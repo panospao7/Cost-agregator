@@ -189,10 +189,6 @@ def scan_file(
         idx = path_str.index("app/src/main/java/")
         rel_for_allowlist = path_str[idx:]
 
-    # Check if this file is fully allowlisted (symbol "*")
-    if is_allowlisted(rel_for_allowlist, "*", allowlist):
-        return violations, False
-
     for i, raw_line in enumerate(lines):
         line_no = i + 1
 
@@ -322,26 +318,24 @@ def load_allowlist(path: Path) -> List[dict]:
 def is_allowlisted(filepath: str, symbol: str, allowlist: List[dict]) -> bool:
     """Check if a filepath:symbol is in the allowlist.
 
-    Supports partial path matching: unrooted relative paths match suffixes.
-    A symbol of "*" matches any symbol for the given file.
+    Uses exact normalized path matching (no suffix/prefix/wildcard matching).
     """
     if not allowlist:
         return False
+    filepath_norm = filepath.replace("\\", "/").rstrip("/")
     for entry in allowlist:
         entry_path = entry.get("path", "")
         if not entry_path:
             continue
-        # entry_path may be relative (e.g., "PrivacyGuard.kt" or
-        # "app/src/main/java/..."). filepath may be absolute or relative.
-        # Only match if the allowlisted path is a suffix of the actual file path
-        if filepath.endswith(entry_path):
+        # Normalize entry_path and compare exactly
+        entry_path_norm = entry_path.replace("\\", "/").rstrip("/")
+        if filepath_norm == entry_path_norm:
             # Check rule match
             entry_rule = entry.get("rule", "")
             if entry_rule and entry_rule != RULE_ID:
                 continue
             entry_symbol = entry.get("symbol", "")
-            # "*" matches all symbols; empty symbol matches empty
-            if entry_symbol == "*" or not symbol or entry_symbol == symbol:
+            if not symbol or entry_symbol == symbol:
                 return True
     return False
 

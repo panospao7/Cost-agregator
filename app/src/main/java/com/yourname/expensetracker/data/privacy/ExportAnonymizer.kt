@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.data.privacy
 
 import android.database.sqlite.SQLiteDatabase
+import com.yourname.expensetracker.diagnostics.Severity
+import com.yourname.expensetracker.diagnostics.safeDiagnostic
 import timber.log.Timber
 import java.io.File
 import javax.inject.Inject
@@ -60,7 +62,8 @@ class ExportAnonymizer @Inject constructor() {
             )
         } catch (e: Exception) {
             Timber.w(e, "$TAG: Cannot open database for sanitisation")
-            throw IllegalStateException("Cannot open database copy for sanitisation: ${e.message}", e)
+            val diag = safeDiagnostic("EXPORT_ANONYMIZE_FAILED", "EXPORT", Severity.ERROR, e)
+            throw IllegalStateException(diag.reasonCode, e)
         }
 
         try {

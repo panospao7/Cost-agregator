@@ -284,7 +284,7 @@ class StackTracePrinter {
 # ── Test 7: Allowlisted file is skipped ────────────────────────────────────
 
 def test_allowlisted_file_skipped(tmp_path):
-    """File allowlisted with symbol='*' → all violations suppressed."""
+    """File allowlisted with exact path → matching violations suppressed."""
     kt_file = _write_kt(
         tmp_path,
         "PrivacyGuard.kt",
@@ -301,9 +301,11 @@ object PrivacyGuard {
 """,
     )
 
-    yaml_content = """- rule: G-PII-01
-  path: PrivacyGuard.kt
-  symbol: "*"
+    # Use exact normalized path — must match what scan_file uses for rel_for_allowlist
+    exact_path = str(kt_file).replace("\\", "/")
+    yaml_content = f"""- rule: G-PII-01
+  path: {exact_path}
+  symbol: rawOcrText
   reason: "Privacy enforcement utility — needs to inspect PII"
   owner: "@panospao7"
   expires: "permanent"

@@ -35,6 +35,9 @@ from typing import Any, Dict, List, Optional, Tuple
 # A blocking guard that exits 1 fails the suite.
 
 GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
+    # ── Registry integrity (must run first) ─────────────────────────────────────
+    ("guard_registry", ["python3", "scripts/ci/verify_guard_registry.py"], "blocking"),
+
     # Blocking guards
     ("source_provenance", ["python3", "scripts/verify_source_provenance_boundaries.py", "--root", "."], "blocking"),
     ("ui_dao", ["python3", "scripts/verify_ui_dao_boundaries.py", "--fail-on-violation"], "blocking"),
