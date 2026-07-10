@@ -503,18 +503,18 @@ tasks.register("checkRawMoneyAggregates") {
                 val lines = f.readLines()
                 var inFromBuckets = false
                 var bracketDepth = 0
-                for ((lineNum, line) in lines) {
+                lines.forEachIndexed { lineNum, line ->
                     val stripped = line.trim()
                     if (stripped.contains("fromBuckets") && stripped.contains("{")) {
                         inFromBuckets = true
                         bracketDepth = 0
                     }
                     if (inFromBuckets) {
-                        bracketDepth += stripped.count { it == '{' } - stripped.count { it == '}' }
+                        bracketDepth += stripped.count { c -> c == '{' } - stripped.count { c -> c == '}' }
                         if (bracketDepth <= 0) { inFromBuckets = false; bracketDepth = 0 }
-                        continue
+                        return@forEachIndexed
                     }
-                    if (stripped.startsWith("import ") || stripped.startsWith("//") || stripped.startsWith("*") || stripped.startsWith("/*")) continue
+                    if (stripped.startsWith("import ") || stripped.startsWith("//") || stripped.startsWith("*") || stripped.startsWith("/*")) return@forEachIndexed
                     for (pattern in rawSumPatterns) {
                         if (pattern.containsMatchIn(stripped)) {
                             violations.add("${f.path}:${lineNum + 1}: Raw money aggregate matches '${pattern.pattern}'")
@@ -575,15 +575,15 @@ tasks.register("checkDirectTimeCalls") {
                 if (fileName in allowlistFiles) return@forEach
                 if (legacyPathMarkers.any { it in filePathLower }) return@forEach
                 val lines = f.readLines()
-                for ((lineNum, line) in lines) {
+                lines.forEachIndexed { lineNum, line ->
                     val stripped = line.trim()
-                    if (stripped.startsWith("import ")) continue
-                    if (stripped.startsWith("//") || stripped.startsWith("*") || stripped.startsWith("/*")) continue
-                    if (stripped.startsWith("\"") || stripped.startsWith("'")) continue
+                    if (stripped.startsWith("import ")) return@forEachIndexed
+                    if (stripped.startsWith("//") || stripped.startsWith("*") || stripped.startsWith("/*")) return@forEachIndexed
+                    if (stripped.startsWith("\"") || stripped.startsWith("'")) return@forEachIndexed
                     for (pattern in patternList) {
                         if (pattern.containsMatchIn(stripped)) {
                             if (stripped.contains("TimeProvider(") || stripped.contains("now =") || stripped.contains("now()")) {
-                                continue
+                                return@forEachIndexed
                             }
                             violations.add("${f.path}:${lineNum + 1}: Direct wall-clock call matches '${pattern.pattern}'")
                             break
