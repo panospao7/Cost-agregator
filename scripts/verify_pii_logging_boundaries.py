@@ -209,13 +209,28 @@ def scan_file(
                 else:
                     # Identify which sensitive var was found
                     found_vars = SENSITIVE_ANY_VAR_RE.findall(raw_line)
-                    found_str = ", ".join(set(found_vars))
-                    violations.append(
-                        f"G-PII-01 {filepath}:{line_no} "
-                        f"Log/print statement with sensitive variable(s): {found_str}. "
-                        f"May leak PII. Use sanitized data or guard with BuildConfig.DEBUG "
-                        f"(file paths only)."
-                    )
+                    found_set = set(found_vars)
+                    # Determine which allowlist symbols apply
+                    symbols_to_check = set()
+                    if found_set & set(SENSITIVE_CONTENT_VARS):
+                        if found_set & {"stackTrace", "stacktrace"}:
+                            symbols_to_check.add("printStackTrace")
+                        if found_set - {"stackTrace", "stacktrace"}:
+                            symbols_to_check.add("rawOcrText")
+                    if found_set & set(FILE_PATH_VARS):
+                        symbols_to_check.add("absolutePath")
+                    # Skip if all applicable symbols are allowlisted for this file
+                    if not all(
+                        is_allowlisted(rel_for_allowlist, sym, allowlist)
+                        for sym in symbols_to_check
+                    ):
+                        found_str = ", ".join(found_set)
+                        violations.append(
+                            f"G-PII-01 {filepath}:{line_no} "
+                            f"Log/print statement with sensitive variable(s): {found_str}. "
+                            f"May leak PII. Use sanitized data or guard with BuildConfig.DEBUG "
+                            f"(file paths only)."
+                        )
 
         # ── Rule 2: Exception messages with user data ────
         if EXCEPTION_CONSTRUCTOR_RE.search(raw_line):
@@ -234,38 +249,42 @@ def scan_file(
             if ANY_LOG_OR_PRINT_RE.search(raw_line):
                 if _has_debug_gate_nearby(lines, i):
                     continue
-                violations.append(
-                    f"G-PII-01 {filepath}:{line_no} "
-                    f"Logging raw exception message (e.message). "
-                    f"Exception messages may contain PII. "
-                    f"Use structured diagnostics with safe reason codes."
-                )
+                if not is_allowlisted(rel_for_allowlist, "e.message_logging", allowlist):
+                    violations.append(
+                        f"G-PII-01 {filepath}:{line_no} "
+                        f"Logging raw exception message (e.message). "
+                        f"Exception messages may contain PII. "
+                        f"Use structured diagnostics with safe reason codes."
+                    )
             # Flag if used in an exception constructor (e.g. RuntimeException(e.message))
             elif EXCEPTION_CONSTRUCTOR_RE.search(raw_line):
-                violations.append(
-                    f"G-PII-01 {filepath}:{line_no} "
-                    f"Exception wrapping raw e.message — "
-                    f"may propagate PII from the original exception. "
-                    f"Use structured diagnostics with safe reason codes."
-                )
+                if not is_allowlisted(rel_for_allowlist, "e.message_wrap", allowlist):
+                    violations.append(
+                        f"G-PII-01 {filepath}:{line_no} "
+                        f"Exception wrapping raw e.message — "
+                        f"may propagate PII from the original exception. "
+                        f"Use structured diagnostics with safe reason codes."
+                    )
 
         # ── Rule 4: printStackTrace in non-test code ─────
         if PRINT_STACK_TRACE_RE.search(raw_line):
-            violations.append(
-                f"G-PII-01 {filepath}:{line_no} "
-                f"printStackTrace() call. Stack traces may leak "
-                f"file paths, user data, or internal state. "
-                f"Use structured diagnostics instead."
-            )
+            if not is_allowlisted(rel_for_allowlist, "printStackTrace", allowlist):
+                violations.append(
+                    f"G-PII-01 {filepath}:{line_no} "
+                    f"printStackTrace() call. Stack traces may leak "
+                    f"file paths, user data, or internal state. "
+                    f"Use structured diagnostics instead."
+                )
 
         # ── Rule 5: toString() on sensitive objects in log
         if TOSTRING_ON_SENSITIVE_RE.search(raw_line):
             if ANY_LOG_OR_PRINT_RE.search(raw_line):
-                violations.append(
-                    f"G-PII-01 {filepath}:{line_no} "
-                    f"toString() on receipt/notification/OCR object in log call. "
-                    f"May leak raw PII. Use structured logging with safe fields."
-                )
+                if not is_allowlisted(rel_for_allowlist, "toString_sensitive", allowlist):
+                    violations.append(
+                        f"G-PII-01 {filepath}:{line_no} "
+                        f"toString() on receipt/notification/OCR object in log call. "
+                        f"May leak raw PII. Use structured logging with safe fields."
+                    )
 
     return violations, False
 

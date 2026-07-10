@@ -28,6 +28,22 @@
   expires: "2027-01-01"
   linked_issue: "MIT-003"
 
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugDataStorage.kt
+  symbol: "absolutePath"
+  reason: "Debug-only data storage utility — safe to log file paths and exception messages in debug context"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/ui/screens/debug/DebugDataStorage.kt
+  symbol: "e.message_wrap"
+  reason: "Debug-only data storage utility — safe to log file paths and exception messages in debug context"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
 # ── Geocoding/Location Services ──────────────────────────────────
 # These services log e.message from network/HTTP errors, not user PII
 
@@ -98,8 +114,32 @@
   linked_issue: "MIT-003"
 
 - rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+  symbol: "absolutePath"
+  reason: "Backup infrastructure — file paths and exception messages are safe in backup context"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+  symbol: "e.message_wrap"
+  reason: "Backup infrastructure — file paths and exception messages are safe in backup context"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
   path: app/src/main/java/com/yourname/expensetracker/data/backup/CostbackupBundle.kt
   symbol: "e.message_logging"
+  reason: "Backup bundle — file paths are safe in backup context"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/CostbackupBundle.kt
+  symbol: "absolutePath"
   reason: "Backup bundle — file paths are safe in backup context"
   owner: "@panospao7"
   expires: "2027-01-01"
@@ -124,6 +164,22 @@
   linked_issue: "MIT-003"
 
 - rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+  symbol: "e.message_wrap"
+  reason: "Export anonymization utility — file path logging is expected in export context"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+  symbol: "rawOcrText"
+  reason: "Export anonymization utility — file path logging is expected in export context"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
   path: app/src/main/java/com/yourname/expensetracker/ui/screens/export/ExportOptionsViewModel.kt
   symbol: "e.message_logging"
   reason: "Export options ViewModel — file path logging for export flow"
@@ -132,8 +188,24 @@
   linked_issue: "MIT-003"
 
 - rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/ui/screens/export/ExportOptionsViewModel.kt
+  symbol: "absolutePath"
+  reason: "Export options ViewModel — file path logging for export flow"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
   path: app/src/main/java/com/yourname/expensetracker/ui/screens/backup/BackupRestoreViewModel.kt
   symbol: "e.message_logging"
+  reason: "Backup restore ViewModel — file path logging for backup flow"
+  owner: "@panospao7"
+  expires: "2027-01-01"
+  linked_issue: "MIT-003"
+
+- rule: G-PII-01
+  path: app/src/main/java/com/yourname/expensetracker/ui/screens/backup/BackupRestoreViewModel.kt
+  symbol: "absolutePath"
   reason: "Backup restore ViewModel — file path logging for backup flow"
   owner: "@panospao7"
   expires: "2027-01-01"
