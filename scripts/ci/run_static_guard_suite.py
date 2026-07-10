@@ -49,12 +49,62 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     ("ignored_test_budget", ["python3", "scripts/verify_ignored_test_budget.py", "--fail-on-violation", "--baseline", "29"], "blocking"),
     ("lint_baseline_policy", ["python3", "scripts/verify_lint_baseline_policy.py", "--fail-on-violation", "--max-missing-translations", "2219"], "blocking"),
 
-    # Warning backlog guards
-    ("cancellation", ["python3", "scripts/verify_cancellation_boundaries.py"], "warning"),
-    ("privacy", ["python3", "scripts/verify_privacy_boundaries.py", "--root", "."], "warning"),
-    ("db_access", ["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation"], "warning"),
-    ("event_writers", ["python3", "scripts/verify_event_writers.py", "--fail-on-violation"], "warning"),
-    ("money", ["python3", "scripts/verify_money_boundaries.py", "--root", "."], "warning"),
+    # Ratchet-wrapped guards (was warning backlog; now blocking via ratchet)
+    (
+        "cancellation",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "cancellation",
+            "--command", "python3 scripts/verify_cancellation_boundaries.py",
+            "--baseline", "config/baselines/cancellation.json",
+            "--fail-on-violation",
+        ],
+        "blocking",
+    ),
+    (
+        "privacy",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "privacy",
+            "--command", "python3 scripts/verify_privacy_boundaries.py --root .",
+            "--baseline", "config/baselines/privacy.json",
+            "--fail-on-violation",
+        ],
+        "blocking",
+    ),
+    (
+        "db_access",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "db_access",
+            "--command", "python3 scripts/verify_db_access_boundaries.py --fail-on-violation",
+            "--baseline", "config/baselines/db_access.json",
+            "--fail-on-violation",
+        ],
+        "blocking",
+    ),
+    (
+        "event_writers",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "event_writers",
+            "--command", "python3 scripts/verify_event_writers.py --fail-on-violation",
+            "--baseline", "config/baselines/event_writers.json",
+            "--fail-on-violation",
+        ],
+        "blocking",
+    ),
+    (
+        "money",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "money",
+            "--command", "python3 scripts/verify_money_boundaries.py --root .",
+            "--baseline", "config/baselines/money.json",
+            "--fail-on-violation",
+        ],
+        "blocking",
+    ),
 
     # Pytest — always runs
     ("guard_tests", ["python3", "-m", "pytest", "scripts/test_verify_*.py", "-v", "--tb=short"], "blocking"),
