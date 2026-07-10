@@ -28,10 +28,3 @@
   expires: "permanent"
   linked_issue: "MIT-003"
 
-- rule: G-DI-01
-  path: app/build.gradle.kts
-  symbol: "isMinifyEnabled = false"
-  reason: "Release build type isMinifyEnabled=false is intentional for this project's release configuration. ProGuard is configured separately if needed."
-  owner: "@panospao7"
-  expires: "permanent"
-  linked_issue: "MIT-003"

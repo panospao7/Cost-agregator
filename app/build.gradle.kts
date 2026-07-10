@@ -24,8 +24,25 @@ android {
         // Keys are now stored in SecureKeyStorage (encrypted at rest)
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // Uses default debug keystore — sufficient for CI verification
+        }
+    }
+
     buildTypes {
         release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // Use debug signing for CI builds; production signing is separate
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        debug {
+            // Keep debug build fast for development
             isMinifyEnabled = false
         }
     }
