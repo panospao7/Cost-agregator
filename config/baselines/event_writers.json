@@ -1,6 +1,6 @@
 {
   "guard": "event_writers",
-  "generated": "2026-07-10T15:53:39.215371+00:00",
+  "generated": "2026-07-10T20:14:40.484684+00:00",
   "fingerprints": [
     "DAO app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt:150",
     "DAO app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt:178",

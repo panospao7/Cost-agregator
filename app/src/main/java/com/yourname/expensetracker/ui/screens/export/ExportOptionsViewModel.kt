@@ -54,9 +54,9 @@ data class ExportOptionsUiState(
     val isLoading: Boolean = false,
     val exportPreview: String? = null,
     val exportPreviewTruncated: Boolean = false,
-    val exportFilePath: String? = null,
     val error: String? = null,
-    val exportSuccess: Boolean = false
+    val exportSuccess: Boolean = false,
+    val exportFilePath: String? = null
 )
 
 data class ExportFormat(
@@ -192,7 +192,6 @@ class ExportOptionsViewModel @Inject constructor(
                 isLoading = true,
                 exportPreview = null,
                 exportPreviewTruncated = false,
-                exportFilePath = null,
                 exportSuccess = false,
                 error = null
             )
@@ -235,7 +234,7 @@ class ExportOptionsViewModel @Inject constructor(
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
-                    error = "Export unavailable: ${e.message}"
+                    error = "Export is temporarily unavailable. Please try again later."
                 )
                 return@launch
             }
@@ -356,11 +355,11 @@ class ExportOptionsViewModel @Inject constructor(
                     isLoading = false,
                     exportPreview = previewCollector.value,
                     exportPreviewTruncated = previewCollector.truncated,
-                    exportFilePath = finalFile.absolutePath,
                     exportSuccess = true,
+                    exportFilePath = finalFile.absolutePath,
                     error = null
                 )
-                Timber.i("Export finished: format=%s, path=%s, previewChars=%d", format, finalFile.absolutePath, previewCollector.value.length)
+                Timber.i("Export finished: format=%s, previewChars=%d", format, previewCollector.value.length)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 if (exportGeneration != generation) return@launch
                 _uiState.value = _uiState.value.copy(
@@ -904,5 +903,5 @@ private fun String.accountingExportDisplayName(): String = when (this) {
 
 private fun Exception.toUserMessage(): String = when (this) {
     is IllegalArgumentException -> message ?: "Export data is invalid for the selected format."
-    else -> "Failed to generate export: ${message ?: "Unknown error"}"
+    else -> "Failed to generate export. Please try again."
 }

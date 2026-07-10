@@ -485,7 +485,7 @@ object BackupVerifier {
                     errors.add("Semantic integrity: $description ($count orphan rows)")
                 }
             } catch (e: Exception) {
-                Timber.w(e, "Semantic integrity check skipped: $description")
+                Timber.w("Semantic integrity check skipped: $description — %s", e.javaClass.simpleName)
             }
         }
         return errors
@@ -499,7 +499,7 @@ object BackupVerifier {
                 if (it.moveToFirst()) it.getInt(0) else 0
             }
         } catch (e: Exception) {
-            Timber.w("Could not count rows for table '%s': %s", tableName, e.message)
+            Timber.w("Could not count rows for table '%s': COUNT_FAILED", tableName)
             -1 // Table doesn't exist or not accessible
         }
     }
@@ -603,7 +603,7 @@ object BackupVerifier {
                 issues.add(
                     VerificationIssue(
                         "SEMANTIC_QUERY_FAILED",
-                        "Aggregate query failed: $query — ${e.message}"
+                            "Aggregate query failed: SEMANTIC_QUERY_FAILED"
                     )
                 )
             }

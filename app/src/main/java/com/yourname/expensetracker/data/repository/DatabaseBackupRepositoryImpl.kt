@@ -451,7 +451,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         backupEncryptionService.encrypt(tempCopy, fos, backupPassword)
                     }
 
-                    Timber.d("Database encrypted and exported successfully to: ${backupFile.absolutePath}")
+                    Timber.d("Database encrypted and exported successfully")
                     Result.success(backupFile)
                 } finally {
                     tempCopy.delete()
@@ -466,7 +466,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     }
                 }
 
-                Timber.d("Database exported successfully to: ${backupFile.absolutePath}")
+                Timber.d("Database exported successfully")
                 Result.success(backupFile)
             }
         } catch (e: Exception) {
@@ -678,7 +678,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
 
                 run.event("ENCRYPTED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
-                Timber.d("Created .costbackup: %s", outputFile.absolutePath)
+                Timber.d("Created .costbackup bundle")
                 Timber.d("BackupOperationEvent.BACKUP_COMPLETED: backup finished successfully")
                 run.success()
                 Result.success(outputFile)
@@ -688,7 +688,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to create .costbackup bundle")
-            run.failedFinal(e.message ?: "Exception", e)
+            run.failedFinal("BACKUP_EXPORT_FAILED", e)
             Result.failure(e)
         } finally {
             runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
@@ -745,9 +745,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
                         reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED,
                         exception = error as? Exception, isTerminal = true)
-                    restoreEvents.finalizeRunFailed(error.message ?: "Extraction failed", error as? Exception)
+                    restoreEvents.finalizeRunFailed("BUNDLE_EXTRACTION_FAILED", error as? Exception)
                     restoreMaintenanceMode.exit(forceRestartRequired = false)
-                    restoreJournal.failJournal(journalEntry, error.message ?: "Extraction failed")
+                    restoreJournal.failJournal(journalEntry, "BUNDLE_EXTRACTION_FAILED")
                     tempDir.deleteRecursively()
                     return@withContext when (error) {
                         is CostbackupBundle.WrongBackupPasswordException ->
@@ -801,7 +801,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Incomplete backup manifest", e)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
-                restoreJournal.failJournal(journalEntry, e.message ?: "Incomplete backup manifest")
+                restoreJournal.failJournal(journalEntry, "MANIFEST_INCOMPLETE")
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(e)
             }
@@ -821,11 +821,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR, exception = e, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Staged verification failed", e)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
-                restoreJournal.failJournal(journalEntry, "Staged verification failed: ${e.message}")
+                restoreJournal.failJournal(journalEntry, "STAGED_VERIFICATION_FAILED")
                 stagedDbFile.delete()
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
-                    Exception("Staged database verification failed: ${e.message}")
+                    Exception("STAGED_VERIFICATION_FAILED")
                 )
             }
 
@@ -854,13 +854,13 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                             exception = error as? Exception, isTerminal = true)
                         restoreEvents.finalizeRunFailed("Post-migration verification failed", error as? Exception)
                         restoreMaintenanceMode.exit(forceRestartRequired = false)
-                        restoreJournal.failJournal(journalEntry, "Post-migration verification failed: ${error.message}")
+                        restoreJournal.failJournal(journalEntry, "POST_MIGRATION_VERIFICATION_FAILED")
                         stagedDbFile.delete()
                         File(stagedDbPath + "-wal").delete()
                         File(stagedDbPath + "-shm").delete()
                         tempDir.deleteRecursively()
                         return@withContext Result.failure(
-                            Exception("Post-migration staged DB verification failed: ${error.message}")
+                            Exception("POST_MIGRATION_VERIFICATION_FAILED")
                         )
                     }
 
@@ -877,21 +877,21 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     exception = e, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Staged migration failed", e)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
-                restoreJournal.failJournal(journalEntry, "Staged migration failed: ${e.message}")
+                restoreJournal.failJournal(journalEntry, "STAGED_MIGRATION_FAILED")
                 stagedDbFile.delete()
                 tempDir.deleteRecursively()
                 // Delete any migrated WAL/SHM files Room may have created
                 File(stagedDbPath + "-wal").delete()
                 File(stagedDbPath + "-shm").delete()
                 return@withContext Result.failure(
-                    Exception("Staged database migration failed: ${e.message}")
+                    Exception("STAGED_MIGRATION_FAILED")
                 )
             }
 
             // 7. Create safety backup
             val safetyBackupResult = createSafetyBackupInternalAssumingMaintenance("restore")
             if (safetyBackupResult.isFailure) {
-                val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown error"
+                val reason = "SAFETY_BACKUP_FAILED"
                 // DDL-512-01: emit terminal event BEFORE failJournal
                 restoreEvents.event("SAFETY_BACKUP_CREATED",
                     com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
@@ -963,10 +963,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     exception = e, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Database swap failed", e)
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
-                restoreJournal.failJournal(journalEntry, "Swap failed: ${e.message}")
+                restoreJournal.failJournal(journalEntry, "DB_SWAP_FAILED")
                 tempDir.deleteRecursively()
                 return@withContext Result.failure(
-                    Exception("Database swap failed and was rolled back: ${e.message}")
+                    Exception("DB_SWAP_FAILED_AND_ROLLED_BACK")
                 )
             }
 
@@ -1080,26 +1080,26 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     )
                     tempDir.deleteRecursively()
                     return@withContext Result.failure(
-                        Exception("CRITICAL: Restore failed and safety backup rollback also failed. " +
-                            "Manual recovery required. Error: ${e.message}")
+                        Exception(                            "CRITICAL: Restore failed and safety backup rollback also failed. " +
+                            "Manual recovery required.")
                     )
                 }
 
                 // DDL-512-01: emit ROLLBACK_COMPLETED BEFORE failJournal
                 restoreEvents.event("ROLLBACK_COMPLETED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED, isTerminal = true)
-                restoreJournal.failJournal(journalEntry, "Verification failed, rolled back: ${e.message}")
+                restoreJournal.failJournal(journalEntry, "VERIFICATION_FAILED_ROLLED_BACK")
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
                 tempDir.deleteRecursively()
 
                 // F6: DB was swapped — do not use old run handle. Journal is authoritative.
-                Result.failure(Exception("Restore verification failed and was rolled back: ${e.message}"))
+                Result.failure(Exception("VERIFICATION_FAILED_ROLLED_BACK"))
             }
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to restore .costbackup bundle")
             restoreMaintenanceMode.exit(forceRestartRequired = false)
             // Use finalizeRunFailed which respects roomAllowed flag
-            restoreEvents.finalizeRunFailed(e.message ?: "Exception", e)
+            restoreEvents.finalizeRunFailed("RESTORE_FAILED", e)
             Result.failure(e)
         }
     }
@@ -1250,8 +1250,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         tempFile.copyTo(finalFile, overwrite = true)
                         tempFile.delete()
                     }
-                    Timber.d("Restored receipt asset: %s -> %s (receiptId=%d)",
-                        assetFile.name, finalFile.absolutePath, receiptId)
+                    Timber.d("Restored receipt asset: receiptId=%d",
+                        receiptId)
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     runCatching { tempFile.delete() }
@@ -1285,7 +1285,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
-                val msg = "Failed to restore receipt asset: ${assetFile.name} - ${e.message}"
+                val msg = "Failed to restore receipt asset: RECEIPT_ASSET_RESTORE_FAILED"
                 warnings.add(msg)
                 Timber.e(e, "Failed to restore receipt asset: %s", assetFile.name)
                 // DDL-512-09: emit ASSET_FAILED event
@@ -1310,7 +1310,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     val updatedTasks = currentJournalEntry.assetTasks.map { t ->
                         if (t.receiptId == receiptId) t.copy(
                             status = RestoreJournal.AssetRestoreStatus.FAILED,
-                            error = e.message
+                            error = "ASSET_RESTORE_FAILED"
                         ) else t
                     }
                     currentJournalEntry = currentJournalEntry.copy(assetTasks = updatedTasks)
@@ -1428,7 +1428,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreJournal.failJournal(journalEntry, "validation_failed: source database file not found")
                 run.failedFinal("Source database file not found")
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
-                return@withContext Result.failure(Exception("Source database file not found: ${sourceFile.absolutePath}"))
+                return@withContext Result.failure(Exception("Source database file not found"))
             }
             if (!sourceFile.canRead()) {
                 restoreJournal.failJournal(journalEntry, "validation_failed: cannot read source database file")
@@ -1446,14 +1446,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // Validate source database before touching anything
             val sourceValidation = validateSourceDatabase(sourceFile)
             if (sourceValidation.isFailure) {
-                restoreJournal.failJournal(journalEntry, "validation_failed: ${sourceValidation.exceptionOrNull()?.message}")
-                Timber.e("Source database validation failed: ${sourceValidation.exceptionOrNull()?.message}")
+                restoreJournal.failJournal(journalEntry, "SOURCE_VALIDATION_FAILED")
+                Timber.e("Source database validation failed: SOURCE_VALIDATION_FAILED")
                 run.event("SOURCE_VALIDATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.VALIDATION_FAILED)
                 run.failedFinal("Invalid backup file", sourceValidation.exceptionOrNull())
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 return@withContext Result.failure(
-                    Exception("Invalid backup file: ${sourceValidation.exceptionOrNull()?.message}")
+                    Exception("SOURCE_VALIDATION_FAILED")
                 )
             }
             val sourceSummary = sourceValidation.getOrNull() ?: run {
@@ -1506,7 +1506,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
                 val safetyBackupResult = createSafetyBackupInternalAssumingMaintenance("restore")
                 if (safetyBackupResult.isFailure) {
-                    val reason = safetyBackupResult.exceptionOrNull()?.message ?: "Unknown backup error"
+                    val reason = "SAFETY_BACKUP_FAILED"
                     Timber.e("Database import aborted: safety backup failed: $reason")
                     restoreJournal.failJournal(journalEntry, "Safety backup failed: $reason")
                     run.failedFinal("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
@@ -1558,7 +1558,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 // instance reads before process restart.
                 database = AppDatabase.fileBuilder(context).build()
 
-                Timber.d("Verified database staged and swapped from: ${sourceFile.absolutePath}")
+                Timber.d("Verified database staged and swapped")
 
                 journalEntry = restoreJournal.transitionTo(journalEntry, RestoreJournal.JournalState.VERIFYING)
                 val freshDb = restoreDatabaseOpener.openFreshDatabase()
@@ -1612,7 +1612,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                             exception = rollbackResult.exceptionOrNull())
                     }
 
-                    restoreJournal.failJournal(journalEntry, importError.message ?: "Import failed after swap")
+                    restoreJournal.failJournal(journalEntry, "IMPORT_FAILED_AFTER_SWAP")
                     if (rollbackResult.isSuccess) {
                         restoreMaintenanceMode.exit(forceRestartRequired = true)
                     } else {
@@ -1624,8 +1624,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     return@withContext if (rollbackResult.isSuccess) {
                         Result.failure(
                             Exception(
-                                "Import failed and database was restored from safety backup. " +
-                                    "Reason: ${importError.message}",
+                                "IMPORT_FAILED_ROLLED_BACK",
                                 importError
                             )
                         )
@@ -1633,17 +1632,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         val rollbackError = rollbackResult.exceptionOrNull()
                         Result.failure(
                             Exception(
-                                "Import failed and automatic restore also failed. " +
-                                    "Manual recovery may be required. " +
-                                    "Import error: ${importError.message}. " +
-                                    "Restore error: ${rollbackError?.message}",
+                                "IMPORT_ROLLBACK_BOTH_FAILED",
                                 importError
                             )
                         )
                     }
                 }
-                restoreJournal.failJournal(journalEntry, importError.message ?: "Import failed pre-swap")
-                run.failedFinal(importError.message ?: "Import failed pre-swap", importError)
+                restoreJournal.failJournal(journalEntry, "IMPORT_FAILED_PRE_SWAP")
+                run.failedFinal("IMPORT_FAILED_PRE_SWAP", importError)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 throw importError
 
@@ -1657,7 +1653,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             Timber.e(e, "Failed to import database")
             // Ensure maintenance mode is exited even for unexpected failures.
             // Calling exit() when already NORMAL is harmless (idempotent write).
-            runCatching { run.failedFinal(e.message ?: "Exception", e) }
+            runCatching { run.failedFinal("IMPORT_FAILED", e) }
             restoreMaintenanceMode.exit(forceRestartRequired = false)
             Result.failure(e)
         }
@@ -1809,7 +1805,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
         } catch (e: Exception) {
             Timber.e(e, "Failed to validate source database")
-            Result.failure(Exception("Could not read source database: ${e.message}"))
+            Result.failure(Exception("SOURCE_DATABASE_UNREADABLE"))
         }
     }
     
@@ -1829,7 +1825,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         targetShmFile: File
     ) {
         if (!sourceDbFile.exists()) {
-            throw Exception("Verified staged database file is missing: ${sourceDbFile.absolutePath}")
+            throw Exception("Verified staged database file is missing")
         }
 
         targetDbFile.delete()
@@ -2219,7 +2215,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 .onFailure { Timber.w(it, "Failed to close Room openHelper before rollback restore") }
 
             if (!safetyBackupFile.exists() || !safetyBackupFile.canRead()) {
-                throw Exception("Safety backup is not accessible: ${safetyBackupFile.absolutePath}")
+                throw Exception("Safety backup is not accessible")
             }
 
             val backupWalFile = File(safetyBackupFile.parentFile, "${safetyBackupFile.name}-wal")
@@ -2266,9 +2262,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             // Other Hilt-injected AppDatabase consumers still hold the stale singleton.
             // The forceRestartRequired=true pattern remains the authoritative fix for full invalidation.
             database = AppDatabase.fileBuilder(context).build()
-            Timber.w("Import rollback succeeded using safety backup: ${safetyBackupFile.absolutePath}")
+            Timber.w("Import rollback succeeded using safety backup")
         }.onFailure {
-            Timber.e(it, "Import rollback failed using safety backup: ${safetyBackupFile.absolutePath}")
+            Timber.e("Import rollback failed using safety backup")
         }
     }
     
@@ -2339,7 +2335,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
 
             cleanupOldSafetyBackups(safetyBackupDir)
-            Timber.d("Safety backup created by $callerOperation: ${safetyBackupFile.absolutePath}")
+            Timber.d("Safety backup created by $callerOperation")
             Result.success(safetyBackupFile)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

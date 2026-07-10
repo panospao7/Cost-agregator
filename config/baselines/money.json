@@ -1,8 +1,5 @@
 {
   "guard": "money",
-  "generated": "2026-07-10T15:53:40.057439+00:00",
-  "fingerprints": [
-    "G-MONEY-15 app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt:611",
-    "G-MONEY-15 app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt:612"
-  ]
+  "generated": "2026-07-10T20:14:41.436995+00:00",
+  "fingerprints": []
 }

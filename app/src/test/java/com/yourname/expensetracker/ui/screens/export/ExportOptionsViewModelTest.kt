@@ -318,7 +318,7 @@ class ExportOptionsViewModelTest {
         val state = viewModel.uiState.value
         assertTrue(!state.exportSuccess)
         assertEquals(null, state.exportFilePath)
-        assertEquals("Failed to generate export: cache dir unavailable", state.error)
+        assertEquals("Failed to generate export. Please try again.", state.error)
         assertTrue(!state.isLoading)
     }
 

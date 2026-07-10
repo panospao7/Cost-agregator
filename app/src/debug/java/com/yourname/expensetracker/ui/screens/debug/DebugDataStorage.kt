@@ -15,6 +15,8 @@ import timber.log.Timber
  * Handles persistence of debug data to file storage.
  * Saves the most recent bank statement import debug data so it can be
  * reviewed even after app restart.
+ *
+ * DEBUG variant: full implementation.
  */
 @Singleton
 class DebugDataStorage @Inject constructor(
@@ -22,7 +24,7 @@ class DebugDataStorage @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
     private val file = File(context.filesDir, "last_debug_data.json")
-    
+
     /**
      * Save debug data to file
      */
@@ -30,13 +32,13 @@ class DebugDataStorage @Inject constructor(
         withContext(Dispatchers.IO) {
             try {
                 file.writeText(debugData.toJson(timeProvider.now()))
-                Timber.d("Saved debug data to ${file.absolutePath}")
+                Timber.d("Saved debug data")
             } catch (e: Exception) {
-                Timber.e(e, "Failed to save debug data: ${e.message}")
+                Timber.e(e, "Failed to save debug data: WRITE_FAILED")
             }
         }
     }
-    
+
     /**
      * Load debug data from file
      */
@@ -46,17 +48,17 @@ class DebugDataStorage @Inject constructor(
                 Timber.d("No saved debug data found")
                 return@withContext null
             }
-            
+
             return@withContext try {
                 val json = file.readText()
                 parseDebugDataFromJson(json)
             } catch (e: Exception) {
-                Timber.e(e, "Failed to load debug data: ${e.message}")
+                Timber.e(e, "Failed to load debug data: PARSE_FAILED")
                 null
             }
         }
     }
-    
+
     /**
      * Clear saved debug data
      */
@@ -68,19 +70,19 @@ class DebugDataStorage @Inject constructor(
             }
         }
     }
-    
+
     /**
      * Parse JSON back into DebugData object
      */
     private fun parseDebugDataFromJson(json: String): DebugData? {
         return try {
             val root = org.json.JSONObject(json)
-            
+
             // Extract metadata
             val metadata = root.optJSONObject("metadata")
             val processingTimeMs = metadata?.optLong("processingTimeMs") ?: 0L
             val parserUsed = metadata?.optString("parserUsed") ?: "Unknown"
-            
+
             // Extract transactions
             val transactionsArray = root.optJSONArray("transactions") ?: org.json.JSONArray()
             val transactions = mutableListOf<com.yourname.expensetracker.domain.parser.ParsedTransaction>()
@@ -104,7 +106,7 @@ class DebugDataStorage @Inject constructor(
                     validationSources[i] = vs
                 }
             }
-            
+
             // Extract issues
             val issuesRoot = root.optJSONObject("issues")
             val issuesArray = issuesRoot?.optJSONArray("details") ?: org.json.JSONArray()
@@ -119,19 +121,19 @@ class DebugDataStorage @Inject constructor(
                     suggestion = if (issueObj.isNull("suggestion")) null else issueObj.optString("suggestion")
                 ))
             }
-            
+
             // Extract logs
             val logsArray = root.optJSONArray("parsingLogs") ?: org.json.JSONArray()
             val logs = mutableListOf<String>()
             for (i in 0 until logsArray.length()) {
                 logs.add(logsArray.getString(i))
             }
-            
+
             // Extract raw text preview (we don't store full raw text for space, but we could)
             // For now, use the preview or just empty string if not available
             val rawTextObj = root.optJSONObject("rawText")
             val rawText = rawTextObj?.optString("preview") ?: ""
-            
+
             DebugData(
                 rawText = rawText,
                 parsedTransactions = transactions,
@@ -142,7 +144,7 @@ class DebugDataStorage @Inject constructor(
                 validationSources = validationSources
             )
         } catch (e: Exception) {
-            Timber.e(e, "Failed to parse JSON: ${e.message}")
+            Timber.e(e, "Failed to parse debug JSON: PARSE_FAILED")
             null
         }
     }

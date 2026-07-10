@@ -50,19 +50,19 @@ class AndroidForegroundLocationProvider @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: SecurityException) {
-            Log.w(TAG, "Location permission revoked mid-call: ${e.message}")
+            Log.w(TAG, "LOCATION_PERMISSION_DENIED")
             null
         } catch (e: Exception) {
-            Log.w(TAG, "Location unavailable: ${e.message}")
+            Log.w(TAG, "LOCATION_UNAVAILABLE", e)
             try {
                 fusedClient.lastLocation.await()?.toLatLon()
             } catch (fallback: CancellationException) {
                 throw fallback
             } catch (fallback: SecurityException) {
-                Log.w(TAG, "Cached location unavailable after permission loss: ${fallback.message}")
+                Log.w(TAG, "LOCATION_PERMISSION_DENIED_FALLBACK")
                 null
             } catch (fallback: Exception) {
-                Log.w(TAG, "Cached location unavailable: ${fallback.message}")
+                Log.w(TAG, "LOCATION_UNAVAILABLE_FALLBACK")
                 null
             }
         }

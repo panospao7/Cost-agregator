@@ -1,6 +1,6 @@
 {
   "guard": "db_access",
-  "generated": "2026-07-10T19:59:23.790590+00:00",
+  "generated": "2026-07-10T20:14:38.788765+00:00",
   "fingerprints": [
     "FORBIDDEN_FILE_OP: DB file operation outside approved backup/restore class app/src/main/java/com/yourname/expensetracker/data/database/DatabaseMigrations.kt:38",
     "FORBIDDEN_FILE_OP: DB file operation outside approved backup/restore class app/src/main/java/com/yourname/expensetracker/data/database/DatabaseMigrations.kt:39",

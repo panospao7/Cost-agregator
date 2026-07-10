@@ -287,12 +287,12 @@ object CostbackupBundle {
                 encryptionService.encrypt(tempZip, fos, password)
             }
 
-            Timber.d("Created .costbackup bundle: %s (%d bytes)", outputFile.absolutePath, outputFile.length())
+            Timber.d("Created .costbackup bundle (%d bytes)", outputFile.length())
             outputFile
         } finally {
             // 4. Always clean up the temp ZIP file
             if (tempZip.exists() && !tempZip.delete()) {
-                Timber.w("Failed to delete temp ZIP file: %s", tempZip.absolutePath)
+                Timber.w("Failed to delete temp ZIP file")
             }
         }
     }
@@ -451,7 +451,7 @@ object CostbackupBundle {
             throw InvalidBackupFormatException("Missing database.sqlite in extracted bundle")
         }
 
-        Timber.d("Extracted .costbackup bundle to: %s", outputDir.absolutePath)
+        Timber.d("Extracted .costbackup bundle")
 
         ExtractionResult(
             manifest = manifest,
@@ -509,7 +509,7 @@ object CostbackupBundle {
             if (includeReceiptImages && !redacted) {
                 for ((relPath, file) in receiptFiles) {
                     if (!file.exists() || !file.isFile) {
-                        Timber.w("Receipt file missing during bundle creation: %s", file.absolutePath)
+                        Timber.w("Receipt file missing during bundle creation")
                         continue
                     }
                     zos.putNextEntry(ZipEntry(relPath))

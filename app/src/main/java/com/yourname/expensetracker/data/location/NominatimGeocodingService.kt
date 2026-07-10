@@ -186,11 +186,11 @@ class NominatimGeocodingService @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
-            Log.e(TAG, "reverseGeocode network error: ${e.message}", e)
+            Log.e(TAG, "GEOCODE_NETWORK_ERROR", e)
             GeocodingLookupResult.Failure(GeocodingError.NetworkError)
         } catch (e: Exception) {
-            Log.e(TAG, "reverseGeocode error: ${e.message}", e)
-            GeocodingLookupResult.Failure(GeocodingError.Unknown(e.message))
+            Log.e(TAG, "GEOCODE_UNKNOWN_ERROR", e)
+            GeocodingLookupResult.Failure(GeocodingError.Unknown("GEOCODE_UNKNOWN"))
             }
         }
     }
@@ -244,13 +244,13 @@ class NominatimGeocodingService @Inject constructor(
                 else GeocodingBatchResult.Success(results)
             }
         } catch (e: IOException) {
-            Log.e(TAG, "    <== Nominatim network error: ${e.message}", e)
+            Log.e(TAG, "GEOCODE_NETWORK_ERROR", e)
             when {
                 e.message == "NOMINATIM_403" -> GeocodingBatchResult.Failure(GeocodingError.RateLimited)
                 else -> GeocodingBatchResult.Failure(GeocodingError.NetworkError)
             }
         } catch (e: JSONException) {
-            Log.e(TAG, "    <== Nominatim parse error: ${e.message}", e)
+            Log.e(TAG, "GEOCODE_PARSE_ERROR", e)
             GeocodingBatchResult.Failure(GeocodingError.ParseError)
         }
     }

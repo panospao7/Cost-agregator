@@ -1,646 +1,189 @@
-Here is the focused implementation plan for the remaining issues after latest `42e53e1`.
+I reviewed the full 13-commit sequence from `ebb5aa9` through `b710120`, including PRs A–F, follow-up fixes, current source, and Actions run #431. **Verdict: RED — the branch is not merge-ready.** The latest run already has failures in Static Guards, Release Check, and `:app:check`. ([github.com](https://github.com/panospao7/Cost-agregator/compare/ebb5aa93348282b31c1c669d1bf1271d584b9eb0...b71012066943a8cccf1afb26ebf7af6b4f960f3d))
 
-<atomicity_pr23_remaining_cleanup_plan.md>
-# PR23 — Final Verification and Residual Atomicity/Cancellation Cleanup Plan
+<CI_GUARDRAILS_DEEP_REVIEW_B710120.md>
+# CI Guardrails Deep Review
 
-Base reviewed commit: `42e53e15be17303d945fe75c5afb7e22b963eab5`
+**Target:** `b71012066943a8cccf1afb26ebf7af6b4f960f3d`  
+**Compared against:** `ebb5aa93348282b31c1c669d1bf1271d584b9eb0`  
+**Scope:** 13 commits, 111 changed files. ([github.com](https://github.com/panospao7/Cost-agregator/compare/ebb5aa93348282b31c1c669d1bf1271d584b9eb0...b71012066943a8cccf1afb26ebf7af6b4f960f3d))  
+**Verdict:** **RED — do not merge**
 
-## Current recommended status
+---
 
-| MIT | Status |
+# 1. Actual CI status
+
+Actions run **#431**, triggered July 10, 2026 at 18:56, shows:
+
+| Job | Result at review time |
 |---|---|
-| MIT-031 | Core DONE / global repository-event debt remains |
-| MIT-041 | Nearly DONE, pending PR23 data-quality fix + visible green CI |
-| MIT-034 | PARTIAL |
-| MIT-043 | PARTIAL |
-| MIT-075 | PARTIAL by design |
+| Validate Workflow | Passed |
+| Static Guards | **Failed — exit 2** |
+| Lint & Check | **Failed — `:app:check`** |
+| Release Check | **Failed — artifact verifier exit 1** |
+| Unit Tests | Still running at capture time |
+| Instrumented Tests | Not scheduled on feature-branch pushes |
 
-## Goal
+The lint failure is no longer `lintDebug`; execution reached the later `Run Gradle check` step. Therefore the MissingTranslation baseline appears to have allowed lint and assembly to complete, but the overall Gradle verification remains red. ([github.com](https://github.com/panospao7/Cost-agregator/actions/runs/29116299203))
 
-Finish the remaining small but important issues before treating MIT-031/MIT-041 as truly release-safe.
-
-Remaining issues:
-
-1. Bank skipped invalid amount ledger can persist `NaN` / `Infinity`.
-2. Bank duplicate/invalid skip audit policy needs explicit tests.
-3. Cancellation static guard does not yet ban raw `runCatching`.
-4. Direct event DAO legacy repository debt remains accepted until `2026-08-15`.
-5. Warranty lifecycle event descriptions may include product names.
-6. Latest green CI is not externally visible.
-7. Docs should distinguish “core DONE” from “global residual debt.”
-
-Recommended branch:
-
-```bash
-git checkout -b atomicity-pr23-final-verification-cleanup
-```
-
-Recommended commits:
-
-1. `PR23-1 — Sanitize bank skipped invalid amount ledger`
-2. `PR23-2 — Bank skipped/duplicate item audit tests`
-3. `PR23-3 — Cancellation guard raw runCatching rule`
-4. `PR23-4 — Direct event DAO debt tracking polish`
-5. `PR23-5 — Warranty lifecycle metadata privacy polish`
-6. `PR23-6 — CI verification and docs correction`
+No successful complete run exists for the target SHA. Run #430 was cancelled by the newer push and already showed failures in Static Guards, Release Check, and Lint & Check. ([github.com](https://github.com/panospao7/Cost-agregator/actions/runs/29115246513))
 
 ---
 
-# PR23-1 — Sanitize Bank Skipped Invalid Amount Ledger
+# 2. Critical blocker: Static Guards is structurally broken
 
-## Problem
+## 2.1 Release artifact verification incorrectly runs in Static Guards
 
-In `BankStatementLifecycleProcessor`, invalid amount branches currently insert skipped `BankStatementImportItem` rows with:
+`run_static_guard_suite.py` includes `release_artifact` as a blocking guard. However, the Static Guards job only checks out source, installs Python, and runs the suite. It never builds an APK.
 
-```kotlin
-amount = tx.amount
-```
+`verify_release_artifact.py` reports a violation if no release APK exists. Therefore a clean Static Guards checkout cannot pass this guard. Release verification belongs exclusively after `assembleRelease`. ([raw.githubusercontent.com](https://raw.githubusercontent.com/panospao7/Cost-agregator/b71012066943a8cccf1afb26ebf7af6b4f960f3d/.github/workflows/ci.yml))
 
-even when:
+### Required fix
 
-```kotlin
-tx.amount.isNaN() || tx.amount.isInfinite()
-```
+Remove `release_artifact` from `GUARD_MANIFEST`.
 
-This means the DB ledger can persist `NaN`, `Infinity`, or `-Infinity`.
-
-That contradicts the “validate finite amount before mutation” rule and may break queries, aggregates, or UI/debug rendering.
-
-## Files
-
-- `BankStatementLifecycleProcessor.kt`
-- `BankStatementImportItem.kt`
-- bank statement tests
-
-## Implementation
-
-### 1. Sanitize non-finite amount
-
-Change invalid amount skipped-row insert from:
-
-```kotlin
-amount = tx.amount
-```
-
-to:
-
-```kotlin
-amount = null
-```
-
-or, if you need original raw amount for debugging, store only a safe reason code:
-
-```kotlin
-errorReason = "INVALID_AMOUNT_NON_FINITE"
-```
-
-Do **not** store the raw non-finite value.
-
-Recommended:
-
-```kotlin
-BankStatementImportItem(
-    runId = importRunId,
-    rowIndex = index,
-    status = BankStatementImportItemStatus.SKIPPED,
-    amount = null,
-    currency = tx.currency?.takeIf { it.isValidCurrencyCode() },
-    errorReason = "INVALID_AMOUNT_NON_FINITE",
-    errorClass = null
-)
-```
-
-### 2. Sanitize reason
-
-Avoid:
-
-```text
-INVALID_AMOUNT: Amount is NaN or Infinite
-```
-
-Prefer structured code:
-
-```text
-INVALID_AMOUNT_NON_FINITE
-```
-
-If human-readable description is needed, keep it in docs/UI mapping, not DB diagnostic string.
-
-## Tests
-
-Add:
-
-1. `nan_amount_creates_skipped_item_with_null_amount`
-2. `positive_infinity_amount_creates_skipped_item_with_null_amount`
-3. `negative_infinity_amount_creates_skipped_item_with_null_amount`
-4. `non_finite_amount_reason_is_structured_code`
-5. `non_finite_amount_does_not_create_receipt_or_pending_review`
-6. `non_finite_amount_does_not_create_receipt_lifecycle_event`
-
-## Acceptance criteria
-
-- No `NaN` / `Infinity` is persisted in skipped item amount.
-- Invalid amount skipped row remains auditable through structured reason code.
-- MIT-041 data-quality concern is closed.
+Keep it only in the Release Check job after the release artifact has been produced.
 
 ---
 
-# PR23-2 — Bank Skipped / Duplicate Item Audit Tests
+## 2.2 Ratchet exit-code contract is incompatible with the suite runner
 
-## Problem
+`guard_ratchet.py` returns:
 
-Bank skipped rows before receipt creation are audited by `BankStatementImportItem`, not receipt lifecycle events. That policy is acceptable, but it needs explicit tests.
+- `0` for unchanged.
+- `1` for new findings.
+- `2` for some errors.
+- `3` when findings were resolved.
 
-Cases needing coverage:
+The suite runner interprets only `0` as pass and `1` as violation; every other value is classified as infrastructure failure. Therefore a successful backlog reduction returns exit 3 and causes Static Guards to exit 2. ([raw.githubusercontent.com](https://raw.githubusercontent.com/panospao7/Cost-agregator/b71012066943a8cccf1afb26ebf7af6b4f960f3d/scripts/ci/run_static_guard_suite.py))
 
-- invalid amount;
-- invalid currency;
-- invalid date if applicable;
-- duplicate expense;
-- duplicate pending review;
-- row processing failure before receipt creation.
+This directly explains the current exit-2 behavior:
 
-## Policy
+- PR C created a DB baseline with 70 findings.
+- `b710120` changed the DB guard result to zero.
+- `b710120` did not modify the baseline file.
+- The ratchet therefore sees resolved findings and returns 3.
+- The suite classifies 3 as infrastructure failure. ([github.com](https://github.com/panospao7/Cost-agregator/compare/ebb5aa93348282b31c1c669d1bf1271d584b9eb0...b71012066943a8cccf1afb26ebf7af6b4f960f3d))
 
-Document and test:
+### Required fix
+
+Use only the standard contract:
+
+- `0`: policy satisfied.
+- `1`: policy violation, including stale/resolved baseline entries that must be pruned.
+- `2`: infrastructure failure.
+
+Delete exit code 3.
+
+Prefer this behavior:
 
 ```text
-BankStatementImportItem is the authoritative per-item audit ledger for rows skipped before receipt/review creation.
-Receipt lifecycle events begin only after a receipt exists.
+new finding             -> exit 1
+resolved but unpruned   -> exit 1
+exact baseline match    -> exit 0
+guard/config error      -> exit 2
 ```
-
-## Tests
-
-Add:
-
-1. `invalid_currency_creates_skipped_item_ledger`
-2. `invalid_currency_reason_is_structured_code`
-3. `duplicate_expense_creates_skipped_item_ledger`
-4. `duplicate_pending_review_creates_skipped_item_ledger`
-5. `duplicate_skip_reason_does_not_include_raw_merchant_or_description`
-6. `skipped_item_without_receipt_has_no_receipt_lifecycle_event`
-7. `failed_item_records_error_class_only`
-8. `failed_item_does_not_store_raw_exception_message`
-
-## Acceptance criteria
-
-- Skipped/duplicate bank rows are auditable.
-- No receipt event is expected when no receipt exists.
-- Reasons are structured/sanitized.
-- MIT-041 closure has test evidence.
 
 ---
 
-# PR23-3 — Cancellation Guard Raw `runCatching` Rule
+## 2.3 The latest ratchet fix remains incorrect
 
-## Problem
+`b710120` treats any non-zero guard exit with empty stdout as an infrastructure error. This is not sufficient:
 
-Known raw `runCatching` sites in core files were fixed, but the static guard still does not strongly prevent reintroduction.
+- A guard exiting `2` with stdout is still an infrastructure error.
+- A legitimate guard could report through stderr or a structured output file.
+- Unknown exit codes must always be errors regardless of stdout.
+- Exit code `1` should remain a violation even if stdout is empty.
 
-`CancellationSafetyArchitectureGuardTest` should fail raw `runCatching` in suspend/domain/worker/repository paths.
+The updated test no longer tests a genuinely missing command. It now runs Python with `sys.exit(1)`, so its original “command not found” behavior is no longer covered. ([github.com](https://github.com/panospao7/Cost-agregator/commit/b71012066943a8cccf1afb26ebf7af6b4f960f3d))
 
-## Files
-
-- `CancellationSafetyArchitectureGuardTest.kt`
-- cancellation fixture resources if present
-- `CancellationSafe.kt`
-
-## Implementation
-
-### 1. Add rule
-
-Add rule ID:
+### Correct handling
 
 ```text
-RAW_RUN_CATCHING_IN_SUSPEND_PATH
+child exit 0 -> pass
+child exit 1 -> findings/violation
+child exit 2 -> infrastructure error
+other exit   -> infrastructure error
 ```
 
-Fail source containing:
-
-```kotlin
-runCatching {
-```
-
-in files classified as:
-
-- Worker;
-- Receiver;
-- Repository;
-- Coordinator;
-- Service;
-- Pipeline;
-- suspend-heavy domain path.
-
-Allow only:
-
-```kotlin
-CancellationSafe.runCatchingCancellable { ... }
-```
-
-### 2. Avoid false positives
-
-Do not flag:
-
-```kotlin
-CancellationSafe.runCatchingCancellable
-```
-
-Do not flag tests unless desired.
-
-Optionally allow pure non-suspend utility files through structured allowlist.
-
-### 3. Structured allowlist
-
-If any raw `runCatching` remains, require:
-
-```kotlin
-CancellationAllowlistEntry(
-    fileName = "...",
-    rule = "RAW_RUN_CATCHING_IN_SUSPEND_PATH",
-    owner = "...",
-    reason = "...",
-    issue = "MIT-034",
-    expires = LocalDate.parse("2026-08-15")
-)
-```
-
-### 4. Fixtures
-
-Bad:
-
-```text
-RunCatchingInSuspendRepository.kt
-RunCatchingInWorker.kt
-RunCatchingOnFailureSwallowsCancellation.kt
-```
-
-Good:
-
-```text
-CancellationSafeRunCatchingCancellable.kt
-ExplicitTryCatchRethrowsCancellation.kt
-PureNonSuspendRunCatchingAllowlisted.kt
-```
-
-## Tests
-
-1. `raw_runCatching_in_suspend_repository_fails`
-2. `raw_runCatching_in_worker_fails`
-3. `runCatchingCancellable_passes`
-4. `expired_runCatching_allowlist_fails`
-5. `core_source_has_no_raw_runCatching_violations`
-
-## Acceptance criteria
-
-- Raw `runCatching` cannot return silently in core async paths.
-- MIT-034 remains partial only because of known allowlisted debt, not guard weakness.
+Output presence must not determine semantic exit status.
 
 ---
 
-# PR23-4 — Direct Event DAO Debt Tracking Polish
+# 3. Critical blocker: DB violations were exempted, not fixed
 
-## Problem
-
-`DirectEventDaoInsertGuardTest` is now structured, but it still allows legacy production repositories until `2026-08-15`.
-
-This may be acceptable as residual debt, but docs and guard should make it impossible to forget.
-
-## Tasks
-
-### 1. Add category to allowlist
-
-Extend:
-
-```kotlin
-data class DirectEventDaoAllowlistEntry(
-    val fileName: String,
-    val rule: String,
-    val category: String,
-    val owner: String,
-    val reason: String,
-    val issue: String,
-    val expires: LocalDate
-)
-```
-
-Categories:
+`b710120` reports zero DB findings because it added approximately 17 class-level allowlist entries and approved two whole classes for raw DB file operations. Many entries explicitly set:
 
 ```text
-WRITER_IMPLEMENTATION
-COORDINATOR
-LEGACY_REPOSITORY
-MIGRATION
-TEST
+requires_write_barrier: false
 ```
 
-### 2. Enforce expiry policy
+Affected paths include:
 
-Rules:
+- Receipt lifecycle services.
+- Transaction event writers.
+- RestoreJournalImporter.
+- BankApiIntegration.
+- Source-link writers.
+- OperationRunRecorder.
+- SmartBillNegotiationEngine.
+- WarrantyExpirationWorker.
+- FinancialRescueCoordinator.
+- DatabaseMigrations. ([github.com](https://github.com/panospao7/Cost-agregator/commit/b71012066943a8cccf1afb26ebf7af6b4f960f3d))
 
-- `WRITER_IMPLEMENTATION`: can be long-lived.
-- `COORDINATOR`: allowed if transaction-scoped.
-- `LEGACY_REPOSITORY`: max 45 days.
-- `MIGRATION`: expiry required.
-- `TEST`: test source only.
+Most entries:
 
-Test:
+- Have no `methods_only`.
+- Authorize every recognized matching mutation in the class.
+- Waive the write-barrier requirement.
+- Use the generic reason “pre-existing pattern.”
+- Link to generic MIT-003 rather than the relevant ownership issue.
+- Have no concrete removal date or evidence test.
 
-```kotlin
-legacy_repository_direct_event_allowlist_cannot_exceed_45_days
-```
+This contradicts PR B’s goal of exact, finding-scoped exemptions.
 
-### 3. Create migration checklist
+## Scanner weaknesses remain
 
-For each legacy repository entry, add doc/table:
+The current DB guard:
 
-| File | Event type | Replacement owner | Expiry |
-|---|---|---|---|
-| `ReceiptRepository.kt` | receipt event | ReceiptLifecycleCoordinator | 2026-08-15 |
-| `ReviewQueueRepository.kt` | review event | ReviewLifecycleCoordinator | 2026-08-15 |
-| `ExpenseRepository.kt` | transaction event | TransactionLifecycleCoordinator | 2026-08-15 |
-| etc. |
+- Uses a custom line-oriented YAML parser.
+- Returns an empty allowlist when the file is missing.
+- Prints only a warning for missing allowlist.
+- Silently skips unreadable Kotlin files.
+- Matches class ownership by filename.
+- Proves a barrier only by checking whether matching text appears earlier in the function.
+- Does not prove control-flow dominance.
+- Approves DB file operations for an entire class, not an exact method. ([raw.githubusercontent.com](https://raw.githubusercontent.com/panospao7/Cost-agregator/b71012066943a8cccf1afb26ebf7af6b4f960f3d/scripts/verify_db_access_boundaries.py))
 
-## Acceptance criteria
+Therefore PR F’s claimed fail-closed hardening does not cover this high-risk guard.
 
-- Legacy repository direct-event debt is explicit and time-boxed.
-- MIT-031 can be described as “core coordinator paths done, repository debt tracked.”
+## Required fix
+
+1. Revert the new class-wide exemptions.
+2. Restore the 70 exact pre-existing findings to the DB ratchet temporarily.
+3. Keep only genuine structural exceptions:
+   - Exact migration functions inside `DatabaseMigrations`.
+   - Exact maintenance-owned operations in `FinancialRescueCoordinator`, after maintenance ownership is proven.
+4. Route ordinary mutations through lifecycle owners.
+5. Require a write barrier where appropriate.
+6. Add exact method and operation matching.
+7. Make missing/unreadable configuration or source exit 2.
+8. Prune the baseline only after actual code changes remove findings.
+
+A guard reaching zero because all findings are exempted is not architecture closure.
 
 ---
 
-# PR23-5 — Warranty Lifecycle Metadata Privacy Polish
+# 4. Critical blocker: PII “strict zero” is produced through unsafe suppressions
 
-## Problem
+PR A properly removed several targeted `printStackTrace`, raw OCR, email, and raw exception-message paths. That part was directionally correct. ([github.com](https://github.com/panospao7/Cost-agregator/commit/d40c230))
 
-Warranty lifecycle event descriptions may include product names:
+However, `eaa59ca` subsequently added PII exemptions for:
 
-```kotlin
-"Warranty created for ${warranty.productName}"
-```
+- `absolutePath`
+- `e.message_logging`
+- `e.message_wrap`
+- `rawOcrText`
 
-Product names can be sensitive purchase data.
+across backup, export, debug, and UI files. Reasons claim paths
 
-Warranty events are currently accepted as non-critical/best-effort, but their metadata should still be privacy-safe.
-
-## Files
-
-- `WarrantyTrackerRepository.kt`
-- warranty lifecycle event model/DAO
-- warranty tests
-
-## Implementation options
-
-### Option A — remove product names from event descriptions
-
-Use generic descriptions:
-
-```text
-WARRANTY_CREATED
-WARRANTY_UPDATED
-WARRANTY_DELETED
-WARRANTY_CLAIMED
-WARRANTY_REJECTED
-```
-
-Metadata:
-
-```kotlin
-warrantyId
-eventCode
-source
-```
-
-No product name.
-
-### Option B — hash product names
-
-If product correlation is needed:
-
-```kotlin
-productNameHash = privacyHash(warranty.productName)
-```
-
-Do not store raw name.
-
-Recommended: Option A.
-
-## Tests
-
-1. `warranty_created_event_does_not_include_product_name`
-2. `warranty_updated_event_does_not_include_product_name`
-3. `warranty_claim_event_does_not_include_product_name`
-4. `warranty_event_failure_rethrows_cancellation`
-5. `warranty_event_failure_logs_sanitized_class_only`
-
-## Acceptance criteria
-
-- Warranty lifecycle events do not persist raw product names.
-- Warranty remains outside MIT-031 critical scope unless later migrated.
-
----
-
-# PR23-6 — CI Verification and Docs Correction
-
-## Problem
-
-Latest docs close MIT-031/MIT-041, but no visible green CI for latest commit was available during review.
-
-## Tasks
-
-### 1. Run full verification
-
-```bash
-./gradlew :app:compileDebugKotlin
-./gradlew :app:testDebugUnitTest
-./gradlew :app:lintDebug
-./gradlew :app:assembleDebug
-./gradlew :app:verifyRoomSchemaSnapshots
-./gradlew :app:verifyDbAccessBoundaries
-```
-
-Preferred:
-
-```bash
-./gradlew :app:check
-```
-
-### 2. Run targeted verification
-
-```bash
-./gradlew :app:testDebugUnitTest --tests "*BankStatement*"
-./gradlew :app:testDebugUnitTest --tests "*Cancellation*"
-./gradlew :app:testDebugUnitTest --tests "*Architecture*"
-./gradlew :app:testDebugUnitTest --tests "*NotificationProcessing*"
-./gradlew :app:testDebugUnitTest --tests "*ReceiptLink*"
-./gradlew :app:testDebugUnitTest --tests "*Warranty*"
-```
-
-### 3. Update docs with evidence
-
-Docs should include:
-
-```text
-Verified commit:
-Commands run:
-Result:
-Known excluded tests:
-Owner:
-Expiry:
-```
-
-### 4. Status wording
-
-Recommended:
-
-```text
-MIT-031: CORE DONE — critical coordinator-owned state/event paths transaction-scoped. Legacy repository direct-event debt tracked until 2026-08-15.
-MIT-041: DONE after PR23 invalid amount ledger fix + green CI.
-MIT-034: PARTIAL — cancellation allowlist remains.
-MIT-043: PARTIAL — regeneration best-effort and MIT-033 uniqueness dependency.
-MIT-075: PARTIAL — no durable outbox by design.
-```
-
-## Acceptance criteria
-
-- Latest commit has visible green CI or documented local command output.
-- Docs do not overclaim global closure beyond accepted residual debt.
-
----
-
-# PR24 — MIT-034 Burn-Down
-
-## Goal
-
-Move MIT-034 from PARTIAL to scoped DONE or full DONE.
-
-## Tasks
-
-1. Eliminate raw `runCatching` in all production suspend paths.
-2. Reduce cancellation allowlist from current count to:
-   - zero core worker/coordinator/repository mutation entries;
-   - UI-only entries split to `MIT-034-UI`, if needed.
-3. Add guard that fails:
-   - raw `runCatching`;
-   - broad catch without CE rethrow;
-   - `Throwable` catch without CE rethrow;
-   - `onFailure` swallowing cancellation.
-
-## Acceptance criteria
-
-- No core/background cancellation allowlists remain.
-- MIT-034 closure scope is honest.
-
----
-
-# PR25 — MIT-043 Final Recurring Decision
-
-## Current partial reasons
-
-- regeneration is best-effort by design;
-- duplicate fulfillment depends on MIT-033;
-- DB uniqueness not fully owned here.
-
-## Option A — keep partial
-
-Document:
-
-```text
-MIT-043 remains PARTIAL until MIT-033 lands and regeneration policy is finalized.
-```
-
-## Option B — close
-
-Required:
-
-1. MIT-033 uniqueness merged.
-2. Duplicate actual-link conflict tests pass.
-3. Regeneration either:
-   - all-or-nothing; or
-   - durable diagnostics for every skipped window and product acceptance.
-4. Projection rollback tests pass.
-
----
-
-# PR26 — MIT-075 Outbox Decision
-
-## Current state
-
-No durable outbox. Evidence logger only.
-
-## Option A — keep partial
-
-Docs:
-
-```text
-Side-effect evidence is diagnostic-only; no guaranteed replay.
-```
-
-## Option B — implement outbox
-
-Add:
-
-```text
-post_commit_side_effects
-```
-
-with status, attempts, nextAttemptAt, errorCode, errorClass, payloadJson.
-
-Add dispatcher worker and retry/dead-letter tests.
-
----
-
-# Final Closure Checklist
-
-## MIT-031
-
-Can be closed as **core DONE** when:
-
-- manual `TransactionContext` construction is blocked;
-- critical coordinator paths use `DomainTransactionRunner`;
-- context-free writer calls are blocked;
-- direct repository-event debt is structured and expiring;
-- CI green.
-
-## MIT-041
-
-Can be closed when:
-
-- NaN/Infinity skipped amount rows store `null`;
-- skipped/duplicate item audit policy is tested;
-- bank cancellation/failure cleanup tests pass;
-- CI green.
-
-## MIT-034
-
-Can close only when:
-
-- no core cancellation allowlists remain;
-- raw `runCatching` guard exists;
-- broad catch fixtures fail.
-
-## MIT-043
-
-Can close only when:
-
-- duplicate fulfillment uniqueness/conflict policy is complete;
-- regeneration policy is atomic or durably diagnosed;
-- projection rollback tests pass.
-
-## MIT-075
-
-Can close only with:
-
-- real outbox; or
-- re-scoped issue definition that accepts diagnostic-only evidence.
-
----
-
-# Minimal PR23 Patch
-
-If time is short:
-
-1. Store `amount = null` for bank NaN/Infinity skipped rows.
-2. Add tests for NaN/Infinity skipped rows.
-3. Add raw `runCatching` static guard.
-4. Add visible CI verification.
-5. Update docs: MIT-031 core done, MIT-041 done only after PR23 + green CI.
-</atomicity_pr23_remaining_plan.md>
+:warning: The provider stream ended early, so this response may be incomplete.

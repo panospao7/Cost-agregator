@@ -112,7 +112,7 @@ class ExportAnonymizer @Inject constructor() {
         if (count == 0) return 0
 
         db.execSQL("UPDATE scanned_receipts SET rawOcrText = NULL WHERE rawOcrText IS NOT NULL")
-        Timber.d("$TAG: Nulled rawOcrText in $count scanned_receipt rows")
+        Timber.d("$TAG: Nulled OCR text in $count scanned_receipt rows")
         return count
     }
 

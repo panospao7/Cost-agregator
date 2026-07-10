@@ -1,0 +1,7 @@
+{
+  "guard": "pii_logging",
+  "generated": "2026-07-10T20:14:13.403991+00:00",
+  "fingerprints": [
+    "G-PII-01 app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt:63"
+  ]
+}
