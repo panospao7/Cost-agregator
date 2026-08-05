@@ -404,9 +404,7 @@ def test_infra_error_on_command_not_found(tmp_path: Path) -> None:
     baseline = tmp_path / "baseline.json"
     _write_baseline(baseline, "test", [])
 
-    # python -c "import sys; sys.exit(1)" exits 1 with empty stdout
-    # This simulates a guard that failed to run properly.
-    command = f'{sys.executable} -c "import sys; sys.exit(1)"'
+    command = "definitely_missing_guard_executable_9f3c1c"
     result = _run_ratchet(
         "test",
         command,
