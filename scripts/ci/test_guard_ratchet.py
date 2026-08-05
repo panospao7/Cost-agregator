@@ -477,3 +477,152 @@ def test_resolved_entry_exits_one(tmp_path: Path) -> None:
     )
     assert "DECREASED" in result.stdout
     assert "RESOLVED: 1" in result.stdout
+
+
+# -- R2 ratchet subprocess portability tests --------------------------------------
+
+
+def test_nested_python_command_resolves_interpreter(tmp_path: Path) -> None:
+    """Nested command with 'python3' resolves to sys.executable (Windows-safe).
+
+    On Windows, ``python3`` is a Microsoft Store alias that fails under
+    ``shell=True``.  The ratchet must resolve it and execute the guard
+    successfully.
+    """
+    guard_out = "G-CANCEL-01 app/src/main/java/com/example/Foo.kt:10 desc\n"
+    guard_py = tmp_path / "mock_guard.py"
+    _write_guard_script(guard_py, guard_out, exit_code=1)
+
+    baseline_fps = ["G-CANCEL-01 app/src/main/java/com/example/Foo.kt"]
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(baseline, "test", baseline_fps)
+
+    # Use "python3" in the command — ratchet must resolve it
+    result = _run_ratchet(
+        "test",
+        f"python3 {guard_py}",
+        baseline,
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, (
+        f"Expected exit 0, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "PASS" in result.stdout
+
+
+def test_child_exit_one_with_parseable_findings_is_ratcheted(tmp_path: Path) -> None:
+    """Child exits 1 with parseable findings → ratchet exits 1 (--fail-on-violation).
+
+    This is the standard ratchet path: guard finds violations, ratchet detects
+    a new finding not in the baseline.
+    """
+    guard_out = "G-CANCEL-01 app/src/main/java/com/example/New.kt:1 new finding\n"
+    guard_py = tmp_path / "mock_guard.py"
+    _write_guard_script(guard_py, guard_out, exit_code=1)
+
+    # Baseline has a different (old) finding — new one is a growth violation
+    baseline_fps = ["G-CANCEL-01 app/src/main/java/com/example/Old.kt"]
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(baseline, "test", baseline_fps)
+
+    result = _run_ratchet(
+        "test",
+        f"{sys.executable} {guard_py}",
+        baseline,
+        extra_args=["--fail-on-violation"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 1, (
+        f"Expected exit 1, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "FAIL" in result.stdout
+    assert "NEW: 1" in result.stdout
+
+
+def test_child_exit_one_no_parseable_findings_exits_two(tmp_path: Path) -> None:
+    """Guard exits 1 with output that contains no parseable findings → exit 2.
+
+    The guard output is present but none of it matches any known fingerprint
+    format.  The ratchet must treat this as an infrastructure error (exit 2),
+    not silently pass.
+    """
+    guard_out = "some unstructured error output\nthat has no guard findings\n"
+    guard_py = tmp_path / "mock_guard.py"
+    _write_guard_script(guard_py, guard_out, exit_code=1)
+
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(baseline, "test", [])
+
+    result = _run_ratchet(
+        "test",
+        f"{sys.executable} {guard_py}",
+        baseline,
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "no parseable findings" in result.stderr
+
+
+def test_missing_command_exits_two(tmp_path: Path) -> None:
+    """Command executable not found on PATH → ratchet exits 2.
+
+    When the first token in the command does not exist anywhere on PATH
+    and is not a recognised interpreter name, ``subprocess.run`` raises
+    ``FileNotFoundError`` and the ratchet exits 2.
+    """
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(baseline, "test", [])
+
+    result = _run_ratchet(
+        "test",
+        "nonexistent_cmd_xyz_12345_abcde",
+        baseline,
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+
+def test_timeout_exits_two(tmp_path: Path) -> None:
+    """Guard command exceeds timeout → ratchet exits 2.
+
+    The ratchet passes ``--timeout`` through to the inner subprocess.
+    When the child sleeps longer than the timeout the ratchet catches
+    ``TimeoutExpired`` and reports an infrastructure error.
+    """
+    guard_py = tmp_path / "mock_slow_guard.py"
+    content = """#!/usr/bin/env python3
+import time
+time.sleep(10)
+"""
+    guard_py.write_text(content, encoding="utf-8")
+    if sys.platform != "win32":
+        os.chmod(guard_py, 0o755)
+
+    baseline = tmp_path / "baseline.json"
+    _write_baseline(baseline, "test", [])
+
+    result = _run_ratchet(
+        "test",
+        f"{sys.executable} {guard_py}",
+        baseline,
+        extra_args=["--timeout", "1"],
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "Timeout" in result.stderr

@@ -20,7 +20,10 @@ Usage:
 
 import argparse
 import json
+import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -328,17 +331,60 @@ def compare_fingerprints(
 # Guard execution
 # ------------------------------------------------------------------
 
+def _resolve_python(command: List[str]) -> List[str]:
+    """Resolve the Python interpreter in a command for cross-platform compatibility.
+
+    On Windows, ``python3`` may map to a non-functional Microsoft Store alias.
+    We use ``sys.executable`` as the safe fallback, which works on all platforms.
+    """
+    if not command:
+        return command
+
+    exe = command[0]
+    # Only resolve known Python entry-point names
+    if exe not in ("python3", "python"):
+        return command
+
+    # On Windows, the Microsoft Store app execution alias for python3.exe
+    # may appear on PATH but fail at runtime. Always prefer sys.executable.
+    if sys.platform == "win32":
+        return [sys.executable] + command[1:]
+
+    # On Linux/macOS: use python3 if available, fall back to python, then sys.executable
+    if shutil.which(exe) is not None:
+        return command
+
+    alt = "python" if exe == "python3" else "python3"
+    if shutil.which(alt) is not None:
+        return [alt] + command[1:]
+
+    return [sys.executable] + command[1:]
+
+
 def run_guard_command(
     command: str, cwd: Path, timeout: int = 300
 ) -> Tuple[int, str, str]:
     """Execute a shell command and return (exit_code, stdout, stderr).
 
     Exit code -1 signals an infrastructure error (timeout, not-found, ...).
+
+    Parses the command string with ``shlex.split`` for safe, ``shell=False``
+    execution.  Resolves ``python3`` / ``python`` interpreter tokens to
+    ``sys.executable`` for cross-platform portability (avoids Windows
+    Microsoft Store alias failures).
     """
     try:
+        # Parse command string safely for shell=False execution
+        parts = shlex.split(command, posix=(os.name != "nt"))
+        if not parts:
+            return -1, "", "Empty command"
+
+        # Resolve Python interpreter for cross-platform compatibility
+        resolved = _resolve_python(parts)
+
         result = subprocess.run(
-            command,
-            shell=True,
+            resolved,
+            shell=False,
             capture_output=True,
             text=True,
             encoding="utf-8",
