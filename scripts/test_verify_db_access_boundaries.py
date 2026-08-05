@@ -444,3 +444,284 @@ class TransactionLifecycleCoordinator {
     assert len(violations) > 0, (
         f"DAO not in policy should produce violation, got: {violations}"
     )
+
+
+# ── DB Batch 1: Property-to-interface resolution tests ────────────────────────
+
+def test_property_decl_group_dao_matches_policy_via_interface_type(tmp_path):
+    """groupDao: ExpenseGroupDao → resolved to expenseGroupDao, matching policy."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "GroupLifecycleCoordinator.kt", """
+package com.example
+import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+import javax.inject.Inject
+
+class GroupLifecycleCoordinator @Inject constructor(
+    private val groupDao: ExpenseGroupDao
+) {
+    fun addGroup() {
+        groupDao.insert(g)
+    }
+}
+""")
+    policy = [
+        {
+            "path": "GroupLifecycleCoordinator.kt",
+            "class": "GroupLifecycleCoordinator",
+            "method": "*",
+            "daos": ["expenseGroupDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "canonical group lifecycle writer",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) == 0, (
+        f"groupDao resolved to expenseGroupDao should match policy, got: {violations}"
+    )
+
+
+def test_property_decl_usage_dao_matches_policy_via_interface_type(tmp_path):
+    """usageDao: SubscriptionUsageDao → resolved to subscriptionUsageDao, matching policy."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "SubscriptionRepository.kt", """
+package com.example
+import com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
+import javax.inject.Inject
+
+class SubscriptionRepository @Inject constructor(
+    private val usageDao: SubscriptionUsageDao
+) {
+    fun recordUsage() {
+        usageDao.insert(u)
+    }
+}
+""")
+    policy = [
+        {
+            "path": "SubscriptionRepository.kt",
+            "class": "SubscriptionRepository",
+            "method": "*",
+            "daos": ["subscriptionUsageDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "canonical subscription writer",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) == 0, (
+        f"usageDao resolved to subscriptionUsageDao should match policy, got: {violations}"
+    )
+
+
+def test_exact_matching_does_not_allow_unrelated_dao(tmp_path):
+    """Only the declared DAO interface identity matches; unrelated DAOs are flagged."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "SomeRepo.kt", """
+package com.example
+import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+import javax.inject.Inject
+
+class SomeRepo @Inject constructor(
+    private val groupDao: ExpenseGroupDao
+) {
+    fun save() {
+        groupDao.insert(g)          // approved: groupDao -> expenseGroupDao in policy
+        scannedReceiptDao.delete(r) // NOT approved: scannedReceiptDao not in policy
+    }
+}
+""")
+    policy = [
+        {
+            "path": "SomeRepo.kt",
+            "class": "SomeRepo",
+            "method": "*",
+            "daos": ["expenseGroupDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "group repo",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) == 1, (
+        f"Expected 1 violation for unrelated DAO, got {len(violations)}: {violations}"
+    )
+    assert "UNALLOWLISTED_CLASS" in violations[0][3], (
+        f"Expected UNALLOWLISTED_CLASS for scannedReceiptDao, got: {violations[0][3]}"
+    )
+
+
+def test_one_approved_dao_does_not_suppress_second_unapproved_dao(tmp_path):
+    """One approved DAO property must not suppress a second unapproved DAO in the same class."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "MultiDaoRepo.kt", """
+package com.example
+import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+import com.yourname.expensetracker.data.database.dao.GroupMemberDao
+import javax.inject.Inject
+
+class MultiDaoRepo @Inject constructor(
+    private val groupDao: ExpenseGroupDao,
+    private val memberDao: GroupMemberDao
+) {
+    fun doWork() {
+        groupDao.insert(g)   // approved: expenseGroupDao in policy
+        memberDao.update(m)  // NOT approved: groupMemberDao NOT in policy
+    }
+}
+""")
+    policy = [
+        {
+            "path": "MultiDaoRepo.kt",
+            "class": "MultiDaoRepo",
+            "method": "*",
+            "daos": ["expenseGroupDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "group repo",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) == 1, (
+        f"Expected 1 violation for unapproved memberDao, got {len(violations)}: {violations}"
+    )
+    assert "UNALLOWLISTED_CLASS" in violations[0][3], (
+        f"Expected UNALLOWLISTED_CLASS for memberDao, got: {violations[0][3]}"
+    )
+
+
+def test_structural_exception_behavior_remains_exact_after_property_mapping(tmp_path):
+    """Existing structural exceptions (DatabaseMigrations, FinancialRescueCoordinator)
+    are not affected by the property-to-interface mapping."""
+    # Test 1: DatabaseMigrations execSQL still passes
+    content_migration = """
+package com.example
+import androidx.room.migration.Migration
+object DatabaseMigrations {
+    val MIGRATION_145_146 = object : Migration(145, 146) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("CREATE TABLE test(id INTEGER)")
+        }
+    }
+}
+"""
+    src1 = tmp_path / "src_mig"
+    src1.mkdir()
+    _write_kt(src1, "DatabaseMigrations.kt", content_migration)
+    _SAMPLE_STRUCTURAL = [
+        {
+            "path": "DatabaseMigrations.kt",
+            "class": "DatabaseMigrations",
+            "method_pattern": r"MIGRATION_\d+_\d+",
+            "operation": "execSQL",
+            "reason": "Room migration SQL",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        },
+    ]
+    violations, files_scanned = scan(str(src1), [], _SAMPLE_STRUCTURAL)
+    assert files_scanned > 0
+    assert len(violations) == 0, (
+        f"Migration execSQL should still pass, got: {violations}"
+    )
+
+    # Test 2: FinancialRescueCoordinator raw_sqlite still passes
+    content_rescue = """
+package com.example
+class FinancialRescueCoordinator {
+    fun performMaintenanceRescue() {
+        val db = getWritableDatabase()
+        db.execSQL("VACUUM")
+    }
+}
+"""
+    src2 = tmp_path / "src_rescue"
+    src2.mkdir()
+    _write_kt(src2, "FinancialRescueCoordinator.kt", content_rescue)
+    _SAMPLE_STRUCTURAL2 = [
+        {
+            "path": "FinancialRescueCoordinator.kt",
+            "class": "FinancialRescueCoordinator",
+            "method_pattern": "performMaintenanceRescue",
+            "operation": "raw_sqlite",
+            "reason": "Exclusive maintenance rescue operation",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        },
+    ]
+    violations2, files_scanned2 = scan(str(src2), [], _SAMPLE_STRUCTURAL2)
+    assert files_scanned2 > 0
+    assert len(violations2) == 0, (
+        f"FinancialRescueCoordinator execSQL should still pass, got: {violations2}"
+    )
+
+    # Test 3: Non-migration SQL outside migration object still fails (exact matching)
+    content_bad = """
+package com.example
+object DatabaseMigrations {
+    fun someHelper() {
+        val db = getDatabase()
+        db.execSQL("DROP TABLE users")
+    }
+}
+"""
+    src3 = tmp_path / "src_bad"
+    src3.mkdir()
+    _write_kt(src3, "DatabaseMigrations.kt", content_bad)
+    violations3, files_scanned3 = scan(str(src3), [], _SAMPLE_STRUCTURAL)
+    assert files_scanned3 > 0
+    assert len(violations3) > 0, (
+        "Non-migration SQL outside MIGRATION object should still produce a violation"
+    )
+
+
+def test_property_decl_with_fully_qualified_type(tmp_path):
+    """Fully qualified type paths should still resolve correctly."""
+    src = tmp_path / "src"
+    src.mkdir()
+    _write_kt(src, "SomeRepo.kt", """
+package com.example
+import javax.inject.Inject
+
+class SomeRepo @Inject constructor(
+    private val memberDao: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+) {
+    fun doWork() {
+        memberDao.insert(m)
+    }
+}
+""")
+    policy = [
+        {
+            "path": "SomeRepo.kt",
+            "class": "SomeRepo",
+            "method": "*",
+            "daos": ["groupMemberDao"],
+            "operation": "write",
+            "barrier_required": False,
+            "reason": "test",
+            "owner": "@test",
+            "linked_issue": "TEST-001",
+        }
+    ]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned > 0
+    assert len(violations) == 0, (
+        f"Fully qualified GroupMemberDao should resolve to groupMemberDao, got: {violations}"
+    )

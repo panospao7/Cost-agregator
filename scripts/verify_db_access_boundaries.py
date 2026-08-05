@@ -293,6 +293,29 @@ DIRECT_DAO_MUTATION = re.compile(
     r'restore|save|bulkRename|approve|reject)\s*\('
 )
 
+# Matches Kotlin property/constructor parameter declarations with explicit DAO types:
+#   private val groupDao: ExpenseGroupDao
+#   val usageDao: SubscriptionUsageDao
+#   private val memberDao: GroupMemberDao
+# Group 1: variable/property name, Group 2: declared DAO interface simple name
+DAO_PROPERTY_DECL = re.compile(
+    r'(?:private\s+|protected\s+|internal\s+|override\s+)*'
+    r'(?:val|var|lateinit\s+var)\s+(\w+)\s*:\s*'
+    r'(?:\w+\.)*(\w+Dao)\b'
+)
+
+
+def _interface_name_to_room_accessor(interface_name):
+    """Derive the Room DB accessor name from a DAO interface simple name.
+
+    Room generates an abstract method by lowercasing the first character of the
+    DAO interface name.  E.g. ExpenseGroupDao -> expenseGroupDao,
+    SubscriptionUsageDao -> subscriptionUsageDao.
+    """
+    if not interface_name or len(interface_name) < 2:
+        return interface_name
+    return interface_name[0].lower() + interface_name[1:]
+
 
 def _extract_dao_names_from_line(line, dao_var_map):
     """Extract DAO type names from a mutation line.
@@ -335,7 +358,12 @@ def _build_dao_var_map(lines):
         val expenseDao = database.expenseDao()
         val dao = database.scannedReceiptDao()
 
-    Returns dict: variable_name -> DAO_type_name (e.g., 'dao' -> 'scannedReceiptDao')
+    Also resolves constructor/property declarations with explicit DAO types:
+        private val groupDao: ExpenseGroupDao  -> groupDao -> expenseGroupDao
+        val usageDao: SubscriptionUsageDao     -> usageDao -> subscriptionUsageDao
+
+    Returns dict: variable_name -> DAO_room_accessor_name
+      (e.g., 'dao' -> 'scannedReceiptDao', 'groupDao' -> 'expenseGroupDao')
     """
     var_map = {}
     pending_var = None
@@ -345,22 +373,35 @@ def _build_dao_var_map(lines):
         if s.startswith("//") or s.startswith("*"):
             continue
 
+        # Pattern 1: val name = database.someDao()
         m = LOCAL_DAO_ASSIGN.search(line)
         if m:
             var_map[m.group(1)] = m.group(2)
             pending_var = None
-        else:
-            # Multi-line: val dao =\n    database.scannedReceiptDao()
-            m_pending = re.search(r'\bval\s+(\w+)\s*=\s*$', line.rstrip())
-            if m_pending:
-                pending_var = m_pending.group(1)
-            elif pending_var and re.search(r'\w+Dao\s*\(', line):
-                m_dao = re.search(r'(\w+Dao)\s*\(', line)
-                if m_dao:
-                    var_map[pending_var] = m_dao.group(1)
-                pending_var = None
-            else:
-                pending_var = None
+            continue
+
+        # Pattern 2: Multi-line val name =\n    database.someDao()
+        m_pending = re.search(r'\bval\s+(\w+)\s*=\s*$', line.rstrip())
+        if m_pending:
+            pending_var = m_pending.group(1)
+            continue
+        if pending_var and re.search(r'\w+Dao\s*\(', line):
+            m_dao = re.search(r'(\w+Dao)\s*\(', line)
+            if m_dao:
+                var_map[pending_var] = m_dao.group(1)
+            pending_var = None
+            continue
+        pending_var = None
+
+        # Pattern 3: val/var name: SomeDaoType (constructor/property injection)
+        m_prop = DAO_PROPERTY_DECL.search(line)
+        if m_prop:
+            var_name = m_prop.group(1)
+            interface_name = m_prop.group(2)
+            room_accessor = _interface_name_to_room_accessor(interface_name)
+            # Only add if not already mapped by more specific patterns above
+            if var_name not in var_map:
+                var_map[var_name] = room_accessor
 
     return var_map
 
