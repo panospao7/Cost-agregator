@@ -936,7 +936,9 @@ class DupClassRepo {
     ambiguous = [v for v in violations if "ambiguous class declaration" in v[3]]
     assert len(ambiguous) == 2, violations
     for v in ambiguous:
-        assert "class=DupClassRepo" in v[3]
+        # The controlled fail-closed message is:
+        #   UNALLOWLISTED_CLASS: ambiguous class declaration 'DupClassRepo' in source file rule=...
+        assert "ambiguous class declaration 'DupClassRepo' in source file" in v[3], v[3]
     assert len([v for v in violations if "UNALLOWLISTED_CLASS" in v[3]]) == 2, violations
 
 
@@ -1462,7 +1464,9 @@ def test_worker_barrier_direct_entry_requires_barrier(tmp_path, monkeypatch):
     _write_kt(
         src,
         "com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt",
-        """class WorkerExecutionGuard {
+        """class WorkerExecutionGuard(
+    private val backgroundJobRunDao: BackgroundJobRunDao
+) {
     suspend fun recoverStaleRunningJobs() {
         backgroundJobRunDao.staleAbortIfStillRunning(runId, stamp)
     }
@@ -1477,9 +1481,11 @@ def test_worker_barrier_direct_entry_requires_barrier(tmp_path, monkeypatch):
     _write_kt(
         src,
         "com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt",
-        """class WorkerExecutionGuard {
+        """class WorkerExecutionGuard(
+    private val backgroundJobRunDao: BackgroundJobRunDao
+) {
     suspend fun recoverStaleRunningJobs() {
-        writeBarrier.checkWritesAllowed("recoverStaleRunningJobs")
+        writeBarrier.checkWritesAllowed("WorkerExecutionGuard.recoverStaleRunningJobs")
         backgroundJobRunDao.staleAbortIfStillRunning(runId, stamp)
     }
 }
@@ -1489,23 +1495,243 @@ def test_worker_barrier_direct_entry_requires_barrier(tmp_path, monkeypatch):
     assert violations == [], violations
 
 
+def test_barrier_before_line_matches_canonical_barrier_forms_only():
+    """The write-barrier evidence is exact: it matches the ACTUAL barrier forms
+    (``writeBarrier.checkWritesAllowed(...)`` and ``writeBarrier.runWrite(...)``)
+    but never a read-only mode predicate (``writeBarrier.writesAllowed()`` — it
+    does not block writes) or a different receiver
+    (``myWriteBarrier.checkWritesAllowed(...)``)."""
+    template = [
+        "class Foo {",
+        "    fun doWork() {",
+        "        {BARRIER}",
+        "        expenseDao.insert(e)",
+        "    }",
+        "}",
+    ]
+
+    def barrier_ok(barrier_line):
+        lines = [line.replace("{BARRIER}", barrier_line) for line in template]
+        return _mod._barrier_before_line(lines, fun_start=1, mutation_lineno=4)
+
+    # Canonical enforcing barrier forms used by production writers.
+    assert barrier_ok('writeBarrier.checkWritesAllowed("Foo.doWork")') is True
+    assert barrier_ok("writeBarrier.runWrite(op) { }") is True
+    # A read-only predicate never satisfies the barrier.
+    assert barrier_ok("writeBarrier.writesAllowed()") is False
+    # A different receiver cannot satisfy evidence (exact receiver match).
+    assert barrier_ok('myWriteBarrier.checkWritesAllowed("Foo.doWork")') is False
+    # A qualified receiver with spaces around the dot is NOT the unqualified
+    # ``writeBarrier`` receiver — it never satisfies barrier evidence.
+    assert barrier_ok('foo . writeBarrier.checkWritesAllowed("Foo.doWork")') is False
+    # A qualified receiver with a comment between the dot and the token is NOT
+    # the unqualified ``writeBarrier`` receiver either.
+    assert barrier_ok('foo. /*c*/ writeBarrier.checkWritesAllowed("Foo.doWork")') is False
+    # No barrier at all still fails closed.
+    assert barrier_ok("val x = 1") is False
+
+
+def test_scan_barrier_evidence_real_call_before_mutation_passes(tmp_path, monkeypatch):
+    """A REAL ``writeBarrier.checkWritesAllowed(...)`` call strictly before the
+    DAO mutation satisfies barrier evidence and the writer is authorized."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierEvidenceRepo.kt")
+    _write_kt(
+        src,
+        "com/example/BarrierEvidenceRepo.kt",
+        """class BarrierEvidenceRepo {
+    fun doWork() {
+        writeBarrier.checkWritesAllowed("BarrierEvidenceRepo.doWork")
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    policy = [_entry(path, "BarrierEvidenceRepo", "doWork", ["expenseDao"], "insert",
+                     barrier_required=True)]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned == 1
+    assert violations == [], violations
+
+
+def test_scan_barrier_evidence_fake_call_in_comment_fails(tmp_path, monkeypatch):
+    """A fake ``writeBarrier.checkWritesAllowed(...)`` inside a line comment is
+    masked and NEVER satisfies barrier evidence — the writer still fails closed
+    with MISSING_WRITE_BARRIER."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierEvidenceRepo.kt")
+    _write_kt(
+        src,
+        "com/example/BarrierEvidenceRepo.kt",
+        """class BarrierEvidenceRepo {
+    fun doWork() {
+        // writeBarrier.checkWritesAllowed("fake")
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    policy = [_entry(path, "BarrierEvidenceRepo", "doWork", ["expenseDao"], "insert",
+                     barrier_required=True)]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned == 1
+    missing = [v for v in violations if "MISSING_WRITE_BARRIER" in v[3]]
+    assert len(missing) == 1, violations
+
+
+def test_scan_barrier_evidence_fake_call_in_string_fails(tmp_path, monkeypatch):
+    """A fake ``writeBarrier.checkWritesAllowed(...)`` inside a string literal
+    is masked and NEVER satisfies barrier evidence — the writer still fails
+    closed with MISSING_WRITE_BARRIER."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierEvidenceRepo.kt")
+    _write_kt(
+        src,
+        "com/example/BarrierEvidenceRepo.kt",
+        """class BarrierEvidenceRepo {
+    fun doWork() {
+        val fake = "writeBarrier.checkWritesAllowed(fake)"
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    policy = [_entry(path, "BarrierEvidenceRepo", "doWork", ["expenseDao"], "insert",
+                     barrier_required=True)]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned == 1
+    missing = [v for v in violations if "MISSING_WRITE_BARRIER" in v[3]]
+    assert len(missing) == 1, violations
+
+
+def test_scan_barrier_evidence_qualified_receiver_fails(tmp_path, monkeypatch):
+    """A QUALIFIED receiver (``foo.writeBarrier.checkWritesAllowed(...)``) is
+    NOT the unqualified ``writeBarrier`` receiver — it never satisfies barrier
+    evidence and the writer fails closed with MISSING_WRITE_BARRIER."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierEvidenceRepo.kt")
+    _write_kt(
+        src,
+        "com/example/BarrierEvidenceRepo.kt",
+        """class BarrierEvidenceRepo {
+    fun doWork() {
+        foo.writeBarrier.checkWritesAllowed("BarrierEvidenceRepo.doWork")
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    policy = [_entry(path, "BarrierEvidenceRepo", "doWork", ["expenseDao"], "insert",
+                     barrier_required=True)]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned == 1
+    missing = [v for v in violations if "MISSING_WRITE_BARRIER" in v[3]]
+    assert len(missing) == 1, violations
+
+
+def test_scan_barrier_evidence_spaced_or_comment_qualified_receiver_fails(tmp_path, monkeypatch):
+    """A QUALIFIED receiver with spaces around the dot
+    (``foo . writeBarrier.checkWritesAllowed(...)``) or with a comment between
+    the dot and the token (``foo. /*comment*/ writeBarrier.checkWritesAllowed(...)``)
+    is NOT the unqualified ``writeBarrier`` receiver — it never satisfies
+    barrier evidence and the writer fails closed with MISSING_WRITE_BARRIER."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierEvidenceRepo.kt")
+    policy = [_entry(path, "BarrierEvidenceRepo", "doWork", ["expenseDao"], "insert",
+                     barrier_required=True)]
+    for barrier_line in (
+        'foo . writeBarrier.checkWritesAllowed("BarrierEvidenceRepo.doWork")',
+        'foo. /*comment*/ writeBarrier.checkWritesAllowed("BarrierEvidenceRepo.doWork")',
+    ):
+        _write_kt(
+            src,
+            "com/example/BarrierEvidenceRepo.kt",
+            f"""class BarrierEvidenceRepo {{
+    fun doWork() {{
+        {barrier_line}
+        expenseDao.insert(e)
+    }}
+}}
+""",
+        )
+        violations, files_scanned = scan(str(src), policy, [])
+        assert files_scanned == 1
+        missing = [v for v in violations if "MISSING_WRITE_BARRIER" in v[3]]
+        assert len(missing) == 1, violations
+
+
+def test_scan_barrier_evidence_comment_and_spaced_qualified_receiver_fails(tmp_path, monkeypatch):
+    """A QUALIFIED receiver with a comment between the receiver and the dot
+    AND spaces around the dot (``foo /* comment */ . writeBarrier.checkWritesAllowed(...)``)
+    is NOT the unqualified ``writeBarrier`` receiver — it never satisfies
+    barrier evidence and the writer fails closed with MISSING_WRITE_BARRIER."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierEvidenceRepo.kt")
+    _write_kt(
+        src,
+        "com/example/BarrierEvidenceRepo.kt",
+        """class BarrierEvidenceRepo {
+    fun doWork() {
+        foo /* comment */ . writeBarrier.checkWritesAllowed("BarrierEvidenceRepo.doWork")
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    policy = [_entry(path, "BarrierEvidenceRepo", "doWork", ["expenseDao"], "insert",
+                     barrier_required=True)]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned == 1
+    # Exactly one violation, and it is the controlled MISSING_WRITE_BARRIER:
+    # the mutation is NOT authorized.
+    assert len(violations) == 1, violations
+    assert "MISSING_WRITE_BARRIER" in violations[0][3], violations
+
+
+def test_scan_barrier_evidence_wrong_order_fails(tmp_path, monkeypatch):
+    """A barrier call AFTER the DAO mutation is NOT before it — it never
+    satisfies barrier evidence and the writer fails closed with
+    MISSING_WRITE_BARRIER."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierEvidenceRepo.kt")
+    _write_kt(
+        src,
+        "com/example/BarrierEvidenceRepo.kt",
+        """class BarrierEvidenceRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+        writeBarrier.checkWritesAllowed("BarrierEvidenceRepo.doWork")
+    }
+}
+""",
+    )
+    policy = [_entry(path, "BarrierEvidenceRepo", "doWork", ["expenseDao"], "insert",
+                     barrier_required=True)]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned == 1
+    missing = [v for v in violations if "MISSING_WRITE_BARRIER" in v[3]]
+    assert len(missing) == 1, violations
+
+
 def test_exchange_rate_policy_exact_entries_authorize(tmp_path, monkeypatch):
     src = _fixture_source(tmp_path, monkeypatch)
     path = _canonical("com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt")
     _write_kt(
         src,
         "com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt",
-        """class ExchangeRateStoreAdapter {
+        """class ExchangeRateStoreAdapter(
+    private val exchangeRateDao: ExchangeRateDao
+) {
     suspend fun insertOrUpdate(rate: DomainExchangeRate) {
-        writeBarrier.checkWritesAllowed("insertOrUpdate")
+        writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdate")
         exchangeRateDao.insertOrUpdate(rate)
     }
     suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {
-        writeBarrier.checkWritesAllowed("insertOrUpdateAll")
+        writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdateAll")
         exchangeRateDao.insertOrUpdateAll(rates)
     }
     suspend fun deleteOldRates(olderThan: Long) {
-        writeBarrier.checkWritesAllowed("deleteOldRates")
+        writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.deleteOldRates")
         exchangeRateDao.deleteOldRates(olderThan)
     }
 }
@@ -1527,9 +1753,11 @@ def test_exchange_rate_policy_wrong_operation_rejected(tmp_path, monkeypatch):
     _write_kt(
         src,
         "com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt",
-        """class ExchangeRateStoreAdapter {
+        """class ExchangeRateStoreAdapter(
+    private val exchangeRateDao: ExchangeRateDao
+) {
     suspend fun insertOrUpdate(rate: DomainExchangeRate) {
-        writeBarrier.checkWritesAllowed("insertOrUpdate")
+        writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdate")
         exchangeRateDao.insertOrUpdate(rate)
     }
 }
@@ -1547,14 +1775,18 @@ def test_prompt_state_policy_exact_entries_authorize(tmp_path, monkeypatch):
     _write_kt(
         src,
         "com/yourname/expensetracker/data/repository/PromptStateRepository.kt",
-        """class PromptStateRepository {
-    suspend fun recordPrompt(prompt: PromptState) {
-        writeBarrier.checkWritesAllowed("recordPrompt")
-        promptStateDao.insertPromptState(prompt)
+        """class PromptStateRepository(
+    private val promptStateDao: PromptStateDao
+) {
+    suspend fun recordPrompt(promptType: String): Long {
+        writeBarrier.checkWritesAllowed("PromptStateRepository.recordPrompt")
+        val promptState = PromptState(promptType = promptType, createdAt = 0L)
+        return promptStateDao.insertPromptState(promptState)
     }
-    suspend fun cleanupOldRecords(cutoff: Long) {
-        writeBarrier.checkWritesAllowed("cleanupOldRecords")
-        promptStateDao.deleteOldPrompts(cutoff)
+    suspend fun cleanupOldRecords() {
+        writeBarrier.checkWritesAllowed("PromptStateRepository.cleanupOldRecords")
+        val cutoffTime = 0L
+        promptStateDao.deleteOldPrompts(cutoffTime)
     }
 }
 """,
@@ -1576,9 +1808,11 @@ def test_group_implementation_path_authorized_data_impl_only(tmp_path, monkeypat
         src,
         "com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt",
         """package com.example.data
-class GroupTransactionCoordinator {
+class GroupTransactionCoordinator(
+    private val groupDao: ExpenseGroupDao
+) {
     suspend fun archiveGroup(groupId: Long) {
-        writeBarrier.checkWritesAllowed("archiveGroup")
+        writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.archiveGroup")
         groupDao.archiveGroup(groupId)
     }
 }
@@ -1593,8 +1827,11 @@ interface GroupTransactionCoordinator {
 }
 """,
     )
+    # The data impl declares `groupDao: ExpenseGroupDao`, so the scanner resolves
+    # the DAO identity to the Room accessor name `expenseGroupDao` exactly as it
+    # does for the real data/database/GroupTransactionCoordinator.kt.
     policy = [_entry(data_path, "GroupTransactionCoordinator", "archiveGroup",
-                     ["groupDao"], "archiveGroup", barrier_required=True)]
+                     ["expenseGroupDao"], "archiveGroup", barrier_required=True)]
     violations, files_scanned = scan(str(src), policy, [])
     assert files_scanned == 2
     assert violations == [], violations
@@ -1607,9 +1844,11 @@ def test_group_implementation_wrong_subdirectory_path_rejected(tmp_path, monkeyp
     _write_kt(
         src,
         "com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt",
-        """class GroupTransactionCoordinator {
+        """class GroupTransactionCoordinator(
+    private val groupDao: ExpenseGroupDao
+) {
     suspend fun archiveGroup(groupId: Long) {
-        writeBarrier.checkWritesAllowed("archiveGroup")
+        writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.archiveGroup")
         groupDao.archiveGroup(groupId)
     }
 }
@@ -1617,7 +1856,7 @@ def test_group_implementation_wrong_subdirectory_path_rejected(tmp_path, monkeyp
     )
     # Policy points at the DOMAIN interface path - it must NOT authorize the data impl.
     policy = [_entry(domain_path, "GroupTransactionCoordinator", "archiveGroup",
-                     ["groupDao"], "archiveGroup", barrier_required=True)]
+                     ["expenseGroupDao"], "archiveGroup", barrier_required=True)]
     violations, _ = scan(str(src), policy, [])
     assert any("UNALLOWLISTED_CLASS" in v[3] for v in violations), violations
 
@@ -1628,13 +1867,16 @@ def test_group_implementation_delegator_not_approved(tmp_path, monkeypatch):
     _write_kt(
         src,
         "com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt",
-        """class GroupTransactionCoordinator {
+        """class GroupTransactionCoordinator(
+    private val groupDao: ExpenseGroupDao,
+    private val groupExpenseDao: GroupExpenseDao
+) {
     suspend fun permanentlyDeleteGroup(groupId: Long) {
-        writeBarrier.checkWritesAllowed("permanentlyDeleteGroup")
+        writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.permanentlyDeleteGroup")
         deleteGroupAtomic(groupId)
     }
     suspend fun deleteGroupAtomic(groupId: Long) {
-        writeBarrier.checkWritesAllowed("deleteGroupAtomic")
+        writeBarrier.checkWritesAllowed("GroupTransactionCoordinator.deleteGroupAtomic")
         groupExpenseDao.deleteAllForGroup(groupId)
         groupDao.delete(group)
     }
@@ -1642,7 +1884,7 @@ def test_group_implementation_delegator_not_approved(tmp_path, monkeypatch):
 """,
     )
     policy = [_entry(path, "GroupTransactionCoordinator", "permanentlyDeleteGroup",
-                     ["groupDao", "groupExpenseDao"], "deleteAllForGroup", barrier_required=True)]
+                     ["expenseGroupDao", "groupExpenseDao"], "deleteAllForGroup", barrier_required=True)]
     violations, _ = scan(str(src), policy, [])
     assert any("UNALLOWLISTED_CLASS" in v[3] for v in violations), violations
 

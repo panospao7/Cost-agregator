@@ -1906,11 +1906,85 @@ def _matches_structural_exception(rel_path, class_name, decls, operation, struct
     return False
 
 
+# Canonical write-barrier evidence.  The ONLY barrier calls that enforce the
+# restore/write barrier before a DAO mutation are
+# ``writeBarrier.checkWritesAllowed(...)`` (every production writer) and
+# ``writeBarrier.runWrite(...)`` (the DatabaseWriteBarrier API form that
+# checks the barrier internally before running its block).  The core call
+# pattern is exact, never broad: the bounded method-name alternation means a
+# read-only mode predicate (``writeBarrier.writesAllowed()`` — it does NOT
+# block writes) or text that merely shares a prefix can never satisfy barrier
+# evidence.  Receiver qualification is decided by
+# :func:`_write_barrier_receiver_is_unqualified`, which inspects the MASKED
+# context BEFORE the ``writeBarrier`` token — never by a single lookbehind —
+# so a qualified receiver with spaces or comments around the dot can never be
+# mistaken for the unqualified ``writeBarrier`` identifier.
+WRITE_BARRIER_PATTERN = re.compile(
+    r'writeBarrier\s*\.\s*(?:checkWritesAllowed|runWrite)\s*\('
+)
+
+
+def _write_barrier_receiver_is_unqualified(masked_line, match_start):
+    """Return True when the ``writeBarrier`` receiver is UNQUALIFIED.
+
+    ``masked_line`` is a comment/string-masked source line (line comments,
+    block comments, strings, triple-quoted strings, and char literals are
+    spaces; offsets are preserved) and ``match_start`` is the char offset
+    where ``writeBarrier`` begins.
+
+    Inspects the masked context immediately before the token instead of
+    relying on a single lookbehind:
+
+      * a word character directly before the token means the token is the
+        tail of a longer identifier (``somewriteBarrier.checkWritesAllowed``)
+        — reject;
+      * skipping whitespace (a masked comment is whitespace), a preceding
+        ``.`` means the receiver is QUALIFIED — reject, whether the dot is
+        adjacent (``foo.writeBarrier``), spaced (``foo . writeBarrier``), or
+        comment-padded (``foo. /*c*/ writeBarrier``);
+      * otherwise the token is the standalone identifier ``writeBarrier`` used
+        as the receiver at method/body scope — accept.
+    """
+    if match_start <= 0:
+        return True
+    prev = masked_line[match_start - 1]
+    if prev == "_" or prev.isalnum():
+        return False
+    j = match_start - 1
+    while j >= 0 and masked_line[j].isspace():
+        j -= 1
+    if j >= 0 and masked_line[j] == ".":
+        return False
+    return True
+
+
 def _barrier_before_line(lines, fun_start, mutation_lineno):
-    """Return True if a writeBarrier call appears between fun_start and mutation_lineno."""
+    """Return True if a REAL writeBarrier call appears strictly between
+    ``fun_start`` and ``mutation_lineno``.
+
+    ``fun_start`` is the 0-based line of the enclosing method declaration;
+    ``mutation_lineno`` is the 1-based line of the DAO mutation.  Only lines
+    strictly before the mutation line are inspected, so a barrier AFTER the
+    mutation never satisfies evidence.
+
+    Evidence is checked on the STATEFULLY MASKED source lines (line comments,
+    block comments, strings, triple-quoted strings, and char literals replaced
+    with spaces; line count and ordering preserved), so a fake
+    ``writeBarrier.checkWritesAllowed(...)`` inside a comment or string can
+    never satisfy barrier evidence.
+
+    Every candidate call is receiver-aware: the masked context before the
+    ``writeBarrier`` token is inspected (see
+    :func:`_write_barrier_receiver_is_unqualified`), so a qualified receiver
+    — including ``foo . writeBarrier`` or ``foo. /*c*/ writeBarrier`` — can
+    never satisfy evidence.
+    """
+    masked = _mask_lines_for_structural_scan(lines)
     for i in range(fun_start, min(mutation_lineno - 1, len(lines))):
-        if WRITE_BARRIER_PATTERN.search(lines[i]):
-            return True
+        line = masked[i]
+        for m in WRITE_BARRIER_PATTERN.finditer(line):
+            if _write_barrier_receiver_is_unqualified(line, m.start()):
+                return True
     return False
 
 
