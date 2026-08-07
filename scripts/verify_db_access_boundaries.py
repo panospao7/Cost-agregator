@@ -136,6 +136,20 @@ _DIRECT_CHAIN_MUTATION_RE = re.compile(
     r'(?P<method>(?:' + _MUTATION_ALTERNATION + r')\w*)\s*\('
 )
 
+# ── Exact structural file-operation whitelist ─────────────────────────────────
+# These five names are the ONLY operation values any structural exception
+# entry, manifest tuple, or direct-API structural entry may name.  The generic
+# ``write`` value, ``raw_*`` categories (``raw_sqlite`` / ``raw_db_file``),
+# empty strings, and arbitrary values are invalid policy metadata: they are
+# rejected by structural_entry_metadata_errors() (and therefore by every
+# loader and by scan()'s direct API) with a controlled exit-2 error carrying
+# the entry's path/class context — a value outside this set can never
+# authorize a file operation.
+STRUCTURAL_FILE_OPERATIONS = frozenset({
+    "execSQL", "openDatabase", "getDatabasePath", "deleteRecursively",
+    "writableDatabase",
+})
+
 # ── Structural file-operation evidence (exact masked call/token matching) ─────
 # A structural exception is only satisfied when its ``operation`` appears in
 # the COMMENT/STRING-MASKED text as an EXACT call (``name(`` — spanning line
@@ -143,9 +157,10 @@ _DIRECT_CHAIN_MUTATION_RE = re.compile(
 # comment/string text (including a trailing comment on the same line) and
 # identifier prefixes (``getDatabasePathway`` for ``getDatabasePath``,
 # ``openDatabaseHelper`` for ``openDatabase``, ``mywritableDatabase`` for
-# ``writableDatabase``) can never satisfy evidence.  ``raw_``-prefixed
-# operations are catch-all file operations, but only for occurrences the
-# scanner PROVES as exact operations — never for prefix-like identifiers.
+# ``writableDatabase``) can never satisfy evidence.  The allowed operation
+# vocabulary is STRUCTURAL_FILE_OPERATIONS — the five supported operations —
+# and every occurrence the scanner proves must be covered by an EXACT
+# structural exception naming that same operation.
 _FILE_OP_CALL_EVIDENCE = {
     "execSQL": re.compile(r"\bexecSQL\s*\("),
     "openDatabase": re.compile(r"\bopenDatabase\s*\("),
@@ -178,6 +193,18 @@ _FILE_OP_UNSUPPORTED_TOKENS = (
     ("getDatabasePath", re.compile(r"\bgetDatabasePath\b"), _FILE_OP_CALL_EVIDENCE["getDatabasePath"]),
     ("deleteRecursively", re.compile(r"\.deleteRecursively\b"), _FILE_OP_TOKEN_EVIDENCE["deleteRecursively"]),
 )
+
+# The evidence tables must cover EXACTLY the whitelisted structural operations
+# and nothing else — a whitelisted operation without evidence, or an evidence
+# entry outside the whitelist, is a programming error that fails loudly at
+# import time so detection and authorization can never drift apart.
+if (
+    frozenset(_FILE_OP_CALL_EVIDENCE) | frozenset(_FILE_OP_TOKEN_EVIDENCE)
+) != STRUCTURAL_FILE_OPERATIONS:
+    raise AssertionError(
+        "structural file-operation evidence tables must cover EXACTLY "
+        "STRUCTURAL_FILE_OPERATIONS"
+    )
 
 # ── Declaration parsing (exact structural matching) ───────────────────────────
 FUN_DECL_RE = re.compile(r'\bfun\s+(\w+)\s*[<(]')
@@ -292,6 +319,12 @@ OWNERSHIP_POLICY_PATH = os.path.join(
 )
 STRUCTURAL_EXCEPTIONS_PATH = os.path.join(
     PROJECT_ROOT, "config", "guards", "db_structural_exceptions.yml"
+)
+# Canonical structural expected-methods manifest — the contract that the
+# production CLI enforces against db_structural_exceptions.yml (exact tuple
+# set equivalence + entry counts + source evidence).
+STRUCTURAL_EXPECTED_METHODS_PATH = os.path.join(
+    PROJECT_ROOT, "config", "guards", "db_structural_exceptions_expected_methods.yml"
 )
 
 SKIP_DIRS = {"test", "androidTest", "migration", "generated", "build"}
@@ -488,7 +521,11 @@ def structural_entry_metadata_errors(entry):
          non-empty strings when present;
       5. ``path`` must be a canonical policy path;
       6. ``method_pattern`` must be bounded: an exact method name or the single
-         migration form ``MIGRATION_\\d+_\\d+``.
+         migration form ``MIGRATION_\\d+_\\d+``;
+      7. ``operation`` must be one of the exact whitelisted structural
+         operations (``STRUCTURAL_FILE_OPERATIONS``) — the generic ``write``,
+         ``raw_*`` categories, empty strings, and arbitrary values are invalid
+         policy metadata and fail closed.
     """
     errors = []
     if not isinstance(entry, dict):
@@ -520,6 +557,19 @@ def structural_entry_metadata_errors(entry):
         errors.append(
             f"'method_pattern' must be an exact method name or the bounded "
             f"migration form MIGRATION_\\d+_\\d+, got {mp!r}"
+        )
+
+    # H2 strict operation whitelist: a structural exception (or manifest
+    # tuple) may name ONLY one of the exact supported structural operations.
+    # The generic ``write`` value, ``raw_*`` categories (``raw_sqlite`` /
+    # ``raw_db_file``), empty strings, and arbitrary values are invalid policy
+    # metadata — a value outside the whitelist can never authorize a file
+    # operation and fails closed here (exit 2 via the loaders / scan()).
+    op = entry.get("operation")
+    if not isinstance(op, str) or op not in STRUCTURAL_FILE_OPERATIONS:
+        errors.append(
+            f"'operation' must be one of the exact supported structural "
+            f"operations {sorted(STRUCTURAL_FILE_OPERATIONS)}, got {op!r}"
         )
     return errors
 
@@ -718,6 +768,689 @@ def load_db_structural_exceptions(exceptions_path=None):
             sys.exit(2)
 
     return entries
+
+
+# ── Structural expected-methods manifest (canonical contract) ─────────────────
+# The production CLI enforces `config/guards/db_structural_exceptions_expected_methods.yml`
+# as the CANONICAL contract for `db_structural_exceptions.yml`:
+#
+#   * immutable classification — the manifest's ``expected`` and ``fixtures``
+#     tuple sets must EXACTLY equal the immutable checked-in contracts
+#     (``MANIFEST_IMMUTABLE_EXPECTED_TUPLES`` / ``MANIFEST_IMMUTABLE_FIXTURE_TUPLES``);
+#     moving a tuple between sections or inventing a new tuple fails with
+#     ``MANIFEST_CLASSIFICATION_MISMATCH`` (exit 2), so a reclassified
+#     ``expected`` tuple can never escape its mandatory operation evidence;
+#   * exact tuple-set equivalence — the manifest's ``expected`` + ``fixtures``
+#     tuple set (path, class, method_pattern, operation) must EXACTLY equal the
+#     structural-exceptions entry tuple set.  Missing manifest tuples, extra
+#     exception tuples, duplicates in either side, and operation mismatches on
+#     the same (path, class, method_pattern) all fail with exit 2;
+#   * entry-count contract — the manifest's ``counts`` section pins the exact
+#     number of ownership-policy and structural-exceptions entries.  A count
+#     change without an explicit manifest update is a configuration error;
+#   * source evidence — every manifest tuple must be backed by EXACT source
+#     evidence (canonical path resolves to a real file, class declared exactly
+#     once, method_pattern matches an actual declaration in that class, and —
+#     for expected entries — the operation token occurs in that exact method
+#     body).  A stale or aspirational manifest tuple is an infra/config error.
+
+# Only these top-level keys are accepted in the manifest.  Everything else
+# (including ``allowlist``-style metadata) is a config error (exit 2).
+MANIFEST_ALLOWED_TOP_KEYS = frozenset({"baseline", "expected", "fixtures", "counts"})
+
+# Only these keys are accepted inside the ``counts`` section.
+MANIFEST_COUNT_KEYS = frozenset({"ownership_entries", "structural_entries"})
+
+# Pinned canonical entry counts for the DB policy gate.  The manifest's
+# ``counts`` section must equal these EXACT values, and the current policy
+# files must equal the manifest's counts — a silent count change on either
+# side is a configuration error (exit 2).
+PINNED_OWNERSHIP_ENTRY_COUNT = 99
+PINNED_STRUCTURAL_ENTRY_COUNT = 62
+
+# ── Immutable checked-in tuple contracts (expected/fixtures classification) ────
+# The manifest's ``expected`` and ``fixtures`` sections must EXACTLY equal these
+# canonical (path, class, method_pattern, operation) tuple sets.  The sets are
+# IMMUTABLE — they pin the exact identities of the checked-in manifest:
+#
+#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 58 tuples.  Operation evidence is
+#     REQUIRED for every expected tuple: the operation token must occur in the
+#     exact declaration body.
+#   * MANIFEST_IMMUTABLE_FIXTURE_TUPLES — 4 tuples.  Fixture tuples keep
+#     declaration-only semantics, and ONLY because their exact identities are
+#     independently pinned here — a reclassified or invented fixture tuple can
+#     never escape this contract.
+#
+# Both contracts are exact and disjoint, so a tuple can never be moved between
+# sections (expected -> fixtures or fixtures -> expected) or invented: any
+# reclassification leaves one contract short and the other overfull and fails
+# with MANIFEST_CLASSIFICATION_MISMATCH (exit 2 via main()).  This is what
+# prevents a reclassified ``expected`` tuple from ever bypassing its mandatory
+# operation evidence.
+_MIGRATION_METHOD_PATTERN = "MIGRATION_\\d+_\\d+"
+
+_STRUCT_PATH_DATABASE_MIGRATIONS = (
+    "app/src/main/java/com/yourname/expensetracker/data/database/DatabaseMigrations.kt"
+)
+_STRUCT_PATH_APP_DATABASE = (
+    "app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt"
+)
+_STRUCT_PATH_FINANCIAL_RESCUE = (
+    "app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt"
+)
+_STRUCT_PATH_DB_BACKUP_IMPL = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+)
+_STRUCT_PATH_APP_STARTUP = (
+    "app/src/main/java/com/yourname/expensetracker/startup/AppStartupCoordinator.kt"
+)
+_STRUCT_PATH_DB_INTEGRITY = (
+    "app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt"
+)
+_STRUCT_PATH_EXPORT_ANONYMIZER = (
+    "app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt"
+)
+_STRUCT_PATH_LEGACY_MIGRATION = (
+    "app/src/main/java/com/yourname/expensetracker/service/debug/LegacyDataMigrationService.kt"
+)
+_STRUCT_PATH_BACKUP_VERIFIER = (
+    "app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt"
+)
+_STRUCT_PATH_SNAPSHOT_CREATOR = (
+    "app/src/main/java/com/yourname/expensetracker/data/backup/SqliteSnapshotCreator.kt"
+)
+
+# The exact operation vocabulary is bounded to the five supported file
+# operations (``execSQL``, ``openDatabase``, ``getDatabasePath``,
+# ``deleteRecursively``, ``writableDatabase``).  There is no ``raw_*``
+# catch-all category — every tuple names an exact operation with exact
+# evidence.
+MANIFEST_IMMUTABLE_EXPECTED_TUPLES = frozenset([
+    # ── Room migrations (DatabaseMigrations.kt / AppDatabase.kt) ─────────────
+    (_STRUCT_PATH_DATABASE_MIGRATIONS, "DatabaseMigrations", _MIGRATION_METHOD_PATTERN, "execSQL"),
+    (_STRUCT_PATH_APP_DATABASE, "AppDatabase", _MIGRATION_METHOD_PATTERN, "execSQL"),
+    (_STRUCT_PATH_APP_DATABASE, "AppDatabase", "FRESH_INSTALL_CALLBACK", "execSQL"),
+    (_STRUCT_PATH_APP_DATABASE, "AppDatabase", "onCreate", "execSQL"),
+    # ── Financial rescue (FinancialRescueCoordinator.kt) ─────────────────────
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "runRescueIfNeeded", "getDatabasePath"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "readOldDatabaseSnapshot", "openDatabase"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "readUserVersion", "openDatabase"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "createFreshRoomDatabaseAndImport", "getDatabasePath"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "createFreshRoomDatabaseAndImport", "writableDatabase"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "importCategories", "execSQL"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "importExpenses", "execSQL"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "importExpenseGroups", "execSQL"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "importGroupMembers", "execSQL"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "importGroupExpenses", "execSQL"),
+    (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "importSplitItemAssignments", "execSQL"),
+    # ── Backup / restore infrastructure (DatabaseBackupRepositoryImpl.kt) ────
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "verifyStagedImportWithRoom", "writableDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "reopenAndVerifyLiveImport", "writableDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "queryRoomCountsForVerification", "writableDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "verifyDatabaseFileStateForVerification", "openDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "exportDatabase", "getDatabasePath"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "createCostBackup", "writableDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "createCostBackup", "getDatabasePath"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "createCostBackup", "openDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreCostBackup", "getDatabasePath"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreCostBackup", "deleteRecursively"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreCostBackup", "writableDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "importDatabase", "getDatabasePath"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "validateSourceDatabase", "openDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "preflightImportedFile", "openDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "repairBudgetsSchemaToV86", "execSQL"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "restoreFromSafetyBackup", "writableDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "checkpointWal", "writableDatabase"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "createSafetyBackupInternalAssumingMaintenance", "getDatabasePath"),
+    (_STRUCT_PATH_DB_BACKUP_IMPL, "DatabaseBackupRepositoryImpl", "resetDatabase", "getDatabasePath"),
+    # ── Startup DB checks / crash recovery ────────────────────────────────────
+    (_STRUCT_PATH_APP_STARTUP, "AppStartupCoordinator", "verifySafetyRestoredDb", "openDatabase"),
+    (_STRUCT_PATH_APP_STARTUP, "AppStartupCoordinator", "verifySafetyRestoredDb", "writableDatabase"),
+    # ── Diagnostics / integrity (DatabaseIntegrityScanner.kt) ────────────────
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkDuplicateActiveOverallBudgets", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkDuplicateActiveCategoryBudgets", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkMultipleCurrentUsersPerGroup", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkDuplicateGroupExpenseLinks", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkDuplicatePlannedExpenseOccurrenceKeys", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkRawNotificationFingerprintDupes", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkExpensesWithNullDedupeKey", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkPartialLatLonRows", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkInvalidCurrencyValues", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkOrphanedWarranties", "writableDatabase"),
+    (_STRUCT_PATH_DB_INTEGRITY, "DatabaseIntegrityScanner", "checkOrphanedReceiptLinks", "writableDatabase"),
+    # ── Privacy / export (ExportAnonymizer.kt) ────────────────────────────────
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeExport", "openDatabase"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeScannedReceipts", "execSQL"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeRawNotifications", "execSQL"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeNotificationIntake", "execSQL"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeAiArtifacts", "execSQL"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeAiChatMessages", "execSQL"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeMerchantLocations", "execSQL"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeEmailReceiptSources", "execSQL"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizePendingReviews", "execSQL"),
+    (_STRUCT_PATH_EXPORT_ANONYMIZER, "ExportAnonymizer", "sanitizeBankStatementImportItems", "execSQL"),
+    # ── Legacy data migration (LegacyDataMigrationService.kt) ────────────────
+    (_STRUCT_PATH_LEGACY_MIGRATION, "LegacyDataMigrationService", "migrateFromBackup", "openDatabase"),
+])
+
+MANIFEST_IMMUTABLE_FIXTURE_TUPLES = frozenset([
+    # ── Backup restore verification / SQLite snapshot creation ───────────────
+    (_STRUCT_PATH_BACKUP_VERIFIER, "BackupVerifier", "verify", "openDatabase"),
+    (_STRUCT_PATH_BACKUP_VERIFIER, "BackupVerifier", "verifyQuick", "openDatabase"),
+    (_STRUCT_PATH_SNAPSHOT_CREATOR, "SqliteSnapshotCreator", "tryVacuumInto", "openDatabase"),
+    (_STRUCT_PATH_SNAPSHOT_CREATOR, "SqliteSnapshotCreator", "tryVacuumInto", "execSQL"),
+])
+
+# Derived contract counts (58 expected / 4 fixtures).
+MANIFEST_IMMUTABLE_EXPECTED_COUNT = len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
+MANIFEST_IMMUTABLE_FIXTURE_COUNT = len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
+
+
+def _manifest_entry_context(entry, index, section):
+    """Return a stable context string for a manifest entry."""
+    return _entry_label(entry, index, f"manifest {section} entry")
+
+
+def _manifest_duplicate_signature(entry):
+    """Return the exact tuple signature used for duplicate detection."""
+    return (
+        entry.get("path"),
+        entry.get("class"),
+        entry.get("method_pattern"),
+        entry.get("operation"),
+    )
+
+
+def _manifest_section_tuple_set(manifest, section):
+    """Return the canonical (path, class, method_pattern, operation) tuple set
+    of one manifest section (``expected`` or ``fixtures``), skipping non-dict
+    entries (already reported by the metadata validator)."""
+    result = set()
+    for entry in manifest.get(section) or []:
+        if not isinstance(entry, dict):
+            continue
+        result.add(_manifest_duplicate_signature(entry))
+    return result
+
+
+def structural_manifest_classification_errors(manifest):
+    """Return controlled ``MANIFEST_CLASSIFICATION_MISMATCH`` errors, or [].
+
+    Pure helper (no I/O, no ``sys.exit``) that tests exercise directly and
+    ``main()`` merges into the DB_STRUCTURAL_MANIFEST gate (exit 2).
+
+    Enforces the IMMUTABLE checked-in tuple contracts:
+
+      1. the manifest's ``expected`` tuple set must EXACTLY equal
+         ``MANIFEST_IMMUTABLE_EXPECTED_TUPLES``;
+      2. the manifest's ``fixtures`` tuple set must EXACTLY equal
+         ``MANIFEST_IMMUTABLE_FIXTURE_TUPLES``.
+
+    Both contracts are exact and disjoint, so a tuple can never be moved
+    between sections (expected -> fixtures or fixtures -> expected) or
+    invented: any reclassification leaves one contract short and the other
+    overfull and fails here.  This is what prevents a reclassified ``expected``
+    tuple from ever bypassing its mandatory operation evidence — a fixture
+    tuple keeps declaration-only semantics ONLY because its exact identity is
+    independently pinned by the immutable fixture contract.
+    """
+    errors = []
+    expected_set = _manifest_section_tuple_set(manifest, "expected")
+    fixture_set = _manifest_section_tuple_set(manifest, "fixtures")
+
+    if expected_set != MANIFEST_IMMUTABLE_EXPECTED_TUPLES:
+        errors.append(
+            "MANIFEST_CLASSIFICATION_MISMATCH: manifest 'expected' tuple set "
+            "must EXACTLY equal the immutable expected contract "
+            f"({MANIFEST_IMMUTABLE_EXPECTED_COUNT} tuples); "
+            f"got {len(expected_set)} distinct tuple(s)"
+        )
+    if fixture_set != MANIFEST_IMMUTABLE_FIXTURE_TUPLES:
+        errors.append(
+            "MANIFEST_CLASSIFICATION_MISMATCH: manifest 'fixtures' tuple set "
+            "must EXACTLY equal the immutable fixture contract "
+            f"({MANIFEST_IMMUTABLE_FIXTURE_COUNT} tuples); "
+            f"got {len(fixture_set)} distinct tuple(s)"
+        )
+    return errors
+
+
+def structural_manifest_metadata_errors(manifest):
+    """Return human-readable metadata errors for a parsed manifest, or [].
+
+    Pure helper (no I/O, no ``sys.exit``).  Validates the COMPLETE manifest
+    contract shared by the loader and the CLI:
+
+      1. the manifest must be a mapping;
+      2. only keys in ``MANIFEST_ALLOWED_TOP_KEYS`` are accepted — an unknown
+         top-level key is a configuration error;
+      3. ``expected`` and ``fixtures`` must be lists (both required);
+      4. every entry must pass the COMPLETE structural-entry contract
+         (:func:`structural_entry_metadata_errors`), so non-canonical paths,
+         unbounded method_patterns, and unknown entry keys are rejected;
+      5. duplicate tuples inside ``expected``, inside ``fixtures``, and across
+         the two sections are rejected;
+      6. ``counts`` (when present) must contain non-negative integer
+         ``ownership_entries`` and ``structural_entries``.
+    """
+    errors = []
+    if not isinstance(manifest, dict):
+        return ["manifest must be a mapping"]
+
+    unknown_keys = set(manifest) - MANIFEST_ALLOWED_TOP_KEYS
+    if unknown_keys:
+        errors.append(f"unknown top-level key(s) {sorted(unknown_keys)}")
+
+    for section in ("expected", "fixtures"):
+        entries = manifest.get(section)
+        if not isinstance(entries, list):
+            errors.append(f"'{section}' must be a list")
+            continue
+        for i, entry in enumerate(entries):
+            label = _manifest_entry_context(entry, i, section)
+            for e in structural_entry_metadata_errors(entry):
+                errors.append(f"{e} in {label}")
+
+    # Duplicate tuples: within each section and across both sections.
+    seen = set()
+    for section in ("expected", "fixtures"):
+        entries = manifest.get(section)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            sig = _manifest_duplicate_signature(entry)
+            if sig in seen:
+                errors.append(
+                    f"duplicate manifest tuple {sig!r} in '{section}'"
+                )
+            seen.add(sig)
+
+    counts = manifest.get("counts")
+    if counts is not None:
+        if not isinstance(counts, dict):
+            errors.append("'counts' must be a mapping")
+        else:
+            unknown_counts = set(counts) - MANIFEST_COUNT_KEYS
+            if unknown_counts:
+                errors.append(f"unknown 'counts' key(s) {sorted(unknown_counts)}")
+            for key in sorted(MANIFEST_COUNT_KEYS):
+                value = counts.get(key)
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    errors.append(
+                        f"'counts.{key}' must be a non-negative integer"
+                    )
+
+    return errors
+
+
+def load_db_structural_expected_methods(manifest_path=None):
+    """Load and validate the structural expected-methods manifest.
+
+    Returns the parsed manifest mapping with validated ``expected``,
+    ``fixtures``, and ``counts`` sections.  Any metadata violation — unknown
+    top-level key, malformed entry, duplicate tuple, invalid counts — exits 2
+    with the controlled context (never a silent acceptance).
+    """
+    if manifest_path is None:
+        manifest_path = STRUCTURAL_EXPECTED_METHODS_PATH
+
+    data = _yaml_safe_load_or_exit(
+        manifest_path, "structural expected-methods manifest"
+    )
+    errors = structural_manifest_metadata_errors(data)
+    if errors:
+        for error in errors:
+            print(f"ERROR: {error} in {manifest_path}", file=sys.stderr)
+        sys.exit(2)
+    return data
+
+
+# ── Structural expected-methods manifest source verification ──────────────────
+# The production CLI enforces EXACT source evidence for every manifest tuple:
+# the canonical path must resolve to a real file under the approved production
+# source root, the class must be declared exactly once (from MASKED source
+# declarations), and the method_pattern must ``re.fullmatch`` an actual
+# declaration name in that class.  ``expected`` tuples additionally require the
+# operation token to occur in that exact method body (EXACT masked call/token
+# evidence — never a file-wide fallback or substring match).  ``fixtures``
+# tuples require declaration existence only (the manifest's documented
+# contract: fixture methods may legitimately contain no guard-tracked token).
+
+
+def _manifest_declarations_within_type(lines, masked_lines, type_decl):
+    """Return every declaration dict inside ``type_decl``.
+
+    Includes function declarations (``fun NAME(``) and bounded migration
+    objects (``val NAME = object``).  Each dict carries ``kind``, ``name``,
+    ``start``, ``end`` and — for functions — the extracted ``body`` plus the
+    parser's fail-closed flags.  Migration objects span ``start``..``end`` as
+    their balanced object literal.
+
+    Detection runs on the stateful comment/string mask (``masked_lines``), so
+    fake ``fun``/``val NAME = object`` text inside comments or literals never
+    creates a declaration.
+    """
+    decls = []
+    for fn in parse_function_declarations(lines, type_decl["start"], type_decl["end"]):
+        decls.append({
+            "kind": "fun",
+            "name": fn["name"],
+            "start": fn["start"],
+            "end": fn["end"],
+            "body": fn["body"],
+            "unsupported_expression": bool(fn.get("unsupported_expression", False)),
+            "unterminated_braced_body": bool(fn.get("unterminated_braced_body", False)),
+        })
+    for i in range(type_decl["start"], type_decl["end"] + 1):
+        m = VAL_OBJECT_DECL_RE.search(masked_lines[i])
+        if not m:
+            continue
+        name = lines[i][m.start(1):m.end(1)]
+        end = _type_body_end(lines, i)
+        decls.append({
+            "kind": "val_object",
+            "name": name,
+            "start": i,
+            "end": end,
+        })
+    return decls
+
+
+def _declaration_has_operation_evidence(decl, operation, lines, masked_lines):
+    """Return True when ``decl``'s EXACT body carries EXACT evidence for ``operation``.
+
+    ``decl`` is a declaration dict from
+    :func:`_manifest_declarations_within_type`.  Evidence is checked on the
+    comment/string-MASKED body with the SAME exact patterns the production
+    scanner uses (:data:`_FILE_OP_PATTERNS`):
+
+      * ``execSQL`` / ``openDatabase`` / ``getDatabasePath`` — exact call
+        evidence (``NAME(``), never a bare identifier;
+      * ``deleteRecursively()`` / ``writableDatabase`` — exact token evidence.
+
+    A substring match or file-wide fallback is never used: the operation must
+    be provable inside THIS exact declaration body (masked), so comment/string
+    text and prefix-like identifiers never count as evidence.  A function body
+    the parser could not bound (unsupported/unterminated) fails closed.
+    """
+    if decl["kind"] == "fun":
+        if decl.get("unsupported_expression") or decl.get("unterminated_braced_body"):
+            return False
+        masked_body = _mask_mutation_body(decl.get("body", ""))
+    else:
+        masked_body = _join_body_lines(
+            masked_lines[decl["start"]:decl["end"] + 1]
+        )
+    if operation not in STRUCTURAL_FILE_OPERATIONS:
+        return False
+    if operation in _FILE_OP_CALL_EVIDENCE:
+        return _FILE_OP_CALL_EVIDENCE[operation].search(masked_body) is not None
+    if operation in _FILE_OP_TOKEN_EVIDENCE:
+        return _FILE_OP_TOKEN_EVIDENCE[operation].search(masked_body) is not None
+    return False
+
+
+def _manifest_source_file(canonical_path, source_root, cache):
+    """Return the one-pass parsed entry for ``canonical_path`` (cached).
+
+    Parses each referenced source file ONCE (masked lines, type declarations,
+    and per-class declaration lists) and reuses the result for every manifest
+    tuple that references the same file — repeated whole-file scans are
+    avoided.  ``cache`` maps canonical policy path -> entry dict.
+
+    Entry fields: ``invalid`` (path not under an approved root), ``missing``
+    (no such file), ``unreadable`` (I/O or decode failure), ``lines``,
+    ``masked_lines``, ``types`` (parse_type_declarations result), and
+    ``decls`` (class name -> list of declaration dicts).  Exactly one of
+    ``invalid``/``missing``/``unreadable`` is True on failure.
+    """
+    cached = cache.get(canonical_path)
+    if cached is not None:
+        return cached
+    entry = {
+        "invalid": False,
+        "missing": False,
+        "unreadable": False,
+        "lines": None,
+        "masked_lines": None,
+        "types": [],
+        "decls": {},
+    }
+    filepath = _canonical_path_file(canonical_path, source_root)
+    if filepath is None:
+        entry["invalid"] = True
+        cache[canonical_path] = entry
+        return entry
+    if not os.path.isfile(filepath):
+        entry["missing"] = True
+        cache[canonical_path] = entry
+        return entry
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            lines = f.readlines()
+    except (OSError, UnicodeDecodeError):
+        entry["unreadable"] = True
+        cache[canonical_path] = entry
+        return entry
+    entry["lines"] = lines
+    entry["masked_lines"] = _mask_lines_for_structural_scan(lines)
+    entry["types"] = parse_type_declarations(lines)
+    for type_decl in entry["types"]:
+        decls = _manifest_declarations_within_type(
+            lines, entry["masked_lines"], type_decl
+        )
+        entry["decls"].setdefault(type_decl["name"], []).extend(decls)
+    cache[canonical_path] = entry
+    return entry
+
+
+def verify_structural_exceptions_manifest(structural_entries, manifest, source_root,
+                                          ownership_count=None):
+    """Validate the structural expected-methods manifest against the CURRENT
+    structural exceptions and the source tree.
+
+    Returns a list of controlled error strings ([] when the manifest passes).
+    Never calls ``sys.exit`` — ``main()`` maps non-empty results to exit 2 with
+    the ``DB_STRUCTURAL_MANIFEST`` prefix.
+
+    The manifest is the CANONICAL contract for ``db_structural_exceptions.yml``:
+
+      1. malformed manifest metadata fails closed (unknown top-level keys,
+         malformed entries, duplicate manifest tuples, invalid counts) — the
+         SAME validator the loader uses;
+      2. exact tuple-set equivalence — the manifest's ``expected`` + ``fixtures``
+         tuple set (path, class, method_pattern, operation) must EXACTLY equal
+         the current structural-exceptions tuple set.  Missing manifest tuples,
+         extra exception tuples, and duplicates in the current set all fail;
+      3. entry-count contract — the manifest's ``counts`` section must equal
+         the pinned production counts (99 ownership / 62 structural), the
+         current ownership count (``ownership_count`` argument, or a helper)
+         must equal ``counts.ownership_entries``, and the current structural
+         count must equal ``counts.structural_entries``;
+      4. source evidence — every tuple is source-verified through EXACT
+         mechanisms only: the canonical path must resolve to a real file under
+         ``source_root``, the class must be declared exactly once (masked
+         declarations), and the method_pattern must ``re.fullmatch`` an actual
+         declaration name in that class.  ``expected`` tuples additionally
+         require EXACT operation evidence (masked call/token patterns) inside
+         the exact declaration body.  ``fixtures`` tuples require declaration
+         existence only (the manifest's documented contract — fixture methods
+         may legitimately contain no guard-tracked token today).  File-wide
+         fallback and substring matching are never used.
+
+    Each returned error is a bounded ``CODE: detail`` string; the code is one
+    of {MANIFEST_INVALID, DUPLICATE_TUPLE, MISSING_TUPLE, EXTRA_TUPLE,
+    COUNT_MISMATCH, SOURCE_PATH_INVALID, SOURCE_PATH_NOT_FOUND,
+    SOURCE_FILE_UNREADABLE, SOURCE_CLASS_MISSING, SOURCE_CLASS_AMBIGUOUS,
+    SOURCE_DECLARATION_MISSING, SOURCE_EVIDENCE_MISSING}.  Raw source text and
+    exception messages are never included.
+    """
+    errors = []
+
+    # 1. Malformed manifest metadata (fail closed before anything else).
+    meta_errors = structural_manifest_metadata_errors(manifest)
+    if meta_errors:
+        for meta_error in meta_errors:
+            errors.append("MANIFEST_INVALID: " + meta_error)
+        return errors
+
+    # 2. Current tuples from the structural-exceptions entries.
+    current_tuples = []
+    for i, entry in enumerate(structural_entries):
+        if not isinstance(entry, dict):
+            errors.append(
+                f"MANIFEST_INVALID: structural exception entry #{i + 1} must "
+                "be a mapping"
+            )
+            continue
+        current_tuples.append((
+            entry.get("path"),
+            entry.get("class"),
+            entry.get("method_pattern"),
+            entry.get("operation"),
+        ))
+
+    # 3. Manifest tuples from ``expected`` + ``fixtures``.
+    manifest_tuples = []
+    for section in ("expected", "fixtures"):
+        for entry in manifest.get(section) or []:
+            if not isinstance(entry, dict):
+                continue  # already reported by the metadata validator
+            manifest_tuples.append((
+                entry["path"],
+                entry["class"],
+                entry["method_pattern"],
+                entry["operation"],
+            ))
+
+    # 4. Duplicate tuples in the CURRENT structural exceptions.
+    seen = set()
+    for t in current_tuples:
+        if t in seen:
+            errors.append(
+                f"DUPLICATE_TUPLE: current structural exceptions contain "
+                f"duplicate tuple {t!r}"
+            )
+        seen.add(t)
+
+    # 5. Exact tuple-set equivalence.
+    current_set = set(current_tuples)
+    manifest_set = set(manifest_tuples)
+    for t in sorted(manifest_set - current_set):
+        errors.append(
+            f"MISSING_TUPLE: manifest tuple {t!r} has no EXACT structural "
+            "exception entry in db_structural_exceptions.yml"
+        )
+    for t in sorted(current_set - manifest_set):
+        errors.append(
+            f"EXTRA_TUPLE: structural exception tuple {t!r} is not covered by "
+            "any manifest (expected/fixtures) tuple"
+        )
+
+    # 6. Entry-count contract.
+    counts = manifest.get("counts") or {}
+    manifest_ownership = counts.get("ownership_entries")
+    manifest_structural = counts.get("structural_entries")
+    if manifest_ownership != PINNED_OWNERSHIP_ENTRY_COUNT:
+        errors.append(
+            f"COUNT_MISMATCH: manifest counts.ownership_entries="
+            f"{manifest_ownership!r} must equal {PINNED_OWNERSHIP_ENTRY_COUNT}"
+        )
+    if manifest_structural != PINNED_STRUCTURAL_ENTRY_COUNT:
+        errors.append(
+            f"COUNT_MISMATCH: manifest counts.structural_entries="
+            f"{manifest_structural!r} must equal {PINNED_STRUCTURAL_ENTRY_COUNT}"
+        )
+    if ownership_count is not None and ownership_count != manifest_ownership:
+        errors.append(
+            f"COUNT_MISMATCH: current ownership policy has {ownership_count} "
+            f"entries but the manifest contract requires {manifest_ownership}"
+        )
+    if len(current_tuples) != manifest_structural:
+        errors.append(
+            f"COUNT_MISMATCH: current structural exceptions have "
+            f"{len(current_tuples)} entries but the manifest contract "
+            f"requires {manifest_structural}"
+        )
+
+    # 7. Source evidence — one-pass declaration cache per file.
+    cache = {}
+    for section in ("expected", "fixtures"):
+        require_evidence = section == "expected"
+        for i, entry in enumerate(manifest.get(section) or []):
+            if not isinstance(entry, dict):
+                continue
+            label = _manifest_entry_context(entry, i, section)
+            path = entry["path"]
+            class_name = entry["class"]
+            method_pattern = entry["method_pattern"]
+            operation = entry["operation"]
+
+            file_entry = _manifest_source_file(path, source_root, cache)
+            if file_entry["invalid"]:
+                errors.append(
+                    f"SOURCE_PATH_INVALID: {label}: path is not canonical "
+                    "under an approved production source root"
+                )
+                continue
+            if file_entry["missing"]:
+                errors.append(
+                    f"SOURCE_PATH_NOT_FOUND: {label}: canonical source file "
+                    "does not exist under the source root"
+                )
+                continue
+            if file_entry["unreadable"]:
+                errors.append(
+                    f"SOURCE_FILE_UNREADABLE: {label}: cannot read Kotlin "
+                    "source file"
+                )
+                continue
+
+            class_count = sum(
+                1 for t in file_entry["types"] if t["name"] == class_name
+            )
+            if class_count == 0:
+                errors.append(
+                    f"SOURCE_CLASS_MISSING: {label}: declared class/object "
+                    f"{class_name!r} is not present in the source file"
+                )
+                continue
+            if class_count > 1:
+                errors.append(
+                    f"SOURCE_CLASS_AMBIGUOUS: {label}: declared class/object "
+                    f"{class_name!r} is declared more than once in the source "
+                    "file"
+                )
+                continue
+
+            matching = [
+                decl for decl in file_entry["decls"].get(class_name, [])
+                if re.fullmatch(method_pattern, decl["name"])
+            ]
+            if not matching:
+                errors.append(
+                    f"SOURCE_DECLARATION_MISSING: {label}: no declaration in "
+                    f"class/object {class_name!r} fullmatches method_pattern "
+                    f"{method_pattern!r}"
+                )
+                continue
+
+            if require_evidence and not any(
+                _declaration_has_operation_evidence(
+                    decl, operation, file_entry["lines"],
+                    file_entry["masked_lines"],
+                )
+                for decl in matching
+            ):
+                errors.append(
+                    f"SOURCE_EVIDENCE_MISSING: {label}: operation "
+                    f"{operation!r} has no EXACT source evidence in any "
+                    f"declaration fullmatching method_pattern {method_pattern!r}"
+                )
+
+    return errors
 
 
 # ── Legacy allowlist (for backward compatibility) ──────────────────────────────
@@ -1081,15 +1814,55 @@ def extract_mutation_pairs(body, var_map=None):
 
 # ── Declaration / body parsing (exact class + method scoping) ─────────────────
 
+# Tokens whose presence at the END of a class/object/interface header line mean
+# the header continues on the following line (a supertype list or a
+# type-parameter clause): ``,`` separates supertypes, ``:``/``<``/``(`` carry
+# the rest of a delegation/type-parameter clause, and a trailing ``.`` continues
+# a qualified type name.  Without these, a multi-line header whose constructor
+# parens close BEFORE the body brace (e.g. ``AnomalyAlertRepositoryImpl``) would
+# be truncated at the paren-close line instead of reaching the first top-level
+# ``{``.
+_TYPE_HEADER_CONTINUATION_ENDINGS = (",", ":", "<", "(", ".")
+
+
+def _line_ends_with_type_header_continuation(line):
+    """Return True when a MASKED header line continues onto the next line.
+
+    ``line`` must already be masked (strings/comments replaced by spaces), so a
+    trailing ``,``/``:``/``.``/``<``/``(`` inside a comment or a string can
+    never be mistaken for a real header continuation.
+    """
+    s = line.rstrip()
+    if not s:
+        return False
+    return s.endswith(_TYPE_HEADER_CONTINUATION_ENDINGS)
+
+
 def _type_body_end(lines, start):
     """Return the 0-based line index where the type body closes (balanced).
 
     Walks from the declaration line tracking parens and braces on a
     comment/string-aware copy of the source, so a ``"}"`` literal, a ``// }``
     comment, or a block-comment brace can never close the type body.  The body
-    opens at the first ``{`` and ends when braces rebalance.  Body-less
-    declarations (interfaces/objects without braces) end on their own line once
-    the signature parens are balanced.
+    opens at the FIRST TOP-LEVEL ``{`` (paren depth 0) and ends when braces
+    rebalance.  A brace inside constructor default values (paren depth >= 1) is
+    header content, never the body opener.
+
+    A multi-line header whose constructor parens close BEFORE the body brace is
+    tracked across the full masked header until that first top-level ``{``, so a
+    class like AnomalyAlertRepositoryImpl::
+
+        class AnomalyAlertRepositoryImpl(
+            private val dao: AnomalyAlertDao
+        ) : SomeContract,
+            OtherContract {
+
+    is no longer truncated at the declaration line just because the parens
+    balance on an earlier line.  A header line that ends with a continuation
+    token (``,``/``:``/``.``/``<``/``(``) carries the supertype list /
+    type-parameter clause onto the following line.  Body-less declarations
+    (interfaces/objects/sealed members without braces) still end on their own
+    line once the signature parens are balanced and no continuation follows.
     """
     masked = _mask_lines_for_structural_scan(lines)
     depth = 0
@@ -1097,14 +1870,29 @@ def _type_body_end(lines, start):
     started = False
     for i in range(start, len(lines)):
         line = masked[i]
-        depth += line.count("{") - line.count("}")
-        paren += line.count("(") - line.count(")")
-        if line.count("{") > 0:
-            started = True
+        if started:
+            depth += line.count("{") - line.count("}")
+        else:
+            for j, ch in enumerate(line):
+                if ch == "(":
+                    paren += 1
+                elif ch == ")":
+                    paren -= 1
+                elif ch == "{" and paren == 0:
+                    started = True
+                    rest = line[j + 1:]
+                    depth = 1 + rest.count("{") - rest.count("}")
+                    break
+            if not started and paren <= 0 and i > start:
+                # Constructor parens balanced but no body brace opened yet.  A
+                # header-continuation token on this line means the header
+                # carries on to the next line; otherwise the declaration is
+                # body-less and ends on its declaration line.
+                if _line_ends_with_type_header_continuation(line):
+                    continue
+                return start
         if started and depth == 0:
             return i
-        if not started and paren <= 0 and i > start:
-            return start
     return len(lines) - 1
 
 
@@ -1876,13 +2664,9 @@ def _matches_structural_exception(rel_path, class_name, decls, operation, struct
     Matching is EXACT and the occurrence has already proven the exact
     COMMENT/STRING-masked call/token evidence (the evidence IS the
     detection):
-      * a non-``raw_`` entry must name the operation EXACTLY — a raw
-        substring match is never used, so a prefix-like identifier can never
-        satisfy evidence for the real operation;
-      * a ``raw_`` entry accepts any provably-exact operation — it can never
-        authorize prefix-like identifiers (``getDatabasePathway``,
-        ``openDatabaseHelper``, ``mywritableDatabase``) because detection
-        never produces such occurrences;
+      * the entry must name the operation EXACTLY — a raw substring match is
+        never used, so a prefix-like identifier can never satisfy evidence for
+        the real operation;
       * the method_pattern must ``re.fullmatch`` one of the ACTUAL enclosing
         declaration names (function, object, or ``val NAME = object``
         migration declaration).  Substring matching is never used, so
@@ -1894,10 +2678,8 @@ def _matches_structural_exception(rel_path, class_name, decls, operation, struct
             continue
         if exc.get("class") != class_name:
             continue
-        op_type = exc["operation"]
-        if not op_type.startswith("raw_"):
-            if op_type != operation:
-                continue
+        if exc["operation"] != operation:
+            continue
         method_pattern = exc["method_pattern"]
         for decl_name, _start in decls:
             if re.fullmatch(method_pattern, decl_name):
@@ -2096,8 +2878,8 @@ def scan(source_dir, ownership_policy=None, structural_exceptions=None):
         and keeps the exact source line of its call-start token, while
         prefix-like identifiers (``getDatabasePathway``,
         ``openDatabaseHelper``, ``mywritableDatabase``) and comment/string
-        text are never detected; ``raw_`` structural operations therefore
-        authorize only provably-exact operations, never prefix-like text;
+        text are never detected; structural exceptions authorize only the
+        EXACT operation they name — never a different real operation;
       * a supported operation token that cannot be proven as an exact call
         fails closed with UNSUPPORTED_STRUCTURAL_OP instead of being
         silently skipped;
@@ -2465,6 +3247,376 @@ def scan(source_dir, ownership_policy=None, structural_exceptions=None):
     return violations, files_scanned
 
 
+# ── Ownership-policy source evidence (exhaustive policy-side validation) ──────
+# The scan-side guard proves every REAL mutation is authorized.  The policy-side
+# source-evidence validator proves the INVERSE: every policy entry is backed by
+# EXACT source evidence.  A policy entry that names a class/method/DAO/operation
+# the source does not contain (or that omits a real mutation in the named method)
+# is invalid policy metadata and exits 2 — a stale or aspirational policy entry
+# can never silently approve anything the scan would otherwise catch later.
+
+# Controlled reason codes emitted by verify_ownership_policy_source_evidence().
+# These are the ONLY codes the CLI prints for source-evidence failures.
+SOURCE_EVIDENCE_CODES = frozenset({
+    "ENTRY_INVALID",
+    "PATH_NOT_FOUND",
+    "PATH_INVALID",
+    "FILE_UNREADABLE",
+    "CLASS_MISSING",
+    "CLASS_AMBIGUOUS",
+    "METHOD_MISSING",
+    "METHOD_BODY_UNSUPPORTED",
+    "DAO_RESOLUTION_FAILED",
+    "PAIR_NOT_FOUND",
+    "PAIR_NOT_COVERED",
+    "MISSING_WRITE_BARRIER",
+    "MEDIATED_METADATA_UNTRUTHFUL",
+})
+
+
+def _source_evidence_error(path, class_name, method_name, code, detail,
+                           dao=None, operation=None):
+    """Build one structured source-evidence error dict.
+
+    Bounded, controlled fields only — never raw source text or exception
+    messages.  ``code`` must be one of the controlled SOURCE_EVIDENCE_CODES.
+    ``dao``/``operation`` are added only when the error concerns a specific
+    mutation pair.
+    """
+    error = {
+        "path": path,
+        "class": class_name,
+        "method": method_name,
+        "code": code,
+        "detail": detail,
+    }
+    if dao is not None:
+        error["dao"] = dao
+    if operation is not None:
+        error["operation"] = operation
+    return error
+
+
+def _canonical_path_file(canonical_path, source_root):
+    """Resolve a canonical policy path to a real file under ``source_root``.
+
+    Canonical policy paths are repository-relative POSIX paths under an
+    approved production source root (``app/src/main/java``).  ``source_root``
+    is the absolute directory of that root, so the canonical path is stripped
+    of its root prefix and joined under ``source_root``.  Returns None when the
+    path is not under an approved root (fail closed — a basename or suffix can
+    never resolve here).
+    """
+    for root in APPROVED_PRODUCTION_SOURCE_ROOTS:
+        if canonical_path == root:
+            return None
+        if canonical_path.startswith(root + "/"):
+            rel = canonical_path[len(root) + 1:]
+            return os.path.join(source_root, *rel.split("/"))
+    return None
+
+
+def _verify_ownership_group(path, class_name, method_name, group_entries,
+                            source_root):
+    """Return structured source-evidence errors for one (path, class, method)
+    group of ownership entries.
+
+    ``group_entries`` is a list of ``(index, entry)`` tuples sharing the same
+    canonical ``path``, ``class``, and ``method``.  The group is the unit of
+    policy-union coverage: for overloaded methods the union of every overload's
+    mutation pairs is the method's evidence, and every listed ``(dao,
+    operation)`` pair must exist in that union while every actual pair in the
+    union must be covered by the group's listed union.
+
+    Fail-closed discipline mirrors ``scan()``: no filename-stem, file-wide
+    token, wildcard, or ``matches.last()`` fallback is ever used.
+    """
+    errors = []
+
+    # 1. Resolve the canonical path to a real file under the source root.
+    filepath = _canonical_path_file(path, source_root)
+    if filepath is None:
+        return [_source_evidence_error(
+            path, class_name, method_name, "PATH_INVALID",
+            "policy path is not under an approved production source root",
+        )]
+    if not os.path.isfile(filepath):
+        return [_source_evidence_error(
+            path, class_name, method_name, "PATH_NOT_FOUND",
+            "canonical source file does not exist under the source root",
+        )]
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            lines = f.readlines()
+    except (OSError, UnicodeDecodeError):
+        return [_source_evidence_error(
+            path, class_name, method_name, "FILE_UNREADABLE",
+            "cannot read Kotlin source file",
+        )]
+
+    # 2. Exact class/object resolution from the ACTUAL Kotlin declarations.
+    #    Zero matches and duplicate declarations both fail closed.
+    types = parse_type_declarations(lines)
+    class_decls = [t for t in types if t["name"] == class_name]
+    if not class_decls:
+        return [_source_evidence_error(
+            path, class_name, method_name, "CLASS_MISSING",
+            f"declared class/object {class_name!r} is not present in the "
+            "source file",
+        )]
+    if len(class_decls) > 1:
+        return [_source_evidence_error(
+            path, class_name, method_name, "CLASS_AMBIGUOUS",
+            f"declared class/object {class_name!r} is declared more than once "
+            "in the source file",
+        )]
+    type_decl = class_decls[0]
+
+    # 3. Exact method resolution, including private methods and overloads.
+    methods = parse_function_declarations(lines, type_decl["start"],
+                                         type_decl["end"])
+    target_methods = [m for m in methods if m["name"] == method_name]
+    if not target_methods:
+        return [_source_evidence_error(
+            path, class_name, method_name, "METHOD_MISSING",
+            f"method {method_name!r} is not declared in class/object "
+            f"{class_name!r}",
+        )]
+
+    # Fail closed when any body cannot be bounded: pairs extracted from a
+    # partial body can never prove exhaustive coverage.
+    for m in target_methods:
+        if m.get("unsupported_expression") or m.get("unterminated_braced_body"):
+            return [_source_evidence_error(
+                path, class_name, method_name, "METHOD_BODY_UNSUPPORTED",
+                f"method {method_name!r} body cannot be bounded; source "
+                "evidence refused",
+            )]
+
+    # 4. DAO identity resolution from class/method declarations/types — the
+    #    SAME scoping rules scan() uses (constructor params, class properties,
+    #    method locals; a local alias declared in ANOTHER method is never in
+    #    scope here and fails closed).
+    method_body_lines = set()
+    for m in methods:
+        method_body_lines.update(range(m["start"], m["end"] + 1))
+    class_map = build_class_scope_dao_var_map(
+        lines, type_decl["start"], type_decl["end"],
+        excluded_line_numbers=method_body_lines,
+    )
+    all_locals = {}
+    for m in methods:
+        body_lines = m["body"].split("\n")
+        local_map = build_dao_var_map(body_lines, 0, len(body_lines) - 1)
+        all_locals.update(local_map)
+
+    # 5. Extract exact (dao, operation) pairs from every target method body
+    #    and union them across overloads.
+    extracted = {}  # (dao, op) -> [(method_start_0, abs_lineno_1)]
+    resolution_failures = []  # (receiver, op, abs_lineno)
+    for m in target_methods:
+        body_lines = m["body"].split("\n")
+        local_map = build_dao_var_map(body_lines, 0, len(body_lines) - 1)
+        var_map = {**class_map, **local_map}
+        out_of_scope = set(all_locals) - set(var_map)
+        matches = _extract_mutation_matches(
+            m["body"],
+            var_map=var_map,
+            out_of_scope_aliases=out_of_scope,
+            out_of_scope_alias_identities=all_locals,
+        )
+        for match in matches:
+            abs_lineno = m["start"] + match["lineno"] + 1
+            if match["out_of_scope"]:
+                resolution_failures.append(
+                    (match["receiver"], match["op"], abs_lineno)
+                )
+            else:
+                extracted.setdefault((match["dao"], match["op"]), []).append(
+                    (m["start"], abs_lineno)
+                )
+
+    for receiver, op, abs_lineno in resolution_failures:
+        errors.append(_source_evidence_error(
+            path, class_name, method_name, "DAO_RESOLUTION_FAILED",
+            f"mutation {receiver}.{op}(...) at line {abs_lineno} cannot be "
+            "resolved to a DAO identity in this method (out-of-scope alias); "
+            "source evidence refused",
+            dao=receiver, operation=op,
+        ))
+
+    actual_union = set(extracted)
+
+    # 6. Policy union for the group: every (dao, operation) pair listed by
+    #    every entry with the same (path, class, method).
+    listed_union = set()
+    for _index, entry in group_entries:
+        for dao in entry.get("daos") or []:
+            listed_union.add((dao, entry["operation"]))
+
+    # 7. Bidirectional exact-pair coverage.
+    #    7a. Every listed pair must exist in the source union — a policy entry
+    #        that names a DAO/operation the method never invokes is untruthful.
+    for _index, entry in group_entries:
+        for dao in entry.get("daos") or []:
+            pair = (dao, entry["operation"])
+            if pair not in actual_union:
+                errors.append(_source_evidence_error(
+                    path, class_name, method_name, "PAIR_NOT_FOUND",
+                    f"policy lists dao={dao} operation={entry['operation']} "
+                    "but the source method body contains no such mutation",
+                    dao=dao, operation=entry["operation"],
+                ))
+
+    #    7b. Every actual pair must be covered by the policy union — a real
+    #        mutation the policy omits fails closed (all-or-nothing).
+    for dao, op in sorted(actual_union):
+        if (dao, op) not in listed_union:
+            errors.append(_source_evidence_error(
+                path, class_name, method_name, "PAIR_NOT_COVERED",
+                f"source method invokes dao={dao} operation={op} which is not "
+                "covered by any policy entry for this method",
+                dao=dao, operation=op,
+            ))
+
+    # 8. Barrier evidence and mediation truthfulness per actual mutation.
+    for (dao, op), occurrences in extracted.items():
+        covering = [
+            entry for _index, entry in group_entries
+            if entry.get("operation") == op and dao in (entry.get("daos") or [])
+        ]
+        if not covering:
+            continue  # already reported as PAIR_NOT_COVERED
+        for method_start, abs_lineno in occurrences:
+            barrier_before = _barrier_before_line(
+                lines, method_start, abs_lineno
+            )
+            for entry in covering:
+                if entry.get("barrier_required") and not barrier_before:
+                    errors.append(_source_evidence_error(
+                        path, class_name, method_name, "MISSING_WRITE_BARRIER",
+                        "barrier_required=true but no direct masked "
+                        "writeBarrier.checkWritesAllowed/runWrite before "
+                        f"dao={dao} operation={op} at line {abs_lineno}",
+                        dao=dao, operation=op,
+                    ))
+                if entry.get("barrier_via") and entry.get("barrier_required"):
+                    errors.append(_source_evidence_error(
+                        path, class_name, method_name,
+                        "MEDIATED_METADATA_UNTRUTHFUL",
+                        "entry claims WorkerExecutionGuard mediation "
+                        f"(barrier_via={entry.get('barrier_via')}) but "
+                        "barrier_required=true; mediation and a direct barrier "
+                        "claim cannot both be true",
+                        dao=dao, operation=op,
+                    ))
+                if entry.get("barrier_via") and barrier_before:
+                    errors.append(_source_evidence_error(
+                        path, class_name, method_name,
+                        "MEDIATED_METADATA_UNTRUTHFUL",
+                        "entry claims WorkerExecutionGuard mediation "
+                        f"(barrier_via={entry.get('barrier_via')}) yet the "
+                        f"source directly invokes writeBarrier before dao={dao} "
+                        f"operation={op} at line {abs_lineno}",
+                        dao=dao, operation=op,
+                    ))
+
+    # Deduplicate identical diagnostics (multiple entries may share a pair).
+    seen = set()
+    unique = []
+    for err in errors:
+        signature = (
+            err["code"], err["path"], err["class"], err["method"],
+            err.get("dao"), err.get("operation"), err["detail"],
+        )
+        if signature in seen:
+            continue
+        seen.add(signature)
+        unique.append(err)
+    return unique
+
+
+def verify_ownership_policy_source_evidence(entries, source_root):
+    """Return structured source-evidence errors for ownership entries, or [].
+
+    Pure policy-side validator (reads only the referenced source files under
+    ``source_root``; never calls ``sys.exit``).  Tests exercise it directly and
+    ``main()`` maps non-empty results to exit code 2.
+
+    Every entry must be backed by EXHAUSTIVE exact source evidence:
+
+      1. the canonical path must resolve to a real Kotlin file under
+         ``source_root``;
+      2. the declared ``class``/``object`` must exist exactly once in that file
+         (missing/ambiguous classes fail closed — never a filename-stem or
+         file-wide fallback);
+      3. the exact ``method`` must exist in that class, including private
+         methods and overloads; for overloads the union of all overloads'
+         mutation pairs is the method's evidence and the policy union must
+         cover every pair;
+      4. DAO identities resolve through class-scoped properties/constructor
+         params and method-scoped locals (``groupDao: ExpenseGroupDao`` ->
+         ``expenseGroupDao``) exactly as ``scan()`` resolves them;
+      5. mutation ``(dao, operation)`` pairs are extracted from the COMPLETE
+         exact method body; every listed policy pair must exist in the source
+         and every actual source pair must be covered by the policy union — a
+         single mismatch fails;
+      6. when ``barrier_required`` is true, a direct MASKED
+         ``writeBarrier.checkWritesAllowed`` / ``writeBarrier.runWrite`` call
+         must appear before each mutation; mediated worker metadata
+         (``barrier_via``) must be truthful — a mediated entry must not also
+         claim a direct barrier, and the source must not directly invoke the
+         barrier while mediation is claimed;
+      7. no filename stem, file-wide token presence, wildcard, or
+         ``matches.last()`` fallback is ever used.
+
+    Each returned error is a structured dict with bounded controlled fields:
+    ``{path, class, method, code, detail}`` plus ``dao``/``operation`` when the
+    error concerns a specific pair.  ``code`` is one of the controlled
+    SOURCE_EVIDENCE_CODES.
+    """
+    errors = []
+    groups = {}
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            errors.append(_source_evidence_error(
+                "", "", "", "ENTRY_INVALID", "entry must be a mapping",
+            ))
+            continue
+        # Reuse the loader's complete metadata validator so a malformed entry
+        # (unknown key, non-canonical path, wildcard method, operation: write,
+        # bad boolean) is reported here instead of being resolved lazily.
+        meta_errors = ownership_entry_metadata_errors(entry)
+        if meta_errors:
+            errors.append(_source_evidence_error(
+                entry.get("path", ""),
+                entry.get("class", ""),
+                entry.get("method", ""),
+                "ENTRY_INVALID",
+                "; ".join(meta_errors),
+            ))
+            continue
+        key = (entry["path"], entry["class"], entry["method"])
+        groups.setdefault(key, []).append((i, entry))
+
+    for (path, class_name, method_name), group_entries in groups.items():
+        errors.extend(_verify_ownership_group(
+            path, class_name, method_name, group_entries, source_root,
+        ))
+
+    # Deterministic ordering for stable diagnostics.
+    errors.sort(key=lambda e: (
+        e.get("path", ""),
+        e.get("class", ""),
+        e.get("method", ""),
+        e.get("code", ""),
+        e.get("dao", ""),
+        e.get("operation", ""),
+        e.get("detail", ""),
+    ))
+    return errors
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -2479,6 +3631,12 @@ def main():
         "--structural-exceptions",
         default=None,
         help="Path to structural exceptions YAML (default: config/guards/db_structural_exceptions.yml)",
+    )
+    parser.add_argument(
+        "--structural-manifest",
+        default=None,
+        help="Path to structural expected-methods manifest YAML "
+             "(default: config/guards/db_structural_exceptions_expected_methods.yml)",
     )
     args = parser.parse_args()
 
@@ -2495,6 +3653,59 @@ def main():
     # method_patterns with exit 2).
     exceptions_path = args.structural_exceptions or STRUCTURAL_EXCEPTIONS_PATH
     structural_exceptions = load_db_structural_exceptions(exceptions_path)
+
+    # Exhaustive ownership-policy source evidence: every policy entry must be
+    # backed by EXACT source evidence (canonical path, class, method, DAO,
+    # operation, and — when claimed — a direct masked write barrier).  A stale
+    # or aspirational entry is an infrastructure/config error, never a silent
+    # approval, so any source-evidence failure exits 2 before scanning.
+    source_evidence_errors = verify_ownership_policy_source_evidence(
+        ownership_policy, SOURCE_DIR
+    )
+    if source_evidence_errors:
+        for error in source_evidence_errors:
+            context = (
+                f"path={error['path']} class={error['class']} "
+                f"method={error['method']}"
+            )
+            if "dao" in error:
+                context += f" dao={error['dao']}"
+            if "operation" in error:
+                context += f" operation={error['operation']}"
+            print(
+                f"ERROR: DB_POLICY_SOURCE_EVIDENCE: {error['code']}: "
+                f"{context} — {error['detail']}",
+                file=sys.stderr,
+            )
+        sys.exit(2)
+
+    # Structural expected-methods manifest: the CANONICAL contract for
+    # db_structural_exceptions.yml.  Enforce exact tuple-set equivalence, the
+    # pinned entry counts (99 ownership / 62 structural), and EXACT source
+    # evidence for every expected method before scanning.  Any failure is an
+    # infrastructure/config error (exit 2) — a stale or aspirational manifest
+    # can never silently approve file operations.
+    manifest_path = args.structural_manifest or STRUCTURAL_EXPECTED_METHODS_PATH
+    structural_manifest = load_db_structural_expected_methods(manifest_path)
+    manifest_errors = verify_structural_exceptions_manifest(
+        structural_exceptions, structural_manifest, SOURCE_DIR,
+        ownership_count=len(ownership_policy),
+    )
+    # Immutable classification contract: the manifest's expected/fixtures tuple
+    # sets must EXACTLY equal the checked-in immutable contracts.  A moved or
+    # invented tuple fails here with MANIFEST_CLASSIFICATION_MISMATCH before
+    # scanning — a reclassified expected tuple can never bypass its operation
+    # evidence through the declaration-only fixtures bucket.
+    manifest_errors.extend(
+        structural_manifest_classification_errors(structural_manifest)
+    )
+    if manifest_errors:
+        for manifest_error in manifest_errors:
+            print(
+                f"ERROR: DB_STRUCTURAL_MANIFEST: {manifest_error}",
+                file=sys.stderr,
+            )
+        sys.exit(2)
 
     violations, files_scanned = scan(SOURCE_DIR, ownership_policy, structural_exceptions)
 

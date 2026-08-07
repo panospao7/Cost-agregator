@@ -188,13 +188,15 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "tests": "scripts/test_verify_db_access_boundaries.py",
         "mode": "ratchet",
         "baseline": "config/baselines/db_access.json",
-        "allowlist": "config/db_access_allowlist.yml",
+        "allowlist": None,  # Legacy config/db_access_allowlist.yml is superseded
         "policies": [
             "config/guards/db_ownership_policy.yml",
             "config/guards/db_structural_exceptions.yml",
+            "config/guards/db_structural_exceptions_expected_methods.yml",
         ],
         "description": "DB access boundary — global write/read/restore barrier "
-                       "with ownership policy and structural exceptions",
+                       "with ownership policy, structural exceptions, and the "
+                       "structural expected-methods manifest",
     },
 
     "event_writers": {

@@ -1,242 +1,1127 @@
-# DB Ownership Policy — canonical legal writers
-# 
-# This file defines the EXACT set of classes, DAOs, and operations that
-# are allowed to perform database writes. Every direct DAO mutation call
-# in the codebase MUST match an entry here, a structural exception, or
+# DB Ownership Policy — canonical legal writers (H2 exact contract)
+#
+# This file defines the EXACT set of classes, methods, DAOs, and operations
+# that are allowed to perform database writes. Every direct DAO mutation call
+# in app/src/main/java MUST match an entry here, a structural exception, or
 # be recorded as unresolved debt in the ratchet baseline.
 #
-# Each entry requires: path, class, method, daos, operation, 
-# barrier_required, reason, owner, linked_issue.
+# Hardened (H2) contract — every entry requires:
+#   - path:           canonical repository-relative POSIX path under
+#                     app/src/main/java with '/' separators (bare basenames,
+#                     backslashes, and non-.kt paths are rejected by the loader);
+#   - class:          exact Kotlin class/object name as declared in the file;
+#   - method:         EXACT method name (no wildcard "*" — every writer method
+#                     is individually enumerated);
+#   - daos:           non-empty list of EXACT Room accessor names (the DAO
+#                     interface simple name with its first character lowercased,
+#                     e.g. ExpenseGroupDao -> expenseGroupDao) that this method
+#                     writes to for the listed operation;
+#   - operation:      the EXACT DAO method name the method body invokes
+#                     (e.g. "insert", "insertAtomic", "archiveGroup",
+#                     "staleAbortIfStillRunning", "deleteAllForGroup").
+#                     The universal value "write" is invalid policy metadata
+#                     and is rejected by the loader (verify_db_access_boundaries.py);
+#   - barrier_required: real boolean. true only when the method body contains a
+#                     direct writeBarrier.checkWritesAllowed(...) /
+#                     writeBarrier.runWrite(...) call BEFORE the DAO mutation.
+#                     Lifecycle coordinators that guard via a private helper
+#                     (TransactionLifecycleCoordinator.checkWritesAllowed) or
+#                     workers whose write protection is mediated by
+#                     WorkerExecutionGuard set false;
+#   - barrier_via:    ONLY for mediated WorkerExecutionGuard entries — documents
+#                     that write protection is provided by the guard, not by a
+#                     direct barrier call in the method;
+#   - reason, owner, linked_issue: controlled documentation fields.
 #
-# - method: "*" means the class owns all write methods for the listed DAOs.
-# - operation: "write" means all mutation operations (insert, update, delete, etc.).
-# - barrier_required: true means the method must call writeBarrier.checkWritesAllowed()
-#   before the DAO mutation. Set false for lifecycle coordinators that handle
-#   their own guarding (e.g., withTransaction).
+# No wildcard methods, no "operation: write", no permanent expiry/allowed_until
+# fields. Structural exceptions live in db_structural_exceptions.yml (untouched).
 
 entries:
 
   # ── Expenses / Transaction events ──────────────────────────────
-  - path: TransactionLifecycleCoordinator.kt
+  # Source: domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  # Every direct (dao, operation) pair is enumerated below. Write protection is
+  # enforced through the private checkWritesAllowed(...) helper (which calls
+  # writeBarrier.checkWritesAllowed) at the top of each public method, so
+  # barrier_required is false here — the helper call is not a direct barrier
+  # invocation inside the method body and cannot satisfy scanner evidence.
+  # createExpense (public wrapper) delegates to createExpenseMutation and is
+  # deliberately NOT listed.
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
     class: TransactionLifecycleCoordinator
-    method: "*"
-    daos: [expenseDao, transactionEventDao]
-    operation: write
+    method: "createExpenseMutation"
+    daos: [expenseDao]
+    operation: "insertAtomic"
     barrier_required: false
-    reason: "Canonical transaction lifecycle writer — guards at entry via withTransaction"
+    reason: "Private DB-only expense creation — atomic insert with IGNORE-on-conflict; barrier via checkWritesAllowed helper"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Notifications ───────────────────────────────────────────────
-  - path: NotificationRepository.kt
-    class: NotificationRepository
-    method: "*"
-    daos: [rawNotificationDao, pendingReviewDao, pipelineDiagnosticEventDao, blockedPackageDao, expenseDao, userCorrectionDao, sourceStatsDao]
-    operation: write
-    barrier_required: true
-    reason: "Canonical notification writer — includes purge/restore DAOs needed for maintenance"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "createExpenseMutation"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Private DB-only expense creation — lifecycle event inserts inside transaction; barrier via checkWritesAllowed helper"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Receipts / OCR / Email ──────────────────────────────────────
-  - path: ReceiptLifecycleCoordinator.kt
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "writeUpdateValidationFailedEventBestEffort"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Best-effort UPDATE_VALIDATION_FAILED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateExpense"
+    daos: [expenseDao]
+    operation: "update"
+    barrier_required: false
+    reason: "Canonical expense update — full-row update inside transaction; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateExpense"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Canonical expense update — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateCategory"
+    daos: [expenseDao]
+    operation: "updateCategoryNullable"
+    barrier_required: false
+    reason: "Category-only expense update; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateCategory"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Category-only expense update — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateLocation"
+    daos: [expenseDao]
+    operation: "updateLocation"
+    barrier_required: false
+    reason: "Location-only expense update; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateLocation"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Location-only expense update — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateBusinessExpensePatch"
+    daos: [expenseDao]
+    operation: "update"
+    barrier_required: false
+    reason: "Business/tax field patch update; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateBusinessExpensePatch"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Business/tax field patch — UPDATED / UPDATE_VALIDATION_FAILED lifecycle event inserts; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateMerchant"
+    daos: [expenseDao]
+    operation: "updateMerchantAndKey"
+    barrier_required: false
+    reason: "Merchant rename with key recomputation; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateMerchant"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Merchant rename — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateType"
+    daos: [expenseDao]
+    operation: "updateTransactionType"
+    barrier_required: false
+    reason: "Transaction-type update with dedupe-key recomputation; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateType"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Transaction-type update — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateTransferDetails"
+    daos: [expenseDao]
+    operation: "updateTransferDirection"
+    barrier_required: false
+    reason: "Transfer-direction update; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateTransferDetails"
+    daos: [expenseDao]
+    operation: "updateTransferAccountName"
+    barrier_required: false
+    reason: "Transfer-account-name update; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateTransferDetails"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Transfer details update — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateTypeAndTransferDetails"
+    daos: [expenseDao]
+    operation: "updateTransactionType"
+    barrier_required: false
+    reason: "Atomic type+transfer update — type column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateTypeAndTransferDetails"
+    daos: [expenseDao]
+    operation: "updateTransferDirection"
+    barrier_required: false
+    reason: "Atomic type+transfer update — direction column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateTypeAndTransferDetails"
+    daos: [expenseDao]
+    operation: "updateTransferAccountName"
+    barrier_required: false
+    reason: "Atomic type+transfer update — account-name column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateTypeAndTransferDetails"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Atomic type+transfer update — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateOwnershipDbOnlyV2"
+    daos: [expenseDao]
+    operation: "updateIsNotMine"
+    barrier_required: false
+    reason: "DB-only ownership update — isNotMine column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateOwnershipDbOnlyV2"
+    daos: [expenseDao]
+    operation: "updateOwnerName"
+    barrier_required: false
+    reason: "DB-only ownership update — ownerName column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateOwnershipDbOnlyV2"
+    daos: [expenseDao]
+    operation: "updateIsSharedExpense"
+    barrier_required: false
+    reason: "DB-only ownership update — isSharedExpense column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateOwnershipDbOnlyV2"
+    daos: [expenseDao]
+    operation: "updateSharedWithName"
+    barrier_required: false
+    reason: "DB-only ownership update — sharedWithName column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateOwnershipDbOnlyV2"
+    daos: [expenseDao]
+    operation: "updateMySharePercentage"
+    barrier_required: false
+    reason: "DB-only ownership update — mySharePercentage column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateOwnershipDbOnlyV2"
+    daos: [expenseDao]
+    operation: "updateMyShareAmount"
+    barrier_required: false
+    reason: "DB-only ownership update — myShareAmount column; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "updateOwnershipDbOnlyV2"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "DB-only ownership update — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "bulkUpdateCategory"
+    daos: [expenseDao]
+    operation: "updateCategoryForMerchant"
+    barrier_required: false
+    reason: "Bulk merchant-based category reassignment; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "bulkUpdateCategory"
+    daos: [expenseDao]
+    operation: "updateCategoryForCategory"
+    barrier_required: false
+    reason: "Bulk category-to-category reassignment; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "bulkUpdateCategory"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Bulk category update — BULK_UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "bulkUpdateMerchant"
+    daos: [expenseDao]
+    operation: "updateMerchantAndKey"
+    barrier_required: false
+    reason: "Bulk merchant rename with key recomputation; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "bulkUpdateMerchant"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Bulk merchant rename — BULK_UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "deleteExpense"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Canonical expense deletion — DELETED lifecycle event insert before row delete; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "deleteExpense"
+    daos: [expenseDao]
+    operation: "delete"
+    barrier_required: false
+    reason: "Canonical expense deletion — hard delete of expense row; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+    class: TransactionLifecycleCoordinator
+    method: "writeDuplicateEvent"
+    daos: [transactionEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "CREATE_DUPLICATE_SKIPPED lifecycle event insert for duplicate resolution; barrier via checkWritesAllowed helper"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Receipts ────────────────────────────────────────────────────
+  # Source: domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  # deleteReceipt performs a direct writeBarrier.checkWritesAllowed(...) at the
+  # top of the method, so barrier_required is true (verified by source).
+  - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
     class: ReceiptLifecycleCoordinator
-    method: "*"
-    daos: [scannedReceiptDao, receiptEventDao, emailReceiptDao, pendingReviewDao, receiptExpenseLinkDao]
-    operation: write
-    barrier_required: false
-    reason: "Canonical receipt lifecycle writer"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  # ── Recurring / Reminders ───────────────────────────────────────
-  - path: RecurringRuleLifecycleCoordinator.kt
-    class: RecurringRuleLifecycleCoordinator
-    method: "*"
-    daos: [manualRecurringExpenseDao, occurrenceDao, reminderDeliveryDao, plannedExpenseDao, lifecycleEventDao]
-    operation: write
+    method: "deleteReceipt"
+    daos: [receiptExpenseLinkDao]
+    operation: "deleteAllLinksForReceipt"
     barrier_required: true
-    reason: "Canonical recurring rule writer"
+    reason: "Canonical receipt deletion — deletes receipt-expense links inside transaction"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  - path: RecurringLifecycleCoordinator.kt
-    class: RecurringLifecycleCoordinator
-    method: "*"
-    daos: [occurrenceDao, expenseDao, manualRecurringExpenseDao, reminderDeliveryDao, lifecycleEventDao, plannedExpenseDao]
-    operation: write
+  - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+    class: ReceiptLifecycleCoordinator
+    method: "deleteReceipt"
+    daos: [scannedReceiptDao]
+    operation: "delete"
     barrier_required: true
-    reason: "Canonical recurring occurrence writer"
+    reason: "Canonical receipt deletion — deletes the scanned-receipt row"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  - path: ReminderDeliveryCoordinator.kt
-    class: ReminderDeliveryCoordinator
-    method: "*"
-    daos: [recurringReminderDeliveryDao, reminderDeliveryDao]
-    operation: write
+  - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+    class: ReceiptLifecycleCoordinator
+    method: "deleteReceipt"
+    daos: [receiptEventDao]
+    operation: "insert"
     barrier_required: true
-    reason: "Canonical reminder delivery writer"
+    reason: "Canonical receipt deletion — ASSET_DELETE_FAILED fallback event insert when asset cleanup fails"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Budget / Forecast / Planned ─────────────────────────────────
-  - path: BudgetRepository.kt
+  # ── Budgets ─────────────────────────────────────────────────────
+  # Source: data/repository/BudgetRepository.kt
+  # add/update/delete call writeBarrier.checkWritesAllowed directly.
+  # deleteBudget explicitly purges forecasts (budgetForecastDao) inside the
+  # same transaction as the budget delete (belt-and-suspenders over the
+  # CASCADE FK, schema v142).
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
     class: BudgetRepository
-    method: "*"
-    daos: [budgetDao, budgetAdjustmentDao]
-    operation: write
+    method: "addBudget"
+    daos: [budgetDao]
+    operation: "insert"
     barrier_required: true
-    reason: "Canonical budget writer"
+    reason: "Canonical budget creation — inactive-budget insert branch"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  - path: PlannedExpenseRepository.kt
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+    class: BudgetRepository
+    method: "addBudget"
+    daos: [budgetDao]
+    operation: "insertAndActivateOverall"
+    barrier_required: true
+    reason: "Canonical budget creation — overall (null category) active-budget insert branch"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+    class: BudgetRepository
+    method: "addBudget"
+    daos: [budgetDao]
+    operation: "insertAndActivateCategory"
+    barrier_required: true
+    reason: "Canonical budget creation — category-scoped active-budget insert branch"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+    class: BudgetRepository
+    method: "updateBudget"
+    daos: [budgetDao]
+    operation: "updateAndEnforceActiveScope"
+    barrier_required: true
+    reason: "Canonical budget update — resets notification flags and enforces active scope"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+    class: BudgetRepository
+    method: "deleteBudget"
+    daos: [budgetForecastDao]
+    operation: "deleteForecastsForBudget"
+    barrier_required: true
+    reason: "Canonical budget deletion — explicit forecast purge (belt-and-suspenders over CASCADE FK) inside transaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+    class: BudgetRepository
+    method: "deleteBudget"
+    daos: [budgetDao]
+    operation: "delete"
+    barrier_required: true
+    reason: "Canonical budget deletion — deletes the budget row"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Planned Expenses ────────────────────────────────────────────
+  # Source: data/repository/PlannedExpenseRepository.kt
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
     class: PlannedExpenseRepository
-    method: "*"
+    method: "addPlannedExpense"
     daos: [plannedExpenseDao]
-    operation: write
+    operation: "insertPlannedExpense"
     barrier_required: true
-    reason: "Canonical planned expense writer"
+    reason: "Canonical planned-expense creation — insert with lifecycle timestamps and IGNORE conflict check"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Bank ────────────────────────────────────────────────────────
-  - path: BankConnectionLifecycleCoordinator.kt
-    class: BankConnectionLifecycleCoordinator
-    method: "*"
-    daos: [bankConnectionDao]
-    operation: write
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
+    class: PlannedExpenseRepository
+    method: "deletePlannedExpense"
+    daos: [plannedExpenseDao]
+    operation: "deletePlannedExpense"
     barrier_required: true
-    reason: "Canonical bank connection writer"
+    reason: "Canonical planned-expense deletion by entity"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  - path: BankSyncCoordinator.kt
-    class: BankSyncCoordinator
-    method: "*"
-    daos: [bankConnectionDao, expenseDao]
-    operation: write
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
+    class: PlannedExpenseRepository
+    method: "deletePlannedExpenseById"
+    daos: [plannedExpenseDao]
+    operation: "deletePlannedExpenseById"
     barrier_required: true
-    reason: "Canonical bank sync writer — routes expenses through TransactionLifecycleCoordinator"
+    reason: "Canonical planned-expense deletion by id"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Import ─────────────────────────────────────────────────────
-  - path: ImportCoordinator.kt
-    class: ImportCoordinator
-    method: "*"
-    daos: [expenseDao, categoryDao]
-    operation: write
-    barrier_required: true
-    reason: "Canonical import writer — routes through TransactionLifecycleCoordinator"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  # ── Investments ─────────────────────────────────────────────────
-  - path: InvestmentTracker.kt
-    class: InvestmentTracker
-    method: "*"
-    daos: [investmentDao, investmentValueDao, investmentTransactionDao]
-    operation: write
-    barrier_required: true
-    reason: "Canonical investment writer"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - path: InvestmentRepository.kt
-    class: InvestmentRepository
-    method: "*"
-    daos: [investmentDao, investmentTransactionDao, investmentValueDao]
-    operation: write
-    barrier_required: true
-    reason: "Canonical investment writer"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  # ── Groups ──────────────────────────────────────────────────────
-  - path: GroupLifecycleCoordinator.kt
-    class: GroupLifecycleCoordinator
-    method: "*"
-    daos: [groupDao, groupExpenseDao, memberDao, settlementDao, lifecycleEventDao]
-    operation: write
-    barrier_required: true
-    reason: "Canonical group lifecycle writer"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  # ── Categories / Merchants ──────────────────────────────────────
-  - path: CategoryRepository.kt
+  # ── Categories ──────────────────────────────────────────────────
+  # Source: data/repository/CategoryRepository.kt
+  # add/delete only. merchantCategoryDao writes (ensureDefaultCategories /
+  # seed path) remain unresolved debt and are NOT authorized here.
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
     class: CategoryRepository
-    method: "*"
+    method: "addCategory"
     daos: [categoryDao]
-    operation: write
+    operation: "getOrInsertByNameNoCase"
     barrier_required: true
-    reason: "Canonical category writer"
+    reason: "Canonical category creation — Room-transactional get-or-insert with NOCASE dedupe"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  - path: MerchantCategoryRepository.kt
-    class: MerchantCategoryRepository
-    method: "*"
-    daos: [merchantCategoryDao, merchantNormalizationDao, merchantLocationDao]
-    operation: write
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+    class: CategoryRepository
+    method: "deleteCategory"
+    daos: [categoryDao]
+    operation: "delete"
     barrier_required: true
-    reason: "Canonical merchant writer"
+    reason: "Canonical category deletion — guarded by budget-reference and isDefault checks"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Spending Challenges ─────────────────────────────────────────
-  - path: SpendingChallengeRepository.kt
-    class: SpendingChallengeRepository
-    method: "*"
-    daos: [spendingChallengeDao]
-    operation: write
+  # ── Groups (domain lifecycle) ───────────────────────────────────
+  # Source: domain/groups/GroupLifecycleCoordinator.kt
+  # Public methods call writeBarrier.checkWritesAllowed directly (barrier_required
+  # true). The private emitLifecycleEvent inserts a lifecycle event without its
+  # own direct barrier (caller-guarded), so barrier_required is false there.
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "createGroup"
+    daos: [groupLifecycleEventDao]
+    operation: "insert"
     barrier_required: true
-    reason: "Canonical challenge writer"
+    reason: "Group creation — GROUP_CREATED lifecycle event insert after atomic group+members commit"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Savings ─────────────────────────────────────────────────────
-  - path: SavingsGoalRepository.kt
-    class: SavingsGoalRepository
-    method: "*"
-    daos: [savingsGoalDao, savingsSweepPlanDao]
-    operation: write
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "addMember"
+    daos: [groupLifecycleEventDao]
+    operation: "insert"
     barrier_required: true
-    reason: "Canonical savings writer"
+    reason: "Member addition — GROUP_MEMBER_ADDED lifecycle event insert"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Subscriptions ───────────────────────────────────────────────
-  - path: SubscriptionRepository.kt
-    class: SubscriptionRepository
-    method: "*"
-    daos: [subscriptionCandidateDao, subscriptionPriceHistoryDao, subscriptionUsageDao]
-    operation: write
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "removeMember"
+    daos: [groupMemberDao]
+    operation: "update"
     barrier_required: true
-    reason: "Canonical subscription writer"
+    reason: "Member soft-removal — sets leftAt inside balance-gate transaction"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Warranties ──────────────────────────────────────────────────
-  - path: WarrantyRepository.kt
-    class: WarrantyRepository
-    method: "*"
-    daos: [warrantyDao, warrantyLifecycleEventDao]
-    operation: write
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "removeMember"
+    daos: [groupLifecycleEventDao]
+    operation: "insert"
     barrier_required: true
-    reason: "Canonical warranty writer"
+    reason: "Member soft-removal — GROUP_MEMBER_REMOVED lifecycle event insert"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Exchange Rates ──────────────────────────────────────────────
-  - path: ExchangeRateRepository.kt
-    class: ExchangeRateRepository
-    method: "*"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "addExpense"
+    daos: [groupLifecycleEventDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Group expense addition — GROUP_EXPENSE_ADDED lifecycle event insert"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "archiveGroup"
+    daos: [groupLifecycleEventDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Group archive (soft-delete) — GROUP_ARCHIVED lifecycle event insert"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "deleteGroupPermanently"
+    daos: [groupLifecycleEventDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Permanent group deletion — GROUP_PERMANENTLY_DELETED lifecycle event insert (G08 confirm-gated)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "recordSettlement"
+    daos: [groupSettlementDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Settlement recording — persists settlement row inside transaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+    class: GroupLifecycleCoordinator
+    method: "emitLifecycleEvent"
+    daos: [groupLifecycleEventDao]
+    operation: "insert"
+    barrier_required: false
+    reason: "Private lifecycle-event emitter used by recordSettlement — caller-guarded, no direct barrier in this method"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── GroupTransactionCoordinator (data-layer implementation) ────────
+  # Source: data/database/GroupTransactionCoordinator.kt
+  # (app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt)
+  # The DOMAIN interface (domain/groups/GroupTransactionCoordinator.kt) has no
+  # implementation body and never touches DAOs — DAO ownership must point at the
+  # real implementation class in data/database/. Every direct implementation
+  # method with DAO mutations is enumerated; permanentlyDeleteGroup is NOT
+  # listed because it only delegates to deleteGroupAtomic (which is listed).
+  # Room accessor identities: ExpenseGroupDao -> expenseGroupDao,
+  # GroupMemberDao -> groupMemberDao, GroupExpenseDao -> groupExpenseDao,
+  # ExpenseDao -> expenseDao.
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "createGroupWithMembers"
+    daos: [expenseGroupDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Atomic group insert inside withTransaction (direct DAO evidence)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "createGroupWithMembers"
+    daos: [groupMemberDao]
+    operation: "insertAll"
+    barrier_required: true
+    reason: "Atomic member bulk insert inside withTransaction (direct DAO evidence)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "addMemberToGroup"
+    daos: [groupMemberDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Atomic member insert inside withTransaction (read-check-then-insert)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "addExpenseToGroup"
+    daos: [groupExpenseDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Atomic group expense insert inside withTransaction (standalone, no system link)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "addExpenseWithLink"
+    daos: [groupExpenseDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Atomic group expense insert linked to existing system expense"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "deleteGroup"
+    daos: [expenseGroupDao]
+    operation: "archiveGroup"
+    barrier_required: true
+    reason: "Soft-delete group via expenseGroupDao.archiveGroup (isActive=false)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "archiveGroup"
+    daos: [expenseGroupDao]
+    operation: "archiveGroup"
+    barrier_required: true
+    reason: "Archive group via expenseGroupDao.archiveGroup inside withTransaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "createGroupWithMembersAtomic"
+    daos: [expenseGroupDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Low-level atomic group insert inside withTransaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "createGroupWithMembersAtomic"
+    daos: [groupMemberDao]
+    operation: "insertAll"
+    barrier_required: true
+    reason: "Low-level atomic member bulk insert inside withTransaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "createSystemExpenseAndLinkToGroup"
+    daos: [groupExpenseDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Atomic system expense creation + group link inside withTransaction (expense via TransactionLifecycleCoordinator.createExpenseDbOnlyV2)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "addExpenseToGroupAtomic"
+    daos: [groupExpenseDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Atomic group expense insert with single-currency validation"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # deleteGroupAtomic — the REAL hard-delete implementation method. Its body
+  # directly contains the DAO operations (groupExpenseDao.deleteAllForGroup,
+  # groupMemberDao.deleteAllForGroup, expenseGroupDao.delete,
+  # expenseDao.clearSharedExpenseFlags) and it is the target that
+  # permanentlyDeleteGroup delegates to. The interface-only permanentlyDeleteGroup
+  # method is deliberately NOT approved: its body contains no DAO operations
+  # (delegation only).
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "deleteGroupAtomic"
+    daos: [groupExpenseDao]
+    operation: "deleteAllForGroup"
+    barrier_required: true
+    reason: "Atomic hard delete — deletes group expenses (child table) inside transaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "deleteGroupAtomic"
+    daos: [groupMemberDao]
+    operation: "deleteAllForGroup"
+    barrier_required: true
+    reason: "Atomic hard delete — deletes group members inside transaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "deleteGroupAtomic"
+    daos: [expenseGroupDao]
+    operation: "delete"
+    barrier_required: true
+    reason: "Atomic hard delete — deletes the parent group row"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+    class: GroupTransactionCoordinator
+    method: "deleteGroupAtomic"
+    daos: [expenseDao]
+    operation: "clearSharedExpenseFlags"
+    barrier_required: true
+    reason: "Atomic hard delete — clears shared-expense flags on orphaned linked system expenses"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Data Retention / Privacy Audit ───────────────────────────────
+  # Source: data/privacy/DataRetentionWorker.kt
+  # doWork writes privacy-audit events via appDatabase.privacyAuditDao().
+  # Barrier: WorkerExecutionGuard.runGuardedWithContext mediates write protection;
+  # no direct writeBarrier.checkWritesAllowed() call within doWork.
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
+    class: DataRetentionWorker
+    method: "doWork"
+    daos: [privacyAuditDao]
+    operation: "insert"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated write protection; direct barrier not claimed. Worker writes privacy audit events for retention purges."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── AI Chat ──────────────────────────────────────────────────────
+  # Source: data/repository/AiChatRepositoryImpl.kt
+  # Room accessor identities: AiChatSessionDao -> aiChatSessionDao,
+  # AiChatMessageDao -> aiChatMessageDao.
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+    class: AiChatRepositoryImpl
+    method: "createSession"
+    daos: [aiChatSessionDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Insert new AI chat session row"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+    class: AiChatRepositoryImpl
+    method: "appendMessage"
+    daos: [aiChatMessageDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Insert message row inside withTransaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+    class: AiChatRepositoryImpl
+    method: "appendMessage"
+    daos: [aiChatSessionDao]
+    operation: "updateLastTouched"
+    barrier_required: true
+    reason: "Update session lastTouched inside withTransaction"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+    class: AiChatRepositoryImpl
+    method: "clearSession"
+    daos: [aiChatSessionDao]
+    operation: "deleteById"
+    barrier_required: true
+    reason: "Delete single AI chat session by ID (cascades to messages)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+    class: AiChatRepositoryImpl
+    method: "clearAllHistory"
+    daos: [aiChatSessionDao]
+    operation: "deleteAll"
+    barrier_required: true
+    reason: "Delete all AI chat sessions (cascades to all messages)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+    class: AiChatRepositoryImpl
+    method: "purgeOldMessages"
+    daos: [aiChatMessageDao]
+    operation: "deleteOlderThan"
+    barrier_required: true
+    reason: "Delete messages older than cutoff epoch millis"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Anomaly Alerts ───────────────────────────────────────────────
+  # Source: data/repository/AnomalyAlertRepositoryImpl.kt
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/AnomalyAlertRepositoryImpl.kt
+    class: AnomalyAlertRepositoryImpl
+    method: "insert"
+    daos: [anomalyAlertDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Canonical anomaly alert writer — inserts alert rows for spending anomalies"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Business Expenses / Mileage ──────────────────────────────────
+  # Source: data/repository/BusinessExpenseRepository.kt
+  # Room accessor identity: MileageTrackingDao -> mileageTrackingDao.
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/BusinessExpenseRepository.kt
+    class: BusinessExpenseRepository
+    method: "addMileage"
+    daos: [mileageTrackingDao]
+    operation: "insert"
+    barrier_required: true
+    reason: "Canonical business mileage writer — inserts mileage tracking records"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Warranty Expiration Notifications ────────────────────────────
+  # Source: service/warranty/WarrantyExpirationWorker.kt
+  # doWork writes deliveryDao.recoverStaleClaimed + deliveryDao.deleteOlderThan;
+  # private deliverReminder writes deliveryDao.insertOrIgnore, claim,
+  # markSentFromClaimed, markFailed (direct evidence supports the private writer).
+  # Barrier: WorkerExecutionGuard.runGuardedWithContext mediates write protection;
+  # no direct writeBarrier.checkWritesAllowed() call inside the worker.
+  - path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+    class: WarrantyExpirationWorker
+    method: "doWork"
+    daos: [warrantyReminderDeliveryDao]
+    operation: "recoverStaleClaimed"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated write protection; direct barrier not claimed. Resets stale CLAIMED deliveries to SCHEDULED at run start."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+    class: WarrantyExpirationWorker
+    method: "doWork"
+    daos: [warrantyReminderDeliveryDao]
+    operation: "deleteOlderThan"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated write protection; direct barrier not claimed. Prunes deliveries whose expiry is older than 90 days."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+    class: WarrantyExpirationWorker
+    method: "deliverReminder"
+    daos: [warrantyReminderDeliveryDao]
+    operation: "insertOrIgnore"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated write protection; direct barrier not claimed. Seeds SCHEDULED delivery row idempotently."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+    class: WarrantyExpirationWorker
+    method: "deliverReminder"
+    daos: [warrantyReminderDeliveryDao]
+    operation: "claim"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated write protection; direct barrier not claimed. Atomically claims SCHEDULED/FAILED delivery row."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+    class: WarrantyExpirationWorker
+    method: "deliverReminder"
+    daos: [warrantyReminderDeliveryDao]
+    operation: "markSentFromClaimed"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated write protection; direct barrier not claimed. Persists SENT only when delivery is DELIVERED."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+    class: WarrantyExpirationWorker
+    method: "deliverReminder"
+    daos: [warrantyReminderDeliveryDao]
+    operation: "markFailed"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated write protection; direct barrier not claimed. Records NOT_DELIVERED as FAILED (re-claimable)."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Exchange Rates ────────────────────────────────────────────────
+  # Source: data/currency/ExchangeRateStoreAdapter.kt
+  # Each method calls writeBarrier.checkWritesAllowed(...) directly before the
+  # DAO mutation (verified by DbGuardPolicyFixtureTest source evidence).
+  - path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
+    class: ExchangeRateStoreAdapter
+    method: "insertOrUpdate"
     daos: [exchangeRateDao]
-    operation: write
+    operation: "insertOrUpdate"
     barrier_required: true
-    reason: "Canonical exchange rate writer — network fetch, not user data"
+    reason: "Canonical exchange-rate single upsert writer — direct writeBarrier before exchangeRateDao.insertOrUpdate"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
+    class: ExchangeRateStoreAdapter
+    method: "insertOrUpdateAll"
+    daos: [exchangeRateDao]
+    operation: "insertOrUpdateAll"
+    barrier_required: true
+    reason: "Canonical exchange-rate bulk upsert writer — direct writeBarrier before exchangeRateDao.insertOrUpdateAll"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
+    class: ExchangeRateStoreAdapter
+    method: "deleteOldRates"
+    daos: [exchangeRateDao]
+    operation: "deleteOldRates"
+    barrier_required: true
+    reason: "Canonical exchange-rate retention purge writer — direct writeBarrier before exchangeRateDao.deleteOldRates"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Prompt States ─────────────────────────────────────────────────
+  # Source: data/repository/PromptStateRepository.kt
+  # Each method calls writeBarrier.checkWritesAllowed(...) directly before the
+  # DAO mutation (verified by DbGuardPolicyFixtureTest source evidence).
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
+    class: PromptStateRepository
+    method: "recordPrompt"
+    daos: [promptStateDao]
+    operation: "insertPromptState"
+    barrier_required: true
+    reason: "Canonical prompt-state writer — records prompt shown; direct writeBarrier before promptStateDao.insertPromptState"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
+    class: PromptStateRepository
+    method: "recordAcknowledgment"
+    daos: [promptStateDao]
+    operation: "insertPromptState"
+    barrier_required: true
+    reason: "Canonical prompt-state writer — records user acknowledgment; direct writeBarrier before promptStateDao.insertPromptState"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
+    class: PromptStateRepository
+    method: "cleanupOldRecords"
+    daos: [promptStateDao]
+    operation: "deleteOldPrompts"
+    barrier_required: true
+    reason: "Canonical prompt-state retention purge — direct writeBarrier before promptStateDao.deleteOldPrompts"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Background Job Runs (worker ledger) ───────────────────────────
+  # Source: domain/workers/WorkerRunLogger.kt + WorkerExecutionGuard.kt
+  # WorkerRunLoggerImpl.start is guard-mediated: WorkerExecutionGuard.startRunSafely
+  # calls writeBarrier.checkWritesAllowed(...) before WorkerRunLoggerImpl.start()
+  # inserts the RUNNING row; barrier_via documents that indirection and a direct
+  # barrier is NOT claimed there (verified by DbGuardPolicyFixtureTest).
+  # Handle.terminal is the exact terminal-writer: the private nested Handle
+  # writes dao.completeTerminal(...) under WorkerExecutionGuard.guardTerminal's
+  # bounded terminal-write wrapper, so it is also guard-mediated.
+  # WorkerExecutionGuard.recoverStaleRunningJobs is invoked directly at startup
+  # (outside runGuarded), so it performs its own writeBarrier.checkWritesAllowed(...)
+  # before staleAbortIfStillRunning and claims a direct barrier.
+  - path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
+    class: WorkerRunLoggerImpl
+    method: "start"
+    daos: [backgroundJobRunDao]
+    operation: "insert"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated insert of RUNNING job-run row via startRunSafely writeBarrier check; direct barrier not claimed."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
+    class: Handle
+    method: "terminal"
+    daos: [backgroundJobRunDao]
+    operation: "completeTerminal"
+    barrier_required: false
+    barrier_via: WorkerExecutionGuard
+    reason: "WorkerExecutionGuard-mediated terminal writer — private nested Handle completes job-run row under guardTerminal bounded write; direct barrier not claimed."
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt
+    class: WorkerExecutionGuard
+    method: "recoverStaleRunningJobs"
+    daos: [backgroundJobRunDao]
+    operation: "staleAbortIfStillRunning"
+    barrier_required: true
+    reason: "Stale-run recovery invoked directly at startup outside runGuarded — direct writeBarrier.checkWritesAllowed before CAS staleAbortIfStillRunning mutation; fail closed when writes blocked."
     owner: "@panospao7"
     linked_issue: "MIT-003"

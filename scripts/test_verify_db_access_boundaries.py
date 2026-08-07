@@ -29,9 +29,11 @@ Contract under test (scripts/verify_db_access_boundaries.py):
 * File operations are detected from the COMPLETE statefully masked text with
   EXACT call/token evidence - calls may span line breaks
   (``db.execSQL\\n("...")``, ``SQLiteDatabase.openDatabase\\n(...)``) and keep
-  the call-start line; ``raw_`` categories authorize only provably-exact
-  operations (never prefix-like text such as ``getDatabasePathway`` /
-  ``openDatabaseHelper`` / ``mywritableDatabase``); a supported operation
+  the call-start line; the exact operation vocabulary is bounded to
+  ``execSQL``, ``openDatabase``, ``getDatabasePath``, ``deleteRecursively``,
+  ``writableDatabase`` — a structural exception never authorizes a different
+  real operation, never prefix-like text such as ``getDatabasePathway`` /
+  ``openDatabaseHelper`` / ``mywritableDatabase``; a supported operation
   token that cannot be parsed as an exact call fails closed with
   ``UNSUPPORTED_STRUCTURAL_OP`` instead of being silently skipped.
 * Missing / unreadable / empty source behavior is fail-closed.
@@ -67,6 +69,15 @@ matches_policy_pair = _mod.matches_policy_pair
 load_db_ownership_policy = _mod.load_db_ownership_policy
 load_db_structural_exceptions = _mod.load_db_structural_exceptions
 normalize_policy_for_scan = _mod._normalize_policy_for_scan
+verify_ownership_policy_source_evidence = _mod.verify_ownership_policy_source_evidence
+structural_manifest_metadata_errors = _mod.structural_manifest_metadata_errors
+load_db_structural_expected_methods = _mod.load_db_structural_expected_methods
+verify_structural_exceptions_manifest = _mod.verify_structural_exceptions_manifest
+structural_manifest_classification_errors = _mod.structural_manifest_classification_errors
+MANIFEST_IMMUTABLE_EXPECTED_TUPLES = _mod.MANIFEST_IMMUTABLE_EXPECTED_TUPLES
+MANIFEST_IMMUTABLE_FIXTURE_TUPLES = _mod.MANIFEST_IMMUTABLE_FIXTURE_TUPLES
+MANIFEST_IMMUTABLE_EXPECTED_COUNT = _mod.MANIFEST_IMMUTABLE_EXPECTED_COUNT
+MANIFEST_IMMUTABLE_FIXTURE_COUNT = _mod.MANIFEST_IMMUTABLE_FIXTURE_COUNT
 
 CANONICAL_ROOT = "app/src/main/java"
 
@@ -500,7 +511,7 @@ def test_structural_loader_rejects_broad_method_patterns(tmp_path):
   - path: app/src/main/java/com/example/SomeClass.kt
     class: SomeClass
     method_pattern: '{pattern}'
-    operation: raw_sqlite
+    operation: execSQL
     reason: test
     owner: "@test"
     linked_issue: "TEST-001"
@@ -516,7 +527,7 @@ def test_structural_loader_accepts_exact_method_names(tmp_path):
   - path: app/src/main/java/com/example/SomeClass.kt
     class: SomeClass
     method_pattern: '{pattern}'
-    operation: raw_sqlite
+    operation: execSQL
     reason: test
     owner: "@test"
     linked_issue: "TEST-001"
@@ -546,7 +557,7 @@ def test_structural_loader_rejects_unknown_field(tmp_path, capsys):
   - path: app/src/main/java/com/example/SomeClass.kt
     class: SomeClass
     method_pattern: "verify"
-    operation: raw_sqlite
+    operation: execSQL
     class_name: "SomeClass"
     reason: test
     owner: "@test"
@@ -591,6 +602,72 @@ def test_structural_entry_metadata_errors_validate_entries():
     assert any("method_pattern" in e for e in errors)
 
 
+def test_structural_file_operations_whitelist_is_exact():
+    """The structural operation whitelist is EXACTLY the five supported
+    names — no ``raw_*`` category, no generic ``write``, nothing else."""
+    assert _mod.STRUCTURAL_FILE_OPERATIONS == frozenset({
+        "execSQL", "openDatabase", "getDatabasePath", "deleteRecursively",
+        "writableDatabase",
+    })
+
+
+def test_structural_metadata_rejects_invalid_operations():
+    """Any structural operation outside the exact whitelist — ``raw_sqlite``,
+    ``raw_db_file``, the generic ``write``, an arbitrary value, or an empty
+    string — is rejected by the metadata validator (fail closed)."""
+    for bad_op in ("raw_sqlite", "raw_db_file", "write", "arbitrary", ""):
+        entry = _sexc(
+            _canonical("com/example/SomeClass.kt"), "SomeClass", "verify", bad_op
+        )
+        errors = structural_entry_metadata_errors(entry)
+        assert errors, f"operation {bad_op!r} must be rejected"
+        assert any(
+            "exact supported structural operations" in e for e in errors
+        ), f"operation {bad_op!r} must be rejected with the whitelist error"
+
+
+def test_structural_loader_rejects_invalid_operations(tmp_path):
+    """The structural loader exits 2 (fail closed) for every invalid operation
+    value — a structural exception can never authorize a ``raw_*``, ``write``,
+    empty, or arbitrary operation."""
+    for i, bad_op in enumerate(("raw_sqlite", "raw_db_file", "write", "arbitrary", "")):
+        exceptions_path = _write_exceptions_yaml(tmp_path, f"""
+  - path: app/src/main/java/com/example/SomeClass.kt
+    class: SomeClass
+    method_pattern: "verify"
+    operation: {bad_op!r}
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+""")
+        with pytest.raises(SystemExit) as exc_info:
+            load_db_structural_exceptions(exceptions_path)
+        assert exc_info.value.code == 2, f"operation {bad_op!r} must fail closed"
+
+
+def test_structural_loader_rejects_invalid_operation_in_manifest(tmp_path):
+    """The structural expected-methods manifest loader exits 2 for a manifest
+    tuple whose operation is outside the exact whitelist (fail closed)."""
+    manifest_path = tmp_path / "manifest.yml"
+    manifest_path.write_text(
+        "counts:\n"
+        "  ownership_entries: 99\n"
+        "  structural_entries: 1\n"
+        "expected:\n"
+        "  - path: app/src/main/java/com/example/SomeClass.kt\n"
+        "    class: SomeClass\n"
+        "    method_pattern: 'verify'\n"
+        "    operation: raw_sqlite\n"
+        "    reason: test\n"
+        "    owner: '@test'\n"
+        "    linked_issue: 'TEST-001'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit) as exc_info:
+        load_db_structural_expected_methods(str(manifest_path))
+    assert exc_info.value.code == 2
+
+
 # ── 4. Exact class / method / body resolution ─────────────────────────────────
 
 def test_parse_type_declarations_extracts_exact_names_and_kinds():
@@ -615,6 +692,50 @@ object Qux {
     # Every declaration must expose a sane, non-negative balanced range.
     for d in decls:
         assert 0 <= d["start"] <= d["end"]
+
+
+def test_multiline_class_header_body_brace_after_constructor_parens(tmp_path, monkeypatch):
+    """A class whose constructor parens close on a header line BEFORE the body
+    brace (``) : SomeContract,`` then ``OtherContract {`` — the
+    AnomalyAlertRepositoryImpl shape) is parsed to its true balanced body: the
+    exact method body is found and its DAO mutation is detected, instead of the
+    type being truncated at the declaration line (which would drop the method
+    and mis-attribute the mutation as top-level code)."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/AnomalyAlertRepositoryImpl.kt")
+    content = """class AnomalyAlertRepositoryImpl(
+    private val dao: AnomalyAlertDao
+) : SomeContract,
+    OtherContract {
+    fun insert(alert: AnomalyAlert): Long {
+        return dao.insert(alert)
+    }
+}
+"""
+    _write_kt(src, "com/example/AnomalyAlertRepositoryImpl.kt", content)
+
+    lines = content.split("\n")
+    decls = parse_type_declarations(lines)
+    assert [d["name"] for d in decls] == ["AnomalyAlertRepositoryImpl"]
+    assert decls[0]["start"] == 0
+    # The type must span the full balanced body — never truncated at the
+    # declaration line just because the constructor parens balance early.
+    assert decls[0]["end"] == len(lines) - 1
+
+    methods = parse_function_declarations(lines, decls[0]["start"], decls[0]["end"])
+    assert [m["name"] for m in methods] == ["insert"]
+    assert "return dao.insert(alert)" in methods[0]["body"]
+
+    pairs = extract_mutation_pairs(methods[0]["body"], build_dao_var_map(lines))
+    assert ("anomalyAlertDao", "insert") in pairs
+
+    # End-to-end: the mutation is attributed to the exact method body and the
+    # covering policy authorizes it (never UNSUPPORTED_DAO_SCOPE at top level).
+    policy = [_entry(path, "AnomalyAlertRepositoryImpl", "insert",
+                     ["anomalyAlertDao"], "insert")]
+    violations, files_scanned = scan(str(src), policy, [])
+    assert files_scanned == 1
+    assert violations == [], violations
 
 
 def test_parse_function_declarations_extracts_methods_and_bodies():
@@ -3026,13 +3147,14 @@ def test_scan_api_rejects_ownership_write_operation(tmp_path, monkeypatch):
 
 
 # ── 17. Masked file-operation detection & exact structural evidence ───────────
-# File-operation detection (execSQL, openDatabase, writableDatabase, raw
-# database operations) runs on the stateful comment/string mask of the WHOLE
-# file (line comments, block comments, strings, triple-quoted strings, and char
-# literals replaced by spaces with offsets/newlines preserved).  Fake operation
-# text in comments/strings can never be detected as a file operation and can
-# never satisfy structural operation evidence — evidence requires the EXACT
-# call/token in the MASKED line, never a raw substring.
+# File-operation detection (execSQL, openDatabase, getDatabasePath,
+# deleteRecursively, writableDatabase) runs on the stateful comment/string
+# mask of the WHOLE file (line comments, block comments, strings,
+# triple-quoted strings, and char literals replaced by spaces with
+# offsets/newlines preserved).  Fake operation text in comments/strings can
+# never be detected as a file operation and can never satisfy structural
+# operation evidence — evidence requires the EXACT call/token in the MASKED
+# line, never a raw substring.
 
 def test_scan_file_ops_in_comments_and_strings_not_detected(tmp_path, monkeypatch):
     """Fake ``execSQL(`` / ``openDatabase(`` / ``writableDatabase`` text inside
@@ -3181,16 +3303,17 @@ def test_real_file_ops_still_detected_and_authorized(tmp_path, monkeypatch):
     assert [v[1] for v in flagged] == [3, 6, 9], flagged
 
 
-def test_raw_prefix_structural_operation_authorizes_real_ops_only(tmp_path, monkeypatch):
-    """``raw_``-prefixed structural operations remain catch-all: they approve
-    every REAL masked file operation inside the approved class/method, while a
-    real op in an unapproved method is still flagged."""
+def test_exact_operation_exception_authorizes_real_ops_only(tmp_path, monkeypatch):
+    """Exact structural operations authorize ONLY the methods they name: an
+    exception for ``execSQL`` + ``writableDatabase`` approves those real ops
+    in the approved method, while a real op in an unapproved method is still
+    flagged."""
     src = _fixture_source(tmp_path, monkeypatch)
-    path = _canonical("com/example/RawOpRepo.kt")
+    path = _canonical("com/example/ExactOpRepo.kt")
     _write_kt(
         src,
-        "com/example/RawOpRepo.kt",
-        """class RawOpRepo {
+        "com/example/ExactOpRepo.kt",
+        """class ExactOpRepo {
     fun rescue() {
         db.execSQL("VACUUM")
         val w = db.writableDatabase
@@ -3201,7 +3324,10 @@ def test_raw_prefix_structural_operation_authorizes_real_ops_only(tmp_path, monk
 }
 """,
     )
-    exceptions = [_sexc(path, "RawOpRepo", r"rescue", "raw_sqlite")]
+    exceptions = [
+        _sexc(path, "ExactOpRepo", r"rescue", "execSQL"),
+        _sexc(path, "ExactOpRepo", r"rescue", "writableDatabase"),
+    ]
     violations, files_scanned = scan(str(src), [], exceptions)
     assert files_scanned == 1
     flagged = [v for v in violations if "FORBIDDEN_FILE_OP" in v[3]]
@@ -3377,16 +3503,16 @@ def test_scan_unsupported_structural_operation_token_fails_closed(tmp_path, monk
     assert len([v for v in violations if v[1] == 6]) == 0, violations
 
 
-def test_scan_unsupported_structural_operation_not_authorized_by_raw(tmp_path, monkeypatch):
-    """A raw_ exception cannot authorize an unparseable supported operation
-    token — the real call in the same method is approved, the bare token
-    fails closed with UNSUPPORTED_STRUCTURAL_OP."""
+def test_scan_unsupported_structural_operation_not_authorized_by_exact_op(tmp_path, monkeypatch):
+    """An exact structural exception cannot authorize an unparseable supported
+    operation token — the real call in the same method is approved, the bare
+    token fails closed with UNSUPPORTED_STRUCTURAL_OP."""
     src = _fixture_source(tmp_path, monkeypatch)
-    path = _canonical("com/example/UnsupportedRawRepo.kt")
+    path = _canonical("com/example/UnsupportedExactOpRepo.kt")
     _write_kt(
         src,
-        "com/example/UnsupportedRawRepo.kt",
-        """class UnsupportedRawRepo {
+        "com/example/UnsupportedExactOpRepo.kt",
+        """class UnsupportedExactOpRepo {
     fun rescue() {
         db.execSQL
         db.execSQL("VACUUM")
@@ -3394,7 +3520,7 @@ def test_scan_unsupported_structural_operation_not_authorized_by_raw(tmp_path, m
 }
 """,
     )
-    exceptions = [_sexc(path, "UnsupportedRawRepo", r"rescue", "raw_sqlite")]
+    exceptions = [_sexc(path, "UnsupportedExactOpRepo", r"rescue", "execSQL")]
     violations, files_scanned = scan(str(src), [], exceptions)
     assert files_scanned == 1
     unsupported = [v for v in violations if "UNSUPPORTED_STRUCTURAL_OP" in v[3]]
@@ -3403,12 +3529,13 @@ def test_scan_unsupported_structural_operation_not_authorized_by_raw(tmp_path, m
     assert len([v for v in violations if "FORBIDDEN_FILE_OP" in v[3]]) == 0, violations
 
 
-# ── 17c. Raw structural operation precision ───────────────────────────────────
-# ``raw_`` exception categories are catch-all ONLY for provably-exact file
-# operations.  Detection uses exact masked call syntax / token boundaries, so
-# prefix-like identifiers (``getDatabasePathway``, ``openDatabaseHelper``,
-# ``mywritableDatabase``) are never detected as the supported operations and a
-# raw_ exception can never authorize them.
+# ── 17c. Exact structural operation precision ─────────────────────────────────
+# Structural exceptions name EXACT operations only (execSQL, openDatabase,
+# getDatabasePath, deleteRecursively, writableDatabase) with exact evidence.
+# Detection uses exact masked call syntax / token boundaries, so prefix-like
+# identifiers (``getDatabasePathway``, ``openDatabaseHelper``,
+# ``mywritableDatabase``) are never detected as the supported operations and
+# an exact-operation exception can never authorize them.
 
 def test_scan_prefix_like_identifiers_not_detected_as_file_ops(tmp_path, monkeypatch):
     """Prefix-like identifiers are NOT supported file operations: with no
@@ -3432,16 +3559,17 @@ def test_scan_prefix_like_identifiers_not_detected_as_file_ops(tmp_path, monkeyp
     assert violations == [], violations
 
 
-def test_scan_raw_exception_never_authorizes_prefix_like_text(tmp_path, monkeypatch):
-    """A raw_ exception covering the method authorizes only real provable
-    operations — prefix-like identifiers are never detected, never authorized,
-    and a REAL op in an uncovered method is still flagged at its exact line."""
+def test_scan_exact_op_exception_never_authorizes_prefix_like_text(tmp_path, monkeypatch):
+    """An exact structural exception covering the method authorizes only the
+    real named operation — prefix-like identifiers are never detected, never
+    authorized, and a REAL op in an uncovered method is still flagged at its
+    exact line."""
     src = _fixture_source(tmp_path, monkeypatch)
-    path = _canonical("com/example/PrefixRawRepo.kt")
+    path = _canonical("com/example/PrefixExactOpRepo.kt")
     _write_kt(
         src,
-        "com/example/PrefixRawRepo.kt",
-        """class PrefixRawRepo {
+        "com/example/PrefixExactOpRepo.kt",
+        """class PrefixExactOpRepo {
     fun rescue() {
         val a = getDatabasePathway("backup.db")
         val b = openDatabaseHelper(path, null, 0)
@@ -3454,7 +3582,7 @@ def test_scan_raw_exception_never_authorizes_prefix_like_text(tmp_path, monkeypa
 }
 """,
     )
-    exceptions = [_sexc(path, "PrefixRawRepo", r"rescue", "raw_sqlite")]
+    exceptions = [_sexc(path, "PrefixExactOpRepo", r"rescue", "execSQL")]
     violations, files_scanned = scan(str(src), [], exceptions)
     assert files_scanned == 1
     # The real op inside rescue is authorized; the real op in `other` is
@@ -3466,16 +3594,17 @@ def test_scan_raw_exception_never_authorizes_prefix_like_text(tmp_path, monkeypa
     assert len([v for v in violations if "UNSUPPORTED_STRUCTURAL_OP" in v[3]]) == 0, violations
 
 
-def test_scan_raw_exception_authorizes_exact_real_operations(tmp_path, monkeypatch):
-    """A raw_ exception approves the EXACT real supported operations in the
-    approved method — getDatabasePath, openDatabase, writableDatabase,
-    deleteRecursively, execSQL — each detected with exact token/call syntax."""
+def test_scan_exact_operation_exceptions_authorize_all_five_real_operations(tmp_path, monkeypatch):
+    """Five exact structural exceptions — one per supported operation —
+    approve the EXACT real operations in the approved method:
+    getDatabasePath, openDatabase, writableDatabase, deleteRecursively,
+    execSQL — each detected with exact token/call syntax."""
     src = _fixture_source(tmp_path, monkeypatch)
-    path = _canonical("com/example/RawPositiveRepo.kt")
+    path = _canonical("com/example/ExactOpsPositiveRepo.kt")
     _write_kt(
         src,
-        "com/example/RawPositiveRepo.kt",
-        """class RawPositiveRepo {
+        "com/example/ExactOpsPositiveRepo.kt",
+        """class ExactOpsPositiveRepo {
     fun rescue() {
         val dbFile = context.getDatabasePath("backup.db")
         val db = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, 0)
@@ -3486,11 +3615,17 @@ def test_scan_raw_exception_authorizes_exact_real_operations(tmp_path, monkeypat
 }
 """,
     )
-    exceptions = [_sexc(path, "RawPositiveRepo", r"rescue", "raw_db_file")]
+    exceptions = [
+        _sexc(path, "ExactOpsPositiveRepo", r"rescue", "getDatabasePath"),
+        _sexc(path, "ExactOpsPositiveRepo", r"rescue", "openDatabase"),
+        _sexc(path, "ExactOpsPositiveRepo", r"rescue", "writableDatabase"),
+        _sexc(path, "ExactOpsPositiveRepo", r"rescue", "deleteRecursively"),
+        _sexc(path, "ExactOpsPositiveRepo", r"rescue", "execSQL"),
+    ]
     violations, files_scanned = scan(str(src), [], exceptions)
     assert files_scanned == 1
     assert violations == [], violations
-    # Without the exception each real op is flagged at its exact line.
+    # Without the exceptions each real op is flagged at its exact line.
     violations, _ = scan(str(src), [], [])
     flagged = [v for v in violations if "FORBIDDEN_FILE_OP" in v[3]]
     assert len(flagged) == 5, violations
@@ -3498,7 +3633,7 @@ def test_scan_raw_exception_authorizes_exact_real_operations(tmp_path, monkeypat
 
 
 def test_scan_single_op_exception_requires_exact_operation(tmp_path, monkeypatch):
-    """A non-raw structural exception authorizes ONLY the exact operation — a
+    """A structural exception authorizes ONLY the exact operation — a
     prefix-like sibling (getDatabasePathway) never satisfies the evidence for
     the real getDatabasePath call, which is still approved."""
     src = _fixture_source(tmp_path, monkeypatch)
@@ -3518,6 +3653,42 @@ def test_scan_single_op_exception_requires_exact_operation(tmp_path, monkeypatch
     violations, files_scanned = scan(str(src), [], exceptions)
     assert files_scanned == 1
     assert violations == [], violations
+
+
+def test_scan_execSQL_exception_never_authorizes_other_operations(tmp_path, monkeypatch):
+    """An ``execSQL`` structural exception authorizes ONLY execSQL: real
+    ``openDatabase`` / ``getDatabasePath`` calls and prefix-like identifiers
+    (``getDatabasePathway``, ``openDatabaseHelper``) in the same method are
+    never approved — every real non-execSQL op fails closed with
+    FORBIDDEN_FILE_OP at its exact line."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/ExecSQLOnlyRepo.kt")
+    _write_kt(
+        src,
+        "com/example/ExecSQLOnlyRepo.kt",
+        """class ExecSQLOnlyRepo {
+    fun rescue() {
+        db.execSQL("VACUUM")
+        val db = SQLiteDatabase.openDatabase(path, null, 0)
+        val f = context.getDatabasePath("backup.db")
+        val a = getDatabasePathway("x")
+        val b = openDatabaseHelper(path, null, 0)
+    }
+}
+""",
+    )
+    exceptions = [_sexc(path, "ExecSQLOnlyRepo", r"rescue", "execSQL")]
+    violations, files_scanned = scan(str(src), [], exceptions)
+    assert files_scanned == 1
+    # execSQL is authorized; the real openDatabase and getDatabasePath calls
+    # are NOT — each fails closed at its exact line.
+    flagged = [v for v in violations if "FORBIDDEN_FILE_OP" in v[3]]
+    assert len(flagged) == 2, violations
+    assert [v[1] for v in flagged] == [4, 5], flagged
+    # Prefix-like identifiers are never detected as supported operations and
+    # no other violation fires.
+    assert len([v for v in violations if "UNSUPPORTED_STRUCTURAL_OP" in v[3]]) == 0, violations
+    assert len(violations) == 2, violations
 
 
 # ── 18. Direct-API config errors and unsupported DAO scopes ───────────────────
@@ -3806,4 +3977,898 @@ def test_method_local_alias_referenced_at_class_body_fails_closed(tmp_path, monk
     # The valid method-A mutation is authorized: only the class-body scope
     # violation is reported.
     assert len([v for v in violations if "UNALLOWLISTED_CLASS" in v[3]]) == 0, violations
+
+
+# ── 19. Ownership-policy source evidence ─────────────────────────────────────
+# verify_ownership_policy_source_evidence() proves the INVERSE of scan(): every
+# policy entry must be backed by EXACT source evidence (the canonical path
+# resolves to a real file, the class exists exactly once, the exact method
+# exists, every listed (dao, operation) pair exists in the source and every
+# actual source pair is covered by the policy union, and barrier claims are
+# truthful).  Failures use only the controlled SOURCE_EVIDENCE_CODES.
+
+def _evidence_codes(entries, source_root):
+    return [
+        e["code"]
+        for e in verify_ownership_policy_source_evidence(entries, str(source_root))
+    ]
+
+
+def test_source_evidence_valid_exact_entry_returns_no_errors(tmp_path, monkeypatch):
+    """A policy entry that EXACTLY matches the source (canonical path, class,
+    method, DAO, operation) is backed by source evidence: no errors."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/FooRepo.kt")
+    _write_kt(
+        src,
+        "com/example/FooRepo.kt",
+        """class FooRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    entries = [_entry(path, "FooRepo", "doWork", ["expenseDao"], "insert")]
+    assert _evidence_codes(entries, src) == []
+
+
+def test_source_evidence_missing_class_fails_closed(tmp_path, monkeypatch):
+    """A policy class the source file never declares fails closed with the
+    controlled CLASS_MISSING code — never a filename-stem fallback."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/FooRepo.kt")
+    _write_kt(
+        src,
+        "com/example/FooRepo.kt",
+        """class FooRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    entries = [_entry(path, "MissingRepo", "doWork", ["expenseDao"], "insert")]
+    errors = verify_ownership_policy_source_evidence(entries, str(src))
+    assert len(errors) == 1
+    assert errors[0]["code"] == "CLASS_MISSING"
+    assert errors[0]["class"] == "MissingRepo"
+
+
+def test_source_evidence_missing_method_fails_closed(tmp_path, monkeypatch):
+    """A policy method the source class never declares fails closed with the
+    controlled METHOD_MISSING code."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/FooRepo.kt")
+    _write_kt(
+        src,
+        "com/example/FooRepo.kt",
+        """class FooRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    entries = [_entry(path, "FooRepo", "otherMethod", ["expenseDao"], "insert")]
+    errors = verify_ownership_policy_source_evidence(entries, str(src))
+    assert len(errors) == 1
+    assert errors[0]["code"] == "METHOD_MISSING"
+    assert errors[0]["method"] == "otherMethod"
+
+
+def test_source_evidence_wrong_dao_operation_pair_fails_closed(tmp_path, monkeypatch):
+    """A policy pair the method never invokes (PAIR_NOT_FOUND) AND a real
+    source pair the policy omits (PAIR_NOT_COVERED) both fail closed."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/PairRepo.kt")
+    _write_kt(
+        src,
+        "com/example/PairRepo.kt",
+        """class PairRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    # The policy names budgetDao.update while the source invokes
+    # expenseDao.insert — the bidirectional coverage check fails both ways.
+    entries = [_entry(path, "PairRepo", "doWork", ["budgetDao"], "update")]
+    errors = verify_ownership_policy_source_evidence(entries, str(src))
+    codes = [e["code"] for e in errors]
+    assert "PAIR_NOT_FOUND" in codes, codes
+    assert "PAIR_NOT_COVERED" in codes, codes
+    assert any(e.get("dao") == "budgetDao" and e.get("operation") == "update"
+               for e in errors if e["code"] == "PAIR_NOT_FOUND"), errors
+    assert any(e.get("dao") == "expenseDao" and e.get("operation") == "insert"
+               for e in errors if e["code"] == "PAIR_NOT_COVERED"), errors
+
+
+def test_source_evidence_anomaly_multiline_class_header_exact_entry(tmp_path, monkeypatch):
+    """The AnomalyAlertRepositoryImpl shape — constructor parens close before
+    the body brace on a later header line (``) : SomeContract,`` then
+    ``OtherContract {``) — is parsed to its true balanced body, so the exact
+    policy entry is backed by source evidence."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/AnomalyAlertRepositoryImpl.kt")
+    _write_kt(
+        src,
+        "com/example/AnomalyAlertRepositoryImpl.kt",
+        """class AnomalyAlertRepositoryImpl(
+    private val dao: AnomalyAlertDao
+) : SomeContract,
+    OtherContract {
+    fun insert(alert: AnomalyAlert): Long {
+        return dao.insert(alert)
+    }
+}
+""",
+    )
+    entries = [_entry(path, "AnomalyAlertRepositoryImpl", "insert",
+                      ["anomalyAlertDao"], "insert")]
+    assert _evidence_codes(entries, src) == []
+
+
+def test_source_evidence_overloaded_method_union(tmp_path, monkeypatch):
+    """Overloaded methods share one (path, class, method) group: the union of
+    every overload's mutation pairs is the method's evidence.  A partial policy
+    covering only one overload fails closed (PAIR_NOT_COVERED); the full union
+    passes."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/OverloadRepo.kt")
+    _write_kt(
+        src,
+        "com/example/OverloadRepo.kt",
+        """class OverloadRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+    }
+    fun doWork(x: Int) {
+        budgetDao.update(b)
+    }
+}
+""",
+    )
+    partial = [_entry(path, "OverloadRepo", "doWork", ["expenseDao"], "insert")]
+    errors = verify_ownership_policy_source_evidence(partial, str(src))
+    codes = [e["code"] for e in errors]
+    assert "PAIR_NOT_COVERED" in codes, codes
+    assert any(e.get("dao") == "budgetDao" and e.get("operation") == "update"
+               for e in errors if e["code"] == "PAIR_NOT_COVERED"), errors
+
+    full = [
+        _entry(path, "OverloadRepo", "doWork", ["expenseDao"], "insert"),
+        _entry(path, "OverloadRepo", "doWork", ["budgetDao"], "update"),
+    ]
+    assert _evidence_codes(full, src) == []
+
+
+def test_source_evidence_private_method_exact_entry(tmp_path, monkeypatch):
+    """A private method is resolved exactly like any other method — a covering
+    policy entry is backed by source evidence."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/PrivateRepo.kt")
+    _write_kt(
+        src,
+        "com/example/PrivateRepo.kt",
+        """class PrivateRepo {
+    private fun doWork() {
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    entries = [_entry(path, "PrivateRepo", "doWork", ["expenseDao"], "insert")]
+    assert _evidence_codes(entries, src) == []
+
+
+def test_source_evidence_barrier_required_without_direct_barrier_fails(tmp_path, monkeypatch):
+    """barrier_required=true with no direct masked writeBarrier before the
+    mutation fails closed with MISSING_WRITE_BARRIER — the pair itself is
+    covered, so no PAIR_NOT_COVERED fires."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierRepo.kt")
+    _write_kt(
+        src,
+        "com/example/BarrierRepo.kt",
+        """class BarrierRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    entries = [_entry(path, "BarrierRepo", "doWork", ["expenseDao"], "insert",
+                      barrier_required=True)]
+    errors = verify_ownership_policy_source_evidence(entries, str(src))
+    codes = [e["code"] for e in errors]
+    assert "MISSING_WRITE_BARRIER" in codes, codes
+    assert "PAIR_NOT_COVERED" not in codes, codes
+
+
+def test_source_evidence_barrier_required_with_direct_barrier_passes(tmp_path, monkeypatch):
+    """A real writeBarrier.checkWritesAllowed call before the mutation
+    satisfies the barrier claim and the entry is fully backed by evidence."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/BarrierRepo.kt")
+    _write_kt(
+        src,
+        "com/example/BarrierRepo.kt",
+        """class BarrierRepo {
+    fun doWork() {
+        writeBarrier.checkWritesAllowed("BarrierRepo.doWork")
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    entries = [_entry(path, "BarrierRepo", "doWork", ["expenseDao"], "insert",
+                      barrier_required=True)]
+    assert _evidence_codes(entries, src) == []
+
+
+def test_source_evidence_mediated_metadata_contradiction_fails(tmp_path, monkeypatch):
+    """A mediated entry (barrier_via=WorkerExecutionGuard) must be truthful:
+    claiming mediation AND a direct barrier at the same time — or claiming
+    mediation while the source directly invokes writeBarrier — is
+    MEDIATED_METADATA_UNTRUTHFUL."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical("com/example/MediatedRepo.kt")
+    _write_kt(
+        src,
+        "com/example/MediatedRepo.kt",
+        """class MediatedRepo {
+    fun doWork() {
+        writeBarrier.checkWritesAllowed("MediatedRepo.doWork")
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    entries = [_entry(path, "MediatedRepo", "doWork", ["expenseDao"], "insert",
+                      barrier_required=True, barrier_via="WorkerExecutionGuard")]
+    errors = verify_ownership_policy_source_evidence(entries, str(src))
+    codes = [e["code"] for e in errors]
+    assert "MEDIATED_METADATA_UNTRUTHFUL" in codes, codes
+    # A direct barrier is present, so the missing-barrier code never fires.
+    assert "MISSING_WRITE_BARRIER" not in codes, codes
+
+
+def test_source_evidence_invalid_entry_metadata_fails_closed(tmp_path):
+    """Invalid policy metadata (operation: write) is rejected before any
+    resolution with the controlled ENTRY_INVALID code."""
+    entries = [_entry(_canonical("com/example/FooRepo.kt"), "FooRepo", "doWork",
+                      ["expenseDao"], "write")]
+    errors = verify_ownership_policy_source_evidence(entries, str(tmp_path))
+    assert len(errors) == 1
+    assert errors[0]["code"] == "ENTRY_INVALID"
+    assert "operation: write" in errors[0]["detail"]
+
+
+def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path, monkeypatch, capsys):
+    """The CLI maps a source-evidence failure to exit 2 and prints the
+    controlled DB_POLICY_SOURCE_EVIDENCE diagnostic to stderr — a stale policy
+    entry can never silently approve anything."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    _write_kt(
+        src,
+        "com/example/FooRepo.kt",
+        """class FooRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    # Valid policy metadata, but the referenced class does not exist in the
+    # fixture source — the source-evidence validator fails with CLASS_MISSING.
+    policy_path = _write_policy_yaml(tmp_path, """
+  - path: app/src/main/java/com/example/FooRepo.kt
+    class: MissingRepo
+    method: "doWork"
+    daos: [expenseDao]
+    operation: insert
+    barrier_required: false
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+""")
+    exceptions_path = tmp_path / "exceptions.yml"
+    exceptions_path.write_text("entries: []\n", encoding="utf-8")
+
+    # SOURCE_DIR is computed at import time; pin it (and PROJECT_ROOT) to the
+    # fixture tree so main() resolves the fixture policy against fixture source.
+    monkeypatch.setattr(_mod, "SOURCE_DIR", str(src))
+    monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", [
+        "verify_db_access_boundaries.py",
+        "--ownership-policy", policy_path,
+        "--structural-exceptions", str(exceptions_path),
+    ])
+
+    with pytest.raises(SystemExit) as exc_info:
+        _mod.main()
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "DB_POLICY_SOURCE_EVIDENCE" in err
+    assert "CLASS_MISSING" in err
+
+
+# ── 20. Structural expected-methods manifest gate ─────────────────────────────
+# The production CLI enforces `config/guards/db_structural_exceptions_expected_methods.yml`
+# as the CANONICAL contract for `db_structural_exceptions.yml`:
+#
+#   * exact tuple-set equivalence between the manifest's `expected` + `fixtures`
+#     tuple set and the current structural-exception tuple set (missing/extra
+#     tuples and duplicates all fail);
+#   * pinned entry counts (99 ownership / 62 structural) via the manifest's
+#     `counts` section;
+#   * exact source evidence for every manifest tuple (canonical path resolves
+#     to a real file, class declared exactly once, method_pattern fullmatches a
+#     declaration, and — for `expected` tuples — the operation token has EXACT
+#     evidence in that declaration body).
+#
+# Policies/manifests are copied into temporary YAML files and loaded through
+# the production loaders, then the pure validator API is exercised with the
+# fixture policies.  Assertions use only the controlled codes the CLI emits
+# under the `DB_STRUCTURAL_MANIFEST` prefix.
+
+def _manifest_entry_yaml(entry):
+    """Render one structural entry as YAML list-item lines (core fields)."""
+    return (
+        "  - path: " + entry["path"] + "\n"
+        "    class: " + entry["class"] + "\n"
+        "    method_pattern: '" + entry["method_pattern"] + "'\n"
+        "    operation: " + entry["operation"] + "\n"
+    )
+
+
+def _manifest_entries_yaml(entries):
+    """Render many structural entries as a YAML list body."""
+    return "".join(_manifest_entry_yaml(e) for e in entries)
+
+
+def _write_manifest_yaml(tmp_path, expected_entries, fixture_entries=(),
+                         ownership=99, structural=62):
+    """Write a structural expected-methods manifest into the temp tree."""
+    manifest = tmp_path / "manifest.yml"
+    content = (
+        "baseline:\n"
+        '  commit: "test"\n'
+        "counts:\n"
+        f"  ownership_entries: {ownership}\n"
+        f"  structural_entries: {structural}\n"
+    )
+    if expected_entries:
+        content += "expected:\n" + _manifest_entries_yaml(expected_entries)
+    else:
+        content += "expected: []\n"
+    if fixture_entries:
+        content += "fixtures:\n" + _manifest_entries_yaml(fixture_entries)
+    else:
+        content += "fixtures: []\n"
+    manifest.write_text(content, encoding="utf-8")
+    return str(manifest)
+
+
+def _manifest_dict(expected_entries, fixture_entries=(), ownership=99, structural=62):
+    """Build a parsed manifest mapping (the validator API input form)."""
+    return {
+        "baseline": {"commit": "test"},
+        "counts": {
+            "ownership_entries": ownership,
+            "structural_entries": structural,
+        },
+        "expected": list(expected_entries),
+        "fixtures": list(fixture_entries),
+    }
+
+
+def _manifest_source_file_fixture(tmp_path, monkeypatch, class_name="SomeClass",
+                                  n=62, no_evidence_indices=()):
+    """Create a source file with ``n`` methods; each calls ``db.execSQL(...)``
+    unless its index is in ``no_evidence_indices`` (those bodies carry no
+    guard-tracked operation token)."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    path = _canonical(f"com/example/{class_name}.kt")
+    methods = []
+    for i in range(n):
+        if i in no_evidence_indices:
+            methods.append(f"    fun m{i}() {{\n        val x = {i}\n    }}")
+        else:
+            methods.append(
+                f"    fun m{i}() {{\n        db.execSQL(\"SELECT {i}\")\n    }}"
+            )
+    _write_kt(
+        src,
+        f"com/example/{class_name}.kt",
+        f"class {class_name} {{\n" + "\n".join(methods) + "\n}\n",
+    )
+    return src, path
+
+
+def _manifest_tuples(path, class_name, n=62, operation="execSQL"):
+    """Build ``n`` distinct (path, class, m{i}, operation) manifest tuples."""
+    return [
+        {
+            "path": path,
+            "class": class_name,
+            "method_pattern": f"m{i}",
+            "operation": operation,
+        }
+        for i in range(n)
+    ]
+
+
+def _sexc_entries_for(tuples):
+    """Turn manifest tuples into structural-exception entries."""
+    return [
+        _sexc(t["path"], t["class"], t["method_pattern"], t["operation"])
+        for t in tuples
+    ]
+
+
+def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, monkeypatch):
+    """The manifest's expected tuple set EXACTLY equals the structural
+    exceptions YAML's entry tuple set (both copied to temp files and loaded
+    through the production loaders) — with the pinned 99/62 counts and full
+    source evidence the gate passes cleanly."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+
+    exceptions_path = _write_exceptions_yaml(
+        tmp_path, _manifest_entries_yaml(_sexc_entries_for(tuples))
+    )
+    structural = load_db_structural_exceptions(exceptions_path)
+
+    manifest_path = _write_manifest_yaml(tmp_path, tuples)
+    manifest = load_db_structural_expected_methods(manifest_path)
+
+    errors = verify_structural_exceptions_manifest(
+        structural, manifest, str(src), ownership_count=99
+    )
+    assert errors == [], errors
+
+
+def test_manifest_missing_tuple_fails_closed(tmp_path, monkeypatch):
+    """A manifest tuple with no EXACT structural exception entry fails with the
+    controlled MISSING_TUPLE code — and no other code fires."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=63)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name, n=63)
+    # Current structural exceptions omit m62; the manifest keeps it.
+    current = _sexc_entries_for(tuples[:-1])
+    manifest = _manifest_dict(tuples)
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), ownership_count=99
+    )
+    missing = [e for e in errors if e.startswith("MISSING_TUPLE")]
+    assert len(missing) == 1, errors
+    assert "m62" in missing[0], missing
+    assert all(not e.startswith("EXTRA_TUPLE") for e in errors), errors
+    assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
+
+
+def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
+    """A structural exception tuple with no manifest coverage fails with the
+    controlled EXTRA_TUPLE code — an entry added without a manifest update can
+    never silently pass."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=62)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name, n=62)
+    # Current exceptions keep m61; the manifest does not cover it.
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(tuples[:-1])
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), ownership_count=99
+    )
+    extra = [e for e in errors if e.startswith("EXTRA_TUPLE")]
+    assert len(extra) == 1, errors
+    assert "m61" in extra[0], extra
+    assert all(not e.startswith("MISSING_TUPLE") for e in errors), errors
+    assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
+
+
+def test_manifest_duplicate_tuple_fails_closed(tmp_path, monkeypatch):
+    """A duplicated tuple inside the CURRENT structural exceptions fails with
+    the controlled DUPLICATE_TUPLE code."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=61)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name, n=61)
+    current = _sexc_entries_for(tuples)
+    current.append(_sexc(path, class_name, "m0", "execSQL"))  # duplicate m0
+    manifest = _manifest_dict(tuples)
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), ownership_count=99
+    )
+    dup = [e for e in errors if e.startswith("DUPLICATE_TUPLE")]
+    assert len(dup) == 1, errors
+    assert "m0" in dup[0], dup
+    assert all(not e.startswith("MISSING_TUPLE") for e in errors), errors
+    assert all(not e.startswith("EXTRA_TUPLE") for e in errors), errors
+    assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
+
+
+def test_manifest_duplicate_manifest_tuple_rejected(tmp_path):
+    """A duplicated tuple INSIDE the manifest's expected section is invalid
+    manifest metadata: the loader exits 2 and the metadata validator reports
+    the duplicate detail (which surfaces under the controlled MANIFEST_INVALID
+    code at validation time)."""
+    path = _canonical("com/example/SomeClass.kt")
+    tuples = _manifest_tuples(path, "SomeClass", n=61)
+    dup = list(tuples) + [dict(tuples[0])]
+
+    manifest_path = _write_manifest_yaml(tmp_path, dup)
+    with pytest.raises(SystemExit) as exc_info:
+        load_db_structural_expected_methods(manifest_path)
+    assert exc_info.value.code == 2
+
+    errors = structural_manifest_metadata_errors(_manifest_dict(dup))
+    assert any("duplicate" in e for e in errors), errors
+
+
+def test_manifest_malformed_entry_fails_closed(tmp_path):
+    """A malformed manifest entry (non-canonical path or unbounded
+    method_pattern) is rejected with the controlled MANIFEST_INVALID code
+    before any tuple or source check — the loader exits 2."""
+    path = _canonical("com/example/SomeClass.kt")
+    tuples = _manifest_tuples(path, "SomeClass", n=62)
+
+    # Non-canonical path (bare basename) — loader and validator both reject.
+    bad_path = [dict(t) for t in tuples]
+    bad_path[0]["path"] = "SomeClass.kt"
+    manifest_path = _write_manifest_yaml(tmp_path, bad_path)
+    with pytest.raises(SystemExit) as exc_info:
+        load_db_structural_expected_methods(manifest_path)
+    assert exc_info.value.code == 2
+    errors = structural_manifest_metadata_errors(_manifest_dict(bad_path))
+    assert any("not canonical" in e for e in errors), errors
+
+    # Unbounded method_pattern — rejected by the validator.
+    bad_pattern = [dict(t) for t in tuples]
+    bad_pattern[0]["method_pattern"] = ".*"
+    errors = structural_manifest_metadata_errors(_manifest_dict(bad_pattern))
+    assert any("method_pattern" in e for e in errors), errors
+
+    # The validator API surfaces the SAME controlled MANIFEST_INVALID code the
+    # CLI prints under the DB_STRUCTURAL_MANIFEST prefix.
+    invalid = [
+        e for e in verify_structural_exceptions_manifest(
+            _sexc_entries_for(tuples), _manifest_dict(bad_path),
+            str(tmp_path), ownership_count=99,
+        )
+        if e.startswith("MANIFEST_INVALID")
+    ]
+    assert invalid, "expected MANIFEST_INVALID from the validator API"
+    assert any("not canonical" in e for e in invalid), invalid
+
+
+def test_manifest_count_mismatch_fails_closed(tmp_path, monkeypatch):
+    """Manifest counts that drift from the pinned 99/62 contract fail with the
+    controlled COUNT_MISMATCH code — on the manifest side, the current
+    ownership count, and the current structural count."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+    current = _sexc_entries_for(tuples)
+
+    manifest = _manifest_dict(tuples, ownership=98, structural=61)
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), ownership_count=99
+    )
+    count_errors = [e for e in errors if e.startswith("COUNT_MISMATCH")]
+    assert len(count_errors) >= 2, errors
+    assert any("ownership_entries" in e for e in count_errors), count_errors
+    assert any("structural_entries" in e for e in count_errors), count_errors
+    assert all("99" in e or "62" in e for e in count_errors), count_errors
+
+
+def test_manifest_source_class_missing_fails_closed(tmp_path, monkeypatch):
+    """A manifest tuple whose class is not declared in the source file fails
+    with the controlled SOURCE_CLASS_MISSING code — never a filename-stem or
+    file-wide fallback."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+    tuples[0] = dict(tuples[0])
+    tuples[0]["class"] = "MissingClass"
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(tuples)
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), ownership_count=99
+    )
+    class_missing = [e for e in errors if e.startswith("SOURCE_CLASS_MISSING")]
+    assert len(class_missing) == 1, errors
+    assert "MissingClass" in class_missing[0], class_missing
+    assert all(not e.startswith("SOURCE_EVIDENCE_MISSING") for e in errors), errors
+
+
+def test_manifest_source_declaration_missing_fails_closed(tmp_path, monkeypatch):
+    """A manifest method_pattern that fullmatches no declaration in the class
+    fails with the controlled SOURCE_DECLARATION_MISSING code."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+    tuples[0] = dict(tuples[0])
+    tuples[0]["method_pattern"] = "noSuchMethod"
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(tuples)
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), ownership_count=99
+    )
+    decl = [e for e in errors if e.startswith("SOURCE_DECLARATION_MISSING")]
+    assert len(decl) == 1, errors
+    assert "noSuchMethod" in decl[0], decl
+
+
+def test_manifest_source_evidence_missing_fails_closed(tmp_path, monkeypatch):
+    """An expected tuple whose method exists but carries no EXACT operation
+    token in its body fails with the controlled SOURCE_EVIDENCE_MISSING code —
+    evidence is never file-wide or substring-based."""
+    src, path = _manifest_source_file_fixture(
+        tmp_path, monkeypatch, n=62, no_evidence_indices=(0,)
+    )
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name, n=62)
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(tuples)
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), ownership_count=99
+    )
+    evidence = [e for e in errors if e.startswith("SOURCE_EVIDENCE_MISSING")]
+    assert len(evidence) == 1, errors
+    assert "m0" in evidence[0], evidence
+    assert all(not e.startswith("SOURCE_DECLARATION_MISSING") for e in errors), errors
+
+
+def test_manifest_fixture_tuple_requires_declaration_only(tmp_path, monkeypatch):
+    """Fixture tuples require declaration existence only — a fixture method
+    without a guard-tracked operation token passes (the documented fixture
+    contract), while the same tuple in ``expected`` would fail with
+    SOURCE_EVIDENCE_MISSING."""
+    src, path = _manifest_source_file_fixture(
+        tmp_path, monkeypatch, n=62, no_evidence_indices=(0,)
+    )
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name, n=62)
+    expected = tuples[1:]
+    fixtures = [tuples[0]]
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(expected, fixtures)
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), ownership_count=99
+    )
+    assert errors == [], errors
+
+
+def test_manifest_cli_wiring_exits_2_with_db_structural_manifest(tmp_path, monkeypatch, capsys):
+    """The CLI maps a structural-manifest failure to exit 2 and prints the
+    controlled DB_STRUCTURAL_MANIFEST diagnostic to stderr — a stale manifest
+    can never silently approve file operations."""
+    src = _fixture_source(tmp_path, monkeypatch)
+    _write_kt(
+        src,
+        "com/example/FooRepo.kt",
+        """class FooRepo {
+    fun doWork() {
+        expenseDao.insert(e)
+    }
+}
+""",
+    )
+    # Ownership policy backed by exact source evidence (passes the
+    # source-evidence stage), empty structural exceptions, and a manifest whose
+    # pinned counts do not match the current policy sizes — a COUNT_MISMATCH
+    # that must exit 2 under the DB_STRUCTURAL_MANIFEST prefix.
+    policy_path = _write_policy_yaml(tmp_path, """
+  - path: app/src/main/java/com/example/FooRepo.kt
+    class: FooRepo
+    method: "doWork"
+    daos: [expenseDao]
+    operation: insert
+    barrier_required: false
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+""")
+    exceptions_path = tmp_path / "exceptions.yml"
+    exceptions_path.write_text("entries: []\n", encoding="utf-8")
+    manifest_path = _write_manifest_yaml(tmp_path, [], ownership=99, structural=62)
+
+    monkeypatch.setattr(_mod, "SOURCE_DIR", str(src))
+    monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", [
+        "verify_db_access_boundaries.py",
+        "--ownership-policy", policy_path,
+        "--structural-exceptions", str(exceptions_path),
+        "--structural-manifest", manifest_path,
+    ])
+
+    with pytest.raises(SystemExit) as exc_info:
+        _mod.main()
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "DB_STRUCTURAL_MANIFEST" in err
+    assert "COUNT_MISMATCH" in err
+
+
+# ── 21. Immutable manifest classification contract ────────────────────────────
+# The structural expected-methods manifest's ``expected`` and ``fixtures``
+# sections must EXACTLY equal the immutable checked-in tuple contracts
+# (58 expected / 4 fixtures).  Moving a tuple between sections, inventing a
+# new fixture tuple, or dropping a pinned tuple all fail with
+# MANIFEST_CLASSIFICATION_MISMATCH — a reclassified ``expected`` tuple can
+# never escape its mandatory operation evidence through the declaration-only
+# fixtures bucket.
+#
+# The checked-in contract tests below load the REAL production files through
+# the production loaders (no synthetic temp fixtures): the 99/62 counts, the
+# exact tuple classification, and the full structural-manifest gate must all
+# pass on the actual repo state.
+
+def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
+    """Build a parsed manifest mapping from canonical (path, class,
+    method_pattern, operation) tuples."""
+    def to_entry(t):
+        path, class_name, method_pattern, operation = t
+        return {
+            "path": path,
+            "class": class_name,
+            "method_pattern": method_pattern,
+            "operation": operation,
+        }
+    return {
+        "baseline": {"commit": "test"},
+        "counts": {
+            "ownership_entries": 99,
+            "structural_entries": 62,
+        },
+        "expected": [to_entry(t) for t in expected_tuples],
+        "fixtures": [to_entry(t) for t in fixture_tuples],
+    }
+
+
+def test_manifest_immutable_contracts_pin_exact_counts():
+    """The immutable contracts pin EXACTLY 58 expected and 4 fixture tuples,
+    every tuple is canonical, and the two contracts are disjoint."""
+    assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 58
+    assert MANIFEST_IMMUTABLE_FIXTURE_COUNT == 4
+    assert len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES) == 58
+    assert len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES) == 4
+    assert MANIFEST_IMMUTABLE_EXPECTED_TUPLES.isdisjoint(
+        MANIFEST_IMMUTABLE_FIXTURE_TUPLES
+    )
+    for path, _class_name, _method_pattern, _operation in (
+        MANIFEST_IMMUTABLE_EXPECTED_TUPLES | MANIFEST_IMMUTABLE_FIXTURE_TUPLES
+    ):
+        assert canonical_policy_path_error(path) is None, path
+
+
+def test_manifest_classification_moving_expected_tuple_to_fixtures_fails():
+    """Moving an expected tuple into fixtures must fail: the expected contract
+    is short one tuple and the fixture contract holds an unexpected one."""
+    expected = sorted(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
+    fixtures = sorted(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
+    moved = expected[0]
+    manifest = _manifest_dict_from_tuples(expected[1:], list(fixtures) + [moved])
+    errors = structural_manifest_classification_errors(manifest)
+    classification = [
+        e for e in errors if e.startswith("MANIFEST_CLASSIFICATION_MISMATCH")
+    ]
+    assert len(classification) == 2, errors
+    assert any("'expected'" in e for e in classification), classification
+    assert any("'fixtures'" in e for e in classification), classification
+
+
+def test_manifest_classification_moving_fixture_tuple_to_expected_fails():
+    """Moving a fixture tuple into expected must fail the same way."""
+    expected = sorted(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
+    fixtures = sorted(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
+    moved = fixtures[0]
+    manifest = _manifest_dict_from_tuples(list(expected) + [moved], fixtures[1:])
+    errors = structural_manifest_classification_errors(manifest)
+    classification = [
+        e for e in errors if e.startswith("MANIFEST_CLASSIFICATION_MISMATCH")
+    ]
+    assert len(classification) == 2, errors
+    assert any("'expected'" in e for e in classification), classification
+    assert any("'fixtures'" in e for e in classification), classification
+
+
+def test_manifest_classification_arbitrary_new_fixture_tuple_fails():
+    """An arbitrary invented fixture tuple (not pinned by the immutable fixture
+    contract) must fail with MANIFEST_CLASSIFICATION_MISMATCH."""
+    fixtures = sorted(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
+    arbitrary = (
+        _canonical("com/example/InventedRepo.kt"),
+        "InventedRepo",
+        "inventedMethod",
+        "execSQL",
+    )
+    manifest = _manifest_dict_from_tuples(
+        sorted(MANIFEST_IMMUTABLE_EXPECTED_TUPLES), list(fixtures) + [arbitrary]
+    )
+    errors = structural_manifest_classification_errors(manifest)
+    classification = [
+        e for e in errors if e.startswith("MANIFEST_CLASSIFICATION_MISMATCH")
+    ]
+    assert len(classification) == 1, errors
+    assert "'fixtures'" in classification[0], classification[0]
+
+
+def test_manifest_classification_reclassified_expected_tuple_cannot_bypass_evidence():
+    """A reclassified expected tuple can never bypass its operation evidence:
+    taking an expected tuple (which requires EXACT operation evidence) and
+    moving it into fixtures (declaration-only) is rejected by the immutable
+    fixture contract — the moved tuple is NOT a pinned fixture identity."""
+    expected = sorted(MANIFEST_IMMUTABLE_EXPECTED_TUPLES)
+    fixtures = sorted(MANIFEST_IMMUTABLE_FIXTURE_TUPLES)
+    reclassified = expected[0]
+    manifest = _manifest_dict_from_tuples(expected[1:], list(fixtures) + [reclassified])
+    errors = structural_manifest_classification_errors(manifest)
+    assert any(
+        e.startswith("MANIFEST_CLASSIFICATION_MISMATCH") for e in errors
+    ), errors
+    assert reclassified not in MANIFEST_IMMUTABLE_FIXTURE_TUPLES
+
+
+def test_manifest_classification_checked_in_manifest_accepted():
+    """The checked-in manifest
+    (config/guards/db_structural_exceptions_expected_methods.yml) satisfies the
+    immutable classification contract exactly — no synthetic fixture data."""
+    manifest = load_db_structural_expected_methods()
+    assert structural_manifest_classification_errors(manifest) == []
+
+
+def test_manifest_current_structural_yaml_tuple_set_remains_exact():
+    """The CURRENT structural exceptions YAML tuple set must EXACTLY equal the
+    checked-in manifest's expected+fixtures tuple set — no missing, no extra,
+    no duplicates, and exactly the pinned 62 entries."""
+    structural = load_db_structural_exceptions()
+    manifest = load_db_structural_expected_methods()
+    current_tuples = [
+        (e["path"], e["class"], e["method_pattern"], e["operation"])
+        for e in structural
+    ]
+    manifest_tuples = [
+        (e["path"], e["class"], e["method_pattern"], e["operation"])
+        for e in (manifest.get("expected") or []) + (manifest.get("fixtures") or [])
+    ]
+    assert len(current_tuples) == len(set(current_tuples)), "duplicates in current YAML"
+    assert len(manifest_tuples) == len(set(manifest_tuples)), "duplicates in manifest"
+    assert set(current_tuples) == set(manifest_tuples)
+    assert len(current_tuples) == 62
+    assert len(manifest_tuples) == 62
+
+
+def test_checked_in_99_62_manifest_contract_via_production_apis():
+    """Canonical checked-in integration test — loads the ACTUAL ownership
+    policy, structural policy, and structural manifest from their production
+    paths and validates the 99/62 contract through the production loaders and
+    validators (no synthetic temp fixtures)."""
+    ownership = load_db_ownership_policy()
+    structural = load_db_structural_exceptions()
+    manifest = load_db_structural_expected_methods()
+
+    assert len(ownership) == 99
+    assert len(structural) == 62
+    assert manifest["counts"] == {
+        "ownership_entries": 99,
+        "structural_entries": 62,
+    }
+    assert structural_manifest_classification_errors(manifest) == []
+
+    errors = verify_structural_exceptions_manifest(
+        structural, manifest, _mod.SOURCE_DIR, ownership_count=len(ownership)
+    )
+    assert errors == [], errors
 

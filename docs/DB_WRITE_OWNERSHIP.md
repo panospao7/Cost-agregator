@@ -3,7 +3,23 @@
 Part of: Global Write/Read/Restore Barrier — PR 5
 
 Every table family has exactly one approved write owner.
-Direct DAO mutation outside this map is a violation caught by the static guard (PR 6/10).
+Direct DAO mutation outside the canonical DB ownership policy is a violation caught by the static guard (PR 6/10).
+
+The **canonical sources of truth** for all DB write authorization are:
+
+- `config/guards/db_ownership_policy.yml` — enumerates every approved writer class, method, DAOs, and operation.
+- `config/guards/db_structural_exceptions.yml` — grants approval for intrinsically low-level DB infrastructure operations (migrations, rescue, backup/restore, diagnostics, privacy export).
+
+All ownership authorization is decided by exactly those two files. In addition,
+`config/guards/db_structural_exceptions_expected_methods.yml` is a **mandatory
+integrity/classification manifest**: it pins the exact `expected`/`fixtures`
+tuple classification of the structural exceptions file against immutable
+checked-in contracts and enforces the 99/62 entry-count contract (ownership 99 / structural 62; expected 58 + fixtures 4). **The manifest
+grants NO authorization** — only an exact ownership-policy entry or a structural
+exception entry authorizes a write. Ratchet baselines likewise never authorize
+writes (see below).
+
+The legacy `config/db_access_allowlist.yml` is **superseded** by the files above and must not be treated as the active source of truth.
 
 ---
 
@@ -15,6 +31,7 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 | expenses (backfill only) | `ExpenseRepository` guarded methods | ⚠️ migrate to `ExpenseWriteStore` (PR 11) |
 | raw_notifications, pending_reviews | `NotificationRepository` | ✅ |
 | raw_notifications, pending_reviews (purge) | `DataRetentionWorker` | ⚠️ migrate to `RetentionCoordinator` |
+| privacy_audit_events | `DataRetentionWorker` (audit-only) | ✅ — retention purge audit trail |
 | scanned_receipts, receipt_events, email_receipts, receipt_expense_links | `ReceiptLifecycleCoordinator` | ✅ |
 | scanned_receipts (match status), receipt_events (match events) | `ReceiptMatchLifecycleService` | ✅ — match mutations + atomic `claimForAutoMatch`; writes `MATCH_ATTEMPTED`/`MATCH_NOT_FOUND`/`MATCH_SKIPPED_DOCUMENT_TYPE`/`AUTO_MATCH_LINK_FAILED`/`MATCH_SUGGESTED` under barrier + transaction |
 | receipt_expense_links (link/unlink) | `ReceiptLinkService` | ⚠️ must use `DatabaseWriteBarrier` (PR 7) |
@@ -31,12 +48,16 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 | subscription_candidates, subscription_price_history, subscription_usage | `SubscriptionRepository` | ✅ |
 | warranties, warranty_lifecycle_events | `WarrantyRepository` | ✅ |
 | warranty_reminder_deliveries | `WarrantyExpirationWorker` (via `WarrantyReminderDeliveryDao`: claim-before-notify; `SENT` only on `DELIVERED`) | ✅ — durable replacement for the removed SharedPreferences sent-state |
-| expense_groups, group_members, group_expenses, group_settlements | `GroupLifecycleCoordinator` | ✅ |
+| expense_groups, group_members, group_expenses, group_settlements | `GroupLifecycleCoordinator`, `GroupTransactionCoordinator` | ✅ |
 | categories | `CategoryRepository` | ✅ |
 | merchant_categories, merchant_normalizations, merchant_locations | `MerchantCategoryRepository` | ✅ |
 | spending_challenges | `SpendingChallengeRepository` | ✅ |
-| exchange_rates | `ExchangeRateRepository` | ✅ |
-| ai_artifacts, ai_chat_messages, ai_chat_sessions | `AiArtifactRepository` | ✅ |
+| anomaly_alerts | `AnomalyAlertRepositoryImpl` | ✅ |
+| mileage_tracking | `BusinessExpenseRepository` | ✅ |
+| exchange_rates | `ExchangeRateStoreAdapter` | ✅ |
+| ai_artifacts | `AiArtifactRepository` | ✅ |
+| ai_chat_messages, ai_chat_sessions | `AiArtifactRepository`, `AiChatRepositoryImpl` | ✅ |
+| prompt_states | `PromptStateRepository` | ✅ |
 | background_job_runs | `WorkerRunLoggerImpl` | ✅ |
 | pipeline_diagnostic_events | `PipelineDiagnosticEventRepository` | ⚠️ route through `MaintenanceSafeDiagnosticSink` (PR 9) |
 | DB file operations | `DatabaseBackupRepositoryImpl` | ✅ (file-level only, under maintenance mode) |
@@ -49,7 +70,8 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 2. **Every write entrypoint checks `DatabaseWriteBarrier`.** No exception except Room migrations.
 3. **Workers do not write DAOs directly.** They call coordinator/repository methods.
 4. **Debug-only writes** require `BuildConfig.DEBUG` guard AND `writeBarrier.checkWritesAllowed()`.
-5. **Entries marked ⚠️** are temporary allowlist exceptions. Each has a `allowed_until` target in `config/db_access_allowlist.yml`.
+5. **Entries marked ⚠️** are temporary exceptions tracked via issues linked from `config/guards/db_ownership_policy.yml`. The legacy `config/db_access_allowlist.yml` file is superseded; new authorizations must go into the ownership policy.
+6. **Ratchet baselines** track unresolved debt only (writers not yet listed in the ownership policy). They do **not** authorize writes — only an exact canonical ownership policy entry or a structural exception entry authorizes a DAO mutation. Baselines never make a write legal.
 
 ---
 
@@ -58,7 +80,7 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 | Pattern | Reason |
 |---|---|
 | UI / ViewModel direct DAO calls | No lifecycle coordination, no barrier |
-| Worker direct DAO calls (outside allowlist) | Must go through coordinator |
+| Worker direct DAO calls (outside the canonical DB ownership policy) | Must go through coordinator |
 | Email service direct DAO writes | Must delegate to `ReceiptLifecycleCoordinator` |
 | Any DAO write after DB file swap without fresh Room instance | Stale Room — use `AppDatabase.fileBuilder()` |
 
@@ -69,7 +91,11 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
 - **Runtime:** `DatabaseWriteBarrier.checkWritesAllowed()` throws `DatabaseAccessBlockedException` in all non-NORMAL modes.
 - **Static (warning):** `scripts/verify_db_access_boundaries.py` reports violations (PR 6).
 - **Static (CI failure):** Same script exits non-zero on new violations (PR 10).
-- **Config:** `config/db_access_allowlist.yml` is the source of truth for the static guard.
+- **Canonical policy:** `config/guards/db_ownership_policy.yml` is the source of truth for approved write owners. Each entry enumerates an exact class + method + DAOs + operation. Wildcard `"*"` method entries are not supported — every writer method must be individually listed.
+- **Structural exceptions:** `config/guards/db_structural_exceptions.yml` grants approval for DB file operations (Room migrations, maintenance rescue, backup/restore, diagnostics, privacy export, etc.) via exact method_pattern + operation matching.
+- **Structural manifest:** `config/guards/db_structural_exceptions_expected_methods.yml` is a mandatory integrity/classification manifest enforced by `verify_db_access_boundaries.py`. It requires the current structural-exception tuple set to EXACTLY equal the manifest's `expected` + `fixtures` tuple set, the `expected` set to exactly equal the immutable expected contract, and the `fixtures` set to exactly equal the immutable fixture contract (a moved or invented tuple fails with `MANIFEST_CLASSIFICATION_MISMATCH`, exit 2). **The manifest grants NO authorization** — it only verifies that the structural exceptions file matches its recorded classification.
+- **Ratchet baselines:** The ratchet baseline records unresolved debt (writers that exist in code but are not yet listed in the ownership policy). Baselines do **not** authorize new ownership; they document existing debt that must be resolved. Baselines never authorize writes — only an exact canonical ownership-policy entry or a structural exception entry authorizes a DAO mutation. New writers must be added to `db_ownership_policy.yml` — never to the baseline alone.
+- **Legacy allowlist:** `config/db_access_allowlist.yml` is retained for backward compatibility only and is superseded by the ownership policy + structural exceptions files above. Do not treat it as the active source of truth.
 
 ### Pipeline 4 Enforcement Additions
 - **`RecurringArchitectureGuardTest`** — 19 static architecture guard tests enforce:
@@ -79,3 +105,74 @@ Direct DAO mutation outside this map is a violation caught by the static guard (
   - Critical events use `RecurringLifecycleEventWriter` not direct DAO
   - Deactivation deletes (not cancels) open PLANNED rows
   - No `0L` placeholder occurrence IDs in reconcile results
+
+---
+
+## H2 ownership-policy sync — canonical sources and unresolved debt
+
+### Canonical sources of truth
+
+All DB write authorization is decided by exactly two files:
+
+- **`config/guards/db_ownership_policy.yml`** — the canonical ownership policy.
+  It enumerates every approved writer as an exact `(class, method, daos,
+  operation)` tuple. Wildcard `method = "*"` and the generic `operation: write`
+  are invalid policy metadata and are rejected by the loader
+  (`verify_db_access_boundaries.py`).
+- **`config/guards/db_structural_exceptions.yml`** — the canonical structural
+  exceptions file for intrinsically low-level DB file operations (migrations,
+  rescue, backup/restore, diagnostics, privacy export) via exact
+  `method_pattern` + `operation` matching.
+
+`config/guards/db_structural_exceptions_expected_methods.yml` is a mandatory
+integrity/classification manifest (not an authorization file): it pins the exact
+`expected`/`fixtures` tuple classification of the structural exceptions file
+against immutable checked-in contracts and enforces the 99/62 entry-count
+contract (ownership 99 / structural 62; expected=58 / fixtures=4). **The
+manifest grants no authorization** — only an exact
+ownership-policy entry or a structural exception entry authorizes a write.
+Baselines never authorize writes either (see below).
+
+The legacy `config/db_access_allowlist.yml` is superseded by the policy files
+above and is not a source of authorization.
+
+### Ratchet baseline: debt tracking only, not authorization
+
+`config/baselines/db_access.json` (driven by `scripts/ci/guard_ratchet.py`)
+records the DB access guard's current findings so CI can enforce no-growth.
+Recording a writer there **does not authorize** any DAO write — it only documents
+existing uncovered debt. Only an exact canonical ownership policy entry or a
+structural exception entry authorizes a DAO mutation; the ratchet baseline is
+never an authorization path. New writers must be added to
+`db_ownership_policy.yml` — never to the baseline alone.
+
+### Unresolved categories (not authorized)
+
+The following write paths remain outside the ownership policy and must NOT be
+treated as approved:
+
+- **`merchantCategoryDao`** — `CategoryRepository` seed/normalization writes
+  (`insertAll`, `updateNormalizedCanonicalName` in
+  `data/repository/CategoryRepository.kt`). The ownership policy only authorizes
+  `CategoryRepository.addCategory` / `deleteCategory` on `categoryDao`.
+- **`ExpenseRepository.userCorrectionDao`** — user-correction insert in
+  `data/repository/ExpenseRepository.kt`. `ExpenseRepository` has no
+  ownership-policy entry.
+- **`DatabaseBackupRepositoryImpl.scannedReceiptDao`** — restore-time
+  `scannedReceiptDao.update` of receipt image paths inside
+  `DatabaseBackupRepositoryImpl`. Structural exceptions cover only exact
+  structural-operation tuples for this class (`execSQL`, `openDatabase`,
+  `getDatabasePath`, `deleteRecursively`, `writableDatabase`), not DAO writes.
+  Structural exceptions are exact path/class/method/operation tuples and do
+  not authorize arbitrary raw file or database operations.
+- **Notification repair/scheduler paths** — `NotificationIntakeCoordinator`,
+  `NotificationIntakeWorker`, `NotificationIntakeRecoveryScheduler`, and
+  `NotificationIntakePayloadRepairer` write `intakeDao` directly
+  (`insertOrIgnore`, `claimForProcessing`, `markTerminal`, `markFinalFailure`,
+  `markRetryableFailure`, `purgeVisiblePayload`, `releaseStaleProcessing`, etc.)
+  without an ownership-policy entry.
+- **Current DB ratchet debt** — `config/baselines/db_access.json` lists the
+  currently uncovered writers (`UNALLOWLISTED_CLASS` / `UNALLOWLISTED_CLASS_DIRECT_CHAIN` /
+  `FORBIDDEN_FILE_OP` findings). These are debt, not authorization; resolving them
+  means adding entries to the ownership policy / structural exceptions, never
+  deleting the baseline record.
