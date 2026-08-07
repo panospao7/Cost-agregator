@@ -167,6 +167,109 @@ python -m pytest scripts/test_*.py -v
 
 ---
 
+## DB access boundary Gradle guard (PR-GR-01)
+
+The `:app:verifyDbAccessBoundaries` Gradle task **fails closed**. Before running
+the ratchet it validates every required input; a missing / non-regular /
+unreadable / outside-repository path is a `GradleException` — never a warning
+or a silent skip.
+
+### Required inputs (canonical defaults)
+
+| Required input | Canonical repo path |
+|---|---|
+| Ratchet wrapper | `scripts/ci/guard_ratchet.py` |
+| DB guard scanner | `scripts/verify_db_access_boundaries.py` |
+| Ratchet baseline | `config/baselines/db_access.json` |
+| Ownership policy | `config/guards/db_ownership_policy.yml` |
+| Structural exceptions | `config/guards/db_structural_exceptions.yml` |
+| Structural manifest | `config/guards/db_structural_exceptions_expected_methods.yml` |
+
+### Invocation
+
+```bash
+./gradlew :app:verifyDbAccessBoundaries --stacktrace
+```
+
+- The Python interpreter defaults to `python3` and can be overridden with
+  `-PpythonExecutable=/path/to/python3`. A preflight `pythonExecutable --version`
+  runs first; failure to launch Python (or a non-zero `--version` exit) is an
+  infrastructure error — distinct from the ratchet's own exit 2. The Python
+  contract mirror (`scripts/ci/gradle_db_guard_inputs.py`) surfaces it as a
+  controlled `GradleDbGuardInputError` exception (code `python_preflight`); the
+  Gradle task reports the same condition by failing the task with a
+  `GradleException`. The ratchet itself reserves exit 2 for its own
+  infrastructure failures (missing/malformed baseline, unlaunchable child
+  command, unexpected child exit, or an exit-1 guard that emits no parseable
+  fingerprints).
+- The ratchet is invoked with repeatable single-token `--command-arg=<value>`
+  arguments (argument list, `shell=False`) and `--ci-mode` — never a shell
+  string with embedded paths.  Every ratchet child argument is encoded as one
+  `--command-arg=<value>` list token (including option-like child values such
+  as `--fail-on-violation`, `--ownership-policy`, `--structural-exceptions`,
+  and `--structural-manifest`), so argparse can never re-parse them as the
+  ratchet's own flags.
+- Test-only path overrides (never used in production CI):
+  `-PdbGuardRatchetPath=...`, `-PdbGuardScriptPath=...`,
+  `-PdbGuardBaselinePath=...`, `-PdbGuardOwnershipPolicyPath=...`,
+  `-PdbGuardStructuralExceptionsPath=...`,
+  `-PdbGuardStructuralManifestPath=...`.
+  Relative override paths resolve against the repository root (`rootDir`),
+  consistent with the canonical defaults; absolute overrides are used as-is.
+
+### Failure messages
+
+Exit 1 (policy violations — new or stale/resolved findings when
+`--fail-on-violation` is enabled) directs developers to the canonical DB
+write-ownership sources of truth:
+
+- `config/guards/db_ownership_policy.yml`
+- `config/guards/db_structural_exceptions.yml`
+- `docs/DB_WRITE_OWNERSHIP.md`
+
+The legacy `config/db_access_allowlist.yml` is **superseded** and is never
+referenced by the guard.
+
+### Contract tests
+
+The Python helper `scripts/ci/gradle_db_guard_inputs.py` is the **contract
+mirror** of the Gradle task's input validation. Invalid inputs are reported
+through three distinct channels:
+
+- **Python contract helper** — for any invalid input (outside the repository
+  root, missing, non-regular, unreadable, or a failed Python preflight) the
+  helper raises `GradleDbGuardInputError` with a controlled, machine-readable
+  `code` (`outside_root`, `not_found`, `not_regular`, `not_readable`,
+  `python_preflight`) — never a warning or a silent skip.
+- **Ratchet process** — once inputs pass, the inner ratchet reports through
+  its own process exit codes:
+  - exit 0 — no new findings and no stale/resolved baseline entries (pass);
+  - exit 1 — policy violation: new or stale/resolved findings detected when
+    `--fail-on-violation` is enabled;
+  - exit 2 — infrastructure/configuration failure (unlaunchable child
+    command, malformed or unreadable baseline, unexpected child exit, or an
+    exit-1 guard with no parseable fingerprints).
+- **Gradle task** — the task converts the same invalid inputs into a
+  `GradleException`, failing the task (fail closed); an infrastructure
+  condition (for example the Python preflight) also fails the task, so a
+  broken local setup can never degrade into a warning.
+
+The parity tests in
+`scripts/ci/test_gradle_db_guard_contract.py` assert that the six required
+inputs, the override property names, and the inner ratchet command
+construction in `app/build.gradle.kts` stay in sync with that mirror, and that
+the policy/manifest arguments are always passed explicitly (never gated on
+override properties). They also assert every ratchet child argument is encoded
+as a single `--command-arg=<value>` token and that relative override paths
+resolve against the repository root. Whenever the Gradle validation changes,
+update the mirror and keep the parity tests green.
+
+```bash
+python3 -m pytest scripts/ci/test_gradle_db_guard_contract.py -v
+```
+
+---
+
 ## CI job equivalents
 
 | CI Job | Local command |
@@ -202,7 +305,7 @@ brew install actionlint
 Or download the binary from [GitHub releases](https://github.com/rhysd/actionlint/releases).
 
 ### `python3: command not found`
-Ensure Python 3.8+ is installed and available as `python3`. On some systems use `python` instead.
+Ensure Python 3.8+ is installed and available as `python3`. On some systems use `python` instead. The `verifyDbAccessBoundaries` Gradle task accepts `-PpythonExecutable=/path/to/python3` to point at the interpreter; its preflight `--version` check fails the task with a `GradleException` when Python cannot be launched. The Python contract mirror (`scripts/ci/gradle_db_guard_inputs.py`) surfaces the same condition as a `GradleDbGuardInputError` exception (code `python_preflight`) — a Python exception, not a ratchet exit code; the ratchet uses exit 2 only for its own infrastructure failures.
 
 ### Gradle daemon issues
 CI uses `--no-daemon`. For local runs, the daemon is fine, but if you encounter issues:

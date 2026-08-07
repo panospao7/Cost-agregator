@@ -6,29 +6,59 @@ Runs a guard script, fingerprints its violations, and compares against
 a stored baseline. Reports new, resolved, and unchanged findings.
 
 Exit codes:
-  0 -- no new findings (pass, even if old ones remain)
-  1 -- new or resolved findings detected (policy violation)
-  2 -- infrastructure error (guard crash, missing baseline, etc.)
+  0 -- no new findings and no stale/resolved baseline entries (pass)
+  1 -- policy violation: new or stale/resolved findings detected when
+       --fail-on-violation is enabled
+  2 -- infrastructure/configuration failure (guard crash, missing or
+       malformed baseline, unlaunchable Python, unexpected child exit, etc.)
 
-Usage:
+Usage (preferred -- repeatable single-token --command-arg=<value> list, shell=False):
+  python scripts/ci/guard_ratchet.py \
+    --guard-name cancellation \
+    --command-arg=python3 \
+    --command-arg=scripts/verify_cancellation_boundaries.py \
+    --baseline config/baselines/cancellation.json \
+    --fail-on-violation
+
+  Every child argument is encoded as ONE --command-arg=<value> token,
+  including option-like child values, e.g.:
+
+    --command-arg=--fail-on-violation
+    --command-arg=--ownership-policy
+    --command-arg=--structural-exceptions
+    --command-arg=--structural-manifest
+
+  A separate "--command-arg <value>" pair would let argparse re-parse
+  option-like child values as the ratchet's own flags and abort with
+  "expected one argument".  (The separate-token form still parses for
+  ordinary non-option values, but the single-token form is unambiguous for
+  every argument and is therefore preferred.)
+
+Usage (legacy compatibility -- --command shell string):
   python scripts/ci/guard_ratchet.py \
     --guard-name cancellation \
     --command "python3 scripts/verify_cancellation_boundaries.py" \
     --baseline config/baselines/cancellation.json \
     --fail-on-violation
+
+  The legacy form is parsed with a cross-platform, shell-free tokenizer
+  (never shell=True).  Syntactic surrounding quotes are removed so quoted
+  paths containing spaces work on every platform, e.g.:
+
+    --command 'python3 "C:\\dir with spaces\\guard.py"'
+
+  Shell metacharacters (;, &&, |, >, ...) are inert tokens, never operators.
 """
 
 import argparse
 import json
-import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 # Ensure stdout/stderr can handle Unicode on Windows
 if hasattr(sys.stdout, "reconfigure"):
@@ -67,6 +97,17 @@ _MONEY_PATH_HEADER_RE = re.compile(
 def _find_project_root() -> Path:
     """Return the project root directory (current working directory)."""
     return Path.cwd().resolve()
+
+
+def _sanitize_guard_name(name: str) -> str:
+    """Return a bounded, controlled representation of a guard name.
+
+    Non ``[A-Za-z0-9_.-]`` characters (including newlines) are replaced with
+    ``_`` and the result is capped at 80 characters so a hostile or malformed
+    ``--guard-name`` can never turn a diagnostic into multiple unbounded lines
+    or inject unbounded payloads.
+    """
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", name)[:80]
 
 
 def _normalize_path(path_line: str, project_root: Path) -> str:
@@ -252,24 +293,48 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
     """Load a baseline JSON file.  Returns None if the file is missing.
 
     When *guard_name* is provided, validates structure and exits 2 on
-    malformed or mismatched data (fingerprints not a list, duplicates,
-    wrong guard name, unparseable JSON).
+    malformed or mismatched data (unreadable/unparseable file, non-dict
+    JSON top level, wrong guard name, fingerprints missing / not a list /
+    non-string entries / duplicates).  Failures are reported with controlled
+    diagnostics only -- never a traceback or a raw exception message.
     """
     if not path.exists():
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"ERROR: Malformed baseline JSON in {path}: {e}", file=sys.stderr)
+    except FileNotFoundError:
+        # File disappeared between the existence check and the open.
+        return None
+    except UnicodeDecodeError:
+        print(f"ERROR: Baseline file is not valid UTF-8: {path}", file=sys.stderr)
+        sys.exit(2)
+    except json.JSONDecodeError:
+        print(f"ERROR: Malformed baseline JSON in {path}", file=sys.stderr)
+        sys.exit(2)
+    except (PermissionError, OSError) as exc:
+        print(
+            f"ERROR: Could not read baseline file {path} "
+            f"({exc.__class__.__name__})",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    if not isinstance(data, dict):
+        print(
+            f"ERROR: Baseline JSON top-level value must be an object in {path}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     if guard_name is not None:
         # Validate guard name matches
-        if data.get("guard") != guard_name:
+        actual_guard = data.get("guard")
+        if actual_guard != guard_name:
+            shown = actual_guard if isinstance(actual_guard, str) else "<non-string>"
             print(
                 f"ERROR: Baseline guard name mismatch in {path}: "
-                f"expected '{guard_name}', got '{data.get('guard')}'",
+                f"expected '{guard_name}', got '{shown}'",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -281,6 +346,17 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
             file=sys.stderr,
         )
         sys.exit(2)
+
+    # Reject non-string or blank entries (they would poison the set-based
+    # duplicate check and produce unstable fingerprints downstream).
+    for fp in fingerprints:
+        if not isinstance(fp, str) or not fp.strip():
+            print(
+                f"ERROR: Baseline 'fingerprints' entries must be non-empty "
+                f"strings in {path}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
 
     # Check for duplicate fingerprints
     if len(fingerprints) != len(set(fingerprints)):
@@ -361,23 +437,111 @@ def _resolve_python(command: List[str]) -> List[str]:
     return [sys.executable] + command[1:]
 
 
+def _strip_syntactic_quotes(token: str) -> str:
+    """Remove one matching pair of syntactic surrounding quotes from a token.
+
+    Only a quote character that both starts AND ends the token (with the same
+    quote character) is removed.  Quotes embedded inside a token are legitimate
+    inner characters and are preserved untouched, so ``py"th"on`` stays
+    ``py"th"on`` and only ``"C:\\dir with spaces\\x.py"`` loses its quotes.
+    """
+    if len(token) >= 2 and token[0] in ('"', "'") and token[-1] == token[0]:
+        return token[1:-1]
+    return token
+
+
+def _split_legacy_command(command: str) -> List[str]:
+    """Split a legacy ``--command`` string into an argument list without a shell.
+
+    Cross-platform, injection-safe alternative to ``shlex.split`` for the
+    legacy compatibility path (never executes through a shell):
+
+      * whitespace separates tokens;
+      * whitespace inside a matching pair of quotes is part of the same
+        token, so quoted paths containing spaces stay intact
+        (``"C:\\Program Files\\x.py"`` -> ``C:\\Program Files\\x.py``);
+      * shell metacharacters (``;``, ``&&``, ``|``, ``>``, ...) are ordinary
+        characters -- they are passed through as inert argument tokens and are
+        never interpreted, because the result is executed with ``shell=False``;
+      * each token has only its syntactic surrounding quotes removed (see
+        :func:`_strip_syntactic_quotes`); legitimate inner quote characters
+        are preserved;
+      * backslashes are literal (Windows path separators are never treated as
+        shell escape characters).
+
+    Returns an empty list when *command* contains only whitespace.
+    """
+    tokens: List[str] = []
+    buf: List[str] = []
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if ch.isspace():
+            if buf:
+                tokens.append("".join(buf))
+                buf = []
+            i += 1
+            continue
+        if ch in ('"', "'"):
+            # A quoted span: keep the quote characters in the buffer so the
+            # post-pass can strip them as syntactic surrounding quotes while
+            # leaving any inner characters untouched.
+            close = command.find(ch, i + 1)
+            if close != -1:
+                buf.append(ch)
+                buf.append(command[i + 1:close])
+                buf.append(ch)
+                i = close + 1
+                continue
+            # Unbalanced opening quote: keep it as a literal character.
+            buf.append(ch)
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    if buf:
+        tokens.append("".join(buf))
+    return [_strip_syntactic_quotes(t) for t in tokens]
+
+
 def run_guard_command(
-    command: str, cwd: Path, timeout: int = 300
+    command: Union[str, List[str]], cwd: Path, timeout: int = 300
 ) -> Tuple[int, str, str]:
-    """Execute a shell command and return (exit_code, stdout, stderr).
+    """Execute a guard command and return (exit_code, stdout, stderr).
+
+    ``command`` may be either of:
+
+      * a list of arguments (the preferred ``--command-arg=<value>``
+        single-token form) — executed directly with ``shell=False``, so
+        paths containing spaces need no quoting, can never be reinterpreted
+        by a shell, and option-like child values stay inside the child
+        command; or
+      * a command string (the legacy ``--command`` compatibility form) —
+        parsed with :func:`_split_legacy_command` (a cross-platform,
+        shell-free tokenizer that removes only syntactic surrounding quotes,
+        so quoted paths containing spaces work on Windows and POSIX alike) and
+        executed with ``shell=False``.
 
     Exit code -1 signals an infrastructure error (timeout, not-found, ...).
 
-    Parses the command string with ``shlex.split`` for safe, ``shell=False``
-    execution.  Resolves ``python3`` / ``python`` interpreter tokens to
-    ``sys.executable`` for cross-platform portability (avoids Windows
-    Microsoft Store alias failures).
+    Resolves ``python3`` / ``python`` interpreter tokens to ``sys.executable``
+    for cross-platform portability (avoids Windows Microsoft Store alias
+    failures).
     """
     try:
-        # Parse command string safely for shell=False execution
-        parts = shlex.split(command, posix=(os.name != "nt"))
-        if not parts:
-            return -1, "", "Empty command"
+        if isinstance(command, list):
+            parts = list(command)
+            if not parts:
+                return -1, "", "Empty command"
+        else:
+            # Parse command string safely for shell=False execution.
+            # Quoted paths with spaces are kept as single tokens and only
+            # syntactic surrounding quotes are removed; shell metacharacters
+            # stay inert argument tokens (never shell operators).
+            parts = _split_legacy_command(command)
+            if not parts:
+                return -1, "", "Empty command"
 
         # Resolve Python interpreter for cross-platform compatibility
         resolved = _resolve_python(parts)
@@ -396,9 +560,12 @@ def run_guard_command(
     except subprocess.TimeoutExpired:
         return -1, "", f"Timeout after {timeout}s"
     except FileNotFoundError:
-        return -1, "", f"Command not found: {command.split()[0]}"
+        first = command[0] if isinstance(command, list) and command else str(command)
+        return -1, "", f"Command not found: {first}"
     except Exception as exc:
-        return -1, "", f"Infrastructure error: {exc}"
+        # Controlled bounded diagnostic only -- never expose raw exception
+        # text (may carry file paths, messages, or internal state).
+        return -1, "", f"RATCHET_SUBPROCESS_ERROR: {exc.__class__.__name__}"
 
 
 # ------------------------------------------------------------------
@@ -481,7 +648,28 @@ def main() -> None:
         "--guard-name", required=True, help="Human-readable guard name for reporting."
     )
     parser.add_argument(
-        "--command", required=True, help="Shell command to run the guard script."
+        "--command",
+        required=False,
+        default=None,
+        help="Shell command to run the guard script.  LEGACY compatibility "
+             "path only — prefer the repeatable --command-arg=<value> form "
+             "so the command is executed as an argument list with shell=False.",
+    )
+    parser.add_argument(
+        "--command-arg",
+        action="append",
+        dest="command_args",
+        default=None,
+        metavar="VALUE",
+        help="One argument of the guard command.  Repeatable.  Encode each "
+             "child argument as a single --command-arg=<value> token, "
+             "including option-like child values (e.g. "
+             "--command-arg=--fail-on-violation), so argparse can never "
+             "re-parse them as the ratchet's own flags.  The arguments are "
+             "executed as an argument list with shell=False, so paths "
+             "containing spaces need no quoting and can never be "
+             "reinterpreted by a shell.  Use either this or --command, not "
+             "both.",
     )
     parser.add_argument(
         "--baseline", required=True, help="Path to baseline JSON file."
@@ -489,7 +677,8 @@ def main() -> None:
     parser.add_argument(
         "--fail-on-violation",
         action="store_true",
-        help="Exit with code 1 when new findings are detected.",
+        help="Exit with code 1 when new or stale/resolved findings are "
+             "detected (policy violation).",
     )
     parser.add_argument(
         "--update-baseline",
@@ -513,6 +702,31 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # -- Command resolution ---------------------------------------------------
+    # Prefer the repeatable single-token --command-arg=<value> argument-list
+    # form (executed with shell=False, no shell-string ambiguity; option-like
+    # child values stay inside the child command).  --command is retained only
+    # as a compatibility path for older callers; the two forms are mutually
+    # exclusive.  (The separate "--command-arg <value>" pair also still parses
+    # for ordinary values, but the single-token form is unambiguous for every
+    # argument.)
+    if args.command_args is not None and args.command is not None:
+        print(
+            "ERROR: use either --command or --command-arg, not both",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if args.command_args is not None:
+        guard_command = args.command_args
+    elif args.command is not None:
+        guard_command = args.command
+    else:
+        print(
+            "ERROR: one of --command or --command-arg is required",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     # -- CI mode: reject baseline updates ----------------------------------------
     if args.ci_mode and args.update_baseline:
         print("ERROR: Baseline updates prohibited in CI mode", file=sys.stderr)
@@ -525,7 +739,7 @@ def main() -> None:
 
     # -- 1. Run the guard command ------------------------------------------------
     guard_exit, stdout, stderr = run_guard_command(
-        args.command, project_root, args.timeout
+        guard_command, project_root, args.timeout
     )
 
     if guard_exit < 0:
@@ -536,11 +750,11 @@ def main() -> None:
         # Guard passed — findings should be empty or structured
         pass
     elif guard_exit == 1:
-        # Guard found violations — parse findings
-        if not stdout.strip():
-            # Exit 1 with no output = infrastructure error
-            print("Guard exited 1 but produced no parseable findings", file=sys.stderr)
-            sys.exit(2)
+        # Guard found violations — parse findings below.  Raw child output is
+        # intentionally NOT echoed here: parseability is decided only after
+        # fingerprint extraction, and unparseable output is reported below as
+        # a single bounded diagnostic.
+        pass
     elif guard_exit == 2:
         # Guard infrastructure error
         print(f"Guard exited with infrastructure error (code 2)", file=sys.stderr)
@@ -550,18 +764,23 @@ def main() -> None:
         print(f"Guard exited with unknown code {guard_exit}", file=sys.stderr)
         sys.exit(2)
 
-    # Print guard stdout for logging (but strip trailing newlines)
-    if stdout.strip():
-        print(stdout.strip())
-
     # -- 2. Extract fingerprints -------------------------------------------------
+    # Never echo raw child stdout/stderr before deciding parseability: it may
+    # carry unparseable or sensitive payloads.  Parseable findings are surfaced
+    # only through the sanitized fingerprint report (print_report) below.
     current_fps = extract_fingerprints(stdout, project_root)
 
     # If guard exited 1 but no fingerprints could be parsed, that's an
     # infrastructure error (output format changed, guard broken, etc.).
+    # Emit exactly one bounded, structured diagnostic -- never raw child
+    # stdout/stderr (may carry sensitive data) -- then exit 2.
     if guard_exit == 1 and len(current_fps) == 0:
-        print(f"Guard '{args.guard_name}' exited 1 but produced no parseable findings", file=sys.stderr)
-        print(f"Raw stdout: {stdout[:500]}", file=sys.stderr)
+        print(
+            f"RATCHET_UNPARSEABLE_GUARD_OUTPUT: "
+            f"guard={_sanitize_guard_name(args.guard_name)} "
+            f"exit=1 (no parseable findings)",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     # -- 3. Load baseline --------------------------------------------------------

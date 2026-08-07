@@ -665,43 +665,184 @@ tasks.named("check") {
 // TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
 // calls outside approved TimeProvider implementations
 
-// PR 10 — DB access boundary guard via ratchet wrapper.
+// PR-GR-01 — DB access boundary guard via ratchet wrapper (fail closed).
 // The ratchet accepts baselined findings (exit 0 if no new violations)
 // and fails on new violations (exit 1) or infrastructure errors (exit 2).
+//
+// Required inputs are validated BEFORE execution:
+//   scripts/ci/guard_ratchet.py
+//   scripts/verify_db_access_boundaries.py
+//   config/baselines/db_access.json
+//   config/guards/db_ownership_policy.yml
+//   config/guards/db_structural_exceptions.yml
+//   config/guards/db_structural_exceptions_expected_methods.yml
+// A missing / non-regular / unreadable / outside-root input is a hard
+// GradleException — never a warning or a silent skip.
+//
+// Test-only path overrides (production CI must use the defaults):
+//   -PdbGuardRatchetPath=...                 scripts/ci/guard_ratchet.py
+//   -PdbGuardScriptPath=...                  scripts/verify_db_access_boundaries.py
+//   -PdbGuardBaselinePath=...                config/baselines/db_access.json
+//   -PdbGuardOwnershipPolicyPath=...         config/guards/db_ownership_policy.yml
+//   -PdbGuardStructuralExceptionsPath=...    config/guards/db_structural_exceptions.yml
+//   -PdbGuardStructuralManifestPath=...      config/guards/db_structural_exceptions_expected_methods.yml
+//
+// Relative overrides resolve against the repository root (rootDir) so they
+// are consistent with the canonical defaults; absolute overrides are used
+// as-is.
+//
+// The inner ratchet command ALWAYS receives all six resolved canonical paths
+// explicitly — the policy/manifest inputs are never gated on the test-only
+// overrides, so production CI uses the exact canonical defaults below.
+//
+// Python interpreter (defaults to python3):
+//   -PpythonExecutable=/path/to/python3
 tasks.register("verifyDbAccessBoundaries") {
     group = "verification"
-    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer allowlist (ratchet-enforced)"
+    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer policy (ratchet-enforced, fail closed)"
     doLast {
-        val ratchetScript = file("$rootDir/scripts/ci/guard_ratchet.py")
-        val guardScript = file("$rootDir/scripts/verify_db_access_boundaries.py")
-        val baseline = file("$rootDir/config/baselines/db_access.json")
-        if (!ratchetScript.exists()) {
-            logger.warn("verifyDbAccessBoundaries: ratchet script not found at ${ratchetScript.absolutePath}")
-            return@doLast
+        val rootCanonical = rootDir.canonicalFile
+        fun resolveDbGuardPath(defaultRel: String, overrideProp: String): File {
+            val override = findProperty(overrideProp)?.toString()?.takeIf { it.isNotBlank() }
+            val path = if (override != null) {
+                // Relative overrides are resolved against the repository root
+                // (rootDir), consistent with the canonical defaults; absolute
+                // overrides are used as-is.
+                val overrideFile = File(override)
+                if (overrideFile.isAbsolute) file(override) else file("$rootDir/$override")
+            } else {
+                file("$rootDir/$defaultRel")
+            }
+            val canonical = path.canonicalFile
+            if (!canonical.path.startsWith(rootCanonical.path + File.separator, ignoreCase = true)) {
+                throw GradleException(
+                    "verifyDbAccessBoundaries: required input for '$defaultRel' points outside the repository root: " +
+                    path.absolutePath
+                )
+            }
+            return canonical
         }
+
+        val ratchetFile = resolveDbGuardPath("scripts/ci/guard_ratchet.py", "dbGuardRatchetPath")
+        val guardFile = resolveDbGuardPath("scripts/verify_db_access_boundaries.py", "dbGuardScriptPath")
+        val baselineFile = resolveDbGuardPath("config/baselines/db_access.json", "dbGuardBaselinePath")
+        val ownershipPolicyFile = resolveDbGuardPath(
+            "config/guards/db_ownership_policy.yml", "dbGuardOwnershipPolicyPath"
+        )
+        val structuralExceptionsFile = resolveDbGuardPath(
+            "config/guards/db_structural_exceptions.yml", "dbGuardStructuralExceptionsPath"
+        )
+        val structuralManifestFile = resolveDbGuardPath(
+            "config/guards/db_structural_exceptions_expected_methods.yml", "dbGuardStructuralManifestPath"
+        )
+
+        val requiredInputs = listOf(
+            "scripts/ci/guard_ratchet.py" to ratchetFile,
+            "scripts/verify_db_access_boundaries.py" to guardFile,
+            "config/baselines/db_access.json" to baselineFile,
+            "config/guards/db_ownership_policy.yml" to ownershipPolicyFile,
+            "config/guards/db_structural_exceptions.yml" to structuralExceptionsFile,
+            "config/guards/db_structural_exceptions_expected_methods.yml" to structuralManifestFile
+        )
+        for ((rel, candidate) in requiredInputs) {
+            if (!candidate.exists()) {
+                throw GradleException(
+                    "verifyDbAccessBoundaries: required input not found: ${candidate.absolutePath} ($rel)"
+                )
+            }
+            if (!candidate.isFile) {
+                throw GradleException(
+                    "verifyDbAccessBoundaries: required input is not a regular file: ${candidate.absolutePath} ($rel)"
+                )
+            }
+            if (!candidate.canRead()) {
+                throw GradleException(
+                    "verifyDbAccessBoundaries: required input is not readable: ${candidate.absolutePath} ($rel)"
+                )
+            }
+        }
+
+        val pythonExecutable =
+            (findProperty("pythonExecutable")?.toString()?.takeIf { it.isNotBlank() }) ?: "python3"
+
+        // Preflight: launch the interpreter with --version.  Failure to launch
+        // Python is an infrastructure error, not a policy violation.
+        val preflightExit: Int = try {
+            exec {
+                workingDir = rootDir
+                commandLine(pythonExecutable, "--version")
+                isIgnoreExitValue = true
+            }.exitValue
+        } catch (_: Exception) {
+            throw GradleException(
+                "verifyDbAccessBoundaries: Python preflight failed — could not launch '$pythonExecutable' " +
+                "(infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
+            )
+        }
+        if (preflightExit != 0) {
+            throw GradleException(
+                "verifyDbAccessBoundaries: Python preflight failed — '$pythonExecutable --version' exited " +
+                "$preflightExit (infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
+            )
+        }
+
+        // Execute the ratchet with an argument list (shell=False), never a shell
+        // string with embedded paths.  The inner guard command is passed as
+        // repeatable single-token --command-arg=<value> arguments to eliminate
+        // shell-string ambiguity and to keep option-like child values
+        // (--fail-on-violation, --ownership-policy, --structural-exceptions,
+        // --structural-manifest) inside the child command: a separate
+        // "--command-arg <value>" pair would let argparse re-parse those
+        // values as the ratchet's own flags and abort with "expected one
+        // argument".  --command is kept only as a ratchet compatibility path.
+        //
+        // All six required inputs are passed EXPLICITLY with their resolved
+        // canonical paths — including the three policy/manifest inputs, which
+        // are never gated on override properties.  In production CI the
+        // defaults are explicit and identical to the canonical config paths:
+        //   config/guards/db_ownership_policy.yml
+        //   config/guards/db_structural_exceptions.yml
+        //   config/guards/db_structural_exceptions_expected_methods.yml
+        // so the inner guard can never silently fall back to a different file.
+        val commandArgs = mutableListOf<String>()
+        commandArgs += pythonExecutable
+        commandArgs += ratchetFile.absolutePath
+        commandArgs += "--guard-name"
+        commandArgs += "db_access"
+        // Every ratchet child argument is encoded as a single
+        // --command-arg=<value> list token, including option-like values.
+        commandArgs += "--command-arg=$pythonExecutable"
+        commandArgs += "--command-arg=${guardFile.absolutePath}"
+        commandArgs += "--command-arg=--fail-on-violation"
+        commandArgs += "--command-arg=--ownership-policy"
+        commandArgs += "--command-arg=${ownershipPolicyFile.absolutePath}"
+        commandArgs += "--command-arg=--structural-exceptions"
+        commandArgs += "--command-arg=${structuralExceptionsFile.absolutePath}"
+        commandArgs += "--command-arg=--structural-manifest"
+        commandArgs += "--command-arg=${structuralManifestFile.absolutePath}"
+        commandArgs += "--baseline"
+        commandArgs += baselineFile.absolutePath
+        commandArgs += "--fail-on-violation"
+        commandArgs += "--ci-mode"
+
         val result = exec {
             workingDir = rootDir
-            commandLine(
-                "python3", ratchetScript.absolutePath,
-                "--guard-name", "db_access",
-                "--command", "python3 ${guardScript.absolutePath} --fail-on-violation",
-                "--baseline", baseline.absolutePath,
-                "--fail-on-violation",
-                "--ci-mode"
-            )
+            commandLine(commandArgs)
             isIgnoreExitValue = true
         }
         when (result.exitValue) {
             0 -> { /* pass: no new violations */ }
             1 -> throw GradleException(
                 "New DB access boundary violations found. " +
-                "Add the class to config/db_access_allowlist.yml with a reason, " +
+                "Add an exact entry to config/guards/db_ownership_policy.yml with a reason, " +
+                "or a structural exception to config/guards/db_structural_exceptions.yml, " +
                 "or route the write through the approved lifecycle coordinator. " +
                 "See docs/DB_WRITE_OWNERSHIP.md."
             )
             2 -> throw GradleException(
-                "verifyDbAccessBoundaries: infrastructure error (missing baseline, bad config, or ratchet failure). " +
-                "Check that config/baselines/db_access.json exists and is valid."
+                "verifyDbAccessBoundaries: infrastructure error (missing baseline, malformed config, or ratchet failure). " +
+                "Check that config/baselines/db_access.json exists and is valid, and that the DB guard scripts " +
+                "and policy files under config/guards/ are present and valid."
             )
             else -> throw GradleException("verifyDbAccessBoundaries: unexpected exit code ${result.exitValue}")
         }
