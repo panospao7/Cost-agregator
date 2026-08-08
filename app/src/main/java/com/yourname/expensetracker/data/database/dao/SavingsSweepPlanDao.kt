@@ -92,38 +92,38 @@ interface SavingsSweepPlanDao {
     /**
      * Update plan status.
      *
-     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param timestamp Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE savings_sweep_plan SET status = :status, actionedAt = :timestamp WHERE id = :planId")
-    suspend fun updateStatus(planId: Long, status: SweepPlanStatus, timestamp: Long = System.currentTimeMillis())
+    suspend fun updateStatus(planId: Long, status: SweepPlanStatus, timestamp: Long)
 
     /**
      * Accept a sweep plan.
      *
-     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param timestamp Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE savings_sweep_plan SET status = 'ACCEPTED', actionedAt = :timestamp WHERE id = :planId")
-    suspend fun acceptPlan(planId: Long, timestamp: Long = System.currentTimeMillis())
+    suspend fun acceptPlan(planId: Long, timestamp: Long)
 
     /**
      * Dismiss a sweep plan.
      *
-     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param timestamp Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE savings_sweep_plan SET status = 'DISMISSED', actionedAt = :timestamp WHERE id = :planId")
-    suspend fun dismissPlan(planId: Long, timestamp: Long = System.currentTimeMillis())
+    suspend fun dismissPlan(planId: Long, timestamp: Long)
 
     /**
      * Mark plans as expired for months that have passed.
      *
-     * @param currentTime Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param currentTime Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE savings_sweep_plan SET status = 'EXPIRED' WHERE monthEnd < :currentTime AND status = 'PENDING'")
-    suspend fun expireOldPlans(currentTime: Long = System.currentTimeMillis())
+    suspend fun expireOldPlans(currentTime: Long)
 
     /**
      * Delete old sweep plans (for cleanup).

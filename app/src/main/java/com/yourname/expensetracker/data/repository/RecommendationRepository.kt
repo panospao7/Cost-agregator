@@ -159,7 +159,7 @@ class RecommendationRepository @Inject constructor(
     suspend fun expireOld(userId: String, beforeTimestamp: Long = timeProvider.now()) {
         writeBarrier.checkWritesAllowed("RecommendationRepository.expireOld")
         withContext(ioDispatcher) {
-            dao.expireOld(userId, beforeTimestamp)
+            dao.expireOld(userId, beforeTimestamp, timeProvider.now())
         }
     }
 
@@ -170,7 +170,7 @@ class RecommendationRepository @Inject constructor(
     suspend fun expireAll(userId: String, beforeTimestamp: Long = timeProvider.now()) {
         writeBarrier.checkWritesAllowed("RecommendationRepository.expireAll")
         withContext(ioDispatcher) {
-            dao.expireOld(userId, beforeTimestamp)
+            dao.expireOld(userId, beforeTimestamp, timeProvider.now())
             dao.expireAllActiveByUser(userId, timeProvider.now())
         }
     }

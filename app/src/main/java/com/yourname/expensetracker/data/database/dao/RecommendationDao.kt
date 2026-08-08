@@ -34,10 +34,10 @@ interface RecommendationDao {
         LIMIT 5
     """)
     /**
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
-    suspend fun getActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): List<RecommendationEntity>
+    suspend fun getActiveByUser(userId: String, nowMillis: Long): List<RecommendationEntity>
 
     /**
      * Get the full active recommendation set for a user without the UI-facing cap.
@@ -58,10 +58,10 @@ interface RecommendationDao {
         id ASC
     """)
     /**
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
-    suspend fun getAllActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): List<RecommendationEntity>
+    suspend fun getAllActiveByUser(userId: String, nowMillis: Long): List<RecommendationEntity>
     
     /**
      * Observe active recommendations for reactive UI updates.
@@ -82,10 +82,10 @@ interface RecommendationDao {
         LIMIT 5
     """)
     /**
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
-    fun observeActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): Flow<List<RecommendationEntity>>
+    fun observeActiveByUser(userId: String, nowMillis: Long): Flow<List<RecommendationEntity>>
     
     /**
      * Insert a new recommendation.
@@ -118,10 +118,10 @@ interface RecommendationDao {
         WHERE id = :id
     """)
     /**
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
-    suspend fun archive(id: String, nowMillis: Long = System.currentTimeMillis())
+    suspend fun archive(id: String, nowMillis: Long)
 
     /**
      * Archive active recommendations outside the retained active set.
@@ -138,13 +138,13 @@ interface RecommendationDao {
           AND id NOT IN (:retainedIds)
     """)
     /**
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     suspend fun archiveActiveOverflow(
         userId: String,
         retainedIds: List<String>,
-        nowMillis: Long = System.currentTimeMillis()
+        nowMillis: Long
     ): Int
     
     /**
@@ -159,10 +159,10 @@ interface RecommendationDao {
           AND status != 'EXPIRED'
     """)
     /**
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
-    suspend fun expireOld(userId: String, beforeTimestamp: Long, nowMillis: Long = System.currentTimeMillis())
+    suspend fun expireOld(userId: String, beforeTimestamp: Long, nowMillis: Long)
 
     @Query("""
         UPDATE recommendations
@@ -172,10 +172,10 @@ interface RecommendationDao {
           AND status = 'ACTIVE'
     """)
     /**
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
-    suspend fun expireAllActiveByUser(userId: String, nowMillis: Long = System.currentTimeMillis()): Int
+    suspend fun expireAllActiveByUser(userId: String, nowMillis: Long): Int
     
     /**
      * Clear all recommendations for a user (e.g., account switch).
@@ -207,8 +207,8 @@ interface RecommendationDao {
     /**
      * Count active recommendations for a user.
      *
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("""
         SELECT COUNT(*) FROM recommendations
@@ -217,14 +217,14 @@ interface RecommendationDao {
           AND dismissedAt IS NULL
           AND expiresAt > :nowMillis
     """)
-    suspend fun countActive(userId: String, nowMillis: Long = System.currentTimeMillis()): Int
+    suspend fun countActive(userId: String, nowMillis: Long): Int
     
     /**
      * Delete all expired recommendations (cleanup).
      *
-     * @param nowMillis Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param nowMillis Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("DELETE FROM recommendations WHERE expiresAt < :nowMillis AND status = 'EXPIRED'")
-    suspend fun deleteExpired(nowMillis: Long = System.currentTimeMillis()): Int
+    suspend fun deleteExpired(nowMillis: Long): Int
 }

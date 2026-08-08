@@ -51,25 +51,25 @@ interface BudgetAdjustmentDao {
     suspend fun getRecentRecommendations(since: Long): List<BudgetAdjustmentRecommendation>
     
     /**
-     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param timestamp Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE budget_adjustment_recommendations SET status = 'APPLIED', appliedAt = :timestamp WHERE id = :id")
-    suspend fun markRecommendationApplied(id: Long, timestamp: Long = System.currentTimeMillis())
+    suspend fun markRecommendationApplied(id: Long, timestamp: Long)
     
     /**
-     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param timestamp Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE budget_adjustment_recommendations SET status = 'DISMISSED', dismissedAt = :timestamp WHERE id = :id")
-    suspend fun markRecommendationDismissed(id: Long, timestamp: Long = System.currentTimeMillis())
+    suspend fun markRecommendationDismissed(id: Long, timestamp: Long)
     
     /**
-     * @param now Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param now Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE budget_adjustment_recommendations SET status = 'EXPIRED' WHERE status = 'PENDING' AND expiresAt < :now")
-    suspend fun expireOldRecommendations(now: Long = System.currentTimeMillis())
+    suspend fun expireOldRecommendations(now: Long)
     
     @Query("DELETE FROM budget_adjustment_recommendations WHERE status = 'EXPIRED' AND generatedAt < :before")
     suspend fun deleteExpiredRecommendations(before: Long)
