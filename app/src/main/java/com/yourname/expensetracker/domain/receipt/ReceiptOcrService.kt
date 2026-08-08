@@ -31,6 +31,16 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+/**
+ * Build a unique cache-file base name for temporary OCR/PDF artifacts.
+ *
+ * Uses [UUID.randomUUID] instead of `System.nanoTime()` so temp-file
+ * uniqueness does not depend on the monotonic clock and stays within the
+ * G-TIME-01 boundary (UUID-based unique-name generation, not wall-clock).
+ */
+internal fun uniqueTempFileName(prefix: String, extension: String): String =
+    "${prefix}_${UUID.randomUUID().toString()}.$extension"
+
 data class OcrResult(
     val fullText: String,
     val blocks: List<TextBlock>,
@@ -312,7 +322,7 @@ class ReceiptOcrService @Inject constructor(
      * @return Pair of (extracted text, total page count).
      */
     private suspend fun extractPdfText(pdfUri: Uri): Pair<String, Int> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val tempFile = File(context.cacheDir, "temp_pdf_extract_${System.nanoTime()}.pdf")
+        val tempFile = File(context.cacheDir, uniqueTempFileName("temp_pdf_extract", "pdf"))
         var document: PDDocument? = null
         var totalPages = 0
         
@@ -401,7 +411,7 @@ class ReceiptOcrService @Inject constructor(
      * Render first page of PDF as thumbnail for UI preview.
      */
     private suspend fun renderPdfFirstPageThumbnail(pdfUri: Uri): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val tempFile = File(context.cacheDir, "temp_pdf_thumb_${System.nanoTime()}.pdf")
+        val tempFile = File(context.cacheDir, uniqueTempFileName("temp_pdf_thumb", "pdf"))
         var renderer: PdfRenderer? = null
         var pfd: ParcelFileDescriptor? = null
         
@@ -459,7 +469,7 @@ class ReceiptOcrService @Inject constructor(
      * Process PDF by rendering pages to bitmaps and running OCR (for scanned PDFs).
      */
     private suspend fun processPdfWithOcr(pdfUri: Uri): OcrResult {
-        val tempFile = File(context.cacheDir, "temp_pdf_${System.nanoTime()}.pdf")
+        val tempFile = File(context.cacheDir, uniqueTempFileName("temp_pdf", "pdf"))
         var renderer: PdfRenderer? = null
         var pfd: ParcelFileDescriptor? = null
         
@@ -613,7 +623,7 @@ class ReceiptOcrService @Inject constructor(
     }
 
     private fun loadAndCorrectBitmap(uri: Uri): Bitmap? {
-        val tempFile = File(context.cacheDir, "temp_ocr_${System.nanoTime()}.jpg")
+        val tempFile = File(context.cacheDir, uniqueTempFileName("temp_ocr", "jpg"))
         var decodedBitmap: Bitmap? = null
         try {
             // Copy URI to temp file
@@ -723,7 +733,9 @@ class ReceiptOcrService @Inject constructor(
         val cacheDir = File(context.cacheDir, "receipt_images")
         if (!cacheDir.exists()) cacheDir.mkdirs()
 
-        val file = File(cacheDir, "camera_${System.currentTimeMillis()}.jpg")
+        // G-TIME-01: UUID-based unique name (not wall-clock) so temp URI
+        // uniqueness does not depend on System.currentTimeMillis().
+        val file = File(cacheDir, uniqueTempFileName("camera", "jpg"))
 
         return androidx.core.content.FileProvider.getUriForFile(
             context,

@@ -25,9 +25,11 @@ import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigati
 import com.yourname.expensetracker.domain.model.UiText
 import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.util.FakeMonotonicTimeProvider
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.*
+import java.util.UUID
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -38,6 +40,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -54,6 +57,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     private lateinit var executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase
     private lateinit var mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase
     private lateinit var privacySettingsRepository: FakePrivacySettingsRepository
+    private lateinit var monotonicTimeProvider: FakeMonotonicTimeProvider
     private lateinit var viewModel: AssistantViewModel
 
     @Before
@@ -69,6 +73,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         privacySettingsRepository = FakePrivacySettingsRepository(
             PrivacySettings(redactBeforeCloud = false)
         )
+        monotonicTimeProvider = FakeMonotonicTimeProvider()
 
         every { aiSettingsRepository.settings() } returns flowOf(
             AiSettings(
@@ -88,7 +93,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository
+            privacySettingsRepository,
+            monotonicTimeProvider
         )
     }
 
@@ -106,7 +112,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository
+            privacySettingsRepository,
+            monotonicTimeProvider
         )
 
         advanceUntilIdle()
@@ -131,7 +138,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository
+            privacySettingsRepository,
+            monotonicTimeProvider
         )
 
         advanceUntilIdle()
@@ -168,7 +176,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository
+            privacySettingsRepository,
+            monotonicTimeProvider
         )
 
         advanceUntilIdle()
@@ -192,7 +201,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository
+            privacySettingsRepository,
+            monotonicTimeProvider
         )
 
         advanceUntilIdle()
@@ -234,6 +244,45 @@ class AssistantViewModelTest : ViewModelTestUtils() {
     }
 
     @Test
+    fun `submitQuery populates runtime diagnostics with timing and without user payloads`() = runTest(testDispatcher) {
+        val intent = FinancialQueryIntent(
+            rawQuery = "total this month",
+            normalizedQuery = "total this month",
+            filters = ExpenseQueryFilters(),
+            metric = QueryMetric.TOTAL
+        )
+        coEvery { interpretFinancialQueryUseCase(any(), any()) } coAnswers {
+            monotonicTimeProvider.advanceMillis(5)
+            FinancialQueryInterpretationResult.Structured(intent)
+        }
+        coEvery { executeFinancialQueryUseCase(intent) } coAnswers {
+            monotonicTimeProvider.advanceMillis(3)
+            FinancialQueryResult.Summary(
+                title = UiText.DynamicString("Total spending"),
+                primaryText = "42.00 EUR"
+            )
+        }
+        coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
+
+        // S11-009/T1: submit a deliberately sensitive query — diagnostics must
+        // never contain any user query text in any build.
+        val sensitiveQuery = "SENSITIVE-QUERY-CARD-4111111111111111-SECRET"
+        viewModel.submitQuery(sensitiveQuery)
+        advanceUntilIdle()
+
+        val diagnostics = viewModel.uiState.value.runtimeDiagnostics
+        assertNotNull("runtime diagnostics must be populated after a query", diagnostics)
+        assertTrue("diagnostics must contain total timing", diagnostics.contains("Total: 8ms"))
+        assertTrue("diagnostics must contain interpretation timing", diagnostics.contains("Interpret: 5ms"))
+        assertTrue("diagnostics must contain execution timing", diagnostics.contains("Execute: 3ms"))
+        assertTrue("diagnostics must contain the result type", diagnostics.contains("Result:"))
+        assertFalse("diagnostics must never contain user query text", diagnostics.contains(sensitiveQuery))
+        assertFalse("diagnostics must not contain a query fragment", diagnostics.contains("4111111111111111"))
+        assertFalse("diagnostics must not leak the result payload amount", diagnostics.contains("42.00 EUR"))
+        assertFalse("diagnostics must not leak the result payload title", diagnostics.contains("Total spending"))
+    }
+
+    @Test
     fun `submitQuery handles clarification result`() = runTest(testDispatcher) {
         coEvery { interpretFinancialQueryUseCase(any(), any()) } returns FinancialQueryInterpretationResult.Clarification(
             prompt = "Which month?",
@@ -258,6 +307,109 @@ class AssistantViewModelTest : ViewModelTestUtils() {
 
         val resultItem = viewModel.uiState.value.messages.last() as AssistantConversationItem.Result
         assertTrue(resultItem.result is FinancialQueryResult.Unsupported)
+    }
+
+    @Test
+    fun `submitQuery generates non-empty unique ids for user and result items`() = runTest(testDispatcher) {
+        val intent = FinancialQueryIntent(
+            rawQuery = "total this month",
+            normalizedQuery = "total this month",
+            filters = ExpenseQueryFilters(),
+            metric = QueryMetric.TOTAL
+        )
+        coEvery { interpretFinancialQueryUseCase(any(), any()) } returns FinancialQueryInterpretationResult.Structured(intent)
+        coEvery { executeFinancialQueryUseCase(intent) } returns FinancialQueryResult.Summary(
+            title = UiText.DynamicString("Total spending"),
+            primaryText = "42.00 EUR"
+        )
+        coEvery { mapFinancialQueryToNavigationUseCase(intent) } returns null
+
+        viewModel.submitQuery("first query")
+        advanceUntilIdle()
+        viewModel.submitQuery("second query")
+        advanceUntilIdle()
+
+        val ids = viewModel.uiState.value.messages.map { (it as? AssistantConversationItem.User)?.id ?: (it as AssistantConversationItem.Result).id }
+        assertEquals(4, ids.size)
+        assertTrue("ids must be non-empty", ids.all { it.isNotEmpty() })
+        assertTrue("ids must be unique", ids.toSet().size == ids.size)
+        assertPrefixedUuid(ids[0], "user-")
+        assertPrefixedUuid(ids[1], "result-")
+        assertPrefixedUuid(ids[2], "user-")
+        assertPrefixedUuid(ids[3], "result-")
+    }
+
+    @Test
+    fun `submitQuery generates non-empty unique ids for clarification and unsupported items`() = runTest(testDispatcher) {
+        coEvery { interpretFinancialQueryUseCase(any(), any()) } returnsMany listOf(
+            FinancialQueryInterpretationResult.Clarification(
+                prompt = "Which month?",
+                options = listOf("This month", "Last month")
+            ),
+            FinancialQueryInterpretationResult.Unsupported("Unsupported query")
+        )
+
+        viewModel.submitQuery("first query")
+        advanceUntilIdle()
+        viewModel.submitQuery("second query")
+        advanceUntilIdle()
+
+        val ids = viewModel.uiState.value.messages.map { (it as? AssistantConversationItem.User)?.id ?: (it as AssistantConversationItem.Result).id }
+        assertEquals(4, ids.size)
+        assertTrue("ids must be non-empty", ids.all { it.isNotEmpty() })
+        assertTrue("ids must be unique", ids.toSet().size == ids.size)
+        assertPrefixedUuid(ids[1], "clarification-")
+        assertPrefixedUuid(ids[3], "unsupported-")
+    }
+
+    @Test
+    fun `submitQuery generates non-empty unique id for error item`() = runTest(testDispatcher) {
+        coEvery { interpretFinancialQueryUseCase(any(), any()) } throws RuntimeException("boom")
+
+        viewModel.submitQuery("failing query")
+        advanceUntilIdle()
+
+        val userItem = viewModel.uiState.value.messages[0] as AssistantConversationItem.User
+        val errorItem = viewModel.uiState.value.messages[1] as AssistantConversationItem.Error
+        assertTrue(userItem.id.isNotEmpty())
+        assertTrue(errorItem.id.isNotEmpty())
+        assertNotEquals(userItem.id, errorItem.id)
+        assertPrefixedUuid(userItem.id, "user-")
+        assertPrefixedUuid(errorItem.id, "error-")
+    }
+
+    @Test
+    fun `submitQuery failure surfaces fixed friendly message and sanitized diagnostics without raw exception text`() = runTest(testDispatcher) {
+        coEvery { interpretFinancialQueryUseCase(any(), any()) } coAnswers {
+            monotonicTimeProvider.advanceMillis(5)
+            throw RuntimeException("boom with sensitive payload: 42.00 EUR")
+        }
+
+        // S11-009/T1: submit a deliberately sensitive query on the failure path —
+        // diagnostics must never contain user query text in any build.
+        val sensitiveQuery = "SENSITIVE-QUERY-CARD-4111111111111111-SECRET"
+        viewModel.submitQuery(sensitiveQuery)
+        advanceUntilIdle()
+
+        val errorItem = viewModel.uiState.value.messages[1] as AssistantConversationItem.Error
+        assertEquals("Something went wrong while handling your request. Please retry.", viewModel.uiState.value.errorMessage)
+        assertEquals("Something went wrong while handling your request. Please retry.", errorItem.text)
+        assertFalse("error message must not leak raw exception text", viewModel.uiState.value.errorMessage.contains("boom"))
+        assertFalse("error item text must not leak raw exception text", errorItem.text.contains("sensitive payload"))
+        assertFalse("error message must never contain the sensitive query", viewModel.uiState.value.errorMessage.contains(sensitiveQuery))
+        assertFalse("error item text must never contain the sensitive query", errorItem.text.contains(sensitiveQuery))
+        assertFalse("error message must never contain a card fragment", viewModel.uiState.value.errorMessage.contains("4111111111111111"))
+        assertFalse("error item text must never contain a card fragment", errorItem.text.contains("4111111111111111"))
+
+        val diagnostics = viewModel.uiState.value.runtimeDiagnostics
+        assertNotNull("runtime diagnostics must be populated after a failure", diagnostics)
+        assertTrue("diagnostics must contain a controlled reason code", diagnostics.contains("UNKNOWN_ERROR"))
+        assertTrue("diagnostics may contain the exception class name", diagnostics.contains("RuntimeException"))
+        assertTrue("diagnostics must contain total timing", diagnostics.contains("Total: 5ms"))
+        assertFalse("diagnostics must not leak raw exception message", diagnostics.contains("boom"))
+        assertFalse("diagnostics must not leak user payload text", diagnostics.contains("42.00 EUR"))
+        assertFalse("diagnostics must never contain user query text", diagnostics.contains(sensitiveQuery))
+        assertFalse("diagnostics must not contain a card fragment", diagnostics.contains("4111111111111111"))
     }
 
     @Test
@@ -302,7 +454,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository
+            privacySettingsRepository,
+            monotonicTimeProvider
         )
 
         val intent = FinancialQueryIntent(
@@ -351,7 +504,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository
+            privacySettingsRepository,
+            monotonicTimeProvider
         )
 
         val storedHistory = listOf(
@@ -407,7 +561,8 @@ class AssistantViewModelTest : ViewModelTestUtils() {
             interpretFinancialQueryUseCase,
             executeFinancialQueryUseCase,
             mapFinancialQueryToNavigationUseCase,
-            privacySettingsRepository
+            privacySettingsRepository,
+            monotonicTimeProvider
         )
 
         val expectedHistory = listOf(
@@ -619,6 +774,13 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         field.isAccessible = true
         val flow = field.get(viewModel) as MutableStateFlow<AssistantUiState>
         flow.value = state
+    }
+
+    private fun assertPrefixedUuid(id: String, prefix: String) {
+        assertTrue("id must start with '$prefix'", id.startsWith(prefix))
+        val suffix = id.removePrefix(prefix)
+        assertTrue("suffix after '$prefix' must be non-empty", suffix.isNotEmpty())
+        assertNotNull("suffix after '$prefix' must be a valid UUID", UUID.fromString(suffix))
     }
 
     private fun runtimeSummary(

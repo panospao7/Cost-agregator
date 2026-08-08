@@ -1,0 +1,60 @@
+# Time boundary guard exceptions (G-TIME-01).
+#
+# Canonical policy for `scripts/verify_time_boundaries.py`.
+#
+# Exact entries only:
+#   - path   : repository-relative path (forward slashes), no wildcards
+#   - class  : enclosing class simple name as attributed by the scanner
+#   - method : enclosing method name as attributed by the scanner
+#   - api    : canonical API token (one of the guarded API names)
+#   - reason : why the direct clock access is safe
+#   - owner  : exception owner
+#   - linked_issue : tracking issue
+#
+# Rules:
+#   - No wildcard paths/methods/apis.
+#   - No permanent entries.
+#   - Every entry must match real detected source evidence, or the guard
+#     fails closed with exit 2 (stale exception).
+#   - Only verified clock adapters and exact elapsed-duration methods are
+#     authorized. Wall-clock reads elsewhere must be routed through
+#     `TimeProvider` (injected `SystemTimeProvider`).
+
+version: 1
+exceptions:
+  - path: app/src/main/java/com/yourname/expensetracker/domain/util/SystemTimeProvider.kt
+    class: SystemTimeProvider
+    method: now
+    api: System.currentTimeMillis
+    reason: "Canonical platform clock adapter — the single production implementation of TimeProvider"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/groups/SettlementCalculator.kt
+    class: SettlementCalculator
+    method: findMinimalTransferPlan
+    api: System.nanoTime
+    reason: "Monotonic elapsed-duration measurement for the DFS solver time budget — not a wall-clock read"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  # Two SEPARATE exact entries — one per Room migration lambda that seeds data
+  # with a timestamp. Both execute inside Room's openHelper during DB open,
+  # before any Hilt TimeProvider injection exists, so they are genuinely
+  # unavoidable direct clock reads. The migration declarations are named
+  # objects (object MIGRATION_16_17 : Migration(...)) so the scanner
+  # attributes each call to its own class; no broad AppDatabase.Companion
+  # /migrate bucket is used. FRESH_INSTALL_CALLBACK needs no entry — it only
+  # rebuilds tables from existing rows and never calls a wall-clock API.
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: MIGRATION_16_17
+    method: migrate
+    api: System.currentTimeMillis
+    reason: "Room migration lambda (16->17) executes during DB open before Hilt TimeProvider injection; seeds merchant_canonicals createdAt/updatedAt for existing expense rows"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: MIGRATION_41_42
+    method: migrate
+    api: System.currentTimeMillis
+    reason: "Room migration lambda (41->42) executes during DB open before Hilt TimeProvider injection; seeds default exchange_rates lastUpdated"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"

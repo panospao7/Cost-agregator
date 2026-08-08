@@ -490,7 +490,11 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        val MIGRATION_16_17 = object : androidx.room.migration.Migration(16, 17) {
+        // Named object (not `val X = object : ...`) so the G-TIME-01 scanner
+        // attributes its System.currentTimeMillis() seeding to
+        // `MIGRATION_16_17.migrate` — an exact, separate exception entry —
+        // instead of the broad `AppDatabase.Companion.migrate` bucket.
+        object MIGRATION_16_17 : androidx.room.migration.Migration(16, 17) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // Create canonical merchants table
                 database.execSQL("""
@@ -1319,7 +1323,11 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         // Migration 41 -> 42: Multi-Currency Support
-        val MIGRATION_41_42 = object : androidx.room.migration.Migration(41, 42) {
+        // Named object (not `val X = object : ...`) so the G-TIME-01 scanner
+        // attributes its System.currentTimeMillis() default-rate seeding to
+        // `MIGRATION_41_42.migrate` — an exact, separate exception entry —
+        // instead of the broad `AppDatabase.Companion.migrate` bucket.
+        object MIGRATION_41_42 : androidx.room.migration.Migration(41, 42) {
             override fun migrate(database: androidx.sqlite.db.SupportSQLiteDatabase) {
                 // Create exchange_rates table
                 database.execSQL("""
