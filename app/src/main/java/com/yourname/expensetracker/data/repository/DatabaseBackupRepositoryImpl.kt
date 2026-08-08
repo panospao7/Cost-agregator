@@ -29,6 +29,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.delay
@@ -80,7 +81,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
     private val snapshotCreator: com.yourname.expensetracker.data.backup.SqliteSnapshotCreator,
     private val restoreInternalWriteScope: com.yourname.expensetracker.data.backup.RestoreInternalWriteScope,
     private val operationRunRecorder: com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder,
-    private val diagnosticSink: MaintenanceSafeDiagnosticSink
+    private val diagnosticSink: MaintenanceSafeDiagnosticSink,
+    private val timeProvider: TimeProvider
 ) : DatabaseBackupRepository {
 
     private var stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary =
@@ -102,7 +104,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         restoreMaintenanceMode: RestoreMaintenanceMode,
         restoreJournal: RestoreJournal,
         stagedImportVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
-        liveImportVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary
+        liveImportVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
+        timeProvider: TimeProvider
     ) : this(
         context, database, ioDispatcher, privacyGate, privacySettingsRepository,
         backupEncryptionService, exportAnonymizer, secureKeyStorage,
@@ -122,7 +125,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 block(com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle)
             override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) = Unit
         },
-        com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink()
+        com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
+        timeProvider
     ) {
         this.stagedImportVerifier = stagedImportVerifier
         this.liveImportVerifier = liveImportVerifier
@@ -662,6 +666,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     databaseFile = tempDb,
                     receiptFiles = receiptFiles,
                     password = password,
+                    nowEpochMs = timeProvider.now(),
                     tableCounts = tableCounts,
                     databaseVersion = APP_DATABASE_SCHEMA_VERSION,
                     redacted = resolvedRedacted,
@@ -737,7 +742,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             // 3. Extract bundle to temp workspace
             val tempDir = File(context.cacheDir, "costbackup_extract_${System.currentTimeMillis()}")
-            val extractionResult = CostbackupBundle.extract(bundleFile, tempDir, password)
+            val extractionResult = CostbackupBundle.extract(bundleFile, tempDir, password, nowEpochMs = timeProvider.now())
                 .getOrElse { error ->
                     // Wrong password or corrupt bundle — exit maintenance, live DB never touched
                     // DDL-512-01: emit terminal event BEFORE failJournal renames the active journal

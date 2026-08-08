@@ -46,7 +46,13 @@ object CostbackupBundle {
     data class BackupManifest(
         val backupFormatVersion: Int = 1,
         val databaseVersion: Int,
-        val createdAt: Long = System.currentTimeMillis(),
+        /**
+         * Epoch-millis creation timestamp. Must be supplied explicitly by callers —
+         * there is no hidden wall-clock default. The legacy JSON fallback (for old
+         * bundles without a `createdAt` field) is sourced from [fromJson]'s explicit
+         * [nowEpochMs] parameter.
+         */
+        val createdAt: Long,
         val includes: BackupIncludes = BackupIncludes(),
         val tableCounts: Map<String, Int> = emptyMap(),
         val receiptAssetCount: Int = 0,
@@ -65,10 +71,14 @@ object CostbackupBundle {
         }
 
         companion object {
-            fun fromJson(json: JSONObject): BackupManifest = BackupManifest(
+            /**
+             * Parses a manifest. Legacy bundles without a `createdAt` field fall back
+             * to the caller-supplied [nowEpochMs] — no hidden wall-clock read.
+             */
+            fun fromJson(json: JSONObject, nowEpochMs: Long): BackupManifest = BackupManifest(
                 backupFormatVersion = json.optInt("backupFormatVersion", 1),
                 databaseVersion = json.getInt("databaseVersion"),
-                createdAt = json.optLong("createdAt", System.currentTimeMillis()),
+                createdAt = json.optLong("createdAt", nowEpochMs),
                 includes = json.optJSONObject("includes")?.let { BackupIncludes.fromJson(it) }
                     ?: BackupIncludes(),
                 tableCounts = json.optJSONObject("tableCounts")?.let { obj ->
@@ -253,9 +263,12 @@ object CostbackupBundle {
     /**
      * Creates a .costbackup bundle at [outputFile].
      *
+     * @param outputFile destination bundle file
      * @param databaseFile the Room DB file to include
      * @param receiptFiles map of relative path (e.g. "files/receipts/r1.jpg") → original file
      * @param password user-provided encryption password
+     * @param nowEpochMs explicit epoch-millis "now" stamped into the manifest's
+     *        `createdAt` field (no hidden wall-clock default)
      * @param tableCounts map of table name → row count for manifest
      * @param databaseVersion Room schema version
      * @param redacted whether the backup was sanitised (privacy-first)
@@ -265,6 +278,7 @@ object CostbackupBundle {
         databaseFile: File,
         receiptFiles: Map<String, File>,
         password: String,
+        nowEpochMs: Long,
         tableCounts: Map<String, Int>,
         databaseVersion: Int,
         redacted: Boolean = true,
@@ -279,7 +293,7 @@ object CostbackupBundle {
 
         try {
             // 2. Build ZIP streaming to temp file (avoids OOM from ByteArrayOutputStream)
-            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages, privacyModeName)
+            buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages, nowEpochMs, privacyModeName)
 
             // 3. Encrypt from temp file + write header + ciphertext to output file
             FileOutputStream(outputFile).use { fos ->
@@ -302,12 +316,15 @@ object CostbackupBundle {
     /**
      * Extracts a .costbackup bundle to [outputDir].
      *
+     * @param nowEpochMs explicit epoch-millis "now" used for the manifest legacy
+     *        `createdAt` fallback (no hidden wall-clock read)
      * @return the extracted directory containing manifest.json, database.sqlite, files/, checksums.json
      */
     fun extract(
         bundleFile: File,
         outputDir: File,
         password: String,
+        nowEpochMs: Long,
         encryptionService: BackupEncryptionService = BackupEncryptionService(),
         limits: ExtractionLimits = ExtractionLimits()
     ): Result<ExtractionResult> = runCatching {
@@ -419,7 +436,7 @@ object CostbackupBundle {
         val manifestFile = extractedFiles["manifest.json"]
             ?: throw InvalidBackupFormatException("Missing manifest.json in bundle")
         val manifestJson = JSONObject(manifestFile.readText())
-        val manifest = BackupManifest.fromJson(manifestJson)
+        val manifest = BackupManifest.fromJson(manifestJson, nowEpochMs)
 
         // 6. Verify checksums
         val checksumsFile = extractedFiles["checksums.json"]
@@ -477,6 +494,7 @@ object CostbackupBundle {
         databaseVersion: Int,
         redacted: Boolean,
         includeReceiptImages: Boolean,
+        nowEpochMs: Long,
         privacyModeName: String? = null
     ) {
         ZipOutputStream(BufferedOutputStream(FileOutputStream(tempZip))).use { zos ->
@@ -484,6 +502,7 @@ object CostbackupBundle {
             // -- manifest.json --
             val manifest = BackupManifest(
                 databaseVersion = databaseVersion,
+                createdAt = nowEpochMs,
                 tableCounts = tableCounts,
                 receiptAssetCount = receiptFiles.size,
                 options = BackupOptionsManifest(

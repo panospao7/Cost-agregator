@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.backup
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.work.WorkManager
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.workers.WorkerSpec
 import com.yourname.expensetracker.domain.workers.WorkerLeaseRegistry
@@ -25,10 +26,11 @@ import javax.inject.Singleton
 @Singleton
 class RestoreMaintenanceMode @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val workerLeaseRegistry: dagger.Lazy<WorkerLeaseRegistry>
+    private val workerLeaseRegistry: dagger.Lazy<WorkerLeaseRegistry>,
+    private val timeProvider: TimeProvider
 ) {
     /** Test-only constructor — uses a no-op WorkerLeaseRegistry. */
-    constructor(context: Context) : this(
+    constructor(context: Context, timeProvider: TimeProvider) : this(
         context,
         dagger.Lazy { com.yourname.expensetracker.domain.workers.NoOpWorkerDrainController().let {
             object : WorkerLeaseRegistry {
@@ -42,7 +44,8 @@ class RestoreMaintenanceMode @Inject constructor(
                 override fun isStopRequested() = false
                 override fun resetStopFlag() {}
             }
-        }}
+        }},
+        timeProvider
     )
 
     private val prefs: SharedPreferences =
@@ -115,7 +118,7 @@ class RestoreMaintenanceMode @Inject constructor(
         // Previously two separate commits; crash between them left inconsistent state.
         prefs.edit()
             .putString(KEY_CRITICAL_REASON, reason)
-            .putLong(KEY_CRITICAL_TIMESTAMP, System.currentTimeMillis())
+            .putLong(KEY_CRITICAL_TIMESTAMP, timeProvider.now())
             .putString(KEY_MAINTENANCE_MODE, Mode.CRITICAL_RECOVERY_REQUIRED.name)
             .commit()
         _modeFlow.value = Mode.CRITICAL_RECOVERY_REQUIRED

@@ -23,6 +23,9 @@ class CostbackupBundleLimitsTest {
 
     private val password = "zip-bomb-test-password"
 
+    /** Deterministic epoch-millis stamped into the bundle manifest `createdAt`. */
+    private val nowEpochMs = 1716163200000L // 2024-05-20 00:00 UTC
+
     /** Builds a real .costbackup whose database.sqlite entry is [dbBytes] bytes. */
     private fun buildBundle(dbBytes: Int): File {
         val dbFile = tmp.newFile("database_source.bin").apply {
@@ -34,6 +37,7 @@ class CostbackupBundleLimitsTest {
             databaseFile = dbFile,
             receiptFiles = emptyMap(),
             password = password,
+            nowEpochMs = nowEpochMs,
             tableCounts = mapOf("expenses" to 1),
             databaseVersion = 1,
             redacted = true,
@@ -50,6 +54,7 @@ class CostbackupBundleLimitsTest {
 
         val result = CostbackupBundle.extract(
             bundle, outDir, password,
+            nowEpochMs = nowEpochMs,
             limits = CostbackupBundle.ExtractionLimits(
                 maxTotalDecompressedBytes = 10L * 1024 * 1024,
                 maxEntryBytes = 10L * 1024 * 1024,
@@ -57,6 +62,11 @@ class CostbackupBundleLimitsTest {
             )
         )
         assertTrue("extract should succeed within generous limits", result.isSuccess)
+        assertEquals(
+            "manifest createdAt must equal the supplied deterministic nowEpochMs",
+            nowEpochMs,
+            result.getOrNull()?.manifest?.createdAt
+        )
     }
 
     @Test
@@ -67,6 +77,7 @@ class CostbackupBundleLimitsTest {
 
         val result = CostbackupBundle.extract(
             bundle, outDir, password,
+            nowEpochMs = nowEpochMs,
             limits = CostbackupBundle.ExtractionLimits(maxEntryBytes = 1024)
         )
         assertTrue("extract should fail", result.isFailure)
@@ -84,6 +95,7 @@ class CostbackupBundleLimitsTest {
         // Manifest + db + checksums together exceed a 2 KB total cap.
         val result = CostbackupBundle.extract(
             bundle, outDir, password,
+            nowEpochMs = nowEpochMs,
             limits = CostbackupBundle.ExtractionLimits(maxTotalDecompressedBytes = 2048)
         )
         assertTrue("extract should fail", result.isFailure)
@@ -102,12 +114,32 @@ class CostbackupBundleLimitsTest {
         // A cap of 1 entry must trip the entry-count guard.
         val result = CostbackupBundle.extract(
             bundle, outDir, password,
+            nowEpochMs = nowEpochMs,
             limits = CostbackupBundle.ExtractionLimits(maxEntryCount = 1)
         )
         assertTrue("extract should fail", result.isFailure)
         assertTrue(
             "should be a BackupTooLargeException",
             result.exceptionOrNull() is CostbackupBundle.BackupTooLargeException
+        )
+    }
+
+    @Test
+    fun `manifest without createdAt falls back to supplied nowEpochMs`() {
+        // Legacy bundles predate the createdAt field; the fallback must be the
+        // explicit caller-supplied timestamp — never a hidden wall-clock read.
+        val legacyJson = org.json.JSONObject().apply {
+            put("backupFormatVersion", 1)
+            put("databaseVersion", 1)
+            put("tableCounts", org.json.JSONObject(mapOf("expenses" to 1)))
+            // No createdAt field
+        }
+
+        val manifest = CostbackupBundle.BackupManifest.fromJson(legacyJson, nowEpochMs = nowEpochMs)
+        assertEquals(
+            "legacy manifest createdAt must fall back to the supplied nowEpochMs",
+            nowEpochMs,
+            manifest.createdAt
         )
     }
 

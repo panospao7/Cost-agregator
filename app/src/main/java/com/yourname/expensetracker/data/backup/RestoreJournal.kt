@@ -101,7 +101,11 @@ class RestoreJournal @Inject constructor(
         }
 
         companion object {
-            fun fromJson(json: JSONObject): JournalEntry = JournalEntry(
+            /**
+             * Parses a journal entry. Legacy journals without a `startedAt` field fall
+             * back to the caller-supplied [nowEpochMs] — no hidden wall-clock read.
+             */
+            fun fromJson(json: JSONObject, nowEpochMs: Long): JournalEntry = JournalEntry(
                 operationId = json.optString("operationId", UUID.randomUUID().toString()),
                 operationCorrelationId = json.optString("operationCorrelationId", UUID.randomUUID().toString()),
                 state = json.optString("state", "PREPARING").let { stateName ->
@@ -111,8 +115,10 @@ class RestoreJournal @Inject constructor(
                         JournalState.PREPARING
                     }
                 },
-                // M10-LEGACY: Fallback for old JSON without startedAt; uses wall-clock only when parsing legacy journals
-                startedAt = json.optLong("startedAt", System.currentTimeMillis()),
+                // M10-LEGACY: Fallback for old JSON without startedAt; uses the explicit
+                // nowEpochMs (sourced from the injected TimeProvider by callers) only when
+                // parsing legacy journals.
+                startedAt = json.optLong("startedAt", nowEpochMs),
                 // DDL-016-05: read both old name and new _prefixed name for recovery paths
                 sourceBackupPath = (json.optString("_sourceBackupPath").takeIf { it.isNotEmpty() && it != "null" }
                     ?: json.optString("sourceBackupPath", null)?.takeIf { it != "null" }),
@@ -364,7 +370,7 @@ class RestoreJournal @Inject constructor(
             if (!file.exists()) return null
             val text = file.readText()
             if (text.isBlank()) return null
-            JournalEntry.fromJson(JSONObject(text))
+            JournalEntry.fromJson(JSONObject(text), timeProvider.now())
         } catch (e: Exception) {
             Timber.w(e, "Failed to read success journal")
             null
@@ -408,7 +414,7 @@ class RestoreJournal @Inject constructor(
             if (!file.exists()) return null
             val text = file.readText()
             if (text.isBlank()) return null
-            JournalEntry.fromJson(JSONObject(text))
+            JournalEntry.fromJson(JSONObject(text), timeProvider.now())
         } catch (e: Exception) {
             Timber.w(e, "Failed to read failure journal")
             null
@@ -478,7 +484,7 @@ class RestoreJournal @Inject constructor(
             if (!journalFile.exists()) return null
             val text = journalFile.readText()
             if (text.isBlank()) return null
-            JournalEntry.fromJson(JSONObject(text))
+            JournalEntry.fromJson(JSONObject(text), timeProvider.now())
         } catch (e: Exception) {
             Timber.e(e, "Failed to read restore journal")
             null

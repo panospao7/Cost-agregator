@@ -24,6 +24,7 @@ import io.mockk.mockkObject
 import io.mockk.unmockkObject
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -74,6 +75,9 @@ class DatabaseBackupRepositoryImplTest {
 
     private val testDispatcher = StandardTestDispatcher()
     private lateinit var repository: DatabaseBackupRepositoryImpl
+
+    /** Deterministic epoch-millis injected via FakeTimeProvider into the repository. */
+    private val fixedTime = 1716163200000L // 2024-05-20 00:00 UTC
 
     private lateinit var tempDir: File
     private lateinit var dbFile: File
@@ -669,7 +673,8 @@ class DatabaseBackupRepositoryImplTest {
             restoreMaintenanceMode = mockRestoreMaintenanceMode,
             restoreJournal = mockRestoreJournal,
             stagedImportVerifier = stagedVerifier,
-            liveImportVerifier = liveVerifier
+            liveImportVerifier = liveVerifier,
+            timeProvider = FakeTimeProvider(fixedTime)
         )
     }
 
