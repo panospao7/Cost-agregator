@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.repository.ExpenseRepository
 import com.yourname.expensetracker.domain.model.BudgetSnapshot
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.util.GlobalTimeZoneTestLock
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -18,6 +19,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
+import java.util.TimeZone
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SpendingPersonalityClassifierTest {
@@ -307,6 +309,53 @@ class SpendingPersonalityClassifierTest {
     }
 
     @Test
+    fun `calculateWeekendSpendShare treats sunday as weekend and monday as weekday`() {
+        val sunday = purchase(id = 1L, amount = 50.0, merchant = "Sunday", date = millis(2026, Calendar.MARCH, 8, 12))
+        val monday = purchase(id = 2L, amount = 30.0, merchant = "Monday", date = millis(2026, Calendar.MARCH, 9, 12))
+
+        assertApproxEquals(1.0, invokeCalculateWeekendSpendShare(listOf(sunday)), 0.0001)
+        assertApproxEquals(0.0, invokeCalculateWeekendSpendShare(listOf(monday)), 0.0001)
+        assertApproxEquals(0.625, invokeCalculateWeekendSpendShare(listOf(sunday, monday)), 0.0001)
+    }
+
+    @Test
+    fun `calculateNightSpendShare uses 8pm hour boundary`() {
+        val at19 = purchase(id = 1L, amount = 40.0, merchant = "Before 8pm", date = millis(2026, Calendar.MARCH, 5, 19))
+        val at20 = purchase(id = 2L, amount = 40.0, merchant = "At 8pm", date = millis(2026, Calendar.MARCH, 5, 20))
+
+        assertApproxEquals(0.0, invokeCalculateNightSpendShare(listOf(at19)), 0.0001)
+        assertApproxEquals(1.0, invokeCalculateNightSpendShare(listOf(at20)), 0.0001)
+        assertApproxEquals(0.5, invokeCalculateNightSpendShare(listOf(at19, at20)), 0.0001)
+    }
+
+    @Test
+    fun `classifier preserves weekend and night semantics across DST spring forward with fixed timestamps`() = GlobalTimeZoneTestLock.withLock {
+        val originalTz = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+            // US DST spring forward: Sunday 2026-03-08 at 02:00 -> 03:00 local.
+            val before = millisAt(2026, Calendar.MARCH, 8, 1, 30) // EST (UTC-5)
+            val after = millisAt(2026, Calendar.MARCH, 8, 3, 30)  // EDT (UTC-4)
+
+            // Only one real hour elapsed even though the wall clock jumped two hours.
+            assertEquals(3_600_000L, after - before)
+
+            val purchases = listOf(
+                purchase(id = 1L, amount = 10.0, merchant = "DST Pre", date = before),
+                purchase(id = 2L, amount = 20.0, merchant = "DST Post", date = after)
+            )
+
+            // Both purchases fall on Sunday (March 8), so the weekend share is 100%.
+            assertApproxEquals(1.0, invokeCalculateWeekendSpendShare(purchases), 0.0001)
+
+            // Hours 1 and 3 are both before 8 PM, so neither counts as night.
+            assertApproxEquals(0.0, invokeCalculateNightSpendShare(purchases), 0.0001)
+        } finally {
+            TimeZone.setDefault(originalTz)
+        }
+    }
+
+    @Test
     fun `calculateConfidence returns zero and never NaN for empty feature map`() {
         val confidence = invokeCalculateConfidence(
             transactionCount = 25,
@@ -399,6 +448,24 @@ class SpendingPersonalityClassifierTest {
         return method.invoke(classifier, purchases, allExpenses, budgets) as Map<String, Double>
     }
 
+    private fun invokeCalculateWeekendSpendShare(purchases: List<ExpenseSnapshot>): Double {
+        val method = SpendingPersonalityClassifier::class.java.getDeclaredMethod(
+            "calculateWeekendSpendShare",
+            List::class.java
+        )
+        method.isAccessible = true
+        return method.invoke(classifier, purchases) as Double
+    }
+
+    private fun invokeCalculateNightSpendShare(purchases: List<ExpenseSnapshot>): Double {
+        val method = SpendingPersonalityClassifier::class.java.getDeclaredMethod(
+            "calculateNightSpendShare",
+            List::class.java
+        )
+        method.isAccessible = true
+        return method.invoke(classifier, purchases) as Double
+    }
+
     private fun invokeDeterminePersonalityType(featureScores: Map<String, Double>): SpendingPersonalityType {
         val method = SpendingPersonalityClassifier::class.java.getDeclaredMethod(
             "determinePersonalityType",
@@ -486,5 +553,12 @@ class SpendingPersonalityClassifierTest {
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
+    }
+
+    private fun millisAt(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long {
+        return java.time.LocalDateTime.of(year, month, day, hour, minute)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
     }
 }

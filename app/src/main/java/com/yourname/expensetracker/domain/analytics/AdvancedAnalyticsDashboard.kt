@@ -337,15 +337,14 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             7 to UiText.fromKey(DomainTextKeys.COMMON_DAY_SUNDAY)
         )
         
-        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-        val calendar = java.util.Calendar.getInstance()
-        
+        // T4A: java.time — DayOfWeek.value is Monday=1..Sunday=7, matching the
+        // dayMap keys used below (1 = Monday ... 7 = Sunday).
         for (expense in expenses) {
             if (expense.transactionType == DomainTransactionType.PURCHASE) {
-                calendar.timeInMillis = expense.date
-                val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
-                // Convert to Monday = 1 format
-                val adjustedDay = if (dayOfWeek == java.util.Calendar.SUNDAY) 7 else dayOfWeek - 1
+                val adjustedDay = java.time.Instant.ofEpochMilli(expense.date)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .dayOfWeek
+                    .value
                 
                 val list = dayMap.getOrPut(adjustedDay) { mutableListOf() }
                 list.add(expense.effectiveAmount)
@@ -387,16 +386,16 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         }
 
         // Check weekend spending
-        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-        val calendar = java.util.Calendar.getInstance()
+        // T4A: java.time — SATURDAY/SUNDAY comparison preserves weekend semantics.
         var weekendSpending = 0.0
         var weekdaySpending = 0.0
 
             for (expense in expenses) {
             if (expense.transactionType == DomainTransactionType.PURCHASE) {
-                calendar.timeInMillis = expense.date
-                val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
-                if (dayOfWeek == java.util.Calendar.SATURDAY || dayOfWeek == java.util.Calendar.SUNDAY) {
+                val dayOfWeek = java.time.Instant.ofEpochMilli(expense.date)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .dayOfWeek
+                if (dayOfWeek == java.time.DayOfWeek.SATURDAY || dayOfWeek == java.time.DayOfWeek.SUNDAY) {
                     weekendSpending += expense.effectiveAmount
                 } else {
                     weekdaySpending += expense.effectiveAmount

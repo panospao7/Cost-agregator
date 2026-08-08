@@ -7,8 +7,12 @@ import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import com.yourname.expensetracker.domain.util.GlobalTimeZoneTestLock
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.util.TimeZone
 
 class DayOfWeekAnalyzerTest {
 
@@ -99,6 +103,70 @@ class DayOfWeekAnalyzerTest {
         assertApproxEquals(700.0, insights.last().totalSpent, 0.01)
     }
 
+    @Test
+    fun `analyze maps sunday and monday boundary timestamps to dayIndex 6 and 0`() {
+        val start = startOfMonth(2026, 3)
+        val end = startOfMonth(2026, 4)
+        val expenses = listOf(
+            createExpense("2026-03-01", 40.0, merchant = "Sunday Boundary", id = 201L), // Sunday
+            createExpense("2026-03-02", 25.0, merchant = "Monday Boundary", id = 202L)   // Monday
+        )
+
+        val insights = analyzer.analyze(startDate = start, endDate = end, allExpenses = expenses.map { it.toSnapshot() }, displayCurrency = "EUR")
+
+        val sunday = insights.first { it.dayName == "Sun" }
+        val monday = insights.first { it.dayName == "Mon" }
+
+        assertEquals(6, sunday.dayIndex)
+        assertApproxEquals(40.0, sunday.totalSpent, 0.01)
+        assertEquals(1, sunday.transactionCount)
+
+        assertEquals(0, monday.dayIndex)
+        assertApproxEquals(25.0, monday.totalSpent, 0.01)
+        assertEquals(1, monday.transactionCount)
+    }
+
+    @Test
+    fun `analyze maps fixed timestamps around DST spring forward to the correct calendar days`() = GlobalTimeZoneTestLock.withLock {
+        val originalTz = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+            // US DST spring forward: Sunday 2026-03-08 at 02:00 -> 03:00 local.
+            val beforeTransition = millisAt(2026, 3, 8, 1, 30) // EST (UTC-5)
+            val afterTransition = millisAt(2026, 3, 8, 3, 30)  // EDT (UTC-4)
+            val mondayAfter = millisAt(2026, 3, 9, 12, 0)
+
+            // Only one real hour elapsed between the two fixed instants (23-hour day).
+            assertEquals(3_600_000L, afterTransition - beforeTransition)
+
+            val expenses = listOf(
+                snapshotAt(beforeTransition, 10.0, "DST Pre", 301L),
+                snapshotAt(afterTransition, 20.0, "DST Post", 302L),
+                snapshotAt(mondayAfter, 30.0, "Monday After DST", 303L)
+            )
+
+            val insights = analyzer.analyze(
+                startDate = startOfMonth(2026, 3),
+                endDate = startOfMonth(2026, 4),
+                allExpenses = expenses,
+                displayCurrency = "EUR"
+            )
+
+            val sunday = insights.first { it.dayName == "Sun" }
+            val monday = insights.first { it.dayName == "Mon" }
+
+            assertEquals(6, sunday.dayIndex)
+            assertApproxEquals(30.0, sunday.totalSpent, 0.01)
+            assertEquals(2, sunday.transactionCount)
+
+            assertEquals(0, monday.dayIndex)
+            assertApproxEquals(30.0, monday.totalSpent, 0.01)
+            assertEquals(1, monday.transactionCount)
+        } finally {
+            TimeZone.setDefault(originalTz)
+        }
+    }
+
     private fun Expense.toSnapshot(): ExpenseSnapshot = ExpenseSnapshot(
         id = id,
         amount = amount,
@@ -145,4 +213,26 @@ class DayOfWeekAnalyzerTest {
         createExpense("2026-03-28", 120.00, merchant = "Utilities", category = "utilities", id = 13L),
         createExpense("2026-03-30", 500.00, type = TransactionType.DEPOSIT, merchant = "Bonus", id = 14L)
     )
+
+    private fun millisAt(year: Int, month: Int, day: Int, hour: Int, minute: Int): Long =
+        LocalDateTime.of(year, month, day, hour, minute)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+
+    private fun snapshotAt(date: Long, amount: Double, merchant: String, id: Long): ExpenseSnapshot =
+        ExpenseSnapshot(
+            id = id,
+            amount = amount,
+            effectiveAmount = amount,
+            currency = "EUR",
+            merchant = merchant,
+            merchantKey = null,
+            transactionType = DomainTransactionType.PURCHASE,
+            date = date,
+            categoryId = null,
+            isNotMine = false,
+            transferDirection = null,
+            notes = null
+        )
 }

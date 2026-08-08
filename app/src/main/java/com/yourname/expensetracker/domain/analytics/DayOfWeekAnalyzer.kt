@@ -2,6 +2,8 @@ package com.yourname.expensetracker.domain.analytics
 
 import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
+import java.time.Instant
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -26,12 +28,12 @@ class DayOfWeekAnalyzer @Inject constructor() {
         }
 
         val byDayOfWeek = expenses.groupBy { expense ->
-            // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-            val cal = java.util.Calendar.getInstance()
-            cal.timeInMillis = expense.date
-            // Calendar.DAY_OF_WEEK: Sunday=1, Monday=2, ..., Saturday=7
-            // Convert to Monday=0, Tuesday=1, ..., Sunday=6 to match DAY_NAMES
-            (cal.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+            // T4A: java.time — DayOfWeek.value is Monday=1..Sunday=7; minus 1 yields
+            // Monday=0, Tuesday=1, ..., Sunday=6 to match DAY_NAMES.
+            Instant.ofEpochMilli(expense.date)
+                .atZone(ZoneId.systemDefault())
+                .dayOfWeek
+                .value - 1
         }
 
         // Keep stable chronological weekday order (Mon -> Sun).

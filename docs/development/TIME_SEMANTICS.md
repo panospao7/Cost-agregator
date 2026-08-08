@@ -321,6 +321,65 @@ through `TimeProvider` and the existing guard exception list is unchanged.
 
 Later time findings outside T3C scope remain **pending** in subsequent batches.
 
+### Time Batch T4A Tier 2 — Analytics weekday / DST semantics (complete)
+
+T4A replaces the analytics engines' direct `java.util.Calendar` day-of-week
+reads with `java.time` / `TimePeriodUtils` while preserving each engine's
+documented weekday convention. Tier 1 migrated the production reads; **Tier 2**
+adds boundary and DST regression coverage on the real `AdvancedAnalyticsDashboard`
+path and documents the weekday mapping each engine uses.
+
+Weekday mapping by engine:
+
+- **`SpendingPersonalityClassifier`** — `calculateWeekendSpendShare` uses
+  `TimePeriodUtils.getDayOfWeek` (Calendar style: Sunday=1 … Saturday=7) and
+  compares against `Calendar.SATURDAY`/`Calendar.SUNDAY` to preserve the
+  original weekend semantics. `calculateNightSpendShare` uses
+  `TimePeriodUtils.getHourOfDay` (0–23, system zone) for the `>= 8 PM` night
+  threshold. No wall-clock reads were introduced — both helpers are pure,
+  seeded from the transaction timestamp.
+- **`DayOfWeekAnalyzer`** — `analyze` uses `java.time.DayOfWeek.value`
+  (Monday=1 … Sunday=7); subtracting 1 yields the **Monday=0 … Sunday=6**
+  `dayIndex` that indexes `DAY_NAMES` (Mon…Sun). The stable Mon→Sun output
+  order is unchanged.
+- **`AdvancedAnalyticsDashboard`** — `getWeeklyPattern` uses
+  `java.time.DayOfWeek.value` directly for the `weeklyPattern` buckets
+  (**Monday=1 … Sunday=7**, matching `DayOfWeekSpending.dayOfWeek` and the
+  1→Monday/7→Sunday `dayNames` map). `generateInsights` compares
+  `SATURDAY`/`SUNDAY` via `java.time.DayOfWeek` to preserve the weekend
+  spending insight.
+
+Fixed DST / boundary regression tests added (Tier 2):
+
+- `AdvancedAnalyticsDashboardTest` — **Sunday purchases map to day 7 and
+  Monday to day 1 through the real weekly pattern path**: purchases on
+  2026-03-01 (Sunday) and 2026-03-02 (Monday) land in `dayOfWeek == 7` and
+  `dayOfWeek == 1` via `generateDashboardData` → `getWeeklyPattern`, and a
+  deposit does not inflate the pattern's transaction counts.
+- `AdvancedAnalyticsDashboardTest` — **DST spring-forward fixed timestamps
+  preserve Sunday/Monday mapping and insight behavior**: with the default
+  zone pinned to `America/New_York`, fixed instants before (01:30 EST) and
+  after (03:30 EDT) the Sunday 2026-03-08 02:00→03:00 transition are asserted
+  to be exactly one real hour apart (23-hour day), both still map to Sunday
+  (`dayOfWeek == 7`), the following Monday maps to `dayOfWeek == 1`, and the
+  weekend `SPENDING_PATTERN` insight still fires for the DST-day spend.
+- Existing Tier 1 boundary tests remain: `DayOfWeekAnalyzerTest`
+  (Sunday/Monday boundary → `dayIndex` 6/0, DST spring-forward) and
+  `SpendingPersonalityClassifierTest` day/hour coverage.
+
+**Explicitly still pending (T4B and later):**
+
+- `AdvancedAnalyticsDashboard.getMonthlyTrend` — the complex month cursor
+  (A18: replace the `java.util.Calendar` month iteration with
+  `java.time.ZonedDateTime` + `ZoneId.systemDefault()`).
+- CashFlow / Budget engine Calendar loops (e.g. `AdvancedAnalyticsEngine`
+  weekday mapping and weekend classification still read `Calendar` constants).
+- `TimePeriodUtils` internal `Calendar`-based strategy migration to
+  `java.time`.
+
+This batch is **not** a claim that all T4 time work is complete — the items
+above remain pending.
+
 ## Enforcing These Rules
 
 After changes, run the automated time-boundary guard:

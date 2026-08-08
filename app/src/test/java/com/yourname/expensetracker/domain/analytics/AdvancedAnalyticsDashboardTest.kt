@@ -8,6 +8,7 @@ import com.yourname.expensetracker.testAnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.data.repository.ExpenseRepository
+import com.yourname.expensetracker.domain.util.GlobalTimeZoneTestLock
 import io.mockk.coEvery
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -15,7 +16,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.time.ZoneId
+import java.util.TimeZone
 
 class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
 
@@ -162,6 +165,120 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
         assertApproxEquals(0.0, result.netCashflow)
         assertTrue(result.insights.none { it.type == DashboardInsightType.SAVINGS_OPPORTUNITY })
     }
+
+    @Test
+    fun `sunday purchases map to day 7 and monday to day 1 through real weekly pattern path`() = runTest {
+        // 2026-03-01 is a Sunday and 2026-03-02 is a Monday in every zone:
+        // timestamps are derived and re-read with the same system default zone.
+        val start = ms("2026-03-01")
+        val end = ms("2026-04-01")
+
+        val all = listOf(
+            expenseAt(start, 40.0, TransactionType.PURCHASE, merchant = "Sunday"),
+            expenseAt(ms("2026-03-02"), 25.0, TransactionType.PURCHASE, merchant = "Monday"),
+            expenseAt(ms("2026-03-04"), 10.0, TransactionType.PURCHASE, merchant = "Wednesday"),
+            // Deposits are not part of the weekly spending pattern.
+            expenseAt(start, 100.0, TransactionType.DEPOSIT, merchant = "Deposit")
+        )
+
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        val sunday = result.weeklyPattern.first { it.dayOfWeek == 7 }
+        val monday = result.weeklyPattern.first { it.dayOfWeek == 1 }
+
+        assertEquals(7, sunday.dayOfWeek)
+        assertApproxEquals(40.0, sunday.averageSpending)
+        assertEquals(1, sunday.transactionCount)
+
+        assertEquals(1, monday.dayOfWeek)
+        assertApproxEquals(25.0, monday.averageSpending)
+        assertEquals(1, monday.transactionCount)
+
+        // The deposit must not inflate the pattern: only the three purchases count.
+        assertEquals(3, result.weeklyPattern.sumOf { it.transactionCount })
+    }
+
+    @Test
+    fun `dst spring-forward fixed timestamps preserve sunday monday mapping and insight behavior`() = runTest {
+        GlobalTimeZoneTestLock.withLock {
+            val originalTz = TimeZone.getDefault()
+            try {
+                TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+                val zone = ZoneId.of("America/New_York")
+
+                // US DST spring forward: Sunday 2026-03-08 at 02:00 -> 03:00 local.
+                val beforeTransition = zonedMs(2026, 3, 8, 1, 30, zone) // EST (UTC-5)
+                val afterTransition = zonedMs(2026, 3, 8, 3, 30, zone)  // EDT (UTC-4)
+                val mondayAfter = zonedMs(2026, 3, 9, 12, 0, zone)
+
+                // Only one real hour elapsed between the two fixed instants (23-hour day).
+                assertEquals(3_600_000L, afterTransition - beforeTransition)
+
+                val start = zonedMs(2026, 3, 1, 0, 0, zone)
+                val end = zonedMs(2026, 4, 1, 0, 0, zone)
+
+                val all = listOf(
+                    expenseAt(beforeTransition, 10.0, TransactionType.PURCHASE, merchant = "DST Pre"),
+                    expenseAt(afterTransition, 20.0, TransactionType.PURCHASE, merchant = "DST Post"),
+                    expenseAt(mondayAfter, 5.0, TransactionType.PURCHASE, merchant = "Monday After DST")
+                )
+
+                coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+                    val rangeStart = firstArg<Long>()
+                    val rangeEnd = secondArg<Long>()
+                    all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+                }
+
+                val result = dashboard.generateDashboardData(start, end)
+
+                val sunday = result.weeklyPattern.first { it.dayOfWeek == 7 }
+                val monday = result.weeklyPattern.first { it.dayOfWeek == 1 }
+
+                // Both fixed DST-day instants map to Sunday (day 7); Monday maps to day 1.
+                assertEquals(2, sunday.transactionCount)
+                assertApproxEquals(15.0, sunday.averageSpending)
+                assertEquals(1, monday.transactionCount)
+                assertApproxEquals(5.0, monday.averageSpending)
+
+                // Weekend insight still fires on the DST day: 30 weekend vs 5 weekday spend.
+                assertTrue(result.insights.any { it.type == DashboardInsightType.SPENDING_PATTERN })
+            } finally {
+                TimeZone.setDefault(originalTz)
+            }
+        }
+    }
+
+    private fun zonedMs(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int,
+        minute: Int,
+        zone: ZoneId
+    ): Long = LocalDateTime.of(year, month, day, hour, minute)
+        .atZone(zone)
+        .toInstant()
+        .toEpochMilli()
+
+    private fun expenseAt(
+        dateMs: Long,
+        amount: Double,
+        type: TransactionType,
+        categoryId: Long? = null,
+        merchant: String = "M"
+    ): Expense = Expense(
+        amount = amount,
+        merchant = merchant,
+        transactionType = type,
+        categoryId = categoryId,
+        date = dateMs
+    )
 
     private fun exp(
         date: String,
