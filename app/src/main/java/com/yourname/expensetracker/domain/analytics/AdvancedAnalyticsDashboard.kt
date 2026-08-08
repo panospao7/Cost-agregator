@@ -239,33 +239,25 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             .includedExpenses
             .groupBy(::buildMonthKey)
 
-        val startYear = TimePeriodUtils.getYear(startDate)
-        val startMonth = TimePeriodUtils.getMonth(startDate)
-
-        var currentYear = startYear
-        var currentMonth = startMonth
-
-        // Iterate with a calendar-month cursor; stop when the cursor reaches endDate
+        // Iterate with a month-start cursor; stop when the cursor reaches endDate
         // (half-open: buckets cover [startDate, endDate), so stop when monthStart >= endDate)
-        while (true) {
-            // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-            val calendar = java.util.Calendar.getInstance()
-            calendar.set(currentYear, currentMonth, 1, 0, 0, 0)
-            calendar.set(java.util.Calendar.MILLISECOND, 0)
-            val monthStart = calendar.timeInMillis
+        // A18: java.time/TimePeriodUtils month-start iteration — no raw Calendar cursor.
+        // TimePeriodUtils uses the system default timezone; monthStart is always the 1st at
+        // 00:00, so Calendar.add(MONTH, 1) semantics never trigger end-of-month coercion.
+        var monthStart = TimePeriodUtils.getStartOfMonth(startDate)
 
+        while (true) {
             // Stop if the start of this month is at or beyond endDate (half-open upper bound)
             if (monthStart >= endDate) break
 
-            // Advance calendar to the first day of the next month to get nextMonthStart
-            calendar.add(java.util.Calendar.MONTH, 1)
-            val nextMonthStart = calendar.timeInMillis
+            // Advance to the first day of the next month to get nextMonthStart
+            val nextMonthStart = TimePeriodUtils.getEndOfMonth(monthStart)
 
             // Clamp bucket to the requested half-open dashboard range [startDate, endDate)
             val bucketStart = maxOf(monthStart, startDate)
             val bucketEnd = minOf(nextMonthStart, endDate)
 
-            val monthKey = "$currentYear-${(currentMonth + 1).toString().padStart(2, '0')}"
+            val monthKey = TimePeriodUtils.formatMonthKey(monthStart)
 
             val expenses = monthlyBuckets[monthKey].orEmpty().filter {
                 it.date >= bucketStart && it.date < bucketEnd
@@ -286,11 +278,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             result.add(MonthlyDataPoint(monthKey, spending, income, displayCurrency))
 
             // Move to next month
-            currentMonth++
-            if (currentMonth > 11) {
-                currentMonth = 0
-                currentYear++
-            }
+            monthStart = nextMonthStart
         }
 
         return result

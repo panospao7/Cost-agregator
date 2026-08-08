@@ -123,6 +123,159 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
     }
 
     @Test
+    fun `monthly trend across Jan to Feb emits Jan and Feb bucket labels with clamped ranges`() = runTest {
+        val start = ms("2026-01-15")
+        val end = ms("2026-02-20")
+
+        val all = listOf(
+            exp("2026-01-15", 10.0, TransactionType.PURCHASE, merchant = "JanStart"),
+            exp("2026-01-31", 20.0, TransactionType.PURCHASE, merchant = "JanEnd"),
+            exp("2026-02-01", 30.0, TransactionType.PURCHASE, merchant = "FebStart"),
+            exp("2026-02-19", 40.0, TransactionType.PURCHASE, merchant = "FebNearEnd"),
+            // Exactly at endDate — half-open: must be excluded from the February bucket.
+            exp("2026-02-20", 999.0, TransactionType.PURCHASE, merchant = "AtEndDate")
+        )
+
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertEquals(listOf("2026-01", "2026-02"), result.monthlyTrend.map { it.month })
+        assertApproxEquals(30.0, result.monthlyTrend[0].spending)
+        assertApproxEquals(70.0, result.monthlyTrend[1].spending)
+    }
+
+    @Test
+    fun `monthly trend across Dec to Jan emits year rollover labels 2025-12 and 2026-01`() = runTest {
+        val start = ms("2025-12-10")
+        val end = ms("2026-01-15")
+
+        val all = listOf(
+            exp("2025-12-10", 100.0, TransactionType.PURCHASE, merchant = "DecStart"),
+            exp("2025-12-31", 200.0, TransactionType.PURCHASE, merchant = "DecEnd"),
+            exp("2026-01-01", 50.0, TransactionType.PURCHASE, merchant = "JanStart"),
+            exp("2026-01-14", 60.0, TransactionType.PURCHASE, merchant = "JanNearEnd"),
+            // Exactly at endDate — half-open: excluded.
+            exp("2026-01-15", 999.0, TransactionType.PURCHASE, merchant = "AtEndDate")
+        )
+
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertEquals(listOf("2025-12", "2026-01"), result.monthlyTrend.map { it.month })
+        assertApproxEquals(300.0, result.monthlyTrend[0].spending)
+        assertApproxEquals(110.0, result.monthlyTrend[1].spending)
+    }
+
+    @Test
+    fun `monthly trend from Jan 31 start coerces to Jan month start keeping Jan and Feb bucket labels`() = runTest {
+        val start = ms("2026-01-31")
+        val end = ms("2026-03-01")
+
+        val all = listOf(
+            // startDate lands on Jan 31; the month-start cursor is coerced to Jan 1,
+            // so the January bucket covers [Jan 31, Feb 1) without skipped/duplicate buckets.
+            exp("2026-01-31", 10.0, TransactionType.PURCHASE, merchant = "Jan31Start"),
+            exp("2026-02-15", 20.0, TransactionType.PURCHASE, merchant = "Feb15"),
+            exp("2026-02-28", 30.0, TransactionType.PURCHASE, merchant = "Feb28"),
+            // March's monthStart == endDate — excluded by the half-open upper bound.
+            exp("2026-03-01", 999.0, TransactionType.PURCHASE, merchant = "Mar1AtEnd")
+        )
+
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertEquals(listOf("2026-01", "2026-02"), result.monthlyTrend.map { it.month })
+        assertApproxEquals(10.0, result.monthlyTrend[0].spending)
+        assertApproxEquals(50.0, result.monthlyTrend[1].spending)
+    }
+
+    @Test
+    fun `leap February produces a single February bucket that includes the leap day`() = runTest {
+        val start = ms("2024-02-01")
+        val end = ms("2024-03-01")
+
+        val all = listOf(
+            exp("2024-02-01", 10.0, TransactionType.PURCHASE, merchant = "Feb1"),
+            exp("2024-02-28", 20.0, TransactionType.PURCHASE, merchant = "Feb28"),
+            exp("2024-02-29", 30.0, TransactionType.PURCHASE, merchant = "LeapDay"),
+            // March's monthStart == endDate — excluded.
+            exp("2024-03-01", 999.0, TransactionType.PURCHASE, merchant = "Mar1AtEnd")
+        )
+
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        assertEquals(listOf("2024-02"), result.monthlyTrend.map { it.month })
+        assertApproxEquals(60.0, result.monthlyTrend[0].spending)
+    }
+
+    @Test
+    fun `half-open end boundary excludes the bucket whose monthStart equals endDate`() = runTest {
+        val start = ms("2026-02-01")
+        val end = ms("2026-03-01")
+
+        val all = listOf(
+            exp("2026-02-01", 10.0, TransactionType.PURCHASE, merchant = "Feb1"),
+            exp("2026-02-28", 20.0, TransactionType.PURCHASE, merchant = "Feb28"),
+            // Exactly at endDate — excluded from the February bucket (date < bucketEnd == endDate).
+            exp("2026-03-01", 999.0, TransactionType.PURCHASE, merchant = "ExactlyAtEndDate")
+        )
+
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+            val rangeStart = firstArg<Long>()
+            val rangeEnd = secondArg<Long>()
+            all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+        }
+
+        val result = dashboard.generateDashboardData(start, end)
+
+        // March's monthStart (2026-03-01) == endDate, so the loop stops before emitting March.
+        assertEquals(listOf("2026-02"), result.monthlyTrend.map { it.month })
+        assertApproxEquals(30.0, result.monthlyTrend[0].spending)
+    }
+
+    @Test
+    fun `invalid or empty ranges return existing empty monthly trend and empty data keeps zero buckets`() = runTest {
+        // Empty dataset but valid range — existing behavior: every intersecting month is
+        // still emitted as a zero-valued bucket (no chart gaps).
+        coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } returns emptyList()
+
+        val noData = dashboard.generateDashboardData(ms("2026-01-01"), ms("2026-03-01"))
+        assertEquals(listOf("2026-01", "2026-02"), noData.monthlyTrend.map { it.month })
+        assertApproxEquals(0.0, noData.monthlyTrend[0].spending)
+        assertApproxEquals(0.0, noData.monthlyTrend[0].income)
+        assertApproxEquals(0.0, noData.monthlyTrend[1].spending)
+        assertApproxEquals(0.0, noData.monthlyTrend[1].income)
+
+        // Invalid ranges (endDate <= startDate) return the existing empty result.
+        val equal = dashboard.generateDashboardData(ms("2026-01-15"), ms("2026-01-15"))
+        assertTrue(equal.monthlyTrend.isEmpty())
+
+        val reversed = dashboard.generateDashboardData(ms("2026-02-15"), ms("2026-01-15"))
+        assertTrue(reversed.monthlyTrend.isEmpty())
+    }
+
+    @Test
     fun `no income edge case keeps totals and avoids divide errors in insights`() = runTest {
         val start = ms("2026-03-01")
         val end = ms("2026-04-01")
@@ -248,6 +401,58 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
 
                 // Weekend insight still fires on the DST day: 30 weekend vs 5 weekday spend.
                 assertTrue(result.insights.any { it.type == DashboardInsightType.SPENDING_PATTERN })
+            } finally {
+                TimeZone.setDefault(originalTz)
+            }
+        }
+    }
+
+    @Test
+    fun `dst month-loop keeps bucket labels and totals under America New York and excludes expense exactly at endDate`() = runTest {
+        GlobalTimeZoneTestLock.withLock {
+            val originalTz = TimeZone.getDefault()
+            try {
+                TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+                val zone = ZoneId.of("America/New_York")
+
+                // US DST spring forward: Sunday 2026-03-08 at 02:00 -> 03:00 local.
+                val beforeTransition = zonedMs(2026, 3, 8, 1, 30, zone) // EST (UTC-5)
+                val afterTransition = zonedMs(2026, 3, 8, 3, 30, zone)  // EDT (UTC-4)
+                val midMonth = zonedMs(2026, 3, 20, 10, 0, zone)
+
+                // Only one real hour elapsed between the two fixed instants (23-hour day).
+                assertEquals(3_600_000L, afterTransition - beforeTransition)
+
+                val start = zonedMs(2026, 3, 1, 0, 0, zone)
+                val end = zonedMs(2026, 4, 1, 0, 0, zone)
+
+                val all = listOf(
+                    expenseAt(beforeTransition, 10.0, TransactionType.PURCHASE, merchant = "DST Pre"),
+                    expenseAt(afterTransition, 20.0, TransactionType.PURCHASE, merchant = "DST Post"),
+                    expenseAt(midMonth, 30.0, TransactionType.DEPOSIT, merchant = "Income"),
+                    // Exactly at endDate — half-open: must be excluded.
+                    expenseAt(end, 999.0, TransactionType.PURCHASE, merchant = "AtEndDate")
+                )
+
+                // Half-open stub: [rangeStart, rangeEnd)
+                coEvery { expenseRepository.getExpenseSnapshotsBetween(any(), any()) } answers {
+                    val rangeStart = firstArg<Long>()
+                    val rangeEnd = secondArg<Long>()
+                    all.filter { it.date >= rangeStart && it.date < rangeEnd }.toExpenseSnapshots()
+                }
+
+                val result = dashboard.generateDashboardData(start, end)
+
+                // Only the March DST month bucket is emitted; April's monthStart == endDate is excluded.
+                assertEquals(listOf("2026-03"), result.monthlyTrend.map { it.month })
+
+                // Both pre- and post-transition fixed instants still land in the March bucket.
+                assertApproxEquals(30.0, result.monthlyTrend[0].spending)
+                assertApproxEquals(30.0, result.monthlyTrend[0].income)
+
+                // The expense exactly at endDate is excluded from trend and totals.
+                assertApproxEquals(30.0, result.totalSpent)
+                assertApproxEquals(30.0, result.totalIncome)
             } finally {
                 TimeZone.setDefault(originalTz)
             }
