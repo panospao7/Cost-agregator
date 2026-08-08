@@ -1,8 +1,8 @@
 package com.yourname.expensetracker.domain.forecasting
 
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
-import java.util.Calendar
 import java.util.Random
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -75,9 +75,8 @@ class MonteCarloSpendingSimulator @Inject constructor(
         estimatedWeeklyRecurring: Double = 0.0
     ): MonteCarloResult? {
         val now = timeProvider.now()
-        val calendar = Calendar.getInstance().apply { timeInMillis = now }
-        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+        val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
+        val dayOfMonth = TimePeriodUtils.getDayOfMonth(now)
         val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(0)
 
         // If it's the last day of the month, the "forecast" is just what we've spent + known upcoming

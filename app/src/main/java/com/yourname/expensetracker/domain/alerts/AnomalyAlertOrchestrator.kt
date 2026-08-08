@@ -329,11 +329,8 @@ class AnomalyAlertOrchestrator @Inject constructor(
      * Detection period that spans historical lookback through now.
      */
     private fun getDetectionPeriod(now: Long, startMs: Long): MonthPeriod {
-        val calendar = java.util.Calendar.getInstance().apply {
-            timeInMillis = now
-        }
-        val year = calendar.get(java.util.Calendar.YEAR)
-        val month = calendar.get(java.util.Calendar.MONTH)
+        val year = TimePeriodUtils.getYear(now)
+        val month = TimePeriodUtils.getMonth(now)
         return MonthPeriod(year, month, startMs, now + 1L)
     }
 

@@ -4,11 +4,14 @@ import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.repository.SpendingChallengeRepository
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.capture
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
@@ -17,6 +20,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.time.LocalDateTime
+import java.time.ZoneId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @Suppress("DEPRECATION_ERROR")
@@ -144,6 +149,35 @@ class SpendingChallengeManagerTest {
         assertEquals(now - DAY_MS * 7, created.baselineStartDate)
         assertEquals(managerTestStartOfDay(now), created.baselineEndDate)
         coVerify(exactly = 1) { repository.saveChallenge(any()) }
+    }
+
+    @Test
+    fun `checkNoSpendStreak on DST spring-forward date captures DAO start as getStartOfDay and end as raw start plus DAY_MS`() = runTest {
+        // 2024-03-31 10:00 local is a DST spring-forward day in many zones.
+        // Expected values are derived from TimePeriodUtils/java.time so the
+        // assertions stay deterministic regardless of the runner's zone.
+        val now = toEpochMs(2024, 3, 31, 10, 0)
+        every { timeProvider.now() } returns now
+        coEvery { expenseDao.getOldestExpenseDate() } returns null
+        val startSlot = slot<Long>()
+        val endSlot = slot<Long>()
+        coEvery { expenseDao.getSpendingDailyTotalsBetween(capture(startSlot), capture(endSlot)) } returns emptyList()
+        coEvery { expenseDao.getTotalSpentBetween(any(), any()) } returns 90.0
+        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 90.0, 1))
+
+        val status = manager.checkNoSpendStreak()
+
+        val startOfDay = TimePeriodUtils.getStartOfDay(now)
+        assertEquals("DAO range start must be the calendar start of day", startOfDay, startSlot.captured)
+        assertEquals("DAO range end preserves existing raw DAY_MS semantics", startOfDay + DAY_MS, endSlot.captured)
+        assertTrue(status.hasNoSpendToday)
+    }
+
+    private fun toEpochMs(year: Int, month: Int, day: Int, hour: Int = 0, minute: Int = 0): Long {
+        return LocalDateTime.of(year, month, day, hour, minute, 0)
+            .atZone(ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
     }
 
     private fun managerTestStartOfDay(timestamp: Long): Long {

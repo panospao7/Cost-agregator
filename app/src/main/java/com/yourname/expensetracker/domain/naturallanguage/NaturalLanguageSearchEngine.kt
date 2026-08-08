@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.naturallanguage
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import java.time.Instant
 import java.time.LocalDate
@@ -475,9 +476,7 @@ class NaturalLanguageSearchEngine @Inject constructor(
          * Used when no explicit date range is specified in the query.
          */
         private fun DEFAULT_SEARCH_WINDOW_START_MS(now: Long): Long {
-            val cal = java.util.Calendar.getInstance().apply { timeInMillis = now }
-            cal.add(java.util.Calendar.MONTH, -3)
-            return cal.timeInMillis
+            return TimePeriodUtils.addMonths(now, -3)
         }
     }
     

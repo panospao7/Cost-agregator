@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.analytics.AnomalyDetector
 import com.yourname.expensetracker.domain.analytics.AnomalyMethod
 import com.yourname.expensetracker.domain.analytics.AnomalyTransaction
 import com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult
+import com.yourname.expensetracker.domain.analytics.MonthPeriod
 import com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot
 import com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -316,6 +317,60 @@ class AnomalyAlertOrchestratorTest {
 
         coVerify(exactly = 0) { expenseDao.getExpensesByCategory(any(), any(), any()) }
         verify(exactly = 1) { anomalyDetector.detect(any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `checkAndAlert builds January detection period with 0-based month and exact 90-day window`() = runTest {
+        val janNow = FakeTimeProvider.forDate(2026, 1, 15).now()
+        timeProvider.setTime(janNow)
+
+        val expense = expenseWithCategory(
+            id = 810L,
+            merchant = "January Shop",
+            categoryId = 10L,
+            categoryName = "Winter"
+        )
+        coEvery { expenseDao.getExpensesByCategory(eq(10L), any(), any()) } returns emptyList()
+
+        val monthPeriodSlot = slot<MonthPeriod>()
+        every { anomalyDetector.detect(capture(monthPeriodSlot), any(), any(), any()) } returns emptyList()
+
+        orchestrator.checkAndAlert(expense)
+
+        val period = monthPeriodSlot.captured
+        assertEquals(2026, period.year)
+        assertEquals(0, period.month) // Calendar.JANUARY = 0
+        assertEquals(TimePeriodUtils.addDays(janNow, -90), period.startMs)
+        assertEquals(janNow + 1L, period.endMs)
+
+        coVerify(exactly = 1) { expenseDao.getExpensesByCategory(eq(10L), TimePeriodUtils.addDays(janNow, -90), janNow) }
+    }
+
+    @Test
+    fun `checkAndAlert builds December detection period with 0-based month and exact 90-day window`() = runTest {
+        val decNow = FakeTimeProvider.forDate(2026, 12, 15).now()
+        timeProvider.setTime(decNow)
+
+        val expense = expenseWithCategory(
+            id = 811L,
+            merchant = "December Shop",
+            categoryId = 11L,
+            categoryName = "Holiday"
+        )
+        coEvery { expenseDao.getExpensesByCategory(eq(11L), any(), any()) } returns emptyList()
+
+        val monthPeriodSlot = slot<MonthPeriod>()
+        every { anomalyDetector.detect(capture(monthPeriodSlot), any(), any(), any()) } returns emptyList()
+
+        orchestrator.checkAndAlert(expense)
+
+        val period = monthPeriodSlot.captured
+        assertEquals(2026, period.year)
+        assertEquals(11, period.month) // Calendar.DECEMBER = 11
+        assertEquals(TimePeriodUtils.addDays(decNow, -90), period.startMs)
+        assertEquals(decNow + 1L, period.endMs)
+
+        coVerify(exactly = 1) { expenseDao.getExpensesByCategory(eq(11L), TimePeriodUtils.addDays(decNow, -90), decNow) }
     }
 
     private fun expenseWithCategory(

@@ -268,7 +268,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val todayStart: Long,
         val weekStart: Long,
         val monthStart: Long,
-        val calendar: java.util.Calendar,
         val daysInMonth: Int,
         val dayOfMonth: Int,
         val daysRemaining: Int,
@@ -303,7 +302,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             ctx.monthSpent, ctx.previousMonthTotal, ctx.todaySpent, ctx.todayTxCount
         )
         val budgetSummary = computeBudgetSummary(ctx)
-        val streakData = calculateStreakData(ctx.calendar, ctx.data.data.expenses, ctx.monthStart)
+        val streakData = calculateStreakData(ctx.now, ctx.data.data.expenses, ctx.monthStart)
         val healthScore = computeHealthScore(ctx, streakData.first)
         val healthScoreV2Result = computeHealthScoreV2(ctx)
         val lifestyleWidget = computeLifestyleWidget()
@@ -456,9 +455,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val deposits = expenses.filter { it.transactionType == DashboardTransactionType.DEPOSIT && !it.isNotMine }
 
         val todayPurchases = purchases.filter { it.date >= todayStart }
-        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = now }
-        val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
-        val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        val daysInMonth = TimePeriodUtils.getDaysInMonth(now)
+        val dayOfMonth = TimePeriodUtils.getDayOfMonth(now)
 
         val budgetStatuses = data.budgetStatuses
         val overallBudget = budgetStatuses.find { it.budgetCategoryId == null }
@@ -469,7 +467,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             todayStart = todayStart,
             weekStart = weekStart,
             monthStart = monthStart,
-            calendar = calendar,
             daysInMonth = daysInMonth,
             dayOfMonth = dayOfMonth,
             daysRemaining = daysInMonth - dayOfMonth,
@@ -567,7 +564,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val pastSumDaily = amountByDay.map { amount -> runningTotal += amount; runningTotal }
 
         // Build spending pace from normalized aggregates
-        val daysInMonth = ctx.calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val daysInMonth = TimePeriodUtils.getDaysInMonth(ctx.now)
         val daysElapsed = ctx.dayOfMonth
         val spendingPace = SpendingPace(
             currentMonthSpent = normalized.monthAggregate.displayAmount,
@@ -669,8 +666,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             .mapValues { (_, expenses) -> expenses.sumOf { it.normalizedAmount }.toFloat() }
 
         // Build daily history list aligned with calendar days
-        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = ctx.now }
-        val daysInMonth = calendar.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        val daysInMonth = TimePeriodUtils.getDaysInMonth(ctx.now)
         val monthStart = ctx.monthStart
         val dailyHistory = (0 until daysInMonth).map { dayIndex ->
             val dayStart = monthStart + dayIndex * TimePeriodUtils.DAY_IN_MILLIS
@@ -1144,14 +1140,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
      * @return Triple of (currentStreak, personalBest, daysWithoutSpendingThisMonth)
      */
     private fun calculateStreakData(
-        calendar: java.util.Calendar,
+        now: Long,
         expenses: List<DashboardExpense>,
         startOfMonth: Long
     ): Triple<Int, Int, Int> {
-        val now = calendar.timeInMillis
         val oneDayMs = TimePeriodUtils.DAY_IN_MILLIS
         val todayStart = TimePeriodUtils.getStartOfDay(now)
-        val dayOfMonth = calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        val dayOfMonth = TimePeriodUtils.getDayOfMonth(now)
         
         // Track unique PURCHASE days owned by the user.
         val purchaseDays = expenses
