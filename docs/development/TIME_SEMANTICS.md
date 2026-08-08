@@ -380,6 +380,42 @@ Fixed DST / boundary regression tests added (Tier 2):
 This batch is **not** a claim that all T4 time work is complete — the items
 above remain pending.
 
+### Time Batch T4 Tier 3 — Injected-clock timing + day-key migration (complete)
+
+Tier 3 removes the last direct wall-clock reads from the health-score timing
+diagnostic and the cash-flow day-key formatter:
+
+- **`FinancialHealthScoreV2.calculateHealthScore`** — the two
+  `System.currentTimeMillis()` reads behind the "calculated in Nms"
+  performance diagnostic now come from the injected `TimeProvider`:
+  `val startTime = timeProvider.now()` is captured once before the
+  calculation and the duration is `timeProvider.now() - startTime`.
+  Diagnostic text and behavior are unchanged and no raw data is logged. A
+  deterministic `FakeTimeProvider` test asserts the reported duration is the
+  injected-clock delta (exactly `0ms` for a fixed fake, never a
+  non-deterministic wall-clock elapsed figure) while preserving score
+  semantics.
+- **`CashFlowCalculator.formatDayKey`** — the `Calendar`-based day-key
+  formatter now derives the zero-padded `yyyy-MM-dd` (Locale.US) key from
+  `TimePeriodUtils.getYear` / `getMonth() + 1` / `getDayOfMonth`. The helper
+  is `internal` so focused boundary tests can assert the exact fixed format.
+  Boundary coverage was added through the real calculation path: a leap-day
+  occurrence (2024-02-29) lands on the Feb 29 entry, and occurrences due
+  2025-12-31 vs 2026-01-01 stay on distinct day keys across the month/year
+  boundary, plus direct fixed-format assertions on the helper.
+
+**Explicitly still pending (T4B and later):**
+
+- `CashFlowCalculator.calculateDailyCashFlow` — the complex `java.util.Calendar`
+  day-iteration loop (including its inline day-key construction) remains on
+  `Calendar`.
+- `TimePeriodUtils` internal `Calendar`-based strategy migration to
+  `java.time`.
+
+**No** time exception or baseline was added or edited: the removed calls are
+strictly decreases in direct-time usage, so the existing
+`config/guards/time_boundary_exceptions.yml` is unchanged.
+
 ## Enforcing These Rules
 
 After changes, run the automated time-boundary guard:

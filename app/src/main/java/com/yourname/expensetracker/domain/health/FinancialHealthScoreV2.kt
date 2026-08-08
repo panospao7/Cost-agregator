@@ -89,7 +89,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         periodStart: Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),
         periodEnd: Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
     ): FinancialHealthResult {
-        val startTime = System.currentTimeMillis()
+        val startTime = timeProvider.now()
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         
@@ -196,7 +196,7 @@ class FinancialHealthScoreV2 @Inject constructor(
                 recommendation = recommendation
             )
             
-            val duration = System.currentTimeMillis() - startTime
+            val duration = timeProvider.now() - startTime
             Timber.d("FinancialHealthScoreV2 calculated in ${duration}ms: overall=$overallScore, savings=$savingsRateScore, runway=$runwayScore, budget=$budgetAdherenceScore, bills=$billReliabilityScore")
             
             FinancialHealthResult(

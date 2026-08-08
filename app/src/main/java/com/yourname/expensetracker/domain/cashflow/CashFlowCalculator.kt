@@ -563,14 +563,22 @@ class CashFlowCalculator @Inject constructor(
         return abs(a - b) <= reference * AMOUNT_TOLERANCE_PERCENT
     }
 
-    /** Formats an epoch-ms instant to a yyyy-MM-dd key (avoids cross-year collisions). */
-    private fun formatDayKey(epochMs: Long): String {
-        val cal = Calendar.getInstance().apply { timeInMillis = epochMs }
+    /**
+     * Formats an epoch-ms instant to a `yyyy-MM-dd` key (avoids cross-year
+     * collisions).
+     *
+     * T4 Tier 3: derives the year/month/day from the canonical
+     * [TimePeriodUtils] field accessors instead of a raw `java.util.Calendar`
+     * (format is unchanged: Locale.US, zero-padded). Internal (not private)
+     * so focused boundary tests can assert the exact fixed format for leap
+     * days and month/year boundaries without re-running the cash-flow loop.
+     */
+    internal fun formatDayKey(epochMs: Long): String {
         return String.format(
             Locale.US, "%04d-%02d-%02d",
-            cal.get(Calendar.YEAR),
-            cal.get(Calendar.MONTH) + 1,
-            cal.get(Calendar.DAY_OF_MONTH)
+            TimePeriodUtils.getYear(epochMs),
+            TimePeriodUtils.getMonth(epochMs) + 1,
+            TimePeriodUtils.getDayOfMonth(epochMs)
         )
     }
 

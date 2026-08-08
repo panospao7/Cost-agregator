@@ -663,6 +663,67 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         }
     }
 
+    // ============================================================================
+    // T4 Tier 3 – day-key boundary tests (formatDayKey via TimePeriodUtils)
+    // ============================================================================
+
+    @Test
+    fun `T4T3 leap day occurrence lands on feb 29 not adjacent days`() = runTest {
+        val leapDay = ms("2024-02-29")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = leapDay)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = leapDay, amount = 800.0, merchant = "Rent")
+        )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(leapDay), Date(ms("2024-03-01")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
+        )
+
+        assertEquals(1, result.size)
+        assertEquals(ms("2024-02-29"), result[0].date.time)
+        assertEquals(listOf("Rent"), result[0].predictedRecurring.map { it.merchantName })
+    }
+
+    @Test
+    fun `T4T3 month and year boundary occurrences keep distinct day keys`() = runTest {
+        val dec31 = ms("2025-12-31")
+        val jan1 = ms("2026-01-01")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
+        coEvery { recurringPatternsProvider.getConfirmedPatterns() } returns listOf(
+            manualPattern(id = 1L, merchant = "Rent", amount = 800.0, nextDate = dec31),
+            manualPattern(id = 2L, merchant = "Gym", amount = 20.0, nextDate = jan1)
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(1L, any(), any()) } returns listOf(
+            occurrence(ruleId = 1L, dueDate = dec31, amount = 800.0, merchant = "Rent")
+        )
+        coEvery { recurringLifecycleCoordinator.projectOccurrences(2L, any(), any()) } returns listOf(
+            occurrence(ruleId = 2L, dueDate = jan1, amount = 20.0, merchant = "Gym")
+        )
+        coEvery { recurringOccurrenceDao.getByDateRange(any(), any()) } returns emptyList()
+
+        val result = calculator.calculateDailyCashFlow(
+            Date(dec31), Date(ms("2026-01-02")), startingBalance = MoneyAmount(0.0, CurrencyCode("EUR"))
+        )
+
+        assertEquals(2, result.size)
+        assertEquals(ms("2025-12-31"), result[0].date.time)
+        assertEquals(listOf("Rent"), result[0].predictedRecurring.map { it.merchantName })
+        assertEquals(ms("2026-01-01"), result[1].date.time)
+        assertEquals(listOf("Gym"), result[1].predictedRecurring.map { it.merchantName })
+    }
+
+    @Test
+    fun `T4T3 formatDayKey emits zero padded yyyy-MM-dd for leap and boundary dates`() {
+        assertEquals("2024-02-29", calculator.formatDayKey(ms("2024-02-29")))
+        assertEquals("2025-12-31", calculator.formatDayKey(ms("2025-12-31")))
+        assertEquals("2026-01-01", calculator.formatDayKey(ms("2026-01-01")))
+        assertEquals("2026-03-05", calculator.formatDayKey(ms("2026-03-05")))
+    }
+
     private fun manualPattern(
         id: Long,
         merchant: String,
