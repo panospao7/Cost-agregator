@@ -26,6 +26,7 @@ import com.yourname.expensetracker.domain.usecase.dashboard.DashboardData
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
@@ -77,7 +78,9 @@ class DailyBriefingWorkerTest {
     private val aiWorkScheduler = mockk<com.yourname.expensetracker.domain.ai.service.AiWorkScheduler>(relaxed = true)
     private val diagnosticEventWriter = mockk<DiagnosticEventWriter>(relaxed = true)
     private val workManager: WorkManager = mockk(relaxed = true)
-    private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1000L }
+    // G-TIME-01: deterministic fixed time via the shared FakeTimeProvider (1000L),
+    // matching every startedAt assertion in this suite.
+    private val timeProvider: TimeProvider = FakeTimeProvider(1000L)
 
     // Relaxed run context so behavioral tests can both run the guarded block AND
     // coVerify the worker's counter calls (e.g. addNotificationsSent on delivery).

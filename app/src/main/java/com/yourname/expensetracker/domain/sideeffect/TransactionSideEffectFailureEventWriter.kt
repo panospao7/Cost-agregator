@@ -6,12 +6,14 @@ import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class TransactionSideEffectFailureEventWriter @Inject constructor(
-    private val transactionEventWriter: TransactionLifecycleEventWriter
+    private val transactionEventWriter: TransactionLifecycleEventWriter,
+    private val timeProvider: TimeProvider
 ) : SideEffectEventWriter {
 
     override suspend fun started(action: PostCommitAction) = Unit
@@ -27,10 +29,14 @@ class TransactionSideEffectFailureEventWriter @Inject constructor(
     ) {
         if (!shouldMirrorToTransactionEvents(action)) return
 
+        // Capture "now" once so the mirror event uses the same deterministic
+        // timestamp for occurredAt (G-TIME-01). startedAtMs defaults to occurredAt,
+        // so a single explicit read keeps the event internally consistent.
+        val now = timeProvider.now()
         transactionEventWriter.write(
             TransactionContext(
                 correlationId = action.correlationId ?: java.util.UUID.randomUUID().toString(),
-                occurredAt = System.currentTimeMillis(),
+                occurredAt = now,
                 source = "post_commit_action_runner"
             ),
             TransactionLifecycleEvent(

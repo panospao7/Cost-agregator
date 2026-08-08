@@ -14,6 +14,7 @@ import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycle
 import com.yourname.expensetracker.domain.sideeffect.*
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.SourceLearningPolicy
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Lazy
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -26,7 +27,8 @@ class TransactionSideEffectPlanner @Inject constructor(
     private val merchantNormalizationRepository: MerchantNormalizationRepository,
     private val recurringLifecycleCoordinator: Lazy<RecurringLifecycleCoordinator>,
     private val expenseDao: ExpenseDao,
-    private val categoryDao: CategoryDao
+    private val categoryDao: CategoryDao,
+    private val timeProvider: TimeProvider
 ) {
 
     fun planCreated(
@@ -107,6 +109,9 @@ class TransactionSideEffectPlanner @Inject constructor(
         changedFields: Set<BulkChangedField> = setOf(BulkChangedField.UNKNOWN)
     ): PostCommitActionBatch {
         val corrId = correlationId ?: CorrelationIds.newId()
+        // Capture "now" once per batch so every bulk action in this batch shares
+        // the same deterministic idempotency timestamp (G-TIME-01).
+        val now = timeProvider.now()
         if (affectedCount <= 0) {
             return PostCommitActionBatch(corrId, listOf(
                 PostCommitAction(
@@ -119,7 +124,7 @@ class TransactionSideEffectPlanner @Inject constructor(
                     source = source,
                     correlationId = corrId,
                     causationId = null,
-                    idempotencyKey = "bulk:$source:0:budget_check:${System.currentTimeMillis()}",
+                    idempotencyKey = "bulk:$source:0:budget_check:$now",
                     priority = SideEffectPriority.LOW,
                     metadata = SafeEventMetadata.builder().put("affectedCount", "0").build()
                 ) { SideEffectOutcome.Skipped(SideEffectSkipReason.NO_WORK) }
@@ -130,20 +135,20 @@ class TransactionSideEffectPlanner @Inject constructor(
         val actions = mutableListOf<PostCommitAction>()
 
         if (normalizedFields.affectsBudget()) {
-            actions += makeBulkBudgetCheckAction(source, affectedCount, normalizedFields, corrId)
+            actions += makeBulkBudgetCheckAction(source, affectedCount, normalizedFields, corrId, now)
         }
         if (normalizedFields.affectsAnomaly()) {
-            actions += makeBulkAnomalyInvalidationAction(source, affectedCount, normalizedFields, corrId)
+            actions += makeBulkAnomalyInvalidationAction(source, affectedCount, normalizedFields, corrId, now)
         }
         if (normalizedFields.affectsMerchantLearning()) {
-            actions += makeBulkMerchantCategoryDirtyAction(source, affectedCount, normalizedFields, corrId)
-            actions += makeBulkMerchantCanonicalStatsDirtyAction(source, affectedCount, normalizedFields, corrId)
+            actions += makeBulkMerchantCategoryDirtyAction(source, affectedCount, normalizedFields, corrId, now)
+            actions += makeBulkMerchantCanonicalStatsDirtyAction(source, affectedCount, normalizedFields, corrId, now)
         }
         if (normalizedFields.affectsAnalyticsCache()) {
-            actions += makeBulkAnalyticsCacheInvalidationAction(source, affectedCount, normalizedFields, corrId)
+            actions += makeBulkAnalyticsCacheInvalidationAction(source, affectedCount, normalizedFields, corrId, now)
         }
         if (normalizedFields.affectsRecurring()) {
-            actions += makeBulkRecurringReconciliationAction(source, affectedCount, normalizedFields, corrId)
+            actions += makeBulkRecurringReconciliationAction(source, affectedCount, normalizedFields, corrId, now)
         }
 
         return PostCommitActionBatch(corrId, actions)
@@ -421,7 +426,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         source: String,
         affectedCount: Int,
         changedFields: Set<BulkChangedField>,
-        correlationId: String
+        correlationId: String,
+        now: Long
     ): PostCommitAction {
         return PostCommitAction(
             pipeline = AppPipeline.TRANSACTION,
@@ -433,7 +439,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:budget_check:${System.currentTimeMillis()}",
+            idempotencyKey = "bulk:$source:$affectedCount:budget_check:$now",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -455,7 +461,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         source: String,
         affectedCount: Int,
         changedFields: Set<BulkChangedField>,
-        correlationId: String
+        correlationId: String,
+        now: Long
     ): PostCommitAction {
         return PostCommitAction(
             pipeline = AppPipeline.TRANSACTION,
@@ -467,7 +474,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:anomaly_invalidation:${System.currentTimeMillis()}",
+            idempotencyKey = "bulk:$source:$affectedCount:anomaly_invalidation:$now",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -488,7 +495,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         source: String,
         affectedCount: Int,
         changedFields: Set<BulkChangedField>,
-        correlationId: String
+        correlationId: String,
+        now: Long
     ): PostCommitAction {
         return PostCommitAction(
             pipeline = AppPipeline.TRANSACTION,
@@ -500,7 +508,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:merchant_category_dirty:${System.currentTimeMillis()}",
+            idempotencyKey = "bulk:$source:$affectedCount:merchant_category_dirty:$now",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -517,7 +525,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         source: String,
         affectedCount: Int,
         changedFields: Set<BulkChangedField>,
-        correlationId: String
+        correlationId: String,
+        now: Long
     ): PostCommitAction {
         return PostCommitAction(
             pipeline = AppPipeline.TRANSACTION,
@@ -529,7 +538,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:merchant_stats_dirty:${System.currentTimeMillis()}",
+            idempotencyKey = "bulk:$source:$affectedCount:merchant_stats_dirty:$now",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -546,7 +555,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         source: String,
         affectedCount: Int,
         changedFields: Set<BulkChangedField>,
-        correlationId: String
+        correlationId: String,
+        now: Long
     ): PostCommitAction {
         return PostCommitAction(
             pipeline = AppPipeline.TRANSACTION,
@@ -558,7 +568,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:analytics_cache:${System.currentTimeMillis()}",
+            idempotencyKey = "bulk:$source:$affectedCount:analytics_cache:$now",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())
@@ -575,7 +585,8 @@ class TransactionSideEffectPlanner @Inject constructor(
         source: String,
         affectedCount: Int,
         changedFields: Set<BulkChangedField>,
-        correlationId: String
+        correlationId: String,
+        now: Long
     ): PostCommitAction {
         return PostCommitAction(
             pipeline = AppPipeline.TRANSACTION,
@@ -587,7 +598,7 @@ class TransactionSideEffectPlanner @Inject constructor(
             source = source,
             correlationId = correlationId,
             causationId = null,
-            idempotencyKey = "bulk:$source:$affectedCount:recurring_reconciliation:${System.currentTimeMillis()}",
+            idempotencyKey = "bulk:$source:$affectedCount:recurring_reconciliation:$now",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
                 .put("affectedCount", affectedCount.toString())

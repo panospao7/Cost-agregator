@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.service.receiptmatching.ReceiptMatchingWorker
 import com.yourname.expensetracker.service.reminder.BillReminderWorker
 import com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
@@ -47,8 +48,14 @@ object WorkerRegistry {
     data class Entry(
         /** Must match a key in [WorkerSpec.DEFAULTS]. */
         val specName: String,
-        /** Scheduling function called at startup and after restore exit. */
-        val schedule: (Context) -> Unit
+        /**
+         * Scheduling function called at startup and after restore exit.
+         *
+         * @param timeProvider The single source of "now" (G-TIME-01), forwarded to
+         *   entries that need it (e.g. midnight-aligned scheduling). Entries that
+         *   don't need time ignore it.
+         */
+        val schedule: (Context, TimeProvider) -> Unit
     )
 
     /**
@@ -66,14 +73,14 @@ object WorkerRegistry {
      * `schedule()` method because it is midnight-aligned, not periodic.
      */
     val entries: List<Entry> = listOf(
-        Entry("location_backfill") { LocationBackfillWorker.schedule(it) },
-        Entry("merchant_key_backfill") { MerchantKeyBackfillWorker.schedule(it) },
-        Entry("warranty_expiration_check") { WarrantyExpirationWorker.schedule(it) },
-        Entry("data_retention") { DataRetentionWorker.schedule(it) },
-        Entry("bill_reminder_periodic") { BillReminderWorker.schedule(it) },
-        Entry("receipt_matching") { ReceiptMatchingWorker.schedule(it) },
-        Entry("ai_daily_briefing") {
-            WorkerSpecScheduler.scheduleAtMidnight(it, "ai_daily_briefing", DailyBriefingWorker::class.java)
+        Entry("location_backfill") { context, _ -> LocationBackfillWorker.schedule(context) },
+        Entry("merchant_key_backfill") { context, _ -> MerchantKeyBackfillWorker.schedule(context) },
+        Entry("warranty_expiration_check") { context, _ -> WarrantyExpirationWorker.schedule(context) },
+        Entry("data_retention") { context, _ -> DataRetentionWorker.schedule(context) },
+        Entry("bill_reminder_periodic") { context, _ -> BillReminderWorker.schedule(context) },
+        Entry("receipt_matching") { context, _ -> ReceiptMatchingWorker.schedule(context) },
+        Entry("ai_daily_briefing") { context, timeProvider ->
+            WorkerSpecScheduler.scheduleAtMidnight(context, "ai_daily_briefing", DailyBriefingWorker::class.java, timeProvider)
         }
     )
 
@@ -88,14 +95,17 @@ object WorkerRegistry {
      * succeeded and how many threw exceptions.
      *
      * @param context Application or activity context.
+     * @param timeProvider The single source of "now" (G-TIME-01), forwarded to
+     *   each [Entry.schedule] so midnight-aligned entries compute delays from the
+     *   same injected clock as the rest of the app.
      * @param diagnosticEventWriter Optional writer for emitting summary diagnostic events.
      */
-    fun scheduleAll(context: Context, diagnosticEventWriter: DiagnosticEventWriter? = null) {
+    fun scheduleAll(context: Context, timeProvider: TimeProvider, diagnosticEventWriter: DiagnosticEventWriter? = null) {
         val failedWorkers = mutableListOf<String>()
         var successCount = 0
 
         for (entry in entries) {
-            val caught = runCatching { entry.schedule(context) }
+            val caught = runCatching { entry.schedule(context, timeProvider) }
             if (caught.isSuccess) {
                 successCount++
             } else {

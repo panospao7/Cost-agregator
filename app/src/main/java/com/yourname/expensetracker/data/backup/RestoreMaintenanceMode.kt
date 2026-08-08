@@ -188,7 +188,7 @@ class RestoreMaintenanceMode @Inject constructor(
      */
     private fun scheduleAllWorkers() {
         val application = context.applicationContext
-        WorkerRegistry.scheduleAll(application)
+        WorkerRegistry.scheduleAll(application, timeProvider)
     }
 
     // ── Persistence ───────────────────────────────────────────────

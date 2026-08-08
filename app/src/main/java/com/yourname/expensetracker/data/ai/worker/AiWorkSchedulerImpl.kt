@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -21,14 +22,16 @@ import javax.inject.Singleton
  */
 @Singleton
 class AiWorkSchedulerImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) : AiWorkScheduler {
 
     override fun scheduleDailyBriefing() {
         WorkerSpecScheduler.scheduleAtMidnight(
             context,
             AppConfig.Ai.WORK_NAME_DAILY_BRIEFING,
-            DailyBriefingWorker::class.java
+            DailyBriefingWorker::class.java,
+            timeProvider
         )
     }
 

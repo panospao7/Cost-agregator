@@ -188,8 +188,13 @@ class NotificationRepository @Inject constructor(
      *
      * Unlike [deleteAll] this does **not** touch the expenses table, making it
      * safe for notification-specific cleanup without losing imported expense records.
+     *
+     * @param now Current time in epoch milliseconds (G-TIME-01). Used as the
+     *   [TransactionEvent.occurredAt] for the BULK_DELETED audit event. Callers
+     *   must pass the injected [com.yourname.expensetracker.domain.util.TimeProvider]
+     *   value — this method intentionally has no hidden clock.
      */
-    suspend fun deleteAllNotifications() {
+    suspend fun deleteAllNotifications(now: Long) {
         writeBarrier.checkWritesAllowed("NotificationRepository.deleteAllNotifications")
         database.withTransaction {
             // P2-PR2 (NEW-P2-006): Write BULK_DELETED TransactionEvent before mutation
@@ -198,7 +203,7 @@ class NotificationRepository @Inject constructor(
                 eventType = LifecycleEventType.BULK_DELETED.name,
                 source = "SYSTEM",
                 actor = null,
-                occurredAt = System.currentTimeMillis(),
+                occurredAt = now,
                 dedupeKey = null,
                 duplicateExpenseId = null,
                 beforeSnapshot = null,

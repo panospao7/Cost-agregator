@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.intelligence.TransactionClassifier
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
@@ -28,6 +29,12 @@ class NotificationRepositoryStressTest {
     private val pipeline = mockk<NotificationProcessingPipeline>(relaxed = true)
 
     private lateinit var repository: NotificationRepository
+
+    /** Fixed "now" for G-TIME-01: deleteAllNotifications must not use a hidden clock. */
+    private val fixedNow = 1716163200000L
+
+    /** Deterministic time provider seeded with the fixed "now" for deleteAllNotifications. */
+    private val fakeTimeProvider = FakeTimeProvider(fixedNow)
 
     @Before
     fun setup() {
@@ -182,7 +189,7 @@ class NotificationRepositoryStressTest {
         coEvery { pendingReviewDao.deleteAll() } returns Unit
         coEvery { userCorrectionDao.deleteAll() } returns Unit
 
-        repository.deleteAllNotifications()
+        repository.deleteAllNotifications(fakeTimeProvider.now())
     }
 
     @Test

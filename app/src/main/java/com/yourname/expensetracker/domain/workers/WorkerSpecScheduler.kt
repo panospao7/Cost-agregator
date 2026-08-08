@@ -7,6 +7,7 @@ import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.EventOutcome
 import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -191,7 +192,8 @@ object WorkerSpecScheduler {
      *
      * Reads [WorkerSpec.DEFAULTS] by [workerName], checks [WorkerSpec.enabled] and version
      * (same logic as [scheduleFromSpec]), computes the delay until the next midnight in the
-     * system timezone, and enqueues a [OneTimeWorkRequest] with that delay.
+     * system timezone from the injected [TimeProvider], and enqueues a [OneTimeWorkRequest]
+     * with that delay.
      *
      * If the spec is disabled, any existing scheduled work is cancelled (parity with
      * [scheduleFromSpec]) and no new work is enqueued. When enabled, the enqueue uses
@@ -200,6 +202,9 @@ object WorkerSpecScheduler {
      * @param context  Application or activity context.
      * @param workerName  Key into [WorkerSpec.DEFAULTS] (also used as the unique work name).
      * @param workerClass  The exact [ListenableWorker] subclass to schedule.
+     * @param timeProvider  The single source of "now" (G-TIME-01) used to compute the
+     *   delay until the next midnight boundary. The actual enqueue still happens on the
+     *   real WorkManager wall clock, so scheduling remains real-time correct.
      * @param diagnosticEventWriter  Optional writer for emitting diagnostic events on failure.
      * @return [ScheduleResult] describing the scheduling outcome.
      */
@@ -207,6 +212,7 @@ object WorkerSpecScheduler {
         context: Context,
         workerName: String,
         workerClass: Class<out ListenableWorker>,
+        timeProvider: TimeProvider,
         diagnosticEventWriter: DiagnosticEventWriter? = null
     ): ScheduleResult {
         val spec = WorkerSpec.DEFAULTS[workerName] ?: run {
@@ -249,24 +255,25 @@ object WorkerSpecScheduler {
             spec.oneShotPolicy
         }
 
-        // Compute next midnight in system timezone.
-        // NOTE: System.currentTimeMillis() is intentionally used here because
-        // WorkManager scheduling inherently operates on real wall-clock time.
-        // Injecting TimeProvider would not make scheduling more testable since
-        // the actual enqueue depends on the real system clock.
-        val now = System.currentTimeMillis()
-        val cal = java.util.Calendar.getInstance().apply {
-            timeInMillis = now
-            add(java.util.Calendar.DAY_OF_MONTH, 1)
-            set(java.util.Calendar.HOUR_OF_DAY, 0)
-            set(java.util.Calendar.MINUTE, 0)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }
+        // Compute next midnight in system timezone from the injected TimeProvider
+        // (G-TIME-01). java.time is used instead of Calendar so the delay derives
+        // from the same single source of "now" as the rest of the app. The actual
+        // WorkManager enqueue still operates on the real wall clock, so scheduling
+        // remains real-time correct: the TimeProvider only decides when the next
+        // midnight boundary occurs, not how WorkManager measures elapsed time.
+        val now = timeProvider.now()
+        val zone = java.time.ZoneId.systemDefault()
+        val nextMidnightMs = java.time.Instant.ofEpochMilli(now)
+            .atZone(zone)
+            .toLocalDate()
+            .plusDays(1)
+            .atStartOfDay(zone)
+            .toInstant()
+            .toEpochMilli()
         // Guard against near-zero delay when scheduled just before midnight
         // (e.g. 23:59:59.999). A sub-minute initial delay could cause tight
         // re-scheduling loops. Floor at 60 seconds.
-        val rawDelayMs = cal.timeInMillis - now
+        val rawDelayMs = nextMidnightMs - now
         val delayMs = maxOf(rawDelayMs, 60_000L)
 
         @Suppress("UNCHECKED_CAST")

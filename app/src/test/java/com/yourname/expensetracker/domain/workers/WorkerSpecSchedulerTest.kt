@@ -7,6 +7,7 @@ import androidx.work.ListenableWorker
 import androidx.work.OneTimeWorkRequest
 import androidx.work.WorkManager
 import com.yourname.expensetracker.data.location.MerchantKeyBackfillWorker
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
@@ -52,6 +53,10 @@ class WorkerSpecSchedulerTest {
     // builder; the worker itself is never instantiated here.
     private val workerClass: Class<out ListenableWorker> = MerchantKeyBackfillWorker::class.java
 
+    // Fixed "now" (2024-05-20T00:00:00Z) so next-midnight delay assertions are
+    // deterministic and never depend on the wall clock (G-TIME-01).
+    private val timeProvider: FakeTimeProvider = FakeTimeProvider(1716163200000L)
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
@@ -81,7 +86,7 @@ class WorkerSpecSchedulerTest {
             )
         )
 
-        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass)
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
 
         // Parity with scheduleFromSpec: disabled → cancel existing, never enqueue.
         verify(exactly = 1) { workManager.cancelUniqueWork(name) }
@@ -114,7 +119,7 @@ class WorkerSpecSchedulerTest {
             workManager.enqueueUniqueWork(eq(name), capture(policySlot), any<OneTimeWorkRequest>())
         } returns mockk(relaxed = true)
 
-        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass)
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
 
         verify(exactly = 1) {
             workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
@@ -151,7 +156,7 @@ class WorkerSpecSchedulerTest {
             workManager.enqueueUniqueWork(eq(name), capture(policySlot), any<OneTimeWorkRequest>())
         } returns mockk(relaxed = true)
 
-        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass)
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
 
         verify(exactly = 1) {
             workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
@@ -226,7 +231,7 @@ class WorkerSpecSchedulerTest {
             workManager.enqueueUniqueWork(eq(name), capture(policySlot), any<OneTimeWorkRequest>())
         } returns mockk(relaxed = true)
 
-        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass)
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
 
         verify(exactly = 1) {
             workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
@@ -260,7 +265,7 @@ class WorkerSpecSchedulerTest {
             workManager.enqueueUniqueWork(eq(name), capture(policySlot), any<OneTimeWorkRequest>())
         } returns mockk(relaxed = true)
 
-        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass)
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
 
         verify(exactly = 1) {
             workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
@@ -304,6 +309,103 @@ class WorkerSpecSchedulerTest {
         assertEquals(
             "Error message should match simulated failure",
             simulatedError, result.error
+        )
+    }
+
+    // ── G-TIME-01: deterministic next-midnight delay via injected TimeProvider ──
+
+    @Test
+    fun `midnight worker initial delay equals next-midnight delay from fixed time`() {
+        val name = "fixed_time_midnight_worker"
+        val spec = WorkerSpec(
+            name = name,
+            version = 1,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.KEEP
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+        // Pre-seed the persisted version so no version-bump path fires; this keeps
+        // the enqueued request's initialDelay attributable purely to the fixed time.
+        context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+            .edit().putInt(name, spec.version).commit()
+
+        val requestSlot = slot<OneTimeWorkRequest>()
+        every {
+            workManager.enqueueUniqueWork(eq(name), any(), capture(requestSlot))
+        } returns mockk(relaxed = true)
+
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, timeProvider)
+
+        verify(exactly = 1) {
+            workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
+        }
+        assertTrue("Fixed-time midnight worker should return scheduled=true", result.scheduled)
+
+        // Expected delay mirrors production exactly: next midnight in the system zone
+        // from the SAME fixed "now" (no wall clock), floored at the 60s minimum.
+        val now = timeProvider.now()
+        val zone = java.time.ZoneId.systemDefault()
+        val nextMidnightMs = java.time.Instant.ofEpochMilli(now)
+            .atZone(zone)
+            .toLocalDate()
+            .plusDays(1)
+            .atStartOfDay(zone)
+            .toInstant()
+            .toEpochMilli()
+        val expectedDelay = maxOf(nextMidnightMs - now, 60_000L)
+
+        assertEquals(
+            "OneTimeWorkRequest.workSpec.initialDelay must equal the next-midnight delay " +
+                "computed from the same fixed time/zone",
+            expectedDelay,
+            requestSlot.captured.workSpec.initialDelay
+        )
+    }
+
+    @Test
+    fun `near-midnight schedule floors initial delay at 60 seconds`() {
+        val name = "near_midnight_worker"
+        val spec = WorkerSpec(
+            name = name,
+            version = 1,
+            enabled = true,
+            repeatIntervalHours = null,
+            oneShotPolicy = ExistingWorkPolicy.KEEP
+        )
+        every { WorkerSpec.DEFAULTS } returns mapOf(name to spec)
+        // Pre-seed the persisted version so no version-bump path fires.
+        context.getSharedPreferences("worker_spec_versions", Context.MODE_PRIVATE)
+            .edit().putInt(name, spec.version).commit()
+
+        // Derive a deterministic time 30s before the next midnight boundary from the
+        // same fixed timestamp/zone (still no wall clock), so the raw delay would be
+        // sub-minute and the production 60s floor must apply.
+        val zone = java.time.ZoneId.systemDefault()
+        val nextMidnightMs = java.time.Instant.ofEpochMilli(timeProvider.now())
+            .atZone(zone)
+            .toLocalDate()
+            .plusDays(1)
+            .atStartOfDay(zone)
+            .toInstant()
+            .toEpochMilli()
+        val nearMidnight = FakeTimeProvider(nextMidnightMs - 30_000L)
+
+        val requestSlot = slot<OneTimeWorkRequest>()
+        every {
+            workManager.enqueueUniqueWork(eq(name), any(), capture(requestSlot))
+        } returns mockk(relaxed = true)
+
+        val result = WorkerSpecScheduler.scheduleAtMidnight(context, name, workerClass, nearMidnight)
+
+        verify(exactly = 1) {
+            workManager.enqueueUniqueWork(eq(name), any(), any<OneTimeWorkRequest>())
+        }
+        assertTrue("Near-midnight worker should return scheduled=true", result.scheduled)
+        assertEquals(
+            "Sub-minute raw delay must be floored to the production minimum of 60s",
+            60_000L,
+            requestSlot.captured.workSpec.initialDelay
         )
     }
 }

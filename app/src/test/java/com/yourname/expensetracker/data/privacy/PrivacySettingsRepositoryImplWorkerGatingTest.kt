@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.WorkManager
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import io.mockk.every
 import io.mockk.mockk
@@ -39,6 +41,7 @@ class PrivacySettingsRepositoryImplWorkerGatingTest {
 
     private lateinit var context: Context
     private val workManager: WorkManager = mockk(relaxed = true)
+    private val fakeTimeProvider = FakeTimeProvider(1716163200000L)
     private lateinit var repository: PrivacySettingsRepositoryImpl
 
     @Before
@@ -47,7 +50,7 @@ class PrivacySettingsRepositoryImplWorkerGatingTest {
         mockkStatic(WorkManager::class)
         every { WorkManager.getInstance(any()) } returns workManager
         // Constructor reads WorkManager.getInstance(context) — now mocked.
-        repository = PrivacySettingsRepositoryImpl(context)
+        repository = PrivacySettingsRepositoryImpl(context, fakeTimeProvider)
     }
 
     @After
@@ -94,8 +97,12 @@ class PrivacySettingsRepositoryImplWorkerGatingTest {
         // observable without standing up the real worker companions.
         mockkObject(WorkerRegistry)
         val scheduled = mutableListOf<String>()
+        var forwardedTimeProvider: TimeProvider? = null
         every { WorkerRegistry.entries } returns listOf(
-            WorkerRegistry.Entry("ai_daily_briefing") { scheduled.add("ai_daily_briefing") }
+            WorkerRegistry.Entry("ai_daily_briefing") { context, timeProvider ->
+                scheduled.add("ai_daily_briefing")
+                forwardedTimeProvider = timeProvider
+            }
         )
 
         val old = PrivacySettings(cloudAiEnabled = false)
@@ -106,6 +113,16 @@ class PrivacySettingsRepositoryImplWorkerGatingTest {
         assertTrue(
             "Re-enabling cloud AI must reschedule ai_daily_briefing",
             scheduled.contains("ai_daily_briefing")
+        )
+        // G-TIME-01: the Entry schedule lambda must receive the repository's
+        // injected TimeProvider (identity, not a re-created clock) and its fixed time.
+        assertTrue(
+            "Entry schedule must receive the repository's injected TimeProvider",
+            forwardedTimeProvider === fakeTimeProvider
+        )
+        assertTrue(
+            "Forwarded time must match the injected fixed time",
+            forwardedTimeProvider?.now() == 1716163200000L
         )
         // Re-enable path must not cancel anything.
         verify(exactly = 0) { workManager.cancelUniqueWork(any()) }

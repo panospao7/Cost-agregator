@@ -130,6 +130,7 @@ class DailyBriefingWorker @AssistedInject constructor(
                 applicationContext,
                 AppConfig.Ai.WORK_NAME_DAILY_BRIEFING,
                 DailyBriefingWorker::class.java,
+                timeProvider,
                 diagnosticEventWriter
             )
             if (!result.scheduled) {

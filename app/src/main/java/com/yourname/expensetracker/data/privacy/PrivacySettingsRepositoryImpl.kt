@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsLoadState
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.PrivacyRuntimeWorkerPolicy
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -48,7 +49,8 @@ private val Context.privacySettingsDataStore: DataStore<Preferences> by preferen
 
 @Singleton
 class PrivacySettingsRepositoryImpl @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) : PrivacySettingsRepository {
     private val workManager = WorkManager.getInstance(context)
 
@@ -174,7 +176,7 @@ class PrivacySettingsRepositoryImpl @Inject constructor(
                 val schedule = scheduleBySpec[workerName] ?: continue
                 // Route through WorkerRegistry so a disabled WorkerSpec is respected
                 // (scheduleAtMidnight / scheduleFromSpec cancel when spec.enabled=false).
-                runCatching { schedule(context) }
+                runCatching { schedule(context, timeProvider) }
                     .onSuccess { Timber.i("Rescheduled %s — gating privacy toggle enabled", workerName) }
                     .onFailure { Timber.w(it, "Failed to reschedule %s", workerName) }
             }

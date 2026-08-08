@@ -71,7 +71,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreMaintenanceMode blocks writes when in restore mode`() {
         // GIVEN: a fresh RestoreMaintenanceMode (defaults to NORMAL)
-        val modeManager = RestoreMaintenanceMode(context)
+        val modeManager = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
 
         // THEN: writes are allowed in the initial NORMAL state
         assertTrue(
@@ -100,7 +100,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreMaintenanceMode allows writes in normal and backup modes`() {
         // GIVEN: a fresh RestoreMaintenanceMode
-        val modeManager = RestoreMaintenanceMode(context)
+        val modeManager = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
 
         // THEN: NORMAL mode allows writes
         assertTrue(
@@ -129,7 +129,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreMaintenanceMode reset restores writes`() {
         // GIVEN: RestoreMaintenanceMode in RESTORE_STAGING mode
-        val modeManager = RestoreMaintenanceMode(context)
+        val modeManager = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         modeManager.enter(RestoreMaintenanceMode.Mode.RESTORE_STAGING)
         assertFalse("Precondition: writes should be blocked", modeManager.isWritesAllowed())
 
@@ -148,7 +148,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreMaintenanceMode exit without force restores writes`() {
         // GIVEN: RestoreMaintenanceMode in RESTORE_VERIFYING mode
-        val modeManager = RestoreMaintenanceMode(context)
+        val modeManager = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         modeManager.enter(RestoreMaintenanceMode.Mode.RESTORE_VERIFYING)
         assertFalse("Precondition: writes should be blocked", modeManager.isWritesAllowed())
 
@@ -170,7 +170,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreMaintenanceMode exit with force keeps writes blocked`() {
         // GIVEN: RestoreMaintenanceMode in RESTORE_ROLLING_BACK mode
-        val modeManager = RestoreMaintenanceMode(context)
+        val modeManager = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         modeManager.enter(RestoreMaintenanceMode.Mode.RESTORE_ROLLING_BACK)
         assertFalse("Precondition: writes should be blocked", modeManager.isWritesAllowed())
 
@@ -195,7 +195,7 @@ class BackupRestoreContractTest {
     @Test
     fun `restoreMaintenanceMode all restore modes block writes`() {
         // GIVEN: RestoreMaintenanceMode
-        val modeManager = RestoreMaintenanceMode(context)
+        val modeManager = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
 
         // WHEN/THEN: each restore mode blocks writes
         val restoreModes = listOf(
