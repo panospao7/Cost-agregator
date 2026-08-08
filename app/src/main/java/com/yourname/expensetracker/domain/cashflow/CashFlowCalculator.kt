@@ -25,6 +25,8 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
+import java.time.Instant
+import java.time.ZoneId
 import java.util.*
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -125,12 +127,26 @@ class CashFlowCalculator @Inject constructor(
             "startingBalance currency '${startingBalance.currency.code}' does not match home currency '$homeCurrency'. " +
                 "Pass the starting balance in the home currency (no auto-conversion is performed)."
         }
-        val calendar = Calendar.getInstance()
         val results = mutableListOf<DailyCashFlow>()
         var runningBalance = startingBalance.amount
 
         val startTime = startDate.time
         val endTime = endDate.time
+
+        // T4B-2: Deterministic day iteration over the system-default timezone.
+        // The old java.util.Calendar cursor (which preserved the caller's time-of-day
+        // across iterations and advanced with calendar.add(DAY_OF_MONTH, 1)) is replaced
+        // by a java.time.LocalDate cursor. A calendar day D is emitted for the half-open
+        // range [startTime, endTime) iff D.atStartOfDay(zone) < endTime; the cursor
+        // advances with LocalDate.plusDays(1) — never with fixed DAY_MS, which is wrong
+        // on 23/25-hour DST days. Day boundaries are derived with atStartOfDay(zone),
+        // equivalent to TimePeriodUtils.getStartOfDay/getEndOfDay semantics.
+        if (startTime >= endTime) {
+            // Empty / invalid range — same contract as the old cursor loop (no days).
+            return emptyList()
+        }
+        val zone = ZoneId.systemDefault()
+        val startLocalDate = Instant.ofEpochMilli(startTime).atZone(zone).toLocalDate()
 
         // ── Pre-compute occurrence-driven predictions (FCST-3) ──────────────
         // P6-CURRENT-024: READ-ONLY. Manual rules are PROJECTED in memory via the
@@ -242,32 +258,26 @@ class CashFlowCalculator @Inject constructor(
         // Get historical data for the period
         val historicalExpenses = expenseRepository.getExpensesBetween(startTime, endTime)
 
-        // Group historical expenses by day key (yyyy-MM-dd) to avoid cross-year collisions
+        // Group historical expenses by day key (yyyy-MM-dd) to avoid cross-year collisions.
+        // T4B-2: keys come from the canonical formatDayKey (TimePeriodUtils-derived)
+        // instead of the inline Calendar read, keeping the same Locale.US zero-padded format.
         val expensesByDay = mutableMapOf<String, MutableList<Expense>>()
         for (expense in historicalExpenses) {
-            calendar.timeInMillis = expense.date
-            val dayKey = String.format(
-                Locale.US,
-                "%04d-%02d-%02d",
-                calendar.get(Calendar.YEAR),
-                calendar.get(Calendar.MONTH) + 1,
-                calendar.get(Calendar.DAY_OF_MONTH)
-            )
+            val dayKey = formatDayKey(expense.date)
             val list = expensesByDay.getOrPut(dayKey) { mutableListOf() }
             list.add(expense)
         }
 
-        // Process each day
-        calendar.time = startDate
-        while (calendar.time.before(endDate)) {
-            val currentDay = calendar.time
-            val dayKey = String.format(
-                Locale.US,
-                "%04d-%02d-%02d",
-                calendar.get(Calendar.YEAR),
-                calendar.get(Calendar.MONTH) + 1,
-                calendar.get(Calendar.DAY_OF_MONTH)
-            )
+        // Process each day — deterministic LocalDate iteration (T4B-2).
+        // The cursor is a LocalDate in the system-default zone. Each iteration emits
+        // exactly one calendar day (dayStart .. dayEnd), so DST days with 23/25 hours
+        // and leap days produce one entry each (never zero or two).
+        var cursorLocalDate = startLocalDate
+        while (cursorLocalDate.atStartOfDay(zone).toInstant().toEpochMilli() < endTime) {
+            val dayStart = cursorLocalDate.atStartOfDay(zone).toInstant().toEpochMilli()
+            val dayEnd = cursorLocalDate.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            val currentDay = Date(dayStart)
+            val dayKey = formatDayKey(dayStart)
 
             // Get day's expenses
             val dayExpenses = expensesByDay[dayKey] ?: mutableListOf()
@@ -301,9 +311,11 @@ class CashFlowCalculator @Inject constructor(
             // Path 1: Occurrence-driven predictions from manual rules
             occurrencePatternsByDay[dayKey]?.let { predictedRecurringList.addAll(it) }
 
-            // Path 2: Detected-only patterns — ad-hoc date matching on nextExpectedDate
-            val currentDayStart = TimePeriodUtils.getStartOfDay(currentDay.time)
-            val currentDayEnd = TimePeriodUtils.getEndOfDay(currentDay.time)
+            // Path 2: Detected-only patterns — ad-hoc date matching on nextExpectedDate.
+            // T4B-2: dayStart/dayEnd are already derived via atStartOfDay(zone), which is
+            // identical to TimePeriodUtils.getStartOfDay/getEndOfDay on the same instant.
+            val currentDayStart = dayStart
+            val currentDayEnd = dayEnd
             for (pattern in detectedPatterns) {
                 val expectedDayStart = TimePeriodUtils.getStartOfDay(pattern.nextExpectedDate)
                 if (expectedDayStart >= currentDayStart && expectedDayStart < currentDayEnd) {
@@ -441,8 +453,8 @@ class CashFlowCalculator @Inject constructor(
                 )
             )
             
-            // Move to next day
-            calendar.add(Calendar.DAY_OF_MONTH, 1)
+            // Move to next day (calendar-day arithmetic via plusDays(1), never fixed DAY_MS)
+            cursorLocalDate = cursorLocalDate.plusDays(1)
         }
         
         return results

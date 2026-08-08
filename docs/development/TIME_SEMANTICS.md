@@ -369,11 +369,8 @@ Fixed DST / boundary regression tests added (Tier 2):
 
 **Explicitly still pending (T4B and later):**
 
-- `AdvancedAnalyticsDashboard.getMonthlyTrend` — the complex month cursor
-  (A18: replace the `java.util.Calendar` month iteration with
-  `java.time.ZonedDateTime` + `ZoneId.systemDefault()`).
-- CashFlow / Budget engine Calendar loops (e.g. `AdvancedAnalyticsEngine`
-  weekday mapping and weekend classification still read `Calendar` constants).
+- Budget engine Calendar loops / `AdvancedAnalyticsEngine` weekday mapping and
+  weekend classification still read `Calendar` constants.
 - `TimePeriodUtils` internal `Calendar`-based strategy migration to
   `java.time`.
 
@@ -406,15 +403,60 @@ diagnostic and the cash-flow day-key formatter:
 
 **Explicitly still pending (T4B and later):**
 
-- `CashFlowCalculator.calculateDailyCashFlow` — the complex `java.util.Calendar`
-  day-iteration loop (including its inline day-key construction) remains on
-  `Calendar`.
 - `TimePeriodUtils` internal `Calendar`-based strategy migration to
   `java.time`.
 
 **No** time exception or baseline was added or edited: the removed calls are
 strictly decreases in direct-time usage, so the existing
 `config/guards/time_boundary_exceptions.yml` is unchanged.
+
+### Time Batch T4B-2 — CashFlowCalculator deterministic LocalDate day iteration (complete)
+
+`CashFlowCalculator.calculateDailyCashFlow` no longer iterates days with a
+`java.util.Calendar` cursor (`calendar.time = startDate; while
+(calendar.time.before(endDate)) { ... calendar.add(Calendar.DAY_OF_MONTH, 1) }`).
+It now uses a deterministic `java.time.LocalDate` cursor in the system-default
+timezone:
+
+- The first day is `Instant.ofEpochMilli(startTime).atZone(ZoneId.systemDefault()).toLocalDate()`.
+- A calendar day `D` is emitted for the half-open range `[startTime, endTime)`
+  iff `D.atStartOfDay(zone) < endTime`.
+- The cursor advances with `LocalDate.plusDays(1)` — never fixed `DAY_MS`, which
+  is wrong on 23/25-hour DST days.
+- Per-day boundaries (`dayStart`/`dayEnd`) are derived with `atStartOfDay(zone)`,
+  equivalent to `TimePeriodUtils.getStartOfDay/getEndOfDay` (half-open
+  `[start, end)`), so DST days and leap days each produce exactly one entry.
+- Historical expenses are grouped by the canonical `formatDayKey` (the T4 Tier 3
+  helper) instead of an inline `Calendar` field read; keys are unchanged
+  (`yyyy-MM-dd`, Locale.US, zero-padded).
+- `DailyCashFlow.date` is the day's start boundary (`Date(dayStart)`); for the
+  day-aligned ranges used by callers this is identical to the old cursor value.
+- Empty/invalid ranges (`startTime >= endTime`) still return an empty list
+  (explicit early return; the old cursor loop also produced zero days).
+- The detected-pattern day match uses the same `dayStart`/`dayEnd` (unchanged
+  half-open semantics against `nextExpectedDate`).
+
+Boundary regression tests added on the real calculation path
+(`CashFlowCalculatorTest`):
+
+- DST spring-forward (America/New_York 2026-03-08) — exactly one entry per day,
+  23-hour day boundary, both pre/post-transition expenses attributed to the same
+  local date key.
+- DST fall-back (America/New_York 2026-11-01) — exactly one entry per day,
+  25-hour day boundary, both occurrences of the repeated 01:30 hour attributed
+  to Nov 1.
+- Leap day / month boundary (2024-02-28 → 2024-03-02) — one entry per local date
+  including 2024-02-29.
+- Exact end-exclusive — a row at exactly `endTime` is never surfaced and never
+  emitted as a day.
+- Empty and inverted ranges — both return no daily cash flows.
+- Events around midnight — 23:59:59 vs 00:00:00 attribution on the correct local
+  date keys.
+
+**No** time exception or baseline was added or edited: the `Calendar` usage was
+strictly reduced. The separate pending item — `TimePeriodUtils` internal
+`Calendar`-based strategy migration to `java.time` — is **not** part of this
+batch.
 
 ## Enforcing These Rules
 
