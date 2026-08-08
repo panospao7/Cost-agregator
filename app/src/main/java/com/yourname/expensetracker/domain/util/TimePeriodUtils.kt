@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.util
 
 import java.time.DayOfWeek
 import java.time.Instant
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 import java.time.temporal.WeekFields
@@ -333,10 +334,10 @@ object TimePeriodUtils {
      * Formats a timestamp as canonical month key (`yyyy-MM`).
      */
     fun formatMonthKey(timestamp: Long): String {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        val zoned = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault())
         return formatMonthKey(
-            year = cal.get(Calendar.YEAR),
-            month = cal.get(Calendar.MONTH) + 1
+            year = zoned.year,
+            month = zoned.monthValue
         )
     }
 
@@ -369,27 +370,18 @@ object TimePeriodUtils {
         val (startYear, startMonth) = parseMonthKey(startMonthKey)
         val (endYear, endMonth) = parseMonthKey(endMonthKey)
 
-        val cursor = Calendar.getInstance().apply {
-            clear()
-            set(Calendar.YEAR, startYear)
-            set(Calendar.MONTH, startMonth - 1)
-            set(Calendar.DAY_OF_MONTH, 1)
-        }
-        val end = Calendar.getInstance().apply {
-            clear()
-            set(Calendar.YEAR, endYear)
-            set(Calendar.MONTH, endMonth - 1)
-            set(Calendar.DAY_OF_MONTH, 1)
-        }
+        val start = YearMonth.of(startYear, startMonth)
+        val end = YearMonth.of(endYear, endMonth)
 
-        require(!cursor.after(end)) {
+        require(!start.isAfter(end)) {
             "startMonthKey must be <= endMonthKey: $startMonthKey > $endMonthKey"
         }
 
         val monthKeys = mutableListOf<String>()
-        while (!cursor.after(end)) {
-            monthKeys.add(formatMonthKey(cursor.timeInMillis))
-            cursor.add(Calendar.MONTH, 1)
+        var cursor = start
+        while (!cursor.isAfter(end)) {
+            monthKeys.add(formatMonthKey(cursor.year, cursor.monthValue))
+            cursor = cursor.plusMonths(1)
         }
         return monthKeys
     }
@@ -681,26 +673,22 @@ object TimePeriodUtils {
      * Returns the number of days remaining in the month (excluding the current day).
      */
     fun getDaysRemainingInMonth(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        val daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
-        return daysInMonth - dayOfMonth
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate()
+        return localDate.lengthOfMonth() - localDate.dayOfMonth
     }
 
     /**
      * Returns the day of month (1–31) for the given [timestamp].
      */
     fun getDayOfMonth(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return cal.get(Calendar.DAY_OF_MONTH)
+        return Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).dayOfMonth
     }
 
     /**
      * Returns the number of days in the month containing [timestamp].
      */
     fun getDaysInMonth(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return cal.getActualMaximum(Calendar.DAY_OF_MONTH)
+        return Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).toLocalDate().lengthOfMonth()
     }
 
     /**
@@ -708,18 +696,18 @@ object TimePeriodUtils {
      * E.g. the 1st returns 0, the 15th returns 14.
      */
     fun getDayIndexFromMonthStart(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return (cal.get(Calendar.DAY_OF_MONTH) - 1).coerceAtLeast(0)
+        val dayOfMonth = Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).dayOfMonth
+        return (dayOfMonth - 1).coerceAtLeast(0)
     }
 
     /**
      * Checks whether two timestamps fall in the same calendar month and year.
      */
     fun isSameMonth(timestamp1: Long, timestamp2: Long): Boolean {
-        val cal1 = Calendar.getInstance().apply { timeInMillis = timestamp1 }
-        val cal2 = Calendar.getInstance().apply { timeInMillis = timestamp2 }
-        return cal1.get(Calendar.YEAR) == cal2.get(Calendar.YEAR) &&
-               cal1.get(Calendar.MONTH) == cal2.get(Calendar.MONTH)
+        val zone = ZoneId.systemDefault()
+        val zoned1 = Instant.ofEpochMilli(timestamp1).atZone(zone)
+        val zoned2 = Instant.ofEpochMilli(timestamp2).atZone(zone)
+        return zoned1.year == zoned2.year && zoned1.monthValue == zoned2.monthValue
     }
 
     // ============================================================================
@@ -763,16 +751,14 @@ object TimePeriodUtils {
      * Returns the calendar year for [timestamp].
      */
     fun getYear(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return cal.get(Calendar.YEAR)
+        return Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).year
     }
 
     /**
      * Returns the calendar month for [timestamp] (0 = January, 11 = December).
      */
     fun getMonth(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return cal.get(Calendar.MONTH)
+        return Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).monthValue - 1
     }
 
     /**
@@ -846,8 +832,15 @@ object TimePeriodUtils {
      * Returns the day of week using [Calendar] constants (SUNDAY = 1 … SATURDAY = 7).
      */
     fun getDayOfWeek(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return cal.get(Calendar.DAY_OF_WEEK)
+        return when (Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).dayOfWeek) {
+            DayOfWeek.SUNDAY -> Calendar.SUNDAY
+            DayOfWeek.MONDAY -> Calendar.MONDAY
+            DayOfWeek.TUESDAY -> Calendar.TUESDAY
+            DayOfWeek.WEDNESDAY -> Calendar.WEDNESDAY
+            DayOfWeek.THURSDAY -> Calendar.THURSDAY
+            DayOfWeek.FRIDAY -> Calendar.FRIDAY
+            DayOfWeek.SATURDAY -> Calendar.SATURDAY
+        }
     }
 
     // ============================================================================
@@ -909,12 +902,10 @@ object TimePeriodUtils {
      * Always pair with [getAppCalendarWeekYear] when constructing a week-scoped key.
      */
     fun getAppCalendarWeekNumber(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply {
-            timeInMillis = timestamp
-            firstDayOfWeek = Calendar.MONDAY
-            minimalDaysInFirstWeek = 1
-        }
-        return cal.get(Calendar.WEEK_OF_YEAR)
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        val appCalendarWeekFields = WeekFields.of(DayOfWeek.MONDAY, 1)
+        return localDate.get(appCalendarWeekFields.weekOfYear())
     }
 
     /**
@@ -924,8 +915,7 @@ object TimePeriodUtils {
      * [getAppCalendarWeekNumber]** at every year boundary.
      */
     fun getAppCalendarWeekYear(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return cal.get(Calendar.YEAR)
+        return Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).year
     }
 
     /**
@@ -943,8 +933,7 @@ object TimePeriodUtils {
      * Returns the hour of day (0–23) for [timestamp].
      */
     fun getHourOfDay(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
-        return cal.get(Calendar.HOUR_OF_DAY)
+        return Instant.ofEpochMilli(timestamp).atZone(ZoneId.systemDefault()).hour
     }
 
     // ============================================================================
