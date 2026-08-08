@@ -1,12 +1,17 @@
 package com.yourname.expensetracker.data.backup
 
+import com.yourname.expensetracker.data.privacy.BackupEncryptionService
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.BufferedOutputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * P7-CURRENT-023 — [CostbackupBundle.extract] must enforce decompressed-size and
@@ -141,6 +146,104 @@ class CostbackupBundleLimitsTest {
             nowEpochMs,
             manifest.createdAt
         )
+    }
+
+    @Test
+    fun `fromJson keeps stored createdAt when present instead of the fallback`() {
+        // T2B: the nowEpochMs fallback must only apply when createdAt is missing —
+        // a stored value must never be overwritten by an unrelated caller-supplied time.
+        val json = org.json.JSONObject().apply {
+            put("backupFormatVersion", 1)
+            put("databaseVersion", 1)
+            put("createdAt", nowEpochMs)
+        }
+
+        val manifest = CostbackupBundle.BackupManifest.fromJson(json, nowEpochMs = nowEpochMs + 5L)
+        assertEquals(
+            "stored createdAt must win over the supplied fallback",
+            nowEpochMs,
+            manifest.createdAt
+        )
+    }
+
+    @Test
+    fun `extract of legacy bundle without createdAt falls back to the exact supplied nowEpochMs`() {
+        // T2B: the extract boundary must thread the caller's explicit nowEpochMs into
+        // BackupManifest.fromJson for legacy bundles that predate createdAt. The fallback
+        // value must be reproduced verbatim — proving no wall clock is consulted.
+        val bundle = buildLegacyBundleWithoutCreatedAt()
+        val outDir = File(tmp.root, "extract_legacy")
+        val fallback = nowEpochMs + 1001L // distinct from any creation-time value
+
+        val result = CostbackupBundle.extract(bundle, outDir, password, nowEpochMs = fallback)
+
+        assertTrue("legacy bundle extract should succeed", result.isSuccess)
+        assertEquals(
+            "legacy createdAt fallback must be the exact supplied nowEpochMs",
+            fallback,
+            result.getOrNull()?.manifest?.createdAt
+        )
+    }
+
+    @Test
+    fun `extract keeps the stored manifest createdAt instead of the extract nowEpochMs fallback`() {
+        // T2B: a bundle that already stores createdAt (normal case) must preserve that
+        // value even when extract is called with a different nowEpochMs.
+        val bundle = buildBundle(dbBytes = 1024) // stored createdAt == nowEpochMs
+        val outDir = File(tmp.root, "extract_present")
+        val unrelatedNow = nowEpochMs + 999L // different from the stored value
+
+        val result = CostbackupBundle.extract(bundle, outDir, password, nowEpochMs = unrelatedNow)
+
+        assertTrue("extract should succeed", result.isSuccess)
+        assertEquals(
+            "stored createdAt must win over the extract fallback",
+            nowEpochMs,
+            result.getOrNull()?.manifest?.createdAt
+        )
+    }
+
+    /**
+     * Builds a legacy-format .costbackup whose manifest.json intentionally omits the
+     * `createdAt` field (predates the field). Header + AES-GCM encryption mirror
+     * [CostbackupBundle.create] so [CostbackupBundle.extract] can read it.
+     */
+    private fun buildLegacyBundleWithoutCreatedAt(): File {
+        val dbFile = tmp.newFile("legacy_database.bin").apply {
+            writeBytes(byteArrayOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
+        }
+        val innerZip = File(tmp.root, "legacy_bundle_inner.zip")
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(innerZip))).use { zos ->
+            val manifest = org.json.JSONObject().apply {
+                put("backupFormatVersion", 1)
+                put("databaseVersion", 1)
+                put("tableCounts", org.json.JSONObject(mapOf("expenses" to 1)))
+                // Intentionally no createdAt — this is the legacy format
+            }
+            zos.putNextEntry(ZipEntry("manifest.json"))
+            zos.write(manifest.toString(2).toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("database.sqlite"))
+            dbFile.inputStream().use { it.copyTo(zos) }
+            zos.closeEntry()
+
+            val checksums = org.json.JSONObject().apply {
+                put("entries", org.json.JSONObject(mapOf("database.sqlite" to CostbackupBundle.sha256Hex(dbFile))))
+            }
+            zos.putNextEntry(ZipEntry("checksums.json"))
+            zos.write(checksums.toString(2).toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+        }
+
+        val out = File(tmp.root, "legacy_bundle.costbackup")
+        FileOutputStream(out).use { fos ->
+            // Header: magic (11B) + format version (2B big-endian uint16 = 1)
+            fos.write("COSTBACKUP1".toByteArray(Charsets.US_ASCII))
+            fos.write(byteArrayOf(0x00, 0x01))
+            BackupEncryptionService().encrypt(innerZip, fos, password)
+        }
+        return out
     }
 
     @Test

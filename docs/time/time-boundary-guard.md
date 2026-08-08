@@ -193,34 +193,6 @@ temp and persisted receipt naming. No exception or baseline authorizes these
 calls. They are deferred to **Time Batch T2** for migration to UUID-based or
 `TimeProvider`-backed naming.
 
-### DatabaseBackupRepositoryImpl — deferred to T2B
-
-`DatabaseBackupRepositoryImpl.kt` contains six remaining direct wall-clock
-reads, all used for filename / staging / restore naming. **None are
-authorized** by any exception entry or baseline. They are deferred to
-**Time Batch T2B** for UUID-based and/or `TimeProvider`-backed remediation.
-
-`LocalDateTime.now(ZoneId.systemDefault())`:
-
-| Line | Method (flow) | Naming use |
-|------|---------------|------------|
-| 430 | `exportDatabase` (legacy debug raw DB export) | Backup filename naming: `expense_tracker_backup_<timestamp>.db` / `.enc` |
-| 587 | `createCostBackup` | Snapshot temp-file and output bundle filename naming: `costbackup_snapshot_<timestamp>.db`, `expense_tracker_backup_<timestamp>_<uuid>.costbackup` |
-| 2334 | `createSafetyBackupInternalAssumingMaintenance` | Safety backup filename naming: `expense_tracker_backup_SAFETY_<timestamp>.db` |
-
-`System.currentTimeMillis()`:
-
-| Line | Method (flow) | Naming use |
-|------|---------------|------------|
-| 712 | `restoreCostBackup` | Staging DB name: `expense_tracker_db_import_stage_<millis>` |
-| 744 | `restoreCostBackup` | Restore extract temp-directory name: `costbackup_extract_<millis>` |
-| 1411 | `importDatabase` (legacy debug import) | Staging DB name: `expense_tracker_db_import_stage_<millis>` |
-
-All six are **unauthorized** today: the guard reports each one and no
-exception or baseline covers them. T2B remediation will replace these with
-UUID-based naming and/or `TimeProvider`-backed timestamps. Do **not** add
-time exceptions or baselines for these findings.
-
 ### Remaining guard-reported findings — pending T2–T6
 
 All other guard-reported direct-time findings outside the exact exception
@@ -244,6 +216,44 @@ T1 scope covers only the following authorized exceptions:
    clock call; no exception entry needed).
 
 No broad exceptions or baselines extend beyond these.
+
+## Completed Batches
+
+### Time Batch T2B — DatabaseBackupRepositoryImpl (complete)
+
+`DatabaseBackupRepositoryImpl.kt` previously contained six remaining direct
+wall-clock reads used for filename / staging / restore naming. Time Batch
+**T2B** remediated all six. **No** time exception or baseline was added.
+
+Semantically timestamped, user-visible backup/safety names now derive their
+timestamp from the injected `TimeProvider.now()` via
+`Instant.ofEpochMilli(...).atZone(ZoneId.systemDefault()).toLocalDateTime()`
+(no `LocalDateTime.now()`):
+
+- `exportDatabase` (legacy debug raw DB export) — `expense_tracker_backup_<timestamp>.db` / `.enc`
+- `createCostBackup` — output bundle `expense_tracker_backup_<timestamp>_<uuid>.costbackup`;
+  `<timestamp>` comes from the same single `TimeProvider.now()` capture passed to
+  `CostbackupBundle.create` as `nowEpochMs`
+- `createSafetyBackupInternalAssumingMaintenance` — `expense_tracker_backup_SAFETY_<timestamp>.db`
+
+Uniqueness-only names now use `UUID.randomUUID()` (no
+`System.currentTimeMillis()`); prefixes, file extensions, cleanup matching,
+restore-journal `stagedDbPath`/`extractTempDirPath` persistence, and path
+safety are unchanged:
+
+- `exportDatabase` — internal `temp_export_<uuid>.db` sanitize/encrypt copy
+- `createCostBackup` — snapshot temp `costbackup_snapshot_<uuid>.db`
+- `restoreCostBackup` — staging DB `expense_tracker_db_import_stage_<uuid>`
+- `restoreCostBackup` — extract temp dir `costbackup_extract_<uuid>`
+- `importDatabase` (legacy debug import) — staging DB `expense_tracker_db_import_stage_<uuid>`
+
+A static source test in `DatabaseBackupRepositoryImplTest` asserts that no
+`System.currentTimeMillis()` / `LocalDateTime.now()` remains in the file, and
+focused tests assert the timestamped filenames are derived from a deterministic
+`FakeTimeProvider` and that staging names use UUID prefixes.
+
+Later Time Batch work (T2 ReceiptAssetStore and all T2–T6 findings listed above)
+remains **pending** — it is not marked complete by this batch.
 
 ## Related documentation
 

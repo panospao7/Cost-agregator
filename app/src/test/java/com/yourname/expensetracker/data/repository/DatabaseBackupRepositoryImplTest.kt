@@ -22,9 +22,12 @@ import io.mockk.verify
 import io.mockk.verifyOrder
 import io.mockk.mockkObject
 import io.mockk.unmockkObject
+import com.yourname.expensetracker.data.backup.BackupVerifier
+import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -32,6 +35,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -40,6 +44,11 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import java.util.UUID
 
 /**
  * Tests for [DatabaseBackupRepositoryImpl] covering backup/restore lifecycle.
@@ -658,7 +667,9 @@ class DatabaseBackupRepositoryImplTest {
 
     private fun createRepository(
         stagedVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
-        liveVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary = { _, _, _, summary -> summary }
+        liveVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary = { _, _, _, summary -> summary },
+        encryptionService: BackupEncryptionService = backupEncryptionService,
+        timeProvider: TimeProvider = FakeTimeProvider(fixedTime)
     ): DatabaseBackupRepositoryImpl {
         return DatabaseBackupRepositoryImpl(
             context = context,
@@ -666,7 +677,7 @@ class DatabaseBackupRepositoryImplTest {
             ioDispatcher = testDispatcher,
             privacyGate = privacyGate,
             privacySettingsRepository = privacySettingsRepository,
-            backupEncryptionService = backupEncryptionService,
+            backupEncryptionService = encryptionService,
             exportAnonymizer = exportAnonymizer,
             secureKeyStorage = secureKeyStorage,
             receiptAssetStore = mockk(relaxed = true),
@@ -674,7 +685,7 @@ class DatabaseBackupRepositoryImplTest {
             restoreJournal = mockRestoreJournal,
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier,
-            timeProvider = FakeTimeProvider(fixedTime)
+            timeProvider = timeProvider
         )
     }
 
@@ -708,6 +719,26 @@ class DatabaseBackupRepositoryImplTest {
             repeat(merchantCount) { db.execSQL("INSERT INTO merchant_categories(name) VALUES ('merchant_$it')") }
             repeat(pendingCount) { db.execSQL("INSERT INTO pending_reviews(status) VALUES ('PENDING')") }
             repeat(budgetCount) { db.execSQL("INSERT INTO budgets(amount) VALUES (${it + 10}.0)") }
+        } finally {
+            db.close()
+        }
+    }
+
+    /**
+     * Creates a database containing every table tracked by [BackupVerifier] (57 tables),
+     * so the strict backup pipeline (`collectTableCountsStrict` + `BackupVerifier.verify`)
+     * passes and `createCostBackup` reaches `CostbackupBundle.create`.
+     */
+    private fun createFullSchemaDatabase(file: File) {
+        file.parentFile?.mkdirs()
+        val db = SQLiteDatabase.openOrCreateDatabase(file, null)
+        try {
+            db.execSQL("PRAGMA user_version = $APP_DATABASE_SCHEMA_VERSION")
+            for (tableName in BackupVerifier.allTableNames()) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS \"$tableName\" (id INTEGER PRIMARY KEY)")
+            }
+            // One expense row so the manifest tableCounts carries real data.
+            db.execSQL("INSERT INTO expenses (id) VALUES (1)")
         } finally {
             db.close()
         }
@@ -965,6 +996,199 @@ class DatabaseBackupRepositoryImplTest {
         }
     }
 
+    @Test
+    fun `export backup filename timestamp is derived from timeProvider`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 2,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val result = repository.exportDatabase()
+
+        assertTrue(result.isSuccess)
+        val backupFile = result.getOrNull()
+        assertNotNull(backupFile)
+        // T2B: the user-visible timestamped backup name must come from the injected
+        // TimeProvider (FakeTimeProvider fixedTime), never LocalDateTime.now().
+        val expectedTimestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss", Locale.US)
+            .format(Instant.ofEpochMilli(fixedTime).atZone(ZoneId.systemDefault()).toLocalDateTime())
+        assertEquals("expense_tracker_backup_${expectedTimestamp}.db", backupFile!!.name)
+    }
+
+    @Test
+    fun `createCostBackup stamps CountingTimeProvider timestamp into manifest createdAt`() = runTest(testDispatcher) {
+        // Full 57-table schema so the strict backup pipeline (collectTableCountsStrict +
+        // BackupVerifier.verify) passes and the flow actually reaches CostbackupBundle.create.
+        createFullSchemaDatabase(file = dbFile)
+        val cacheDir = File(tempDir, "cache").apply { mkdirs() }
+        every { context.cacheDir } returns cacheDir
+
+        // Dedicated counting provider: its counter reflects ONLY createCostBackup's
+        // snapshot/timestamped bundle path, so no unrelated TimeProvider call from
+        // other repository operations can pollute the "called exactly once" assertion.
+        val countingTime = CountingTimeProvider(startTime = fixedTime)
+
+        // Real crypto so the produced bundle is extractable and its manifest can be read back.
+        val repo = createRepository(
+            stagedVerifier = { _, _, _, _, summary -> summary },
+            encryptionService = BackupEncryptionService(),
+            timeProvider = countingTime
+        )
+
+        val result = repo.createCostBackup(
+            password = "t2b_timestamp_password",
+            includeReceiptImages = false,
+            redacted = true,
+            privacyMode = null
+        )
+
+        assertTrue("createCostBackup should produce a real bundle", result.isSuccess)
+        val bundleFile = result.getOrNull()!!
+
+        // T2B: the snapshot/timestamped bundle path must call timeProvider.now() exactly once.
+        assertEquals(
+            "timeProvider.now() must be called exactly once for the snapshot/timestamped bundle path",
+            1,
+            countingTime.callCount
+        )
+        val snapshotEpochMs = countingTime.firstValue
+
+        // T2B: the single snapshotEpochMs = timeProvider.now() capture must drive BOTH the
+        // user-visible bundle name and the nowEpochMs argument to CostbackupBundle.create.
+        val expectedTimestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss", Locale.US)
+            .format(Instant.ofEpochMilli(snapshotEpochMs).atZone(ZoneId.systemDefault()).toLocalDateTime())
+        assertTrue(
+            "bundle name must embed the snapshot capture timestamp (name uses the same capture)",
+            bundleFile.name.startsWith("expense_tracker_backup_${expectedTimestamp}_")
+        )
+        assertTrue(bundleFile.name.endsWith(".costbackup"))
+
+        // Extract with an unrelated nowEpochMs sentinel (0L): a stored createdAt must win,
+        // proving the manifest was stamped from CountingTimeProvider, never a second/uncontrolled clock.
+        val extractDir = File(tempDir, "extract_created_at")
+        val extraction = CostbackupBundle.extract(
+            bundleFile, extractDir, "t2b_timestamp_password",
+            nowEpochMs = 0L
+        )
+        assertTrue("bundle should extract with the same password", extraction.isSuccess)
+        assertEquals(
+            "manifest createdAt must be the exact snapshot capture value",
+            snapshotEpochMs,
+            extraction.getOrNull()?.manifest?.createdAt
+        )
+
+        runCatching { bundleFile.delete() }
+    }
+
+    @Test
+    fun `safety backup filename timestamp is derived from timeProvider`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+
+        val result = repository.createSafetyBackup()
+
+        assertTrue(result.isSuccess)
+        val safetyBackupFile = result.getOrNull()
+        assertNotNull(safetyBackupFile)
+        // T2B: safety backup names are user-visible and timestamped; the timestamp
+        // must be derived from the injected TimeProvider, never LocalDateTime.now().
+        val expectedTimestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss", Locale.US)
+            .format(Instant.ofEpochMilli(fixedTime).atZone(ZoneId.systemDefault()).toLocalDateTime())
+        assertEquals("expense_tracker_backup_SAFETY_${expectedTimestamp}.db", safetyBackupFile!!.name)
+    }
+
+    @Test
+    fun `staging db names are uuid based and unique across imports`() = runTest(testDispatcher) {
+        createSqliteDatabase(
+            file = dbFile,
+            expenseCount = 1,
+            categoryCount = 1,
+            merchantCount = 1,
+            pendingCount = 1,
+            budgetCount = 1
+        )
+        val sourceBackup = File(tempDir, "source_stage_uuid.db")
+        createSqliteDatabase(
+            file = sourceBackup,
+            expenseCount = 3,
+            categoryCount = 2,
+            merchantCount = 4,
+            pendingCount = 1,
+            budgetCount = 2
+        )
+
+        val stagedNames = mutableListOf<String>()
+        every { context.getDatabasePath(any()) } answers {
+            val name = firstArg<String>()
+            if (name.startsWith("expense_tracker_db_import_stage_")) stagedNames += name
+            File(tempDir, name)
+        }
+
+        // Two separate repository instances (each starts with a fresh mock database)
+        // so the second import is not affected by the first's hot-swap of the member.
+        assertTrue(repository.importDatabase(sourceBackup).isSuccess)
+        assertTrue(
+            createRepository(stagedVerifier = { _, _, _, _, summary -> summary })
+                .importDatabase(sourceBackup)
+                .isSuccess
+        )
+
+        // T2B: staging DB names use UUID.randomUUID() (uniqueness-only), not
+        // System.currentTimeMillis(). Assert prefix + UUID shape, never the value.
+        assertEquals(2, stagedNames.size)
+        stagedNames.forEach { name ->
+            assertUuidSuffix(name, "expense_tracker_db_import_stage_")
+        }
+        assertNotEquals(stagedNames[0], stagedNames[1])
+    }
+
+    @Test
+    fun `no direct wall clock reads remain in DatabaseBackupRepositoryImpl`() {
+        val sourceFile = resolveRepositorySourceFile()
+        assertNotNull(
+            "Could not locate DatabaseBackupRepositoryImpl.kt — a broken source-root resolver " +
+                "would make this guard pass without checking anything",
+            sourceFile
+        )
+        val source = sourceFile!!.readText()
+        assertFalse(
+            "DatabaseBackupRepositoryImpl.kt must not call System.currentTimeMillis() directly — " +
+                "T2B replaced wall-clock uniqueness names (staging DB, extract temp dir) with UUID.randomUUID()",
+            source.contains("System.currentTimeMillis")
+        )
+        assertFalse(
+            "DatabaseBackupRepositoryImpl.kt must not call LocalDateTime.now() directly — " +
+                "T2B derives timestamped backup/safety filenames from timeProvider.now()",
+            source.contains("LocalDateTime.now")
+        )
+    }
+
+    private fun assertUuidSuffix(name: String, prefix: String) {
+        assertTrue(name.startsWith(prefix))
+        val suffix = name.removePrefix(prefix)
+        assertEquals(suffix, UUID.fromString(suffix).toString())
+    }
+
+    private fun resolveRepositorySourceFile(): File? {
+        val relative = "app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt"
+        val candidates = listOf(
+            File(relative),
+            File(System.getProperty("user.dir") ?: ".", relative),
+            File("src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt")
+        )
+        return candidates.firstOrNull { it.exists() && it.isFile }
+    }
+
     private data class Schema37FixtureCounts(
         val expenseCount: Int,
         val categoryCount: Int,
@@ -980,6 +1204,34 @@ class DatabaseBackupRepositoryImplTest {
                 pendingReviewCount = pendingReviewCount,
                 budgetCount = budgetCount
             )
+        }
+    }
+
+    /**
+     * TimeProvider test double that counts every [now] invocation and returns
+     * deterministic sequential values (startTime, startTime + step, ...).
+     *
+     * Used by the `createCostBackup stamps ...` test to prove the snapshot /
+     * timestamped bundle path reads the clock exactly once and that the exact
+     * captured value drives both the bundle filename and manifest.createdAt.
+     */
+    private class CountingTimeProvider(
+        private val startTime: Long,
+        private val stepMillis: Long = 1_000L
+    ) : TimeProvider {
+
+        /** Number of [now] invocations so far. */
+        var callCount: Int = 0
+            private set
+
+        /** Value returned by the first [now] call (the createCostBackup snapshot capture). */
+        val firstValue: Long
+            get() = startTime
+
+        override fun now(): Long {
+            val value = startTime + callCount * stepMillis
+            callCount++
+            return value
         }
     }
 }

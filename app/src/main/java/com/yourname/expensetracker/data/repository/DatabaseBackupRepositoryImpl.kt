@@ -38,7 +38,7 @@ import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
 import java.security.SecureRandom
-import java.time.LocalDateTime
+import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.*
@@ -426,8 +426,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
 
-            // Create timestamped filename
-            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US).format(LocalDateTime.now(ZoneId.systemDefault()))
+            // Create timestamped filename (derived from injected TimeProvider)
+            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US)
+                .format(Instant.ofEpochMilli(timeProvider.now()).atZone(ZoneId.systemDefault()).toLocalDateTime())
             val backupFileName = "${BACKUP_PREFIX}${timestamp}.db"
             val encryptedFileName = "${BACKUP_PREFIX}${timestamp}.enc"
 
@@ -437,7 +438,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             if (encryptionEnabled) {
                 // --- Encrypted export flow ---
                 // 1. Copy DB to a temp file and sanitise
-                val tempCopy = File(exportDir, "temp_export_${timestamp}.db")
+                val tempCopy = File(exportDir, "temp_export_${UUID.randomUUID()}.db")
                 try {
                     dbFile.inputStream().use { input ->
                         tempCopy.outputStream().use { output ->
@@ -584,8 +585,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             }
 
             // Copy DB to temp for snapshot
-            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US).format(LocalDateTime.now(ZoneId.systemDefault()))
-            val tempDb = java.io.File(context.cacheDir, "costbackup_snapshot_${timestamp}.db")
+            val snapshotEpochMs = timeProvider.now()
+            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US)
+                .format(Instant.ofEpochMilli(snapshotEpochMs).atZone(ZoneId.systemDefault()).toLocalDateTime())
+            val tempDb = java.io.File(context.cacheDir, "costbackup_snapshot_${UUID.randomUUID()}.db")
             try {
                 // Capture live counts under drain before snapshot (for equivalence verification)
                 val liveCountsBeforeCopy = runCatching {
@@ -666,7 +669,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     databaseFile = tempDb,
                     receiptFiles = receiptFiles,
                     password = password,
-                    nowEpochMs = timeProvider.now(),
+                    nowEpochMs = snapshotEpochMs,
                     tableCounts = tableCounts,
                     databaseVersion = APP_DATABASE_SCHEMA_VERSION,
                     redacted = resolvedRedacted,
@@ -709,7 +712,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
         val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
         val liveDbPath = liveDbFile.absolutePath
-        val stagedDbName = "${IMPORT_STAGING_PREFIX}${System.currentTimeMillis()}"
+        val stagedDbName = "${IMPORT_STAGING_PREFIX}${UUID.randomUUID()}"
         val stagedDbFile = context.getDatabasePath(stagedDbName)
         val stagedDbPath = stagedDbFile.absolutePath
 
@@ -741,7 +744,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             restoreEvents.event("JOURNAL_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             // 3. Extract bundle to temp workspace
-            val tempDir = File(context.cacheDir, "costbackup_extract_${System.currentTimeMillis()}")
+            val tempDir = File(context.cacheDir, "costbackup_extract_${UUID.randomUUID()}")
             val extractionResult = CostbackupBundle.extract(bundleFile, tempDir, password, nowEpochMs = timeProvider.now())
                 .getOrElse { error ->
                     // Wrong password or corrupt bundle — exit maintenance, live DB never touched
@@ -1408,7 +1411,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         val liveDbFile = context.getDatabasePath(AppDatabase.DATABASE_NAME)
         val liveDbWalFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-wal")
         val liveDbShmFile = File(liveDbFile.parentFile, "${AppDatabase.DATABASE_NAME}-shm")
-        val stagedDbName = "$IMPORT_STAGING_PREFIX${System.currentTimeMillis()}"
+        val stagedDbName = "$IMPORT_STAGING_PREFIX${UUID.randomUUID()}"
         val stagedDbFile = context.getDatabasePath(stagedDbName)
         val stagedDbWalFile = File(stagedDbFile.parentFile, "$stagedDbName-wal")
         val stagedDbShmFile = File(stagedDbFile.parentFile, "$stagedDbName-shm")
@@ -2331,7 +2334,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 )
             }
 
-            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US).format(LocalDateTime.now(ZoneId.systemDefault()))
+            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US)
+                .format(Instant.ofEpochMilli(timeProvider.now()).atZone(ZoneId.systemDefault()).toLocalDateTime())
             val safetyBackupDir = File(context.filesDir, "safety_backups").apply { mkdirs() }
             val safetyBackupFile = File(safetyBackupDir, "${BACKUP_PREFIX}SAFETY_${timestamp}.db")
 
