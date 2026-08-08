@@ -255,6 +255,31 @@ focused tests assert the timestamped filenames are derived from a deterministic
 Later Time Batch work (T2 ReceiptAssetStore and all T2–T6 findings listed above)
 remains **pending** — it is not marked complete by this batch.
 
+### Time Batch T3C — DefaultAiEnvironmentMonitor TTL cache (complete)
+
+`DefaultAiEnvironmentMonitor` previously used a raw
+`System.currentTimeMillis()` call to manage its TTL cache freshness check.
+Time Batch **T3C** replaced this with the injected `TimeProvider` so the cache
+is now fully testable and consistent with project time semantics.
+
+Boundary semantics:
+
+- `< 1500ms` since last check → **fresh**, cache entry reused.
+- `>= 1500ms` since last check → **refresh**, monitor re-evaluates environment.
+
+Deterministic `FakeTimeProvider` tests cover:
+
+- **fresh** — elapsed time below the 1500 ms threshold;
+- **exact boundary** — elapsed time exactly at the 1500 ms threshold (triggers refresh);
+- **past boundary** — elapsed time well beyond the threshold;
+- **advancement** — time moves forward across multiple checks, verifying the cache
+  transitions from fresh to stale.
+
+**No** time exception or baseline was added. The class obtains time exclusively
+through `TimeProvider` and the existing guard exception list is unchanged.
+
+Later time findings outside T3C scope remain **pending** in subsequent batches.
+
 ## Related documentation
 
 - `docs/development/TIME_SEMANTICS.md` — time semantics developer rules.

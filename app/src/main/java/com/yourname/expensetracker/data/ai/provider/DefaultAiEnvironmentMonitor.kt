@@ -12,6 +12,7 @@ import com.google.mlkit.genai.prompt.GenerativeModel
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicReference
@@ -23,7 +24,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class DefaultAiEnvironmentMonitor @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) : AiEnvironmentMonitor {
 
     private data class CachedStatus(
@@ -59,7 +61,7 @@ class DefaultAiEnvironmentMonitor @Inject constructor(
             return OnDeviceModelStatus.UNSUPPORTED_ANDROID_VERSION
         }
 
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         cachedFeatureStatus.get()
             ?.takeIf { now - it.checkedAtMs < STATUS_CACHE_TTL_MS }
             ?.let { return it.status }
