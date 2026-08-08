@@ -458,6 +458,82 @@ strictly reduced. The separate pending item — `TimePeriodUtils` internal
 `Calendar`-based strategy migration to `java.time` — is **not** part of this
 batch.
 
+### Time Batch T4B-3 — BudgetCalculator java.time month-anchoring / day-coercion (implemented — validation pending)
+
+`BudgetCalculator.calculatePeriodWindowForTime` no longer uses
+`java.util.Calendar` for its month-anchoring and day-of-month coercion logic.
+The three Calendar sites are migrated to `TimePeriodUtils` / `java.time`
+(system-default timezone, half-open `[start, end)` contract preserved):
+
+1. **Base evaluation setup** — the `Calendar.getInstance()` anchor/eval dates
+   are replaced by a single `java.time.LocalDate` derived from the
+   caller-provided `evaluationTime` via `TimePeriodUtils.getStartOfDay` +
+   `Instant.atZone(ZoneId.systemDefault())`. The DAILY boundary (`+1 day`) and
+   the WEEKLY anchor-weekday walk (already java.time) now share this date.
+2. **MONTHLY month-anchoring / day-coercion** — the previous
+   `Calendar.DAY_OF_MONTH` / `Calendar.MONTH` add/set logic is replaced by
+   `LocalDate.withDayOfMonth(...)` / `plusMonths(...)` with explicit
+   day-of-month clamping (`coerceAtMost(lengthOfMonth())`) on both the start
+   and the exclusive end boundary. The "evaluation day before the coerced
+   anchor day → cycle started last month" rule is preserved verbatim.
+3. **YEARLY anniversary logic** — the previous `Calendar.MONTH` /
+   `Calendar.DAY_OF_MONTH` anniversary checks and `Calendar.YEAR` add/set
+   arithmetic are replaced by `LocalDate.monthValue` / `dayOfMonth` comparison
+   plus `LocalDate.of(...)` / `plusYears(1)`. A Feb 29 anchor still clamps to
+   Feb 28 in non-leap years on both boundaries.
+
+Preserved semantics (exact):
+
+- **Period start/end**: anchored-cycle boundaries at local midnight
+  (`atStartOfDay(zone)`), matching the previous `Calendar` midnight windows.
+- **Month-end coercion**: anchor day clamped to each target month's length
+  (Jan 31 → Feb 28/29, Mar 31 → Apr 30).
+- **Previous-month calculation**: evaluation before the coerced anchor day
+  shifts the cycle start to the previous month.
+- **Day-of-month clamping**: never produces an invalid day in any month.
+- **System-default timezone**: `ZoneId.systemDefault()` everywhere, matching
+  the previous `Calendar.getInstance()` behavior.
+- **Half-open boundaries**: `[startInclusiveMillis, endExclusiveMillis)`.
+- **DST**: boundaries are local midnights, so a period crossing a DST
+  transition spans 23/25-hour days; no fixed `DAY_MS` arithmetic is used
+  where calendar days/months are required.
+
+No money/currency behavior changed (pure period-boundary migration).
+
+Real-path boundary regression tests added (`BudgetCalculatorTimeBoundaryTest`):
+
+- Jan 31 previous month — leap and non-leap February ends;
+- leap February — active Feb 29 → Mar 29 cycle (anchor Feb 29 2024 evaluated
+  Mar 15 2024 keeps the current-month window anchored on Feb 29),
+  eval-before-anchor previous month with clamped start, and YEARLY
+  Feb 29 → Feb 28 non-leap clamping;
+- month-end / day-of-month coercion — Mar 31 → Apr 30 and anchor day 30 →
+  Feb 28/29;
+- DST — a MONTHLY window crossing the America/New_York 2026-03-08
+  spring-forward keeps local midnight boundaries and its wall-clock duration
+  is not a fixed `28 * DAY_MS`;
+- exact start/end — start inclusive, end exclusive, one ms before end
+  contained;
+- invalid range — an invalid `periodMode` throws a controlled
+  `IllegalArgumentException` (never silent CALENDAR fallback), and a
+  cross-product sweep of boundary anchors/evaluation dates never produces an
+  inverted window and always contains the evaluation time.
+
+**Explicitly still pending (T4B and later):**
+
+- `TimePeriodUtils` internal `Calendar`-based strategy migration to
+  `java.time`.
+- `AdvancedAnalyticsEngine` weekday mapping / weekend classification and
+  `AdvancedAnalyticsEngine.getMonthlyTrend` month cursor still read
+  `Calendar` constants.
+- Any other remaining domain time findings (for example
+  `SpendingPersonalityClassifier` / `AnomalyDetector` Calendar constant reads)
+  remain pending.
+
+**No** time exception or baseline was added or edited: the removed calls are
+strictly decreases in `Calendar` usage, so the existing
+`config/guards/time_boundary_exceptions.yml` is unchanged.
+
 ## Enforcing These Rules
 
 After changes, run the automated time-boundary guard:

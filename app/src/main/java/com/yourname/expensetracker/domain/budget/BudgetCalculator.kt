@@ -6,7 +6,10 @@ import com.yourname.expensetracker.domain.core.time.PeriodKind
 import com.yourname.expensetracker.domain.core.time.PeriodRange
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
-import java.util.Calendar
+import java.time.Instant
+import java.time.LocalDate
+import java.time.YearMonth
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -106,93 +109,84 @@ class BudgetCalculator @Inject constructor(
     }
 
     fun calculatePeriodWindowForTime(period: BudgetPeriod, anchorDate: Long, evaluationTime: Long): PeriodRange {
-        val anchorCal = Calendar.getInstance().apply { timeInMillis = anchorDate }
+        val zone = ZoneId.systemDefault()
 
-        // Use TimePeriodUtils for consistent start-of-day logic
-        val startOfDay = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(evaluationTime)
-        
-        val cal = Calendar.getInstance().apply { timeInMillis = startOfDay }
+        // Use TimePeriodUtils for consistent start-of-day logic.
+        val startOfDay = TimePeriodUtils.getStartOfDay(evaluationTime)
+        // T4B-3: The evaluation date is derived once from the caller-provided
+        // evaluation time (never the wall clock) in the system-default timezone.
+        val evalDate = Instant.ofEpochMilli(startOfDay).atZone(zone).toLocalDate()
 
         return when (period) {
             BudgetPeriod.DAILY -> {
-                val start = cal.timeInMillis
-                cal.add(Calendar.DAY_OF_YEAR, 1)
-                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = cal.timeInMillis, label = "Budget")
+                val start = startOfDay
+                val end = evalDate.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
             BudgetPeriod.WEEKLY -> {
                 // NEW-P6-016: Use ISO week fields instead of Calendar.WEEK_OF_YEAR,
                 // which is locale-dependent.  Converting to java.time.LocalDate for
                 // ISO-aware week arithmetic ensures consistent week boundaries.
-                val zone = java.time.ZoneId.systemDefault()
-                val anchorDayOfWeek = java.time.Instant.ofEpochMilli(anchorDate)
+                val anchorDayOfWeek = Instant.ofEpochMilli(anchorDate)
                     .atZone(zone).toLocalDate().dayOfWeek
-                var evalDate = java.time.Instant.ofEpochMilli(startOfDay)
-                    .atZone(zone).toLocalDate()
-                while (evalDate.dayOfWeek != anchorDayOfWeek) {
-                    evalDate = evalDate.minusDays(1)
+                var weekDate = evalDate
+                while (weekDate.dayOfWeek != anchorDayOfWeek) {
+                    weekDate = weekDate.minusDays(1)
                 }
-                val start = evalDate.atStartOfDay(zone).toInstant().toEpochMilli()
-                val end = evalDate.plusWeeks(1).atStartOfDay(zone).toInstant().toEpochMilli()
+                val start = weekDate.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = weekDate.plusWeeks(1).atStartOfDay(zone).toInstant().toEpochMilli()
                 PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
             BudgetPeriod.MONTHLY -> {
-                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                
-                // Set to start of current month
-                cal.set(Calendar.DAY_OF_MONTH, 1)
-                // Evaluate if we are currently past the anchor day
-                val evalCal = Calendar.getInstance().apply { timeInMillis = evaluationTime }
-                
-                val evalDay = evalCal.get(Calendar.DAY_OF_MONTH)
-                
-                // Determine the correct month start
-                // If today is before the anchor day, the period actually started last month
-                // Note: we must also coerce the anchor day by the max days of the evaluated month
-                val adjustedAnchorDay = anchorDay.coerceAtMost(evalCal.getActualMaximum(Calendar.DAY_OF_MONTH))
-                val hasPassedAnchorThisMonth = evalDay >= adjustedAnchorDay
-                
-                if (!hasPassedAnchorThisMonth) {
-                    cal.add(Calendar.MONTH, -1)
-                }
-                
-                val prevMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(prevMonthMax))
+                // T4B-3: java.time month-anchoring preserving the previous
+                // java.util.Calendar semantics exactly:
+                // - the anchor day comes from the budget's anchor date;
+                // - if the evaluation day is before the (coerced) anchor day, the
+                //   cycle started in the previous month;
+                // - the anchor day is clamped to the target month length on both
+                //   the start and the exclusive end boundary.
+                val anchorDay = Instant.ofEpochMilli(anchorDate).atZone(zone).toLocalDate().dayOfMonth
+                val evalDay = evalDate.dayOfMonth
 
-                val start = cal.timeInMillis
-                
-                // To find the end, go to the start of the next cycle
-                cal.add(Calendar.MONTH, 1)
-                val nextMonthMax = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-                
-                // Use anchor day, but coerce if next month has fewer days
-                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(nextMonthMax))
-                
-                val end = cal.timeInMillis
+                // Coerce the anchor day by the max days of the evaluated month.
+                val adjustedAnchorDay = anchorDay.coerceAtMost(evalDate.lengthOfMonth())
+                val hasPassedAnchorThisMonth = evalDay >= adjustedAnchorDay
+
+                val startMonthDate = if (hasPassedAnchorThisMonth) evalDate else evalDate.minusMonths(1)
+                val start = startMonthDate.withDayOfMonth(anchorDay.coerceAtMost(startMonthDate.lengthOfMonth()))
+                    .atStartOfDay(zone).toInstant().toEpochMilli()
+
+                val endMonthDate = startMonthDate.plusMonths(1)
+                val end = endMonthDate.withDayOfMonth(anchorDay.coerceAtMost(endMonthDate.lengthOfMonth()))
+                    .atStartOfDay(zone).toInstant().toEpochMilli()
+
                 PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
             BudgetPeriod.YEARLY -> {
-                val anchorMonth = anchorCal.get(Calendar.MONTH)
-                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                
-                val currentMonth = cal.get(Calendar.MONTH)
-                val currentDay = cal.get(Calendar.DAY_OF_MONTH)
-                val adjustedDay = anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH))
+                // T4B-3: java.time anniversary anchoring preserving the previous
+                // java.util.Calendar semantics exactly (a Feb 29 anchor clamps to
+                // Feb 28 in non-leap years on both boundaries).
+                val anchorDateInZone = Instant.ofEpochMilli(anchorDate).atZone(zone).toLocalDate()
+                val anchorMonth = anchorDateInZone.monthValue
+                val anchorDay = anchorDateInZone.dayOfMonth
 
-                // Check if we passed the anniversary this year
-                var passed = false
-                if (currentMonth > anchorMonth) passed = true
-                else if (currentMonth == anchorMonth && currentDay >= adjustedDay) passed = true
-                
-                if (!passed) {
-                    cal.add(Calendar.YEAR, -1)
-                }
-                
-                cal.set(Calendar.MONTH, anchorMonth)
-                cal.set(Calendar.DAY_OF_MONTH, anchorDay.coerceAtMost(cal.getActualMaximum(Calendar.DAY_OF_MONTH)))
-                
-                val start = cal.timeInMillis
-                cal.add(Calendar.YEAR, 1)
-                val end = cal.timeInMillis
+                val currentMonth = evalDate.monthValue
+                val currentDay = evalDate.dayOfMonth
+                val adjustedDay = anchorDay.coerceAtMost(evalDate.lengthOfMonth())
+
+                // Check if we passed the anniversary this year.
+                val passed = currentMonth > anchorMonth ||
+                    (currentMonth == anchorMonth && currentDay >= adjustedDay)
+
+                val startYear = if (passed) evalDate.year else evalDate.year - 1
+                val startDate = LocalDate.of(
+                    startYear,
+                    anchorMonth,
+                    anchorDay.coerceAtMost(YearMonth.of(startYear, anchorMonth).lengthOfMonth())
+                )
+                val start = startDate.atStartOfDay(zone).toInstant().toEpochMilli()
+
+                val end = startDate.plusYears(1).atStartOfDay(zone).toInstant().toEpochMilli()
                 PeriodRange(kind = PeriodKind.CUSTOM, startInclusiveMillis = start, endExclusiveMillis = end, label = "Budget")
             }
         }
