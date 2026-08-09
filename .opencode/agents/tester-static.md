@@ -1,7 +1,7 @@
 ---
 description: Read-only test coverage and validation strategy reviewer.
 mode: subagent
-model: opencode-go/qwen3.6-plus
+model: opencode-go/qwen3.7-plus
 temperature: 0.1
 steps: 22
 color: info

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.currency
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExchangeRateDao
 import com.yourname.expensetracker.data.database.entity.ExchangeRate
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
@@ -11,7 +12,8 @@ import javax.inject.Singleton
 
 @Singleton
 class ExchangeRateStoreAdapter @Inject constructor(
-    private val exchangeRateDao: ExchangeRateDao
+    private val exchangeRateDao: ExchangeRateDao,
+    private val writeBarrier: DatabaseWriteBarrier
 ) : ExchangeRateStore {
 
     override suspend fun getRate(fromCurrency: String, toCurrency: String): DomainExchangeRate? {
@@ -27,10 +29,12 @@ class ExchangeRateStoreAdapter @Inject constructor(
     }
 
     override suspend fun insertOrUpdate(rate: DomainExchangeRate) {
+        writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdate")
         exchangeRateDao.insertOrUpdate(rate.toEntity())
     }
 
     override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {
+        writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.insertOrUpdateAll")
         exchangeRateDao.insertOrUpdateAll(rates.map { it.toEntity() })
     }
 
@@ -45,6 +49,7 @@ class ExchangeRateStoreAdapter @Inject constructor(
     }
 
     override suspend fun deleteOldRates(olderThan: Long) {
+        writeBarrier.checkWritesAllowed("ExchangeRateStoreAdapter.deleteOldRates")
         exchangeRateDao.deleteOldRates(olderThan)
     }
 }

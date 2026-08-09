@@ -1,7 +1,7 @@
 ---
 description: Read-only privacy and security guardian for fail-closed behavior, diagnostics, permissions, and sensitive data handling.
 mode: subagent
-model: opencode-go/qwen3.7-max
+model: opencode-go/gpt-5.6-luna
 temperature: 0
 steps: 32
 color: error

@@ -1,7 +1,7 @@
 # CI Guardrails Recovery Ledger
 
 > **Purpose**: Tracks recovery attempts for CI guard suite failures. Each recovery phase (R1, R2, ...) is recorded as an atomic entry with evidence, root cause, and next-phase action items.
-> **Status**: R1 partial — not green
+> **Status**: RED — DB ownership debt + Gradle config-cache incompatibility remain
 
 ---
 
@@ -128,6 +128,108 @@ The ratchet command `subprocess.run(..., shell=True)` in `guard_ratchet.py` pass
 - Unit-test timing: **pending**
 - PR acceptance: **not green**
 - Final CI verification: **blocked** on R2 fix
+
+---
+
+## R2 — Ratchet Fix + Static Suite Partial Recovery + Gradle Configuration-Cache Discovery
+
+| Field | Value |
+|-------|-------|
+| **Date** | 2026-08-05 |
+| **Branch** | `atomicity-pr21-enforcement-final` |
+| **HEAD** | `c226c67d` |
+| **Session** | `ses_02d2` |
+| **Overall status** | **RED** — infrastructure errors resolved; real findings surfaced; Gradle config-cache blocks R3 |
+
+### Commands Executed
+
+#### 1. R2 Ratchet Command (pytest)
+
+```
+python -m pytest scripts/ci/test_guard_ratchet.py -v --tb=short
+```
+
+| Field | Value |
+|-------|-------|
+| Result | **PASS** (exit 0) |
+| Evidence | 17/17 tests passed |
+
+#### 2. Guard Registry Verification
+
+```
+python scripts/ci/verify_guard_registry.py
+```
+
+| Field | Value |
+|-------|-------|
+| Result | **PASS** (exit 0) |
+| Evidence | 17 guards valid; manifest-consistent |
+
+#### 3. Static Guard Suite
+
+```
+python scripts/ci/run_static_guard_suite.py
+```
+
+| Field | Value |
+|-------|-------|
+| Result | **FAIL** (exit 1) |
+| Total guards | 19 |
+| Passed | 18 |
+| Infrastructure errors | **0** (all 6 baseline 9009 errors resolved) |
+
+##### db_access Finding
+
+| Metric | Value |
+|--------|-------|
+| Baseline | 15 |
+| Current | 43 |
+| New | 31 |
+| Unchanged | 12 |
+| Resolved | 3 |
+
+This is real DB ownership debt, not an infrastructure artifact.
+
+#### 4. Gradle Dry-Run (R3 preparation)
+
+```
+./gradlew :app:check --dry-run --stacktrace
+```
+
+| Field | Value |
+|-------|-------|
+| Result | **FAIL** (exit 1) |
+| Problem count | **13 configuration-cache problems** |
+| Scope | Custom check tasks affected |
+
+##### Root Cause (Gradle)
+
+Configuration-cache failures caused by **Project/script-object references captured in task actions**. Task lambdas hold references to mutable `Project` objects, which are incompatible with Gradle's configuration cache serialization. This is an independent Gradle configuration-cache incompatibility — unrelated to the DB ownership debt.
+
+### What Changed Since R1
+
+- R1 infrastructure errors (exit 9009 from Windows `python3` alias stub) are **fully resolved** — all 19 guards now execute without process-launch failures.
+- `db_access` surfaced as a real finding: 31 new ownership violations against a baseline of 15.
+- No baseline or allowlist changes were made during this validation.
+- Gradle `:app:check --dry-run` exposed a separate configuration-cache incompatibility across custom check tasks.
+
+### Files Changed
+
+None during R2 (ratchet fix was applied in the session; no additional doc changes).
+
+### What Is NOT Complete
+
+- `db_access` finding classification and remediation — **pending**
+- Gradle task refactor to eliminate Project/script-object captures — **pending**
+- Full `:app:check` execution — **blocked** on Gradle config-cache fix
+- Unit-test timing: **pending**
+- PR acceptance: **not green**
+- Final CI verification: **blocked** on Gradle config-cache fix + DB findings
+
+### Next Phase
+
+**Phase 1 — DB finding classification**: Triage the 31 new `db_access` violations; separate real ownership debt from false positives; plan remediation.
+**Phase 2 — Gradle task refactor**: Replace Project/script-object captures in custom check task actions with compatible constructs (e.g., `Provider`-based or lazy-property patterns). Re-run `:app:check --dry-run` to confirm 0 config-cache problems before proceeding.
 
 ---
 

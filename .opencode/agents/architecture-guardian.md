@@ -1,7 +1,7 @@
 ---
 description: Read-only architecture-law guardian for lifecycle, worker, and boundary violations.
 mode: subagent
-model: opencode-go/qwen3.7-max
+model: opencode-go/deepseek-v4-pro
 temperature: 0
 steps: 30
 color: warning

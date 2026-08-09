@@ -84,7 +84,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             every { it.homeCurrency() } returns flowOf("EUR")
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
-        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao())
+        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao(), writeBarrier)
         val currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)
         multiCurrencyRepository = MultiCurrencyRepository(
             expenseDao = database.expenseDao(),

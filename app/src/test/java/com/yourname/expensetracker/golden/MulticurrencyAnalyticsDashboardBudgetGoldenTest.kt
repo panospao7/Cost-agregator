@@ -55,7 +55,7 @@ class MulticurrencyAnalyticsDashboardBudgetGoldenTest : GoldenTestBase() {
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
 
-        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao())
+        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao(), writeBarrier)
         currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)
         multiCurrencyRepository = MultiCurrencyRepository(
             expenseDao = database.expenseDao(),

@@ -1,7 +1,7 @@
 ---
 description: Strict independent final gate for risky architecture, privacy, worker, migration, and security diffs.
 mode: subagent
-model: opencode-go/qwen3.7-max
+model: opencode-go/gpt-5.6-luna
 temperature: 0
 steps: 35
 color: error

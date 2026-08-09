@@ -16,6 +16,7 @@ import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -584,8 +585,42 @@ class WorkerExecutionGuard @Inject constructor(
      * transition stale RUNNING rows to STALE_ABORTED. The conditional WHERE clause
      * (status = 'RUNNING' AND startedAt < :staleThresholdMs) prevents overwriting a
      * real terminal state if recovery races with live completion.
+     *
+     * This method is also invoked directly at startup by [AppStartupCoordinator]
+     * outside runGuarded/runGuardedWithContext, so it enforces the write barrier
+     * itself before any mutation.
+     *
+     * Barrier semantics:
+     * - Denial via [com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException]
+     *   fails closed: a controlled WRITE_BARRIER_DENIED diagnostic is recorded and the
+     *   method returns without any DAO access (restore/maintenance recovery no-op).
+     * - [kotlinx.coroutines.CancellationException] is rethrown unchanged.
+     * - Any other barrier exception propagates to the caller; recovery never silently
+     *   returns on unexpected failures, and no raw message/Throwable/stack trace is logged.
      */
     suspend fun recoverStaleRunningJobs(staleThresholdMs: Long = timeProvider.now() - STALE_THRESHOLD_MS) {
+        try {
+            writeBarrier.checkWritesAllowed("WorkerExecutionGuard.recoverStaleRunningJobs")
+        } catch (e: CancellationException) {
+            // Cancellation must propagate unchanged — never swallow it in a
+            // best-effort startup path.
+            throw e
+        } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+            // Expected barrier denial: fail closed, record only the controlled reason
+            // code via the safe structured diagnostic sink, and return without DAO
+            // access. No raw message/Throwable/stack trace is ever emitted.
+            diagnosticSink.recordBlockedOperation(
+                "WorkerExecutionGuard.recoverStaleRunningJobs",
+                restoreMaintenanceMode.currentMode(),
+                "P9",
+                reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED
+            )
+            return
+        }
+        // Any other barrier exception intentionally propagates to the caller
+        // (AppStartupCoordinator wraps this call and logs safely). Recovery never
+        // silently returns on unexpected failures.
+
         val stale = backgroundJobRunDao.getStaleRunningRuns(staleThresholdMs)
         var recovered = 0
         for (run in stale) {

@@ -159,6 +159,25 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "only contains allowed issue types (MissingTranslation)",
     },
 
+    "time_boundaries": {
+        "script": "scripts/verify_time_boundaries.py",
+        "tests": "scripts/test_verify_time_boundaries.py",
+        "mode": "blocking",
+        "baseline": None,  # No baseline for time violations — strict zero
+        "allowlist": "config/guards/time_boundary_exceptions.yml",
+        "policies": [
+            "config/guards/time_boundary_exceptions.yml",
+        ],
+        "description": "Time boundary guard (G-TIME-01) — detects direct "
+                       "wall-clock APIs (System.currentTimeMillis, "
+                       "System.nanoTime, Date(), Calendar.getInstance(), "
+                       "Instant.now(), LocalDate.now(), LocalDateTime.now(), "
+                       "OffsetDateTime.now(), ZonedDateTime.now(), "
+                       "Clock.systemDefaultZone(), Clock.systemUTC()) outside "
+                       "exact clock-adapter exceptions. No baselines, no "
+                       "broad source-line exemptions.",
+    },
+
     # ── Ratchet-wrapped guards (growth-enforcing baseline via guard_ratchet.py) ──
 
     "cancellation": {

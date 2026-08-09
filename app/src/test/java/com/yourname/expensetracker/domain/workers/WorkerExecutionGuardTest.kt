@@ -653,6 +653,82 @@ class WorkerExecutionGuardTest {
         }
     }
 
+    @Test
+    fun `stale_recovery_barrier_denied_is_noop_with_controlled_diagnostic`() = runTest {
+        // Expected barrier denial (DatabaseAccessBlockedException) must fail closed:
+        // record only the controlled WRITE_BARRIER_DENIED reason (never raw exception
+        // details) and return without any DAO access.
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws
+            com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation(
+                    "WorkerExecutionGuard.recoverStaleRunningJobs"
+                ),
+                mode = RestoreMaintenanceMode.Mode.RESTORE_SWAPPING
+            )
+
+        guard.recoverStaleRunningJobs(staleThresholdMs = 200L)
+
+        coVerify(exactly = 1) {
+            diagnosticSink.recordBlockedOperation(
+                "WorkerExecutionGuard.recoverStaleRunningJobs",
+                RestoreMaintenanceMode.Mode.NORMAL,
+                "P9",
+                reason = com.yourname.expensetracker.data.backup.MaintenanceBlockedReason.WRITE_BARRIER_DENIED
+            )
+        }
+        // No-op: recovery never reaches the DAO.
+        coVerify(exactly = 0) { backgroundJobRunDao.getStaleRunningRuns(any()) }
+        coVerify(exactly = 0) {
+            backgroundJobRunDao.staleAbortIfStillRunning(any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `stale_recovery_barrier_unexpected_exception_propagates_without_diagnostic`() = runTest {
+        // A non-DatabaseAccessBlocked exception from the barrier check must propagate
+        // to the caller (AppStartupCoordinator wraps this call and logs safely). The
+        // guard must not record it as UNKNOWN, must not log a raw Throwable/stack
+        // trace, and must not silently return as if recovery succeeded.
+        val ex = RuntimeException("barrier backend unavailable")
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws ex
+
+        try {
+            guard.recoverStaleRunningJobs(staleThresholdMs = 200L)
+            throw AssertionError("Expected RuntimeException to propagate")
+        } catch (e: RuntimeException) {
+            assertEquals(ex, e)
+        }
+
+        // No diagnostic recorded for unexpected failures; no DAO mutation happens.
+        coVerify(exactly = 0) {
+            diagnosticSink.recordBlockedOperation(any(), any(), any())
+        }
+        coVerify(exactly = 0) { backgroundJobRunDao.getStaleRunningRuns(any()) }
+        coVerify(exactly = 0) {
+            backgroundJobRunDao.staleAbortIfStillRunning(any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `stale_recovery_barrier_cancellation_is_propagated_without_diagnostic`() = runTest {
+        // Cancellation must be preserved: rethrown, no diagnostic recorded, no DAO
+        // mutation. Best-effort startup recovery semantics are unchanged.
+        val ex = kotlinx.coroutines.CancellationException("cancelled during startup")
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws ex
+
+        try {
+            guard.recoverStaleRunningJobs(staleThresholdMs = 200L)
+            throw AssertionError("Expected CancellationException to propagate")
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            assertEquals(ex, e)
+        }
+        coVerify(exactly = 0) {
+            diagnosticSink.recordBlockedOperation(any(), any(), any())
+        }
+        coVerify(exactly = 0) { backgroundJobRunDao.getStaleRunningRuns(any()) }
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // PR12C: Privacy & Notification Permission Policy tests — runGuarded
     // ══════════════════════════════════════════════════════════════════════

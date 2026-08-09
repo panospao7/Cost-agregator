@@ -28,6 +28,7 @@ python3 scripts/verify_di_release_boundaries.py
 python3 scripts/verify_migration_matrix.py --fail-on-violation
 python3 scripts/verify_ignored_test_budget.py
 python3 scripts/verify_allowlist_compliance.py --fail-on-violation
+python3 scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation
 python -m pytest scripts/test_*.py -v
 ```
 
@@ -43,19 +44,29 @@ python -m pytest scripts/test_*.py -v
 ### If a guard flags your code
 1. Read the violation message — it includes file:line and suggested fix
 2. Fix the code if it's a real issue
-3. If the code is safe, add an entry to the guard's allowlist YAML with: reason, owner, expires
+3. If the code is safe, add an exact entry to the guard's allowlist YAML with all seven required fields: `path`, `class`, `method`, `api`, `reason`, `owner`, `linked_issue`
 4. Do NOT remove or @Ignore guard tests
 
 ### Allowlist entry format
 ```yaml
-- rule: G-EXAMPLE-01
-  path: app/src/main/java/com/example/File.kt
-  symbol: SomeClass.someMethod  
-  reason: "Why this is safe"
-  owner: "@github-handle"
-  expires: "2027-01-01"  # or "permanent"
-  linked_issue: "MIT-###"
+- path: app/src/main/java/com/yourname/expensetracker/domain/util/SystemTimeProvider.kt
+  class: SystemTimeProvider
+  method: now
+  api: System.currentTimeMillis
+  reason: "Canonical platform clock adapter — the single production implementation of TimeProvider"
+  owner: "@panospao7"
+  linked_issue: "MIT-003"
 ```
+
+**Forbidden in exception entries:**
+
+- `expires`, `permanent`, or any time-bound semantics — no entry is
+  temporary or evergreen; every entry must be re-verified when the
+  guarded code changes.
+- Wildcard `path`, `class`, `method`, or `api` values (`*`, `**`,
+  glob patterns) — each row must name exactly one source location.
+- Extra keys not in the seven-field schema — unknown keys cause a
+  parse error in the guard.
 
 ### CI pipeline
 | Job | Purpose | Blocking? |

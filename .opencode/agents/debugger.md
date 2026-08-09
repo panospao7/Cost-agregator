@@ -1,7 +1,7 @@
 ---
 description: Root-cause debugger for failing tests, CI errors, flaky behavior, and subtle runtime bugs.
 mode: subagent
-model: opencode-go/glm-5.2
+model: opencode-go/deepseek-v4-pro
 temperature: 0.1
 steps: 32
 color: warning

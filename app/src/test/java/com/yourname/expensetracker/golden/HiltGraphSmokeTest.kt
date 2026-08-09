@@ -39,7 +39,7 @@ class HiltGraphSmokeTest : GoldenTestBase() {
         assertNotNull(MerchantKeyGenerator)
 
         // Constructor-injected classes with real deps
-        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao())
+        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao(), writeBarrier)
         assertNotNull(exchangeRateStore)
 
         val currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)

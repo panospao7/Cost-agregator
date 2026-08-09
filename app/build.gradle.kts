@@ -408,9 +408,13 @@ tasks.register("verifyNoIgnoredGrowth") {
     }
 }
 
-// CI guard: fails if production code calls deprecated raw aggregation DAO methods
-// TODO: Add CI guard that fails if production code calls deprecated raw aggregation
-// methods (e.g., getTotalSpentBetween, getTotalSpent) via grep/lint rule.
+// Deprecated raw-aggregation DAO methods (e.g., getTotalSpentBetween,
+// getTotalSpentFlow) are guarded at the source: each carries
+// @Deprecated(level = DeprecationLevel.ERROR), so any production call
+// without an explicit @Suppress("DEPRECATION_ERROR") fails the build.
+// Remaining call sites (ExpenseRepository, SpendingChallengeManager, ...)
+// are individually suppressed with migration TODOs. No separate grep/lint
+// rule is needed — the compiler-level ERROR deprecation is the guard.
 
 // ARCH-01: Lifecycle bypass guard — wired into check lifecycle (inline, no external kotlin dependency)
 tasks.register("checkLifecycleBypasses") {
@@ -534,71 +538,109 @@ tasks.register("checkRawMoneyAggregates") {
     }
 }
 
-// PR-E24: Inline CI guard for direct wall-clock time calls.
-// Flags: System.currentTimeMillis(), Date(), Calendar.getInstance(), Instant.now(), LocalDate.now()
-// Allowlist: TimeProvider implementations, platform adapters, tests.
+// PR-GR-02: Canonical direct-time boundary guard (G-TIME-01) via fail-closed
+// wrapper around scripts/verify_time_boundaries.py. The defective inline
+// Kotlin scanner (with its now()/now =/TimeProvider( substring exemptions)
+// has been removed and replaced by the tested canonical script.
+//
+// Required inputs are validated BEFORE execution (fail closed):
+//   scripts/verify_time_boundaries.py
+//   config/guards/time_boundary_exceptions.yml
+// A missing / non-regular / unreadable / outside-root input is a hard
+// GradleException — never a warning or a silent skip.
+//
+// Python interpreter (same contract as GR-01's verifyDbAccessBoundaries):
+//   -PpythonExecutable=/path/to/python3
+// A preflight `pythonExecutable --version` runs first; failure to launch
+// Python (or a non-zero --version exit) is an infrastructure error.
 tasks.register("checkDirectTimeCalls") {
     group = "verification"
-    description = "Fails if production code calls System.currentTimeMillis() or Date() outside TimeProvider"
+    description = "Fails if production code calls wall-clock APIs outside the exact time-boundary exceptions (fail closed)"
     doLast {
-        val srcDir = file("$rootDir/app/src/main/java")
-        val patternList = listOf(
-            Regex("""System\.currentTimeMillis\(\)"""),
-            Regex("""Instant\.now\(\)"""),
-            Regex("""Date\(\)"""),
-            Regex("""Calendar\.getInstance\(\)"""),
-            Regex("""LocalDate\.now\(\)"""),
-            Regex("""LocalDateTime\.now\(\)"""),
-            Regex("""LocalTime\.now\(\)"""),
-            Regex("""ZonedDateTime\.now\(\)"""),
-            Regex("""OffsetDateTime\.now\(\)"""),
-            Regex("""Clock\.systemDefaultZone\(\)"""),
-            Regex("""Clock\.systemUTC\(\)"""),
-            Regex("""new\s+Date\s*\(\)"""),
-            Regex("""new\s+java\.util\.Date\s*\(\)""")
+        val rootCanonical = rootDir.canonicalFile
+        val scriptFile = file("$rootDir/scripts/verify_time_boundaries.py").canonicalFile
+        val allowlistFile = file("$rootDir/config/guards/time_boundary_exceptions.yml").canonicalFile
+
+        val requiredInputs = listOf(
+            "scripts/verify_time_boundaries.py" to scriptFile,
+            "config/guards/time_boundary_exceptions.yml" to allowlistFile
         )
-        val allowlistFiles = setOf(
-            "SystemTimeProvider.kt", "FakeTimeProvider.kt", "TestTimeProvider.kt",
-            "TimeProvider.kt", "DateFormatterUtils.kt", "TimeModule.kt",
-            "PeriodRange.kt", "TimePeriodUtils.kt", "PeriodKind.kt",
-            "MigrationRegistry.kt", "AppDatabase.kt", "BackupHelper.kt",
-            "SecureKeyStorage.kt", "CloudCorrelation.kt", "NaturalLanguageDateParser.kt",
-            "GroupLifecycleCoordinator.kt", "GroupBalanceCalculator.kt",
-            "BudgetVsActualEngine.kt", "DailyBucketEngine.kt",
-            "AnalyticsInputAssembler.kt", "TaxEstimator.kt"
-        )
-        val legacyPathMarkers = listOf("legacy", "deprecated", "backfill")
-        val violations = mutableListOf<String>()
-        if (srcDir.exists()) {
-            srcDir.walkTopDown().filter { it.extension == "kt" }.forEach { f ->
-                val fileName = f.name
-                val filePathLower = f.path.lowercase()
-                if (fileName in allowlistFiles) return@forEach
-                if (legacyPathMarkers.any { it in filePathLower }) return@forEach
-                val lines = f.readLines()
-                lines.forEachIndexed { lineNum, line ->
-                    val stripped = line.trim()
-                    if (stripped.startsWith("import ")) return@forEachIndexed
-                    if (stripped.startsWith("//") || stripped.startsWith("*") || stripped.startsWith("/*")) return@forEachIndexed
-                    if (stripped.startsWith("\"") || stripped.startsWith("'")) return@forEachIndexed
-                    for (pattern in patternList) {
-                        if (pattern.containsMatchIn(stripped)) {
-                            if (stripped.contains("TimeProvider(") || stripped.contains("now =") || stripped.contains("now()")) {
-                                return@forEachIndexed
-                            }
-                            violations.add("${f.path}:${lineNum + 1}: Direct wall-clock call matches '${pattern.pattern}'")
-                            break
-                        }
-                    }
-                }
+        for ((rel, candidate) in requiredInputs) {
+            if (!candidate.path.startsWith(rootCanonical.path + File.separator, ignoreCase = true)) {
+                throw GradleException(
+                    "checkDirectTimeCalls: required input for '$rel' points outside the repository root: " +
+                    candidate.absolutePath
+                )
             }
-        } else {
-            throw GradleException("checkDirectTimeCalls: source directory not found at ${srcDir.absolutePath}")
+            if (!candidate.exists()) {
+                throw GradleException(
+                    "checkDirectTimeCalls: required input not found: ${candidate.absolutePath} ($rel)"
+                )
+            }
+            if (!candidate.isFile) {
+                throw GradleException(
+                    "checkDirectTimeCalls: required input is not a regular file: ${candidate.absolutePath} ($rel)"
+                )
+            }
+            if (!candidate.canRead()) {
+                throw GradleException(
+                    "checkDirectTimeCalls: required input is not readable: ${candidate.absolutePath} ($rel)"
+                )
+            }
         }
-        if (violations.isNotEmpty()) {
-            throw GradleException("DIRECT TIME: ${violations.size} violation(s):\n  ${violations.joinToString("\n  ")}")
-        } else {
-            logger.lifecycle("OK: No direct wall-clock time call violations found.")
+
+        val pythonExecutable =
+            (findProperty("pythonExecutable")?.toString()?.takeIf { it.isNotBlank() }) ?: "python3"
+
+        // Preflight: launch the interpreter with --version. Failure to launch
+        // Python is an infrastructure error, not a policy violation.
+        val preflightExit: Int = try {
+            exec {
+                workingDir = rootDir
+                commandLine(pythonExecutable, "--version")
+                isIgnoreExitValue = true
+            }.exitValue
+        } catch (_: Exception) {
+            throw GradleException(
+                "checkDirectTimeCalls: Python preflight failed — could not launch '$pythonExecutable' " +
+                "(infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
+            )
+        }
+        if (preflightExit != 0) {
+            throw GradleException(
+                "checkDirectTimeCalls: Python preflight failed — '$pythonExecutable --version' exited " +
+                "$preflightExit (infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
+            )
+        }
+
+        // Execute the canonical guard with an argument list (shell=False), never
+        // a shell string with embedded paths.
+        val commandArgs = listOf(
+            pythonExecutable,
+            scriptFile.absolutePath,
+            "--root", rootCanonical.absolutePath,
+            "--allowlist", allowlistFile.absolutePath,
+            "--fail-on-violation"
+        )
+        val result = exec {
+            workingDir = rootDir
+            commandLine(commandArgs)
+            isIgnoreExitValue = true
+        }
+        when (result.exitValue) {
+            0 -> { /* pass: no direct wall-clock time violations */ }
+            1 -> throw GradleException(
+                "DIRECT TIME: direct wall-clock time boundary violations found. " +
+                "Route the call through TimeProvider (timeProvider.now()) or add an exact exception entry " +
+                "to config/guards/time_boundary_exceptions.yml with a reason, owner, and linked issue. " +
+                "See docs/development/TIME_SEMANTICS.md."
+            )
+            2 -> throw GradleException(
+                "checkDirectTimeCalls: infrastructure error (missing/malformed exceptions policy, " +
+                "empty source tree, or parser failure). Check that scripts/verify_time_boundaries.py and " +
+                "config/guards/time_boundary_exceptions.yml are present and valid."
+            )
+            else -> throw GradleException("checkDirectTimeCalls: unexpected exit code ${result.exitValue}")
         }
     }
 }
@@ -662,8 +704,11 @@ tasks.named("check") {
     dependsOn("checkLifecycleBypass")
 }
 
-// TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
-// calls outside approved TimeProvider implementations
+// checkDirectTimeCalls wraps scripts/verify_time_boundaries.py and is
+// fail-closed: any missing/unreadable input or direct wall-clock call
+// outside the exact exceptions in config/guards/time_boundary_exceptions.yml
+// produces a hard GradleException.  No TODO remains — the guard is fully
+// wired into the "check" lifecycle (see dependsOn block above).
 
 // PR-GR-01 — DB access boundary guard via ratchet wrapper (fail closed).
 // The ratchet accepts baselined findings (exit 0 if no new violations)

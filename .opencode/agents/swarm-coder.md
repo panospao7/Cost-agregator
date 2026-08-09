@@ -1,7 +1,7 @@
 ---
 description: Bulk mechanical implementation agent for repetitive independent edits across many files.
 mode: subagent
-model: opencode-go/kimi-k2.7-code
+model: opencode-go/deepseek-v4-flash
 temperature: 0.1
 steps: 35
 color: accent

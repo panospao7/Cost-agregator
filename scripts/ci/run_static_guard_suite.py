@@ -50,6 +50,16 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     ("allowlist_compliance", ["python3", "scripts/verify_allowlist_compliance.py", "--fail-on-violation"], "blocking"),
     ("ignored_test_budget", ["python3", "scripts/verify_ignored_test_budget.py", "--fail-on-violation", "--baseline", "29"], "blocking"),
     ("lint_baseline_policy", ["python3", "scripts/verify_lint_baseline_policy.py", "--fail-on-violation"], "blocking"),
+    (
+        "time_boundaries",
+        [
+            "python3", "scripts/verify_time_boundaries.py",
+            "--root", ".",
+            "--allowlist", "config/guards/time_boundary_exceptions.yml",
+            "--fail-on-violation",
+        ],
+        "blocking",
+    ),
 
     # release_artifact verification runs in the release-check CI job after assembleRelease, not here
 

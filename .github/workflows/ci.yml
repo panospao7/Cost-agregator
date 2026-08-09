@@ -62,6 +62,7 @@ jobs:
 #   python3 scripts/verify_pii_logging_boundaries.py --fail-on-violation
 #   python3 scripts/verify_di_release_boundaries.py
   #   python3 scripts/verify_allowlist_compliance.py --fail-on-violation
+  #   python3 scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation
   #   python3 scripts/verify_migration_matrix.py --fail-on-violation
   #   python3 scripts/verify_ignored_test_budget.py --fail-on-violation --baseline 29
   #   python -m pytest scripts/test_*.py -v

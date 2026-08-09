@@ -1,7 +1,7 @@
 ---
 description: Master orchestrator to plan, delegate, coordinate, and review pipeline-local fixes.
 mode: primary
-model: opencode-go/deepseek-v4-pro
+model: opencode-go/gpt-5.6-luna
 temperature: 0.1
 steps: 50
 color: primary

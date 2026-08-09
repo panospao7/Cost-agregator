@@ -1,7 +1,7 @@
 ---
 description: Read-only Room database, DAO, schema, and migration guardian.
 mode: subagent
-model: opencode-go/qwen3.7-max
+model: opencode-go/deepseek-v4-pro
 temperature: 0
 steps: 32
 color: warning
