@@ -533,7 +533,8 @@ class DbGuardPolicyFixtureTest {
 
     /**
      * Canonical repository-relative source path: exactly
-     * `app/src/main/java/.../*.kt`.  Rejects bare filenames, non-`.kt`
+     * `app/src/main/java/.../Foo.kt` (any `.kt` filename under
+     * `app/src/main/java`).  Rejects bare filenames, non-`.kt`
      * files, backslash separators, and `..` traversal segments.
      */
     private val canonicalSourcePathPattern = Regex("^app/src/main/java/[A-Za-z0-9_./-]+\\.kt$")

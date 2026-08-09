@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.SavingsGoal
 import com.yourname.expensetracker.data.database.entity.SavingsSweepPlan
 import com.yourname.expensetracker.data.database.entity.SweepPlanStatus
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
@@ -29,7 +30,7 @@ class SavingsSweepPlanDaoTest {
 
     private lateinit var database: AppDatabase
     private lateinit var dao: SavingsSweepPlanDao
-    private lateinit var goalId: Long
+    private var goalId: Long = 0L
 
     @Before
     fun setup() {
@@ -37,15 +38,17 @@ class SavingsSweepPlanDaoTest {
             ApplicationProvider.getApplicationContext()
         ).build()
         dao = database.savingsSweepPlanDao()
-        goalId = database.savingsGoalDao().insertGoal(
-            SavingsGoal(
-                name = "Emergency Fund",
-                targetAmount = 5000.0,
-                targetDate = FIXED_NOW + 365L * 24 * 60 * 60 * 1000,
-                currency = "EUR",
-                createdAt = FIXED_NOW
+        goalId = runBlocking {
+            database.savingsGoalDao().insertGoal(
+                SavingsGoal(
+                    name = "Emergency Fund",
+                    targetAmount = 5000.0,
+                    targetDate = FIXED_NOW + 365L * 24 * 60 * 60 * 1000,
+                    currency = "EUR",
+                    createdAt = FIXED_NOW
+                )
             )
-        )
+        }
     }
 
     @After

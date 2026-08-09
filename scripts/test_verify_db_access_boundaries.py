@@ -714,7 +714,10 @@ def test_multiline_class_header_body_brace_after_constructor_parens(tmp_path, mo
 """
     _write_kt(src, "com/example/AnomalyAlertRepositoryImpl.kt", content)
 
-    lines = content.split("\n")
+    # Mirror the scanner's production read (f.readlines() has no phantom
+    # trailing "line" for content ending in a newline), so the balanced-body
+    # end index matches what the scanner sees on disk.
+    lines = content.rstrip("\n").split("\n")
     decls = parse_type_declarations(lines)
     assert [d["name"] for d in decls] == ["AnomalyAlertRepositoryImpl"]
     assert decls[0]["start"] == 0

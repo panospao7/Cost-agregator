@@ -7,11 +7,12 @@ import com.google.mlkit.genai.prompt.GenerativeModel
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.unmockkAll
-import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -50,7 +51,7 @@ class DefaultAiEnvironmentMonitorTest {
 
     @Test
     fun `within 1500ms returns cached status and checkStatus exactly once`() = runTest {
-        every { model.checkStatus() } returns FeatureStatus.AVAILABLE
+        coEvery { model.checkStatus() } returns FeatureStatus.AVAILABLE
 
         val first = monitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
         assertEquals(OnDeviceModelStatus.AVAILABLE, first)
@@ -60,12 +61,12 @@ class DefaultAiEnvironmentMonitorTest {
         val second = monitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
         assertEquals(OnDeviceModelStatus.AVAILABLE, second)
 
-        verify(exactly = 1) { model.checkStatus() }
+        coVerify(exactly = 1) { model.checkStatus() }
     }
 
     @Test
     fun `exactly 1500ms refreshes and calls checkStatus twice`() = runTest {
-        every { model.checkStatus() } returns FeatureStatus.AVAILABLE
+        coEvery { model.checkStatus() } returns FeatureStatus.AVAILABLE
 
         val first = monitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
         assertEquals(OnDeviceModelStatus.AVAILABLE, first)
@@ -75,12 +76,12 @@ class DefaultAiEnvironmentMonitorTest {
         val second = monitor.getOnDeviceModelStatus(AiCapability.DASHBOARD_BRIEFING)
         assertEquals(OnDeviceModelStatus.AVAILABLE, second)
 
-        verify(exactly = 2) { model.checkStatus() }
+        coVerify(exactly = 2) { model.checkStatus() }
     }
 
     @Test
     fun `past 1500ms refreshes and maps DOWNLOADABLE to expected status`() = runTest {
-        every { model.checkStatus() } returns FeatureStatus.DOWNLOADABLE
+        coEvery { model.checkStatus() } returns FeatureStatus.DOWNLOADABLE
 
         val first = monitor.getOnDeviceModelStatus(AiCapability.RECEIPT_EXTRACTION)
         assertEquals(OnDeviceModelStatus.NOT_INSTALLED, first)
@@ -90,12 +91,12 @@ class DefaultAiEnvironmentMonitorTest {
         val second = monitor.getOnDeviceModelStatus(AiCapability.RECEIPT_EXTRACTION)
         assertEquals(OnDeviceModelStatus.NOT_INSTALLED, second)
 
-        verify(exactly = 2) { model.checkStatus() }
+        coVerify(exactly = 2) { model.checkStatus() }
     }
 
     @Test
     fun `provider advancement across boundary refreshes`() = runTest {
-        every { model.checkStatus() } returns FeatureStatus.AVAILABLE
+        coEvery { model.checkStatus() } returns FeatureStatus.AVAILABLE
 
         val first = monitor.getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION)
         assertEquals(OnDeviceModelStatus.AVAILABLE, first)
@@ -110,6 +111,6 @@ class DefaultAiEnvironmentMonitorTest {
         val refreshed = monitor.getOnDeviceModelStatus(AiCapability.QUERY_INTERPRETATION)
         assertEquals(OnDeviceModelStatus.AVAILABLE, refreshed)
 
-        verify(exactly = 2) { model.checkStatus() }
+        coVerify(exactly = 2) { model.checkStatus() }
     }
 }

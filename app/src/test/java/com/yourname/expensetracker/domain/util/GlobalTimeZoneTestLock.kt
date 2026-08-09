@@ -44,6 +44,22 @@ object GlobalTimeZoneTestLock {
         }
     }
 
+    /**
+     * Suspend variant of [withLock] for tests that need to call suspend
+     * functions (e.g. DAO/cash-flow/dashboard calls) while holding the
+     * process-wide timezone lock. The lock is always released, even when
+     * [block] throws or suspends, so a failing test never leaves the global
+     * zone lock held for other parallel test classes.
+     */
+    suspend fun <T> withLockSuspend(block: suspend () -> T): T {
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
     /** Acquires the process-wide timezone lock, blocking until it is available. */
     fun acquire() {
         lock.lock()

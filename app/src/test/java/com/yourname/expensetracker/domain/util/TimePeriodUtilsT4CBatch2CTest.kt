@@ -1037,7 +1037,7 @@ class TimePeriodUtilsT4CBatch2CTest {
                             )
                         } else {
                             val startZoned = Instant.ofEpochMilli(start).atZone(ZoneId.of(zoneId))
-                            assertEquals("$label: start is day 1", 1, startZoned.dayOfMonth.value)
+                            assertEquals("$label: start is day 1", 1, startZoned.dayOfMonth)
                             assertEquals("$label: start is local midnight", 0, startZoned.hour)
                             assertEquals("$label: start has zero minutes", 0, startZoned.minute)
                             assertEquals("$label: start has zero seconds", 0, startZoned.second)

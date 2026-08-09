@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetAdjustmentRecommen
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.database.entity.RecommendationStatus
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
@@ -33,7 +34,7 @@ class BudgetAdjustmentDaoTest {
 
     private lateinit var database: AppDatabase
     private lateinit var dao: BudgetAdjustmentDao
-    private lateinit var budgetId: Long
+    private var budgetId: Long = 0L
 
     @Before
     fun setup() {
@@ -41,17 +42,19 @@ class BudgetAdjustmentDaoTest {
             ApplicationProvider.getApplicationContext()
         ).build()
         dao = database.budgetAdjustmentDao()
-        budgetId = database.budgetDao().insert(
-            Budget(
-                categoryId = null,
-                amount = 1000.0,
-                period = BudgetPeriod.MONTHLY,
-                startDate = FIXED_NOW,
-                currency = "EUR",
-                activeOverallKey = 1L,
-                createdAt = FIXED_NOW
+        budgetId = runBlocking {
+            database.budgetDao().insert(
+                Budget(
+                    categoryId = null,
+                    amount = 1000.0,
+                    period = BudgetPeriod.MONTHLY,
+                    startDate = FIXED_NOW,
+                    currency = "EUR",
+                    activeOverallKey = 1L,
+                    createdAt = FIXED_NOW
+                )
             )
-        )
+        }
     }
 
     @After

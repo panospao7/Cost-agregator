@@ -84,10 +84,17 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
         }
 
         // P6-P1-11: Mock normalization engine to return the sum of effectiveAmounts.
+        // NOTE: a concrete CurrencyCode.EUR is used for the homeCurrency value-class
+        // param instead of `any()` — MockK's `any()` on a @JvmInline value class
+        // generates a random signature value that fails CurrencyCode's 3-letter `require`.
+        // All tests here run with homeCurrency = "EUR", so this is behavior-equivalent.
         val normalizationEngine = mockk<MoneyNormalizationEngine>(relaxed = true)
-        coEvery { normalizationEngine.aggregateExpenses(any(), any(), any(), any()) } answers {
+        coEvery { normalizationEngine.aggregateExpenses(any(), CurrencyCode.EUR, any(), any()) } answers {
             val expenses = firstArg<List<Expense>>()
-            val homeCurrency = secondArg<CurrencyCode>()
+            // CurrencyCode is a @JvmInline value class, so at the JVM level the arg
+            // arrives as its underlying String (MockK sees the erased type). Read the
+            // String and wrap it — all tests here use homeCurrency = "EUR".
+            val homeCurrency = CurrencyCode(secondArg<String>())
             val total = expenses.sumOf { it.effectiveAmount }
             com.yourname.expensetracker.domain.core.money.MoneyAggregate(
                 displayAmount = total,
@@ -734,7 +741,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `T4B2 DST spring-forward emits one entry per day with 23 hour boundaries`() = runTest {
-        GlobalTimeZoneTestLock.withLock {
+        GlobalTimeZoneTestLock.withLockSuspend {
             val originalTz = TimeZone.getDefault()
             try {
                 TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
@@ -781,7 +788,7 @@ class CashFlowCalculatorTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `T4B2 DST fall-back emits one entry per day with 25 hour boundaries`() = runTest {
-        GlobalTimeZoneTestLock.withLock {
+        GlobalTimeZoneTestLock.withLockSuspend {
             val originalTz = TimeZone.getDefault()
             try {
                 TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))

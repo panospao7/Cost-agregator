@@ -6,6 +6,26 @@ plugins {
     id("com.google.dagger.hilt.android") version "2.57"
 }
 
+// Resolve the Python interpreter for guard tasks. Prefers an explicit
+// -PpythonExecutable property, then python3, then python (Windows has no
+// python3 by default). A project property always wins so CI can pin it.
+fun pythonInterpreter(): String {
+    findProperty("pythonExecutable")?.toString()?.takeIf { it.isNotBlank() }?.let { return it }
+    val candidates = listOf("python3", "python")
+    for (candidate in candidates) {
+        try {
+            exec {
+                workingDir = rootDir
+                commandLine(candidate, "--version")
+                isIgnoreExitValue = true
+            }.let { if (it.exitValue == 0) return candidate }
+        } catch (_: Exception) {
+            // Candidate not on PATH; try the next one.
+        }
+    }
+    return "python3"
+}
+
 android {
     namespace = "com.yourname.expensetracker"
     compileSdk = 35
@@ -69,7 +89,9 @@ android {
         }
     }
     sourceSets {
+        getByName("debug").assets.srcDirs("$projectDir/schemas")
         getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+        getByName("test").assets.srcDirs("$projectDir/schemas")
     }
 
     testOptions {
@@ -589,8 +611,7 @@ tasks.register("checkDirectTimeCalls") {
             }
         }
 
-        val pythonExecutable =
-            (findProperty("pythonExecutable")?.toString()?.takeIf { it.isNotBlank() }) ?: "python3"
+        val pythonExecutable = pythonInterpreter()
 
         // Preflight: launch the interpreter with --version. Failure to launch
         // Python is an infrastructure error, not a policy violation.
@@ -807,8 +828,7 @@ tasks.register("verifyDbAccessBoundaries") {
             }
         }
 
-        val pythonExecutable =
-            (findProperty("pythonExecutable")?.toString()?.takeIf { it.isNotBlank() }) ?: "python3"
+        val pythonExecutable = pythonInterpreter()
 
         // Preflight: launch the interpreter with --version.  Failure to launch
         // Python is an infrastructure error, not a policy violation.

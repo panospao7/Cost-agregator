@@ -359,7 +359,7 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `dst spring-forward fixed timestamps preserve sunday monday mapping and insight behavior`() = runTest {
-        GlobalTimeZoneTestLock.withLock {
+        GlobalTimeZoneTestLock.withLockSuspend {
             val originalTz = TimeZone.getDefault()
             try {
                 TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
@@ -409,7 +409,7 @@ class AdvancedAnalyticsDashboardTest : AnalyticsEngineTestBase() {
 
     @Test
     fun `dst month-loop keeps bucket labels and totals under America New York and excludes expense exactly at endDate`() = runTest {
-        GlobalTimeZoneTestLock.withLock {
+        GlobalTimeZoneTestLock.withLockSuspend {
             val originalTz = TimeZone.getDefault()
             try {
                 TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))

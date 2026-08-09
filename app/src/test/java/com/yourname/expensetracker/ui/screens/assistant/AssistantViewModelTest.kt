@@ -272,7 +272,7 @@ class AssistantViewModelTest : ViewModelTestUtils() {
 
         val diagnostics = viewModel.uiState.value.runtimeDiagnostics
         assertNotNull("runtime diagnostics must be populated after a query", diagnostics)
-        assertTrue("diagnostics must contain total timing", diagnostics.contains("Total: 8ms"))
+        assertTrue("diagnostics must contain total timing", diagnostics!!.contains("Total: 8ms"))
         assertTrue("diagnostics must contain interpretation timing", diagnostics.contains("Interpret: 5ms"))
         assertTrue("diagnostics must contain execution timing", diagnostics.contains("Execute: 3ms"))
         assertTrue("diagnostics must contain the result type", diagnostics.contains("Result:"))
@@ -394,16 +394,16 @@ class AssistantViewModelTest : ViewModelTestUtils() {
         val errorItem = viewModel.uiState.value.messages[1] as AssistantConversationItem.Error
         assertEquals("Something went wrong while handling your request. Please retry.", viewModel.uiState.value.errorMessage)
         assertEquals("Something went wrong while handling your request. Please retry.", errorItem.text)
-        assertFalse("error message must not leak raw exception text", viewModel.uiState.value.errorMessage.contains("boom"))
+        assertFalse("error message must not leak raw exception text", viewModel.uiState.value.errorMessage?.contains("boom") == true)
         assertFalse("error item text must not leak raw exception text", errorItem.text.contains("sensitive payload"))
-        assertFalse("error message must never contain the sensitive query", viewModel.uiState.value.errorMessage.contains(sensitiveQuery))
+        assertFalse("error message must never contain the sensitive query", viewModel.uiState.value.errorMessage?.contains(sensitiveQuery) == true)
         assertFalse("error item text must never contain the sensitive query", errorItem.text.contains(sensitiveQuery))
-        assertFalse("error message must never contain a card fragment", viewModel.uiState.value.errorMessage.contains("4111111111111111"))
+        assertFalse("error message must never contain a card fragment", viewModel.uiState.value.errorMessage?.contains("4111111111111111") == true)
         assertFalse("error item text must never contain a card fragment", errorItem.text.contains("4111111111111111"))
 
         val diagnostics = viewModel.uiState.value.runtimeDiagnostics
         assertNotNull("runtime diagnostics must be populated after a failure", diagnostics)
-        assertTrue("diagnostics must contain a controlled reason code", diagnostics.contains("UNKNOWN_ERROR"))
+        assertTrue("diagnostics must contain a controlled reason code", diagnostics!!.contains("UNKNOWN_ERROR"))
         assertTrue("diagnostics may contain the exception class name", diagnostics.contains("RuntimeException"))
         assertTrue("diagnostics must contain total timing", diagnostics.contains("Total: 5ms"))
         assertFalse("diagnostics must not leak raw exception message", diagnostics.contains("boom"))

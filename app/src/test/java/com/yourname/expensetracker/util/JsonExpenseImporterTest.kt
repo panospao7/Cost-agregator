@@ -6,6 +6,7 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.CapturingSlot
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.mockk.slot
@@ -42,7 +43,7 @@ class JsonExpenseImporterTest {
     private fun newCountingProvider(): CountingTimeProvider =
         CountingTimeProvider(FakeTimeProvider(fixedNow))
 
-    private fun captureRequest(): slot<CreateExpenseRequest> {
+    private fun captureRequest(): CapturingSlot<CreateExpenseRequest> {
         val requestSlot = slot<CreateExpenseRequest>()
         coEvery { coordinator.createExpense(capture(requestSlot)) } returns CreateExpenseResult.Created(1L)
         return requestSlot

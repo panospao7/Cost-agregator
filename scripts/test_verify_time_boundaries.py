@@ -529,9 +529,9 @@ class TestExceptionMatching:
             "path": "app/src/main/java/com/other/SystemTimeProvider.kt"
         })
         result = _run_guard(root, allowlist=allowlist, fail_on_violation=True)
-        assert result.returncode == 1
-        assert RULE_ID in result.stdout
-        assert "SystemTimeProvider" in result.stdout
+        assert result.returncode == 2
+        assert RULE_ID in result.stderr
+        assert "SystemTimeProvider" in result.stderr
 
     def test_wrong_class_fails(self, tmp_path):
         root = tmp_path
@@ -543,7 +543,7 @@ class TestExceptionMatching:
         ))
         allowlist = _sample_allowlist(root, overrides={"class": "OtherTimeProvider"})
         result = _run_guard(root, allowlist=allowlist, fail_on_violation=True)
-        assert result.returncode == 1
+        assert result.returncode == 2
 
     def test_wrong_method_fails(self, tmp_path):
         root = tmp_path
@@ -555,7 +555,7 @@ class TestExceptionMatching:
         ))
         allowlist = _sample_allowlist(root, overrides={"method": "other"})
         result = _run_guard(root, allowlist=allowlist, fail_on_violation=True)
-        assert result.returncode == 1
+        assert result.returncode == 2
 
     def test_wrong_api_fails(self, tmp_path):
         root = tmp_path
@@ -567,7 +567,7 @@ class TestExceptionMatching:
         ))
         allowlist = _sample_allowlist(root, overrides={"api": "Instant.now"})
         result = _run_guard(root, allowlist=allowlist, fail_on_violation=True)
-        assert result.returncode == 1
+        assert result.returncode == 2
 
     def test_multiple_violations_in_one_method_all_suppressed(self, tmp_path):
         root = tmp_path
