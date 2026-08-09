@@ -54,6 +54,42 @@ import com.yourname.expensetracker.domain.core.time.PeriodRange
  * All calculations use the system default timezone. This utility intentionally
  * does **not** perform UTC normalization — that concern belongs elsewhere.
  *
+ * ### Pre-Gregorian compatibility seam
+ * `java.time` is a **proleptic** Gregorian calendar: it applies Gregorian rules
+ * and historical timezone offsets (Local Mean Time) to every date, including
+ * dates before 1582. The legacy `java.util.Calendar` (`GregorianCalendar`)
+ * instead switches to the **Julian** calendar before its default cutover
+ * (`1582-10-15T00:00:00Z`, see `GREGORIAN_CUTOVER_EPOCH_MILLIS`) and applies
+ * the timezone's standard offset.
+ *
+ * [getStartOfDay] and [getEndOfDay] honor that legacy behavior: timestamps
+ * strictly before the cutover are delegated to the private
+ * `legacyStartOfDay`/`legacyEndOfDay` helpers so the pre-migration `Calendar`
+ * results are reproduced exactly, while modern (post-cutover) timestamps keep
+ * the java.time implementation. The two paths agree for every post-cutover
+ * timestamp the app stores; they can diverge only for pre-1582 dates (Julian
+ * date interpretation and offset rules) and at the representational `Long`
+ * extremes.
+ *
+ * ### Supported epoch range
+ * All helpers accept any `Long` epoch-millis value: `Instant.ofEpochMilli` maps
+ * the full `Long` range onto `java.time.Instant` without throwing, and
+ * java.time's date conversion covers the same range. Day-boundary helpers such
+ * as [getStartOfDay] and [getEndOfDay] require the *result* to fit in a `Long`
+ * epoch-millis when the java.time path is used.
+ *
+ * ### Controlled failure at the `Long` extremes
+ * - `getEndOfDay(Long.MAX_VALUE)` — next-day midnight lies after the latest
+ *   representable epoch-millis, so the java.time path fails **deterministically**
+ *   with `ArithmeticException` (overflow inside `Instant.toEpochMilli()`); it
+ *   never silently wraps or returns undefined values.
+ * - `getStartOfDay(Long.MIN_VALUE)` — `Long.MIN_VALUE` lies far before the
+ *   cutover, so it is handled by the legacy Calendar seam and returns
+ *   `Calendar`'s deterministic result (no exception).
+ *
+ * Every other `Long` input yields a deterministic result. Realistic app data
+ * (roughly year 1–9999) is always inside the supported range.
+ *
  * @see daysBetween for DST-safe calendar-day difference via `java.time.LocalDate`.
  * @see TimeProvider for the single source of "now" that callers should use.
  * @see PeriodRange for the typed period model in `domain.core.time`.
@@ -88,14 +124,46 @@ object TimePeriodUtils {
     }
 
     // ============================================================================
-    // DAY BOUNDARIES
+    // DAY BOUNDARIES  (half-open [start, next-start))
+    //
+    // Modern timestamps use java.time (LocalDate.atStartOfDay / plusDays(1)).
+    // Pre-Gregorian-cutover timestamps delegate to the legacy Calendar
+    // implementation through the private seam helpers below so the pre-migration
+    // behavior is reproduced exactly. See the class docs.
     // ============================================================================
 
     /**
-     * Returns the start of the day (`00:00:00.000`) for the given [timestamp]
-     * in the system default timezone.
+     * Epoch-millis instant of the legacy [java.util.GregorianCalendar]
+     * Julian-to-Gregorian cutover: `1582-10-15T00:00:00Z` (`-12_219_292_800_000`).
+     *
+     * This is the hardcoded default cutover used by `Calendar.getInstance()`
+     * (`GregorianCalendar.DEFAULT_GREGORIAN_CUTOVER`). Timestamps strictly
+     * before this instant are rendered by the legacy [Calendar] under the
+     * **Julian** calendar with the timezone's standard offset, whereas
+     * `java.time` (proleptic Gregorian, historical LMT offsets) can diverge.
      */
-    fun getStartOfDay(timestamp: Long): Long {
+    private const val GREGORIAN_CUTOVER_EPOCH_MILLIS: Long = -12219292800000L
+
+    /**
+     * Returns `true` when [timestamp] lies strictly before the legacy
+     * [java.util.GregorianCalendar] cutover (`GREGORIAN_CUTOVER_EPOCH_MILLIS`,
+     * `1582-10-15T00:00:00Z`). The cutover instant itself is Gregorian, so the
+     * check is exclusive (`timestamp < cutover`).
+     *
+     * See the class docs, "Pre-Gregorian compatibility seam".
+     */
+    private fun isBeforeGregorianCutover(timestamp: Long): Boolean {
+        return timestamp < GREGORIAN_CUTOVER_EPOCH_MILLIS
+    }
+
+    /**
+     * Legacy [Calendar]-based start of day (`00:00:00.000` local): the exact
+     * algorithm [getStartOfDay] used before the java.time migration. Used by the
+     * pre-Gregorian compatibility seam for timestamps before
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS` so the old Julian-calendar / standard
+     * offset behavior is reproduced exactly.
+     */
+    private fun legacyStartOfDay(timestamp: Long): Long {
         val cal = Calendar.getInstance()
         cal.timeInMillis = timestamp
         cal.set(Calendar.HOUR_OF_DAY, 0)
@@ -106,17 +174,77 @@ object TimePeriodUtils {
     }
 
     /**
+     * Legacy [Calendar]-based end of day: start of the **next** day
+     * (`00:00:00.000` local, exclusive). Used by the pre-Gregorian compatibility
+     * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
+     */
+    private fun legacyEndOfDay(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = legacyStartOfDay(timestamp)
+        cal.add(Calendar.DAY_OF_MONTH, 1)
+        return cal.timeInMillis
+    }
+
+    /**
+     * Returns the start of the day (`00:00:00.000`) for the given [timestamp]
+     * in the system default timezone.
+     *
+     * Modern (post-cutover) timestamps use `java.time`: the local date is
+     * derived from the instant and converted back with
+     * `LocalDate.atStartOfDay(zone)`. This preserves the previous `Calendar`
+     * semantics for those dates exactly — local midnight, DST-aware, no fixed
+     * `DAY_IN_MILLIS` arithmetic.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyStartOfDay` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly (Julian calendar rules and the timezone's standard
+     * offset). See the class docs for the full seam description.
+     *
+     * @throws ArithmeticException in the java.time path if the resulting local
+     * midnight cannot be represented as a `Long` epoch-millis (see class docs
+     * for the supported epoch range and controlled failure).
+     */
+    fun getStartOfDay(timestamp: Long): Long {
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyStartOfDay(timestamp)
+        }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        return localDate.atStartOfDay(zone).toInstant().toEpochMilli()
+    }
+
+    /**
      * Returns the **exclusive** upper bound of the day containing [timestamp]:
      * the start of the **next** day (`00:00:00.000`).
      *
      * Half-open contract: a timestamp `t` is in this day when
      * `t >= getStartOfDay(ts) && t < getEndOfDay(ts)`.
+     *
+     * Modern (post-cutover) timestamps use `java.time`: the end is the start of
+     * the **next** local date (`LocalDate.plusDays(1).atStartOfDay(zone)`), so a
+     * day spanning a DST transition is naturally 23 or 25 hours — never a fixed
+     * `DAY_IN_MILLIS`.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyEndOfDay` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly. See the class docs for the full seam description.
+     *
+     * @throws ArithmeticException in the java.time path if the resulting
+     * next-day midnight cannot be represented as a `Long` epoch-millis — by
+     * construction the case `timestamp == Long.MAX_VALUE` (see class docs for
+     * the supported epoch range and controlled failure).
      */
     fun getEndOfDay(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = getStartOfDay(timestamp)
-        cal.add(Calendar.DAY_OF_MONTH, 1)
-        return cal.timeInMillis
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyEndOfDay(timestamp)
+        }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        return localDate.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
     }
 
     /**
