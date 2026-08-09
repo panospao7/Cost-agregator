@@ -37,12 +37,20 @@ import java.util.TimeZone
  *   explicit `java.time` constructions (`ZonedDateTime.of` on an explicit zone),
  *   or as values computed with the independent **legacy `Calendar` oracle** —
  *   never by re-calling the production helpers.
+ * - Pre-cutover and extreme expectations use the **legacy compatibility seam**:
+ *   the year-1 minimum and `Long.MIN_VALUE` cases are asserted against the
+ *   independent legacy `Calendar` oracle (Julian date rules + the timezone's
+ *   standard offset), never against proleptic `java.time` (which applies
+ *   Julian-vs-Gregorian and LMT rules the seam does not). Modern-path
+ *   expectations (year-9999 maximum, `Long.MAX_VALUE`) keep exact `java.time`
+ *   constructions.
  * - DST boundary days are asserted by wall-clock duration (23h / 25h), never by
  *   fixed `DAY_IN_MILLIS` arithmetic.
- * - At the `Long` extremes: `getStartOfDay(Long.MIN_VALUE)` follows the legacy
- *   Calendar seam and returns its deterministic value (no exception), while
- *   `getEndOfDay(Long.MAX_VALUE)` fails deterministically with the documented
- *   `ArithmeticException`; neither ever silently wraps.
+ * - At the `Long` extremes: `getStartOfDay(Long.MIN_VALUE)` and
+ *   `getEndOfDay(Long.MIN_VALUE)` follow the legacy Calendar seam and return
+ *   its deterministic values (no exception), while `getEndOfDay(Long.MAX_VALUE)`
+ *   fails deterministically with the documented `ArithmeticException`; neither
+ *   ever silently wraps.
  */
 class TimePeriodUtilsT4CBatch2ATest {
 
@@ -371,15 +379,29 @@ class TimePeriodUtilsT4CBatch2ATest {
     fun `realistic minimum and maximum timestamps produce exact boundaries`() {
         // Practical extremes of the epoch-millis range used by real app data:
         // the LocalDate-representable year range (year 1 through 9999).
+        //
+        // Year 1 (0001-01-01) lies strictly before the legacy GregorianCalendar
+        // cutover (1582-10-15), so its boundaries follow the pre-Gregorian
+        // compatibility seam. Expectations therefore come from the independent
+        // legacy Calendar oracle (Julian rules + the timezone's standard offset),
+        // NOT from proleptic java.time (which applies Julian-vs-Gregorian and
+        // LMT rules the seam does not). Asserted across every zone.
         val earliest = LocalDateTime.of(1, 1, 1, 0, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
-        val earliestEnd = LocalDateTime.of(1, 1, 2, 0, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
+
+        // Year 9999 is post-cutover (modern java.time path), so its exact
+        // boundaries stay proleptic java.time constructions in UTC.
         val latest = LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_000_000).toInstant(ZoneOffset.UTC).toEpochMilli()
         val latestStart = LocalDateTime.of(9999, 12, 31, 0, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
         val latestEnd = LocalDateTime.of(10000, 1, 1, 0, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
 
+        for (zoneId in ZONES) {
+            withZone(zoneId) {
+                assertEquals("earliest start legacy $zoneId", legacyStartOfDay(earliest), TimePeriodUtils.getStartOfDay(earliest))
+                assertEquals("earliest end legacy $zoneId", legacyEndOfDay(earliest), TimePeriodUtils.getEndOfDay(earliest))
+            }
+        }
+
         withZone("UTC") {
-            assertEquals("earliest start", earliest, TimePeriodUtils.getStartOfDay(earliest))
-            assertEquals("earliest end", earliestEnd, TimePeriodUtils.getEndOfDay(earliest))
             assertEquals("latest start", latestStart, TimePeriodUtils.getStartOfDay(latest))
             assertEquals("latest end", latestEnd, TimePeriodUtils.getEndOfDay(latest))
         }
@@ -420,13 +442,21 @@ class TimePeriodUtilsT4CBatch2ATest {
         //   - getStartOfDay(Long.MAX_VALUE): local midnight is *before* the input.
         //   - getEndOfDay(Long.MIN_VALUE): next-day midnight is *after* the input.
         //
-        // Expected values below are hardcoded constants computed independently
-        // with an explicit java.time oracle (never by re-calling the production
-        // helpers). At the extreme years java.time applies the earliest/latest
-        // known zone rule: for the future instant (MAX) the modern offsets
-        // (UTC +00:00, Kolkata +05:30, Athens +03:00, New York -04:00); for the
-        // past instant (MIN) the historical LMT offsets (+05:53:28, +01:34:52,
-        // -04:56:02 respectively).
+        // The two extremes run on different seams:
+        //   - Long.MAX_VALUE is post-cutover, so start(MAX) takes the modern
+        //     java.time path. Its exact values are hardcoded constants from an
+        //     explicit java.time oracle (never by re-calling the production
+        //     helpers): at the extreme future year java.time applies the latest
+        //     known zone rule — the modern offsets (UTC +00:00, Kolkata +05:30,
+        //     Athens +03:00, New York -04:00).
+        //   - Long.MIN_VALUE is pre-cutover, so end(MIN) follows the legacy
+        //     compatibility seam. Its expected values are hardcoded constants
+        //     derived from the independent legacy Calendar oracle (Julian date
+        //     rules + the timezone's standard offset) — NOT from java.time's
+        //     historical LMT offsets, which diverge for non-UTC zones
+        //     (Kolkata +05:53:28 vs +05:30, Athens +01:34:52 vs +02:00,
+        //     New York -04:56:02 vs -05:00; UTC coincides either way because
+        //     its LMT and standard offsets are both 0).
         val expectedMaxStart = mapOf(
             "UTC" to 9_223_372_036_828_800_000L,
             "Asia/Kolkata" to 9_223_372_036_809_000_000L,
@@ -435,9 +465,9 @@ class TimePeriodUtilsT4CBatch2ATest {
         )
         val expectedMinEnd = mapOf(
             "UTC" to -9_223_372_036_828_800_000L,
-            "Asia/Kolkata" to -9_223_372_036_850_008_000L,
-            "Europe/Athens" to -9_223_372_036_834_492_000L,
-            "America/New_York" to -9_223_372_036_811_038_000L
+            "Asia/Kolkata" to -9_223_372_036_848_600_000L,
+            "Europe/Athens" to -9_223_372_036_836_000_000L,
+            "America/New_York" to -9_223_372_036_810_800_000L
         )
         for (zoneId in ZONES) {
             withZone(zoneId) {
@@ -541,12 +571,12 @@ class TimePeriodUtilsT4CBatch2ATest {
         // (America/New_York -04:56:02 LMT vs -05:00 standard, Asia/Kolkata
         // +05:53:28 LMT vs +05:30 standard).
         val cases = listOf(
-            Triple("UTC", "1500-01-01T12:00:00Z"),
-            Triple("UTC", "1500-06-15T12:00:00Z"),
-            Triple("America/New_York", "1500-01-01T12:00:00Z"),
-            Triple("America/New_York", "1500-06-15T12:00:00Z"),
-            Triple("Asia/Kolkata", "1500-01-01T12:00:00Z"),
-            Triple("Asia/Kolkata", "1500-06-15T12:00:00Z")
+            Pair("UTC", "1500-01-01T12:00:00Z"),
+            Pair("UTC", "1500-06-15T12:00:00Z"),
+            Pair("America/New_York", "1500-01-01T12:00:00Z"),
+            Pair("America/New_York", "1500-06-15T12:00:00Z"),
+            Pair("Asia/Kolkata", "1500-01-01T12:00:00Z"),
+            Pair("Asia/Kolkata", "1500-06-15T12:00:00Z")
         )
         for ((zoneId, iso) in cases) {
             withZone(zoneId) {

@@ -5,6 +5,7 @@ import java.time.Instant
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
+import java.time.temporal.TemporalAdjusters
 import java.time.temporal.WeekFields
 import java.util.Calendar
 import com.yourname.expensetracker.domain.core.time.PeriodKind
@@ -62,13 +63,17 @@ import com.yourname.expensetracker.domain.core.time.PeriodRange
  * (`1582-10-15T00:00:00Z`, see `GREGORIAN_CUTOVER_EPOCH_MILLIS`) and applies
  * the timezone's standard offset.
  *
- * [getStartOfDay] and [getEndOfDay] honor that legacy behavior: timestamps
- * strictly before the cutover are delegated to the private
+ * The day helpers [getStartOfDay] and [getEndOfDay] honor that legacy behavior:
+ * timestamps strictly before the cutover are delegated to the private
  * `legacyStartOfDay`/`legacyEndOfDay` helpers so the pre-migration `Calendar`
  * results are reproduced exactly, while modern (post-cutover) timestamps keep
- * the java.time implementation. The two paths agree for every post-cutover
- * timestamp the app stores; they can diverge only for pre-1582 dates (Julian
- * date interpretation and offset rules) and at the representational `Long`
+ * the java.time implementation. The week helpers ([getStartOfWeek],
+ * [getEndOfWeek], [getWeekRange]) honor the **same seam** through the private
+ * `legacyStartOfWeek`/`legacyEndOfWeek`/`legacyWeekRange` helpers, reproducing
+ * the old Monday-start algorithm and `weekOffset` behavior exactly for
+ * pre-cutover timestamps. The two paths agree for every post-cutover timestamp
+ * the app stores; they can diverge only for pre-1582 dates (Julian date
+ * interpretation and offset rules) and at the representational `Long`
  * extremes.
  *
  * ### Supported epoch range
@@ -86,6 +91,12 @@ import com.yourname.expensetracker.domain.core.time.PeriodRange
  * - `getStartOfDay(Long.MIN_VALUE)` — `Long.MIN_VALUE` lies far before the
  *   cutover, so it is handled by the legacy Calendar seam and returns
  *   `Calendar`'s deterministic result (no exception).
+ *
+ * The week helpers follow the same split: `getEndOfWeek(Long.MAX_VALUE)` and
+ * `getWeekRange(Long.MAX_VALUE)` fail deterministically with
+ * `ArithmeticException`, while `Long.MIN_VALUE` inputs for [getStartOfWeek],
+ * [getEndOfWeek] and [getWeekRange] are handled by the legacy Calendar seam
+ * and return its deterministic results (no exception).
  *
  * Every other `Long` input yields a deterministic result. Realistic app data
  * (roughly year 1–9999) is always inside the supported range.
@@ -186,6 +197,60 @@ object TimePeriodUtils {
     }
 
     /**
+     * Legacy [Calendar]-based start of week: the exact algorithm [getStartOfWeek]
+     * used before the java.time migration. Used by the pre-Gregorian
+     * compatibility seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`
+     * so the old Monday-start algorithm and Julian-calendar / standard offset
+     * behavior are reproduced exactly.
+     */
+    private fun legacyStartOfWeek(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = legacyStartOfDay(timestamp)
+        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+        val daysFromMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
+        cal.add(Calendar.DAY_OF_MONTH, -daysFromMonday)
+        return cal.timeInMillis
+    }
+
+    /**
+     * Legacy [Calendar]-based end of week: start of the **next** Monday
+     * (`00:00:00.000` local, exclusive). Used by the pre-Gregorian compatibility
+     * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
+     */
+    private fun legacyEndOfWeek(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = legacyStartOfWeek(timestamp)
+        cal.add(Calendar.DAY_OF_MONTH, 7)
+        return cal.timeInMillis
+    }
+
+    /**
+     * Legacy [Calendar]-based week range with [weekOffset]: the exact algorithm
+     * [getWeekRange] used before the java.time migration (the offset is applied
+     * with `Calendar.add(DAY_OF_MONTH, weekOffset * 7)` **before** truncating to
+     * the Monday of the week). Used by the pre-Gregorian compatibility seam for
+     * timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS` so the old offset
+     * behavior is reproduced exactly.
+     */
+    private fun legacyWeekRange(timestamp: Long, weekOffset: Int): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        if (weekOffset != 0) {
+            cal.add(Calendar.DAY_OF_MONTH, weekOffset * 7)
+        }
+        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+        val daysFromMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
+        cal.add(Calendar.DAY_OF_MONTH, -daysFromMonday)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val startMs = cal.timeInMillis
+        cal.add(Calendar.DAY_OF_MONTH, 7)
+        return startMs to cal.timeInMillis
+    }
+
+    /**
      * Returns the start of the day (`00:00:00.000`) for the given [timestamp]
      * in the system default timezone.
      *
@@ -262,6 +327,12 @@ object TimePeriodUtils {
 
     // ============================================================================
     // WEEK BOUNDARIES  (Monday-start, locale-independent)
+    //
+    // Modern timestamps use java.time (previousOrSame(MONDAY) / plusWeeks(1)).
+    // Pre-Gregorian-cutover timestamps delegate to the legacy Calendar
+    // implementation through the private seam helpers above so the pre-migration
+    // Monday-start algorithm and offset behavior are reproduced exactly. See the
+    // class docs.
     // ============================================================================
 
     /**
@@ -269,21 +340,37 @@ object TimePeriodUtils {
      *
      * This is **locale-independent**: the week always starts on Monday regardless
      * of the device's [java.util.Locale] or [Calendar.firstDayOfWeek] setting.
+     *
+     * Uses `java.time`: the local date is derived from the instant
+     * (`Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()`), moved back
+     * to the previous-or-same Monday with
+     * `TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)`, and converted back
+     * with `LocalDate.atStartOfDay(zone)`. This preserves the previous `Calendar`
+     * semantics exactly — Monday start, local midnight, system default timezone,
+     * DST-aware 23/25-hour weeks, no fixed `DAY_IN_MILLIS` arithmetic.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyStartOfWeek` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly (Julian calendar rules and the timezone's standard
+     * offset). See the class docs for the full seam description.
+     *
+     * @throws ArithmeticException at the `Long` extremes where the resulting
+     * Monday midnight cannot be represented as a `Long` epoch-millis
+     * (deterministic controlled failure; never silently wraps).
      */
     fun getStartOfWeek(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-
-        // Sun=1, Mon=2, Tue=3 … Sat=7
-        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
-        val daysFromMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
-
-        cal.add(Calendar.DAY_OF_MONTH, -daysFromMonday)
-        return cal.timeInMillis
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyStartOfWeek(timestamp)
+        }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        return localDate
+            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            .atStartOfDay(zone)
+            .toInstant()
+            .toEpochMilli()
     }
 
     /**
@@ -293,13 +380,36 @@ object TimePeriodUtils {
      * This always uses ISO week boundaries (Monday-start, locale-independent),
      * not an app-configured week start day.
      *
+     * Uses `java.time`: the week's Monday local date is derived from the instant
+     * and advanced with `plusWeeks(1)` (calendar-aware), then converted back with
+     * `LocalDate.atStartOfDay(zone)`. A week crossing a DST transition is
+     * naturally 23 or 25 hours — never a fixed `7 * DAY_IN_MILLIS`.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyEndOfWeek` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly (Julian calendar rules and the timezone's standard
+     * offset). See the class docs for the full seam description.
+     *
      * Half-open contract: `t >= getStartOfWeek(ts) && t < getEndOfWeek(ts)`.
+     *
+     * @throws ArithmeticException at the `Long` extremes where the resulting
+     * next-Monday midnight cannot be represented as a `Long` epoch-millis
+     * (deterministic controlled failure; never silently wraps).
      */
     fun getEndOfWeek(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = getStartOfWeek(timestamp)
-        cal.add(Calendar.DAY_OF_MONTH, 7)
-        return cal.timeInMillis
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyEndOfWeek(timestamp)
+        }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        return localDate
+            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+            .plusWeeks(1)
+            .atStartOfDay(zone)
+            .toInstant()
+            .toEpochMilli()
     }
 
     /**
@@ -311,35 +421,37 @@ object TimePeriodUtils {
      *
      * - Week starts on Monday `00:00:00.000`.
      * - Week ends at the **next** Monday `00:00:00.000` (exclusive).
+     * - [weekOffset] shifts the reference date by that many **weeks**
+     *   (`LocalDate.plusWeeks`) before locating the containing week — the same
+     *   semantics as the previous `Calendar.add(DAY_OF_MONTH, weekOffset * 7)`.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyWeekRange` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly — including the legacy offset application
+     * (`Calendar.add(DAY_OF_MONTH, weekOffset * 7)` before Monday truncation),
+     * Julian calendar rules, and the timezone's standard offset. See the class
+     * docs for the full seam description.
      *
      * @param timestamp Reference time to determine which week.
      * @param weekOffset 0 for current week, -1 for previous week, etc.
+     * @throws ArithmeticException at the `Long` extremes where a boundary cannot
+     * be represented as a `Long` epoch-millis (deterministic controlled failure;
+     * never silently wraps).
      */
     fun getWeekRange(timestamp: Long, weekOffset: Int = 0): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-
-        // Apply week offset using calendar-aware addition
-        if (weekOffset != 0) {
-            cal.add(Calendar.DAY_OF_MONTH, weekOffset * 7)
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyWeekRange(timestamp, weekOffset)
         }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        val weekStartDate = localDate
+            .plusWeeks(weekOffset.toLong())
+            .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
 
-        // Calculate Monday of this week using delta logic (locale-independent)
-        val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
-        val daysFromMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
-        cal.add(Calendar.DAY_OF_MONTH, -daysFromMonday)
-
-        // Start of week: Monday 00:00:00.000
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        val startMs = cal.timeInMillis
-
-        // End of week: next Monday 00:00:00.000 (exclusive, calendar-aware)
-        cal.add(Calendar.DAY_OF_MONTH, 7)
-        val endMs = cal.timeInMillis
-
+        val startMs = weekStartDate.atStartOfDay(zone).toInstant().toEpochMilli()
+        val endMs = weekStartDate.plusWeeks(1).atStartOfDay(zone).toInstant().toEpochMilli()
         return startMs to endMs
     }
 
