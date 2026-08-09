@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.util
 
 import java.time.DayOfWeek
 import java.time.Instant
+import java.time.Year
 import java.time.YearMonth
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
@@ -75,7 +76,15 @@ import com.yourname.expensetracker.domain.core.time.PeriodRange
  * [getMonthRange]) honor the **same seam** through the private
  * `legacyStartOfMonth`/`legacyEndOfMonth`/`legacyMonthRange` helpers,
  * reproducing the old month-boundary and `monthOffset` behavior exactly for
- * pre-cutover timestamps. The two paths agree for every post-cutover timestamp
+ * pre-cutover timestamps. The quarter helpers ([getStartOfQuarter],
+ * [getEndOfQuarter], [getQuarterRange]) honor the **same seam** through the
+ * private `legacyStartOfQuarter`/`legacyEndOfQuarter`/`legacyQuarterRange`
+ * helpers, reproducing the old quarter-boundary and `quarterOffset` behavior
+ * exactly for pre-cutover timestamps. The year helpers ([getStartOfYear],
+ * [getEndOfYear], [getYearRange]) honor the **same seam** through the private
+ * `legacyStartOfYear`/`legacyEndOfYear`/`legacyYearRange` helpers, reproducing
+ * the old year-boundary and `yearOffset` behavior exactly for pre-cutover
+ * timestamps. The two paths agree for every post-cutover timestamp
  * the app stores; they can diverge only for pre-1582 dates (Julian date
  * interpretation and offset rules) and at the representational `Long`
  * extremes.
@@ -107,6 +116,14 @@ import com.yourname.expensetracker.domain.core.time.PeriodRange
  * `ArithmeticException`, while `Long.MIN_VALUE` inputs for [getStartOfMonth],
  * [getEndOfMonth] and [getMonthRange] are handled by the legacy Calendar seam
  * and return its deterministic results (no exception).
+ *
+ * The quarter and year helpers follow the same split:
+ * `getEndOfQuarter(Long.MAX_VALUE)`, `getQuarterRange(Long.MAX_VALUE)`,
+ * `getEndOfYear(Long.MAX_VALUE)` and `getYearRange(Long.MAX_VALUE)` fail
+ * deterministically with `ArithmeticException`, while `Long.MIN_VALUE` inputs
+ * for [getStartOfQuarter], [getEndOfQuarter], [getQuarterRange],
+ * [getStartOfYear], [getEndOfYear] and [getYearRange] are handled by the legacy
+ * Calendar seam and return its deterministic results (no exception).
  *
  * Every other `Long` input yields a deterministic result. Realistic app data
  * (roughly year 1–9999) is always inside the supported range.
@@ -306,6 +323,108 @@ object TimePeriodUtils {
         }
         val start = legacyStartOfMonth(cal.timeInMillis)
         val end = legacyEndOfMonth(cal.timeInMillis)
+        return start to end
+    }
+
+    /**
+     * Legacy [Calendar]-based start of quarter: the exact algorithm
+     * [getStartOfQuarter] used before the java.time migration. Used by the
+     * pre-Gregorian compatibility seam for timestamps before
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS` so the old Julian-calendar / standard
+     * offset behavior is reproduced exactly.
+     */
+    private fun legacyStartOfQuarter(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        val month = cal.get(Calendar.MONTH)
+        val quarterStartMonth = (month / 3) * 3
+        cal.set(Calendar.MONTH, quarterStartMonth)
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    /**
+     * Legacy [Calendar]-based end of quarter: the 1st of the **next** quarter at
+     * `00:00:00.000` local (exclusive). Used by the pre-Gregorian compatibility
+     * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
+     */
+    private fun legacyEndOfQuarter(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = legacyStartOfQuarter(timestamp)
+        cal.add(Calendar.MONTH, 3)
+        return cal.timeInMillis
+    }
+
+    /**
+     * Legacy [Calendar]-based quarter range with [quarterOffset]: the exact
+     * algorithm [getQuarterRange] used before the java.time migration (the
+     * offset is applied with `Calendar.add(MONTH, quarterOffset * 3)` **before**
+     * truncating to the quarter boundaries). Used by the pre-Gregorian
+     * compatibility seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`
+     * so the old offset behavior is reproduced exactly.
+     */
+    private fun legacyQuarterRange(timestamp: Long, quarterOffset: Int): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        if (quarterOffset != 0) {
+            cal.add(Calendar.MONTH, quarterOffset * 3)
+        }
+        val start = legacyStartOfQuarter(cal.timeInMillis)
+        val end = legacyEndOfQuarter(cal.timeInMillis)
+        return start to end
+    }
+
+    /**
+     * Legacy [Calendar]-based start of year: the exact algorithm
+     * [getStartOfYear] used before the java.time migration. Used by the
+     * pre-Gregorian compatibility seam for timestamps before
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS` so the old Julian-calendar / standard
+     * offset behavior is reproduced exactly.
+     */
+    private fun legacyStartOfYear(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        cal.set(Calendar.MONTH, Calendar.JANUARY)
+        cal.set(Calendar.DAY_OF_MONTH, 1)
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        return cal.timeInMillis
+    }
+
+    /**
+     * Legacy [Calendar]-based end of year: Jan 1st of the **next** year at
+     * `00:00:00.000` local (exclusive). Used by the pre-Gregorian compatibility
+     * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
+     */
+    private fun legacyEndOfYear(timestamp: Long): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = legacyStartOfYear(timestamp)
+        cal.add(Calendar.YEAR, 1)
+        return cal.timeInMillis
+    }
+
+    /**
+     * Legacy [Calendar]-based year range with [yearOffset]: the exact algorithm
+     * [getYearRange] used before the java.time migration (the offset is applied
+     * with `Calendar.add(YEAR, yearOffset)` **before** truncating to the year
+     * boundaries). Used by the pre-Gregorian compatibility seam for timestamps
+     * before `GREGORIAN_CUTOVER_EPOCH_MILLIS` so the old offset behavior is
+     * reproduced exactly.
+     */
+    private fun legacyYearRange(timestamp: Long, yearOffset: Int): Pair<Long, Long> {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = timestamp
+        if (yearOffset != 0) {
+            cal.add(Calendar.YEAR, yearOffset)
+        }
+        val start = legacyStartOfYear(cal.timeInMillis)
+        val end = legacyEndOfYear(cal.timeInMillis)
         return start to end
     }
 
@@ -791,104 +910,233 @@ object TimePeriodUtils {
     }
 
     // ============================================================================
-    // QUARTER BOUNDARIES
+    // QUARTER BOUNDARIES  (half-open [quarter-start, next-quarter-start))
+    //
+    // Modern timestamps use java.time (YearMonth arithmetic for the quarter's
+    // first month and the exclusive end / quarter offsets).
+    // Pre-Gregorian-cutover timestamps delegate to the legacy Calendar
+    // implementation through the private seam helpers above so the pre-migration
+    // behavior is reproduced exactly. See the class docs.
     // ============================================================================
 
     /**
-     * Returns the start of the quarter containing [timestamp]
-     * (1st of the quarter's first month at `00:00:00.000`).
+     * Returns the start of the quarter containing [timestamp]: the 1st of the
+     * quarter's first month at `00:00:00.000` in the system default timezone.
+     *
+     * Uses `java.time`: the local date is derived from the instant
+     * (`Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()`), the
+     * quarter's first month is computed with integer arithmetic
+     * (`((monthValue - 1) / 3) * 3 + 1` → 1, 4, 7 or 10) and the result is
+     * converted back with `YearMonth.atDay(1).atStartOfDay(zone)`. This
+     * preserves the previous `Calendar` semantics exactly — local midnight,
+     * system default timezone, DST-aware quarters, no fixed `DAY_IN_MILLIS`
+     * arithmetic.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyStartOfQuarter` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly (Julian calendar rules and the timezone's standard
+     * offset). See the class docs for the full seam description.
+     *
+     * @throws ArithmeticException in the java.time path if the resulting local
+     * midnight cannot be represented as a `Long` epoch-millis (see class docs
+     * for the supported epoch range and controlled failure).
      */
     fun getStartOfQuarter(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        val month = cal.get(Calendar.MONTH)
-        val quarterStartMonth = (month / 3) * 3
-        cal.set(Calendar.MONTH, quarterStartMonth)
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyStartOfQuarter(timestamp)
+        }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        val quarterStartMonth = ((localDate.monthValue - 1) / 3) * 3 + 1
+        return YearMonth.of(localDate.year, quarterStartMonth).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
     }
 
     /**
      * Returns the **exclusive** upper bound of the quarter containing [timestamp]:
      * the 1st of the **next** quarter at `00:00:00.000`.
+     *
+     * Half-open contract: `t >= getStartOfQuarter(ts) && t < getEndOfQuarter(ts)`.
+     *
+     * Uses `java.time`: the quarter's first [YearMonth] is derived from the
+     * instant and advanced with `plusMonths(3)` (calendar-aware), then
+     * converted back with `LocalDate.atStartOfDay(zone)`. A quarter crossing a
+     * DST transition ends with a 23/25-hour boundary day — never a fixed
+     * `DAY_IN_MILLIS` figure.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyEndOfQuarter` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly. See the class docs for the full seam description.
+     *
+     * @throws ArithmeticException in the java.time path if the resulting
+     * next-quarter midnight cannot be represented as a `Long` epoch-millis — by
+     * construction the case `timestamp == Long.MAX_VALUE` (see class docs for
+     * the supported epoch range and controlled failure).
      */
     fun getEndOfQuarter(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = getStartOfQuarter(timestamp)
-        cal.add(Calendar.MONTH, 3)
-        return cal.timeInMillis
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyEndOfQuarter(timestamp)
+        }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        val quarterStartMonth = ((localDate.monthValue - 1) / 3) * 3 + 1
+        val quarterStart = YearMonth.of(localDate.year, quarterStartMonth)
+        return quarterStart.plusMonths(3).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
     }
 
     /**
      * Returns a `[startInclusive, endExclusive)` pair for the quarter
      * containing [timestamp], optionally shifted by [quarterOffset] quarters.
      *
+     * - Quarter starts on the 1st of its first month `00:00:00.000`.
+     * - Quarter ends at the 1st of the **next** quarter `00:00:00.000` (exclusive).
+     * - [quarterOffset] shifts the reference quarter by that many **quarters**
+     *   (`YearMonth.plusMonths(quarterOffset * 3)`) — the same semantics as the
+     *   previous `Calendar.add(MONTH, quarterOffset * 3)`. The day of
+     *   [timestamp] does not matter: the result depends only on the quarter
+     *   containing it, so month-end coercion is never triggered.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyQuarterRange` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly — including the legacy offset application
+     * (`Calendar.add(MONTH, quarterOffset * 3)`), Julian calendar rules, and the
+     * timezone's standard offset. See the class docs for the full seam
+     * description.
+     *
      * @param timestamp Reference time.
      * @param quarterOffset 0 for current quarter, -1 for previous quarter, etc.
+     * @throws ArithmeticException at the `Long` extremes where a boundary cannot
+     * be represented as a `Long` epoch-millis (deterministic controlled failure;
+     * never silently wraps).
      */
     fun getQuarterRange(timestamp: Long, quarterOffset: Int = 0): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        if (quarterOffset != 0) {
-            cal.add(Calendar.MONTH, quarterOffset * 3)
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyQuarterRange(timestamp, quarterOffset)
         }
-
-        val start = getStartOfQuarter(cal.timeInMillis)
-        val end = getEndOfQuarter(cal.timeInMillis)
-        return start to end
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        val quarterStartMonth = ((localDate.monthValue - 1) / 3) * 3 + 1
+        val quarterStart = YearMonth.of(localDate.year, quarterStartMonth)
+            .plusMonths(quarterOffset.toLong() * 3)
+        val startMs = quarterStart.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val endMs = quarterStart.plusMonths(3).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        return startMs to endMs
     }
 
     // ============================================================================
-    // YEAR BOUNDARIES
+    // YEAR BOUNDARIES  (half-open [Jan 1, next-year Jan 1))
+    //
+    // Modern timestamps use java.time (Year.from(localDate).atDay(1) /
+    // Year.plusYears for the exclusive end and year offsets).
+    // Pre-Gregorian-cutover timestamps delegate to the legacy Calendar
+    // implementation through the private seam helpers above so the pre-migration
+    // behavior is reproduced exactly. See the class docs.
     // ============================================================================
 
     /**
-     * Returns the start of the year (Jan 1st, `00:00:00.000`) for [timestamp].
+     * Returns the start of the year (Jan 1st, `00:00:00.000`) for [timestamp]
+     * in the system default timezone.
+     *
+     * Uses `java.time`: the local date is derived from the instant
+     * (`Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()`), truncated
+     * to the year's first day with `Year.atDay(1)`, and converted back with
+     * `LocalDate.atStartOfDay(zone)`. This preserves the previous `Calendar`
+     * semantics exactly — local midnight, system default timezone, DST-aware
+     * years, no fixed `DAY_IN_MILLIS` arithmetic.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyStartOfYear` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly (Julian calendar rules and the timezone's standard
+     * offset). See the class docs for the full seam description.
+     *
+     * @throws ArithmeticException in the java.time path if the resulting local
+     * midnight cannot be represented as a `Long` epoch-millis (see class docs
+     * for the supported epoch range and controlled failure).
      */
     fun getStartOfYear(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        cal.set(Calendar.MONTH, Calendar.JANUARY)
-        cal.set(Calendar.DAY_OF_MONTH, 1)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        return cal.timeInMillis
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyStartOfYear(timestamp)
+        }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        return Year.from(localDate).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
     }
 
     /**
      * Returns the **exclusive** upper bound of the year containing [timestamp]:
      * Jan 1st of the **next** year at `00:00:00.000`.
+     *
+     * Half-open contract: `t >= getStartOfYear(ts) && t < getEndOfYear(ts)`.
+     *
+     * Uses `java.time`: the year is derived from the instant and advanced with
+     * `Year.plusYears(1)` (calendar-aware, leap-year safe), then converted back
+     * with `LocalDate.atStartOfDay(zone)`.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyEndOfYear` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly. See the class docs for the full seam description.
+     *
+     * @throws ArithmeticException in the java.time path if the resulting
+     * next-year midnight cannot be represented as a `Long` epoch-millis — by
+     * construction the case `timestamp == Long.MAX_VALUE` (see class docs for
+     * the supported epoch range and controlled failure).
      */
     fun getEndOfYear(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = getStartOfYear(timestamp)
-        cal.add(Calendar.YEAR, 1)
-        return cal.timeInMillis
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyEndOfYear(timestamp)
+        }
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        return Year.from(localDate).plusYears(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
     }
 
     /**
      * Returns a `[startInclusive, endExclusive)` pair for the year
      * containing [timestamp], optionally shifted by [yearOffset] years.
      *
+     * - Year starts on Jan 1st `00:00:00.000`.
+     * - Year ends at Jan 1st of the **next** year `00:00:00.000` (exclusive).
+     * - [yearOffset] shifts the reference year by that many **years**
+     *   (`Year.plusYears`) — the same semantics as the previous
+     *   `Calendar.add(YEAR, yearOffset)`. The day of [timestamp] does not
+     *   matter: the result depends only on the year containing it, so
+     *   leap-day clamping (Feb 29 → Feb 28) in the shifted reference is
+     *   irrelevant and never changes the resulting year.
+     *
+     * **Pre-Gregorian compatibility seam:** timestamps strictly before the
+     * legacy `GregorianCalendar` cutover (`1582-10-15T00:00:00Z`, see
+     * `GREGORIAN_CUTOVER_EPOCH_MILLIS`) are delegated to the private
+     * `legacyYearRange` helper, reproducing the pre-migration `Calendar`
+     * behavior exactly — including the legacy offset application
+     * (`Calendar.add(YEAR, yearOffset)`), Julian calendar rules, and the
+     * timezone's standard offset. See the class docs for the full seam
+     * description.
+     *
      * @param timestamp Reference time.
      * @param yearOffset 0 for current year, -1 for previous year, etc.
+     * @throws ArithmeticException at the `Long` extremes where a boundary cannot
+     * be represented as a `Long` epoch-millis (deterministic controlled failure;
+     * never silently wraps).
      */
     fun getYearRange(timestamp: Long, yearOffset: Int = 0): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
-        if (yearOffset != 0) {
-            cal.add(Calendar.YEAR, yearOffset)
+        if (isBeforeGregorianCutover(timestamp)) {
+            return legacyYearRange(timestamp, yearOffset)
         }
-
-        val start = getStartOfYear(cal.timeInMillis)
-        val end = getEndOfYear(cal.timeInMillis)
-        return start to end
+        val zone = ZoneId.systemDefault()
+        val localDate = Instant.ofEpochMilli(timestamp).atZone(zone).toLocalDate()
+        val year = Year.from(localDate).plusYears(yearOffset.toLong())
+        val startMs = year.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val endMs = year.plusYears(1).atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        return startMs to endMs
     }
 
     /**
@@ -896,6 +1144,12 @@ object TimePeriodUtils {
      *
      * The start is January 1 at `00:00:00.000`; the end is January 1 of the
      * **next** year at `00:00:00.000`.
+     *
+     * The [year] argument is converted through the lenient legacy [Calendar]
+     * construction exactly as before, preserving the previous normalization for
+     * out-of-range years (the raw int is wrapped deterministically instead of
+     * throwing). The constructed timestamp is then handed to [getYearRange],
+     * which applies the pre-Gregorian compatibility seam for pre-cutover years.
      */
     fun getYearRange(year: Int): Pair<Long, Long> {
         val cal = Calendar.getInstance().apply {
