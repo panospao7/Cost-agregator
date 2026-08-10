@@ -28,6 +28,7 @@ Infrastructure diagnostics (never baseline-able; exit 2):
   * ``DB_ROOM_QUERY_UNCLASSIFIABLE``
   * ``DB_SIGNATURE_UNRESOLVED``
   * ``DB_DAO_INHERITANCE_UNRESOLVED``
+  * ``UNKNOWN_RULE`` (unknown/unregistered rule code; direct protocol error)
 
 Public API:
 
@@ -196,6 +197,9 @@ _RULE_ENTRIES: Dict[str, RuleProfile] = {
             "path",
             "symbol.owner",
             "symbol.name",
+            "symbol.receiver",
+            "symbol.parameters",
+            "symbol.kind",
             "identity.operation",
         ),
         multiplicity=MULTIPLICITY_COUNT,
@@ -248,6 +252,11 @@ _DIAGNOSTIC_ENTRIES: Dict[str, DiagnosticProfile] = {
         code="DB_DAO_INHERITANCE_UNRESOLVED",
         guard=GUARD_DB_ACCESS,
         description="DAO inheritance chain is broken",
+    ),
+    "UNKNOWN_RULE": DiagnosticProfile(
+        code="UNKNOWN_RULE",
+        guard=GUARD_DB_ACCESS,
+        description="Rule code is not registered in the rule catalog",
     ),
 }
 

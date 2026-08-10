@@ -1,11 +1,11 @@
 # Guard Finding Protocol v2
 
-**Schema name:** `cost-aggregator.guard-findings`  
-**Schema version:** 2  
-**Scope:** PR-F1 — shared finding contract for all ratcheted guards  
-**Status:** PENDING — protocol defined, implementation not yet complete  
-**Related plan:** `GUARDRAIL_FINDINGS_AND_DB_DISCOVERY_PLAN.md` §3, §6  
-**Ledger:** `docs/ci/GUARD_FINDING_DB_V2_LEDGER.md`
+- **Schema name:** `cost-aggregator.guard-findings`
+- **Schema version:** 2
+- **Scope:** PR-F1 — shared finding contract for all ratcheted guards
+- **Status:** PARTIAL / PENDING REVIEW — protocol defined; PR-F1 model/catalog/tests authored; pending strict review and runtime validation
+- **Related plan:** `GUARDRAIL_FINDINGS_AND_DB_DISCOVERY_PLAN.md` §3, §6
+- **Ledger:** `docs/ci/GUARD_FINDING_DB_V2_LEDGER.md`
 
 ---
 
@@ -124,10 +124,39 @@ class GuardDiagnostic:
     code: str               # from diagnostic code catalog
     path: Optional[str]     # canonical POSIX or None
     symbol: Optional[str]   # controlled string or None
-    controlled_context: Dict[str, str]  # bounded key-value pairs
+    controlled_context: Mapping[str, Any]  # recursive bounded JSON-like controlled values (see §3.4.1)
 ```
 
 **Diagnostics are never baseline-able.** They represent infrastructure/parser failures and must never appear in baseline entries. If any diagnostic exists in a report, the guard must exit `2`.
+
+### 3.4.1 controlled_context / statistics value contract
+
+`controlled_context` (and `GuardRunReport.statistics`) is a **recursive bounded JSON-like controlled value**. It is *not* restricted to `Dict[str, str]`: every value in the tree may be one of:
+
+| Value type | Constraint |
+|------------|------------|
+| mapping (`dict`) | key is a bounded string (max 64 chars, no NUL/control/unstripped); value recurses; at most `MAX_CONTEXT_ITEMS` keys per mapping |
+| list/tuple | at most `MAX_CONTEXT_ITEMS` items; each item recurses (order preserved) |
+| string | max 300 chars; no NUL/control characters; no leading/trailing whitespace |
+| number (`int`/`float`) | finite (no `NaN`/`inf`); magnitude `<= 10^18` |
+| boolean / null | allowed as scalars |
+
+**Bounded limits (implemented constants):**
+
+| Bound | Constant | Value |
+|-------|----------|-------|
+| Max nesting depth | `MAX_CONTEXT_DEPTH` | 4 |
+| Max items per mapping/list | `MAX_CONTEXT_ITEMS` | 256 |
+| Max string value length | `MAX_CONTEXT` | 300 |
+| Max mapping-key length | `MAX_KEY` | 64 |
+| Max numeric magnitude | `MAX_NUMBER` | `10^18` |
+
+**Forbidden keys at every level of the tree** (matched on the lowercased key, including word components):
+
+- exact names: `message`, `exception`, `stack`, `trace`, `source`, `sql`, `ocr`, `path`
+- word component: `payload` (so `user_payload`, `raw_message`, and similar payload-smuggling keys are rejected too)
+
+Violations fail closed with controlled error codes only (`CONTEXT_TOO_DEEP`, `CONTEXT_TOO_MANY`, `STRING_TOO_LONG`, `NUMBER_OUT_OF_RANGE`, `NON_FINITE_NUMBER`, `FORBIDDEN_CONTEXT_KEY`, `INVALID_CONTEXT_VALUE`, `NOT_JSONABLE`); the offending key/value is never echoed. After validation the whole tree is deep-frozen (see §3.8).
 
 ### 3.5 GuardRunReport
 
@@ -169,6 +198,30 @@ class AggregatedFinding:
 
 Used by the ratchet for comparison. The `fingerprint` is the stable identity string. The `count` tracks multiplicity. `locations` are informational only and do not affect baseline identity.
 
+### 3.8 Deep immutability contract
+
+Every mapping stored in `GuardFinding.identity`, `GuardDiagnostic.controlled_context`, and `GuardRunReport.statistics` is recursively frozen to `FrozenDict` (keys sorted, values deep-frozen) and every sequence to an immutable tuple *after* validation. Callers can never mutate nested data after construction or inject raw payloads. The frozen structures remain strictly JSON-serializable (`_plain`) with deterministic ordering and hashing.
+
+`FrozenDict` instances are immutable, hashable, and JSON-safe: `__setitem__` is not defined, nested mappings are themselves `FrozenDict`, and nested sequences are tuples. This means:
+
+- Mutating a caller's original dict/list after passing it to a model constructor has no effect on the stored data.
+- Serializing a report containing deep-frozen structures produces byte-deterministic output.
+- The hash of a `FrozenDict` is stable across runs (SHA-256 of the canonical JSON form).
+
+### 3.9 Unresolved symbol diagnostic contract
+
+`unresolved_symbol_diagnostic()` is the explicit conversion helper from an unresolved blocking `CallableSymbol` to the controlled `DB_SIGNATURE_UNRESOLVED` infrastructure diagnostic.
+
+**When a DB policy finding's `CallableSymbol` cannot back a baseline-able `GuardFinding`** (i.e. `kind == "unknown"` or a missing/empty owner, name, or parameters), the emitter must call `unresolved_symbol_diagnostic(symbol=..., path=..., **context)` to produce the controlled diagnostic instead of constructing a `GuardFinding`.
+
+**Contract enforcement** (raises `ProtocolFailure`, exit 2):
+
+- A resolved `CallableSymbol` (nothing to convert) raises `UNRESOLVED_SYMBOL_BLOCKING` — a resolved symbol must be emitted as a finding, never as a signature diagnostic.
+- An unregistered `code` raises `UNKNOWN_DIAGNOSTIC` — no raw code can enter the report.
+- Invalid `path`/`symbol`/`context` values raise the normal controlled `ValidationError` codes from `GuardDiagnostic`.
+
+The returned diagnostic is validated and deep-frozen like any `GuardDiagnostic`. Any report containing it takes the protocol/infrastructure exit-2 path and it is never baseline-able. `DB_SIGNATURE_UNRESOLVED` is itself registered in the diagnostic catalog, so it is a controlled code that cannot be emitted as a finding (`DIAGNOSTIC_AS_FINDING` guard).
+
 ---
 
 ## 4. Rule catalog
@@ -181,7 +234,7 @@ Each stable rule is registered with its required identity fields. The catalog is
 |------|--------------------------|
 | `DB_UNAUTHORIZED_MUTATION` | `path`, `symbol.owner`, `symbol.name`, `symbol.receiver`, `symbol.parameters`, `identity.dao`, `identity.accessor`, `identity.operation`, `identity.mutation_kind`, `identity.call_form` |
 | `DB_MISSING_WRITE_BARRIER` | `path`, `symbol.owner`, `symbol.name`, `symbol.receiver`, `symbol.parameters`, `identity.dao`, `identity.operation` |
-| `DB_FORBIDDEN_STRUCTURAL_OPERATION` | `path`, `symbol.owner`, `symbol.name`, `identity.operation` |
+| `DB_FORBIDDEN_STRUCTURAL_OPERATION` | `path`, `symbol.owner`, `symbol.name`, `symbol.receiver`, `symbol.parameters`, `symbol.kind`, `identity.operation` |
 
 ### 4.2 Infrastructure diagnostic codes (never baseline-able)
 
@@ -196,14 +249,17 @@ Each stable rule is registered with its required identity fields. The catalog is
 | `DB_ROOM_QUERY_UNCLASSIFIABLE` | Room `@Query` SQL cannot be classified |
 | `DB_SIGNATURE_UNRESOLVED` | Exact callable signature cannot be resolved |
 | `DB_DAO_INHERITANCE_UNRESOLVED` | DAO inheritance chain is broken |
+| `UNKNOWN_RULE` | Rule code is not registered in the rule catalog |
 
 ### 4.3 Unknown rule handling
 
 A rule ID not present in the catalog is an **infrastructure failure**. The guard must:
 
-1. Emit a `GuardDiagnostic` with a controlled code (e.g. `UNKNOWN_RULE`).
+1. Raise `ProtocolFailure` with the controlled `UNKNOWN_RULE` error code (itself registered in the diagnostic catalog).
 2. Exit with code `2`.
 3. Never silently skip or downgrade the finding.
+
+Similarly, a DB policy finding whose `CallableSymbol` has `kind == "unknown"` or an unresolved required signature (missing/empty owner, name, or parameters) must not be serialized as a baseline-able `GuardFinding`. The emitter must use the controlled `DB_SIGNATURE_UNRESOLVED` diagnostic via `unresolved_symbol_diagnostic()` instead. Any report carrying that diagnostic takes the protocol/infrastructure exit-2 path and the diagnostic is never baseline-able.
 
 ---
 
@@ -234,6 +290,8 @@ All identity values, symbol components, and diagnostic context values must be **
 | Diagnostic code | 100 characters |
 | Findings per report | 100,000 maximum |
 
+`controlled_context` and `statistics` are **recursive bounded JSON-like controlled values** (mapping keys/values, bounded lists/tuples, finite bounded numbers, booleans/null), not flat `Dict[str, str]`; see §3.4.1 for the value-type matrix, forbidden keys, and the depth/item/length/magnitude bounds (`MAX_CONTEXT_DEPTH = 4`, `MAX_CONTEXT_ITEMS = 256`, `MAX_CONTEXT = 300`, `MAX_KEY = 64`, `MAX_NUMBER = 10^18`).
+
 **Forbidden content in any string field:**
 
 - Raw source code snippets
@@ -256,15 +314,17 @@ Findings within a report are sorted by a deterministic key to ensure stable outp
 2. `path` (lexicographic)
 3. `symbol.owner` (lexicographic)
 4. `symbol.name` (lexicographic)
-5. `symbol.parameters` (lexicographic, element-wise)
-6. `identity.dao` (lexicographic)
-7. `identity.operation` (lexicographic)
+5. `symbol.receiver` (lexicographic; `<none>` for None)
+6. `symbol.parameters` (lexicographic, element-wise)
+7. `symbol.kind` (lexicographic)
+8. `identity` fields (sorted by key, then lexicographic)
+9. `location` (line, column, end_line, end_column — tie-breaker only)
 
 Same-input guarantees same-output regardless of scan order, file system enumeration order, or platform.
 
 ### 6.2 Canonicalization
 
-`canonicalize_report(report)` applies the sort and normalizes all string values (e.g. path separators, whitespace trimming). The canonical form is what gets serialized and compared.
+`canonicalize_report(report)` applies the sort and normalizes all string values (e.g. path separators); string values with leading/trailing whitespace are **rejected**, never trimmed. The canonical form is what gets serialized and compared.
 
 ---
 
@@ -279,6 +339,8 @@ The fingerprint is built **only** from fields listed in the rule's `FingerprintP
 ```text
 v2|<guard>|<rule>|<key>=<value>|<key>=<value>|...
 ```
+
+Identity fields appear **in the catalog-declared profile order** (the `identity_fields` tuple registered in the rule catalog, §4.1), never lexicographically re-sorted: canonical `path` first, then the full callable symbol identity (owner, name, receiver, parameters, and kind when declared), then the catalog-declared `identity.*` fields in their declared profile order. The declared order is the canonical order for the fingerprint string.
 
 Example:
 
@@ -320,8 +382,10 @@ The following fields must **never** participate in fingerprint identity:
 The fingerprint includes everything that defines *what* the finding is:
 
 - Canonical path
-- Full callable symbol (owner, name, receiver, parameter types)
+- Full callable symbol (owner, name, receiver, parameter types, kind)
 - Identity fields from the rule profile (dao, operation, mutation_kind, etc.)
+
+For `DB_FORBIDDEN_STRUCTURAL_OPERATION`, the identity fields include `symbol.kind` and `symbol.receiver` in addition to the standard callable components, so fingerprint stability depends on the full callable signature.
 
 ### 7.6 Collision resistance
 
@@ -375,8 +439,10 @@ The `count` prevents two same-rule findings in the same method from collapsing i
 | `schema == "cost-aggregator.guard-findings"` | exit 2 |
 | `schema_version == 2` | exit 2 |
 | `guard` matches registered guard name | exit 2 |
+| `guard` is registered even when the report is empty (no findings) | exit 2 |
 | `findings` is a list | exit 2 |
 | `diagnostics` is a list | exit 2 |
+| `statistics` is an object (mapping) | exit 2 |
 | Each finding has all required fields | exit 2 |
 | Each finding's rule exists in catalog | exit 2 |
 | Path is canonical POSIX | exit 2 |
@@ -384,6 +450,19 @@ The `count` prevents two same-rule findings in the same method from collapsing i
 | All string lengths within bounds | exit 2 |
 | No duplicate exact source occurrences | exit 2 |
 | Finding guard matches report guard | exit 2 |
+
+Malformed list/mapping types on read (`findings`, `diagnostics`, `statistics`)
+are rejected before any iteration or materialization with controlled
+`JsonValidationError` codes (`FINDINGS_NOT_LIST`, `DIAGNOSTICS_NOT_LIST`,
+`STATISTICS_NOT_MAPPING`); they never surface as raw `TypeError` values.
+
+On the JSON read path (`GuardRunReport.from_dict`) the top-level `schema`,
+`schema_version`, and registered `guard` are validated **before** any
+findings/diagnostics content is touched: a report claiming an unregistered
+guard fails closed with `UNKNOWN_GUARD` even when the content is malformed
+or unknown, and a schema/version mismatch is reported before any content is
+materialized. For a registered guard with valid schema/version, malformed
+content still fails with its normal controlled codes.
 
 ### 9.2 Malformed JSON
 
@@ -428,11 +507,19 @@ def write_report_atomic(path: str, report: GuardRunReport) -> None:
 
 ### 10.2 Failure semantics
 
+The report is canonicalized (deterministically sorted and revalidated) before
+serialization, so the on-disk form is always the canonical protocol-v2 form.
 If writing fails mid-stream:
 
 - The original file (if any) is preserved.
 - The `.tmp` file may be partially written; it is not the active baseline.
 - The guard exits `2`.
+
+Every write failure is converted to a sanitized `AtomicWriteError` with a
+controlled code (`INVALID_PATH`, `MISSING_PARENT`, `PARENT_CHECK_FAILED`,
+`WRITE_FAILED`, or `REPORT_TYPE`). Error messages never echo raw filesystem
+paths, OS exception text, or user values. The sibling temp file is removed on
+failure, so no partial `.tmp` artifact is left behind.
 
 No guard or ratchet may read a `.tmp` file.
 
@@ -465,7 +552,7 @@ The following must never appear in any report field, diagnostic, fingerprint, or
 | Arbitrary `e.message` | Unbounded; privacy |
 | `..` path segments | Traversal risk |
 
-Diagnostics use only **controlled reason/failure codes** from §4.2 and bounded `controlled_context` key-value pairs.
+Diagnostics use only **controlled reason/failure codes** from §4.2 and recursive bounded JSON-like `controlled_context` values (see §3.4.1).
 
 ---
 
@@ -518,21 +605,23 @@ The Gradle task (`verifyDbAccessBoundaries` or equivalent) must produce the same
 
 ## 14. Migration status
 
-This protocol document is **pending**. The following work is not yet complete:
+This protocol document is **PARTIAL / PENDING REVIEW**. The following work status is accurate as of this update:
 
 | Item | Status |
 |------|--------|
-| Protocol model (`guard_findings.py`) | NOT IMPLEMENTED |
-| Rule catalog (`finding_rule_catalog.py`) | NOT IMPLEMENTED |
-| Protocol tests (`test_guard_findings.py`) | NOT IMPLEMENTED |
-| DB guard structured output | NOT IMPLEMENTED |
-| Ratchet v2 consumption | NOT IMPLEMENTED |
-| Guard registry v2 metadata | NOT IMPLEMENTED |
-| Baseline migration | NOT IMPLEMENTED |
-| Static-suite integration | NOT IMPLEMENTED |
-| Gradle integration | NOT IMPLEMENTED |
+| Protocol model (`guard_findings.py`) | **IMPLEMENTED** (PR-F1) — all models, validation, fingerprinting, atomic write, deep immutability (`FrozenDict`), `unresolved_symbol_diagnostic()`, `ProtocolFailure`, `UNKNOWN_RULE` |
+| Rule catalog (`finding_rule_catalog.py`) | **IMPLEMENTED** (PR-F1) — 3 policy rules (including `DB_FORBIDDEN_STRUCTURAL_OPERATION` with `symbol.kind`/`symbol.receiver`/`symbol.parameters` in identity), 10 diagnostic codes (including `UNKNOWN_RULE`), immutable frozen dataclasses |
+| Protocol tests (`test_guard_findings.py`) | **AUTHORED** (PR-F1) — authored protocol tests; execution pending (`python -m pytest scripts/ci/test_guard_findings.py -v`); **NOT EXECUTED in this recovery worktree** |
+| DB guard structured output | **NOT BEGUN** (requires PR-D4/DB scanner integration) |
+| Ratchet v2 consumption | **NOT BEGUN** (PR-F2 not started) |
+| Guard registry v2 metadata | **NOT BEGUN** |
+| Baseline migration | **NOT BEGUN** |
+| Static-suite integration | **NOT BEGUN** |
+| Gradle integration | **NOT BEGUN** |
 
-**Do not claim this protocol is complete or active until all implementation, test, and review gates pass.**
+**PR-F1 status:** Implementation and test files are authored and present in the worktree. They are **pending strict review and runtime validation** (`python -m pytest scripts/ci/test_guard_findings.py -v`). Do not claim this protocol is complete or active until review and test gates pass.
+
+**PR-F2 status (ratchet v2 / DB scanner integration):** Not begun. The current `guard_ratchet.py` remains v1-only (stdout regex parsing). No v2 report consumption, no `COST_AGGREGATOR_GUARD_FINDINGS_FILE` support, no `finding_protocol` registry metadata.
 
 The current migration remains in Phase 0 (freeze evidence). No baseline, policy, or structural-exceptions changes have been made.
 
@@ -560,6 +649,10 @@ Protocol tests must cover:
 | DAO operation changes fingerprint | Semantic identity |
 | Count aggregation retains duplicates | Multiplicity |
 | Source snippets cannot be serialized accidentally | Privacy enforcement |
+| Deep immutability (FrozenDict) prevents mutation | Immutability contract |
+| `unresolved_symbol_diagnostic()` rejects resolved symbols | Diagnostic conversion |
+| `UNKNOWN_RULE` is a controlled protocol failure | Unknown rule handling |
+| `DB_FORBIDDEN_STRUCTURAL_OPERATION` includes `symbol.kind`/`symbol.receiver`/`symbol.parameters` | Structural rule identity |
 
 ---
 
@@ -576,4 +669,4 @@ Protocol tests must cover:
 
 ---
 
-*This document describes the target protocol contract. Implementation is pending. No claims of final completion should be made until code, tests, and review gates pass on the `guard-finding-db-discovery-v2` branch.*
+*This document describes the target protocol contract. PR-F1 implementation (model, catalog, tests) is authored but pending strict review and runtime validation. No claims of final completion should be made until code, tests, and review gates pass on the `guard-finding-db-discovery-v2` branch.*

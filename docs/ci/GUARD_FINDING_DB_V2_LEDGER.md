@@ -4,7 +4,7 @@
 **Branch:** `guard-finding-db-discovery-v2`
 **Start SHA:** `bb2a6f18f12300af60ce1db475fb0c8d73f6b774`
 **Scope:** P0-1 through P0-5 only
-**Status:** PARTIAL / PENDING
+**Status:** PARTIAL / PENDING REVIEW
 
 ---
 
@@ -192,7 +192,7 @@ All paths under `build/guard-v2/before/` are **pending** — directory and files
 
 | PR | Description | Status |
 |----|-------------|--------|
-| PR-F1 | Shared finding protocol | NOT BEGUN |
+| PR-F1 | Shared finding protocol | **PARTIAL / PENDING REVIEW** — v2 model (`guard_findings.py`), catalog (`finding_rule_catalog.py`), and test file (`test_guard_findings.py`) authored; covers v2 envelope (schema, schema_version, guard, findings, diagnostics, statistics — no tool/fingerprint_profile/created_at), deep immutability (`FrozenDict` recursive freeze, deterministic hashing), privacy/sanitized errors (no raw paths, exception text, or hostile values leak), multiplicity-aware aggregation and fingerprint fixes (distinct-location survival, exact-duplicate rejection), unknown-symbol diagnostics (`unresolved_symbol_diagnostic()` / `ProtocolFailure` / `UNRESOLVED_SYMBOL_BLOCKING` / `UNKNOWN_RULE`), declared-order fingerprint exact string and identity order, and unknown-guard/schema/version read-path precedence before content materialization; tests authored but **NOT EXECUTED** in recovery worktree; **not yet reviewed** |
 | PR-F2 | Ratchet v2 and count-aware comparison | NOT BEGUN |
 | PR-D1 | Exact callable signature model | NOT BEGUN |
 | PR-D2 | Room-derived mutator inventory | NOT BEGUN |
@@ -207,15 +207,13 @@ No baseline changes have been made. No ownership-policy changes have been made. 
 
 ## 7. Next safe step
 
-Execute Phase 0 freeze commands manually (Section 4 above) in the `guard-finding-db-discovery-v2` worktree:
-
-1. `mkdir -p build/guard-v2/before`
-2. Run each freeze command (Sections 4.1–4.3) and capture exit codes
-3. Copy source artifacts (Section 4.4) to `build/guard-v2/before/`
-4. Append concrete exit codes and log paths to this ledger
-5. Commit with message: `chore(ci): freeze guard finding v2 migration evidence`
-
-Do not proceed to PR-F1 until freeze evidence is committed and this ledger is updated with actual exit codes and log references.
+1. **Run PR-F1 tests** (not yet executed in this recovery worktree):
+   ```bash
+   python -m pytest scripts/ci/test_guard_findings.py -v --tb=short
+   ```
+2. Run strict code review on `guard_findings.py`, `finding_rule_catalog.py`, and `test_guard_findings.py` against the protocol spec in `docs/ci/GUARD_FINDING_PROTOCOL.md`.
+3. Execute Phase 0 freeze commands manually (Section 4) if freeze evidence is still needed.
+4. Only after PR-F1 review + runtime validation passes, proceed to PR-F2 (ratchet v2 consumption and count-aware comparison).
 
 ---
 
@@ -229,7 +227,9 @@ Do not proceed to PR-F1 until freeze evidence is committed and this ledger is up
 | Ownership policy unchanged | **YES** (confirmed) |
 | Structural exceptions unchanged | **YES** (confirmed) |
 | PR-D1 through PR-D5 begun | **NO** (none started) |
-| PR-F1 / PR-F2 begun | **NO** (none started) |
+| PR-F1 begun | **PARTIAL / PENDING REVIEW** — model, catalog, and test file authored (v2 envelope, deep immutability/`FrozenDict`, privacy/sanitized errors, multiplicity/fingerprint fixes, unknown-symbol diagnostics, declared-order fingerprint exact string, read-path precedence); pending strict review and runtime validation |
+| PR-F1 tests executed | **NOT RUN** in recovery worktree; `python -m pytest scripts/ci/test_guard_findings.py -v` must be run to validate |
+| PR-F2 begun | **NO** (ratchet v2 not started) |
 | Ledger complete with exit codes | **NO** (pending manual execution) |
 
-**Overall:** PARTIAL / PENDING — Phase 0 commands are defined but not yet executed in this recovery worktree. No implementation work has begun. The ledger is awaiting freeze evidence.
+**Overall:** PARTIAL / PENDING REVIEW — PR-F1 implementation (`guard_findings.py`, `finding_rule_catalog.py`, `test_guard_findings.py`) is authored (v2 envelope, deep immutability/FrozenDict, privacy/sanitized errors, multiplicity/fingerprint fixes, unknown-symbol diagnostics, declared-order fingerprint exact string, unknown-guard/schema/version read-path precedence) but has **not been reviewed or executed** in this recovery worktree. Phase 0 freeze commands remain defined but not yet executed. No baseline, policy, or structural-exceptions changes have been made. PR-F2/ratchet/DB scanner integration has not begun.
