@@ -28,6 +28,8 @@ Infrastructure diagnostics (never baseline-able; exit 2):
   * ``DB_ROOM_QUERY_UNCLASSIFIABLE``
   * ``DB_SIGNATURE_UNRESOLVED``
   * ``DB_DAO_INHERITANCE_UNRESOLVED``
+  * ``DB_DAO_ANNOTATION_SCOPE_UNRESOLVED``
+  * Room inventory discovery, inheritance, policy, and atomic-write diagnostics
   * ``UNKNOWN_RULE`` (unknown/unregistered rule code; direct protocol error)
 
 Public API:
@@ -242,6 +244,121 @@ _DIAGNOSTIC_ENTRIES: Dict[str, DiagnosticProfile] = {
         code="DB_ROOM_QUERY_UNCLASSIFIABLE",
         guard=GUARD_DB_ACCESS,
         description="Room @Query SQL cannot be classified",
+    ),
+    "DB_ROOM_RAW_QUERY_POLICY_REQUIRED": DiagnosticProfile(
+        code="DB_ROOM_RAW_QUERY_POLICY_REQUIRED",
+        guard=GUARD_DB_ACCESS,
+        description="Room @RawQuery is missing an exact classification policy entry",
+    ),
+    "DB_ROOM_RAW_QUERY_POLICY_STALE": DiagnosticProfile(
+        code="DB_ROOM_RAW_QUERY_POLICY_STALE",
+        guard=GUARD_DB_ACCESS,
+        description="Room @RawQuery classification policy entry has no discovered counterpart",
+    ),
+    "DB_ROOM_RAW_QUERY_POLICY_INVALID": DiagnosticProfile(
+        code="DB_ROOM_RAW_QUERY_POLICY_INVALID",
+        guard=GUARD_DB_ACCESS,
+        description="Room @RawQuery classification policy is invalid",
+    ),
+    "DB_ROOM_RAW_QUERY_POLICY_INHERITED_AMBIGUOUS": DiagnosticProfile(
+        code="DB_ROOM_RAW_QUERY_POLICY_INHERITED_AMBIGUOUS",
+        guard=GUARD_DB_ACCESS,
+        description="Inherited Room @RawQuery identity is exposed by multiple parents",
+    ),
+    "DB_ROOM_INHERITED_METHOD_CONFLICT": DiagnosticProfile(
+        code="DB_ROOM_INHERITED_METHOD_CONFLICT",
+        guard=GUARD_DB_ACCESS,
+        description="Inherited Room mutator identity is exposed by multiple parents",
+    ),
+    "DB_DAO_INHERITANCE_INVALID_ANCESTOR": DiagnosticProfile(
+        code="DB_DAO_INHERITANCE_INVALID_ANCESTOR",
+        guard=GUARD_DB_ACCESS,
+        description="DAO inheritance is suppressed because an ancestor is unresolved",
+    ),
+    "DB_DAO_ANNOTATION_SCOPE_UNRESOLVED": DiagnosticProfile(
+        code="DB_DAO_ANNOTATION_SCOPE_UNRESOLVED",
+        guard=GUARD_DB_ACCESS,
+        description="Legal @Dao annotation-to-declaration span exceeds the documented safe maximum",
+    ),
+    "DB_ROOM_ANNOTATION_CONFLICT": DiagnosticProfile(
+        code="DB_ROOM_ANNOTATION_CONFLICT",
+        guard=GUARD_DB_ACCESS,
+        description="A Room callable has conflicting persistence annotations",
+    ),
+    "DB_ROOM_MUTATOR_IDENTITY_AMBIGUOUS": DiagnosticProfile(
+        code="DB_ROOM_MUTATOR_IDENTITY_AMBIGUOUS",
+        guard=GUARD_DB_ACCESS,
+        description="Room mutator callable identity is declared more than once",
+    ),
+    "DB_ROOM_INVALID_SOURCE": DiagnosticProfile(
+        code="DB_ROOM_INVALID_SOURCE",
+        guard=GUARD_DB_ACCESS,
+        description="Room inventory source root is invalid",
+    ),
+    "DB_ROOM_SOURCE_UNREADABLE": DiagnosticProfile(
+        code="DB_ROOM_SOURCE_UNREADABLE",
+        guard=GUARD_DB_ACCESS,
+        description="Room source file or directory cannot be read",
+    ),
+    "DB_ROOM_SOURCE_EMPTY": DiagnosticProfile(
+        code="DB_ROOM_SOURCE_EMPTY",
+        guard=GUARD_DB_ACCESS,
+        description="Room inventory source contains no Kotlin DAO declarations",
+    ),
+    "DB_ROOM_DATABASE_VERSION_CONFLICT": DiagnosticProfile(
+        code="DB_ROOM_DATABASE_VERSION_CONFLICT",
+        guard=GUARD_DB_ACCESS,
+        description="Room database declarations contain conflicting versions",
+    ),
+    "DB_ROOM_DUPLICATE_METHOD": DiagnosticProfile(
+        code="DB_ROOM_DUPLICATE_METHOD",
+        guard=GUARD_DB_ACCESS,
+        description="Room DAO method identity is declared more than once",
+    ),
+    "DB_ROOM_UNSUPPORTED_METHOD": DiagnosticProfile(
+        code="DB_ROOM_UNSUPPORTED_METHOD",
+        guard=GUARD_DB_ACCESS,
+        description="Room DAO method syntax is unsupported by inventory discovery",
+    ),
+    "DB_ROOM_INVALID_INPUT": DiagnosticProfile(
+        code="DB_ROOM_INVALID_INPUT",
+        guard=GUARD_DB_ACCESS,
+        description="Room DAO accessor input is invalid",
+    ),
+    "DB_ROOM_BAD_PATH": DiagnosticProfile(
+        code="DB_ROOM_BAD_PATH",
+        guard=GUARD_DB_ACCESS,
+        description="Room DAO source path is invalid",
+    ),
+    "DB_ROOM_UNSUPPORTED_DECLARATION": DiagnosticProfile(
+        code="DB_ROOM_UNSUPPORTED_DECLARATION",
+        guard=GUARD_DB_ACCESS,
+        description="Room DAO declaration syntax is unsupported",
+    ),
+    "DB_ROOM_AMBIGUOUS_DECLARATION": DiagnosticProfile(
+        code="DB_ROOM_AMBIGUOUS_DECLARATION",
+        guard=GUARD_DB_ACCESS,
+        description="Room DAO declaration is ambiguous",
+    ),
+    "DB_ROOM_MISSING_DECLARATION": DiagnosticProfile(
+        code="DB_ROOM_MISSING_DECLARATION",
+        guard=GUARD_DB_ACCESS,
+        description="Room DAO declaration cannot be found",
+    ),
+    "DB_ROOM_AMBIGUOUS_METHOD": DiagnosticProfile(
+        code="DB_ROOM_AMBIGUOUS_METHOD",
+        guard=GUARD_DB_ACCESS,
+        description="Room DAO method identity is ambiguous",
+    ),
+    "DB_ROOM_INVENTORY_WRITE_FAILED": DiagnosticProfile(
+        code="DB_ROOM_INVENTORY_WRITE_FAILED",
+        guard=GUARD_DB_ACCESS,
+        description="Room inventory atomic write failed before replacement",
+    ),
+    "INVENTORY_DURABILITY_UNCONFIRMED": DiagnosticProfile(
+        code="INVENTORY_DURABILITY_UNCONFIRMED",
+        guard=GUARD_DB_ACCESS,
+        description="Room inventory replacement durability could not be confirmed",
     ),
     "DB_SIGNATURE_UNRESOLVED": DiagnosticProfile(
         code="DB_SIGNATURE_UNRESOLVED",

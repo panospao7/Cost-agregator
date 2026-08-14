@@ -1,0 +1,49 @@
+# RawQuery Classification Policy - canonical production policy (exact schema)
+#
+# Every @RawQuery method in app/src/main/java must have an exact entry here;
+# otherwise the Room mutator inventory reports DB_ROOM_RAW_QUERY_POLICY_REQUIRED
+# and fails closed.  Each entry is an exact callable identity:
+#   - dao:           exact DAO FQCN
+#   - method:        exact method name
+#   - signature:     exact receiver and parameter types (canonical type text)
+#   - classification: read or write
+#   - reason, owner, linked_issue: controlled documentation fields
+#
+# Entries must contain exactly the fields above: no wildcard values and no
+# extra fields are accepted, and the loader rejects any entry that does not
+# match this schema.  Tests use scripts/fixtures/db_raw_query_classification.yml
+# as fixture data; the default inventory lookup never reads the fixture.
+version: 1
+methods:
+  - dao: com.yourname.expensetracker.data.database.dao.ExpenseDao
+    method: getExpensesDynamic
+    signature:
+      receiver: null
+      parameters:
+        - androidx.sqlite.db.SupportSQLiteQuery
+    classification: read
+    reason: "Read-only dynamic expense filtering and sorting query"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - dao: com.yourname.expensetracker.data.database.dao.ExpenseDao
+    method: getAssistantExpensesDynamic
+    signature:
+      receiver: null
+      parameters:
+        - androidx.sqlite.db.SupportSQLiteQuery
+    classification: read
+    reason: "Read-only assistant uncapped dynamic expense query"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  - dao: com.yourname.expensetracker.data.database.dao.ExpenseDao
+    method: getAssistantExpenseCountDynamic
+    signature:
+      receiver: null
+      parameters:
+        - androidx.sqlite.db.SupportSQLiteQuery
+    classification: read
+    reason: "Read-only assistant exact-count dynamic expense query"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
