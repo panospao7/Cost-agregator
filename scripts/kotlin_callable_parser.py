@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from db_policy_signature import FunctionSignature, SignatureError, normalize_type_text
+try:  # package mode: imported as ``scripts.kotlin_callable_parser``
+    from .db_policy_signature import FunctionSignature, SignatureError, normalize_type_text
+except ImportError:  # pragma: no cover - flat mode: standalone tools put ``scripts`` on sys.path
+    from db_policy_signature import FunctionSignature, SignatureError, normalize_type_text
 
 __all__ = [
     "ParserError", "CallableDeclaration", "OwnerDeclaration", "mask_kotlin_source",
