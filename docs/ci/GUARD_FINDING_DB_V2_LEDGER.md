@@ -194,8 +194,8 @@ All paths under `build/guard-v2/before/` are **pending** — directory and files
 |----|-------------|--------|
 | PR-F1 | Shared finding protocol | **PARTIAL / PENDING REVIEW** — v2 model (`guard_findings.py`), catalog (`finding_rule_catalog.py`), and test file (`test_guard_findings.py`) authored; covers v2 envelope (schema, schema_version, guard, findings, diagnostics, statistics — no tool/fingerprint_profile/created_at), deep immutability (`FrozenDict` recursive freeze, deterministic hashing), privacy/sanitized errors (no raw paths, exception text, or hostile values leak), multiplicity-aware aggregation and fingerprint fixes (distinct-location survival, exact-duplicate rejection), unknown-symbol diagnostics (`unresolved_symbol_diagnostic()` / `ProtocolFailure` / `UNRESOLVED_SYMBOL_BLOCKING` / `UNKNOWN_RULE`), declared-order fingerprint exact string and identity order, and unknown-guard/schema/version read-path precedence before content materialization; tests authored but **NOT EXECUTED** in recovery worktree; **not yet reviewed** |
 | PR-F2 | Ratchet v2 and count-aware comparison | NOT BEGUN |
-| PR-D1 | Exact callable signature model | NOT BEGUN |
-| PR-D2 | Room-derived mutator inventory | NOT BEGUN |
+| PR-D1 | Exact callable signature model | **PARTIAL / PENDING REVIEW** — signature model, parser, migration CLI, and candidate artifact implemented; tests and runtime validation not executed; final review pending |
+| PR-D2 | Room-derived mutator inventory | **PARTIAL / PENDING REVIEW** — Room inventory implemented; validation pending |
 | PR-D3 | Declaration-level Dao.kt scanning | NOT BEGUN |
 | PR-D4 | Structured DB finding output | NOT BEGUN |
 | PR-D5 | Classify findings and migrate DB baseline | NOT BEGUN |
@@ -226,10 +226,10 @@ No baseline changes have been made. No ownership-policy changes have been made. 
 | Baseline unchanged | **YES** (confirmed) |
 | Ownership policy unchanged | **YES** (confirmed) |
 | Structural exceptions unchanged | **YES** (confirmed) |
-| PR-D1 through PR-D5 begun | **NO** (none started) |
+| PR-D1 through PR-D5 begun | **PARTIAL** — PR-D1 and PR-D2 partial/pending review (see Section 6); PR-D3, PR-D4, PR-D5 not begun |
 | PR-F1 begun | **PARTIAL / PENDING REVIEW** — model, catalog, and test file authored (v2 envelope, deep immutability/`FrozenDict`, privacy/sanitized errors, multiplicity/fingerprint fixes, unknown-symbol diagnostics, declared-order fingerprint exact string, read-path precedence); pending strict review and runtime validation |
 | PR-F1 tests executed | **NOT RUN** in recovery worktree; `python -m pytest scripts/ci/test_guard_findings.py -v` must be run to validate |
 | PR-F2 begun | **NO** (ratchet v2 not started) |
 | Ledger complete with exit codes | **NO** (pending manual execution) |
 
-**Overall:** PARTIAL / PENDING REVIEW — PR-F1 implementation (`guard_findings.py`, `finding_rule_catalog.py`, `test_guard_findings.py`) is authored (v2 envelope, deep immutability/FrozenDict, privacy/sanitized errors, multiplicity/fingerprint fixes, unknown-symbol diagnostics, declared-order fingerprint exact string, unknown-guard/schema/version read-path precedence) but has **not been reviewed or executed** in this recovery worktree. Phase 0 freeze commands remain defined but not yet executed. No baseline, policy, or structural-exceptions changes have been made. PR-F2/ratchet/DB scanner integration has not begun.
+**Overall:** PARTIAL / PENDING REVIEW — PR-F1 implementation (`guard_findings.py`, `finding_rule_catalog.py`, `test_guard_findings.py`) is authored (v2 envelope, deep immutability/FrozenDict, privacy/sanitized errors, multiplicity/fingerprint fixes, unknown-symbol diagnostics, declared-order fingerprint exact string, unknown-guard/schema/version read-path precedence) but has **not been reviewed or executed** in this recovery worktree. PR-D1 (exact callable signature model, parser, migration CLI, candidate artifact) and PR-D2 (Room-derived mutator inventory) are implemented but pending tests, runtime validation, and review. The candidate artifact contains **9 resolved findings and 90 unresolved findings** and is **non-authorizing** (it does not gate CI or alter baseline enforcement). Phase 0 freeze commands remain defined but not yet executed. The DB baseline (`config/baselines/db_access.json`) and ownership policy (`config/guards/db_ownership_policy.yml`) remain **unchanged**. PR-F2/ratchet/DB scanner integration has not begun.

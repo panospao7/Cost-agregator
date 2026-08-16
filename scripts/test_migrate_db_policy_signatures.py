@@ -2,9 +2,9 @@
 
 The suite uses only temporary, canonical ``app/src/main/...`` Kotlin fixtures;
 the migration implementation and its real command-line entry point are used,
-not a reimplementation of discovery.  There are 22 tests (including
-parametrized cases) covering one fixture family with deliberately narrow,
-explicit policy entries.  No baseline or wildcard policy is used.
+not a reimplementation of discovery.  Authored coverage; execution pending.
+The fixture family has deliberately narrow, explicit policy entries.  No
+baseline or wildcard policy is used.
 """
 
 from __future__ import annotations
@@ -112,7 +112,9 @@ def test_cli_reports_exact_controlled_statuses(tmp_path, method, source, signatu
     report = tmp_path / "nested" / "reports" / "status.json"
     result = _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report])
     assert result.returncode == 1
-    assert json.loads(report.read_text(encoding="utf-8"))["entries"][0]["status"] == expected
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    rows = payload["resolved"] if expected == "RESOLVED_EXACTLY" else payload["unresolved"]
+    assert rows[0].get("status", "RESOLVED_EXACTLY") == expected
     assert result.stdout == result.stderr == ""
 
 
@@ -124,14 +126,13 @@ def test_cli_generic_type_parameter_is_fail_closed_and_does_not_change_policy_or
     candidate.parent.mkdir(parents=True, exist_ok=True)
     candidate.write_text("sentinel candidate\n", encoding="utf-8")
     before_policy = policy.read_bytes()
-    before_candidate = candidate.read_bytes()
     report = tmp_path / "nested" / "reports" / "generic.json"
     result = _run_cli(tmp_path, ["--write-candidate", "--policy", policy,
                                  "--output", candidate, "--report", report])
     assert result.returncode == 1
-    assert json.loads(report.read_text(encoding="utf-8"))["entries"][0]["status"] == "SIGNATURE_UNSUPPORTED"
+    assert json.loads(report.read_text(encoding="utf-8"))["unresolved"][0]["status"] == "SIGNATURE_UNSUPPORTED"
     assert policy.read_bytes() == before_policy
-    assert candidate.read_bytes() == before_candidate
+    assert yaml.safe_load(candidate.read_text(encoding="utf-8")) == {"entries": []}
     assert secret not in result.stdout + result.stderr + report.read_text(encoding="utf-8")
 
 
@@ -218,6 +219,18 @@ def test_write_candidate_requires_output_and_rejects_policy_output(tmp_path):
     assert _run_cli(tmp_path, ["--write-candidate", "--policy", policy, "--output", policy]).returncode == 2
 
 
+def test_report_and_candidate_collision_writes_neither_artifact(tmp_path):
+    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
+    collision = tmp_path / "artifacts" / "same.json"
+    collision.parent.mkdir(parents=True, exist_ok=True)
+    collision.write_text("sentinel\n", encoding="utf-8")
+    before = collision.read_bytes()
+    result = _run_cli(tmp_path, ["--write-candidate", "--policy", policy,
+                                 "--output", collision, "--report", collision])
+    assert result.returncode == 2
+    assert collision.read_bytes() == before
+
+
 @pytest.mark.parametrize("mode", ["--check", "--write-candidate"])
 def test_report_cannot_overwrite_active_policy(tmp_path, mode):
     policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
@@ -230,6 +243,16 @@ def test_report_cannot_overwrite_active_policy(tmp_path, mode):
     assert policy.read_bytes() == before
 
 
+def test_candidate_cannot_overwrite_active_policy(tmp_path):
+    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
+    before = policy.read_bytes()
+    result = _run_cli(tmp_path, ["--write-candidate", "--policy", policy,
+                                 "--output", policy, "--report", tmp_path / "report.json"])
+    assert result.returncode == 2
+    assert policy.read_bytes() == before
+    assert not (tmp_path / "report.json").exists()
+
+
 def test_write_candidate_writes_only_candidate_atomically(tmp_path):
     policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
     output = tmp_path / "candidate.yml"
@@ -238,6 +261,50 @@ def test_write_candidate_writes_only_candidate_atomically(tmp_path):
     assert policy.read_bytes() != output.read_bytes()
     assert not list(tmp_path.glob(".db-policy-*.tmp"))
     assert yaml.safe_load(output.read_text(encoding="utf-8"))["entries"][0]["signature"]
+
+
+def test_migrate_candidate_contains_only_resolved_entries_and_preserves_metadata(tmp_path):
+    resolved = _entry("insert", signature=False, reason="keep this", owner="team", linked_issue="GH-9")
+    unresolved = _entry("absent", params=["Int"], reason="unresolved metadata")
+    policy, _ = _fixture(tmp_path, SOURCE, [resolved, unresolved])
+    original = migration.load_policy(policy)
+    candidate, report = migration.migrate(original, tmp_path)
+
+    assert len(candidate["entries"]) == 1
+    assert candidate["entries"][0]["method"] == "insert"
+    assert candidate["entries"][0]["reason"] == "keep this"
+    assert candidate["entries"][0]["owner"] == "team"
+    assert candidate["entries"][0]["linked_issue"] == "GH-9"
+    assert all(row["status"] == "RESOLVED_EXACTLY" for row in report if row["method"] == "insert")
+    assert all(row["method"] != "absent" for row in candidate["entries"])
+
+
+@pytest.mark.parametrize("signature", [
+    {"parameters": ["Int"], "receiver": None, "extra": False},
+    {"parameters": "Int", "receiver": None},
+    {"parameters": ["Int"], "receiver": 7},
+])
+def test_policy_rejects_malformed_signature_during_load(tmp_path, signature):
+    entry = _entry("insert", signature=False)
+    entry["signature"] = signature
+    policy, _ = _fixture(tmp_path, SOURCE, [entry])
+    with pytest.raises(migration.PolicyError):
+        migration.load_policy(policy)
+
+
+@pytest.mark.parametrize("daos", [None, "expenseDao", {"name": "expenseDao"}, [], [7]])
+def test_policy_rejects_malformed_daos_without_type_error_or_value_leak(tmp_path, daos):
+    entry = _entry("insert", signature=False)
+    entry["daos"] = daos
+    policy, _ = _fixture(tmp_path, SOURCE, [entry])
+    with pytest.raises(migration.PolicyError) as exc:
+        migration.load_policy(policy)
+    assert str(exc.value) == "invalid DB policy configuration"
+    result = _run_cli(tmp_path, ["--check", "--policy", policy])
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.strip() == "invalid DB policy configuration"
+    assert str(daos) not in result.stderr
 
 
 def test_write_atomic_uses_replace_commit(monkeypatch, tmp_path):
@@ -309,8 +376,94 @@ def test_candidate_and_report_are_deterministically_ordered(tmp_path):
         assert _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report]).returncode == 0
     assert one.read_bytes() == two.read_bytes()
     payload = json.loads(one.read_text(encoding="utf-8"))
-    assert [row["location"]["entry"] for row in payload["entries"]] == [1, 2]
-    assert payload["statuses"] == sorted(payload["statuses"])
+    assert [row["method"] for row in payload["resolved"]] == ["insert", "overload"]
+    assert set(payload) == {"schema", "schema_version", "policy", "counts", "resolved", "unresolved"}
+    assert payload["schema"] == "cost-aggregator.policy-signature-migration"
+
+
+def test_unresolved_rows_are_complete_and_use_null_for_ambiguous_dao(tmp_path):
+    entry = _entry("absent", params=["Int"], dao="ExpenseDao")
+    entry["daos"] = ["ExpenseDao", "AuditDao"]
+    policy, _ = _fixture(tmp_path, SOURCE, [entry])
+    row = migration.migrate(migration.load_policy(policy), tmp_path)[1][0]
+    assert row["status"] == "PAIR_NOT_FOUND"
+    assert set(row) == {"status", "file", "class", "method", "dao", "operation",
+                        "signature_evidence", "reason_code"}
+    assert row["file"] == REL
+    assert row["dao"] is None
+    assert row["operation"] == "insert"
+    assert row["reason_code"] in migration.REASON_CODES
+    assert set(row["signature_evidence"]) <= {"status", "parameters", "receiver"}
+
+
+def test_report_rejects_noncanonical_totals(tmp_path):
+    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert")])
+    with pytest.raises(migration.PolicyError):
+        migration._report(tmp_path / "report.json", policy, tmp_path,
+                          [{"status": "RESOLVED_EXACTLY"}],
+                          enforce_expected_totals=True)
+
+
+def test_dotted_owner_is_valid_in_policy_candidate_and_report(tmp_path):
+    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
+    loaded = migration.load_policy(policy)
+    candidate, rows = migration.migrate(loaded, tmp_path)
+    assert candidate["entries"][0]["class"] == OWNER
+    report = tmp_path / "dotted-report.json"
+    migration._report(report, policy, tmp_path, rows)
+    assert json.loads(report.read_text(encoding="utf-8"))["resolved"][0]["class"] == OWNER
+
+
+@pytest.mark.parametrize("bad_class", [
+    "", "example..Fixture", ".example.Fixture", "example.Fixture.",
+    "example<Fixture>", "example.*.Fixture", "example.Fixture name",
+    "example.\tFixture", "example.\x01Fixture",
+])
+@pytest.mark.parametrize("method,signature", [("insert", True), ("absent", True)])
+def test_owner_fqcn_validation_is_consistent_and_sanitized(tmp_path, bad_class, method, signature):
+    entry = _entry(method, params=["Int"], signature=signature)
+    entry["class"] = bad_class
+    policy, _ = _fixture(tmp_path, SOURCE, [entry])
+
+    with pytest.raises(migration.PolicyError) as exc:
+        migration.load_policy(policy)
+    assert str(exc.value) == "invalid DB policy configuration"
+    result = _run_cli(tmp_path, ["--check", "--policy", policy])
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.strip() == "invalid DB policy configuration"
+    assert bad_class not in result.stderr
+
+
+@pytest.mark.parametrize("bad_class", [
+    "", "example..Fixture", "example<Fixture>", "example.*.Fixture", "example.Fixture name",
+])
+@pytest.mark.parametrize("resolved", [True, False])
+def test_report_rejects_malformed_owner_fqcn_for_both_row_sections(tmp_path, bad_class, resolved):
+    method = "insert" if resolved else "absent"
+    entry = _entry(method, params=["Int"])
+    policy, _ = _fixture(tmp_path, SOURCE, [entry])
+    row = migration.migrate(migration.load_policy(policy), tmp_path)[1][0]
+    if resolved:
+        row["identity"]["class"] = bad_class
+    else:
+        row["class"] = bad_class
+    with pytest.raises(migration.PolicyError) as exc:
+        migration._report(tmp_path / "invalid-owner-report.json", policy, tmp_path, [row])
+    assert str(exc.value) == "invalid DB policy configuration"
+    assert bad_class not in str(exc.value)
+
+
+def test_unresolved_report_does_not_contain_source_text(tmp_path):
+    secret = "RAW_SOURCE_OR_EXCEPTION_SECRET"
+    entry = _entry("absent", params=["Int"], reason=secret)
+    policy, _ = _fixture(tmp_path, SOURCE + "\n// " + secret, [entry])
+    report = tmp_path / "report.json"
+    assert _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report]).returncode == 1
+    text = report.read_text(encoding="utf-8")
+    assert secret not in text
+    row = json.loads(text)["unresolved"][0]
+    assert row["reason_code"] == "MIGRATION_PAIR_NOT_FOUND"
 
 
 def test_errors_and_reports_are_sanitized(tmp_path):
@@ -339,3 +492,160 @@ def test_explicit_report_only_writes_report_no_implicit_baseline(tmp_path):
     assert not (tmp_path / "baseline.yml").exists()
     assert not (tmp_path / "report.json").exists()
     assert not (tmp_path / "candidate.yml").exists()
+
+
+@pytest.mark.parametrize("field,value", [
+    ("method", "*"), ("class", "Fixture*"), ("path", "app/src/main/java/*/Fixture.kt"),
+    ("daos", ["*"]), ("operation", "write"), ("operation", "unknown"),
+    ("expires", "permanent"), ("allowed_until", "2099-01-01"),
+])
+def test_policy_rejects_wildcards_unknown_operations_and_expiry_metadata(tmp_path, field, value):
+    entry = _entry("insert", signature=False)
+    if field == "daos":
+        entry[field] = value
+    elif field in {"expires", "allowed_until"}:
+        entry[field] = value
+    else:
+        entry[field] = value
+    policy, _ = _fixture(tmp_path, SOURCE, [entry])
+    with pytest.raises(migration.PolicyError) as exc:
+        migration.load_policy(policy)
+    assert str(exc.value) == "invalid DB policy configuration"
+
+
+def test_policy_rejects_permanent_operation_without_leaking_value(tmp_path):
+    entry = _entry("insert", signature=False, operation="permanent")
+    policy, _ = _fixture(tmp_path, SOURCE, [entry])
+
+    with pytest.raises(migration.PolicyError) as exc:
+        migration.load_policy(policy)
+    assert str(exc.value) == "invalid DB policy configuration"
+
+    result = _run_cli(tmp_path, ["--check", "--policy", policy])
+    assert result.returncode == 2
+    assert result.stdout == ""
+    assert result.stderr.strip() == "invalid DB policy configuration"
+    assert "permanent" not in result.stderr
+
+
+@pytest.mark.parametrize("field", ["reason", "owner", "linked_issue"])
+def test_policy_rejects_missing_required_metadata(tmp_path, field):
+    entry = _entry("insert", signature=False)
+    del entry[field]
+    policy, _ = _fixture(tmp_path, SOURCE, [entry])
+    with pytest.raises(migration.PolicyError):
+        migration.load_policy(policy)
+
+
+def test_report_rejects_unknown_keys_and_raw_values(tmp_path):
+    policy, _ = _fixture(tmp_path, SOURCE, [_entry("absent", params=["Int"])])
+    row = migration.migrate(migration.load_policy(policy), tmp_path)[1][0]
+    row["raw_secret"] = "DO_NOT_SERIALIZE"
+    with pytest.raises(migration.PolicyError):
+        migration._report(tmp_path / "report.json", policy, tmp_path, [row])
+
+
+def test_checked_in_migration_report_and_candidate_contract():
+    root = Path(__file__).resolve().parents[1]
+    report = json.loads((root / "build/guardrail-p1-p2/policy-signature-migration.json").read_text(encoding="utf-8"))
+    assert list(report)[:2] == ["schema", "schema_version"]
+    assert set(report) == {"schema", "schema_version", "policy", "counts", "resolved", "unresolved"}
+    assert report["schema"] == "cost-aggregator.policy-signature-migration"
+    assert report["schema_version"] == 1
+    assert report["policy"] == "config/guards/db_ownership_policy.yml"
+    assert report["counts"] == {"input": 99, "resolved": 9, "unresolved": 90}
+    assert len(report["resolved"]) == 9
+    assert len(report["unresolved"]) == 90
+    assert all(set(row) == migration._RESOLVED_KEYS for row in report["resolved"])
+    assert all(set(row) == migration._UNRESOLVED_KEYS for row in report["unresolved"])
+    for row in report["resolved"]:
+        # Resolved rows intentionally have no status field; their section is the status.
+        assert migration.canonical_source_path(row["file"]) == row["file"]
+        assert migration._IDENTIFIER_RE.fullmatch(row["class"])
+        assert migration._IDENTIFIER_RE.fullmatch(row["method"])
+        assert migration._IDENTIFIER_RE.fullmatch(row["dao"])
+        assert migration._IDENTIFIER_RE.fullmatch(row["operation"])
+        signature = row["signature"]
+        assert set(signature) == {"parameters", "receiver"}
+        assert isinstance(signature["parameters"], list)
+        assert all(isinstance(value, str) for value in signature["parameters"])
+        assert signature["receiver"] is None or isinstance(signature["receiver"], str)
+    for row in report["unresolved"]:
+        assert set(row) == {"status", "file", "class", "method", "dao", "operation",
+                            "signature_evidence", "reason_code"}
+        assert row["status"] in migration.STATUS
+        assert row["reason_code"] in migration.REASON_CODES
+        assert migration.canonical_source_path(row["file"]) == row["file"]
+        assert migration._IDENTIFIER_RE.fullmatch(row["class"])
+        assert migration._IDENTIFIER_RE.fullmatch(row["method"])
+        assert row["dao"] is None or migration._IDENTIFIER_RE.fullmatch(row["dao"])
+        assert migration._IDENTIFIER_RE.fullmatch(row["operation"])
+        assert set(row["signature_evidence"]) <= {"status", "parameters", "receiver"}
+        evidence = row["signature_evidence"]
+        if "status" in evidence:
+            assert evidence["status"] in migration.STATUS | {"POLICY_PROVIDED"}
+        if "parameters" in evidence:
+            assert isinstance(evidence["parameters"], list)
+            assert all(isinstance(value, str) for value in evidence["parameters"])
+        if "receiver" in evidence:
+            assert evidence["receiver"] is None or isinstance(evidence["receiver"], str)
+
+    candidate = yaml.safe_load(
+        (root / "config/guards/db_ownership_policy.signatures.candidate.yml").read_text(encoding="utf-8")
+    )
+    candidate_bytes = (root / "config/guards/db_ownership_policy.signatures.candidate.yml").read_bytes()
+    assert "—".encode("utf-8") in candidate_bytes
+    assert b"\\u2014" not in candidate_bytes
+    assert len(candidate["entries"]) == 9
+    active_policy = root / "config/guards/db_ownership_policy.yml"
+    active_before = active_policy.read_bytes()
+    active = migration.load_policy(active_policy)
+    generated_candidate, generated_rows = migration.migrate(active, root)
+    assert len(generated_candidate["entries"]) == 9
+    assert active_policy.read_bytes() == active_before
+    report_symbols = {(row["file"], row["class"], row["method"])
+                      for row in report["resolved"]}
+    candidate_symbols = {(row["path"], row["class"], row["method"])
+                         for row in candidate["entries"]}
+    assert candidate_symbols == report_symbols
+    assert not candidate_symbols.intersection(
+        {(row["file"], row["class"], row["method"]) for row in report["unresolved"]}
+    )
+    active_by_symbol = {(entry["path"], entry["class"], entry["method"]): entry
+                        for entry in active["entries"]}
+    resolved_by_symbol = {(row["identity"]["path"], row["identity"]["class"], row["identity"]["method"]): row
+                          for row in generated_rows if row["status"] == "RESOLVED_EXACTLY"}
+    assert len(resolved_by_symbol) == 9
+    for candidate_entry in candidate["entries"]:
+        symbol = (candidate_entry["path"], candidate_entry["class"], candidate_entry["method"])
+        assert set(candidate_entry) == set(active_by_symbol[symbol]) | {"signature"}
+        for key, value in active_by_symbol[symbol].items():
+            assert candidate_entry[key] == value
+        assert candidate_entry["signature"] == resolved_by_symbol[symbol]["signature"]
+    assert not any(
+        (entry["path"], entry["class"], entry["method"])
+        not in resolved_by_symbol for entry in candidate["entries"]
+    )
+
+
+def test_checked_artifacts_are_read_only_for_check_and_proposal(tmp_path):
+    root = Path(__file__).resolve().parents[1]
+    policy = root / "config/guards/db_ownership_policy.yml"
+    report = root / "build/guardrail-p1-p2/policy-signature-migration.json"
+    candidate = root / "config/guards/db_ownership_policy.signatures.candidate.yml"
+    before = {path: path.read_bytes() for path in (policy, report, candidate)}
+    fake_script = root / "scripts/migrate_db_policy_signatures.py"
+
+    checked = _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report],
+                       fake_script=fake_script)
+    assert checked.returncode == 1
+    assert {path: path.read_bytes() for path in (policy, report, candidate)} == before
+
+    proposed = tmp_path / "new-candidate.yml"
+    proposed_result = _run_cli(
+        tmp_path, ["--write-candidate", "--policy", policy, "--output", proposed,
+                   "--report", report], fake_script=fake_script,
+    )
+    assert proposed_result.returncode == 1
+    assert proposed.exists()
+    assert {path: path.read_bytes() for path in (policy, report, candidate)} == before

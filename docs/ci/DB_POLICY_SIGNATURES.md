@@ -25,6 +25,6 @@ active policy.
 
 All non-`RESOLVED_EXACTLY` statuses are fail-closed and produce a non-zero
 check result. Candidate-only semantics mean the active policy is never written;
-a candidate is committed only when every entry resolves exactly, and otherwise
-the output path is left unchanged. This document records the partial D1 state
-and makes no completion claim.
+the candidate contains only entries that resolved exactly, while unresolved
+entries remain report-only. This document records the partial D1 state and
+makes no completion claim.
