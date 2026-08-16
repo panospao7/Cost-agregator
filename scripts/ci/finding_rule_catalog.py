@@ -370,6 +370,36 @@ _DIAGNOSTIC_ENTRIES: Dict[str, DiagnosticProfile] = {
         guard=GUARD_DB_ACCESS,
         description="DAO inheritance chain is broken",
     ),
+    "DB_DECLARATION_UNRESOLVED": DiagnosticProfile(
+        code="DB_DECLARATION_UNRESOLVED",
+        guard=GUARD_DB_ACCESS,
+        description="Kotlin declaration range cannot be resolved",
+    ),
+    "DB_DECLARATION_INVALID_SOURCE": DiagnosticProfile(
+        code="DB_DECLARATION_INVALID_SOURCE",
+        guard=GUARD_DB_ACCESS,
+        description="Declaration scanner source root is invalid",
+    ),
+    "DB_DECLARATION_SOURCE_EMPTY": DiagnosticProfile(
+        code="DB_DECLARATION_SOURCE_EMPTY",
+        guard=GUARD_DB_ACCESS,
+        description="Declaration scanner source contains no Kotlin files",
+    ),
+    "DB_DECLARATION_SOURCE_UNREADABLE": DiagnosticProfile(
+        code="DB_DECLARATION_SOURCE_UNREADABLE",
+        guard=GUARD_DB_ACCESS,
+        description="Declaration scanner source file or directory cannot be read",
+    ),
+    "DB_DECLARATION_SYMLINK_OUTSIDE": DiagnosticProfile(
+        code="DB_DECLARATION_SYMLINK_OUTSIDE",
+        guard=GUARD_DB_ACCESS,
+        description="Declaration scanner rejected a source symlink outside the approved root",
+    ),
+    "DB_DECLARATION_SCAN_WRITE_FAILED": DiagnosticProfile(
+        code="DB_DECLARATION_SCAN_WRITE_FAILED",
+        guard=GUARD_DB_ACCESS,
+        description="Declaration scanner atomic write failed",
+    ),
     "UNKNOWN_RULE": DiagnosticProfile(
         code="UNKNOWN_RULE",
         guard=GUARD_DB_ACCESS,
