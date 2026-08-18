@@ -1,0 +1,748 @@
+"""Room-aware database access discovery (D4).
+
+This module intentionally performs source-range discovery only.  It does not
+consume legacy guard stdout, infer identity from filenames, or create policy
+rules.  Uncertainty is represented by registered protocol diagnostics and
+therefore makes the returned report untrusted. Clean v2 reports exit 0,
+findings exit 1, and diagnostics exit 2.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None
+
+from ..ci.guard_findings import (
+    CallableSymbol, GuardDiagnostic, GuardFinding, GuardRunReport,
+    SourceLocation, KIND_FUNCTION, KIND_INITIALIZER, KIND_PROPERTY_GETTER,
+    KIND_PROPERTY_SETTER, KIND_VALUES,
+)
+from ..ci.finding_rule_catalog import is_known_diagnostic
+from ..db_policy_signature import SignatureError, normalize_type_text
+from ..kotlin_callable_parser import (
+    ParserError, find_callable_declarations, find_owner_declarations,
+    mask_kotlin_source,
+)
+from .declaration_scanner import scan_production_declarations
+from .room_inventory import build_room_inventory
+from ..verify_db_access_boundaries import (
+    ownership_entry_metadata_errors,
+    structural_entry_metadata_errors,
+)
+
+
+_STRUCTURAL = {
+    "execSQL": re.compile(r"\bexecSQL\s*\("),
+    "openDatabase": re.compile(r"\bopenDatabase\s*\("),
+    "getDatabasePath": re.compile(r"\bgetDatabasePath\s*\("),
+    # All structural evidence patterns begin at the operation token.  The
+    # enclosing call matcher also exposes the operation token (not its dot),
+    # so structural authorization and unsupported-token matching use one
+    # coordinate system for every operation.
+    "deleteRecursively": re.compile(r"\bdeleteRecursively\s*\(\s*\)"),
+    "writableDatabase": re.compile(r"\bwritableDatabase\b"),
+}
+_UNSUPPORTED_STRUCTURAL = {
+    "execSQL": re.compile(r"\bexecSQL\b"),
+    "openDatabase": re.compile(r"\bopenDatabase\b"),
+    "getDatabasePath": re.compile(r"\bgetDatabasePath\b"),
+    "deleteRecursively": re.compile(r"\bdeleteRecursively\b"),
+    # Keep the exact property separate from prefix-like identifiers.  A
+    # property access is evidence even without a call, while names such as
+    # ``writableDatabaseFoo`` must not be silently ignored.
+    "writableDatabase": re.compile(r"\bwritableDatabase(?:[A-Za-z_]\w*)?\b"),
+}
+# Types for which an arbitrary member call is a database structural operation.
+# We only use this allow-list when the receiver type was resolved from the
+# declaration's lexical scope; guessing from a variable name would create
+# false positives and, more importantly, could authorize an unknown operation.
+_STRUCTURAL_RECEIVER_TYPES = frozenset({
+    "SQLiteDatabase", "SupportSQLiteDatabase", "RoomDatabase",
+    "android.database.sqlite.SQLiteDatabase",
+    "androidx.sqlite.db.SupportSQLiteDatabase",
+})
+# Calls are found from the dot and their receiver is parsed backwards.  A
+# suffix regex is unsafe here: it turns ``context.expenseDao`` and
+# ``holder(expenseDao)`` into the apparently bare ``expenseDao``.
+_METHOD_CALL = re.compile(r"\.(?P<safe>\?)?\s*(?P<method>[A-Za-z_]\w*)\s*\(")
+_TYPE = re.compile(r"\b(?:val|var|private|protected|internal|public|lateinit\s+var)\s+(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+_PARAM = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+_DECL_PARAM = re.compile(r"(?:fun\s+)?[A-Za-z_]\w*\s*\((?P<body>[^)]*)\)")
+_ACCESSOR = re.compile(r"\b(?P<kind>get|set)\s*\((?P<params>[^)]*)\)")
+_PROPERTY_STRUCTURAL_ACCESS = re.compile(r"\.(?P<property>writableDatabase)\b")
+
+
+def _load_policy(value: Any) -> tuple[list[dict[str, Any]], bool]:
+    if value is None:
+        return [], True
+    try:
+        if isinstance(value, (str, Path)):
+            if yaml is None:
+                return [], False
+            data = yaml.safe_load(Path(value).read_text(encoding="utf-8"))
+        else:
+            data = value
+        entries = data.get("entries", data) if isinstance(data, dict) else data
+        if not isinstance(entries, list) or any(not isinstance(item, dict) for item in entries):
+            return [], False
+        return list(entries), True
+    except Exception:
+        return [], False
+
+
+def _line(source: str, offset: int) -> int:
+    return source.count("\n", 0, offset) + 1
+
+
+def _line_start(source: str, line: int) -> int:
+    cursor = 0
+    for _ in range(max(0, line - 1)):
+        newline = source.find("\n", cursor)
+        if newline < 0:
+            return len(source)
+        cursor = newline + 1
+    return cursor
+
+
+def _line_end(source: str, line: int) -> int:
+    newline = source.find("\n", _line_start(source, line))
+    return len(source) if newline < 0 else newline
+
+
+def _diag_from_text(value: str) -> GuardDiagnostic | None:
+    if not isinstance(value, str):
+        return GuardDiagnostic("DB_DECLARATION_UNRESOLVED")
+    code, _, rest = value.partition(":")
+    if not is_known_diagnostic(code):
+        return GuardDiagnostic("DB_DECLARATION_UNRESOLVED")
+    path = None
+    if rest.startswith("app/src/"):
+        path_text, separator, line_text = rest.rpartition(":")
+        if separator and path_text.startswith("app/src/") and line_text.isdigit():
+            path = path_text
+        elif not separator:
+            path = rest
+    return GuardDiagnostic(code=code, path=path)
+
+
+def _policy_keys(entry: dict[str, Any]) -> tuple[tuple[str, str, str, str, str], ...]:
+    try:
+        path = entry["path"]
+        owner = entry.get("class")
+        method = entry.get("method")
+        operation = entry.get("operation")
+        daos = entry.get("daos")
+        if not all(isinstance(x, str) and x for x in (path, owner, method, operation)):
+            return ()
+        if not isinstance(daos, list) or not daos or any(not isinstance(item, str) or not item for item in daos):
+            return ()
+        return tuple((path, owner, method, dao, operation) for dao in daos)
+    except (KeyError, TypeError):
+        return ()
+
+
+def _ownership_entry_errors(entry: Any) -> list[str]:
+    """Use the CLI's complete ownership validator for direct API calls."""
+    return ownership_entry_metadata_errors(entry)
+
+
+def _property_symbol_at(source: str, declaration, offset: int) -> CallableSymbol:
+    """Resolve a property initializer/getter/setter at an exact source offset."""
+    begin = _line_start(source, declaration.start_line)
+    end = _line_end(source, declaration.end_line)
+    text = source[begin:end]
+    name_match = re.search(r"\b(?:val|var)\s+([A-Za-z_]\w*)", text)
+    if not name_match:
+        raise SignatureError("BAD_NAME")
+    name = name_match.group(1)
+    accessors = list(_ACCESSOR.finditer(mask_kotlin_source(text)))
+    selected = None
+    for index, accessor in enumerate(accessors):
+        absolute = begin + accessor.start()
+        next_absolute = begin + (accessors[index + 1].start() if index + 1 < len(accessors) else len(text))
+        if absolute <= offset < next_absolute:
+            selected = accessor
+            break
+    if selected is None:
+        # A property initializer is executable, but is not a getter. Keeping a
+        # distinct kind prevents an initializer policy from authorizing either
+        # accessor (and preserves the old initializer scan).
+        kind, parameters = KIND_INITIALIZER, ()
+    elif selected.group("kind") == "get":
+        kind, parameters = KIND_PROPERTY_GETTER, ()
+    else:
+        raw = selected.group("params").strip()
+        match = re.fullmatch(r"[A-Za-z_]\w*\s*:\s*(.+)", raw, re.S)
+        if not match:
+            raise SignatureError("BAD_PARAMS")
+        parameters = (normalize_type_text(match.group(1).strip()),)
+        kind = KIND_PROPERTY_SETTER
+    return CallableSymbol(owner=declaration.owner_fqcn, name=name,
+                          receiver=None, parameters=parameters, kind=kind)
+
+
+def _receiver_expression(masked: str, dot_start: int) -> tuple[str, bool]:
+    """Parse the complete expression immediately preceding a call dot.
+
+    This is deliberately a small, fail-closed Kotlin expression boundary
+    parser, not a name/suffix heuristic.  It balances calls, indexing and
+    parentheses while walking left, then returns the complete expression.  The
+    resolver below accepts only the single identifier form; every other valid
+    expression is therefore reported as unresolved rather than guessed.
+    """
+    end = dot_start
+    i = end - 1
+    while i >= 0 and masked[i].isspace():
+        i -= 1
+    safe = i >= 0 and masked[i] == "?"
+    if safe:
+        i -= 1
+        while i >= 0 and masked[i].isspace():
+            i -= 1
+    depth = {')': 0, ']': 0, '}': 0}
+    closing = {')': '(', ']': '[', '}': '{'}
+    while i >= 0:
+        char = masked[i]
+        if char in depth:
+            depth[char] += 1
+        elif char in closing:
+            if depth[char] > 0:
+                depth[char] -= 1
+            else:
+                break
+        elif not any(depth.values()) and char in ';={}\n':
+            break
+        i -= 1
+    expression = masked[i + 1:end].strip()
+    return expression, (not safe and bool(re.fullmatch(r"[A-Za-z_]\w*", expression)))
+
+
+def _policy_matches(entry: dict[str, Any], declaration, symbol, receiver: str, operation: str) -> bool:
+    """Match the complete callable identity, not just its display name."""
+    if (entry.get("path"), entry.get("class"), entry.get("method"),
+            entry.get("operation")) != (
+                declaration.path, declaration.owner_fqcn.rsplit(".", 1)[-1],
+                symbol.name, operation):
+        return False
+    if not isinstance(entry.get("daos"), list) or receiver not in entry["daos"]:
+        return False
+    signature = entry.get("signature")
+    if signature is None:
+        return False
+    if not isinstance(signature, dict):
+        return False
+    parameters = signature.get("parameters")
+    return (signature.get("receiver") == symbol.receiver and
+            signature.get("kind") == symbol.kind and
+            isinstance(parameters, list) and tuple(parameters) == tuple(symbol.parameters))
+
+
+def _structural_match(entries, path: str, owner: str, method: str, operation: str) -> bool:
+    for entry in entries:
+        if (entry.get("path"), entry.get("class"), entry.get("operation")) != (path, owner, operation):
+            continue
+        pattern = entry.get("method_pattern")
+        if isinstance(pattern, str):
+            try:
+                if re.fullmatch(pattern, method):
+                    return True
+            except re.error:
+                pass
+    return False
+
+
+def _is_structural_receiver(receiver_type: str | None) -> bool:
+    if not receiver_type:
+        return False
+    return receiver_type in _STRUCTURAL_RECEIVER_TYPES or receiver_type.rsplit(".", 1)[-1] in {
+        "SQLiteDatabase", "SupportSQLiteDatabase", "RoomDatabase",
+    }
+
+
+def _argument_types(masked: str, opening: int, receiver_types: dict[str, str]) -> tuple[str, ...] | None:
+    """Resolve the small set of argument forms needed for overload identity."""
+    depth = 0
+    start = opening + 1
+    parts = []
+    for i in range(start, len(masked)):
+        c = masked[i]
+        if c in "([{": depth += 1
+        elif c in ")]}" :
+            if depth == 0:
+                parts.append(masked[start:i].strip())
+                break
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(masked[start:i].strip())
+            start = i + 1
+    if not parts or (len(parts) == 1 and not parts[0]):
+        return ()
+    result = []
+    for value in parts:
+        if value in receiver_types:
+            result.append(receiver_types[value])
+        elif re.fullmatch(r"[0-9]+", value):
+            result.append("Int")
+        elif re.fullmatch(r"[0-9]+[lL]", value):
+            result.append("Long")
+        elif value in {"true", "false"}:
+            result.append("Boolean")
+        elif re.fullmatch(r'"(?:[^"\\]|\\.)*"', value, re.S):
+            result.append("String")
+        else:
+            return None
+    return tuple(result)
+
+
+def _brace_scopes(masked: str) -> tuple[tuple[int, int], ...]:
+    """Return balanced lexical brace ranges in source order."""
+    stack: list[int] = []
+    pairs: list[tuple[int, int]] = []
+    for offset, char in enumerate(masked):
+        if char == "{":
+            stack.append(offset)
+        elif char == "}" and stack:
+            pairs.append((stack.pop(), offset))
+    return tuple(pairs)
+
+
+def _receiver_types(
+    source: str,
+    begin: int,
+    end: int,
+    *,
+    callable_start: int | None = None,
+    callable_end: int | None = None,
+    owner_start: int | None = None,
+    owner_end: int | None = None,
+    use_offset: int | None = None,
+) -> dict[str, str | None]:
+    """Resolve names in the lexical environment of one callable.
+
+    ``begin``/``end`` are the executable range, not a source search window.
+    In particular, declarations from a sibling method are never considered.
+    A ``None`` value is an intentional ambiguity marker: callers must fail
+    closed instead of choosing between equally-scoped declarations.
+    """
+    masked = mask_kotlin_source(source)
+    use = end if use_offset is None else use_offset
+    cstart = begin if callable_start is None else callable_start
+    cend = end if callable_end is None else callable_end
+    scopes = _brace_scopes(masked)
+
+    def scope_for(offset: int, fallback: tuple[int, int]) -> tuple[int, int]:
+        candidates = [scope for scope in scopes if scope[0] < offset < scope[1]]
+        return min(candidates, key=lambda item: item[1] - item[0]) if candidates else fallback
+
+    candidates: list[tuple[str, str, int, tuple[int, int]]] = []
+
+    # Callable parameters are restricted to this callable's own header.  This
+    # avoids accidentally treating constructor or sibling method parameters as
+    # receivers.
+    header_end = masked.find("{", cstart, cend)
+    if header_end < 0:
+        header_end = cend
+    header = source[cstart:header_end]
+    for match in _PARAM.finditer(header):
+        absolute = cstart + match.start()
+        candidates.append((match.group("name"), match.group("type"), absolute,
+                           (cstart, cend)))
+
+    # Class properties and primary-constructor parameters are visible to the
+    # callable, but only direct members of its enclosing class are included.
+    if owner_start is not None and owner_end is not None:
+        owner_scopes = [scope for scope in scopes
+                        if owner_start <= scope[0] and scope[1] <= owner_end]
+        owner_body = min(owner_scopes, key=lambda item: item[0]) if owner_scopes else None
+        if owner_body is not None:
+            for match in _TYPE.finditer(source, owner_body[0] + 1, owner_body[1]):
+                declaration_scope = scope_for(match.start(), owner_body)
+                if declaration_scope == owner_body:
+                    candidates.append((match.group("name"), match.group("type"),
+                                       match.start(), owner_body))
+        constructor_header = source[owner_start:owner_body[0] if owner_body else owner_end]
+        for match in _PARAM.finditer(constructor_header):
+            absolute = owner_start + match.start()
+            if absolute < cstart:
+                candidates.append((match.group("name"), match.group("type"),
+                                   absolute, (owner_start, owner_end)))
+
+    # Locals are deliberately limited to the current callable body and are
+    # visible only after their declaration.  The scope range supplies the
+    # innermost-shadowing rule.
+    body_start = masked.find("{", cstart, cend)
+    if body_start >= 0:
+        body_scope = scope_for(body_start + 1, (body_start, cend))
+        for match in _TYPE.finditer(source, body_start + 1, cend):
+            declaration_scope = scope_for(match.start(), body_scope)
+            candidates.append((match.group("name"), match.group("type"),
+                               match.start(), declaration_scope))
+
+    resolved: dict[str, str | None] = {}
+    by_name: dict[str, list[tuple[str, int, tuple[int, int]]]] = {}
+    for name, typ, declared, scope in candidates:
+        if declared >= use or not (scope[0] <= use <= scope[1]):
+            continue
+        by_name.setdefault(name, []).append((typ, declared, scope))
+    for name, values in by_name.items():
+        innermost = min(item[2][1] - item[2][0] for item in values)
+        visible = [item for item in values
+                   if item[2][1] - item[2][0] == innermost]
+        types = {item[0] for item in visible}
+        resolved[name] = next(iter(types)) if len(visible) == 1 else None
+    return resolved
+
+
+def _dao_maps(inventory) -> tuple[dict[str, set[str]], dict[tuple[str, str], list[Any]]]:
+    by_simple: dict[str, set[str]] = {}
+    methods: dict[tuple[str, str], list[Any]] = {}
+    for dao in inventory.daos:
+        simple = dao.fqcn.rsplit(".", 1)[-1]
+        by_simple.setdefault(simple, set()).add(dao.fqcn)
+        by_simple.setdefault(dao.fqcn, set()).add(dao.fqcn)
+    for method in inventory.methods:
+        methods.setdefault((method.dao.fqcn, method.name), []).append(method)
+    return by_simple, methods
+
+
+def scan_db_access(source_root, ownership_policy=None, structural_policy=None, raw_query_policy=None):
+    """Return a deterministic protocol-v2 report for one DB discovery run.
+
+    ``source_root`` accepts the same project/source-root forms as the D2
+    scanners.  Policies may be parsed mappings/lists or YAML paths.  The
+    scanner is deliberately conservative: unresolved callable, receiver, or
+    operation signatures become diagnostics rather than guessed findings.
+    """
+    ownership, own_ok = _load_policy(ownership_policy)
+    structural, structural_ok = _load_policy(structural_policy)
+    # Validate the complete canonical ownership schema before any policy is
+    # indexed or matched.  In particular, malformed signatures must become an
+    # infrastructure diagnostic, never an unauthorized mutation finding.
+    own_ok = own_ok and all(
+        not _ownership_entry_errors(item) and bool(_policy_keys(item))
+        for item in ownership
+    )
+    structural_ok = structural_ok and all(
+        not structural_entry_metadata_errors(item) for item in structural
+    )
+    inventory = build_room_inventory(source_root, raw_query_policy)
+    declarations = scan_production_declarations(source_root)
+    diagnostics: list[GuardDiagnostic] = []
+    diagnostics.extend(_diag_from_text(item) for item in inventory.diagnostics)
+    diagnostics.extend(
+        GuardDiagnostic(
+            item.code,
+            item.path,
+        )
+        for item in declarations.diagnostics
+    )
+    diagnostics = [item for item in diagnostics if item is not None]
+    if not own_ok or not structural_ok:
+        diagnostics.append(GuardDiagnostic("DB_POLICY_SOURCE_EVIDENCE_INVALID"))
+
+    root = Path(source_root)
+    if root.name == "java" and root.parent.name == "main":
+        project = root.parents[3]
+    elif root.name == "main":
+        project = root.parents[2]
+    elif root.name == "src":
+        project = root.parent.parent
+    else:
+        project = root
+    dao_simple, dao_methods = _dao_maps(inventory)
+    findings: list[GuardFinding] = []
+    files = {item.path: project / item.path for item in declarations.helper_ranges}
+    # Read each file once; declaration ranges are the authoritative scan units.
+    sources: dict[str, str] = {}
+    for path in sorted(files):
+        try:
+            sources[path] = files[path].read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            diagnostics.append(GuardDiagnostic("DB_SOURCE_UNREADABLE", path=path))
+
+    own_keys = {
+        key: item
+        for item in ownership
+        for key in _policy_keys(item)
+    }
+    for declaration in declarations.helper_ranges:
+        source = sources.get(declaration.path)
+        if source is None:
+            continue
+        if declaration.kind in {"class", "interface", "object", "companion", "enum", "annotation", "dao"}:
+            continue
+        if declaration.source_start is not None and declaration.source_end is not None:
+            # Declaration discovery supplies exact offsets for properties and
+            # accessors.  Line reconstruction would merge same-line accessors
+            # and could let one policy identity authorize another callable.
+            start = declaration.source_start
+            end = declaration.source_end
+        elif declaration.body_start is not None:
+            start = declaration.body_start
+            end = declaration.body_end or len(source)
+        else:
+            diagnostics.append(GuardDiagnostic("DB_METHOD_BODY_UNSUPPORTED", path=declaration.path))
+            continue
+        masked = mask_kotlin_source(source)
+        try:
+            owners = find_owner_declarations(source)
+            owner = next((item for item in owners if item.owner == declaration.owner_fqcn), None)
+            callables = find_callable_declarations(source, owner or declaration.owner_fqcn)
+            callable_item = next((item for item in callables if item.start_offset <= start <= item.end_offset), None)
+            if declaration.kind == "function" and callable_item is None:
+                raise ParserError()
+            if declaration.callable_name is not None:
+                symbol = CallableSymbol(
+                    owner=declaration.owner_fqcn,
+                    name=declaration.callable_name,
+                    receiver=None,
+                    parameters=tuple(declaration.parameters),
+                    # ``property`` is a declaration-range kind, not a
+                    # protocol callable kind.  Resolve the executable
+                    # initializer/accessor at each call below.
+                    kind=declaration.kind if declaration.kind in KIND_VALUES else "unknown",
+                )
+            elif callable_item is not None:
+                symbol = CallableSymbol(owner=callable_item.signature.owner_fqcn,
+                                        name=callable_item.signature.function_name,
+                                        receiver=callable_item.signature.receiver,
+                                        parameters=tuple(callable_item.signature.parameter_types),
+                                        kind=KIND_FUNCTION if owner is not None else "top_level_function")
+            else:
+                if declaration.kind == "initializer":
+                    symbol = CallableSymbol(owner=declaration.owner_fqcn,
+                                            name="init", receiver=None,
+                                            parameters=(), kind=KIND_INITIALIZER)
+                else:
+                    declaration_text = source[_line_start(source, declaration.start_line):
+                                               _line_end(source, declaration.end_line)]
+                    name_match = re.search(r"\b(?:val|var)\s+([A-Za-z_]\w*)", declaration_text)
+                    if not name_match:
+                        raise ParserError()
+                    symbol = CallableSymbol(owner=declaration.owner_fqcn or "top_level",
+                                            name=name_match.group(1), receiver=None,
+                                            parameters=(), kind="unknown")
+        except (ParserError, SignatureError):
+            diagnostics.append(GuardDiagnostic("DB_SIGNATURE_UNRESOLVED", path=declaration.path))
+            continue
+        calls = list(_METHOD_CALL.finditer(masked, start, end))
+        for call in sorted(calls, key=lambda item: item.start()):
+            receiver_types = _receiver_types(
+                source, start, end,
+                callable_start=callable_item.start_offset if callable_item is not None else start,
+                callable_end=callable_item.end_offset if callable_item is not None else end,
+                owner_start=owner.start_offset if owner is not None else None,
+                owner_end=owner.end_offset if owner is not None else None,
+                use_offset=call.start(),
+            )
+            receiver, receiver_is_bare = _receiver_expression(masked, call.start())
+            operation = call.group("method")
+            receiver_type = receiver_types.get(receiver) if receiver_is_bare else None
+            call_symbol = symbol
+            if declaration.kind == "property":
+                try:
+                    call_symbol = _property_symbol_at(source, declaration, call.start())
+                except SignatureError:
+                    diagnostics.append(GuardDiagnostic(
+                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
+                        location=SourceLocation(_line(source, call.start()), end_line=_line(source, call.start())),
+                    ))
+                    continue
+            is_structural = operation in _STRUCTURAL
+            if is_structural and (
+                not receiver_is_bare or not _is_structural_receiver(receiver_type)
+            ):
+                diagnostics.append(GuardDiagnostic(
+                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
+                    location=SourceLocation(_line(source, call.start()), end_line=_line(source, call.start())),
+                ))
+                continue
+            if (receiver_is_bare and _is_structural_receiver(receiver_type)
+                    and operation not in _STRUCTURAL
+                    and not any(key[1] == operation for key in dao_methods)):
+                diagnostics.append(GuardDiagnostic(
+                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
+                    location=SourceLocation(_line(source, call.start()), end_line=_line(source, call.start())),
+                ))
+                continue
+            # The receiver parser is for DAO operations only.  Ordinary Kotlin
+            # calls (including structural DB APIs handled below) must not be
+            # reclassified as unresolved DAO scope merely because they use a
+            # dot-call form.
+            if not any(key[1] == operation for key in dao_methods):
+                continue
+            # Safe calls are intentionally not authorized as bare DAO access.
+            # The old matcher skipped ``dao?.insert`` entirely; recognizing the
+            # token and failing closed preserves a structured diagnostic for
+            # direct, qualified, and nested safe-call forms.
+            if call.groupdict().get("safe") or not receiver_is_bare:
+                diagnostics.append(GuardDiagnostic(
+                    "DB_DAO_SCOPE_UNRESOLVED", path=declaration.path,
+                ))
+                continue
+            typ = receiver_types.get(receiver)
+            fqcn_candidates = set(dao_simple.get(typ or "", ()))
+            if not fqcn_candidates:
+                if typ is None:
+                    diagnostics.append(GuardDiagnostic("DB_DAO_SCOPE_UNRESOLVED", path=declaration.path))
+                continue
+            if len(fqcn_candidates) != 1:
+                diagnostics.append(GuardDiagnostic("DB_DAO_SCOPE_UNRESOLVED", path=declaration.path))
+                continue
+            dao = next(iter(fqcn_candidates))
+            candidates = dao_methods.get((dao, operation), [])
+            argument_types = _argument_types(masked, call.end() - 1, receiver_types)
+            if argument_types is None:
+                diagnostics.append(GuardDiagnostic(
+                    "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                ))
+                continue
+            candidates = [item for item in candidates
+                          if tuple(item.parameters) == argument_types]
+            if len(candidates) != 1:
+                diagnostics.append(GuardDiagnostic("DB_CALL_TARGET_AMBIGUOUS", path=declaration.path))
+                continue
+            method = candidates[0]
+            mutator = next((item for item in inventory.mutators if item.method == f"{method.dao.canonical_path}::{dao}#{operation}({', '.join(method.parameters)})"), None)
+            if mutator is None:
+                continue
+            line = _line(source, call.start())
+            location = SourceLocation(line=line, end_line=line)
+            base_policy_candidates = [item for item in ownership
+                                      if (item.get("path"), item.get("class"),
+                                          item.get("method"), item.get("operation")) ==
+                                         (declaration.path,
+                                          declaration.owner_fqcn.rsplit(".", 1)[-1],
+                                          symbol.name, operation)
+                                      and isinstance(item.get("daos"), list)
+                                      and receiver in item["daos"]]
+            if any("signature" not in item for item in base_policy_candidates):
+                diagnostics.append(GuardDiagnostic("DB_SIGNATURE_UNRESOLVED",
+                                                    path=declaration.path,
+                                                    location=location))
+                continue
+            policy_candidates = [item for item in ownership
+                                       if _policy_matches(item, declaration, call_symbol, receiver, operation)]
+            authorized = len(policy_candidates) == 1
+            if authorized and "signature" not in policy_candidates[0]:
+                diagnostics.append(GuardDiagnostic(
+                    "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                    location=location,
+                ))
+                authorized = False
+            if not authorized:
+                findings.append(GuardFinding(
+                    "DB_UNAUTHORIZED_MUTATION", "error", declaration.path,
+                     location, call_symbol,
+                    {"dao": dao, "accessor": receiver, "operation": operation,
+                     "mutation_kind": mutator.mutation_kind, "call_form": "receiver"},
+                    "Database mutation is not owned by an exact policy entry",
+                ))
+            else:
+                entry = policy_candidates[0]
+                if entry.get("barrier_required") is True:
+                    before = masked[start:call.start()]
+                    if not re.search(r"\bwriteBarrier\s*\.\s*(?:checkWritesAllowed|runWrite)\s*\(", before):
+                        findings.append(GuardFinding(
+                            "DB_MISSING_WRITE_BARRIER", "error", declaration.path,
+                            location, call_symbol, {"dao": dao, "operation": operation},
+                            "Database write lacks required barrier evidence",
+                        ))
+
+        for operation, pattern in _STRUCTURAL.items():
+            # ``writableDatabase`` is a property access, not a method call;
+            # it is handled below with the same resolved-receiver checks.
+            if operation == "writableDatabase":
+                continue
+            for match in pattern.finditer(masked, start, end):
+                if not any(
+                    item.group("method") == operation
+                    and item.start("method") == match.start()
+                    for item in calls
+                ):
+                    diagnostics.append(GuardDiagnostic(
+                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
+                        location=SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                    ))
+                    continue
+                structural_symbol = symbol
+                if declaration.kind == "property":
+                    try:
+                        structural_symbol = _property_symbol_at(source, declaration, match.start())
+                    except SignatureError:
+                        diagnostics.append(GuardDiagnostic(
+                            "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
+                            location=SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                        ))
+                        continue
+                if not _structural_match(structural, declaration.path,
+                                         declaration.owner_fqcn.rsplit(".", 1)[-1],
+                                         structural_symbol.name, operation):
+                    findings.append(GuardFinding(
+                        "DB_FORBIDDEN_STRUCTURAL_OPERATION", "error", declaration.path,
+                        SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                         structural_symbol, {"operation": operation},
+                         "Forbidden structural database operation",
+                        ))
+
+        for match in _PROPERTY_STRUCTURAL_ACCESS.finditer(masked, start, end):
+            operation = match.group("property")
+            receiver, receiver_is_bare = _receiver_expression(masked, match.start())
+            receiver_type = receiver_types.get(receiver) if receiver_is_bare else None
+            if not receiver_is_bare or not _is_structural_receiver(receiver_type):
+                diagnostics.append(GuardDiagnostic(
+                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
+                    location=SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                ))
+                continue
+            structural_symbol = symbol
+            if declaration.kind == "property":
+                try:
+                    structural_symbol = _property_symbol_at(source, declaration, match.start())
+                except SignatureError:
+                    diagnostics.append(GuardDiagnostic(
+                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
+                        location=SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                    ))
+                    continue
+            if not _structural_match(structural, declaration.path,
+                                     declaration.owner_fqcn.rsplit(".", 1)[-1],
+                                     structural_symbol.name, operation):
+                findings.append(GuardFinding(
+                    "DB_FORBIDDEN_STRUCTURAL_OPERATION", "error", declaration.path,
+                    SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                    structural_symbol, {"operation": operation},
+                    "Forbidden structural database operation",
+                ))
+
+        # A structural API token without the complete supported call shape is
+        # still evidence of database access.  Do not discard it as an
+        # uninteresting identifier (for example ``db.execSQL`` without an
+        # invocation); emit a diagnostic instead of guessing its scope.
+        for operation, token_pattern in _UNSUPPORTED_STRUCTURAL.items():
+            supported_starts = {
+                match.start() for match in _STRUCTURAL[operation].finditer(masked, start, end)
+            }
+            for token in token_pattern.finditer(masked, start, end):
+                if token.start() not in supported_starts:
+                    diagnostics.append(GuardDiagnostic(
+                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
+                        location=SourceLocation(_line(source, token.start()), end_line=_line(source, token.start())),
+                    ))
+
+    diagnostics = tuple(sorted({(item.code, item.path, repr(item.location), item.symbol, repr(item.controlled_context)): item for item in diagnostics}.values(), key=lambda item: (item.code, item.path or "", repr(item.location))))
+    # Infrastructure diagnostics are never a partial authorization result.
+    # Discard all provisional findings so callers cannot baseline an untrusted
+    # source/inventory parse.
+    if diagnostics:
+        findings = []
+    statistics = {"files_scanned": len(sources), "declarations_scanned": len(declarations.helper_ranges), "inventory_daos": len(inventory.daos), "inventory_mutators": len(inventory.mutators), "trusted": not bool(diagnostics)}
+    return GuardRunReport(guard="db_access", findings=tuple(findings), diagnostics=diagnostics, statistics=statistics)
+
+
+__all__ = ["scan_db_access"]

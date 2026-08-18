@@ -29,6 +29,7 @@ Infrastructure diagnostics (never baseline-able; exit 2):
   * ``DB_SIGNATURE_UNRESOLVED``
   * ``DB_DAO_INHERITANCE_UNRESOLVED``
   * ``DB_DAO_ANNOTATION_SCOPE_UNRESOLVED``
+  * ``DB_STRUCTURAL_SCOPE_UNSUPPORTED``
   * Room inventory discovery, inheritance, policy, and atomic-write diagnostics
   * ``UNKNOWN_RULE`` (unknown/unregistered rule code; direct protocol error)
 
@@ -279,6 +280,11 @@ _DIAGNOSTIC_ENTRIES: Dict[str, DiagnosticProfile] = {
         code="DB_DAO_ANNOTATION_SCOPE_UNRESOLVED",
         guard=GUARD_DB_ACCESS,
         description="Legal @Dao annotation-to-declaration span exceeds the documented safe maximum",
+    ),
+    "DB_STRUCTURAL_SCOPE_UNSUPPORTED": DiagnosticProfile(
+        code="DB_STRUCTURAL_SCOPE_UNSUPPORTED",
+        guard=GUARD_DB_ACCESS,
+        description="Structural database operation cannot be safely scoped or classified",
     ),
     "DB_ROOM_ANNOTATION_CONFLICT": DiagnosticProfile(
         code="DB_ROOM_ANNOTATION_CONFLICT",
