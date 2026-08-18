@@ -373,7 +373,10 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
         # with the fixed controlled diagnostic.  BaseException subclasses
         # (SystemExit, KeyboardInterrupt, GeneratorExit) are intentionally
         # NOT caught here and propagate unchanged.
-        print("ERROR: Could not read baseline file", file=sys.stderr)
+        print(
+            "RATCHET_BASELINE_PROBE_FAILED: baseline path could not be probed",
+            file=sys.stderr,
+        )
         sys.exit(2)
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -384,18 +387,27 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
     except UnicodeDecodeError:
         # Controlled code only -- never echo the baseline path or any
         # decoder detail (the message may carry the filesystem layout).
-        print("ERROR: Baseline file is not valid UTF-8", file=sys.stderr)
+        print(
+            "RATCHET_BASELINE_UNREADABLE: baseline file is not valid UTF-8",
+            file=sys.stderr,
+        )
         sys.exit(2)
     except json.JSONDecodeError:
         # Controlled code only -- never echo the baseline path or the
         # offending JSON text.
-        print("ERROR: Malformed baseline JSON", file=sys.stderr)
+        print(
+            "RATCHET_BASELINE_MALFORMED: baseline file is not valid JSON",
+            file=sys.stderr,
+        )
         sys.exit(2)
     except (PermissionError, OSError):
         # Controlled code only -- never echo the baseline path, OS error
         # text, or the exception class (the message may carry the
         # filesystem layout).
-        print("ERROR: Could not read baseline file", file=sys.stderr)
+        print(
+            "RATCHET_BASELINE_UNREADABLE: baseline file could not be read",
+            file=sys.stderr,
+        )
         sys.exit(2)
     except Exception:
         # Unexpected failure while opening/reading/parsing the baseline.
@@ -404,14 +416,18 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
         # controlled diagnostic.  BaseException subclasses (SystemExit,
         # KeyboardInterrupt, GeneratorExit) are intentionally NOT caught
         # here and propagate unchanged.
-        print("ERROR: Could not read baseline file", file=sys.stderr)
+        print(
+            "RATCHET_BASELINE_UNREADABLE: baseline file could not be read",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     if not isinstance(data, dict):
         # Controlled code only -- never echo the baseline path or the
         # offending top-level value.
         print(
-            "ERROR: Baseline JSON top-level value must be an object",
+            "RATCHET_BASELINE_INVALID: baseline JSON top-level value must be "
+            "an object",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -422,7 +438,7 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
         # content.
         if data.get("guard") != guard_name:
             print(
-                "ERROR: Baseline guard name mismatch",
+                "RATCHET_BASELINE_GUARD_MISMATCH: baseline guard name mismatch",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -430,7 +446,7 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
     fingerprints = data.get("fingerprints")
     if not isinstance(fingerprints, list):
         print(
-            "ERROR: Baseline 'fingerprints' is not a list",
+            "RATCHET_BASELINE_INVALID: baseline 'fingerprints' is not a list",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -439,7 +455,8 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
     # a huge (or hostile) baseline must not be accepted.
     if len(fingerprints) > MAX_BASELINE_ENTRIES:
         print(
-            "ERROR: Baseline contains too many fingerprints",
+            "RATCHET_BASELINE_TOO_LARGE: baseline contains too many "
+            "fingerprints",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -451,14 +468,15 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
     for fp in fingerprints:
         if not isinstance(fp, str) or not fp.strip():
             print(
-                "ERROR: Baseline 'fingerprints' entries must be non-empty "
-                "strings",
+                "RATCHET_BASELINE_INVALID: baseline 'fingerprints' entries "
+                "must be non-empty strings",
                 file=sys.stderr,
             )
             sys.exit(2)
         if len(fp) > MAX_BASELINE_FINGERPRINT:
             print(
-                "ERROR: Baseline fingerprint exceeds maximum length",
+                "RATCHET_BASELINE_INVALID: baseline fingerprint exceeds "
+                "maximum length",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -466,7 +484,8 @@ def load_baseline(path: Path, guard_name: Optional[str] = None) -> Optional[Dict
     # Check for duplicate fingerprints
     if len(fingerprints) != len(set(fingerprints)):
         print(
-            "ERROR: Baseline contains duplicate fingerprints",
+            "RATCHET_BASELINE_INVALID: baseline contains duplicate "
+            "fingerprints",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -935,7 +954,7 @@ def load_baseline_v2(
         # (SystemExit, KeyboardInterrupt, GeneratorExit) are intentionally
         # NOT caught here and propagate unchanged.
         print(
-            "RATCHET_BASELINE_UNREADABLE: baseline file could not be read",
+            "RATCHET_BASELINE_PROBE_FAILED: baseline path could not be probed",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -948,7 +967,7 @@ def load_baseline_v2(
         # Controlled code only -- never echo the baseline path or any
         # decoder detail.
         print(
-            "RATCHET_BASELINE_ENCODING: baseline file is not valid UTF-8",
+            "RATCHET_BASELINE_UNREADABLE: baseline file is not valid UTF-8",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -1761,6 +1780,42 @@ def _main_v2(
                 sys.exit(2)
 
         # Baseline envelope (validated; schema mismatch exits 2).
+        # Explicit v1 baseline incompatibility guard: when the baseline is
+        # a v1 envelope (no baseline_schema_version key) and the finding
+        # protocol is 2, emit a controlled F2 migration-blocker diagnostic
+        # instead of letting load_baseline_v2 fail with a generic envelope
+        # validation error.  The active v1 baseline must not be silently
+        # interpreted as a v2 baseline -- the fingerprint schemas are
+        # incompatible (v1 text-derived vs v2 structured).
+        try:
+            if not baseline_path.exists():
+                print(
+                    "RATCHET_BASELINE_MISSING: baseline file not found",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+        except Exception:
+            print(
+                "RATCHET_BASELINE_PROBE_FAILED: baseline path could not be probed",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        try:
+            with open(baseline_path, "r", encoding="utf-8") as _bf:
+                _probe = json.load(_bf)
+        except Exception:
+            # Malformed/unreadable: let load_baseline_v2 report the
+            # controlled diagnostic.
+            _probe = None
+        if isinstance(_probe, dict) and "baseline_schema_version" not in _probe:
+            print(
+                "RATCHET_V1_BASELINE_INCOMPATIBLE: active baseline is v1 "
+                "(no baseline_schema_version) and cannot be used with "
+                "finding protocol v2; migrate to a v2 baseline first",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
         baseline_data = load_baseline_v2(
             baseline_path, guard_name, report.schema_version
         )

@@ -213,9 +213,18 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
             "config/guards/db_structural_exceptions.yml",
             "config/guards/db_structural_exceptions_expected_methods.yml",
         ],
+        "finding_protocol": 2,
+        "fingerprint_schema": 2,
+        "report_command": "scripts/verify_db_access_boundaries.py",
+        "report_guard_metadata": {
+            "env_file": "COST_AGGREGATOR_GUARD_FINDINGS_FILE",
+            "env_schema": "COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA",
+            "flags": ["--fail-on-violation", "--structural-manifest"],
+        },
         "description": "DB access boundary — global write/read/restore barrier "
                        "with ownership policy, structural exceptions, and the "
-                       "structural expected-methods manifest",
+                       "structural expected-methods manifest. Protocol v2: "
+                       "structured findings via report file, never stdout.",
     },
 
     "event_writers": {

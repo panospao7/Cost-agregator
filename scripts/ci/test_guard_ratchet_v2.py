@@ -2520,7 +2520,7 @@ def test_v2_baseline_malformed_under_sensitive_directory_exits_two(
     [
         (b"[1, 2, 3]", "RATCHET_BASELINE_INVALID"),  # valid JSON, non-object list
         (b'"a plain string"', "RATCHET_BASELINE_INVALID"),  # valid JSON, non-object str
-        (b"\xff\xfe\x00 not utf-8 \x80\x81", "RATCHET_BASELINE_ENCODING"),  # bad UTF-8
+        (b"\xff\xfe\x00 not utf-8 \x80\x81", "RATCHET_BASELINE_UNREADABLE"),  # bad UTF-8
     ],
     ids=["non_object_list", "non_object_string", "invalid_utf8"],
 )
@@ -2530,7 +2530,7 @@ def test_v2_baseline_non_object_or_invalid_utf8_controlled(
     """non-object top-level JSON / invalid UTF-8 -> controlled code, no path leak.
 
     A valid-JSON non-object top level maps to the controlled schema code
-    RATCHET_BASELINE_INVALID; non-UTF-8 bytes map to RATCHET_BASELINE_ENCODING.
+    RATCHET_BASELINE_INVALID; non-UTF-8 bytes map to RATCHET_BASELINE_UNREADABLE.
     Neither diagnostic echoes the sensitive directory name, the file name, the
     offending value, or a traceback.
     """
@@ -2578,7 +2578,7 @@ def test_v2_baseline_non_object_or_invalid_utf8_controlled(
                 3,
                 "invalid start byte",
             ),
-            "RATCHET_BASELINE_ENCODING",
+            "RATCHET_BASELINE_UNREADABLE",
         ),
     ],
     ids=[
@@ -2691,13 +2691,13 @@ def test_v2_baseline_exists_probe_runtime_error_controlled(
     tmp_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
-    """path.exists() raising RuntimeError -> controlled RATCHET_BASELINE_UNREADABLE.
+    """path.exists() raising RuntimeError -> controlled RATCHET_BASELINE_PROBE_FAILED.
 
-    The existence probe at the top of ``load_baseline_v2`` shares the same
-    sanitized error boundary as the read path: an unexpected probe failure
-    (e.g. a hostile filesystem or a broken stat implementation) maps to the
-    fixed controlled code and never leaks the exception class, the message
-    (which may carry a secret path/payload), the baseline path, or a
+    The existence probe at the top of ``load_baseline_v2`` reports only the
+    bounded controlled diagnostic: an unexpected probe failure (e.g. a hostile
+    filesystem or a broken stat implementation) maps to the fixed
+    RATCHET_BASELINE_PROBE_FAILED code and never leaks the exception class, the
+    message (which may carry a secret path/payload), the baseline path, or a
     traceback.
     """
     import guard_ratchet as gr
@@ -2718,7 +2718,7 @@ def test_v2_baseline_exists_probe_runtime_error_controlled(
 
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "RATCHET_BASELINE_UNREADABLE" in captured.err
+    assert "RATCHET_BASELINE_PROBE_FAILED" in captured.err
     assert "SECRETS" not in combined
     assert "baseline.json" not in combined
     assert "Traceback" not in combined
@@ -3239,3 +3239,213 @@ def test_propose_candidate_write_failure_atomic_and_controlled(
     ]
     assert leftovers == [], f"temporary candidate files left behind: {leftovers}"
     assert baseline.read_bytes() == before, "active baseline was modified"
+
+
+# -- F2/D4 integration: v1 baseline rejection and protocol-v2 transport ----------
+
+
+def _write_v1_baseline(path: Path, guard_name: str, fingerprints: List[str]) -> None:
+    """Write a v1 baseline (no baseline_schema_version, no entries)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    baseline = {
+        "guard": guard_name,
+        "generated": "2026-07-10T22:03:53.298282+00:00",
+        "fingerprints": fingerprints,
+    }
+    path.write_text(json.dumps(baseline, indent=2) + "\n", encoding="utf-8")
+
+
+def test_v1_baseline_rejected_in_v2_mode_with_migration_blocker(
+    tmp_path: Path,
+) -> None:
+    """v1 baseline + protocol v2 -> controlled F2 migration-blocker exit 2.
+
+    When the finding protocol is 2 (from registry or --finding-protocol), a
+    v1 baseline (no baseline_schema_version field) must be rejected with a
+    controlled RATCHET_V1_BASELINE_INCOMPATIBLE diagnostic before any
+    comparison.  The v1 fingerprint schema (text-derived) is incompatible
+    with v2 (structured) and must not be silently interpreted.
+    """
+    finding = _finding_dict()
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(guard_py, _report_dict(findings=[finding]), exit_code=1)
+    baseline = _baseline(tmp_path)
+    _write_v1_baseline(baseline, _GUARD, [
+        "UNALLOWLISTED_CLASS app/src/main/java/com/example/Worker.kt"
+    ])
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2 (v1 baseline incompatible), got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "RATCHET_V1_BASELINE_INCOMPATIBLE" in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_v1_baseline_missing_schema_version_rejected_in_v2_mode(
+    tmp_path: Path,
+) -> None:
+    """v1 baseline (missing baseline_schema_version) -> exit 2 in v2 mode.
+
+    Regression: the v1 baseline must not pass through as if it were a v2
+    baseline.  The controlled diagnostic identifies the incompatibility.
+    """
+    finding = _finding_dict()
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(guard_py, _report_dict(findings=[finding]), exit_code=1)
+    baseline = _baseline(tmp_path)
+    # Write a v1 baseline with the old schema (guard, generated, fingerprints)
+    _write_v1_baseline(baseline, _GUARD, [
+        "UNALLOWLISTED_CLASS app/src/main/java/com/example/Worker.kt"
+    ])
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    # Must NOT produce comparison output (no NEW_KEYS, no PASS, no FAIL)
+    assert "NEW_KEYS" not in result.stdout
+    assert "PASS" not in result.stdout
+    assert "FAIL" not in result.stdout
+    assert "Traceback" not in result.stderr
+
+
+def test_v1_baseline_no_leak_sensitive_path_in_v2_mode(
+    tmp_path: Path,
+) -> None:
+    """v1 baseline under a sensitive directory -> controlled diagnostic, no leak.
+
+    The F2 migration-blocker diagnostic must not echo the baseline path,
+    which may carry sensitive directory names.
+    """
+    finding = _finding_dict()
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(guard_py, _report_dict(findings=[finding]), exit_code=1)
+    sensitive_dir = tmp_path / "SECRETS" / "prod"
+    baseline = sensitive_dir / "db_access.json"
+    _write_v1_baseline(baseline, _GUARD, [
+        "UNALLOWLISTED_CLASS app/src/main/java/com/example/Worker.kt"
+    ])
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "RATCHET_V1_BASELINE_INCOMPATIBLE" in result.stderr
+    assert "SECRETS" not in result.stderr
+    assert "db_access.json" not in result.stderr
+    assert "Traceback" not in result.stderr
+
+
+def test_v2_protocol_never_parses_stdout_for_db_guard(
+    tmp_path: Path,
+) -> None:
+    """Protocol v2 with db_access guard: stdout is never parsed.
+
+    A mock guard that writes a valid v2 report AND prints fake stdout
+    findings must result in the report being used (not stdout).  If stdout
+    were parsed, the fake finding would appear as a new key.
+    """
+    report_finding = _finding_dict(name="reportMethod")
+    stdout_line = (
+        "UNALLOWLISTED_CLASS no exact policy entry "
+        "for class=FakeClass method=fakeMethod "
+        "dao=fakeDao op=insert rule=db_ownership_policy "
+        "app/src/main/java/com/example/Fake.kt:1"
+    )
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(
+        guard_py,
+        _report_dict(findings=[report_finding]),
+        exit_code=1,
+        stdout=stdout_line,
+    )
+    baseline = _baseline(tmp_path)
+    _write_baseline_v2(
+        baseline, _GUARD, [_entry(_fingerprint_of(report_finding))],
+    )
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 0, (
+        f"Expected exit 0 (report used, stdout ignored), got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "UNCHANGED: 1" in result.stdout
+    assert "NEW_KEYS: 0" in result.stdout
+
+
+def test_v2_protocol_child_report_transport_via_env(tmp_path: Path) -> None:
+    """Protocol v2: child receives COST_AGGREGATOR_GUARD_FINDINGS_FILE env.
+
+    The ratchet must pass the report file path to the child via the
+    COST_AGGREGATOR_GUARD_FINDINGS_FILE environment variable and set
+    COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA=2.  The mock guard validates
+    these env vars and writes the report to the specified path.
+    """
+    finding = _finding_dict()
+    guard_py = _guard_py(tmp_path)
+    marker = tmp_path / "env_check.txt"
+    _write_mock_guard(
+        guard_py,
+        _report_dict(findings=[finding]),
+        exit_code=1,
+        marker_path=marker,
+        require_existing_report=True,
+    )
+    baseline = _baseline(tmp_path)
+    _write_baseline_v2(baseline, _GUARD, [_entry(_fingerprint_of(finding))])
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 0, (
+        f"Expected exit 0, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    # The mock guard writes the report path to the marker file
+    assert marker.exists(), "mock guard did not write env check marker"
+    report_path = marker.read_text(encoding="utf-8").strip()
+    assert report_path, "mock guard did not record the report path"
+    # Report file must have been cleaned up
+    assert not Path(report_path).exists(), (
+        f"temporary report was not cleaned up: {report_path}"
+    )
+    assert "PASS" in result.stdout
+
+
+def test_registry_resolves_finding_protocol_for_db_access() -> None:
+    """Registry finding_protocol=2 is auto-resolved when --finding-protocol is omitted.
+
+    When the guard registry declares finding_protocol=2 for db_access,
+    the ratchet must use protocol v2 without requiring an explicit
+    --finding-protocol flag.  A v1 baseline must be rejected.
+    """
+    import guard_ratchet as gr
+
+    # Verify the registry returns 2 for db_access
+    protocol = gr._registry_finding_protocol("db_access")
+    assert protocol == 2, (
+        f"Expected registry finding_protocol=2 for db_access, got {protocol}"
+    )
+
+    # Verify resolution without explicit flag
+    resolved = gr._resolve_finding_protocol(None, "db_access")
+    assert resolved == 2, (
+        f"Expected resolved protocol=2 for db_access, got {resolved}"
+    )

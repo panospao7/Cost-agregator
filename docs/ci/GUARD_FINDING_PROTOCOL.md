@@ -613,15 +613,15 @@ This protocol document is **PARTIAL / PENDING REVIEW**. The following work statu
 | Rule catalog (`finding_rule_catalog.py`) | **IMPLEMENTED** (PR-F1) — 3 policy rules (including `DB_FORBIDDEN_STRUCTURAL_OPERATION` with `symbol.kind`/`symbol.receiver`/`symbol.parameters` in identity), 10 diagnostic codes (including `UNKNOWN_RULE`), immutable frozen dataclasses |
 | Protocol tests (`test_guard_findings.py`) | **AUTHORED** (PR-F1) — authored protocol tests; execution pending (`python -m pytest scripts/ci/test_guard_findings.py -v`); **NOT EXECUTED in this recovery worktree** |
 | DB guard structured output | **NOT BEGUN** (requires PR-D4/DB scanner integration) |
-| Ratchet v2 consumption | **NOT BEGUN** (PR-F2 not started) |
-| Guard registry v2 metadata | **NOT BEGUN** |
+| Ratchet v2 consumption | **PARTIAL** — v1 baseline F2 migration-blocker; registry auto-resolve |
+| Guard registry v2 metadata | **PARTIAL** — db_access: finding_protocol=2, fingerprint_schema=2, report metadata |
 | Baseline migration | **NOT BEGUN** |
-| Static-suite integration | **NOT BEGUN** |
+| Static-suite integration | **PARTIAL** — db_access uses protocol-v2 --command-arg tokens |
 | Gradle integration | **NOT BEGUN** |
 
 **PR-F1 status:** Implementation and test files are authored and present in the worktree. They are **pending strict review and runtime validation** (`python -m pytest scripts/ci/test_guard_findings.py -v`). Do not claim this protocol is complete or active until review and test gates pass.
 
-**PR-F2 status (ratchet v2 / DB scanner integration):** Not begun. The current `guard_ratchet.py` remains v1-only (stdout regex parsing). No v2 report consumption, no `COST_AGGREGATOR_GUARD_FINDINGS_FILE` support, no `finding_protocol` registry metadata.
+**PR-F2 status (ratchet v2 / DB scanner integration):** PARTIAL — v1 baseline migration is intentionally blocked with `RATCHET_V1_BASELINE_INCOMPATIBLE`; registry protocol auto-resolution, structured v2 child transport, and suite command integration are implemented. Count-aware comparison exists, but active DB baseline migration and runtime validation remain pending.
 
 The current migration remains in Phase 0 (freeze evidence). No baseline, policy, or structural-exceptions changes have been made.
 

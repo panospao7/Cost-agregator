@@ -559,3 +559,157 @@ class TestArtifactGuardRejectedFromSourceSuite:
             f"release_artifact should not be in GUARD_MANIFEST; "
             f"found guards: {guard_names}"
         )
+
+
+# ── F2/D4 integration tests ───────────────────────────────────────────────────
+
+
+# Import the registry to test its metadata
+import importlib.util as _ilu
+_reg_spec = _ilu.spec_from_file_location(
+    "guard_registry",
+    Path(__file__).resolve().parent / "guard_registry.py",
+)
+_reg = _ilu.module_from_spec(_reg_spec)
+_reg_spec.loader.exec_module(_reg)
+
+
+class TestDbAccessRegistryMetadata:
+    """Verify the db_access guard registry entry carries F2/D4 metadata."""
+
+    def test_finding_protocol_is_two(self):
+        """db_access finding_protocol must be 2."""
+        entry = _reg.GUARD_REGISTRY["db_access"]
+        assert entry.get("finding_protocol") == 2, (
+            f"Expected finding_protocol=2, got {entry.get('finding_protocol')}"
+        )
+
+    def test_fingerprint_schema_is_two(self):
+        """db_access fingerprint_schema must be 2."""
+        entry = _reg.GUARD_REGISTRY["db_access"]
+        assert entry.get("fingerprint_schema") == 2, (
+            f"Expected fingerprint_schema=2, got {entry.get('fingerprint_schema')}"
+        )
+
+    def test_report_command_points_to_verify_script(self):
+        """db_access report_command must reference verify_db_access_boundaries.py."""
+        entry = _reg.GUARD_REGISTRY["db_access"]
+        cmd = entry.get("report_command", "")
+        assert "verify_db_access_boundaries.py" in cmd, (
+            f"report_command does not reference verify_db_access_boundaries.py: {cmd}"
+        )
+
+    def test_report_guard_metadata_has_env_and_flags(self):
+        """db_access report_guard_metadata must declare env vars and flags."""
+        entry = _reg.GUARD_REGISTRY["db_access"]
+        meta = entry.get("report_guard_metadata", {})
+        assert meta.get("env_file") == "COST_AGGREGATOR_GUARD_FINDINGS_FILE"
+        assert meta.get("env_schema") == "COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA"
+        flags = meta.get("flags", [])
+        assert "--fail-on-violation" in flags
+        assert "--structural-manifest" in flags
+
+    def test_baseline_still_v1_non_migrated(self):
+        """db_access baseline must still be the v1 (non-migrated) file."""
+        entry = _reg.GUARD_REGISTRY["db_access"]
+        assert entry.get("baseline") == "config/baselines/db_access.json"
+
+
+class TestDbAccessSuiteCommandTokens:
+    """Verify the DB guard suite entry uses protocol-v2 --command-arg tokens."""
+
+    def test_db_access_command_is_list_of_tokens(self):
+        """The db_access manifest entry must use --command-arg token list."""
+        db_entry = None
+        for name, command, mode in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                db_entry = (name, command, mode)
+                break
+        assert db_entry is not None, "db_access not found in GUARD_MANIFEST"
+        _, command, _ = db_entry
+        assert isinstance(command, list), "command must be a list of tokens"
+
+    def test_db_access_uses_guard_ratchet(self):
+        """The db_access command must invoke guard_ratchet.py."""
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                assert any("guard_ratchet.py" in tok for tok in command), (
+                    f"guard_ratchet.py not in command tokens: {command}"
+                )
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
+    def test_db_access_no_legacy_command_string(self):
+        """The db_access entry must NOT use the legacy --command shell string."""
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                # Must not have a "--command" token (legacy form)
+                assert "--command" not in command, (
+                    f"db_access still uses legacy --command: {command}"
+                )
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
+    def test_db_access_uses_command_arg_tokens(self):
+        """The db_access entry must use --command-arg tokens."""
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                assert "--command-arg=python" in command, (
+                    f"--command-arg=python not in command: {command}"
+                )
+                db_script_arg = None
+                for tok in command:
+                    if "verify_db_access_boundaries.py" in tok:
+                        db_script_arg = tok
+                        break
+                assert db_script_arg is not None, (
+                    f"verify_db_access_boundaries.py not in command tokens: {command}"
+                )
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
+    def test_db_access_includes_structural_manifest(self):
+        """The db_access command must include --structural-manifest."""
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                assert "--command-arg=--structural-manifest" in command, (
+                    f"--structural-manifest not in command tokens: {command}"
+                )
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
+    def test_db_access_includes_canonical_policies(self):
+        """The db_access command must include canonical policy paths."""
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                cmd_str = " ".join(command)
+                assert "db_ownership_policy.yml" in cmd_str, (
+                    f"ownership policy not in command: {command}"
+                )
+                assert "db_structural_exceptions.yml" in cmd_str, (
+                    f"structural exceptions not in command: {command}"
+                )
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
+    def test_db_access_mode_is_blocking(self):
+        """The db_access entry must be blocking mode."""
+        for name, _, mode in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                assert mode == "blocking", f"Expected blocking, got {mode}"
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
+    def test_all_other_guards_preserved(self):
+        """All non-db_access guards must still be present and unchanged."""
+        guard_names = [name for name, _, _ in _runner.GUARD_MANIFEST]
+        expected = [
+            "guard_registry", "source_provenance", "ui_dao", "worker",
+            "receipt_link", "import_lifecycle", "cloud_payload",
+            "pii_logging", "di_release", "allowlist_compliance",
+            "ignored_test_budget", "lint_baseline_policy", "time_boundaries",
+            "cancellation", "privacy", "db_access", "event_writers",
+            "money", "migration_matrix", "guard_tests",
+        ]
+        for name in expected:
+            assert name in guard_names, f"Guard '{name}' missing from manifest"
