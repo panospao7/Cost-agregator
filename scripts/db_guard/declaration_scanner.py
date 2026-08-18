@@ -424,6 +424,10 @@ class DeclarationRange:
     is_abstract: bool
     body_start: int | None
     body_end: int | None
+    callable_name: str | None = None
+    parameters: tuple[str, ...] = ()
+    source_start: int | None = None
+    source_end: int | None = None
 
 
 @dataclass(frozen=True)
@@ -794,7 +798,8 @@ def _range(path: str, source: str, start: int, end: int, owner: str, kind: str,
            dao: bool, abstract: bool, body_start: int | None, body_end: int | None) -> DeclarationRange:
     start_line, end_line = _range_lines(source, start, end)
     return DeclarationRange(path, owner, kind, start_line, end_line, dao,
-                            abstract, body_start, body_end)
+                            abstract, body_start, body_end,
+                            source_start=start, source_end=end)
 
 
 def _direct_functions(masked: str, source: str, path: str, start: int, end: int,
