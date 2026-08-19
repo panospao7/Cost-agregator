@@ -453,6 +453,18 @@ def _tokenize(sql: str) -> Tuple[List[_Token], Optional[str]]:
             tokens.append(_Token("WORD", sql[start:i], depth))
             continue
 
+        # Multi-character operators (``||``, ``==``, ``!=``, ``<>``,
+        # ``<=``, ``>=``, ``>>``, ``<<``).  Emitting them as a single
+        # token lets the expression validator match them against
+        # ``_BINARY_OPS`` instead of seeing two adjacent single-char
+        # operators that break the value/operator alternation.
+        if i + 1 < n:
+            two = c + sql[i + 1]
+            if two in ("||", "==", "!=", "<>", "<=", ">=", ">>", "<<"):
+                tokens.append(_Token("OP", two, depth))
+                i += 2
+                continue
+
         tokens.append(_Token("OP", c, depth))
         i += 1
 
@@ -1006,7 +1018,13 @@ def _valid_statement_grammar(keyword: str, tail: List[_Token]) -> bool:
         as_at = next((n for n, t in enumerate(tail) if _word(tail, n, "AS")), -1)
         return as_at > 1 and _valid_expression(tail[1:as_at]) and name(as_at + 1) == len(tail)
     elif keyword == "VACUUM":
-        return not tail or (name(0) == len(tail)) or (_word(tail, 0, "INTO") and len(tail) == 2 and tail[1].kind == "STRING")
+        if not tail:
+            return True
+        # Only the built-in SQLite schema names are accepted; any other
+        # identifier (e.g. ``VACUUM garbage``) fails closed.
+        if len(tail) == 1 and tail[0].kind == "WORD" and tail[0].text.upper() in ("MAIN", "TEMP"):
+            return True
+        return _word(tail, 0, "INTO") and len(tail) == 2 and tail[1].kind == "STRING"
     elif keyword == "SELECT":
         return _valid_select_tail([_Token("WORD", "SELECT", 0)] + tail)
     else:
