@@ -775,6 +775,9 @@ def _header_opening(text: str, start: int, end: int,
             # ``>`` without touching the delimiter stack.  This keeps
             # function-type parameters such as ``(Int) -> String`` from being
             # misread as an unbalanced generic close.
+            # The loop increment below consumes the arrow's ``>``.  Advancing
+            # by two here would also skip the first token after the arrow (and
+            # can skip an immediately following body brace).
             index += 1
         elif char in closing:
             stack.append(closing[char])
@@ -797,9 +800,18 @@ def _header_opening(text: str, start: int, end: int,
 def _range(path: str, source: str, start: int, end: int, owner: str, kind: str,
            dao: bool, abstract: bool, body_start: int | None, body_end: int | None) -> DeclarationRange:
     start_line, end_line = _range_lines(source, start, end)
+    source_end = end
+    # Structural boundary discovery intentionally stops at the next sibling
+    # token (or the enclosing close), which commonly means that a bodyless
+    # declaration's half-open boundary includes its terminating newline.  The
+    # source range, unlike the structural empty-body marker, ends at the last
+    # character belonging to the declaration itself.
+    if body_start is None and body_end is None:
+        while source_end > start and source[source_end - 1].isspace():
+            source_end -= 1
     return DeclarationRange(path, owner, kind, start_line, end_line, dao,
                             abstract, body_start, body_end,
-                            source_start=start, source_end=end)
+                            source_start=start, source_end=source_end)
 
 
 def _direct_functions(masked: str, source: str, path: str, start: int, end: int,
@@ -855,6 +867,8 @@ def _header_tokens(text: str, start: int, end: int) -> tuple[int | None, int | N
         c = text[index]
         if c == "-" and index + 1 < end and text[index + 1] == ">":
             # A Kotlin ``->`` arrow is not a closing angle bracket.
+            # The loop increment below consumes the arrow's ``>``; do not skip
+            # the first token in the return type/body after it.
             index += 1
         elif c in pairs: stack.append(pairs[c])
         elif c in ")]>":
@@ -885,7 +899,7 @@ def _is_accessor_at(masked: str, index: int, scope_end: int) -> bool:
     as ``val x = set`` never match; an accessor is only claimed at the exact
     position where Kotlin grammar allows one.
     """
-    match = re.match(r"(?:get|set)\s*\(", masked[index:])
+    match = re.match(r"(?:get|set)\s*\(", masked[index:scope_end])
     if not match:
         return False
     if index > 0 and (masked[index - 1].isalnum() or masked[index - 1] == "_"):
@@ -899,6 +913,21 @@ def _is_accessor_at(masked: str, index: int, scope_end: int) -> bool:
         return True
     previous = masked[cursor - 1]
     return previous.isalnum() or previous == "_" or previous in ")]}>"
+
+
+def _next_nonblank(text: str, index: int, end: int) -> int:
+    """Return the next non-horizontal source character within ``[index, end)``."""
+    while index < end and text[index] in " \t\r\n":
+        index += 1
+    return index
+
+
+def _is_direct_scope_boundary(text: str, index: int, end: int) -> bool:
+    """Whether ``index`` starts a declaration belonging to the enclosing scope."""
+    if index >= end or text[index] == "}":
+        return True
+    return (_DIRECT_DECLARATION.match(text, index) is not None
+            or _at_sibling_annotation_or_modifier(text, index))
 
 
 def _expression_end(masked: str, start: int, scope_end: int) -> int:
@@ -929,14 +958,10 @@ def _expression_end(masked: str, start: int, scope_end: int) -> int:
             if char == ";":
                 return index
             if char == "\n":
-                cursor = index + 1
-                while cursor < scope_end and masked[cursor] in " \t\r\n":
-                    cursor += 1
+                cursor = _next_nonblank(masked, index + 1, scope_end)
                 if cursor >= scope_end:
                     return scope_end
-                if (masked[cursor] == "}"
-                        or _DIRECT_DECLARATION.match(masked, cursor)
-                        or _at_sibling_annotation_or_modifier(masked, cursor)
+                if (_is_direct_scope_boundary(masked, cursor, scope_end)
                         or _is_accessor_at(masked, cursor, scope_end)):
                     return index
             if _is_accessor_at(masked, index, scope_end):
@@ -1059,19 +1084,13 @@ def _property_bounds(masked: str, start: int, scope_end: int,
         if char == ";":
             return _result(index)
         if char == "\n":
-            cursor = index + 1
-            while cursor < scope_end and masked[cursor] in " \t\r\n":
-                cursor += 1
+            cursor = _next_nonblank(masked, index + 1, scope_end)
             if cursor >= scope_end:
                 return _result(scope_end)
-            if masked[cursor] == "}":
-                return _result(index)
-            if _DIRECT_DECLARATION.match(masked, cursor):
-                return _result(cursor)
-            # A fresh-line annotation/modifier block opens the next sibling
-            # declaration and is never absorbed into this property.
-            if _at_sibling_annotation_or_modifier(masked, cursor):
-                return _result(cursor)
+            if _is_direct_scope_boundary(masked, cursor, scope_end):
+                # Keep a balanced multiline initializer in the property
+                # range, while preserving the direct sibling as the boundary.
+                return _result(cursor if first_brace is not None else index)
             if _is_accessor_at(masked, cursor, scope_end):
                 index = cursor
                 continue

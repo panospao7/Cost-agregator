@@ -31,19 +31,60 @@ def _write(root: Path, relative: str, source: str) -> None:
 
 
 def _scan(tmp_path: Path, relative: str, source: str):
+    global _CURRENT_SOURCE
+    _CURRENT_SOURCE = source
     _write(tmp_path, relative, source)
     return scan_production_declarations(tmp_path)
 
 
+_CURRENT_SOURCE: str | None = None
+
+
 def _range(path: str, owner: str, kind: str, start: int, end: int,
            dao: bool, abstract: bool, body_start: int | None,
-           body_end: int | None) -> DeclarationRange:
+           body_end: int | None, *, source_start: int | None = None,
+           source_end: int | None = None,
+           source: str | None = None) -> DeclarationRange:
+    source = source if source is not None else _CURRENT_SOURCE
+    if source is not None:
+        lines = source.splitlines(keepends=True)
+        starts = [0]
+        for line in lines:
+            starts.append(starts[-1] + len(line))
+        if source_start is None and 1 <= start <= len(lines):
+            line_start = starts[start - 1]
+            line = lines[start - 1]
+            content = line.rstrip("\r\n")
+            keywords = {
+                "function": ("fun",),
+                "property": ("const", "val", "var"),
+                "class": ("class",),
+                "interface": ("interface",),
+                "enum": ("enum",),
+                "annotation": ("annotation",),
+                "companion": ("companion",),
+            }.get(kind, ())
+            positions = [line.find(keyword) for keyword in keywords]
+            positions = [position for position in positions if position >= 0]
+            source_start = line_start + (min(positions) if positions else len(line) - len(line.lstrip()))
+        if source_end is None and 1 <= end <= len(lines):
+            if body_end is not None:
+                source_end = body_end + 1
+            else:
+                line_start = starts[end - 1]
+                content = lines[end - 1].rstrip("\r\n")
+                source_end = line_start + len(content)
+                if kind == "property":
+                    semicolon = source.find(";", source_start or line_start, line_start + len(content))
+                    if semicolon >= 0:
+                        source_end = semicolon
     return DeclarationRange(path, owner, kind, start, end, dao, abstract,
-                            body_start, body_end)
+                            body_start, body_end, None, (), source_start,
+                            source_end)
 
 
 def _tuple(item: DeclarationRange) -> tuple:
-    """Complete DeclarationRange field tuple for exact comparisons."""
+    """Comparison tuple containing the original nine declaration fields."""
     return (item.path, item.owner_fqcn, item.kind, item.start_line,
             item.end_line, item.is_dao, item.is_abstract, item.body_start,
             item.body_end)
@@ -58,7 +99,7 @@ def _diagnostic(code: str, path: str | None = None) -> Diagnostic:
 
 
 def test_dao_and_same_file_unsafe_writer_keep_only_helper_mutation_in_caller_scan(tmp_path):
-    scan = _scan(tmp_path, "app/src/main/java/example/ReportingDao.kt", """package example
+    source = """package example
 @Dao
 interface ReportingDao {
     fun declared()
@@ -69,34 +110,37 @@ class UnsafeWriter {
         dao.insert()
     }
 }
-""")
+"""
+    scan = _scan(tmp_path, "app/src/main/java/example/ReportingDao.kt", source)
     path = "app/src/main/java/example/ReportingDao.kt"
     assert scan.dao_declarations == (
-        _range(path, "example.ReportingDao", "dao", 3, 5, True, True, 45, 65),
+        _range(path, "example.ReportingDao", "dao", 3, 5, True, True, 45, 65, source=source),
     )
     assert scan.skipped_dao_declaration_ranges == (
-        _range(path, "example.ReportingDao", "function", 4, 4, True, True, None, None),
+        _range(path, "example.ReportingDao", "function", 4, 4, True, True, None, None, source=source),
     )
     assert scan.helper_ranges == (
-        _range(path, "example.UnsafeWriter", "class", 7, 11, False, False, 88, 151),
-        _range(path, "example.UnsafeWriter", "function", 8, 10, False, False, 123, 149),
+        _range(path, "example.UnsafeWriter", "class", 7, 11, False, False, 88, 151, source=source),
+        _range(path, "example.UnsafeWriter", "function", 8, 10, False, False, 123, 149, source=source),
     )
     assert scan.findings == ()
 
 
 def test_top_level_writer_with_dao_parameter_is_never_skipped(tmp_path):
     path = "app/src/main/java/example/TopLevel.kt"
-    scan = _scan(tmp_path, path, """package example
+    source = """package example
 @Dao interface ReportingDao { fun declared() }
 fun unsafeWrite(dao: ReportingDao) {
     dao.insert()
 }
-""")
+"""
+    scan = _scan(tmp_path, path, source)
     assert scan.skipped_dao_declaration_ranges == (
-        _range(path, "example.ReportingDao", "function", 2, 2, True, True, None, None),
+         _range(path, "example.ReportingDao", "function", 2, 2, True, True, None, None,
+                source_start=46, source_end=60, source=source),
     )
     assert scan.helper_ranges[-1] == _range(
-        path, "example", "function", 3, 5, False, False, 99, 117
+        path, "example", "function", 3, 5, False, False, 99, 117, source=source
     )
     assert scan.helper_ranges[-1].is_dao is False
 
@@ -135,15 +179,17 @@ class ReportingHelper {
 
 def test_dao_in_storage_contracts_is_inventoried_by_annotation_not_filename(tmp_path):
     path = "app/src/main/java/example/StorageContracts.kt"
-    scan = _scan(tmp_path, path, """package example
+    source = """package example
 @Dao
 interface ReportingContracts {
     fun load()
 }
-""")
+"""
+    scan = _scan(tmp_path, path, source)
     assert scan.files_scanned == (path,)
     assert scan.dao_declarations == (
-        _range(path, "example.ReportingContracts", "dao", 3, 5, True, True, 51, 67),
+        _range(path, "example.ReportingContracts", "dao", 3, 5, True, True, 51, 67,
+               source=source),
     )
 
 
@@ -167,7 +213,7 @@ class SecondWriter {
 
 def test_abstract_dao_method_is_skipped_but_default_method_body_is_retained(tmp_path):
     path = "app/src/main/java/example/Reporting.kt"
-    scan = _scan(tmp_path, path, """package example
+    source = """package example
 @Dao
 interface ReportingDao {
     fun abstractRead()
@@ -175,12 +221,15 @@ interface ReportingDao {
         println(1)
     }
 }
-""")
+"""
+    scan = _scan(tmp_path, path, source)
     assert scan.dao_declarations == (
-        _range(path, "example.ReportingDao", "dao", 3, 8, True, True, 45, 118),
+        _range(path, "example.ReportingDao", "dao", 3, 8, True, True, 45, 118,
+               source=source),
     )
     assert scan.skipped_dao_declaration_ranges == (
-        _range(path, "example.ReportingDao", "function", 4, 5, True, True, None, None),
+        _range(path, "example.ReportingDao", "function", 4, 5, True, True, None, None,
+               source_start=50, source_end=68, source=source),
     )
     assert scan.helper_ranges == (
         _range(path, "example.ReportingDao", "function", 5, 7, True, False, 92, 116),
@@ -517,14 +566,14 @@ class Typed {
     setter_close = source.index("}", setter_open)
     assert _tuples(properties) == (
         (path, "example.Typed", "property", 3, 4, False, False, None, None),
-        (path, "example.Typed", "property", 5, 8, False, False,
+        (path, "example.Typed", "property", 5, 7, False, False,
          setter_open + 1, setter_close),
     )
     getter, setter = properties
     assert (getter.body_start, getter.body_end) == (None, None)
     assert (setter.body_start, setter.body_end) == (setter_open + 1, setter_close)
     sibling = next(item for item in scan.helper_ranges if item.kind == "function")
-    assert (sibling.start_line, sibling.end_line) == (9, 9)
+    assert (sibling.start_line, sibling.end_line) == (8, 8)
     assert setter.end_line < sibling.start_line
 
 
@@ -538,7 +587,7 @@ fun next() {}
     assert scan.diagnostics == ()
     assert _tuples(scan.helper_ranges) == (
         (path, "example", "property", 2, 2, False, False, None, None),
-        (path, "example", "function", 4, 4, False, False, 66, 67),
+        (path, "example", "function", 4, 4, False, False, 67, 67),
     )
     prop = next(item for item in scan.helper_ranges if item.kind == "property")
     sibling = next(item for item in scan.helper_ranges if item.kind == "function")
@@ -606,7 +655,7 @@ class Holder {
 """)
     assert _tuples(scan.helper_ranges) == (
         (path, "example.Holder", "class", 2, 8, False, False, 30, 115),
-        (path, "example.Holder", "property", 3, 7, False, False, 53, 95),
+        (path, "example.Holder", "property", 3, 6, False, False, 53, 95),
         (path, "example.Holder", "function", 7, 7, False, False, 113, 113),
     )
     prop = next(item for item in scan.helper_ranges if item.kind == "property")
@@ -614,7 +663,7 @@ class Holder {
     # The inner lambda braces are reported as the body span but never
     # truncate the declaration: the property ends at the direct-scope
     # sibling (line 7) and the lambda's close is inside the range.
-    assert (prop.start_line, prop.end_line) == (3, 7)
+    assert (prop.start_line, prop.end_line) == (3, 6)
     assert (prop.body_start, prop.body_end) == (53, 95)
     assert (sibling.start_line, sibling.end_line) == (7, 7)
 
@@ -918,7 +967,9 @@ def test_direct_annotation_on_bodyless_owner_is_preserved(tmp_path):
         ("DirectInline.kt", "package example\n@Marker class A\n", (2, 2)),
     ):
         path = "app/src/main/java/example/" + relative
-        scan = _scan(tmp_path, path, source)
+        # Each case is a separate source file; use a fresh scan root so the
+        # first fixture cannot remain in the inventory for the second case.
+        scan = _scan(tmp_path / relative.removesuffix(".kt"), path, source)
         assert scan.diagnostics == ()
         assert _tuples(scan.helper_ranges) == (
             (path, "example.A", "class", expected[0], expected[1],
@@ -938,10 +989,10 @@ class Holder(val factory: (Int) -> String = { it.toString() }) {
     fun convert(value: (Int) -> String = { it.toString() }) { }
 }
 """)
-    assert scan.helper_ranges == (
-        _range(path, "example.Holder", "class", 2, 6, False, False, 80, 220),
-        _range(path, "example.Holder", "property", 4, 5, False, False, None, None),
-        _range(path, "example.Holder", "function", 5, 5, False, False, 217, 218),
+    assert _tuples(scan.helper_ranges) == (
+        (path, "example.Holder", "class", 2, 6, False, False, 80, 220),
+        (path, "example.Holder", "property", 4, 4, False, False, None, None),
+        (path, "example.Holder", "function", 5, 5, False, False, 217, 218),
     )
 
 
@@ -983,7 +1034,7 @@ class Holder {
 """
     scan = _scan(tmp_path, path, source)
     prop = next(item for item in scan.helper_ranges if item.kind == "property")
-    assert (prop.start_line, prop.end_line) == (3, 10)
+    assert (prop.start_line, prop.end_line) == (3, 8)
     assert prop.body_start == source.index("{\n            dao") + 1
     assert prop.body_end == source.index("\n        }\n    )") + len("\n        ")
     following = next(item for item in scan.helper_ranges
@@ -1046,7 +1097,7 @@ class Holder {
         (path, "example.Holder", "class", 5, 10, False, False, 118, 211),
         (path, "example.Holder.Inner", "enum", 6, 6, False, False, 141, 144),
         (path, "example.Holder.Ann", "annotation", 7, 9, False, True, 172, 209),
-        (path, "example.Holder.Ann", "property", 8, 8, False, False, None, None),
+        (path, "example.Holder.Ann", "property", 8, 9, False, False, None, None),
     )
     for fqcn in (
         "example.Mode", "example.Flag", "example.Marker",
