@@ -103,7 +103,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional
 from urllib.parse import quote
 
 # Make this directory importable so the sibling guard_findings module can be
