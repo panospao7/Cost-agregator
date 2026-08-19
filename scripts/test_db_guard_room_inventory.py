@@ -28,6 +28,12 @@ def _write(root: Path, relative: str, source: str) -> None:
 
 
 def _inventory(tmp_path: Path, source: str, relative: str = "app/src/main/java/example/Fixtures.kt", policy=None):
+    # Guard against callers passing a policy dict as the 3rd positional arg
+    # (which binds to ``relative`` instead of ``policy``).  When the third
+    # argument is not a string it is always the policy; route it correctly.
+    if not isinstance(relative, str):
+        policy = relative
+        relative = "app/src/main/java/example/Fixtures.kt"
     _write(tmp_path, relative, source)
     return build_room_inventory(tmp_path, policy)
 
