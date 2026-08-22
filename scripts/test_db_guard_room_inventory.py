@@ -27,15 +27,12 @@ def _write(root: Path, relative: str, source: str) -> None:
     path.write_text(source, encoding="utf-8")
 
 
-def _inventory(tmp_path: Path, source: str, relative: str = "app/src/main/java/example/Fixtures.kt", policy=None):
-    # Guard against callers passing a policy dict as the 3rd positional arg
-    # (which binds to ``relative`` instead of ``policy``).  When the third
-    # argument is not a string it is always the policy; route it correctly.
-    if not isinstance(relative, str):
-        policy = relative
-        relative = "app/src/main/java/example/Fixtures.kt"
+DEFAULT_RELATIVE = "app/src/main/java/example/Fixtures.kt"
+
+
+def _inventory(tmp_path: Path, source: str, *, relative: str = DEFAULT_RELATIVE, policy=None):
     _write(tmp_path, relative, source)
-    return build_room_inventory(tmp_path, policy)
+    return build_room_inventory(tmp_path, raw_query_policy=policy)
 
 
 def _raw_entry(dao: str, classification: str, method: str = "execute",
@@ -79,6 +76,100 @@ def _mock_directory_barrier(monkeypatch):
     monkeypatch.setattr(room_inventory.os, "close", lambda fd: None if fd == directory_fd else real_close(fd))
 
 
+def test_inventory_helper_rejects_positional_third_argument(tmp_path):
+    """Keyword-only ``relative``/``policy`` make positional misuse fail fast.
+
+    A third positional argument can no longer bind to ``relative`` (or be
+    silently re-routed to ``policy``): the call must raise ``TypeError`` so a
+    dict-shaped policy can never become a synthetic fixture path."""
+    with pytest.raises(TypeError):
+        _inventory(tmp_path, "package example\n@Dao interface D {}\n", "some/relative/Path.kt")
+
+
+def test_dict_policy_cannot_become_synthetic_path(tmp_path):
+    """A dict passed as ``policy=`` stays a policy: nothing derived from its
+    contents may leak into the source tree as a synthetic file path."""
+    inventory = _inventory(
+        tmp_path,
+        "package example\n@Dao interface D { @Insert fun put(v: Item) }\n",
+        policy={"key": "value"},
+    )
+    # No file or directory named after any key/value of the mapping exists.
+    assert not list(tmp_path.rglob("key"))
+    assert not list(tmp_path.rglob("value"))
+    # Exactly one file was written: the canonical default fixture path.
+    written = sorted(
+        path.relative_to(tmp_path).as_posix()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    )
+    assert written == [DEFAULT_RELATIVE]
+    # Fail closed: the malformed dict is reported through the controlled
+    # policy diagnostic channel, never materialized as a path.
+    assert not inventory.mutators
+    assert any(diag_code(d) == "DB_ROOM_RAW_QUERY_POLICY_INVALID" for d in inventory.diagnostics)
+
+
+def test_inventory_default_call_works(tmp_path):
+    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @Insert fun put(v: Item) }\n")
+    assert inventory is not None
+    assert [dao.fqcn for dao in inventory.daos] == ["example.D"]
+    assert (tmp_path / DEFAULT_RELATIVE).is_file()
+
+
+def test_inventory_explicit_relative_writes_fixture(tmp_path):
+    relative = "app/src/main/java/com/example/Other.kt"
+    inventory = _inventory(
+        tmp_path,
+        "package com.example\n@Dao interface Other { @Insert fun save(v: Item) }\n",
+        relative=relative,
+    )
+    written = sorted(
+        path.relative_to(tmp_path).as_posix()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    )
+    assert written == [relative]
+    assert [dao.fqcn for dao in inventory.daos] == ["com.example.Other"]
+    assert inventory.mutators[0].source_location.startswith(relative + ":")
+
+
+def test_inventory_explicit_policy_keyword_forwards(tmp_path):
+    policy = {"version": 1, "methods": [{
+        "dao": "example.D", "method": "execute",
+        "signature": {"receiver": None, "parameters": ["androidx.sqlite.db.SupportSQLiteQuery"]},
+        "classification": "write", "reason": "Controlled repair query",
+        "owner": "@panospao7", "linked_issue": "MIT-003",
+    }]}
+    inventory = _inventory(
+        tmp_path,
+        "package example\n@Dao interface D { @RawQuery fun execute(query: androidx.sqlite.db.SupportSQLiteQuery) }\n",
+        policy=policy,
+    )
+    assert len(inventory.mutators) == 1
+    assert inventory.mutators[0].mutation_kind == "ROOM_MUTATING_QUERY"
+
+
+def test_inventory_forwards_raw_query_policy_by_keyword(tmp_path, monkeypatch):
+    seen = {}
+    real_build = build_room_inventory
+
+    def spy(*args, **kwargs):
+        seen["positional"] = len(args)
+        seen["kwargs"] = kwargs
+        return real_build(*args, **kwargs)
+
+    # Patch the name as imported into THIS test module: ``_inventory``
+    # resolves ``build_room_inventory`` from this module's globals.
+    # ``monkeypatch.setitem`` restores the original binding afterwards.
+    monkeypatch.setitem(_inventory.__globals__, "build_room_inventory", spy)
+    policy = {"version": 1}
+    _inventory(tmp_path, "package example\n@Dao interface D { @Insert fun put(v: Item) }\n", policy=policy)
+    assert seen["positional"] == 1
+    assert seen["kwargs"] == {"raw_query_policy": policy}
+    assert seen["kwargs"]["raw_query_policy"] is policy
+
+
 def test_qualified_multiline_dao_and_non_suffix_file_are_discovered(tmp_path):
     inventory = _inventory(tmp_path, """package example
         @androidx.room.Dao
@@ -87,7 +178,7 @@ def test_qualified_multiline_dao_and_non_suffix_file_are_discovered(tmp_path):
             @androidx.room.Insert
             fun save(value: Item)
         }
-    """, "app/src/main/java/example/Repair.kt")
+    """, relative="app/src/main/java/example/Repair.kt")
     assert [dao.fqcn for dao in inventory.daos] == ["example.RepairDao"]
     assert inventory.mutators[0].method.endswith("#save(Item)")
     assert inventory.mutators[0].source_location == "app/src/main/java/example/Repair.kt:5"
@@ -154,7 +245,7 @@ def test_raw_query_uses_only_exact_policy_signature(tmp_path):
         "classification": "write", "reason": "Controlled repair query",
         "owner": "@panospao7", "linked_issue": "MIT-003",
     }]}
-    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: androidx.sqlite.db.SupportSQLiteQuery) }\n", policy)
+    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: androidx.sqlite.db.SupportSQLiteQuery) }\n", policy=policy)
     assert len(inventory.mutators) == 1
     assert inventory.mutators[0].mutation_kind == "ROOM_MUTATING_QUERY"
 
@@ -216,7 +307,7 @@ def test_raw_query_unsupported_parameter_types_never_become_mutators(tmp_path, p
     inventory = _inventory(
         tmp_path,
         f"package example\nimport androidx.sqlite.db.SupportSQLiteQuery\n@Dao interface D {{ @RawQuery fun execute({parameter}) }}\n",
-        policy,
+        policy=policy,
     )
     assert not inventory.mutators
     assert any(
@@ -243,7 +334,7 @@ def test_raw_query_two_parameters_never_become_mutators(tmp_path):
 import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface D { @RawQuery fun execute(query: SupportSQLiteQuery, limit: Int) }
 """,
-        policy,
+        policy=policy,
     )
     assert not inventory.mutators
     assert any(
@@ -271,7 +362,7 @@ def test_raw_query_extension_receiver_never_becomes_mutator(tmp_path):
 import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface D { @RawQuery fun SupportSQLiteQuery.execute(query: SupportSQLiteQuery) }
 """,
-        policy,
+        policy=policy,
     )
     assert not inventory.mutators
     assert any(
@@ -293,7 +384,7 @@ def test_raw_query_single_support_query_parameter_is_the_positive_contract(tmp_p
     inventory = _inventory(
         tmp_path,
         "package example\nimport androidx.sqlite.db.SupportSQLiteQuery\n@Dao interface D { @RawQuery fun execute(query: SupportSQLiteQuery) }\n",
-        policy,
+        policy=policy,
     )
     assert len(inventory.mutators) == 1
     assert inventory.mutators[0].mutation_kind == "ROOM_MUTATING_QUERY"
@@ -539,7 +630,7 @@ def test_raw_query_policy_rejects_malformed_signature_types(tmp_path, signature)
         "dao": "example.D", "method": "execute", "signature": signature,
         "classification": "write", "reason": "controlled", "owner": "@owner", "linked_issue": "ISSUE",
     }
-    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: SupportSQLiteQuery) }\n", {"version": 1, "methods": [entry]})
+    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: SupportSQLiteQuery) }\n", policy={"version": 1, "methods": [entry]})
     assert any(diag_code(d) == "DB_ROOM_RAW_QUERY_POLICY_INVALID" for d in inventory.diagnostics)
 
 
@@ -550,7 +641,7 @@ def test_raw_query_policy_rejects_non_string_classification(tmp_path, classifica
         "signature": {"receiver": None, "parameters": ["SupportSQLiteQuery"]},
         "classification": classification, "reason": "controlled", "owner": "@owner", "linked_issue": "ISSUE",
     }
-    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: SupportSQLiteQuery) }\n", {"version": 1, "methods": [entry]})
+    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: SupportSQLiteQuery) }\n", policy={"version": 1, "methods": [entry]})
     assert any(diag_code(d) == "DB_ROOM_RAW_QUERY_POLICY_INVALID" for d in inventory.diagnostics)
 
 
@@ -560,7 +651,7 @@ def test_raw_query_policy_rejects_noncanonical_type_whitespace(tmp_path):
         "signature": {"receiver": None, "parameters": [" List < String ? > "]},
         "classification": "write", "reason": "controlled", "owner": "@owner", "linked_issue": "ISSUE",
     }]}
-    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: List<String?>) }\n", policy)
+    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: List<String?>) }\n", policy=policy)
     assert not inventory.mutators
     assert any(diag_code(diagnostic) == "DB_ROOM_RAW_QUERY_POLICY_INVALID" for diagnostic in inventory.diagnostics)
 
@@ -576,7 +667,7 @@ def test_raw_query_canonical_generic_parameter_fails_signature_contract(tmp_path
         "signature": {"receiver": None, "parameters": ["List<String?>"]},
         "classification": "write", "reason": "controlled", "owner": "@owner", "linked_issue": "ISSUE",
     }]}
-    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: List<String?>) }\n", policy)
+    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: List<String?>) }\n", policy=policy)
     assert not inventory.mutators
     assert any(diag_code(d) == "DB_ROOM_RAW_QUERY_POLICY_INVALID" for d in inventory.diagnostics)
 
@@ -588,7 +679,7 @@ def test_raw_query_policy_requires_exact_overload_signature(tmp_path):
         "classification": "write", "reason": "Controlled repair query",
         "owner": "@panospao7", "linked_issue": "MIT-003",
     }]}
-    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: SupportSQLiteQuery) }\n", policy)
+    inventory = _inventory(tmp_path, "package example\n@Dao interface D { @RawQuery fun execute(query: SupportSQLiteQuery) }\n", policy=policy)
     assert not inventory.mutators
     assert any(d.startswith("DB_SIGNATURE_UNRESOLVED:") for d in inventory.diagnostics)
 
@@ -1107,7 +1198,7 @@ def test_stale_policy_only_raw_query_entry_fails_closed(tmp_path):
     inventory = _inventory(
         tmp_path,
         "package example\n@Dao interface D { @Insert fun put(v: Item) }\n",
-        policy,
+        policy=policy,
     )
     assert not inventory.mutators
     assert any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_STALE:") for d in inventory.diagnostics)
@@ -1126,7 +1217,7 @@ def test_stale_policy_only_raw_query_entry_for_missing_dao_fails_closed(tmp_path
     inventory = _inventory(
         tmp_path,
         "package example\n@Dao interface D { @RawQuery fun execute(query: androidx.sqlite.db.SupportSQLiteQuery) }\n",
-        policy,
+        policy=policy,
     )
     assert any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_STALE:") for d in inventory.diagnostics)
     assert not inventory.mutators
@@ -1149,7 +1240,7 @@ def test_discovered_unlisted_raw_query_fails_closed_across_daos(tmp_path):
 @Dao interface First { @RawQuery fun covered(query: androidx.sqlite.db.SupportSQLiteQuery) }
 @Dao interface Second { @RawQuery fun unlisted(query: androidx.sqlite.db.SupportSQLiteQuery) }
 """,
-        policy,
+        policy=policy,
     )
     # ``covered`` is read-classified (never a mutator); ``unlisted`` fails
     # closed with REQUIRED and is never a mutator.
@@ -1177,7 +1268,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Base
 """,
-        policy,
+        policy=policy,
     )
     assert not inventory.mutators
     assert any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_REQUIRED:") for d in inventory.diagnostics)
@@ -1211,7 +1302,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Base
 """,
-        policy,
+        policy=policy,
     )
     assert not inventory.mutators
     assert not any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_") for d in inventory.diagnostics)
@@ -1247,7 +1338,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Middle : Base
 @Dao interface GrandChild : Middle
 """,
-        policy,
+        policy=policy,
     )
     assert any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_REQUIRED:") for d in inventory.diagnostics)
     assert not any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_STALE:") for d in inventory.diagnostics)
@@ -1280,7 +1371,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Base { @Query("SELECT 1") fun execute(query: SupportSQLiteQuery) }
 """,
-        policy,
+        policy=policy,
     )
     assert any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_STALE:") for d in inventory.diagnostics)
     assert not any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_REQUIRED:") for d in inventory.diagnostics)
@@ -1320,7 +1411,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Second { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : First, Second
 """,
-        policy,
+        policy=policy,
     )
     assert any(
         d.startswith("DB_ROOM_RAW_QUERY_POLICY_INHERITED_AMBIGUOUS:")
@@ -1356,7 +1447,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Missing
 """,
-        policy,
+        policy=policy,
     )
     assert any(d.startswith("DB_DAO_INHERITANCE_UNRESOLVED:") for d in inventory.diagnostics)
     assert any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_STALE:") for d in inventory.diagnostics)
@@ -1379,7 +1470,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 """,
-        policy,
+        policy=policy,
     )
     assert len(inventory.mutators) == 1
     assert "example.Child#" in inventory.mutators[0].method
@@ -1409,7 +1500,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Base
 """,
-        policy,
+        policy=policy,
     )
     assert len(inventory.mutators) == 1
     mutator = inventory.mutators[0]
@@ -1445,7 +1536,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 """,
-        policy,
+        policy=policy,
     )
     assert len(inventory.mutators) == 1
     assert "example.Base#" in inventory.mutators[0].method
@@ -1470,7 +1561,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Base { @Query("SELECT 1") fun execute(query: SupportSQLiteQuery) }
 """,
-        policy,
+        policy=policy,
     )
     assert len(inventory.mutators) == 1
     assert "example.Base#" in inventory.mutators[0].method
@@ -1494,7 +1585,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Base { @RawQuery fun execute(query: SupportSQLiteQuery) }
 @Dao interface Child : Base
 """,
-        policy,
+        policy=policy,
     )
     assert len(inventory.mutators) == 1
     assert "example.Base#" in inventory.mutators[0].method
@@ -1521,7 +1612,7 @@ import androidx.sqlite.db.SupportSQLiteQuery
 @Dao interface Middle : Base
 @Dao interface GrandChild : Middle { @RawQuery fun execute(query: SupportSQLiteQuery) }
 """,
-        policy,
+        policy=policy,
     )
     assert len(inventory.mutators) == 2
     assert any("example.Base#" in item.method for item in inventory.mutators)
@@ -1548,7 +1639,7 @@ def test_bodyless_dao_child_inherits_exact_parent_mutator(tmp_path):
     inventory = _inventory(tmp_path, """package example
         @Dao interface Child : Base
         @Dao interface Base { @Insert fun create(v: Item) }
-    """, {"version": 1, "methods": []})
+    """, policy={"version": 1, "methods": []})
     assert {dao.fqcn for dao in inventory.daos} == {"example.Base", "example.Child"}
     assert all(method.dao.fqcn != "example.Child" for method in inventory.methods)
     inherited = [item for item in inventory.mutators if "example.Child#" in item.method]
@@ -1562,7 +1653,7 @@ def test_bodyless_abstract_dao_child_inherits_parent_mutator(tmp_path):
     inventory = _inventory(tmp_path, """package example
         @Dao abstract class Child : Base
         @Dao interface Base { @Delete fun remove(v: Item) }
-    """, {"version": 1, "methods": []})
+    """, policy={"version": 1, "methods": []})
     assert {dao.fqcn for dao in inventory.daos} == {"example.Base", "example.Child"}
     inherited = [item for item in inventory.mutators if "example.Child#" in item.method]
     assert len(inherited) == 1
@@ -1579,7 +1670,7 @@ def test_bodyless_dao_keeps_enclosing_owner_for_inheritance(tmp_path):
             @Dao interface Child : Base
             @Dao interface Base { @Insert fun create(v: Item) }
         }
-    """, {"version": 1, "methods": []})
+    """, policy={"version": 1, "methods": []})
     assert {dao.fqcn for dao in inventory.daos} == {"example.Holder.Base", "example.Holder.Child"}
     inherited = [item for item in inventory.mutators if "example.Holder.Child#" in item.method]
     assert len(inherited) == 1
@@ -2041,7 +2132,7 @@ def test_annotations_in_all_kotlin_literals_and_comments_are_ignored(tmp_path):
 val line = "@Dao interface FakeString { @Update fun fake(v: Item) }"
 val triple = """@Dao interface FakeTriple { @Upsert fun fake(v: Item) }"""
 @Dao interface Real { @Insert fun save(v: Item) }
-''', {"version": 1, "methods": []})
+''', policy={"version": 1, "methods": []})
     assert [dao.fqcn for dao in inventory.daos] == ["example.Real"]
     assert [item.method.rsplit("#", 1)[1] for item in inventory.mutators] == ["save(Item)"]
     assert inventory.diagnostics == ()
@@ -2153,7 +2244,7 @@ def test_named_query_argument_uses_accessor_annotation_span(tmp_path):
 def test_unsupported_accessor_syntax_has_exact_sanitized_diagnostic(tmp_path):
     inventory = _inventory(tmp_path, '''package example
 @Dao interface D { @Insert fun broken(value) }
-''', {"version": 1, "methods": []})
+''', policy={"version": 1, "methods": []})
     assert inventory.mutators == ()
     assert inventory.diagnostics == ("DB_ROOM_UNSUPPORTED_METHOD:app/src/main/java/example/Fixtures.kt",)
 

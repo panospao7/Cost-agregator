@@ -1,651 +1,1458 @@
-"""Contract tests for the DB-policy signature migration CLI.
+"""Candidate-identity tests for the v1 -> v2 DB-policy migration machinery.
 
-The suite uses only temporary, canonical ``app/src/main/...`` Kotlin fixtures;
-the migration implementation and its real command-line entry point are used,
-not a reimplementation of discovery.  Authored coverage; execution pending.
-The fixture family has deliberately narrow, explicit policy entries.  No
-baseline or wildcard policy is used.
+These tests exercise ``migrate_policy(entries, repo_root)`` directly against
+synthetic temporary repositories shaped like the real production tree
+(``app/src/main/java/...`` with ``@Dao`` interfaces and repository classes).
+They replace the obsolete suite that asserted the retired v1-shape CLI API
+(``load_policy`` / ``resolve_entry`` / ``RESOLVED_EXACTLY`` report rows) and
+the stale checked-in 99-input / 9-resolved / 90-unresolved artifact counts;
+none of those symbols exist any longer.
+
+Every resolved row must be an exact, schema-valid v2 candidate identity and
+every failure must surface as exactly one closed ``STATUS_*`` constant —
+never a fabricated resolution, never a defaulted kind, never free-form debt.
+
+Authored coverage; execution pending in this environment.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-import yaml
+# ``policy_v2_candidate`` uses in-package relative imports, so it must be
+# imported as ``scripts.db_guard.policy_v2_candidate`` with the worktree
+# root on ``sys.path``.
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+from scripts.db_guard.policy_model import BarrierMode, CallableKind  # noqa: E402
+from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
+    STATUS_BARRIER_MODE_UNRESOLVED,
+    STATUS_CALLABLE_MISSING,
+    STATUS_DAO_TARGET_AMBIGUOUS,
+    STATUS_MUTATION_PAIR_MISSING,
+    STATUS_RESOLVED,
+    find_duplicate_mutation_keys,
+    migrate_policy,
+)
 
-import migrate_db_policy_signatures as migration  # noqa: E402
+REPO_KT = "app/src/main/java/com/example/Repository.kt"
+DAO_KT = "app/src/main/java/com/example/ExpenseDao.kt"
+AUDIT_DAO_KT = "app/src/main/java/com/example/AuditDao.kt"
+ARCHIVE_DAO_KT = "app/src/main/java/com/example/ArchiveDao.kt"
 
 
-REL = "app/src/main/java/example/Fixture.kt"
-OWNER = "example.Fixture"
+def _write_repo(tmp_path: Path, files: dict) -> None:
+    """Materialize ``{repo-relative posix path: text}`` under ``tmp_path``."""
+    for relative in sorted(files):
+        target = tmp_path / Path(*relative.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(files[relative], encoding="utf-8")
 
 
-def _entry(method, *, params=None, receiver=None, operation="insert", dao="ExpenseDao",
-           reason="controlled reason", owner="owner-id", linked_issue="ISSUE-42",
-           signature=True, barrier_via=None):
+def _dao_source(package: str, name: str) -> str:
+    """A minimal Room DAO interface fixture."""
+    return (
+        "package " + package + "\n"
+        "\n"
+        "@Dao\n"
+        "interface " + name + " {\n"
+        "    fun insert(value: Long): Long\n"
+        "}\n"
+    )
+
+
+def _legacy_entry(
+    path,
+    klass,
+    method,
+    *,
+    params=("Int",),
+    receiver=None,
+    daos=("ExpenseDao",),
+    operation="insert",
+    barrier_required=True,
+    barrier_via=None,
+    reason="controlled migration reason",
+    owner="expense-owners",
+    linked_issue="ISSUE-100",
+):
+    """Build one legacy v1 YAML-shaped policy entry mapping."""
     item = {
-        "path": REL, "class": OWNER, "method": method, "daos": [dao],
-        "operation": operation, "barrier_required": True, "reason": reason,
-        "owner": owner, "linked_issue": linked_issue,
+        "path": path,
+        "class": klass,
+        "method": method,
+        "daos": list(daos),
+        "operation": operation,
+        "barrier_required": barrier_required,
+        "reason": reason,
+        "owner": owner,
+        "linked_issue": linked_issue,
+        "signature": {"parameters": list(params), "receiver": receiver},
     }
-    if signature:
-        item["signature"] = {"parameters": list(params or ()), "receiver": receiver}
     if barrier_via is not None:
         item["barrier_via"] = barrier_via
     return item
 
 
-def _fixture(tmp_path: Path, source: str, entries: list[dict]) -> tuple[Path, Path]:
-    source_path = tmp_path / Path(*REL.split("/"))
-    source_path.parent.mkdir(parents=True, exist_ok=True)
-    source_path.write_text(source, encoding="utf-8")
-    policy = tmp_path / "policy.yml"
-    policy.write_text(yaml.safe_dump({"entries": entries}, sort_keys=False), encoding="utf-8")
-    return policy, source_path
+def _only_entry(result):
+    """Assert a single-entry batch fully resolved and return its candidate."""
+    assert result.input_count == 1
+    assert result.unresolved == ()
+    assert len(result.resolved) == 1
+    return result.resolved[0].entry
 
 
-def _run_cli(tmp_path: Path, args: list[str], *, fake_script: Path | None = None):
-    """Invoke main() through a subprocess while making the CLI's repo root temporary."""
-    fake_script = fake_script or (tmp_path / "scripts" / "migrate_db_policy_signatures.py")
-    fake_script.parent.mkdir(parents=True, exist_ok=True)
-    code = (
-        "import sys; import migrate_db_policy_signatures as m; "
-        "m.__file__ = sys.argv[1]; raise SystemExit(m.main(sys.argv[2:]))"
+EXPENSE_DAO_SOURCE = _dao_source("com.example", "ExpenseDao")
+
+BASIC_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    fun save(value: Int) {\n"
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def _standard_repo_files():
+    return {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: BASIC_REPO_SOURCE}
+
+
+# ── (1) Member function identity ──────────────────────────────────────────────
+
+
+def test_member_function_resolves_to_full_fqcn_and_function_kind(tmp_path):
+    _write_repo(tmp_path, _standard_repo_files())
+    entries = [_legacy_entry(REPO_KT, "Repository", "save")]
+    result = migrate_policy(entries, str(tmp_path))
+    assert STATUS_RESOLVED == "RESOLVED"
+    entry = _only_entry(result)
+    assert entry.path == REPO_KT
+    assert entry.owner_fqcn == "com.example.Repository"
+    assert entry.kind is CallableKind.FUNCTION
+    assert entry.kind.value == "function"
+    assert entry.method == "save"
+    assert entry.parameter_types == ("Int",)
+    assert entry.receiver is None
+    assert entry.dao_accessor == "expenseDao"
+    assert entry.dao_fqcn == "com.example.ExpenseDao"
+    assert entry.operation == "insert"
+    assert entry.barrier_mode is BarrierMode.DIRECT
+
+
+# ── (2) Nested owner FQCN ─────────────────────────────────────────────────────
+
+
+def test_nested_owner_handle_resolves_to_nested_fqcn(tmp_path):
+    nested_source = (
+        "package com.example\n"
+        "\n"
+        "class Outer {\n"
+        "    class Handle {\n"
+        "        fun sync(value: Int) {\n"
+        "            expenseDao.insert(value)\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
     )
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(Path(__file__).resolve().parent)
-    return subprocess.run(
-        [sys.executable, "-c", code, str(fake_script), *map(str, args)],
-        cwd=tmp_path, env=env, text=True, capture_output=True, check=False,
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: nested_source},
     )
+    entries = [
+        _legacy_entry(REPO_KT, "com.example.Outer.Handle", "sync"),
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.owner_fqcn == "com.example.Outer.Handle"
+    assert entry.kind.value == "function"
+    assert entry.method == "sync"
 
 
-SOURCE = """package example
-class Fixture {
-    fun insert(value: Int) { ExpenseDao.insert(value) }
-    fun overload(value: Int) { ExpenseDao.insert(value) }
-    fun overload(value: String) { ExpenseDao.insert(value) }
-    fun rich(value: List<String?>, vararg rest: Int, callback: (String, Int?) -> Unit) {
-        ExpenseDao.insert(value)
+# ── (3) Same simple name in two packages ──────────────────────────────────────
+
+
+def test_same_simple_name_in_two_packages_resolves_per_entry_path(tmp_path):
+    north_kt = "app/src/main/java/com/example/a/NorthRepo.kt"
+    south_kt = "app/src/main/java/com/example/b/NorthRepo.kt"
+    files = {
+        "app/src/main/java/com/example/a/ExpenseDao.kt": _dao_source(
+            "com.example.a", "ExpenseDao"
+        ),
+        "app/src/main/java/com/example/b/AuditDao.kt": _dao_source(
+            "com.example.b", "AuditDao"
+        ),
+        north_kt: (
+            "package com.example.a\n"
+            "\n"
+            "class NorthRepo {\n"
+            "    fun save(value: Int) {\n"
+            "        expenseDao.insert(value)\n"
+            "    }\n"
+            "}\n"
+        ),
+        south_kt: (
+            "package com.example.b\n"
+            "\n"
+            "class NorthRepo {\n"
+            "    fun save(value: Int) {\n"
+            "        auditDao.insert(value)\n"
+            "    }\n"
+            "}\n"
+        ),
     }
-    fun String?.extension(value: Int) { ExpenseDao.insert(value) }
-    fun absent(value: Int) { OtherDao.insert(value) }
-    fun ext(value: Int) { ExpenseDao.insert(value) }
-}
-fun String?.ext(value: Int) { ExpenseDao.insert(value) }
-"""
+    _write_repo(tmp_path, files)
+    entries = [
+        _legacy_entry(north_kt, "NorthRepo", "save"),
+        _legacy_entry(south_kt, "NorthRepo", "save", daos=("AuditDao",)),
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.input_count == 2
+    assert result.unresolved == ()
+    assert len(result.resolved) == 2
+    by_owner = {row.entry.owner_fqcn: row.entry for row in result.resolved}
+    assert set(by_owner) == {
+        "com.example.a.NorthRepo",
+        "com.example.b.NorthRepo",
+    }
+    assert by_owner["com.example.a.NorthRepo"].path == north_kt
+    assert by_owner["com.example.a.NorthRepo"].dao_fqcn == (
+        "com.example.a.ExpenseDao"
+    )
+    assert by_owner["com.example.b.NorthRepo"].path == south_kt
+    assert by_owner["com.example.b.NorthRepo"].dao_fqcn == (
+        "com.example.b.AuditDao"
+    )
 
 
-def test_single_non_overloaded_method_gets_exact_signature(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    candidate, report = migration.migrate(migration.load_policy(policy), tmp_path)
-    assert report[0]["status"] == "RESOLVED_EXACTLY"
-    assert candidate["entries"][0]["signature"] == {"parameters": ["Int"], "receiver": None}
+# ── (4)/(5) Overload resolution ───────────────────────────────────────────────
+
+OVERLOADS_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    fun save(value: Int) {\n"
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "\n"
+    "    fun save(value: String) {\n"
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "}\n"
+)
+
+SIBLING_ONLY_MUTATION_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    fun save(value: Int) {\n"
+    "        expenseDao.getById(value)\n"
+    "    }\n"
+    "\n"
+    "    fun save(value: String) {\n"
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "}\n"
+)
 
 
-def test_overloads_without_signature_are_ambiguous_and_exit_one(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("overload", signature=False)])
-    result = _run_cli(tmp_path, ["--check", "--policy", policy])
-    assert result.returncode == 1
-    assert migration.migrate(migration.load_policy(policy), tmp_path)[1][0]["status"] == "AMBIGUOUS_OVERLOAD"
+def test_overloads_resolve_only_hinted_signature_parameters(tmp_path):
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: OVERLOADS_REPO_SOURCE},
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "save", params=("Int",))]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.parameter_types == ("Int",)
+    assert entry.method == "save"
 
 
-@pytest.mark.parametrize("method,source,signature,expected", [
-    ("unsupported", "fun unsupported(value: Int) = ExpenseDao.insert(value)", {"parameters": ["Int"], "receiver": None}, "SIGNATURE_UNSUPPORTED"),
-    ("missing", "fun present(value: Int) { ExpenseDao.insert(value) }", {"parameters": ["Int"], "receiver": None}, "METHOD_MISSING"),
-    ("absent", "fun absent(value: Int) { OtherDao.insert(value) }", {"parameters": ["Int"], "receiver": None}, "PAIR_NOT_FOUND"),
-    ("overload", "fun overload(value: Int) { ExpenseDao.insert(value) }\nfun overload(value: String) { ExpenseDao.insert(value) }", None, "AMBIGUOUS_OVERLOAD"),
-])
-def test_cli_reports_exact_controlled_statuses(tmp_path, method, source, signature, expected):
-    body = "package example\nclass Fixture {\n" + source + "\n}\n"
-    entry = _entry(method, signature=signature is not None)
-    if signature is not None:
-        entry["signature"] = signature
-    policy, _ = _fixture(tmp_path, body, [entry])
-    report = tmp_path / "nested" / "reports" / "status.json"
-    result = _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report])
-    assert result.returncode == 1
-    payload = json.loads(report.read_text(encoding="utf-8"))
-    rows = payload["resolved"] if expected == "RESOLVED_EXACTLY" else payload["unresolved"]
-    assert rows[0].get("status", "RESOLVED_EXACTLY") == expected
-    assert result.stdout == result.stderr == ""
+def test_sibling_overload_only_mutation_fails_closed(tmp_path):
+    # The hinted Int overload contains no DAO mutation; the insert lives only
+    # on the String sibling.  Nothing may be borrowed across overloads.
+    _write_repo(
+        tmp_path,
+        {
+            DAO_KT: EXPENSE_DAO_SOURCE,
+            REPO_KT: SIBLING_ONLY_MUTATION_REPO_SOURCE,
+        },
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "save", params=("Int",))]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_MUTATION_PAIR_MISSING
+    assert STATUS_MUTATION_PAIR_MISSING == "MUTATION_PAIR_MISSING"
+    assert row.legacy_method == "save"
 
 
-def test_cli_generic_type_parameter_is_fail_closed_and_does_not_change_policy_or_candidate(tmp_path):
-    secret = "GENERIC_SOURCE_SECRET"
-    source = f"package example\nclass Fixture {{\n    fun <T : MissingBound> insert(value: T) {{ ExpenseDao.insert(value) }} // {secret}\n}}\n"
-    policy, _ = _fixture(tmp_path, source, [_entry("insert", signature=False)])
-    candidate = tmp_path / "nested" / "candidate" / "policy.yml"
-    candidate.parent.mkdir(parents=True, exist_ok=True)
-    candidate.write_text("sentinel candidate\n", encoding="utf-8")
-    before_policy = policy.read_bytes()
-    report = tmp_path / "nested" / "reports" / "generic.json"
-    result = _run_cli(tmp_path, ["--write-candidate", "--policy", policy,
-                                 "--output", candidate, "--report", report])
-    assert result.returncode == 1
-    assert json.loads(report.read_text(encoding="utf-8"))["unresolved"][0]["status"] == "SIGNATURE_UNSUPPORTED"
-    assert policy.read_bytes() == before_policy
-    assert yaml.safe_load(candidate.read_text(encoding="utf-8")) == {"entries": []}
-    assert secret not in result.stdout + result.stderr + report.read_text(encoding="utf-8")
+# ── (6) Extension receiver ────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("params,receiver,expected", [
-    (["Int"], None, "RESOLVED_EXACTLY"),
-    (["String"], None, "METHOD_MISSING"),
-    (["Int", "String"], None, "METHOD_MISSING"),
-    (["Int"], "String", "METHOD_MISSING"),
-])
-def test_exact_signature_shape_is_controlled(tmp_path, params, receiver, expected):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", params=params, receiver=receiver)])
-    result = migration.resolve_entry(migration.load_policy(policy)["entries"][0], tmp_path)
-    assert result["status"] == expected
-    assert result["status"] in migration.STATUS
+def test_extension_receiver_emitted_exactly(tmp_path):
+    extension_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun String?.sync(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: extension_source},
+    )
+    entries = [
+        _legacy_entry(
+            REPO_KT, "Repository", "sync", params=("Int",), receiver="String?"
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.receiver == "String?"
+    assert entry.method == "sync"
+    assert entry.parameter_types == ("Int",)
+    assert entry.kind.value == "function"
 
 
-def test_exact_signature_resolves_and_rich_kotlin_types_are_canonical(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry(
-        "rich", params=["List<String?>", "vararg Int", "(String,Int?)->Unit"]
-    )])
-    row = migration.resolve_entry(migration.load_policy(policy)["entries"][0], tmp_path)
-    assert row["status"] == "RESOLVED_EXACTLY"
-    assert row["identity"]["canonical"].endswith("#rich(List<String?>,vararg Int,(String,Int?)->Unit)")
+# ── (7) Top-level callables are never fabricated ──────────────────────────────
 
 
-def test_extension_receiver_signature_is_exact(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("extension", params=["Int"], receiver="String?")])
-    row = migration.resolve_entry(migration.load_policy(policy)["entries"][0], tmp_path)
-    assert row["status"] == "RESOLVED_EXACTLY"
-    assert row["identity"]["canonical"].endswith("#extension(String?)(Int)")
+def test_top_level_callable_is_never_fabricated(tmp_path):
+    top_level_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun other(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "fun insert(value: Int) {\n"
+        "    expenseDao.insert(value)\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: top_level_source},
+    )
+    # An exact-signature top-level fun exists in this very file, but the
+    # entry targets the owner class; the top-level callable must stay
+    # undiscovered instead of being fabricated into a resolved row.
+    entries = [_legacy_entry(REPO_KT, "Repository", "insert")]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_CALLABLE_MISSING
+    assert STATUS_CALLABLE_MISSING == "CALLABLE_MISSING"
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "insert"
 
 
-def test_unresolved_type_alias_fails_closed(tmp_path):
-    source = """package example
-typealias Missing = NotInScope
-class Fixture { fun insert(value: Missing) { ExpenseDao.insert(value) } }
-"""
-    policy, _ = _fixture(tmp_path, source, [_entry("insert", signature=False)])
-    with pytest.raises(migration.PolicyError):
-        migration.migrate(migration.load_policy(policy), tmp_path)
+# ── (8) Unsupported kinds never default to function ───────────────────────────
 
 
-def test_ambiguous_import_alias_fails_closed(tmp_path):
-    source = """package example
-import a.Token as Alias
-import b.Token as Alias
-class Fixture { fun insert(value: Alias) { ExpenseDao.insert(value) } }
-"""
-    policy, _ = _fixture(tmp_path, source, [_entry("insert", signature=False)])
-    with pytest.raises(migration.PolicyError):
-        migration.migrate(migration.load_policy(policy), tmp_path)
+def test_unsupported_kinds_stay_unresolved_and_never_default_to_function(
+    tmp_path,
+):
+    non_fun_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository(\n"
+        "    private val expenseDao: ExpenseDao\n"
+        ") {\n"
+        "    val cache: Long get() = 0L\n"
+        "\n"
+        "    fun real(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: non_fun_source},
+    )
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "Repository", params=()),
+        _legacy_entry(REPO_KT, "Repository", "cache", params=()),
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    # Neither the constructor nor the property accessor may be emitted as a
+    # fabricated kind="function" row.
+    assert result.resolved == ()
+    assert [row.status for row in result.unresolved] == [
+        STATUS_CALLABLE_MISSING,
+        STATUS_CALLABLE_MISSING,
+    ]
+    assert [row.legacy_method for row in result.unresolved] == [
+        "Repository",
+        "cache",
+    ]
 
 
-@pytest.mark.parametrize("method,expected", [("notThere", "METHOD_MISSING"), ("absent", "PAIR_NOT_FOUND")])
-def test_method_missing_and_pair_not_found_statuses(tmp_path, method, expected):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry(method, params=["Int"])])
-    row = migration.resolve_entry(migration.load_policy(policy)["entries"][0], tmp_path)
-    assert row["status"] == expected
+# ── (9)/(10) Parameter order is identity ──────────────────────────────────────
+
+MULTI_PARAM_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    fun transfer(first: List<String?>, second: Int, third: String?) {\n"
+    "        expenseDao.insert(1)\n"
+    "    }\n"
+    "}\n"
+)
 
 
-def test_pair_not_found_is_not_hidden_by_discovery(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("absent", params=["Int"], dao="ExpenseDao")])
-    assert migration.migrate(migration.load_policy(policy), tmp_path)[1][0]["status"] == "PAIR_NOT_FOUND"
+def _multi_param_repo(tmp_path):
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: MULTI_PARAM_REPO_SOURCE},
+    )
 
 
-def test_duplicate_exact_source_signatures_are_rejected(tmp_path):
-    source = "package example\nclass Fixture {\n fun insert(value: Int) { ExpenseDao.insert(value) }\n fun insert(value: Int) { ExpenseDao.insert(value) }\n}\n"
-    policy, _ = _fixture(tmp_path, source, [_entry("insert", params=["Int"])])
-    with pytest.raises(migration.PolicyError):
-        migration.migrate(migration.load_policy(policy), tmp_path)
+def test_ordered_parameter_types_are_preserved_exactly(tmp_path):
+    _multi_param_repo(tmp_path)
+    entries = [
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "transfer",
+            params=("List<String?>", "Int", "String?"),
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.parameter_types == ("List<String?>", "Int", "String?")
 
 
-def test_check_is_read_only_byte_for_byte(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    before = policy.read_bytes()
-    result = _run_cli(tmp_path, ["--check", "--policy", policy])
-    assert result.returncode == 0
-    assert policy.read_bytes() == before
+def test_swapped_parameter_hints_resolve_to_source_derived_order(tmp_path):
+    # Legacy hint order is a HINT ONLY: with exactly one same-name member
+    # fun in source, the entry resolves and the emitted identity is that
+    # declaration's own parsed signature — the source order
+    # (List<String?>, Int, String?) — never the swapped legacy order.
+    _multi_param_repo(tmp_path)
+    entries = [
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "transfer",
+            params=("Int", "List<String?>", "String?"),
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.method == "transfer"
+    assert entry.parameter_types == ("List<String?>", "Int", "String?")
 
 
-def test_write_candidate_requires_output_and_rejects_policy_output(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    assert _run_cli(tmp_path, ["--write-candidate", "--policy", policy]).returncode == 2
-    assert _run_cli(tmp_path, ["--write-candidate", "--policy", policy, "--output", policy]).returncode == 2
+# ── (11) Nullability is identity ──────────────────────────────────────────────
 
 
-def test_report_and_candidate_collision_writes_neither_artifact(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    collision = tmp_path / "artifacts" / "same.json"
-    collision.parent.mkdir(parents=True, exist_ok=True)
-    collision.write_text("sentinel\n", encoding="utf-8")
-    before = collision.read_bytes()
-    result = _run_cli(tmp_path, ["--write-candidate", "--policy", policy,
-                                 "--output", collision, "--report", collision])
-    assert result.returncode == 2
-    assert collision.read_bytes() == before
+def test_string_vs_nullable_string_are_distinct_identities(tmp_path):
+    nullable_overloads_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun store(value: String) {\n"
+        "        expenseDao.insert(1)\n"
+        "    }\n"
+        "\n"
+        "    fun store(value: String?) {\n"
+        "        expenseDao.insert(1)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: nullable_overloads_source},
+    )
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "store", params=("String",)),
+        _legacy_entry(REPO_KT, "Repository", "store", params=("String?",)),
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.input_count == 2
+    assert result.unresolved == ()
+    assert len(result.resolved) == 2
+    shapes = sorted(row.entry.parameter_types for row in result.resolved)
+    assert shapes == [("String",), ("String?",)]
 
 
-@pytest.mark.parametrize("mode", ["--check", "--write-candidate"])
-def test_report_cannot_overwrite_active_policy(tmp_path, mode):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    before = policy.read_bytes()
-    args = [mode, "--policy", policy, "--report", policy]
-    if mode == "--write-candidate":
-        args += ["--output", tmp_path / "candidate.yml"]
-    result = _run_cli(tmp_path, args)
-    assert result.returncode == 2
-    assert policy.read_bytes() == before
+# ── (12) One callable, two operations ─────────────────────────────────────────
 
 
-def test_candidate_cannot_overwrite_active_policy(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    before = policy.read_bytes()
-    result = _run_cli(tmp_path, ["--write-candidate", "--policy", policy,
-                                 "--output", policy, "--report", tmp_path / "report.json"])
-    assert result.returncode == 2
-    assert policy.read_bytes() == before
-    assert not (tmp_path / "report.json").exists()
+def test_one_callable_two_operations_share_callable_key(tmp_path):
+    two_ops_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun upsert(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "        expenseDao.delete(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: two_ops_source},
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "upsert")]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.unresolved == ()
+    assert len(result.resolved) == 2
+    first, second = result.resolved
+    assert first.index == second.index == 0
+    assert [row.entry.operation for row in result.resolved] == [
+        "insert",
+        "delete",
+    ]
+    assert first.entry.callable_key() == second.entry.callable_key()
+    assert first.entry.mutation_key() != second.entry.mutation_key()
+    assert {row.entry.dao_accessor for row in result.resolved} == {"expenseDao"}
 
 
-def test_write_candidate_writes_only_candidate_atomically(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    output = tmp_path / "candidate.yml"
-    result = _run_cli(tmp_path, ["--write-candidate", "--policy", policy, "--output", output])
-    assert result.returncode == 0 and output.exists()
-    assert policy.read_bytes() != output.read_bytes()
-    assert not list(tmp_path.glob(".db-policy-*.tmp"))
-    assert yaml.safe_load(output.read_text(encoding="utf-8"))["entries"][0]["signature"]
+# ── (13) Multi-DAO legacy row splits to exact rows ────────────────────────────
 
 
-def test_migrate_candidate_contains_only_resolved_entries_and_preserves_metadata(tmp_path):
-    resolved = _entry("insert", signature=False, reason="keep this", owner="team", linked_issue="GH-9")
-    unresolved = _entry("absent", params=["Int"], reason="unresolved metadata")
-    policy, _ = _fixture(tmp_path, SOURCE, [resolved, unresolved])
-    original = migration.load_policy(policy)
-    candidate, report = migration.migrate(original, tmp_path)
-
-    assert len(candidate["entries"]) == 1
-    assert candidate["entries"][0]["method"] == "insert"
-    assert candidate["entries"][0]["reason"] == "keep this"
-    assert candidate["entries"][0]["owner"] == "team"
-    assert candidate["entries"][0]["linked_issue"] == "GH-9"
-    assert all(row["status"] == "RESOLVED_EXACTLY" for row in report if row["method"] == "insert")
-    assert all(row["method"] != "absent" for row in candidate["entries"])
-
-
-@pytest.mark.parametrize("signature", [
-    {"parameters": ["Int"], "receiver": None, "extra": False},
-    {"parameters": "Int", "receiver": None},
-    {"parameters": ["Int"], "receiver": 7},
-])
-def test_policy_rejects_malformed_signature_during_load(tmp_path, signature):
-    entry = _entry("insert", signature=False)
-    entry["signature"] = signature
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-    with pytest.raises(migration.PolicyError):
-        migration.load_policy(policy)
-
-
-@pytest.mark.parametrize("daos", [None, "expenseDao", {"name": "expenseDao"}, [], [7]])
-def test_policy_rejects_malformed_daos_without_type_error_or_value_leak(tmp_path, daos):
-    entry = _entry("insert", signature=False)
-    entry["daos"] = daos
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-    with pytest.raises(migration.PolicyError) as exc:
-        migration.load_policy(policy)
-    assert str(exc.value) == "invalid DB policy configuration"
-    result = _run_cli(tmp_path, ["--check", "--policy", policy])
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert result.stderr.strip() == "invalid DB policy configuration"
-    assert str(daos) not in result.stderr
+def test_multi_dao_legacy_row_splits_into_exact_rows(tmp_path):
+    multi_dao_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun mirror(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "        auditDao.markSynced(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {
+            DAO_KT: EXPENSE_DAO_SOURCE,
+            AUDIT_DAO_KT: _dao_source("com.example", "AuditDao"),
+            REPO_KT: multi_dao_source,
+        },
+    )
+    entries = [
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "mirror",
+            daos=("ExpenseDao", "AuditDao"),
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.unresolved == ()
+    assert len(result.resolved) == 2
+    triples = {
+        (row.entry.dao_accessor, row.entry.dao_fqcn, row.entry.operation)
+        for row in result.resolved
+    }
+    assert triples == {
+        ("expenseDao", "com.example.ExpenseDao", "insert"),
+        ("auditDao", "com.example.AuditDao", "markSynced"),
+    }
+    callable_keys = {row.entry.callable_key() for row in result.resolved}
+    assert len(callable_keys) == 1
 
 
-def test_write_atomic_uses_replace_commit(monkeypatch, tmp_path):
-    calls = []
-    real_replace = migration.os.replace
-
-    def replace(source, target):
-        calls.append((Path(source).parent, Path(target)))
-        return real_replace(source, target)
-
-    monkeypatch.setattr(migration.os, "replace", replace)
-    output = tmp_path / "candidate.yml"
-    migration.write_atomic(output, {"entries": []})
-    assert output.exists()
-    assert calls == [(tmp_path, output)]
+# ── (14) Constructor val DAO property ─────────────────────────────────────────
 
 
-def test_report_failure_is_atomic_and_cleans_up_temp(monkeypatch, tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    report = tmp_path / "nested" / "report.json"
-
-    def fail_replace(source, target):
-        raise OSError("secret absolute path should not escape")
-
-    monkeypatch.setattr(migration.os, "replace", fail_replace)
-    with pytest.raises(migration.PolicyError) as exc:
-        migration._report(report, policy, tmp_path, [])
-    assert str(exc.value) == "invalid DB policy configuration"
-    assert not report.exists()
-    assert not list(report.parent.glob(".db-policy-report-*.tmp"))
-
-
-def test_reason_owner_linked_issue_and_other_fields_are_preserved(tmp_path):
-    entry = _entry("insert", signature=False, reason="reason: exact", owner="team/owner", linked_issue="GH-7")
-    entry["daos"] = ["ExpenseDao", "AuditDao"]
-    entry["barrier_required"] = False
-    entry["barrier_via"] = "WorkerExecutionGuard"
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-    candidate, _ = migration.migrate(migration.load_policy(policy), tmp_path)
-    result = candidate["entries"][0]
-    for key in ("path", "class", "method", "daos", "operation", "barrier_required", "barrier_via", "reason", "owner", "linked_issue"):
-        assert result[key] == entry[key]
+def test_constructor_val_dao_property_resolves(tmp_path):
+    constructor_val_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository(\n"
+        "    private val expenseDao: ExpenseDao\n"
+        ") {\n"
+        "    fun add(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: constructor_val_source},
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "add")]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.owner_fqcn == "com.example.Repository"
+    assert entry.dao_accessor == "expenseDao"
+    assert entry.dao_fqcn == "com.example.ExpenseDao"
+    assert entry.operation == "insert"
 
 
-@pytest.mark.parametrize("value", ["", "not controlled!", "x" * 129, 7])
-def test_barrier_via_is_bounded_controlled_metadata(tmp_path, value):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False, barrier_via=value)])
-    with pytest.raises(migration.PolicyError):
-        migration.load_policy(policy)
+# ── (15) Same-simple-name DAOs are ambiguous ──────────────────────────────────
 
 
-def test_report_uses_safe_policy_identifier(tmp_path):
-    absolute_policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
+def test_two_same_simple_name_daos_fail_dao_target_ambiguous(tmp_path):
+    files = {
+        "app/src/main/java/com/example/a/ExpenseDao.kt": _dao_source(
+            "com.example.a", "ExpenseDao"
+        ),
+        "app/src/main/java/com/example/b/ExpenseDao.kt": _dao_source(
+            "com.example.b", "ExpenseDao"
+        ),
+        REPO_KT: BASIC_REPO_SOURCE,
+    }
+    _write_repo(tmp_path, files)
+    entries = [_legacy_entry(REPO_KT, "Repository", "save")]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_DAO_TARGET_AMBIGUOUS
+    assert STATUS_DAO_TARGET_AMBIGUOUS == "DAO_TARGET_AMBIGUOUS"
+    assert row.detail == ""
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "save"
+
+
+# ── (16) Wrong accessor/operation pairing ─────────────────────────────────────
+
+
+def test_wrong_accessor_operation_pairing_yields_pair_missing(tmp_path):
+    """A GENUINE legacy-authorization mismatch fails closed (rule 5).
+
+    The callable body provably performs ``expenseDao.insert(...)`` — a
+    mutation that resolves to a concrete triple — but the legacy entry
+    authorizes only ``ArchiveDao``, an interface that EXISTS in the
+    fixture index.  The failure therefore comes from the
+    authorization-intent gate (no resolved accessor is authorized by the
+    legacy ``daos`` list), not from a read-only-body accident and not from
+    DAO identity/target ambiguity.
+    """
+    inserting_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun save(id: Long) {\n"
+        "        expenseDao.insert(id)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {
+            DAO_KT: EXPENSE_DAO_SOURCE,
+            ARCHIVE_DAO_KT: _dao_source("com.example", "ArchiveDao"),
+            REPO_KT: inserting_source,
+        },
+    )
+    entries = [
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "save",
+            params=("Long",),
+            daos=("ArchiveDao",),
+            operation="insert",
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    # Nothing is emitted: the resolved expenseDao mutation is NOT
+    # authorized by this legacy row, and unauthorized accessors must never
+    # leak into candidates.
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_MUTATION_PAIR_MISSING
+    # The bounded detail pins the intent gate — not the empty-body path —
+    # as the cause of the debt.
+    assert row.detail == "no mutation matches legacy daos"
+    assert row.index == 0
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "save"
+
+
+def test_read_only_body_yields_pair_missing(tmp_path):
+    # Kept from before the intent gate existed: a read-only body extracts
+    # no mutation at all, so nothing pairs regardless of the legacy hint
+    # and the row fails closed instead of inventing a mutation.  The empty
+    # detail distinguishes this no-extraction path from the authorization
+    # mismatch above.
+    read_only_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun load(id: Long) {\n"
+        "        expenseDao.getById(id)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: read_only_source},
+    )
+    entries = [
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "load",
+            params=("Long",),
+            daos=("AuditDao",),
+            operation="insert",
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_MUTATION_PAIR_MISSING
+    assert row.detail == ""
+
+
+# ── (17) Comments and strings are not calls ───────────────────────────────────
+
+
+def test_comments_and_strings_are_not_mutation_calls(tmp_path):
+    masked_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun document(value: Int) {\n"
+        "        // expenseDao.insert(value)\n"
+        "        val note = \"expenseDao.delete(value)\"\n"
+        "        /* expenseDao.insert(value) */\n"
+        "        expenseDao.getById(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: masked_source},
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "document")]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    assert result.unresolved[0].status == STATUS_MUTATION_PAIR_MISSING
+
+
+# ── (18) Safe-call / complex receivers fail closed ────────────────────────────
+
+
+def test_safe_call_and_complex_receivers_fail_closed(tmp_path):
+    unsafe_receivers_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun viaSafeCall(value: Int) {\n"
+        "        expenseDao?.insert(value)\n"
+        "    }\n"
+        "\n"
+        "    fun viaComplexReceiver(value: Int) {\n"
+        "        expenseDaoProvider.get().insert(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: unsafe_receivers_source},
+    )
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "viaSafeCall"),
+        _legacy_entry(REPO_KT, "Repository", "viaComplexReceiver"),
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.input_count == 2
+    assert result.resolved == ()
+    assert [row.status for row in result.unresolved] == [
+        STATUS_MUTATION_PAIR_MISSING,
+        STATUS_MUTATION_PAIR_MISSING,
+    ]
+
+
+# ── (19) Barrier-mode conversion is closed ────────────────────────────────────
+
+
+def test_barrier_required_false_or_barrier_via_is_unresolved(tmp_path):
+    _write_repo(tmp_path, _standard_repo_files())
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "save", barrier_required=False),
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "save",
+            barrier_required=True,
+            barrier_via="WorkerExecutionGuard",
+        ),
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    # Both entries would otherwise resolve cleanly; the barrier gate runs
+    # first and fails both closed.
+    assert result.resolved == ()
+    assert [row.status for row in result.unresolved] == [
+        STATUS_BARRIER_MODE_UNRESOLVED,
+        STATUS_BARRIER_MODE_UNRESOLVED,
+    ]
+    assert STATUS_BARRIER_MODE_UNRESOLVED == "BARRIER_MODE_UNRESOLVED"
+
+
+# ── (20) Duplicate mutation-key detection ─────────────────────────────────────
+
+
+def test_duplicate_mutation_keys_detected_by_find_duplicate_mutation_keys(
+    tmp_path,
+):
+    _write_repo(tmp_path, _standard_repo_files())
+    duplicated = _legacy_entry(REPO_KT, "Repository", "save")
+    result = migrate_policy([duplicated, dict(duplicated)], str(tmp_path))
+    assert result.input_count == 2
+    assert result.unresolved == ()
+    assert len(result.resolved) == 2
+    expected_key = (
+        REPO_KT
+        + "|com.example.Repository|function|save|null|Int"
+        + "|expenseDao|com.example.ExpenseDao|insert"
+    )
+    keys = {row.entry.mutation_key().canonical_key() for row in result.resolved}
+    assert keys == {expected_key}
+    assert find_duplicate_mutation_keys(result) == (expected_key,)
+
+
+# ── Artifact/CLI contract against the real repository ────────────────────────
+#
+# The tests below exercise the REAL checked-in repository strictly read-only
+# through the actual CLI (``subprocess.run([sys.executable, <script>, ...])``).
+# Every artifact they produce lands under the pytest ``tmp_path``; the repo
+# itself is never mutated (``test_active_policy_overwrite_fails`` proves the
+# overwrite guard).  The script derives its repo root from its own
+# ``__file__.parents[1]``, so invoking the checked-in script by absolute path
+# pins the analysis to this worktree regardless of the subprocess cwd.
+#
+# Exit-code table under test: 0 = every row resolved; 1 = visible unresolved
+# debt (or nothing resolved); 2 = usage/collision/duplicate failure.
+
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import re  # noqa: E402
+import subprocess  # noqa: E402
+
+import yaml  # noqa: E402
+
+from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
+    MIGRATION_STATUSES_EXTENDED,
+)
+from scripts.db_guard.policy_v2_loader import load_policy_v2  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+MIGRATION_CLI = REPO_ROOT / "scripts" / "migrate_db_policy_signatures.py"
+ACTIVE_POLICY = REPO_ROOT / "config" / "guards" / "db_ownership_policy.yml"
+TRACKED_CANDIDATE = (
+    REPO_ROOT
+    / "config"
+    / "guards"
+    / "db_ownership_policy.signatures.candidate.yml"
+)
+
+_KT_LINE_MARKER = re.compile(r"\.kt:\d+")
+
+
+def _run_cli(*args):
+    """Invoke the real migration CLI; returns the CompletedProcess."""
+    return subprocess.run(
+        [sys.executable, str(MIGRATION_CLI), *args],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        cwd=str(REPO_ROOT),
+        timeout=600,
+        check=False,
+    )
+
+
+def _write_candidate_artifacts(out_dir: Path):
+    """Success-path ``--write-candidate`` run into ``out_dir``.
+
+    Returns ``(completed, candidate_path, report_path)``.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    candidate = out_dir / "candidate.yml"
+    report = out_dir / "report.json"
+    completed = _run_cli(
+        "--write-candidate",
+        "--output",
+        str(candidate),
+        "--report",
+        str(report),
+    )
+    return completed, candidate, report
+
+
+def _fingerprint(path: Path):
+    """mtime/size/sha256 triple proving a watched file was not touched."""
+    data = path.read_bytes()
+    stat = path.stat()
+    return (stat.st_mtime_ns, stat.st_size, hashlib.sha256(data).hexdigest())
+
+
+def _string_leaves(value):
+    """Yield every string leaf of a nested JSON-shaped structure."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _string_leaves(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _string_leaves(item)
+
+
+def test_v2_loader_accepts_generated_candidate(tmp_path):
+    completed, candidate, _ = _write_candidate_artifacts(tmp_path / "tmp")
+    assert completed.returncode in (0, 1)
+    assert candidate.exists()
+    document, errors = load_policy_v2(candidate)
+    assert errors == []
+    assert document
+
+
+def test_output_contains_no_legacy_field_names(tmp_path):
+    completed, candidate, _ = _write_candidate_artifacts(tmp_path / "tmp")
+    assert completed.returncode in (0, 1)
+    document = yaml.safe_load(candidate.read_text(encoding="utf-8"))
+    legacy_fields = {
+        "class",
+        "daos",
+        "signature",
+        "barrier_required",
+        "barrier_via",
+    }
+    for entry in document["entries"]:
+        assert not legacy_fields & set(entry)
+
+
+def test_report_has_deterministic_ordering(tmp_path):
+    first = tmp_path / "report-one.json"
+    second = tmp_path / "report-two.json"
+    _run_cli("--check", "--report", str(first))
+    _run_cli("--check", "--report", str(second))
+    assert first.read_bytes() == second.read_bytes()
+
+
+def test_report_contains_no_raw_source_or_exception_text(tmp_path):
     report = tmp_path / "report.json"
-    assert _run_cli(tmp_path, ["--check", "--policy", absolute_policy, "--report", report]).returncode == 0
+    _run_cli("--check", "--report", str(report))
     payload = json.loads(report.read_text(encoding="utf-8"))
-    assert payload["policy"] == "custom-policy"
-    assert str(absolute_policy) not in report.read_text(encoding="utf-8")
+    for text in _string_leaves(payload):
+        assert "fun " not in text
+        assert _KT_LINE_MARKER.search(text) is None
+        assert "Traceback" not in text
+    statuses = {row["status"] for row in payload["unresolved"]}
+    assert statuses <= MIGRATION_STATUSES_EXTENDED
 
 
-def test_candidate_and_report_are_deterministically_ordered(tmp_path):
-    entries = [_entry("overload", signature=True), _entry("insert", signature=False)]
-    # Deliberately provide an exact overload signature and a discoverable entry.
-    entries[0]["signature"] = {"parameters": ["Int"], "receiver": None}
-    policy, _ = _fixture(tmp_path, SOURCE, entries)
-    one = tmp_path / "one.json"
-    two = tmp_path / "two.json"
-    for report in (one, two):
-        assert _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report]).returncode == 0
-    assert one.read_bytes() == two.read_bytes()
-    payload = json.loads(one.read_text(encoding="utf-8"))
-    assert [row["method"] for row in payload["resolved"]] == ["insert", "overload"]
-    assert set(payload) == {"schema", "schema_version", "policy", "counts", "resolved", "unresolved"}
-    assert payload["schema"] == "cost-aggregator.policy-signature-migration"
+def test_check_is_read_only(tmp_path):
+    guards_dir = ACTIVE_POLICY.parent
+    watched = (ACTIVE_POLICY, TRACKED_CANDIDATE)
+    before = [_fingerprint(path) for path in watched]
+    listing_before = sorted(item.name for item in guards_dir.iterdir())
+    completed = _run_cli("--check")
+    assert completed.returncode in (0, 1)
+    # Unresolved debt is expected on the real repository: pin the --check run
+    # to exit code 1 (visible debt), never 0 and never a crash code.
+    assert completed.returncode == 1
+    assert [_fingerprint(path) for path in watched] == before
+    assert sorted(item.name for item in guards_dir.iterdir()) == listing_before
+    # No --output/--report given: nothing may be written anywhere.
+    assert list(tmp_path.iterdir()) == []
 
 
-def test_unresolved_rows_are_complete_and_use_null_for_ambiguous_dao(tmp_path):
-    entry = _entry("absent", params=["Int"], dao="ExpenseDao")
-    entry["daos"] = ["ExpenseDao", "AuditDao"]
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-    row = migration.migrate(migration.load_policy(policy), tmp_path)[1][0]
-    assert row["status"] == "PAIR_NOT_FOUND"
-    assert set(row) == {"status", "file", "class", "method", "dao", "operation",
-                        "signature_evidence", "reason_code"}
-    assert row["file"] == REL
-    assert row["dao"] is None
-    assert row["operation"] == "insert"
-    assert row["reason_code"] in migration.REASON_CODES
-    assert set(row["signature_evidence"]) <= {"status", "parameters", "receiver"}
+def test_candidate_report_collision_fails(tmp_path):
+    collide = tmp_path / "collide.artifact"
+    completed = _run_cli(
+        "--write-candidate",
+        "--output",
+        str(collide),
+        "--report",
+        str(collide),
+    )
+    assert completed.returncode == 2
+    assert "Traceback" not in completed.stderr
+    # The collision guard fires before any analysis or write begins.
+    assert not collide.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
-def test_report_rejects_noncanonical_totals(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert")])
-    with pytest.raises(migration.PolicyError):
-        migration._report(tmp_path / "report.json", policy, tmp_path,
-                          [{"status": "RESOLVED_EXACTLY"}],
-                          enforce_expected_totals=True)
+def test_active_policy_overwrite_fails(tmp_path):
+    before = _fingerprint(ACTIVE_POLICY)
+    completed = _run_cli("--write-candidate", "--output", str(ACTIVE_POLICY))
+    assert completed.returncode == 2
+    assert "Traceback" not in completed.stderr
+    assert _fingerprint(ACTIVE_POLICY) == before
 
 
-def test_dotted_owner_is_valid_in_policy_candidate_and_report(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    loaded = migration.load_policy(policy)
-    candidate, rows = migration.migrate(loaded, tmp_path)
-    assert candidate["entries"][0]["class"] == OWNER
-    report = tmp_path / "dotted-report.json"
-    migration._report(report, policy, tmp_path, rows)
-    assert json.loads(report.read_text(encoding="utf-8"))["resolved"][0]["class"] == OWNER
+def test_no_temp_files_remain_after_runs(tmp_path):
+    out_dir = tmp_path / "tmp"
+    completed, _, _ = _write_candidate_artifacts(out_dir)
+    assert completed.returncode in (0, 1)
+    assert sorted(item.name for item in out_dir.iterdir()) == [
+        "candidate.yml",
+        "report.json",
+    ]
+    collide = out_dir / "collide.artifact"
+    failed = _run_cli(
+        "--write-candidate",
+        "--output",
+        str(collide),
+        "--report",
+        str(collide),
+    )
+    assert failed.returncode == 2
+    names = sorted(item.name for item in out_dir.iterdir())
+    assert names == ["candidate.yml", "report.json"]
+    assert not any(name.endswith((".tmp", ".part")) for name in names)
 
 
-@pytest.mark.parametrize("bad_class", [
-    "", "example..Fixture", ".example.Fixture", "example.Fixture.",
-    "example<Fixture>", "example.*.Fixture", "example.Fixture name",
-    "example.\tFixture", "example.\x01Fixture",
-])
-@pytest.mark.parametrize("method,signature", [("insert", True), ("absent", True)])
-def test_owner_fqcn_validation_is_consistent_and_sanitized(tmp_path, bad_class, method, signature):
-    entry = _entry(method, params=["Int"], signature=signature)
-    entry["class"] = bad_class
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-
-    with pytest.raises(migration.PolicyError) as exc:
-        migration.load_policy(policy)
-    assert str(exc.value) == "invalid DB policy configuration"
-    result = _run_cli(tmp_path, ["--check", "--policy", policy])
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert result.stderr.strip() == "invalid DB policy configuration"
-    assert bad_class not in result.stderr
-
-
-@pytest.mark.parametrize("bad_class", [
-    "", "example..Fixture", "example<Fixture>", "example.*.Fixture", "example.Fixture name",
-])
-@pytest.mark.parametrize("resolved", [True, False])
-def test_report_rejects_malformed_owner_fqcn_for_both_row_sections(tmp_path, bad_class, resolved):
-    method = "insert" if resolved else "absent"
-    entry = _entry(method, params=["Int"])
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-    row = migration.migrate(migration.load_policy(policy), tmp_path)[1][0]
-    if resolved:
-        row["identity"]["class"] = bad_class
-    else:
-        row["class"] = bad_class
-    with pytest.raises(migration.PolicyError) as exc:
-        migration._report(tmp_path / "invalid-owner-report.json", policy, tmp_path, [row])
-    assert str(exc.value) == "invalid DB policy configuration"
-    assert bad_class not in str(exc.value)
-
-
-def test_unresolved_report_does_not_contain_source_text(tmp_path):
-    secret = "RAW_SOURCE_OR_EXCEPTION_SECRET"
-    entry = _entry("absent", params=["Int"], reason=secret)
-    policy, _ = _fixture(tmp_path, SOURCE + "\n// " + secret, [entry])
+def test_no_fixed_result_totals_enforced(tmp_path):
+    source = MIGRATION_CLI.read_text(encoding="utf-8")
+    # The retired pinned 99-input artifact totals must stay gone from the tool.
+    assert "99" not in source
     report = tmp_path / "report.json"
-    assert _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report]).returncode == 1
-    text = report.read_text(encoding="utf-8")
-    assert secret not in text
-    row = json.loads(text)["unresolved"][0]
-    assert row["reason_code"] == "MIGRATION_PAIR_NOT_FOUND"
+    _run_cli("--check", "--report", str(report))
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    counts = payload["counts"]
+    assert counts["resolved"] == len(payload["resolved"])
+    assert counts["unresolved"] == len(payload["unresolved"])
+    # Every input entry surfaces as at least one row (a splitting entry can
+    # emit several resolved rows), so the row indexes must cover exactly the
+    # input range — consistency is computed from the rows, never pinned to
+    # fixed artifact totals.
+    indexes = {row["index"] for row in payload["resolved"]} | {
+        row["index"] for row in payload["unresolved"]
+    }
+    assert indexes == set(range(counts["input"]))
 
 
-def test_errors_and_reports_are_sanitized(tmp_path):
-    secret = "SECRET_SOURCE_SNIPPET"
-    source = f'package example\nclass Fixture {{ fun insert(value: Unknown) {{ val x = "{secret}" }} }}\n'
-    policy, _ = _fixture(tmp_path, source, [_entry("insert", signature=False)])
-    result = _run_cli(tmp_path, ["--check", "--policy", policy])
-    assert result.returncode == 2
-    assert secret not in result.stdout + result.stderr
-    with pytest.raises(migration.PolicyError) as exc:
-        migration.migrate(migration.load_policy(policy), tmp_path)
-    assert str(exc.value) == "invalid DB policy configuration"
-    assert secret not in str(exc.value)
-    safe_source = f"package example\n// {secret}\nclass Fixture {{ fun insert(value: Int) {{ ExpenseDao.insert(value) }} }}\n"
-    safe_policy, _ = _fixture(tmp_path, safe_source, [_entry("insert", signature=False)])
-    report = tmp_path / "safe-report.json"
-    assert _run_cli(tmp_path, ["--check", "--policy", safe_policy, "--report", report]).returncode == 0
-    assert secret not in report.read_text(encoding="utf-8")
+def test_real_checked_in_candidate_is_reproducible(tmp_path):
+    """Regenerated candidate bytes must equal the tracked candidate artifact.
+
+    NOTE: this passes only after Step 8 regenerates the tracked candidate
+    (``config/guards/db_ownership_policy.signatures.candidate.yml``) through
+    this very tool; until then this test documents the required end state.
+    """
+    regen = tmp_path / "regen.yml"
+    completed = _run_cli("--write-candidate", "--output", str(regen))
+    assert completed.returncode in (0, 1)
+    assert regen.read_bytes() == TRACKED_CANDIDATE.read_bytes()
 
 
-def test_explicit_report_only_writes_report_no_implicit_baseline(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("insert", signature=False)])
-    report = tmp_path / "reports" / "migration.json"
-    assert _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report]).returncode == 0
-    assert report.exists()
-    assert not (tmp_path / "baseline.yml").exists()
-    assert not (tmp_path / "report.json").exists()
-    assert not (tmp_path / "candidate.yml").exists()
+# ── Appended: synthetic tmp legacy policies through the real CLI ─────────────
+#
+# These tests write legacy v1 policy YAML under pytest ``tmp_path`` and feed it
+# to the real CLI via ``--policy``; analysis stays pinned to the REAL worktree
+# because the script derives its repo root from its own ``__file__``.  They pin
+# the remaining exit-code table cells end to end:
+#   * duplicate mutation keys -> 2, candidate never written;
+#   * malformed YAML input    -> 2, nothing written;
+#   * fully resolved batch    -> 0, schema-valid candidate written;
+#   * zero-resolved batch     -> 1, candidate never written.
 
 
-@pytest.mark.parametrize("field,value", [
-    ("method", "*"), ("class", "Fixture*"), ("path", "app/src/main/java/*/Fixture.kt"),
-    ("daos", ["*"]), ("operation", "write"), ("operation", "unknown"),
-    ("expires", "permanent"), ("allowed_until", "2099-01-01"),
-])
-def test_policy_rejects_wildcards_unknown_operations_and_expiry_metadata(tmp_path, field, value):
-    entry = _entry("insert", signature=False)
-    if field == "daos":
-        entry[field] = value
-    elif field in {"expires", "allowed_until"}:
-        entry[field] = value
-    else:
-        entry[field] = value
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-    with pytest.raises(migration.PolicyError) as exc:
-        migration.load_policy(policy)
-    assert str(exc.value) == "invalid DB policy configuration"
+def _probe_resolving_legacy_entry(report_path: Path):
+    """Rebuild one guaranteed-resolving legacy entry from the real repo.
+
+    Runs ``--check`` once against the active policy, reads the report JSON,
+    and reconstructs a minimal legacy v1 entry from ``resolved[0]``'s identity
+    fields — path, owner simple name, method, DAO accessor hint, operation,
+    and the exact callable signature — so it re-resolves against the same
+    repository state.
+    """
+    completed = _run_cli("--check", "--report", str(report_path))
+    assert completed.returncode in (0, 1)
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    row = payload["resolved"][0]
+    return {
+        "path": row["path"],
+        "class": row["ownerFqcn"].rsplit(".", 1)[-1],
+        "method": row["method"],
+        "daos": [row["daoAccessor"]],
+        "operation": row["operation"],
+        "barrier_required": True,
+        "reason": "reconstructed from resolved[0] identity fields",
+        "owner": "expense-owners",
+        "linked_issue": "ISSUE-100",
+        "signature": {
+            "parameters": list(row["parameterTypes"]),
+            "receiver": row["receiver"],
+        },
+    }
 
 
-def test_policy_rejects_permanent_operation_without_leaking_value(tmp_path):
-    entry = _entry("insert", signature=False, operation="permanent")
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-
-    with pytest.raises(migration.PolicyError) as exc:
-        migration.load_policy(policy)
-    assert str(exc.value) == "invalid DB policy configuration"
-
-    result = _run_cli(tmp_path, ["--check", "--policy", policy])
-    assert result.returncode == 2
-    assert result.stdout == ""
-    assert result.stderr.strip() == "invalid DB policy configuration"
-    assert "permanent" not in result.stderr
-
-
-@pytest.mark.parametrize("field", ["reason", "owner", "linked_issue"])
-def test_policy_rejects_missing_required_metadata(tmp_path, field):
-    entry = _entry("insert", signature=False)
-    del entry[field]
-    policy, _ = _fixture(tmp_path, SOURCE, [entry])
-    with pytest.raises(migration.PolicyError):
-        migration.load_policy(policy)
-
-
-def test_report_rejects_unknown_keys_and_raw_values(tmp_path):
-    policy, _ = _fixture(tmp_path, SOURCE, [_entry("absent", params=["Int"])])
-    row = migration.migrate(migration.load_policy(policy), tmp_path)[1][0]
-    row["raw_secret"] = "DO_NOT_SERIALIZE"
-    with pytest.raises(migration.PolicyError):
-        migration._report(tmp_path / "report.json", policy, tmp_path, [row])
-
-
-def test_checked_in_migration_report_and_candidate_contract():
-    root = Path(__file__).resolve().parents[1]
-    report = json.loads((root / "build/guardrail-p1-p2/policy-signature-migration.json").read_text(encoding="utf-8"))
-    assert list(report)[:2] == ["schema", "schema_version"]
-    assert set(report) == {"schema", "schema_version", "policy", "counts", "resolved", "unresolved"}
-    assert report["schema"] == "cost-aggregator.policy-signature-migration"
-    assert report["schema_version"] == 1
-    assert report["policy"] == "config/guards/db_ownership_policy.yml"
-    assert report["counts"] == {"input": 99, "resolved": 9, "unresolved": 90}
-    assert len(report["resolved"]) == 9
-    assert len(report["unresolved"]) == 90
-    assert all(set(row) == migration._RESOLVED_KEYS for row in report["resolved"])
-    assert all(set(row) == migration._UNRESOLVED_KEYS for row in report["unresolved"])
-    for row in report["resolved"]:
-        # Resolved rows intentionally have no status field; their section is the status.
-        assert migration.canonical_source_path(row["file"]) == row["file"]
-        assert migration._IDENTIFIER_RE.fullmatch(row["class"])
-        assert migration._IDENTIFIER_RE.fullmatch(row["method"])
-        assert migration._IDENTIFIER_RE.fullmatch(row["dao"])
-        assert migration._IDENTIFIER_RE.fullmatch(row["operation"])
-        signature = row["signature"]
-        assert set(signature) == {"parameters", "receiver"}
-        assert isinstance(signature["parameters"], list)
-        assert all(isinstance(value, str) for value in signature["parameters"])
-        assert signature["receiver"] is None or isinstance(signature["receiver"], str)
-    for row in report["unresolved"]:
-        assert set(row) == {"status", "file", "class", "method", "dao", "operation",
-                            "signature_evidence", "reason_code"}
-        assert row["status"] in migration.STATUS
-        assert row["reason_code"] in migration.REASON_CODES
-        assert migration.canonical_source_path(row["file"]) == row["file"]
-        assert migration._IDENTIFIER_RE.fullmatch(row["class"])
-        assert migration._IDENTIFIER_RE.fullmatch(row["method"])
-        assert row["dao"] is None or migration._IDENTIFIER_RE.fullmatch(row["dao"])
-        assert migration._IDENTIFIER_RE.fullmatch(row["operation"])
-        assert set(row["signature_evidence"]) <= {"status", "parameters", "receiver"}
-        evidence = row["signature_evidence"]
-        if "status" in evidence:
-            assert evidence["status"] in migration.STATUS | {"POLICY_PROVIDED"}
-        if "parameters" in evidence:
-            assert isinstance(evidence["parameters"], list)
-            assert all(isinstance(value, str) for value in evidence["parameters"])
-        if "receiver" in evidence:
-            assert evidence["receiver"] is None or isinstance(evidence["receiver"], str)
-
-    candidate = yaml.safe_load(
-        (root / "config/guards/db_ownership_policy.signatures.candidate.yml").read_text(encoding="utf-8")
+def test_duplicate_mutation_key_exits_2_via_cli(tmp_path):
+    entry = _probe_resolving_legacy_entry(tmp_path / "probe-report.json")
+    policy = tmp_path / "duplicate-policy.yml"
+    policy.write_text(
+        yaml.safe_dump({"entries": [entry, dict(entry)]}, sort_keys=False),
+        encoding="utf-8",
     )
-    candidate_bytes = (root / "config/guards/db_ownership_policy.signatures.candidate.yml").read_bytes()
-    assert "—".encode("utf-8") in candidate_bytes
-    assert b"\\u2014" not in candidate_bytes
-    assert len(candidate["entries"]) == 9
-    active_policy = root / "config/guards/db_ownership_policy.yml"
-    active_before = active_policy.read_bytes()
-    active = migration.load_policy(active_policy)
-    generated_candidate, generated_rows = migration.migrate(active, root)
-    assert len(generated_candidate["entries"]) == 9
-    assert active_policy.read_bytes() == active_before
-    report_symbols = {(row["file"], row["class"], row["method"])
-                      for row in report["resolved"]}
-    candidate_symbols = {(row["path"], row["class"], row["method"])
-                         for row in candidate["entries"]}
-    assert candidate_symbols == report_symbols
-    assert not candidate_symbols.intersection(
-        {(row["file"], row["class"], row["method"]) for row in report["unresolved"]}
+    candidate = tmp_path / "candidate.yml"
+    completed = _run_cli(
+        "--write-candidate",
+        "--policy",
+        str(policy),
+        "--output",
+        str(candidate),
     )
-    active_by_symbol = {(entry["path"], entry["class"], entry["method"]): entry
-                        for entry in active["entries"]}
-    resolved_by_symbol = {(row["identity"]["path"], row["identity"]["class"], row["identity"]["method"]): row
-                          for row in generated_rows if row["status"] == "RESOLVED_EXACTLY"}
-    assert len(resolved_by_symbol) == 9
-    for candidate_entry in candidate["entries"]:
-        symbol = (candidate_entry["path"], candidate_entry["class"], candidate_entry["method"])
-        assert set(candidate_entry) == set(active_by_symbol[symbol]) | {"signature"}
-        for key, value in active_by_symbol[symbol].items():
-            assert candidate_entry[key] == value
-        assert candidate_entry["signature"] == resolved_by_symbol[symbol]["signature"]
-    assert not any(
-        (entry["path"], entry["class"], entry["method"])
-        not in resolved_by_symbol for entry in candidate["entries"]
+    # Duplicate mutation keys are a collision failure: exit 2, never a write.
+    assert completed.returncode == 2
+    assert "Traceback" not in completed.stderr
+    assert not candidate.exists()
+
+
+def test_malformed_yaml_policy_exits_2_no_write(tmp_path):
+    policy = tmp_path / "malformed.yml"
+    policy.write_text(":::: not yaml ::::", encoding="utf-8")
+    candidate = tmp_path / "candidate.yml"
+    completed = _run_cli(
+        "--write-candidate",
+        "--policy",
+        str(policy),
+        "--output",
+        str(candidate),
     )
+    # Malformed/unusable policy input fails closed before any analysis or
+    # write begins.
+    assert completed.returncode == 2
+    assert "Traceback" not in completed.stderr
+    assert not candidate.exists()
 
 
-def test_checked_artifacts_are_read_only_for_check_and_proposal(tmp_path):
-    root = Path(__file__).resolve().parents[1]
-    policy = root / "config/guards/db_ownership_policy.yml"
-    report = root / "build/guardrail-p1-p2/policy-signature-migration.json"
-    candidate = root / "config/guards/db_ownership_policy.signatures.candidate.yml"
-    before = {path: path.read_bytes() for path in (policy, report, candidate)}
-    fake_script = root / "scripts/migrate_db_policy_signatures.py"
-
-    checked = _run_cli(tmp_path, ["--check", "--policy", policy, "--report", report],
-                       fake_script=fake_script)
-    assert checked.returncode == 1
-    assert {path: path.read_bytes() for path in (policy, report, candidate)} == before
-
-    proposed = tmp_path / "new-candidate.yml"
-    proposed_result = _run_cli(
-        tmp_path, ["--write-candidate", "--policy", policy, "--output", proposed,
-                   "--report", report], fake_script=fake_script,
+def test_all_resolved_policy_exits_0_and_writes(tmp_path):
+    entry = _probe_resolving_legacy_entry(tmp_path / "probe-report.json")
+    policy = tmp_path / "single-entry-policy.yml"
+    policy.write_text(
+        yaml.safe_dump({"entries": [entry]}, sort_keys=False),
+        encoding="utf-8",
     )
-    assert proposed_result.returncode == 1
-    assert proposed.exists()
-    assert {path: path.read_bytes() for path in (policy, report, candidate)} == before
+    candidate = tmp_path / "candidate.yml"
+    completed = _run_cli(
+        "--write-candidate",
+        "--policy",
+        str(policy),
+        "--output",
+        str(candidate),
+    )
+    # A batch with every row resolved and no debt exits 0 and writes a
+    # candidate that round-trips through the ordinary v2 loader.
+    assert completed.returncode == 0
+    assert candidate.exists()
+    document, errors = load_policy_v2(candidate)
+    assert errors == []
+    assert document
+
+
+def test_zero_resolved_policy_exits_1_no_candidate(tmp_path):
+    policy = tmp_path / "missing-source-policy.yml"
+    policy.write_text(
+        yaml.safe_dump(
+            {
+                "entries": [
+                    _legacy_entry(
+                        "app/src/main/java/com/example/DoesNotExist.kt",
+                        "DoesNotExist",
+                        "missing",
+                    )
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    candidate = tmp_path / "candidate.yml"
+    completed = _run_cli(
+        "--write-candidate",
+        "--policy",
+        str(policy),
+        "--output",
+        str(candidate),
+    )
+    # Zero resolved rows is visible debt: exit 1 and never a candidate write
+    # (a report may still be written).
+    assert completed.returncode == 1
+    assert not candidate.exists()
+
+
+# ── Appended: class-body property + method-local DAO accessors ────────────────
+
+
+def test_class_property_and_local_dao_accessors_resolve(tmp_path):
+    """Both remaining accessor styles resolve (closes matrix 14 fully).
+
+    One repository class declares a CLASS-BODY ``private val archiveDao:
+    ArchiveDao`` property used by one method and a METHOD-LOCAL
+    ``val expenseDao = database.expenseDao()`` alias used by another; two
+    legacy entries targeting each method must both resolve exactly.
+    """
+    repo_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    private val archiveDao: ArchiveDao\n"
+        "\n"
+        "    fun archive(value: Int) {\n"
+        "        archiveDao.insert(value)\n"
+        "    }\n"
+        "\n"
+        "    fun save(value: Int) {\n"
+        "        val expenseDao = database.expenseDao()\n"
+        "        expenseDao.insert(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    archive_dao_kt = "app/src/main/java/com/example/ArchiveDao.kt"
+    _write_repo(
+        tmp_path,
+        {
+            DAO_KT: EXPENSE_DAO_SOURCE,
+            archive_dao_kt: _dao_source("com.example", "ArchiveDao"),
+            REPO_KT: repo_source,
+        },
+    )
+    entries = [
+        # Each legacy row must authorize the DAO its method actually
+        # mutates (rule 5): the archive method's archiveDao mutation is
+        # only emitted because this row authorizes ArchiveDao.
+        _legacy_entry(REPO_KT, "Repository", "archive", daos=("ArchiveDao",)),
+        _legacy_entry(REPO_KT, "Repository", "save"),
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.input_count == 2
+    assert result.unresolved == ()
+    assert len(result.resolved) == 2
+    by_method = {row.entry.method: row.entry for row in result.resolved}
+    assert set(by_method) == {"archive", "save"}
+    # Class-body property accessor: type-derived Room accessor identity.
+    assert by_method["archive"].dao_accessor == "archiveDao"
+    assert by_method["archive"].dao_fqcn == "com.example.ArchiveDao"
+    assert by_method["archive"].operation == "insert"
+    # Method-local alias assigned from the database accessor call.
+    assert by_method["save"].dao_accessor == "expenseDao"
+    assert by_method["save"].dao_fqcn == "com.example.ExpenseDao"
+    assert by_method["save"].operation == "insert"
+
+
+# ── Appended: intent-gate empty-set ``daos`` shapes ───────────────────────────
+#
+# The authorization-intent cross-check (DAO resolution rule 5) derives the
+# expected accessor set ONLY from the string members of a LIST-shaped
+# ``daos`` field.  Each test below keeps the repository body a genuine
+# ``expenseDao.insert(...)`` mutation — so upstream owner/callable/mutation
+# resolution succeeds — and degenerates ONLY the ``daos`` shape, pinning
+# that an empty authorized set fails the whole entry closed as exactly one
+# MUTATION_PAIR_MISSING row carrying the bounded intent-gate detail.
+
+
+def test_daos_key_absent_authorizes_nothing(tmp_path):
+    # No ``daos`` key at all: the legacy row names no DAO, so even a
+    # provably resolvable expenseDao.insert(...) mutation stays
+    # unauthorized and nothing may leak into candidates.
+    _write_repo(tmp_path, _standard_repo_files())
+    entry = _legacy_entry(REPO_KT, "Repository", "save")
+    del entry["daos"]
+    result = migrate_policy([entry], str(tmp_path))
+    assert result.input_count == 1
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_MUTATION_PAIR_MISSING
+    assert row.detail == "no mutation matches legacy daos"
+    assert row.index == 0
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "save"
+
+
+def test_daos_non_list_authorizes_nothing(tmp_path):
+    # A bare string is not a list: it cannot be projected onto accessors,
+    # so the authorized set is empty even though the string names
+    # ExpenseDao.  (list("ExpenseDao") char-splitting must never happen.)
+    _write_repo(tmp_path, _standard_repo_files())
+    entry = _legacy_entry(REPO_KT, "Repository", "save")
+    entry["daos"] = "ExpenseDao"
+    result = migrate_policy([entry], str(tmp_path))
+    assert result.input_count == 1
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_MUTATION_PAIR_MISSING
+    assert row.detail == "no mutation matches legacy daos"
+    assert row.index == 0
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "save"
+
+
+def test_daos_non_string_members_authorizes_nothing(tmp_path):
+    # Non-string members are ignored (filtered out), so a ``daos`` list
+    # with NO string members leaves the authorized set empty.  A mixed
+    # list such as ["ExpenseDao", 7] still authorizes its surviving
+    # string member — pinned below as the contrast — which is exactly why
+    # the pure non-string list is the degenerate empty-set shape.
+    _write_repo(tmp_path, _standard_repo_files())
+    entry = _legacy_entry(REPO_KT, "Repository", "save", daos=(7,))
+    result = migrate_policy([entry], str(tmp_path))
+    assert result.input_count == 1
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_MUTATION_PAIR_MISSING
+    assert row.detail == "no mutation matches legacy daos"
+    assert row.index == 0
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "save"
+    # Contrast: ignoring the non-string member leaves ["ExpenseDao"],
+    # which DOES authorize the evidence-derived expenseDao.insert(...)
+    # mutation — non-string members neither crash nor poison the list.
+    mixed = _legacy_entry(REPO_KT, "Repository", "save")
+    mixed["daos"] = ["ExpenseDao", 7]
+    mixed_result = migrate_policy([mixed], str(tmp_path))
+    assert mixed_result.unresolved == ()
+    assert len(mixed_result.resolved) == 1
+    assert mixed_result.resolved[0].entry.dao_fqcn == (
+        "com.example.ExpenseDao"
+    )
+    assert mixed_result.resolved[0].entry.operation == "insert"
+
+
+# ── Appended: overload/receiver/hint fail-closed statuses ─────────────────────
+#
+# Library-level ``migrate_policy`` coverage for the remaining
+# ``resolve_callable_for_entry`` outcomes over an ``Item``/``List<Item>``
+# overload pair (both bodies perform ``expenseDao.insert(...)``).  The
+# fixture declares ``import com.example.Item`` because the shared parser's
+# type environment is closed-world per file: without the import the
+# declarations themselves would fail as TYPE_UNRESOLVED (PARSER_UNCERTAIN)
+# instead of reaching the hint-matching statuses under test here.
+
+from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
+    STATUS_CALLABLE_AMBIGUOUS,
+    STATUS_CALLABLE_KIND_UNSUPPORTED,
+)
+
+ITEM_OVERLOADS_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "import com.example.Item\n"
+    "\n"
+    "class Repository {\n"
+    "    fun save(item: Item) {\n"
+    "        expenseDao.insert(item)\n"
+    "    }\n"
+    "\n"
+    "    fun save(items: List<Item>) {\n"
+    "        expenseDao.insert(items)\n"
+    "    }\n"
+    "}\n"
+)
+
+SINGLE_SAVE_ITEM_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "import com.example.Item\n"
+    "\n"
+    "class Repository {\n"
+    "    fun save(item: Item) {\n"
+    "        expenseDao.insert(item)\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def _assert_single_unresolved_row(result):
+    """Assert one input stayed fully unresolved as one bounded debt row."""
+    assert result.input_count == 1
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.detail == ""
+    assert row.index == 0
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "save"
+    return row
+
+
+def test_overloads_without_parameter_hint_stay_ambiguous(tmp_path):
+    # Two true same-name overloads and NO parameter hint: nothing may pick
+    # first/last, so the entry resolves to NOTHING and surfaces as exactly
+    # one closed CALLABLE_AMBIGUOUS debt row.
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: ITEM_OVERLOADS_REPO_SOURCE},
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "save", params=())]
+    result = migrate_policy(entries, str(tmp_path))
+    row = _assert_single_unresolved_row(result)
+    assert row.status == STATUS_CALLABLE_AMBIGUOUS
+    assert STATUS_CALLABLE_AMBIGUOUS == "CALLABLE_AMBIGUOUS"
+
+
+def test_overloads_with_non_matching_hint_stay_ambiguous(tmp_path):
+    # A Boolean hint matches neither the Item nor the List<Item> overload:
+    # zero hint matches may never fall back to first/last selection, so the
+    # pair stays fully unresolved as exactly one CALLABLE_AMBIGUOUS row.
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: ITEM_OVERLOADS_REPO_SOURCE},
+    )
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "save", params=("Boolean",))
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    row = _assert_single_unresolved_row(result)
+    assert row.status == STATUS_CALLABLE_AMBIGUOUS
+    assert STATUS_CALLABLE_AMBIGUOUS == "CALLABLE_AMBIGUOUS"
+
+
+def test_wrong_receiver_hint_yields_callable_missing(tmp_path):
+    # A single null-receiver fun save(item: Item): a non-null receiver hint
+    # cannot fabricate a receiver, so every candidate is filtered away and
+    # the row fails closed as CALLABLE_MISSING — never as a defaulted match.
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: SINGLE_SAVE_ITEM_REPO_SOURCE},
+    )
+    entries = [
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "save",
+            params=("Item",),
+            receiver="com.example.Wrong",
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    row = _assert_single_unresolved_row(result)
+    assert row.status == STATUS_CALLABLE_MISSING
+    assert STATUS_CALLABLE_MISSING == "CALLABLE_MISSING"
+
+
+def test_unnormalizable_hint_fails_closed(tmp_path):
+    """An un-normalizable parameter hint fails closed as KIND_UNSUPPORTED.
+
+    Verified against ``resolve_callable_for_entry``: hint normalization runs
+    BEFORE candidate discovery and maps ``(SignatureError, TypeError)`` to
+    ``(None, STATUS_CALLABLE_KIND_UNSUPPORTED)`` — so the constant this
+    path truly emits is ``CALLABLE_KIND_UNSUPPORTED``, regardless of
+    overload count (pinned here against a single-overload method).
+    """
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: SINGLE_SAVE_ITEM_REPO_SOURCE},
+    )
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "save", params=("<", ">"))
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    row = _assert_single_unresolved_row(result)
+    assert row.status == STATUS_CALLABLE_KIND_UNSUPPORTED
+    assert STATUS_CALLABLE_KIND_UNSUPPORTED == "CALLABLE_KIND_UNSUPPORTED"

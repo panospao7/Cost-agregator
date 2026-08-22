@@ -1,137 +1,139 @@
+schemaVersion: 2
 entries:
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
-  class: CategoryRepository
-  method: addCategory
-  daos:
-  - categoryDao
-  operation: getOrInsertByNameNoCase
-  barrier_required: true
-  reason: Canonical category creation — Room-transactional get-or-insert with NOCASE
-    dedupe
-  owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters:
-    - String
-    - String
-    - String
-    receiver: null
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
-  class: CategoryRepository
-  method: deleteCategory
-  daos:
-  - categoryDao
-  operation: delete
-  barrier_required: true
-  reason: Canonical category deletion — guarded by budget-reference and isDefault
-    checks
-  owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters:
-    - Long
-    receiver: null
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/AnomalyAlertRepositoryImpl.kt
-  class: AnomalyAlertRepositoryImpl
-  method: insert
-  daos:
-  - anomalyAlertDao
-  operation: insert
-  barrier_required: true
-  reason: Canonical anomaly alert writer — inserts alert rows for spending anomalies
-  owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters:
-    - com.yourname.expensetracker.domain.alerts.NewAnomalyAlert
-    receiver: null
 - path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
-  class: ExchangeRateStoreAdapter
-  method: insertOrUpdate
-  daos:
-  - exchangeRateDao
-  operation: insertOrUpdate
-  barrier_required: true
-  reason: Canonical exchange-rate single upsert writer — direct writeBarrier before
-    exchangeRateDao.insertOrUpdate
-  owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters:
-    - com.yourname.expensetracker.domain.currency.DomainExchangeRate
-    receiver: null
-- path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
-  class: ExchangeRateStoreAdapter
-  method: insertOrUpdateAll
-  daos:
-  - exchangeRateDao
-  operation: insertOrUpdateAll
-  barrier_required: true
-  reason: Canonical exchange-rate bulk upsert writer — direct writeBarrier before
-    exchangeRateDao.insertOrUpdateAll
-  owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters:
-    - List<com.yourname.expensetracker.domain.currency.DomainExchangeRate>
-    receiver: null
-- path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
-  class: ExchangeRateStoreAdapter
+  ownerFqcn: com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
+  kind: function
   method: deleteOldRates
-  daos:
-  - exchangeRateDao
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: exchangeRateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExchangeRateDao
   operation: deleteOldRates
-  barrier_required: true
-  reason: Canonical exchange-rate retention purge writer — direct writeBarrier before
-    exchangeRateDao.deleteOldRates
+  barrierMode: direct
+  reason: "Canonical exchange-rate retention purge writer \u2014 direct writeBarrier\
+    \ before exchangeRateDao.deleteOldRates"
   owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters:
-    - Long
-    receiver: null
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
-  class: PromptStateRepository
-  method: recordPrompt
-  daos:
-  - promptStateDao
-  operation: insertPromptState
-  barrier_required: true
-  reason: Canonical prompt-state writer — records prompt shown; direct writeBarrier
-    before promptStateDao.insertPromptState
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
+  ownerFqcn: com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
+  kind: function
+  method: insertOrUpdate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.currency.DomainExchangeRate
+  daoAccessor: exchangeRateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExchangeRateDao
+  operation: insertOrUpdate
+  barrierMode: direct
+  reason: "Canonical exchange-rate single upsert writer \u2014 direct writeBarrier\
+    \ before exchangeRateDao.insertOrUpdate"
   owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters:
-    - String
-    receiver: null
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
-  class: PromptStateRepository
-  method: recordAcknowledgment
-  daos:
-  - promptStateDao
-  operation: insertPromptState
-  barrier_required: true
-  reason: Canonical prompt-state writer — records user acknowledgment; direct writeBarrier
-    before promptStateDao.insertPromptState
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
+  ownerFqcn: com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
+  kind: function
+  method: insertOrUpdateAll
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.currency.DomainExchangeRate>
+  daoAccessor: exchangeRateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExchangeRateDao
+  operation: insertOrUpdateAll
+  barrierMode: direct
+  reason: "Canonical exchange-rate bulk upsert writer \u2014 direct writeBarrier before\
+    \ exchangeRateDao.insertOrUpdateAll"
   owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters:
-    - String
-    - String
-    - String?
-    receiver: null
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AnomalyAlertRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AnomalyAlertRepositoryImpl
+  kind: function
+  method: insert
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.alerts.NewAnomalyAlert
+  daoAccessor: anomalyAlertDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AnomalyAlertDao
+  operation: insert
+  barrierMode: direct
+  reason: "Canonical anomaly alert writer \u2014 inserts alert rows for spending anomalies"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: addCategory
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  - String
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: getOrInsertByNameNoCase
+  barrierMode: direct
+  reason: "Canonical category creation \u2014 Room-transactional get-or-insert with\
+    \ NOCASE dedupe"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: deleteCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: delete
+  barrierMode: direct
+  reason: "Canonical category deletion \u2014 guarded by budget-reference and isDefault\
+    \ checks"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
-  class: PromptStateRepository
+  ownerFqcn: com.yourname.expensetracker.data.repository.PromptStateRepository
+  kind: function
   method: cleanupOldRecords
-  daos:
-  - promptStateDao
+  receiver: null
+  parameterTypes: []
+  daoAccessor: promptStateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PromptStateDao
   operation: deleteOldPrompts
-  barrier_required: true
-  reason: Canonical prompt-state retention purge — direct writeBarrier before promptStateDao.deleteOldPrompts
+  barrierMode: direct
+  reason: "Canonical prompt-state retention purge \u2014 direct writeBarrier before\
+    \ promptStateDao.deleteOldPrompts"
   owner: '@panospao7'
-  linked_issue: MIT-003
-  signature:
-    parameters: []
-    receiver: null
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.PromptStateRepository
+  kind: function
+  method: recordAcknowledgment
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  - String?
+  daoAccessor: promptStateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PromptStateDao
+  operation: insertPromptState
+  barrierMode: direct
+  reason: "Canonical prompt-state writer \u2014 records user acknowledgment; direct\
+    \ writeBarrier before promptStateDao.insertPromptState"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.PromptStateRepository
+  kind: function
+  method: recordPrompt
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: promptStateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PromptStateDao
+  operation: insertPromptState
+  barrierMode: direct
+  reason: "Canonical prompt-state writer \u2014 records prompt shown; direct writeBarrier\
+    \ before promptStateDao.insertPromptState"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
