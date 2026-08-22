@@ -30,9 +30,9 @@ from ..kotlin_callable_parser import (
 )
 from .declaration_scanner import scan_production_declarations
 from .room_inventory import build_room_inventory
-from ..verify_db_access_boundaries import (
-    ownership_entry_metadata_errors,
-    structural_entry_metadata_errors,
+from .policy_legacy import (
+    legacy_ownership_entry_metadata_errors as ownership_entry_metadata_errors,
+    legacy_structural_entry_metadata_errors as structural_entry_metadata_errors,
 )
 
 

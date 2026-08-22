@@ -20,9 +20,12 @@ from scripts.ci.guard_findings import GuardRunReport
 from scripts.db_guard.scanner import _diag_from_text
 from scripts.db_guard import reporting
 from scripts.db_guard import room_inventory
-from scripts.verify_db_access_boundaries import (
-    main as verify_main, ownership_entry_metadata_errors,
+from scripts.db_guard.policy_legacy import (
+    legacy_ownership_entry_metadata_errors as ownership_entry_metadata_errors,
 )
+# Kept on the CLI module: these tests invoke the real verifier entry point
+# in-process (CLI-level integration) alongside their subprocess runs.
+from scripts.verify_db_access_boundaries import main as verify_main
 
 
 SCRIPT = Path(__file__).with_name("verify_db_access_boundaries.py")

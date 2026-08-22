@@ -2,7 +2,9 @@
 
 Part of: Global Write/Read/Restore Barrier — PR 5
 
-Every table family has exactly one approved write owner.
+> **Transitional state (PR-01):** The v1 policy (`config/guards/db_ownership_policy.yml` + structural exceptions) remains the **ACTIVE gate**, and its current blocked state is expected until v2 activation. A new authoritative v2 policy model now exists under `scripts/db_guard/` (`policy_model.py`, `policy_v2_loader.py`, `policy_v2_evidence.py`) but is **NOT wired into enforcement**. Candidate generation is GR-02; activation is GR-07. No policy/baseline files were changed by PR-01.
+
+Every table family has exactly one approved write owner — an architectural objective, enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations.
 Direct DAO mutation outside the canonical DB ownership policy is a violation caught by the static guard (PR 6/10).
 
 The **canonical sources of truth** for all DB write authorization are:
@@ -10,7 +12,7 @@ The **canonical sources of truth** for all DB write authorization are:
 - `config/guards/db_ownership_policy.yml` — enumerates every approved writer class, method, DAOs, and operation.
 - `config/guards/db_structural_exceptions.yml` — grants approval for intrinsically low-level DB infrastructure operations (migrations, rescue, backup/restore, diagnostics, privacy export).
 
-All ownership authorization is decided by exactly those two files. In addition,
+All ownership authorization is decided by exactly those two files — an architectural objective, enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations. In addition,
 `config/guards/db_structural_exceptions_expected_methods.yml` is a **mandatory
 integrity/classification manifest**: it pins the exact `expected`/`fixtures`
 tuple classification of the structural exceptions file against immutable
@@ -91,7 +93,8 @@ The legacy `config/db_access_allowlist.yml` is **superseded** by the files above
 - **Runtime:** `DatabaseWriteBarrier.checkWritesAllowed()` throws `DatabaseAccessBlockedException` in all non-NORMAL modes.
 - **Static (warning):** `scripts/verify_db_access_boundaries.py` reports violations (PR 6).
 - **Static (CI failure):** Same script exits non-zero on new violations (PR 10).
-- **Canonical policy:** `config/guards/db_ownership_policy.yml` is the source of truth for approved write owners. Each entry enumerates an exact class + method + DAOs + operation. Wildcard `"*"` method entries are not supported — every writer method must be individually listed.
+- **Transitional guard state:** The static guard currently reports `SIGNATURE_MISSING` / `DB_POLICY_SOURCE_EVIDENCE_INVALID` for entries lacking signatures; this blocked state is intentional pre-v2 and is expected until v2 activation (GR-07).
+- **Canonical policy:** `config/guards/db_ownership_policy.yml` is the source of truth for approved write owners — an architectural objective, enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations. Each entry enumerates an exact class + method + DAOs + operation. Wildcard `"*"` method entries are not supported — every writer method must be individually listed.
 - **Structural exceptions:** `config/guards/db_structural_exceptions.yml` grants approval for DB file operations (Room migrations, maintenance rescue, backup/restore, diagnostics, privacy export, etc.) via exact method_pattern + operation matching.
 - **Structural manifest:** `config/guards/db_structural_exceptions_expected_methods.yml` is a mandatory integrity/classification manifest enforced by `verify_db_access_boundaries.py`. It requires the current structural-exception tuple set to EXACTLY equal the manifest's `expected` + `fixtures` tuple set, the `expected` set to exactly equal the immutable expected contract, and the `fixtures` set to exactly equal the immutable fixture contract (a moved or invented tuple fails with `MANIFEST_CLASSIFICATION_MISMATCH`, exit 2). **The manifest grants NO authorization** — it only verifies that the structural exceptions file matches its recorded classification.
 - **Ratchet baselines:** The ratchet baseline records unresolved debt (writers that exist in code but are not yet listed in the ownership policy). Baselines do **not** authorize new ownership; they document existing debt that must be resolved. Baselines never authorize writes — only an exact canonical ownership-policy entry or a structural exception entry authorizes a DAO mutation. New writers must be added to `db_ownership_policy.yml` — never to the baseline alone.
@@ -112,7 +115,7 @@ The legacy `config/db_access_allowlist.yml` is **superseded** by the files above
 
 ### Canonical sources of truth
 
-All DB write authorization is decided by exactly two files:
+All DB write authorization is decided by exactly two files (an architectural objective — enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations):
 
 - **`config/guards/db_ownership_policy.yml`** — the canonical ownership policy.
   It enumerates every approved writer as an exact `(class, method, daos,

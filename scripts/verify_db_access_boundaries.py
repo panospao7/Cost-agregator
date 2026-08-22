@@ -65,6 +65,31 @@ try:
 except ModuleNotFoundError:  # direct execution from outside the repository root
     from db_policy_signature import SignatureError, normalize_type_text
 
+try:
+    from scripts.db_guard.policy_legacy import (
+        legacy_canonical_path_error,
+        legacy_canonical_path,
+        legacy_ownership_entry_metadata_errors,
+        legacy_structural_entry_metadata_errors,
+        legacy_verify_ownership_policy_source_evidence,
+        _legacy_verify_ownership_group,
+        _legacy_canonical_path_file,
+        LEGACY_OWNERSHIP_ALLOWED_KEYS,
+        LEGACY_STRUCTURAL_ALLOWED_KEYS,
+    )
+except ImportError:
+    from db_guard.policy_legacy import (
+        legacy_canonical_path_error,
+        legacy_canonical_path,
+        legacy_ownership_entry_metadata_errors,
+        legacy_structural_entry_metadata_errors,
+        legacy_verify_ownership_policy_source_evidence,
+        _legacy_verify_ownership_group,
+        _legacy_canonical_path_file,
+        LEGACY_OWNERSHIP_ALLOWED_KEYS,
+        LEGACY_STRUCTURAL_ALLOWED_KEYS,
+    )
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -356,31 +381,7 @@ def canonical_policy_path_error(raw):
     packages; suffix/ambiguous paths are rejected because matching is exact
     canonical path equality.
     """
-    if not isinstance(raw, str):
-        return "path must be a string"
-    p = raw.strip()
-    if not p:
-        return "path must be non-empty"
-    if "\\" in p:
-        return f"path contains a backslash: {p!r} (use '/' separators)"
-    if p.startswith("/") or p.startswith("\\\\") or re.match(r"^[A-Za-z]:[\\/]", p):
-        return f"path must be repository-relative, not absolute: {p!r}"
-    if p.startswith("./") or p == ".":
-        return f"path must not start with './': {p!r}"
-    parts = p.split("/")
-    if any(part in ("", ".", "..") for part in parts):
-        return f"path must not contain empty, '.', or '..' segments: {p!r}"
-    if len(parts) < 2:
-        return f"bare basename path is ambiguous and not allowed: {p!r}"
-    if not p.endswith(".kt"):
-        return f"path must reference a Kotlin source file (.kt): {p!r}"
-    for root in APPROVED_PRODUCTION_SOURCE_ROOTS:
-        if p == root or p.startswith(root + "/"):
-            return None
-    return (
-        f"path {p!r} is not under an approved production source root "
-        f"{sorted(APPROVED_PRODUCTION_SOURCE_ROOTS)}"
-    )
+    return legacy_canonical_path_error(raw)
 
 
 def canonical_policy_path(raw):
@@ -390,9 +391,7 @@ def canonical_policy_path(raw):
     approved production source root.  Matching is exact canonical path
     equality — a non-canonical policy path never authorizes anything.
     """
-    if canonical_policy_path_error(raw) is None:
-        return raw.strip()
-    return None
+    return legacy_canonical_path(raw)
 
 
 def _scanned_file_canonical_path(filepath):
@@ -445,97 +444,7 @@ def ownership_entry_metadata_errors(entry):
       9. ``barrier_via`` / ``delegate_of`` must be non-empty strings when
          present, and ``private`` must be a real boolean when present.
     """
-    errors = []
-    if not isinstance(entry, dict):
-        return ["entry must be a mapping"]
-
-    # H2 strict schema: reject unknown keys so a mistyped field (e.g. ``daoz``)
-    # can never be silently ignored while the guard approves a mutation.
-    unknown_keys = set(entry) - OWNERSHIP_ALLOWED_KEYS
-    if unknown_keys:
-        errors.append(f"unknown key(s) {sorted(unknown_keys)}")
-
-    for field in ("path", "class", "method", "operation", "reason", "owner", "linked_issue"):
-        value = entry.get(field)
-        if not isinstance(value, str) or not value.strip():
-            errors.append(f"'{field}' must be a non-empty string")
-
-    path = entry.get("path")
-    if isinstance(path, str) and path.strip():
-        path_error = canonical_policy_path_error(path)
-        if path_error:
-            errors.append(f"'path' is not canonical: {path_error}")
-
-    op = entry.get("operation")
-    if op == "write":
-        errors.append(
-            "'operation: write' is invalid policy metadata — every entry must "
-            "name the EXACT DAO method it authorizes "
-            "(e.g. 'insert', 'insertOrIgnore', 'archiveGroup', "
-            "'deleteAllForGroup', 'staleAbortIfStillRunning')"
-        )
-    elif not isinstance(op, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", op or ""):
-        errors.append(f"'operation' must be an exact DAO method name, got {op!r}")
-
-    method = entry.get("method")
-    if isinstance(method, str) and _is_wildcard_method(method):
-        errors.append(
-            f"method {method!r} is a wildcard/pattern method — every writer "
-            "method must be individually enumerated with an exact name"
-        )
-
-    daos = entry.get("daos")
-    if "daos" not in entry:
-        errors.append("'daos' must be a non-empty list of non-empty strings")
-    elif not isinstance(daos, list) or not daos:
-        errors.append("'daos' must be a non-empty list of non-empty strings")
-    else:
-        for dao in daos:
-            if not isinstance(dao, str) or not dao.strip():
-                errors.append("every 'daos' entry must be a non-empty string")
-                break
-
-    if "barrier_required" not in entry:
-        errors.append("'barrier_required' must be a real boolean (true/false)")
-    elif not isinstance(entry["barrier_required"], bool):
-        errors.append("'barrier_required' must be a real boolean (true/false)")
-
-    for field in ("barrier_via", "delegate_of"):
-        if field in entry:
-            value = entry[field]
-            if not isinstance(value, str) or not value.strip():
-                errors.append(f"'{field}' must be a non-empty string when present")
-
-    if "signature" in entry:
-        signature = entry["signature"]
-        if not isinstance(signature, dict):
-            errors.append("'signature' must be a mapping when present")
-        else:
-            if set(signature) != {"receiver", "kind", "parameters"}:
-                errors.append("'signature' must contain exactly receiver, kind, parameters")
-            receiver = signature.get("receiver")
-            if receiver is not None and not isinstance(receiver, str):
-                errors.append("'signature.receiver' must be a string or null")
-            elif isinstance(receiver, str):
-                try:
-                    normalized = normalize_type_text(receiver)
-                    if normalized != receiver or receiver.startswith("vararg "):
-                        errors.append("'signature.receiver' must be a canonical type")
-                except SignatureError:
-                    errors.append("'signature.receiver' must be a valid canonical type")
-            kind = signature.get("kind")
-            if kind not in {"function", "constructor", "property_getter", "property_setter", "top_level_function", "initializer"}:
-                errors.append("'signature.kind' is not an allowed callable kind")
-            parameters = signature.get("parameters")
-            if not isinstance(parameters, list) or any(not isinstance(item, str) or not item for item in parameters):
-                errors.append("'signature.parameters' must be a list of non-empty strings")
-            elif any(_noncanonical_signature_type(item) for item in parameters):
-                errors.append("'signature.parameters' must be an ordered list of canonical types")
-
-    if "private" in entry and not isinstance(entry["private"], bool):
-        errors.append("'private' must be a real boolean (true/false) when present")
-
-    return errors
+    return legacy_ownership_entry_metadata_errors(entry)
 
 
 def _noncanonical_signature_type(value):
@@ -569,68 +478,17 @@ def structural_entry_metadata_errors(entry):
          ``raw_*`` categories, empty strings, and arbitrary values are invalid
          policy metadata and fail closed.
     """
-    errors = []
-    if not isinstance(entry, dict):
-        return ["entry must be a mapping"]
-
-    unknown_keys = set(entry) - STRUCTURAL_ALLOWED_KEYS
-    if unknown_keys:
-        errors.append(f"unknown key(s) {sorted(unknown_keys)}")
-
-    for field in ("path", "class", "method_pattern", "operation"):
-        value = entry.get(field)
-        if not isinstance(value, str) or not value.strip():
-            errors.append(f"'{field}' must be a non-empty string")
-
-    for field in ("reason", "owner", "linked_issue"):
-        if field in entry and (
-            not isinstance(entry[field], str) or not entry[field].strip()
-        ):
-            errors.append(f"'{field}' must be a non-empty string when present")
-
-    path = entry.get("path")
-    if isinstance(path, str) and path.strip():
-        path_error = canonical_policy_path_error(path)
-        if path_error:
-            errors.append(f"'path' is not canonical: {path_error}")
-
-    mp = entry.get("method_pattern")
-    if not _is_valid_method_pattern(mp):
-        errors.append(
-            f"'method_pattern' must be an exact method name or the bounded "
-            f"migration form MIGRATION_\\d+_\\d+, got {mp!r}"
-        )
-
-    # H2 strict operation whitelist: a structural exception (or manifest
-    # tuple) may name ONLY one of the exact supported structural operations.
-    # The generic ``write`` value, ``raw_*`` categories (``raw_sqlite`` /
-    # ``raw_db_file``), empty strings, and arbitrary values are invalid policy
-    # metadata — a value outside the whitelist can never authorize a file
-    # operation and fails closed here (exit 2 via the loaders / scan()).
-    op = entry.get("operation")
-    if not isinstance(op, str) or op not in STRUCTURAL_FILE_OPERATIONS:
-        errors.append(
-            f"'operation' must be one of the exact supported structural "
-            f"operations {sorted(STRUCTURAL_FILE_OPERATIONS)}, got {op!r}"
-        )
-    return errors
+    return legacy_structural_entry_metadata_errors(entry)
 
 # ── Policy loading ────────────────────────────────────────────────────────────
 
 # H2 strict schema: the ONLY keys accepted in an ownership-policy entry.
 # Everything else is a config error (exit 2) so typos/misnamed metadata can
 # never silently change approval semantics.
-OWNERSHIP_ALLOWED_KEYS = frozenset({
-    "path", "class", "method", "daos", "operation",
-    "barrier_required", "barrier_via", "reason", "owner",
-    "linked_issue", "private", "delegate_of", "signature",
-})
+OWNERSHIP_ALLOWED_KEYS = LEGACY_OWNERSHIP_ALLOWED_KEYS
 
 # H2 strict schema: the ONLY keys accepted in a structural-exception entry.
-STRUCTURAL_ALLOWED_KEYS = frozenset({
-    "path", "class", "method_pattern", "operation",
-    "reason", "owner", "linked_issue",
-})
+STRUCTURAL_ALLOWED_KEYS = LEGACY_STRUCTURAL_ALLOWED_KEYS
 
 _WILDCARD_CHARS = set("*?[]+")
 
@@ -3355,243 +3213,9 @@ def _source_evidence_error(path, class_name, method_name, code, detail,
     return error
 
 
-def _canonical_path_file(canonical_path, source_root):
-    """Resolve a canonical policy path to a real file under ``source_root``.
-
-    Canonical policy paths are repository-relative POSIX paths under an
-    approved production source root (``app/src/main/java``).  ``source_root``
-    is the absolute directory of that root, so the canonical path is stripped
-    of its root prefix and joined under ``source_root``.  Returns None when the
-    path is not under an approved root (fail closed — a basename or suffix can
-    never resolve here).
-    """
-    for root in APPROVED_PRODUCTION_SOURCE_ROOTS:
-        if canonical_path == root:
-            return None
-        if canonical_path.startswith(root + "/"):
-            rel = canonical_path[len(root) + 1:]
-            return os.path.join(source_root, *rel.split("/"))
-    return None
-
-
-def _verify_ownership_group(path, class_name, method_name, group_entries,
-                            source_root):
-    """Return structured source-evidence errors for one (path, class, method)
-    group of ownership entries.
-
-    ``group_entries`` is a list of ``(index, entry)`` tuples sharing the same
-    canonical ``path``, ``class``, and ``method``.  The group is the unit of
-    policy-union coverage: for overloaded methods the union of every overload's
-    mutation pairs is the method's evidence, and every listed ``(dao,
-    operation)`` pair must exist in that union while every actual pair in the
-    union must be covered by the group's listed union.
-
-    Fail-closed discipline mirrors ``scan()``: no filename-stem, file-wide
-    token, wildcard, or ``matches.last()`` fallback is ever used.
-    """
-    errors = []
-
-    # 1. Resolve the canonical path to a real file under the source root.
-    filepath = _canonical_path_file(path, source_root)
-    if filepath is None:
-        return [_source_evidence_error(
-            path, class_name, method_name, "PATH_INVALID",
-            "policy path is not under an approved production source root",
-        )]
-    if not os.path.isfile(filepath):
-        return [_source_evidence_error(
-            path, class_name, method_name, "PATH_NOT_FOUND",
-            "canonical source file does not exist under the source root",
-        )]
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            lines = f.readlines()
-    except (OSError, UnicodeDecodeError):
-        return [_source_evidence_error(
-            path, class_name, method_name, "FILE_UNREADABLE",
-            "cannot read Kotlin source file",
-        )]
-
-    # 2. Exact class/object resolution from the ACTUAL Kotlin declarations.
-    #    Zero matches and duplicate declarations both fail closed.
-    types = parse_type_declarations(lines)
-    class_decls = [t for t in types if t["name"] == class_name]
-    if not class_decls:
-        return [_source_evidence_error(
-            path, class_name, method_name, "CLASS_MISSING",
-            f"declared class/object {class_name!r} is not present in the "
-            "source file",
-        )]
-    if len(class_decls) > 1:
-        return [_source_evidence_error(
-            path, class_name, method_name, "CLASS_AMBIGUOUS",
-            f"declared class/object {class_name!r} is declared more than once "
-            "in the source file",
-        )]
-    type_decl = class_decls[0]
-
-    # 3. Exact method resolution, including private methods and overloads.
-    methods = parse_function_declarations(lines, type_decl["start"],
-                                         type_decl["end"])
-    target_methods = [m for m in methods if m["name"] == method_name]
-    if not target_methods:
-        return [_source_evidence_error(
-            path, class_name, method_name, "METHOD_MISSING",
-            f"method {method_name!r} is not declared in class/object "
-            f"{class_name!r}",
-        )]
-
-    # Fail closed when any body cannot be bounded: pairs extracted from a
-    # partial body can never prove exhaustive coverage.
-    for m in target_methods:
-        if m.get("unsupported_expression") or m.get("unterminated_braced_body"):
-            return [_source_evidence_error(
-                path, class_name, method_name, "METHOD_BODY_UNSUPPORTED",
-                f"method {method_name!r} body cannot be bounded; source "
-                "evidence refused",
-            )]
-
-    # 4. DAO identity resolution from class/method declarations/types — the
-    #    SAME scoping rules scan() uses (constructor params, class properties,
-    #    method locals; a local alias declared in ANOTHER method is never in
-    #    scope here and fails closed).
-    method_body_lines = set()
-    for m in methods:
-        method_body_lines.update(range(m["start"], m["end"] + 1))
-    class_map = build_class_scope_dao_var_map(
-        lines, type_decl["start"], type_decl["end"],
-        excluded_line_numbers=method_body_lines,
-    )
-    all_locals = {}
-    for m in methods:
-        body_lines = m["body"].split("\n")
-        local_map = build_dao_var_map(body_lines, 0, len(body_lines) - 1)
-        all_locals.update(local_map)
-
-    # 5. Extract exact (dao, operation) pairs from every target method body
-    #    and union them across overloads.
-    extracted = {}  # (dao, op) -> [(method_start_0, abs_lineno_1)]
-    resolution_failures = []  # (receiver, op, abs_lineno)
-    for m in target_methods:
-        body_lines = m["body"].split("\n")
-        local_map = build_dao_var_map(body_lines, 0, len(body_lines) - 1)
-        var_map = {**class_map, **local_map}
-        out_of_scope = set(all_locals) - set(var_map)
-        matches = _extract_mutation_matches(
-            m["body"],
-            var_map=var_map,
-            out_of_scope_aliases=out_of_scope,
-            out_of_scope_alias_identities=all_locals,
-        )
-        for match in matches:
-            abs_lineno = m["start"] + match["lineno"] + 1
-            if match["out_of_scope"]:
-                resolution_failures.append(
-                    (match["receiver"], match["op"], abs_lineno)
-                )
-            else:
-                extracted.setdefault((match["dao"], match["op"]), []).append(
-                    (m["start"], abs_lineno)
-                )
-
-    for receiver, op, abs_lineno in resolution_failures:
-        errors.append(_source_evidence_error(
-            path, class_name, method_name, "DAO_RESOLUTION_FAILED",
-            f"mutation {receiver}.{op}(...) at line {abs_lineno} cannot be "
-            "resolved to a DAO identity in this method (out-of-scope alias); "
-            "source evidence refused",
-            dao=receiver, operation=op,
-        ))
-
-    actual_union = set(extracted)
-
-    # 6. Policy union for the group: every (dao, operation) pair listed by
-    #    every entry with the same (path, class, method).
-    listed_union = set()
-    for _index, entry in group_entries:
-        for dao in entry.get("daos") or []:
-            listed_union.add((dao, entry["operation"]))
-
-    # 7. Bidirectional exact-pair coverage.
-    #    7a. Every listed pair must exist in the source union — a policy entry
-    #        that names a DAO/operation the method never invokes is untruthful.
-    for _index, entry in group_entries:
-        for dao in entry.get("daos") or []:
-            pair = (dao, entry["operation"])
-            if pair not in actual_union:
-                errors.append(_source_evidence_error(
-                    path, class_name, method_name, "PAIR_NOT_FOUND",
-                    f"policy lists dao={dao} operation={entry['operation']} "
-                    "but the source method body contains no such mutation",
-                    dao=dao, operation=entry["operation"],
-                ))
-
-    #    7b. Every actual pair must be covered by the policy union — a real
-    #        mutation the policy omits fails closed (all-or-nothing).
-    for dao, op in sorted(actual_union):
-        if (dao, op) not in listed_union:
-            errors.append(_source_evidence_error(
-                path, class_name, method_name, "PAIR_NOT_COVERED",
-                f"source method invokes dao={dao} operation={op} which is not "
-                "covered by any policy entry for this method",
-                dao=dao, operation=op,
-            ))
-
-    # 8. Barrier evidence and mediation truthfulness per actual mutation.
-    for (dao, op), occurrences in extracted.items():
-        covering = [
-            entry for _index, entry in group_entries
-            if entry.get("operation") == op and dao in (entry.get("daos") or [])
-        ]
-        if not covering:
-            continue  # already reported as PAIR_NOT_COVERED
-        for method_start, abs_lineno in occurrences:
-            barrier_before = _barrier_before_line(
-                lines, method_start, abs_lineno
-            )
-            for entry in covering:
-                if entry.get("barrier_required") and not barrier_before:
-                    errors.append(_source_evidence_error(
-                        path, class_name, method_name, "MISSING_WRITE_BARRIER",
-                        "barrier_required=true but no direct masked "
-                        "writeBarrier.checkWritesAllowed/runWrite before "
-                        f"dao={dao} operation={op} at line {abs_lineno}",
-                        dao=dao, operation=op,
-                    ))
-                if entry.get("barrier_via") and entry.get("barrier_required"):
-                    errors.append(_source_evidence_error(
-                        path, class_name, method_name,
-                        "MEDIATED_METADATA_UNTRUTHFUL",
-                        "entry claims WorkerExecutionGuard mediation "
-                        f"(barrier_via={entry.get('barrier_via')}) but "
-                        "barrier_required=true; mediation and a direct barrier "
-                        "claim cannot both be true",
-                        dao=dao, operation=op,
-                    ))
-                if entry.get("barrier_via") and barrier_before:
-                    errors.append(_source_evidence_error(
-                        path, class_name, method_name,
-                        "MEDIATED_METADATA_UNTRUTHFUL",
-                        "entry claims WorkerExecutionGuard mediation "
-                        f"(barrier_via={entry.get('barrier_via')}) yet the "
-                        f"source directly invokes writeBarrier before dao={dao} "
-                        f"operation={op} at line {abs_lineno}",
-                        dao=dao, operation=op,
-                    ))
-
-    # Deduplicate identical diagnostics (multiple entries may share a pair).
-    seen = set()
-    unique = []
-    for err in errors:
-        signature = (
-            err["code"], err["path"], err["class"], err["method"],
-            err.get("dao"), err.get("operation"), err["detail"],
-        )
-        if signature in seen:
-            continue
-        seen.add(signature)
-        unique.append(err)
-    return unique
+# Legacy implementation moved verbatim to scripts/db_guard/policy_legacy.py;
+# this module-level alias keeps the historical in-module call sites working.
+_canonical_path_file = _legacy_canonical_path_file
 
 
 def verify_ownership_policy_source_evidence(entries, source_root):
@@ -3633,46 +3257,7 @@ def verify_ownership_policy_source_evidence(entries, source_root):
     error concerns a specific pair.  ``code`` is one of the controlled
     SOURCE_EVIDENCE_CODES.
     """
-    errors = []
-    groups = {}
-    for i, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            errors.append(_source_evidence_error(
-                "", "", "", "ENTRY_INVALID", "entry must be a mapping",
-            ))
-            continue
-        # Reuse the loader's complete metadata validator so a malformed entry
-        # (unknown key, non-canonical path, wildcard method, operation: write,
-        # bad boolean) is reported here instead of being resolved lazily.
-        meta_errors = ownership_entry_metadata_errors(entry)
-        if meta_errors:
-            errors.append(_source_evidence_error(
-                entry.get("path", ""),
-                entry.get("class", ""),
-                entry.get("method", ""),
-                "ENTRY_INVALID",
-                "; ".join(meta_errors),
-            ))
-            continue
-        key = (entry["path"], entry["class"], entry["method"])
-        groups.setdefault(key, []).append((i, entry))
-
-    for (path, class_name, method_name), group_entries in groups.items():
-        errors.extend(_verify_ownership_group(
-            path, class_name, method_name, group_entries, source_root,
-        ))
-
-    # Deterministic ordering for stable diagnostics.
-    errors.sort(key=lambda e: (
-        e.get("path", ""),
-        e.get("class", ""),
-        e.get("method", ""),
-        e.get("code", ""),
-        e.get("dao", ""),
-        e.get("operation", ""),
-        e.get("detail", ""),
-    ))
-    return errors
+    return legacy_verify_ownership_policy_source_evidence(entries, source_root)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
