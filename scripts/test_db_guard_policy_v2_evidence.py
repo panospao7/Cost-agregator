@@ -491,6 +491,10 @@ def test_path_outside_approved_roots_reports_path_outside_roots(tmp_path):
 
 
 def test_nonexistent_file_reports_file_unreadable(tmp_path):
+    # The declared-root resolution needs the conventional production root
+    # to exist; with it present, a policy path whose FILE is missing fails
+    # as FILE_UNREADABLE.
+    (tmp_path / "app" / "src" / "main" / "java").mkdir(parents=True)
     errors = verify_v2_policy_source_evidence([_entry()], str(tmp_path))
     assert _codes(errors) == [POLICY_ERROR_V2_EVIDENCE_FILE_UNREADABLE]
 
@@ -689,3 +693,51 @@ def test_nested_class_local_alias_cannot_authorize_outer_mutation(tmp_path):
     assert _codes(forged) == [POLICY_ERROR_V2_EVIDENCE_MUTATION_NOT_FOUND]
     assert forged[0].context.get("dao_accessor") == "otherDao"
     assert forged[0].context.get("operation") == "clear"
+
+
+# ===========================================================================
+# 23. Manifest-declared Kotlin source root (PR-GR-03 Slice D)
+# ===========================================================================
+
+
+_KOTLIN_REPO_KT = "app/src/main/kotlin/com/example/Repo.kt"
+
+_DUAL_ROOT_MANIFEST = """\
+schemaVersion: 1
+roots:
+  - module: :app
+    sourceSet: main
+    path: app/src/main/java
+  - module: :app
+    sourceSet: main
+    path: app/src/main/kotlin
+"""
+
+
+def test_manifest_declared_kotlin_root_path_resolves(tmp_path):
+    """A policy path under a manifest-declared src/main/kotlin root verifies.
+
+    The synthetic repo ships a source-root manifest declaring BOTH the java
+    and the kotlin production roots; the entry and its source file live
+    under the kotlin root, so declared-root membership — not the historical
+    single java tuple — authorizes the path and verification passes with
+    zero errors.
+    """
+    guards = tmp_path / "config" / "guards"
+    guards.mkdir(parents=True)
+    (guards / "production_source_roots.yml").write_text(
+        _DUAL_ROOT_MANIFEST, encoding="utf-8"
+    )
+    # Topology gate: every declared root must exist, including the
+    # otherwise-unused java root.
+    (tmp_path / "app" / "src" / "main" / "java").mkdir(parents=True)
+    kotlin_repo = (
+        tmp_path / "app" / "src" / "main" / "kotlin"
+        / "com" / "example" / "Repo.kt"
+    )
+    kotlin_repo.parent.mkdir(parents=True)
+    kotlin_repo.write_text(HAPPY_SOURCE, encoding="utf-8")
+    errors = verify_v2_policy_source_evidence(
+        [_entry(path=_KOTLIN_REPO_KT)], str(tmp_path)
+    )
+    assert errors == ()

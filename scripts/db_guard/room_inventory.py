@@ -27,6 +27,7 @@ from .dao_accessors import (
 )
 from ..db_policy_signature import SignatureError, normalize_type_text
 from ..kotlin_callable_parser import ParserError, mask_kotlin_source
+from .source_roots import DB_SOURCE_ROOT_UNDECLARED, SourceRootSet, resolve_source_root_set
 from .sql_classifier import classify_sql
 
 
@@ -106,56 +107,53 @@ def _diag(code: str, location: str | None = None) -> str:
     return code if not location else f"{code}:{location}"
 
 
-# Approved Kotlin production source roots, POSIX repository-relative.
-# ``app/src/main/java`` is the only documented Kotlin production root in
-# this repository (mirroring ``APPROVED_PRODUCTION_SOURCE_ROOTS`` in
-# ``verify_db_access_boundaries.py``).  Test, androidTest, debug, release,
-# and generated/build output roots are deliberately never scanned.
-_PRODUCTION_SOURCE_ROOTS = ("app/src/main/java",)
+# Approved production source roots are no longer hard-coded here.  They are
+# resolved through the shared contract in ``scripts/db_guard/source_roots.py``
+# (``resolve_source_root_set``): an explicit ``SourceRootSet`` wins, then the
+# checked-in manifest ``config/guards/production_source_roots.yml`` (loaded,
+# validated, and topology-verified; any diagnostic fails closed and never
+# falls back), then the implicit conventional single root — a branch that
+# exists solely for synthetic test fixtures and embedders without a manifest;
+# real repositories always ship the manifest.
 
 
-def _approved_root(source_root: Any) -> tuple[Path, Path] | None:
-    """Return the canonical project/production-source pair.
+def _absolute_root_anchor(root_abs: str) -> str | None:
+    """Project anchor for an implicit absolute declared root.
 
-    Discovery only ever scans the approved Kotlin production source root
-    ``app/src/main/java``.  ``source_root`` may be the project root, or the
-    ``app/src``, ``app/src/main``, or ``app/src/main/java`` directory
-    itself.  Anything else (a missing root, a non-app layout, or a
-    test/androidTest/debug/release source root) is rejected so the caller
-    emits ``DB_ROOM_INVALID_SOURCE``.
+    Implicit bare-directory roots (a conventional source directory passed
+    directly as ``source_root`` by synthetic fixtures or embedders) are
+    anchored at their enclosing project so emitted paths stay
+    repository-relative POSIX exactly as for manifest-declared roots:
+    ``.../<module>/src/main/java`` anchors at the module's parent directory,
+    and ``.../src/main/kotlin`` anchors at the enclosing module directory.
+    Returns ``None`` (fail closed) when the tail does not match or no
+    anchor remains above the tail.
     """
-    try:
-        root = Path(source_root).resolve(strict=True)
-        if not root.is_dir():
-            return None
-    except (OSError, RuntimeError, TypeError, ValueError):
-        return None
-    if root.name == "java" and root.parent.name == "main" and root.parent.parent.name == "src" and root.parent.parent.parent.name == "app":
-        project = root.parent.parent.parent.parent
-        source = root
-    elif root.name == "main" and root.parent.name == "src" and root.parent.parent.name == "app":
-        project = root.parent.parent.parent
-        source = root / "java"
-    elif root.name == "src" and root.parent.name == "app":
-        project = root.parent.parent
-        source = root / "main" / "java"
+    parts = os.path.normpath(root_abs).split(os.sep)
+    if parts[-3:] == ("src", "main", "java"):
+        anchor_parts = parts[:-4]
+    elif parts[-3:] == ("src", "main", "kotlin"):
+        anchor_parts = parts[:-3]
     else:
-        project = root
-        source = root / "app" / "src" / "main" / "java"
-    if source != project / "app" / "src" / "main" / "java":
         return None
-    if not (project / "app" / "src").is_dir():
+    if not anchor_parts:
         return None
-    return project, source
+    return os.path.join(*anchor_parts)
 
 
-def _canonical_files(project: Path, source: Path) -> tuple[list[tuple[str, Path]], bool]:
-    """Discover Kotlin files below the approved production source root in
-    stable order and report directory walk errors.
+def _declared_root_files(repo_root: Any, root_set: SourceRootSet) -> tuple[list[tuple[str, Path]], bool]:
+    """Discover Kotlin files below every declared production source root.
 
-    ``source`` is always an approved production root (``app/src/main/java``)
-    chosen by ``_approved_root``; test/androidTest/debug/release and
-    generated/build output roots are never walked here.
+    Walks each declared root in manifest order with the exact legacy
+    traversal semantics (sorted directories, sorted filenames, silent skip
+    of non-regular ``.kt`` entries) and anchors every emitted path at the
+    repository root so paths remain repository-relative POSIX.  Implicit
+    absolute roots are anchored at their enclosing project via
+    ``_absolute_root_anchor``.  Returns ``(files, unreadable)``; any walk
+    or stat failure marks the whole scan unreadable so the caller fails
+    closed instead of emitting a partial inventory.  Test, androidTest,
+    debug, release, and generated/build output roots are never walked:
+    only declared production roots are.
     """
     result: list[tuple[str, Path]] = []
     unreadable = False
@@ -164,23 +162,35 @@ def _canonical_files(project: Path, source: Path) -> tuple[list[tuple[str, Path]
         nonlocal unreadable
         unreadable = True
 
-    try:
-        for directory, directories, filenames in os.walk(source, topdown=True, onerror=onerror):
-            directories.sort()
-            for filename in sorted(filenames):
-                if not filename.endswith(".kt"):
-                    continue
-                path = Path(directory) / filename
-                try:
-                    if not path.is_file():
+    repo_abs = os.path.abspath(repo_root)
+    for root in root_set.roots:
+        declared = root.path
+        if os.path.isabs(declared):
+            base = os.path.normpath(declared)
+            anchor = _absolute_root_anchor(base)
+            if anchor is None:
+                unreadable = True
+                continue
+        else:
+            anchor = repo_abs
+            base = os.path.join(repo_abs, *declared.split("/"))
+        try:
+            for directory, directories, filenames in os.walk(base, topdown=True, onerror=onerror):
+                directories.sort()
+                for filename in sorted(filenames):
+                    if not filename.endswith(".kt"):
                         continue
-                    relative = path.relative_to(project).as_posix()
-                except (OSError, ValueError):
-                    unreadable = True
-                    continue
-                result.append((relative, path))
-    except OSError:
-        unreadable = True
+                    path = Path(directory) / filename
+                    try:
+                        if not path.is_file():
+                            continue
+                        relative = path.relative_to(anchor).as_posix()
+                    except (OSError, ValueError):
+                        unreadable = True
+                        continue
+                    result.append((relative, path))
+        except OSError:
+            unreadable = True
     return result, unreadable
 
 
@@ -1016,12 +1026,46 @@ def _raw_query_mutators(
     return result
 
 
-def build_room_inventory(source_root: Any, raw_query_policy: Any = None) -> RoomInventory:
+def _source_root_failure_diagnostics(root_diagnostics: Any) -> tuple[str, ...]:
+    """Controlled untrusted-inventory diagnostics for a failed root-set
+    resolution.
+
+    The historical undeclared-conventional-layout failure keeps its exact
+    legacy single-code shape so existing callers see only
+    ``DB_ROOM_INVALID_SOURCE``; every other resolution failure additionally
+    carries the resolved controlled ``DB_SOURCE_ROOT_*`` codes.  Codes only
+    — never raw exception text, stack traces, or runtime-discovered paths.
+    """
+    codes = [code for code, _context in root_diagnostics]
+    if codes == [DB_SOURCE_ROOT_UNDECLARED]:
+        return (_diag("DB_ROOM_INVALID_SOURCE"),)
+    unique = {"DB_ROOM_INVALID_SOURCE"}
+    unique.update(codes)
+    return tuple(sorted(unique))
+
+
+def build_room_inventory(
+    source_root: Any, raw_query_policy: Any = None, *, source_root_set: Any = None
+) -> RoomInventory:
     """Discover Room mutators below *source_root*, conservatively.
 
-    Discovery scans only the approved Kotlin production source root
-    ``app/src/main/java``; test, androidTest, debug, release, and
-    generated/build output roots are never inventoried.
+    Discovery scans every declared production source root, resolved through
+    the shared contract ``resolve_source_root_set``: an explicit keyword-only
+    ``source_root_set`` (a ``SourceRootSet``) is used as-is; otherwise the
+    checked-in manifest ``config/guards/production_source_roots.yml`` is
+    loaded, validated, and topology-verified — any diagnostic fails closed
+    and is never allowed to fall back; otherwise the implicit conventional
+    single root (``app/src/main/java``, or the conventional source directory
+    itself) is used.  That implicit branch exists solely for synthetic test
+    fixtures and embedders without a manifest; real repositories always ship
+    the manifest.  Test, androidTest, debug, release, and generated/build
+    output roots are never inventoried.
+
+    A failed resolution returns the standard untrusted-inventory shape with
+    ``DB_ROOM_INVALID_SOURCE`` plus the controlled ``DB_SOURCE_ROOT_*``
+    codes (the plain undeclared-conventional-layout case keeps the
+    historical single-code shape).  All emitted source paths remain
+    repository-relative POSIX exactly as before.
 
     ``raw_query_policy`` may be a YAML path, a parsed policy dict, or
     ``None``.  When ``None`` the canonical production policy at
@@ -1029,10 +1073,14 @@ def build_room_inventory(source_root: Any, raw_query_policy: Any = None) -> Room
     policies must be passed explicitly so they are never used by default.
     """
     diagnostics: list[str] = []
-    approved = _approved_root(source_root)
-    if approved is None:
-        return RoomInventory(INVENTORY_SCHEMA, INVENTORY_VERSION, (), (), (), (_diag("DB_ROOM_INVALID_SOURCE"),))
-    project, source_root = approved
+    root_set, root_diagnostics = resolve_source_root_set(source_root, source_root_set)
+    if root_set is None or root_diagnostics:
+        return RoomInventory(
+            INVENTORY_SCHEMA,
+            INVENTORY_VERSION,
+            (), (), (),
+            _source_root_failure_diagnostics(root_diagnostics),
+        )
     entries = _policy_entries(DEFAULT_RAW_QUERY_POLICY if raw_query_policy is None else raw_query_policy)
     policy_valid = entries is not None
     if entries is None:
@@ -1043,7 +1091,7 @@ def build_room_inventory(source_root: Any, raw_query_policy: Any = None) -> Room
         entry["classification"]
         for entry in entries
     }
-    files, walk_unreadable = _canonical_files(project, source_root)
+    files, walk_unreadable = _declared_root_files(source_root, root_set)
     if walk_unreadable:
         diagnostics.append(_diag("DB_ROOM_SOURCE_UNREADABLE"))
     if not files:

@@ -1,0 +1,5 @@
+schemaVersion: 1
+roots:
+  - module: ":app"
+    sourceSet: main
+    path: app/src/main/java

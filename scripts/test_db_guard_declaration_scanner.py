@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts.db_guard import declaration_scanner
 from scripts.ci.finding_rule_catalog import is_known_diagnostic
@@ -21,6 +22,12 @@ from scripts.db_guard.declaration_scanner import (
     ScanWriteError,
     scan_production_declarations,
     write_scan_delta_atomic,
+)
+from scripts.db_guard.room_inventory import build_room_inventory
+from scripts.db_guard.source_roots import (
+    SourceRoot,
+    SourceRootSet,
+    collect_production_kotlin_files,
 )
 
 
@@ -1689,3 +1696,121 @@ def test_mixed_valid_and_empty_kotlin_files_are_diagnostics_only(tmp_path):
     )
     joined = json.dumps([d.to_dict() for d in scan.diagnostics])
     assert "class Good" not in joined
+
+
+# ── Shared root-set resolution (PR-GR-03 Slice C2) ───────────────────────────
+
+
+def _write_repo_manifest(repo: Path, paths: tuple[str, ...]) -> None:
+    payload = {
+        "schemaVersion": 1,
+        "roots": [
+            {"module": ":app", "sourceSet": "main", "path": path}
+            for path in paths
+        ],
+    }
+    _write(repo, "config/guards/production_source_roots.yml",
+           yaml.safe_dump(payload))
+
+
+def test_manifest_declared_kotlin_root_declarations_are_discovered(tmp_path):
+    """A manifest declaring ``app/src/main/kotlin`` puts that root's Kotlin
+    declarations in the inventory under repository-relative POSIX paths."""
+    _write_repo_manifest(tmp_path, ("app/src/main/kotlin",))
+    path = "app/src/main/kotlin/example/KotlinRepo.kt"
+    _write(tmp_path, path, "package example\nclass KotlinRepo {\n    fun load() {}\n}\n")
+    scan = scan_production_declarations(tmp_path)
+    assert scan.diagnostics == ()
+    assert scan.files_scanned == (path,)
+    owner = next(item for item in scan.helper_ranges
+                 if item.owner_fqcn == "example.KotlinRepo")
+    assert (owner.kind, owner.path) == ("class", path)
+
+
+def test_undeclared_kotlin_root_fails_closed_without_partial_results(tmp_path):
+    """Production Kotlin beside a declared java root but omitted from the
+    manifest is a declared-vs-observed mismatch: the complete scan fails
+    closed with a controlled ``DB_SOURCE_ROOT_*`` failure and nothing — not
+    even the declared java file — is scanned."""
+    _write_repo_manifest(tmp_path, ("app/src/main/java",))
+    _write(tmp_path, "app/src/main/java/example/Declared.kt",
+           "package example\nclass Declared {}\n")
+    _write(tmp_path, "app/src/main/kotlin/example/Undeclared.kt",
+           "package example\nclass Undeclared {}\n")
+    scan = scan_production_declarations(tmp_path)
+    assert [item.code for item in scan.diagnostics] == [
+        "DB_DECLARATION_INVALID_SOURCE",
+        "DB_SOURCE_ROOT_UNDECLARED",
+    ]
+    assert scan.files_scanned == ()
+    assert scan.dao_declarations == ()
+    assert scan.skipped_dao_declaration_ranges == ()
+    assert scan.helper_ranges == ()
+
+
+def test_declaration_scanner_and_room_inventory_agree_on_root_membership(tmp_path):
+    """For a synthetic two-root repository the declaration scanner considers
+    exactly the declared production Kotlin file set, and the room inventory
+    discovers the same membership (the Kotlin-root DAO included)."""
+    _write_repo_manifest(tmp_path, ("app/src/main/java", "app/src/main/kotlin"))
+    _write(tmp_path, "app/src/main/java/example/JavaHelper.kt",
+           "package example\nclass JavaHelper {}\n")
+    _write(tmp_path, "app/src/main/kotlin/example/KotlinDao.kt",
+           "package example\n@Dao interface KotlinDao { @Insert fun put(v: Item) }\n")
+    root_set = SourceRootSet(roots=(
+        SourceRoot(module=":app", source_set="main", path="app/src/main/java"),
+        SourceRoot(module=":app", source_set="main", path="app/src/main/kotlin"),
+    ))
+    collected, collection_diagnostics = collect_production_kotlin_files(
+        str(tmp_path), root_set
+    )
+    assert collection_diagnostics == ()
+    scan = scan_production_declarations(tmp_path, root_set=root_set)
+    assert scan.diagnostics == ()
+    # Identical root membership: the same files, spanning both declared roots.
+    assert sorted(scan.files_scanned) == sorted(collected)
+    assert scan.files_scanned == (
+        "app/src/main/java/example/JavaHelper.kt",
+        "app/src/main/kotlin/example/KotlinDao.kt",
+    )
+    inventory = build_room_inventory(
+        tmp_path, {"version": 1, "methods": []}, source_root_set=root_set
+    )
+    assert not inventory.diagnostics
+    assert [dao.fqcn for dao in inventory.daos] == ["example.KotlinDao"]
+    assert [method.dao.canonical_path for method in inventory.methods] == [
+        "app/src/main/kotlin/example/KotlinDao.kt"
+    ]
+
+
+def test_duplicate_fqcn_across_declared_roots_membership_agrees_and_inventory_fails_closed(tmp_path):
+    """Mirror of the room-inventory cross-root duplicate-FQCN fixture over the
+    shared root-set resolution: the declaration scanner has no
+    duplicate-identity surface, so it agrees with the inventory only on
+    declared-root membership -- both copies are scanned and inventoried as
+    distinct path-anchored DAO ranges with no scanner diagnostic -- while the
+    fail-closed duplicate outcome remains exclusively the room inventory's
+    controlled ``DB_ROOM_MUTATOR_IDENTITY_AMBIGUOUS`` contract."""
+    source = "package com.example\n@Dao interface DuplicatedDao { @Insert fun put(v: Item) }\n"
+    java_path = "app/src/main/java/com/example/DuplicatedDao.kt"
+    kotlin_path = "app/src/main/kotlin/com/example/DuplicatedDao.kt"
+    _write_repo_manifest(tmp_path, ("app/src/main/java", "app/src/main/kotlin"))
+    _write(tmp_path, java_path, source)
+    _write(tmp_path, kotlin_path, source)
+    scan = scan_production_declarations(tmp_path)
+    # Membership agreement: both declared roots' copies are scanned.
+    assert scan.files_scanned == (java_path, kotlin_path)
+    # The range scanner claims no duplicate-identity diagnostic: each copy is
+    # its own path-anchored DAO range.
+    assert scan.diagnostics == ()
+    assert [(item.path, item.owner_fqcn, item.kind) for item in scan.dao_declarations] == [
+        (java_path, "com.example.DuplicatedDao", "dao"),
+        (kotlin_path, "com.example.DuplicatedDao", "dao"),
+    ]
+    # The fail-closed duplicate outcome is the inventory's contract only.
+    inventory = build_room_inventory(tmp_path, {"version": 1, "methods": []})
+    assert not inventory.mutators
+    assert any(
+        diagnostic.startswith("DB_ROOM_MUTATOR_IDENTITY_AMBIGUOUS")
+        for diagnostic in inventory.diagnostics
+    )

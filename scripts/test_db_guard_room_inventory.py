@@ -1944,10 +1944,12 @@ def test_non_app_src_root_fails_closed_without_raw_path(tmp_path):
     assert str(source) not in " ".join(inventory.diagnostics)
 
 
-def test_approved_empty_directory_emits_source_empty(tmp_path):
+def test_approved_empty_directory_emits_invalid_source(tmp_path):
+    # GR-03 centralized root resolution made the empty ``app/src`` layout
+    # deterministically invalid: no conventional production root resolves.
     (tmp_path / "app" / "src").mkdir(parents=True)
     inventory = build_room_inventory(tmp_path)
-    assert inventory.diagnostics == ("DB_ROOM_SOURCE_EMPTY",)
+    assert inventory.diagnostics == ("DB_ROOM_INVALID_SOURCE",)
     assert not inventory.daos and not inventory.mutators
 
 
@@ -2287,13 +2289,15 @@ def test_production_source_root_variants_normalize_to_the_same_inventory(tmp_pat
     assert not inventory.diagnostics
 
 
-def test_test_only_source_layout_emits_source_empty(tmp_path):
-    """A project with ``app/src`` but no production ``main/java`` DAO is an
-    empty source (fail closed), never a partial or successful inventory."""
+def test_test_only_source_layout_emits_invalid_source(tmp_path):
+    """A project with ``app/src`` but no production ``main/java`` root is an
+    invalid source (fail closed), never a partial or successful inventory."""
     _write(tmp_path, "app/src/test/java/example/TestDao.kt",
            "package example\n@Dao interface TestDao { @Insert fun saveTest(v: Item) }\n")
     inventory = build_room_inventory(tmp_path)
-    assert inventory.diagnostics == ("DB_ROOM_SOURCE_EMPTY",)
+    # GR-03 centralized root resolution made the missing conventional root
+    # deterministically invalid instead of an empty source.
+    assert inventory.diagnostics == ("DB_ROOM_INVALID_SOURCE",)
     assert not inventory.daos and not inventory.mutators
 
 
@@ -2304,3 +2308,117 @@ def test_project_without_app_src_emits_invalid_source(tmp_path):
     inventory = build_room_inventory(tmp_path)
     assert inventory.diagnostics == ("DB_ROOM_INVALID_SOURCE",)
     assert not inventory.daos and not inventory.mutators
+
+
+# ── Declared source-root manifest integration (PR-GR-03 Slice C1) ────────────
+
+
+MANIFEST_RELATIVE = "config/guards/production_source_roots.yml"
+
+
+def _write_repo_manifest(repo: Path, payload: dict) -> None:
+    path = repo / MANIFEST_RELATIVE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+
+def test_manifest_declared_root_yields_identical_inventory_to_implicit(tmp_path):
+    """A checked-in-style manifest declaring ``app/src/main/java`` must
+    produce exactly the same inventory as the implicit conventional
+    resolution of the same repository (byte-equivalent contract)."""
+    _write(tmp_path, "app/src/main/java/example/Production.kt",
+           "package example\n@Dao interface ProductionDao { @Insert fun save(v: Item) }\n")
+    implicit = build_room_inventory(tmp_path, {"version": 1, "methods": []})
+    assert not implicit.diagnostics
+    assert [dao.fqcn for dao in implicit.daos] == ["example.ProductionDao"]
+    _write_repo_manifest(tmp_path, {
+        "schemaVersion": 1,
+        "roots": [
+            {"module": ":app", "sourceSet": "main", "path": "app/src/main/java"}
+        ],
+    })
+    declared = build_room_inventory(tmp_path, {"version": 1, "methods": []})
+    assert declared == implicit
+    assert [item.method for item in declared.mutators] == [
+        "app/src/main/java/example/Production.kt::example.ProductionDao#save(Item)"
+    ]
+
+
+def test_manifest_declaring_missing_root_fails_closed_untrusted(tmp_path):
+    """A manifest declaring a nonexistent root fails closed with a
+    ``DB_SOURCE_ROOT_*`` diagnostic — never a partial scan, and never an
+    implicit fallback to the conventional root that does exist."""
+    _write(tmp_path, "app/src/main/java/example/Production.kt",
+           "package example\n@Dao interface ProductionDao { @Insert fun save(v: Item) }\n")
+    _write_repo_manifest(tmp_path, {
+        "schemaVersion": 1,
+        "roots": [
+            {"module": ":feature", "sourceSet": "main",
+             "path": "feature/missing/src/main/java"}
+        ],
+    })
+    inventory = build_room_inventory(tmp_path, {"version": 1, "methods": []})
+    # Fail closed: an untrusted resolution never yields a partial scan.
+    assert not inventory.daos and not inventory.methods and not inventory.mutators
+    codes = {diag_code(item) for item in inventory.diagnostics}
+    assert "DB_SOURCE_ROOT_UNREADABLE" in codes
+    assert any(code.startswith("DB_SOURCE_ROOT_") for code in codes)
+    assert "DB_ROOM_INVALID_SOURCE" in codes
+
+
+def test_duplicate_fqcn_across_declared_roots_fails_closed(tmp_path):
+    """A manifest declaring TWO production roots must never launder a
+    duplicate FQCN into a trusted inventory.
+
+    ``com.example.DuplicatedDao`` is declared once under
+    ``app/src/main/java`` and once under ``app/src/main/kotlin``.  Callable
+    identity is independent of source path, so cross-root duplicates are the
+    same ambiguous duplicate-declaration failure as the single-root case:
+    traversal order must never decide which copy wins.  The inventory fails
+    closed with exactly the single-root duplicate contract -- no direct or
+    inherited mutator is emitted for the duplicated FQCN, and the controlled
+    duplicate diagnostics name the identity: the path-independent
+    ``DB_ROOM_MUTATOR_IDENTITY_AMBIGUOUS`` code plus
+    ``DB_DAO_INHERITANCE_UNRESOLVED`` for every duplicate copy.  (The
+    same-file ``DB_ROOM_DUPLICATE_METHOD`` code cannot fire here because its
+    key includes the canonical source path and the two copies live under
+    different declared roots.)  Neither copy is silently dropped either:
+    both stay present as untrusted discovery records with distinct
+    canonical paths, never collapsed into one trusted DAO.
+    """
+    fqcn = "com.example.DuplicatedDao"
+    source = "package com.example\n@Dao interface DuplicatedDao { @Insert fun put(v: Item) }\n"
+    java_relative = "app/src/main/java/com/example/DuplicatedDao.kt"
+    kotlin_relative = "app/src/main/kotlin/com/example/DuplicatedDao.kt"
+    _write(tmp_path, java_relative, source)
+    _write(tmp_path, kotlin_relative, source)
+    _write_repo_manifest(tmp_path, {
+        "schemaVersion": 1,
+        "roots": [
+            {"module": ":app", "sourceSet": "main", "path": "app/src/main/java"},
+            {"module": ":app", "sourceSet": "main", "path": "app/src/main/kotlin"},
+        ],
+    })
+    inventory = build_room_inventory(tmp_path, {"version": 1, "methods": []})
+
+    # Fail closed: nothing trusted is derived from the ambiguous declarations.
+    assert not inventory.mutators
+    assert not any(f"::{fqcn}#" in item.method for item in inventory.mutators)
+
+    # The controlled duplicate diagnostics name the duplicated identity.
+    assert any(
+        diag_code(diagnostic) == "DB_ROOM_MUTATOR_IDENTITY_AMBIGUOUS" and fqcn in diagnostic
+        for diagnostic in inventory.diagnostics
+    ), inventory.diagnostics
+    for relative in (java_relative, kotlin_relative):
+        assert any(
+            diagnostic.startswith("DB_DAO_INHERITANCE_UNRESOLVED:")
+            and relative in diagnostic and fqcn in diagnostic
+            for diagnostic in inventory.diagnostics
+        ), inventory.diagnostics
+
+    # Neither copy is dropped or promoted: both untrusted discovery records
+    # remain, anchored at their own declared root.
+    assert {
+        dao.canonical_path for dao in inventory.daos if dao.fqcn == fqcn
+    } == {java_relative, kotlin_relative}

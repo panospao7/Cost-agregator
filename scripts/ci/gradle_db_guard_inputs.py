@@ -71,6 +71,10 @@ DEFAULT_DB_GUARD_INPUTS: List[Tuple[str, str]] = [
         "config/guards/db_structural_exceptions_expected_methods.yml",
         "dbGuardStructuralManifestPath",
     ),
+    (
+        "config/guards/production_source_roots.yml",
+        "dbGuardSourceRootsManifestPath",
+    ),
 ]
 
 

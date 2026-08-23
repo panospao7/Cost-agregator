@@ -348,49 +348,102 @@ from .policy_parsing import (
     extract_mutation_pairs,
 )
 from .policy_v2_loader import build_policy_entry
-from .source_roots import approved_root_error
+from .source_roots import (
+    DB_SOURCE_ROOT_UNDECLARED,
+    SourceRoot,
+    SourceRootSet,
+    collect_production_kotlin_files,
+    is_declared_production_path,
+    resolve_source_root_set,
+)
+from .declaration_scanner import declared_root_pairs
+
+
+def _declared_relative_root_set(repo_root):
+    """Resolve the effective declared production root set, re-anchored.
+
+    Parity twin of the Slice D helpers in ``policy_v2_evidence`` /
+    ``policy_legacy``: ``resolve_source_root_set`` returns manifest-declared
+    roots as repository-relative POSIX paths but its implicit conventional
+    fallback carries each root as an ABSOLUTE native-separator path anchored
+    at its enclosing project; absolute roots are re-anchored here with the
+    exact parity convention of ``declaration_scanner.declared_root_pairs``
+    so membership checks and tree walks against repository-relative policy
+    paths stay possible.  Returns ``(SourceRootSet, ())`` on success or
+    ``(None, diagnostics)`` fail closed; an absolute root that cannot be
+    anchored is dropped so none of its paths can ever authorize anything.
+    """
+    root_set, diagnostics = resolve_source_root_set(repo_root)
+    if root_set is None or diagnostics:
+        return None, diagnostics
+    anchored = None
+    normalized = []
+    for root in root_set.roots:
+        path = root.path
+        if os.path.isabs(path):
+            if anchored is None:
+                anchored = iter(declared_root_pairs(repo_root, root_set))
+            pair = next(anchored, None)
+            if pair is None:
+                continue
+            anchor, base = pair
+            try:
+                path = os.path.relpath(base, anchor).replace(os.sep, "/")
+            except ValueError:
+                continue
+        normalized.append(
+            SourceRoot(module=root.module, source_set=root.source_set, path=path)
+        )
+    if not normalized:
+        return None, (
+            (DB_SOURCE_ROOT_UNDECLARED, {"reason": "no-conventional-root"}),
+        )
+    return SourceRootSet(roots=tuple(normalized)), ()
 
 
 # ── DAO FQCN index ────────────────────────────────────────────────────────────
 
 
 def build_dao_fqcn_index(repo_root) -> dict[str, tuple[str, ...]]:
-    """Index every Room DAO interface under ``repo_root``'s production tree.
+    """Index every Room DAO interface under ``repo_root``'s declared
+    production tree.
 
-    Walks ``<repo_root>/app/src/main/java`` recursively in deterministic
-    sorted order, masks each ``.kt`` file before structural scanning, and
-    resolves ``@Dao`` interfaces via the shared DAO scanner.  Each DAO
-    simple name becomes its Room-generated accessor name
-    (``ExpenseGroupDao`` -> ``expenseGroupDao``); several FQCNs can share an
-    accessor name only when DAO simple names genuinely collide across
-    packages, which downstream resolution reports as ambiguity instead of
-    guessing.
+    Resolves the DECLARED production source-root set for ``repo_root``
+    (the manifest-backed root set when the checked-in manifest exists, the
+    implicit conventional single root otherwise), walks every declared root
+    via ``collect_production_kotlin_files`` in deterministic order (manifest
+    root order, each root's files sorted by repository-relative path),
+    masks each ``.kt`` file before structural scanning, and resolves
+    ``@Dao`` interfaces via the shared DAO scanner.  Each DAO simple name
+    becomes its Room-generated accessor name (``ExpenseGroupDao`` ->
+    ``expenseGroupDao``); several FQCNs can share an accessor name only when
+    DAO simple names genuinely collide across packages, which downstream
+    resolution reports as ambiguity instead of guessing.
 
     Files that cannot be read, masked, canonically pathed, or scanned are
     skipped silently and bounded (no failure accumulation, no retained
-    paths, text, or exception details).  Returns
+    paths, text, or exception details); a declared tree that cannot be
+    walked at all yields an empty index rather than a partial one.  Returns
     ``{accessor: (fqcn, ...)}`` with sorted FQCN tuples.
     """
-    source_root = Path(repo_root) / "app" / "src" / "main" / "java"
-    if not source_root.is_dir():
+    root_set, _diagnostics = _declared_relative_root_set(repo_root)
+    if root_set is None:
         return {}
-    relative_names = []
-    for dirpath, dirnames, filenames in os.walk(source_root):
-        dirnames.sort()
-        for filename in filenames:
-            if filename.endswith(".kt"):
-                candidate = Path(dirpath) / filename
-                relative_names.append(
-                    candidate.relative_to(source_root).as_posix()
-                )
+    relative_names, walk_diagnostics = collect_production_kotlin_files(
+        repo_root, root_set
+    )
+    if walk_diagnostics:
+        # Fail closed, silently and bounded: an unreadable declared tree
+        # yields no index instead of a partial one.
+        return {}
     index: dict[str, set] = {}
-    for relative_posix in sorted(relative_names):
+    for relative_posix in relative_names:
         try:
-            text = (source_root / relative_posix).read_text(encoding="utf-8")
+            text = (
+                Path(repo_root) / Path(*relative_posix.split("/"))
+            ).read_text(encoding="utf-8")
             masked = mask_kotlin_source(text)
-            canonical = canonical_source_path(
-                "app/src/main/java/" + relative_posix
-            )
+            canonical = canonical_source_path(relative_posix)
             for dao in find_dao_declarations(masked, canonical):
                 simple = dao.fqcn.rsplit(".", 1)[-1]
                 accessor = _interface_name_to_room_accessor(simple)
@@ -631,6 +684,11 @@ def migrate_policy(legacy_entries, repo_root, dao_index=None) -> MigrationResult
     """
     if dao_index is None:
         dao_index = build_dao_fqcn_index(repo_root)
+    # Declared production source roots are resolved ONCE per batch; every
+    # per-entry path gate below membership-checks against this set.  A
+    # resolution failure leaves ``root_set`` None so every path fails the
+    # gate closed (same OWNER_MISSING debt as an out-of-root path).
+    root_set, _root_diagnostics = _declared_relative_root_set(repo_root)
     resolved_rows = []
     unresolved_rows = []
     for index, entry in enumerate(legacy_entries):
@@ -657,7 +715,7 @@ def migrate_policy(legacy_entries, repo_root, dao_index=None) -> MigrationResult
             continue
 
         path = entry.get("path")
-        if approved_root_error(path) is not None:
+        if root_set is None or not is_declared_production_path(root_set, path):
             unresolved_rows.append(
                 UnresolvedRow(
                     index,

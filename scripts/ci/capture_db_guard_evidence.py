@@ -95,6 +95,7 @@ FORBIDDEN_PRESERVATION_PATHS = (
     "config/guards/db_structural_exceptions.yml",
     "config/guards/db_structural_exceptions_expected_methods.yml",
     "config/guards/db_raw_query_classification.yml",
+    "config/guards/production_source_roots.yml",
 )
 
 # Git pathspec patterns used to discover tracked DB-guard inputs dynamically.
@@ -104,6 +105,7 @@ FORBIDDEN_PRESERVATION_PATHS = (
 INPUT_DISCOVERY_PATTERNS = (
     "scripts/db_guard/*.py",
     "config/guards/db_*.yml",
+    "config/guards/production_source_roots.yml",
     "config/baselines/db_access.json",
     "scripts/verify_db_access_boundaries.py",
     "scripts/ci/guard_ratchet.py",
@@ -126,6 +128,7 @@ REQUIRED_INPUT_CANDIDATES = (
     "config/guards/db_structural_exceptions.yml",
     "config/guards/db_structural_exceptions_expected_methods.yml",
     "config/guards/db_raw_query_classification.yml",
+    "config/guards/production_source_roots.yml",
 )
 
 # ── Finite bounds for every persisted list/string/count/report-derived field ──

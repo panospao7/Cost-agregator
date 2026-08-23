@@ -61,7 +61,15 @@ from .policy_errors import (
     POLICY_ERROR_YAML_MODULE_UNAVAILABLE,
     PolicyError,
 )
-from .source_roots import APPROVED_PRODUCTION_SOURCE_ROOTS
+from .source_roots import (
+    APPROVED_PRODUCTION_SOURCE_ROOTS,
+    DB_SOURCE_ROOT_UNDECLARED,
+    SourceRoot,
+    SourceRootSet,
+    is_declared_production_path,
+    resolve_source_root_set,
+)
+from .declaration_scanner import declared_root_pairs
 
 # Shared parsing machinery for the source-evidence trio below.  These helpers
 # live in scripts/db_guard/policy_parsing.py (extracted from the legacy CLI);
@@ -697,25 +705,86 @@ def legacy_load_structural_exceptions(path):
 # parser helpers and ``_source_evidence_error`` come from the shared parsing
 # machinery in ``scripts.db_guard.policy_parsing``.
 # ``APPROVED_PRODUCTION_SOURCE_ROOTS`` keeps coming from
-# ``scripts.db_guard.source_roots``, whose value is identical to the CLI
-# module's constant.
+# ``scripts.db_guard.source_roots`` for the GENERIC canonical-path layer
+# (``legacy_canonical_path_error``), whose value is identical to the CLI
+# module's constant.  PR-GR-03 Slice D: the source-evidence resolver below no
+# longer validates against that in-code tuple — ``_legacy_canonical_path_file``
+# resolves the DECLARED (manifest-backed) production root set through
+# ``resolve_source_root_set`` and membership-checks each canonical path with
+# ``is_declared_production_path`` instead.
+
+
+def _legacy_declared_relative_root_set(source_root):
+    """Resolve the effective declared production root set, re-anchored.
+
+    Parity twin of the Slice D helpers in ``policy_v2_evidence`` /
+    ``policy_v2_candidate``: ``resolve_source_root_set`` returns
+    manifest-declared roots as repository-relative POSIX paths but its
+    implicit conventional fallback carries each root as an ABSOLUTE
+    native-separator path anchored at its enclosing project; absolute roots
+    are re-anchored here with the exact parity convention of
+    ``declaration_scanner.declared_root_pairs`` so membership checks against
+    repository-relative policy paths stay possible.  Returns
+    ``(SourceRootSet, ())`` on success or ``(None, diagnostics)`` fail
+    closed; an absolute root that cannot be anchored is dropped so none of
+    its paths can ever authorize anything.
+    """
+    root_set, diagnostics = resolve_source_root_set(source_root)
+    if root_set is None or diagnostics:
+        return None, diagnostics
+    anchored = None
+    normalized = []
+    for root in root_set.roots:
+        path = root.path
+        if os.path.isabs(path):
+            if anchored is None:
+                anchored = iter(declared_root_pairs(source_root, root_set))
+            pair = next(anchored, None)
+            if pair is None:
+                continue
+            anchor, base = pair
+            try:
+                path = os.path.relpath(base, anchor).replace(os.sep, "/")
+            except ValueError:
+                continue
+        normalized.append(
+            SourceRoot(module=root.module, source_set=root.source_set, path=path)
+        )
+    if not normalized:
+        return None, (
+            (DB_SOURCE_ROOT_UNDECLARED, {"reason": "no-conventional-root"}),
+        )
+    return SourceRootSet(roots=tuple(normalized)), ()
 
 
 def _legacy_canonical_path_file(canonical_path, source_root):
     """Resolve a canonical policy path to a real file under ``source_root``.
 
-    Canonical policy paths are repository-relative POSIX paths under an
-    approved production source root (``app/src/main/java``).  ``source_root``
-    is the absolute directory of that root, so the canonical path is stripped
-    of its root prefix and joined under ``source_root``.  Returns None when the
-    path is not under an approved root (fail closed — a basename or suffix can
-    never resolve here).
+    Membership is checked against the DECLARED production source roots
+    resolved for ``source_root`` — the manifest-backed root set when the
+    checked-in manifest exists, the implicit conventional single root
+    otherwise — never against an in-code root tuple.  The matched declared
+    root's prefix is stripped and the remainder joined under ``source_root``
+    exactly as before, so single-root callers keep identical resolution.
+    Generic syntax rejection (.kt suffix, non-bare basename) plus every
+    fail-closed shape (non-strings, empty values, backslashes, absolute
+    forms, empty/``.``/``..`` segments) still yields None: a basename or
+    suffix can never resolve here.
     """
-    for root in APPROVED_PRODUCTION_SOURCE_ROOTS:
-        if canonical_path == root:
-            return None
-        if canonical_path.startswith(root + "/"):
-            rel = canonical_path[len(root) + 1:]
+    if (
+        not isinstance(canonical_path, str)
+        or not canonical_path.endswith(".kt")
+        or "/" not in canonical_path
+    ):
+        return None
+    root_set, _diagnostics = _legacy_declared_relative_root_set(source_root)
+    if root_set is None:
+        return None
+    if not is_declared_production_path(root_set, canonical_path):
+        return None
+    for root in root_set.roots:
+        if canonical_path.startswith(root.path + "/"):
+            rel = canonical_path[len(root.path) + 1:]
             return os.path.join(source_root, *rel.split("/"))
     return None
 

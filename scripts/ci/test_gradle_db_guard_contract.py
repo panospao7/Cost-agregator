@@ -95,7 +95,7 @@ property name, or how the inner ratchet command is constructed — you MUST:
      - ``test_command_construction_uses_single_token_command_arg``
 
 The parity tests read ``app/build.gradle.kts`` directly and assert that the
-six required input paths and override property names correspond exactly to
+required input paths and override property names correspond exactly to
 ``gradle_db_guard_inputs.DEFAULT_DB_GUARD_INPUTS``, and that the three
 policy/manifest arguments are ALWAYS present in the constructed command path
 (never gated on override properties).
@@ -140,6 +140,7 @@ REQUIRED_INPUTS = [
     "config/guards/db_ownership_policy.yml",
     "config/guards/db_structural_exceptions.yml",
     "config/guards/db_structural_exceptions_expected_methods.yml",
+    "config/guards/production_source_roots.yml",
 ]
 
 # Test-only override properties the task must expose (defaults used in CI).
@@ -150,6 +151,7 @@ OVERRIDE_PROPERTIES = [
     "dbGuardOwnershipPolicyPath",
     "dbGuardStructuralExceptionsPath",
     "dbGuardStructuralManifestPath",
+    "dbGuardSourceRootsManifestPath",
 ]
 
 FORBIDDEN_LEGACY_REFERENCE = "config/db_access_allowlist.yml"
@@ -345,6 +347,36 @@ def test_parity_default_paths_paired_with_exact_override_properties() -> None:
             f"override property '{override_prop}' in a single "
             f'resolveDbGuardPath("{default_rel}", "{override_prop}") call'
         )
+
+
+def test_production_source_roots_manifest_is_required_db_guard_input() -> None:
+    """PR-GR-03 Slice E: the source-root manifest is a required DB guard input.
+
+    ``config/guards/production_source_roots.yml`` must be declared in
+    ``DEFAULT_DB_GUARD_INPUTS`` exactly like the ownership-policy/structural
+    exception inputs, and the Gradle task must pair it with its override
+    property in a single ``resolveDbGuardPath(...)`` call (same parity gate as
+    ``test_parity_default_paths_paired_with_exact_override_properties``).
+    """
+    default_rel = "config/guards/production_source_roots.yml"
+    override_prop = "dbGuardSourceRootsManifestPath"
+    assert (default_rel, override_prop) in DEFAULT_DB_GUARD_INPUTS, (
+        f"{default_rel} must be a required DB guard input in "
+        "DEFAULT_DB_GUARD_INPUTS"
+    )
+    task = _verify_task_text()
+    pair_pattern = (
+        r"resolveDbGuardPath\s*\(\s*"
+        + re.escape(f'"{default_rel}"')
+        + r"\s*,\s*"
+        + re.escape(f'"{override_prop}"')
+        + r"\s*\)"
+    )
+    assert re.search(pair_pattern, task), (
+        f"Gradle task must pair default input '{default_rel}' with "
+        f"override property '{override_prop}' in a single "
+        f'resolveDbGuardPath("{default_rel}", "{override_prop}") call'
+    )
 
 
 def test_command_construction_uses_single_token_command_arg() -> None:

@@ -4,8 +4,8 @@ Verifies that every mutation declared in a v2 policy document is backed by
 exact source evidence in the production Kotlin tree, and that no unlisted
 mutations exist in the verified callables:
 
-* every entry's ``path`` must resolve under an approved production source
-  root and be readable;
+* every entry's ``path`` must resolve under a declared production source
+  root (the manifest-backed root set) and be readable;
 * each entry's owner class and callable must be located exactly once via
   the shared Kotlin callable parser (no sibling overloads — an ambiguous
   or missing declaration fails closed);
@@ -76,7 +76,14 @@ from .policy_errors import (
     POLICY_ERROR_V2_EVIDENCE_UNLISTED_MUTATION,
     POLICY_ERROR_V2_EVIDENCE_DAO_AMBIGUOUS,
 )
-from .source_roots import approved_root_error
+from .source_roots import (
+    DB_SOURCE_ROOT_UNDECLARED,
+    SourceRoot,
+    SourceRootSet,
+    is_declared_production_path,
+    resolve_source_root_set,
+)
+from .declaration_scanner import declared_root_pairs
 from .policy_parsing import (
     build_class_scope_dao_var_map,
     build_dao_var_map,
@@ -104,6 +111,48 @@ __all__ = [
 ]
 
 
+def _declared_relative_root_set(repo_root):
+    """Resolve the effective declared production root set, re-anchored.
+
+    ``resolve_source_root_set`` returns manifest-declared roots as
+    repository-relative POSIX paths, but its implicit conventional fallback
+    (synthetic fixtures and embedders without a manifest) carries each root
+    as an ABSOLUTE native-separator path anchored at its enclosing project.
+    Absolute roots are re-anchored here with the exact parity convention of
+    ``declaration_scanner.declared_root_pairs`` so membership checks against
+    repository-relative policy paths stay possible.  Returns
+    ``(SourceRootSet, ())`` on success or ``(None, diagnostics)`` fail
+    closed; an absolute root that cannot be anchored is dropped so none of
+    its paths can ever authorize anything.
+    """
+    root_set, diagnostics = resolve_source_root_set(repo_root)
+    if root_set is None or diagnostics:
+        return None, diagnostics
+    anchored = None
+    normalized = []
+    for root in root_set.roots:
+        path = root.path
+        if os.path.isabs(path):
+            if anchored is None:
+                anchored = iter(declared_root_pairs(repo_root, root_set))
+            pair = next(anchored, None)
+            if pair is None:
+                continue
+            anchor, base = pair
+            try:
+                path = os.path.relpath(base, anchor).replace(os.sep, "/")
+            except ValueError:
+                continue
+        normalized.append(
+            SourceRoot(module=root.module, source_set=root.source_set, path=path)
+        )
+    if not normalized:
+        return None, (
+            (DB_SOURCE_ROOT_UNDECLARED, {"reason": "no-conventional-root"}),
+        )
+    return SourceRootSet(roots=tuple(normalized)), ()
+
+
 def verify_v2_policy_source_evidence(entries, repo_root, room_inventory=None):
     """Verify v2 policy entries against exact production source evidence.
 
@@ -117,9 +166,13 @@ def verify_v2_policy_source_evidence(entries, repo_root, room_inventory=None):
        distinct callable identity is verified once.
     2. Iterate groups in sorted canonical-key order for determinism; use
        the first entry of each group as its representative.
-    3. Reject paths outside the approved production roots via
-       ``approved_root_error`` ->
-       ``POLICY_ERROR_V2_EVIDENCE_PATH_OUTSIDE_ROOTS``.
+     3. Resolve the DECLARED production source-root set once up front
+        (manifest-backed via ``resolve_source_root_set``); a resolution
+        failure fails closed as exactly one bounded
+        ``POLICY_ERROR_V2_EVIDENCE_PARSER_UNCERTAIN`` finding (reason
+        ``source-roots-unresolved`` plus the controlled diagnostic codes),
+        and each path outside the declared roots yields
+        ``POLICY_ERROR_V2_EVIDENCE_PATH_OUTSIDE_ROOTS``.
     4. Read the file as UTF-8 relative to ``repo_root``; any ``OSError``
        yields ``POLICY_ERROR_V2_EVIDENCE_FILE_UNREADABLE``.
     5. Mask string literals/comments (``mask_kotlin_source``) so they
@@ -157,19 +210,40 @@ def verify_v2_policy_source_evidence(entries, repo_root, room_inventory=None):
 
     Returns:
         Tuple of :class:`~scripts.db_guard.policy_errors.PolicyError`
-        findings, one per failing group at the furthest stage reached.
+        findings, one per failing group at the furthest stage reached —
+        except a failed declared-root-set resolution, which yields exactly
+        one ``POLICY_ERROR_V2_EVIDENCE_PARSER_UNCERTAIN`` finding for the
+        whole batch.
     """
     errors = []
     groups = {}
     for entry in entries:
         groups.setdefault(entry.callable_key().canonical_key(), []).append(entry)
+    if not groups:
+        return ()
+    root_set, root_diagnostics = _declared_relative_root_set(repo_root)
+    if root_set is None:
+        # Fail closed with one bounded parser-uncertain finding: without a
+        # resolved declared root set no path can be authorized.  Context
+        # carries the controlled reason plus the controlled diagnostic
+        # codes only — never raw paths or exception text.
+        return (
+            PolicyError(
+                POLICY_ERROR_V2_EVIDENCE_PARSER_UNCERTAIN,
+                {
+                    "reason": "source-roots-unresolved",
+                    "codes": ",".join(
+                        sorted({code for code, _context in root_diagnostics})
+                    ),
+                },
+            ),
+        )
     for canonical_key in sorted(groups):
         group = groups[canonical_key]
         entry = group[0]
         ck = entry.callable_key()
         try:
-            root_err = approved_root_error(ck.path)
-            if root_err is not None:
+            if not is_declared_production_path(root_set, ck.path):
                 errors.append(
                     PolicyError(
                         POLICY_ERROR_V2_EVIDENCE_PATH_OUTSIDE_ROOTS,

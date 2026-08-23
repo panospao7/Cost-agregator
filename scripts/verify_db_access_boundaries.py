@@ -60,6 +60,12 @@ import re
 import sys
 from collections import Counter
 
+# db_guard modules are package-relative only; direct script execution must
+# anchor the repository root before importing them.
+_PROJECT_IMPORT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_IMPORT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_IMPORT_ROOT)
+
 try:
     from scripts.db_policy_signature import SignatureError, normalize_type_text
 except ModuleNotFoundError:  # direct execution from outside the repository root
@@ -340,10 +346,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 SOURCE_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java")
 
-# Approved production source roots (repository-relative).  Canonical policy
-# paths must live under one of these roots — a path cannot point at tests,
-# generated code, or any other non-production tree.
-APPROVED_PRODUCTION_SOURCE_ROOTS = ("app/src/main/java",)
+# The approved production source-root contract lives exclusively in
+# ``scripts/db_guard/source_roots.py`` (``APPROVED_PRODUCTION_SOURCE_ROOTS``
+# plus the declared manifest layer); policy paths are validated there, so no
+# local root tuple is duplicated at this CLI boundary.
 
 OWNERSHIP_POLICY_PATH = os.path.join(
     PROJECT_ROOT, "config", "guards", "db_ownership_policy.yml"

@@ -28,8 +28,13 @@ from ..kotlin_callable_parser import (
     ParserError, find_callable_declarations, find_owner_declarations,
     mask_kotlin_source,
 )
-from .declaration_scanner import scan_production_declarations
+from .declaration_scanner import (
+    anchor_for_declared_path,
+    declared_root_pairs,
+    scan_production_declarations,
+)
 from .room_inventory import build_room_inventory
+from .source_roots import resolve_source_root_set
 from .policy_legacy import (
     legacy_ownership_entry_metadata_errors as ownership_entry_metadata_errors,
     legacy_structural_entry_metadata_errors as structural_entry_metadata_errors,
@@ -430,8 +435,13 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     structural_ok = structural_ok and all(
         not structural_entry_metadata_errors(item) for item in structural
     )
-    inventory = build_room_inventory(source_root, raw_query_policy)
-    declarations = scan_production_declarations(source_root)
+    # One shared root-set resolution drives every D4 discovery leg (inventory,
+    # declaration ranges, and source reads).  No private root heuristics:
+    # single-root inputs behave exactly as before, and multi-root
+    # repositories consider every declared root in manifest order.
+    root_set, _root_diagnostics = resolve_source_root_set(source_root)
+    inventory = build_room_inventory(source_root, raw_query_policy, source_root_set=root_set)
+    declarations = scan_production_declarations(source_root, root_set=root_set)
     diagnostics: list[GuardDiagnostic] = []
     diagnostics.extend(_diag_from_text(item) for item in inventory.diagnostics)
     diagnostics.extend(
@@ -445,19 +455,19 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     if not own_ok or not structural_ok:
         diagnostics.append(GuardDiagnostic("DB_POLICY_SOURCE_EVIDENCE_INVALID"))
 
-    root = Path(source_root)
-    if root.name == "java" and root.parent.name == "main":
-        project = root.parents[3]
-    elif root.name == "main":
-        project = root.parents[2]
-    elif root.name == "src":
-        project = root.parent.parent
-    else:
-        project = root
     dao_simple, dao_methods = _dao_maps(inventory)
     findings: list[GuardFinding] = []
-    files = {item.path: project / item.path for item in declarations.helper_ranges}
-    # Read each file once; declaration ranges are the authoritative scan units.
+    # Read each file once; declaration ranges are the authoritative scan
+    # units.  Paths map back through the SAME declared-root anchors the
+    # declaration scanner used to emit them, so single-root inputs read
+    # exactly as before and every declared root of a multi-root repository
+    # resolves to its own enclosing project.
+    pairs = declared_root_pairs(source_root, root_set) if root_set is not None else ()
+    files: dict[str, Path] = {}
+    for item in declarations.helper_ranges:
+        anchor = anchor_for_declared_path(pairs, item.path)
+        if anchor is not None:
+            files[item.path] = anchor / item.path
     sources: dict[str, str] = {}
     for path in sorted(files):
         try:

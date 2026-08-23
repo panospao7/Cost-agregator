@@ -212,6 +212,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
             "config/guards/db_ownership_policy.yml",
             "config/guards/db_structural_exceptions.yml",
             "config/guards/db_structural_exceptions_expected_methods.yml",
+            "config/guards/production_source_roots.yml",
         ],
         "finding_protocol": 2,
         "fingerprint_schema": 2,

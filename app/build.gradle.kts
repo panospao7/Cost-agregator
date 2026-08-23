@@ -742,6 +742,7 @@ tasks.named("check") {
 //   config/guards/db_ownership_policy.yml
 //   config/guards/db_structural_exceptions.yml
 //   config/guards/db_structural_exceptions_expected_methods.yml
+//   config/guards/production_source_roots.yml
 // A missing / non-regular / unreadable / outside-root input is a hard
 // GradleException — never a warning or a silent skip.
 //
@@ -752,6 +753,7 @@ tasks.named("check") {
 //   -PdbGuardOwnershipPolicyPath=...         config/guards/db_ownership_policy.yml
 //   -PdbGuardStructuralExceptionsPath=...    config/guards/db_structural_exceptions.yml
 //   -PdbGuardStructuralManifestPath=...      config/guards/db_structural_exceptions_expected_methods.yml
+//   -PdbGuardSourceRootsManifestPath=...     config/guards/production_source_roots.yml
 //
 // Relative overrides resolve against the repository root (rootDir) so they
 // are consistent with the canonical defaults; absolute overrides are used
@@ -760,6 +762,9 @@ tasks.named("check") {
 // The inner ratchet command ALWAYS receives all six resolved canonical paths
 // explicitly — the policy/manifest inputs are never gated on the test-only
 // overrides, so production CI uses the exact canonical defaults below.
+// config/guards/production_source_roots.yml (PR-GR-03) is validated as a
+// required input but is not a child argument: the guard loads it from its
+// canonical repository-relative path via scripts/db_guard/source_roots.py.
 //
 // Python interpreter (defaults to python3):
 //   -PpythonExecutable=/path/to/python3
@@ -801,6 +806,9 @@ tasks.register("verifyDbAccessBoundaries") {
         val structuralManifestFile = resolveDbGuardPath(
             "config/guards/db_structural_exceptions_expected_methods.yml", "dbGuardStructuralManifestPath"
         )
+        val sourceRootsManifestFile = resolveDbGuardPath(
+            "config/guards/production_source_roots.yml", "dbGuardSourceRootsManifestPath"
+        )
 
         val requiredInputs = listOf(
             "scripts/ci/guard_ratchet.py" to ratchetFile,
@@ -808,7 +816,8 @@ tasks.register("verifyDbAccessBoundaries") {
             "config/baselines/db_access.json" to baselineFile,
             "config/guards/db_ownership_policy.yml" to ownershipPolicyFile,
             "config/guards/db_structural_exceptions.yml" to structuralExceptionsFile,
-            "config/guards/db_structural_exceptions_expected_methods.yml" to structuralManifestFile
+            "config/guards/db_structural_exceptions_expected_methods.yml" to structuralManifestFile,
+            "config/guards/production_source_roots.yml" to sourceRootsManifestFile
         )
         for ((rel, candidate) in requiredInputs) {
             if (!candidate.exists()) {
@@ -861,7 +870,7 @@ tasks.register("verifyDbAccessBoundaries") {
         // values as the ratchet's own flags and abort with "expected one
         // argument".  --command is kept only as a ratchet compatibility path.
         //
-        // All six required inputs are passed EXPLICITLY with their resolved
+        // All six child-command inputs are passed EXPLICITLY with their resolved
         // canonical paths — including the three policy/manifest inputs, which
         // are never gated on override properties.  In production CI the
         // defaults are explicit and identical to the canonical config paths:
@@ -869,6 +878,8 @@ tasks.register("verifyDbAccessBoundaries") {
         //   config/guards/db_structural_exceptions.yml
         //   config/guards/db_structural_exceptions_expected_methods.yml
         // so the inner guard can never silently fall back to a different file.
+        // The source-root manifest (config/guards/production_source_roots.yml)
+        // is validated above but read by the guard from its canonical path.
         val commandArgs = mutableListOf<String>()
         commandArgs += pythonExecutable
         commandArgs += ratchetFile.absolutePath

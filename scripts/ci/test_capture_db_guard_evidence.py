@@ -46,6 +46,7 @@ TRACKED_FILES = [
     "config/guards/db_structural_exceptions.yml",
     "config/guards/db_structural_exceptions_expected_methods.yml",
     "config/guards/db_raw_query_classification.yml",
+    "config/guards/production_source_roots.yml",
     "app/build.gradle.kts",
     ".github/workflows/ci.yml",
     "settings.gradle.kts",
@@ -1213,6 +1214,34 @@ def test_input_manifest_completeness(tmp_path):
     assert len(candidates) == len(set(candidates))
     for req in cap.REQUIRED_INPUT_CANDIDATES:
         assert req in candidates
+
+
+def test_input_manifest_includes_production_source_roots(tmp_path):
+    """PR-GR-03 Slice E: the built manifest includes the source-root manifest.
+
+    ``config/guards/production_source_roots.yml`` must appear in the dynamic
+    input manifest when present in the fixture repo, hashed and observed like
+    every other required DB guard config input (exists + blob id + sha256).
+    """
+    rel = "config/guards/production_source_roots.yml"
+    assert rel in cap.REQUIRED_INPUT_CANDIDATES
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    entries = {e["rel_path"]: e for e in evidence["input_manifest"]}
+    entry = entries.get(rel)
+    assert entry is not None, f"{rel} missing from the built input manifest"
+    assert entry["exists"] is True
+    assert entry["blob_id"]
+    assert entry["sha256"]
+    # The capture must not fail closed over this input when it is present.
+    assert not any(w.startswith(f"missing-required-input:{rel}") or
+                   w.startswith(f"missing-blob-id:{rel}")
+                   for w in evidence["infrastructure_warnings"])
+    assert rc == 0
 
 
 # ── New tests: realpath / symlink / custom-matrix validation (requirement 3) ────

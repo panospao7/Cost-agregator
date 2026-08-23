@@ -1456,3 +1456,60 @@ def test_unnormalizable_hint_fails_closed(tmp_path):
     row = _assert_single_unresolved_row(result)
     assert row.status == STATUS_CALLABLE_KIND_UNSUPPORTED
     assert STATUS_CALLABLE_KIND_UNSUPPORTED == "CALLABLE_KIND_UNSUPPORTED"
+
+
+# ── Appended (PR-GR-03 Slice D): Kotlin-root sources through the manifest ─────
+
+
+KOTLIN_DAO_KT = "app/src/main/kotlin/com/example/ExpenseDao.kt"
+KOTLIN_REPO_KT = "app/src/main/kotlin/com/example/Repository.kt"
+
+_DUAL_ROOT_MANIFEST = """\
+schemaVersion: 1
+roots:
+  - module: :app
+    sourceSet: main
+    path: app/src/main/java
+  - module: :app
+    sourceSet: main
+    path: app/src/main/kotlin
+"""
+
+
+def test_kotlin_root_source_file_resolves_through_manifest(tmp_path):
+    """GR-02 resolves a legacy entry whose source lives under a
+    manifest-declared ``src/main/kotlin`` root.
+
+    The synthetic repo ships the dual-root source-root manifest; the DAO
+    interface and the repository class both live under the kotlin root, so
+    BOTH declared-root consumers must honor it for the row to resolve
+    exactly: the generated DAO FQCN index walk (which discovers the kotlin
+    root's @Dao interface) and the per-entry path gate (which membership-
+    checks the kotlin-root policy path).
+    """
+    guards = tmp_path / "config" / "guards"
+    guards.mkdir(parents=True)
+    (guards / "production_source_roots.yml").write_text(
+        _DUAL_ROOT_MANIFEST, encoding="utf-8"
+    )
+    # Topology gate: every declared root must exist, including the
+    # otherwise-unused java root.
+    (tmp_path / "app" / "src" / "main" / "java").mkdir(parents=True)
+    _write_repo(
+        tmp_path,
+        {
+            KOTLIN_DAO_KT: EXPENSE_DAO_SOURCE,
+            KOTLIN_REPO_KT: BASIC_REPO_SOURCE,
+        },
+    )
+    entries = [_legacy_entry(KOTLIN_REPO_KT, "Repository", "save")]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.path == KOTLIN_REPO_KT
+    assert entry.owner_fqcn == "com.example.Repository"
+    assert entry.kind.value == "function"
+    assert entry.method == "save"
+    assert entry.parameter_types == ("Int",)
+    assert entry.dao_accessor == "expenseDao"
+    assert entry.dao_fqcn == "com.example.ExpenseDao"
+    assert entry.operation == "insert"

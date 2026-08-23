@@ -185,6 +185,7 @@ or a silent skip.
 | Ownership policy | `config/guards/db_ownership_policy.yml` |
 | Structural exceptions | `config/guards/db_structural_exceptions.yml` |
 | Structural manifest | `config/guards/db_structural_exceptions_expected_methods.yml` |
+| Source-root manifest | `config/guards/production_source_roots.yml` |
 
 ### Invocation
 
@@ -214,7 +215,8 @@ or a silent skip.
   `-PdbGuardRatchetPath=...`, `-PdbGuardScriptPath=...`,
   `-PdbGuardBaselinePath=...`, `-PdbGuardOwnershipPolicyPath=...`,
   `-PdbGuardStructuralExceptionsPath=...`,
-  `-PdbGuardStructuralManifestPath=...`.
+  `-PdbGuardStructuralManifestPath=...`,
+  `-PdbGuardSourceRootsManifestPath=...`.
   Relative override paths resolve against the repository root (`rootDir`),
   consistent with the canonical defaults; absolute overrides are used as-is.
 
@@ -256,7 +258,7 @@ through three distinct channels:
   broken local setup can never degrade into a warning.
 
 The parity tests in
-`scripts/ci/test_gradle_db_guard_contract.py` assert that the six required
+`scripts/ci/test_gradle_db_guard_contract.py` assert that the seven required
 inputs, the override property names, and the inner ratchet command
 construction in `app/build.gradle.kts` stay in sync with that mirror, and that
 the policy/manifest arguments are always passed explicitly (never gated on

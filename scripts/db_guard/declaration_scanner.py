@@ -19,6 +19,7 @@ from typing import Any, Mapping
 
 from ..kotlin_callable_parser import ParserError, mask_kotlin_source
 from .dao_accessors import AccessorError, find_dao_declarations
+from .source_roots import DB_SOURCE_ROOT_UNDECLARED, resolve_source_root_set
 
 try:
     from ..ci.finding_rule_catalog import is_known_diagnostic as _is_known_diagnostic
@@ -32,7 +33,6 @@ except ImportError:
 
 SCAN_SCHEMA = "cost-aggregator.db-declaration-scan"
 SCAN_SCHEMA_VERSION = 2
-_ROOT = Path("app") / "src" / "main" / "java"
 _ID = r"[A-Za-z_][A-Za-z0-9_]*"
 _DECL = re.compile(
     r"\b(?P<prefix>(?:(?:public|private|protected|internal|open|abstract|final|sealed|data|enum|annotation)\s+)*)"
@@ -541,41 +541,150 @@ def _reject_symlink_components(project_root: Path, supplied_root: Path) -> None:
             continue
 
 
-def _approved_source(root: Any) -> tuple[Path, Path] | None:
-    try:
-        # A symlinked component on the path to the supplied source is
-        # rejected before resolution dereferences it into a trusted path.
-        # The anchor is a string (``C:\\`` on Windows, ``/`` on POSIX); it is
-        # wrapped in a ``Path`` so the component walk never mixes a string
-        # with ``Path / part`` (which would raise TypeError and downgrade a
-        # valid root to ``DB_DECLARATION_INVALID_SOURCE``).
-        _reject_symlink_components(Path(Path(root).anchor), Path(root) / _ROOT)
-        supplied = Path(root).resolve(strict=True)
-        if not supplied.is_dir():
-            return None
-    except ValueError as error:
-        # Only the controlled symlink code escapes; other ValueError inputs
-        # (for example embedded NUL bytes) stay fail closed as an invalid
-        # source.
-        if str(error) != "DB_DECLARATION_SYMLINK_OUTSIDE":
-            return None
-        raise
-    except (OSError, RuntimeError, TypeError):
+def _absolute_root_anchor(root_abs: str) -> str | None:
+    """Project anchor for an implicit absolute declared root.
+
+    Kept in exact parity with ``room_inventory._absolute_root_anchor`` so both
+    consumers anchor the same declared root at the same enclosing project:
+    ``.../<module>/src/main/java`` anchors at the module's parent directory,
+    and ``.../src/main/kotlin`` anchors at the enclosing module directory.
+    Returns ``None`` (fail closed) when the tail does not match or no anchor
+    remains above the tail.
+    """
+    parts = os.path.normpath(root_abs).split(os.sep)
+    if parts[-3:] == ("src", "main", "java"):
+        anchor_parts = parts[:-4]
+    elif parts[-3:] == ("src", "main", "kotlin"):
+        anchor_parts = parts[:-3]
+    else:
         return None
-    candidates = [supplied, supplied / _ROOT]
-    for source in candidates:
+    if not anchor_parts:
+        return None
+    return os.path.join(*anchor_parts)
+
+
+def declared_root_pairs(repo_root: Any, root_set: Any) -> tuple[tuple[Path, Path], ...]:
+    """Ordered ``(anchor, base)`` walking pairs for every declared root.
+
+    The resolved shared contract (a ``SourceRootSet`` from
+    ``resolve_source_root_set``) is the only input — no private root list:
+    manifest-declared roots resolve below ``repo_root``, while implicit roots
+    carry an absolute native path and anchor at their enclosing project via
+    ``_absolute_root_anchor``.  Roots whose tail cannot be anchored are
+    skipped (fail closed); callers treat an empty result as an invalid
+    source.  The order is exactly the declared (manifest) order, so
+    multi-root discovery stays deterministic.
+    """
+    try:
+        repo_abs = os.path.abspath(os.fspath(repo_root))
+    except (TypeError, ValueError):
+        repo_abs = ""
+    pairs: list[tuple[Path, Path]] = []
+    for root in getattr(root_set, "roots", ()):
+        declared = root.path
+        if os.path.isabs(declared):
+            base = os.path.normpath(declared)
+            anchor = _absolute_root_anchor(base)
+            if anchor is None:
+                continue
+        else:
+            if not repo_abs:
+                continue
+            anchor = repo_abs
+            base = os.path.join(repo_abs, *declared.split("/"))
+        pairs.append((Path(anchor), Path(base)))
+    return tuple(pairs)
+
+
+def anchor_for_declared_path(pairs: tuple[tuple[Path, Path], ...],
+                             rel_posix_path: str) -> Path | None:
+    """Filesystem anchor owning a repository-relative POSIX declaration path.
+
+    Declared roots are tested in manifest order and membership is
+    segment-aligned; the first owning root's anchor wins deterministically.
+    Returns ``None`` when the path belongs to no declared root (fail closed).
+    """
+    parts = rel_posix_path.split("/")
+    for anchor, base in pairs:
         try:
-            source = source.resolve(strict=True)
-            if source.name == "java" and source.parent.name == "main" and source.parent.parent.name == "src" and source.parent.parent.parent.name == "app":
-                project = source.parents[3]
-                if source == project / _ROOT:
-                    return project, source
-        except (OSError, RuntimeError, ValueError):
+            prefix = base.relative_to(anchor).as_posix().split("/")
+        except ValueError:
             continue
+        if parts[:len(prefix)] == prefix:
+            return anchor
     return None
 
 
-def _files(project: Path, source: Path) -> tuple[list[tuple[str, Path]], bool, set[str]]:
+def _source_root_failure_diagnostics(
+    root_diagnostics: Any,
+) -> tuple[Diagnostic, ...]:
+    """Controlled fail-closed diagnostics for a failed root-set resolution.
+
+    The historical undeclared-conventional-layout failure keeps its exact
+    legacy single-code shape (``DB_DECLARATION_INVALID_SOURCE``); every other
+    resolution failure additionally carries the resolved controlled
+    ``DB_SOURCE_ROOT_*`` codes.  Codes only — never raw exception text,
+    stack traces, or runtime-discovered filesystem paths.
+    """
+    codes = [code for code, _context in root_diagnostics]
+    if codes == [DB_SOURCE_ROOT_UNDECLARED]:
+        return (_diag("DB_DECLARATION_INVALID_SOURCE"),)
+    unique = {"DB_DECLARATION_INVALID_SOURCE"}
+    unique.update(codes)
+    return tuple(_diag(code) for code in sorted(unique))
+
+
+def _contains_kotlin_source(directory: Path) -> bool:
+    """True when any ``.kt`` file is reachable below ``directory``.
+
+    Bounded observation only (existence of production Kotlin), used to detect
+    production sources outside the declared root set.  An unreadable tree
+    observes nothing and reports absence; the declared-root walk remains the
+    authority for readability failures.
+    """
+    try:
+        for _directory, directories, names in os.walk(
+            directory, topdown=True, onerror=lambda _error: None
+        ):
+            directories.sort()
+            if any(name.endswith(".kt") for name in names):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def _undeclared_kotlin_root_observed(pairs: tuple[tuple[Path, Path], ...]) -> bool:
+    """True when production Kotlin exists beside a declared java root without
+    itself being declared.
+
+    Every declared ``<module>/src/main/java`` root observes its conventional
+    ``<module>/src/main/kotlin`` sibling: production Kotlin sources living in
+    an undeclared sibling are a declared-vs-observed mismatch and must fail
+    the complete scan closed instead of being silently left unscanned.
+    """
+    declared = {os.path.normcase(str(base)) for _anchor, base in pairs}
+    for _anchor, base in pairs:
+        parts = os.path.normpath(str(base)).split(os.sep)
+        if parts[-3:] != ("src", "main", "java"):
+            continue
+        sibling = Path(os.path.dirname(str(base))) / "kotlin"
+        if os.path.normcase(str(sibling)) in declared:
+            continue
+        if _contains_kotlin_source(sibling):
+            return True
+    return False
+
+
+def _files(anchor: Path, source: Path) -> tuple[list[tuple[str, Path]], bool, set[str]]:
+    """Collect Kotlin files below one declared root.
+
+    ``anchor`` is the enclosing project the emitted repository-relative POSIX
+    paths are anchored at; ``source`` is the declared root directory.  A file
+    is trusted only when its canonical real path stays below the root's own
+    real path, so a symlink escaping the declared tree is rejected exactly as
+    before.
+    """
     result: list[tuple[str, Path]] = []
     failed = False
     symlink_diagnostics: set[str] = set()
@@ -584,6 +693,13 @@ def _files(project: Path, source: Path) -> tuple[list[tuple[str, Path]], bool, s
         nonlocal failed
         failed = True
 
+    try:
+        trusted = source.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError):
+        # A declared root that cannot be resolved cannot be walked safely;
+        # the failure marks the whole scan unreadable so the caller fails
+        # closed instead of emitting a partial inventory.
+        return result, True, symlink_diagnostics
     try:
         for directory, directories, names in os.walk(source, topdown=True, onerror=onerror):
             directories.sort()
@@ -603,10 +719,10 @@ def _files(project: Path, source: Path) -> tuple[list[tuple[str, Path]], bool, s
                         symlink_diagnostics.add("DB_DECLARATION_SYMLINK_OUTSIDE")
                         continue
                     real = candidate.resolve(strict=True)
-                    if project / _ROOT not in real.parents:
+                    if trusted not in real.parents:
                         symlink_diagnostics.add("DB_DECLARATION_SYMLINK_OUTSIDE")
                         continue
-                    relative = candidate.relative_to(project).as_posix()
+                    relative = candidate.relative_to(anchor).as_posix()
                     if candidate.is_file(): result.append((relative, candidate))
                 except (OSError, ValueError):
                     failed = True
@@ -1167,9 +1283,28 @@ def _scan_file(path: str, source: str, diagnostics: list[Diagnostic]) -> tuple[l
         return [], [], []
 
 
-def scan_production_declarations(source_root: Any) -> DaoFileScan:
+def scan_production_declarations(source_root: Any, *, root_set: Any = None) -> DaoFileScan:
+    """Scan every declared production source root for Kotlin declarations.
+
+    Roots are resolved once through the shared contract
+    ``resolve_source_root_set``: an explicit keyword-only ``root_set`` (a
+    ``SourceRootSet``) is used as-is; otherwise the checked-in manifest
+    ``config/guards/production_source_roots.yml`` is loaded, validated, and
+    topology-verified — any diagnostic fails closed and never falls back;
+    otherwise the implicit conventional single root is used, a branch that
+    exists solely for synthetic test fixtures and embedders without a
+    manifest.  Declared roots are walked in manifest order and every emitted
+    path stays repository-relative POSIX anchored at the enclosing project.
+
+    A failed resolution keeps the historical single-code shape
+    (``DB_DECLARATION_INVALID_SOURCE``) for the plain undeclared-conventional
+    layout and additionally carries the controlled ``DB_SOURCE_ROOT_*`` codes
+    otherwise.  Production Kotlin observed beside a declared java root but
+    absent from the declared set fails the complete scan closed with
+    ``DB_SOURCE_ROOT_UNDECLARED`` instead of being silently left unscanned.
+    """
     try:
-        return _scan_production_declarations(source_root)
+        return _scan_production_declarations(source_root, root_set)
     except DiagnosticContextError:
         # A diagnostic whose controlled_context fails protocol validation is
         # never trusted: emit the controlled unresolved diagnostic and no
@@ -1178,7 +1313,7 @@ def scan_production_declarations(source_root: Any) -> DaoFileScan:
                            (_diag("DB_DECLARATION_UNRESOLVED"),), ())
 
 
-def _scan_production_declarations(source_root: Any) -> DaoFileScan:
+def _scan_production_declarations(source_root: Any, root_set: Any = None) -> DaoFileScan:
     diagnostics: list[Diagnostic] = []
     try:
         if Path(source_root).is_symlink():
@@ -1191,20 +1326,49 @@ def _scan_production_declarations(source_root: Any) -> DaoFileScan:
         raise
     except (OSError, TypeError, ValueError):
         pass
-    try:
-        approved = _approved_source(source_root)
-    except ValueError as error:
-        # A symlinked component is a controlled fail-closed rejection: report
-        # it with its own code instead of downgrading it to a generic invalid
-        # source or silently dereferencing the link into a trusted scan.
-        if str(error) != "DB_DECLARATION_SYMLINK_OUTSIDE":
-            raise
+    resolved, root_diagnostics = resolve_source_root_set(source_root, root_set)
+    if resolved is None or root_diagnostics:
         return DaoFileScan(SCAN_SCHEMA, SCAN_SCHEMA_VERSION, (), (), (), (),
-                           (_diag("DB_DECLARATION_SYMLINK_OUTSIDE"),), ())
-    if approved is None:
-        return DaoFileScan(SCAN_SCHEMA, SCAN_SCHEMA_VERSION, (), (), (), (), (_diag("DB_DECLARATION_INVALID_SOURCE"),), ())
-    project, source = approved
-    files, walk_failed, symlink_diagnostics = _files(project, source)
+                           _source_root_failure_diagnostics(root_diagnostics), ())
+    pairs = declared_root_pairs(source_root, resolved)
+    if not pairs:
+        return DaoFileScan(SCAN_SCHEMA, SCAN_SCHEMA_VERSION, (), (), (), (),
+                           (_diag("DB_DECLARATION_INVALID_SOURCE"),), ())
+    # A symlinked component between the project anchor and any declared root
+    # is rejected before the walk dereferences it into a trusted path (the
+    # exact legacy pre-resolution rejection, applied per declared root).
+    for anchor, base in pairs:
+        try:
+            _reject_symlink_components(Path(Path(anchor).anchor), base)
+        except ValueError as error:
+            # A symlinked component is a controlled fail-closed rejection:
+            # report it with its own code instead of downgrading it to a
+            # generic invalid source or silently dereferencing the link into
+            # a trusted scan.
+            if str(error) != "DB_DECLARATION_SYMLINK_OUTSIDE":
+                raise
+            return DaoFileScan(SCAN_SCHEMA, SCAN_SCHEMA_VERSION, (), (), (), (),
+                               (_diag("DB_DECLARATION_SYMLINK_OUTSIDE"),), ())
+        except (OSError, TypeError):
+            return DaoFileScan(SCAN_SCHEMA, SCAN_SCHEMA_VERSION, (), (), (), (),
+                               (_diag("DB_DECLARATION_INVALID_SOURCE"),), ())
+    if _undeclared_kotlin_root_observed(pairs):
+        # Declared-vs-observed mismatch: production Kotlin exists beside a
+        # declared java root while the declared set omits it.  The complete
+        # scan fails closed — no partial ranges, nothing scanned.
+        return DaoFileScan(
+            SCAN_SCHEMA, SCAN_SCHEMA_VERSION, (), (), (), (),
+            (_diag("DB_DECLARATION_INVALID_SOURCE"),
+             _diag("DB_SOURCE_ROOT_UNDECLARED")), (),
+        )
+    files: list[tuple[str, Path]] = []
+    walk_failed = False
+    symlink_diagnostics: set[str] = set()
+    for anchor, base in pairs:
+        root_files, root_failed, root_symlinks = _files(anchor, base)
+        files.extend(root_files)
+        walk_failed = walk_failed or root_failed
+        symlink_diagnostics |= root_symlinks
     diagnostics.extend(_diag(code) for code in sorted(symlink_diagnostics))
     if walk_failed:
         diagnostics.append(_diag("DB_DECLARATION_SOURCE_UNREADABLE"))
@@ -1320,4 +1484,4 @@ def write_scan_delta_atomic(path: Any, scan: DaoFileScan) -> None:
                 pass
 
 
-__all__ = ["DeclarationRange", "Diagnostic", "DiagnosticContextError", "DaoFileScan", "scan_production_declarations", "write_scan_delta_atomic"]
+__all__ = ["DeclarationRange", "Diagnostic", "DiagnosticContextError", "DaoFileScan", "anchor_for_declared_path", "declared_root_pairs", "scan_production_declarations", "write_scan_delta_atomic"]

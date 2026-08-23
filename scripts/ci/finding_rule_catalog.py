@@ -31,6 +31,7 @@ Infrastructure diagnostics (never baseline-able; exit 2):
   * ``DB_DAO_ANNOTATION_SCOPE_UNRESOLVED``
   * ``DB_STRUCTURAL_SCOPE_UNSUPPORTED``
   * Room inventory discovery, inheritance, policy, and atomic-write diagnostics
+  * Production source-root manifest/topology diagnostics (PR-GR-03)
   * ``UNKNOWN_RULE`` (unknown/unregistered rule code; direct protocol error)
 
 Public API:
@@ -405,6 +406,33 @@ _DIAGNOSTIC_ENTRIES: Dict[str, DiagnosticProfile] = {
         code="DB_DECLARATION_SCAN_WRITE_FAILED",
         guard=GUARD_DB_ACCESS,
         description="Declaration scanner atomic write failed",
+    ),
+    # PR-GR-03 Slice B: production source-root manifest meta-guard
+    # (scripts/ci/verify_production_source_roots.py).
+    "DB_SOURCE_ROOT_MANIFEST_INVALID": DiagnosticProfile(
+        code="DB_SOURCE_ROOT_MANIFEST_INVALID",
+        guard=GUARD_DB_ACCESS,
+        description="Production source-root manifest is invalid",
+    ),
+    "DB_SOURCE_ROOT_UNDECLARED": DiagnosticProfile(
+        code="DB_SOURCE_ROOT_UNDECLARED",
+        guard=GUARD_DB_ACCESS,
+        description="Production source root is undeclared or not observed",
+    ),
+    "DB_SOURCE_ROOT_LAYOUT_UNSUPPORTED": DiagnosticProfile(
+        code="DB_SOURCE_ROOT_LAYOUT_UNSUPPORTED",
+        guard=GUARD_DB_ACCESS,
+        description="Gradle source-root layout cannot be safely verified",
+    ),
+    "DB_SOURCE_ROOT_UNREADABLE": DiagnosticProfile(
+        code="DB_SOURCE_ROOT_UNREADABLE",
+        guard=GUARD_DB_ACCESS,
+        description="Production source root or manifest cannot be read",
+    ),
+    "DB_SOURCE_ROOT_SYMLINK_OUTSIDE": DiagnosticProfile(
+        code="DB_SOURCE_ROOT_SYMLINK_OUTSIDE",
+        guard=GUARD_DB_ACCESS,
+        description="Production source root resolves outside the repository via symlink",
     ),
     "UNKNOWN_RULE": DiagnosticProfile(
         code="UNKNOWN_RULE",
