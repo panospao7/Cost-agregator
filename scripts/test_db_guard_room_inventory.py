@@ -2422,3 +2422,37 @@ def test_duplicate_fqcn_across_declared_roots_fails_closed(tmp_path):
     assert {
         dao.canonical_path for dao in inventory.daos if dao.fqcn == fqcn
     } == {java_relative, kotlin_relative}
+
+
+def test_absolute_conventional_java_root_anchors(tmp_path):
+    """An absolute conventional ``src/main/java`` root anchors like a
+    manifest-declared root.
+
+    Regression for the GR-03 shared-root migration: the implicit-root branch
+    resolves a bare conventional source directory into an ABSOLUTE declared
+    root, and ``_absolute_root_anchor`` must compare the native path tail
+    like-for-like so ``.../<module>/src/main/java`` anchors at the module's
+    parent directory.  A list-vs-tuple tail comparison made every absolute
+    conventional root fail closed with ``DB_ROOM_SOURCE_UNREADABLE`` /
+    ``DB_ROOM_SOURCE_EMPTY`` instead of being walked."""
+    relative = "app/src/main/java/com/example/AbsoluteDao.kt"
+    _write(
+        tmp_path,
+        relative,
+        "package com.example\n@Dao interface AbsoluteDao { @Insert fun put(v: Item) }\n",
+    )
+    java_root = tmp_path / "app" / "src" / "main" / "java"
+    inventory = build_room_inventory(java_root)
+    # Anchored discovery: the DAO and its @Insert mutator are found and the
+    # emitted canonical path stays repository-relative POSIX below the
+    # enclosing project anchor (the module's parent directory).
+    assert [dao.fqcn for dao in inventory.daos] == ["com.example.AbsoluteDao"]
+    assert [dao.canonical_path for dao in inventory.daos] == [relative]
+    assert [mutator.mutation_kind for mutator in inventory.mutators] == ["ROOM_INSERT"]
+    assert inventory.mutators[0].source_location.startswith(relative + ":")
+    # No fail-closed source diagnostics from the anchoring step.
+    assert not any(
+        diag_code(diagnostic) in {"DB_ROOM_SOURCE_EMPTY", "DB_ROOM_SOURCE_UNREADABLE"}
+        for diagnostic in inventory.diagnostics
+    )
+    assert inventory.diagnostics == ()

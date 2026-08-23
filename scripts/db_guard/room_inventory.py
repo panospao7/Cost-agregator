@@ -130,9 +130,9 @@ def _absolute_root_anchor(root_abs: str) -> str | None:
     anchor remains above the tail.
     """
     parts = os.path.normpath(root_abs).split(os.sep)
-    if parts[-3:] == ("src", "main", "java"):
+    if tuple(parts[-3:]) == ("src", "main", "java"):
         anchor_parts = parts[:-4]
-    elif parts[-3:] == ("src", "main", "kotlin"):
+    elif tuple(parts[-3:]) == ("src", "main", "kotlin"):
         anchor_parts = parts[:-3]
     else:
         return None

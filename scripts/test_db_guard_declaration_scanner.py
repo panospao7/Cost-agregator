@@ -1814,3 +1814,28 @@ def test_duplicate_fqcn_across_declared_roots_membership_agrees_and_inventory_fa
         diagnostic.startswith("DB_ROOM_MUTATOR_IDENTITY_AMBIGUOUS")
         for diagnostic in inventory.diagnostics
     )
+
+
+def test_absolute_conventional_kotlin_root_anchors(tmp_path):
+    """An absolute conventional ``src/main/kotlin`` root anchors and scans.
+
+    Regression for the GR-03 shared-root migration: an implicit absolute
+    ``src/main/kotlin`` root must anchor at its enclosing module directory
+    through a like-for-like native-tail comparison.  A list-vs-tuple tail
+    mismatch made ``_absolute_root_anchor`` return ``None``, so the root was
+    silently dropped from ``declared_root_pairs`` and the scan failed closed
+    with ``DB_DECLARATION_INVALID_SOURCE`` instead of scanning."""
+    relative = "src/main/kotlin/example/Plain.kt"
+    _write(tmp_path, relative, "package example\n\nclass Plain {\n    fun hold() {}\n}\n")
+    kotlin_root = tmp_path / "src" / "main" / "kotlin"
+    scan = scan_production_declarations(kotlin_root)
+    # The declared root was anchored (not dropped) and the file was scanned,
+    # emitted repository-relative POSIX below the enclosing module directory.
+    assert scan.files_scanned == (relative,)
+    assert scan.diagnostics == ()
+    # The plain class is discovered as a helper declaration with its owner.
+    assert any(
+        item.owner_fqcn == "example.Plain" and item.kind == "class"
+        for item in scan.helper_ranges
+    )
+    assert scan.dao_declarations == ()

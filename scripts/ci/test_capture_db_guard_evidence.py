@@ -79,6 +79,44 @@ def _assert_no_absolute(token: str) -> None:
     assert not _DRIVE_LETTER_RE.search(token), f"drive letter in argv token: {token!r}"
 
 
+# ── Semantic command matching (fixture helpers) ───────────────────────────────
+def _argv_basename(token) -> str:
+    """Basename of an argv token, tolerant of POSIX and Windows separators."""
+    return os.path.basename(str(token).replace("\\", "/"))
+
+
+def _matches(argv, script_name: str, *flags: str) -> bool:
+    """Semantic match for a child command invocation.
+
+    True iff any argv element's basename equals ``script_name`` (so the
+    repository-relative prefixed tokens used by the production command
+    matrices — e.g. ``scripts/verify_db_access_boundaries.py`` — still match)
+    AND every flag in ``flags`` appears verbatim in argv.  The verbatim-flag
+    requirement keeps sibling invocations of the same script unambiguous
+    (``--inventory-only`` vs ``--fail-on-violation``) and prevents a ratchet
+    command that merely embeds the script as a ``--command-arg=<value>`` token
+    from firing the db-cli branch.
+    """
+    if not any(_argv_basename(token) == script_name for token in argv):
+        return False
+    return all(flag in argv for flag in flags)
+
+
+def _is_git_cmd(argv, subcommand: str, *leading: str) -> bool:
+    """Semantic match for ``git <subcommand>`` carrying every ``leading`` token.
+
+    Tokens are compared verbatim and order-insensitively against ``argv[2:]``,
+    so extra flags/pathspecs (e.g. the ``--`` pathspec lists sent by the
+    preservation checker) do not break the match, while distinct revisions
+    (``HEAD`` vs ``HEAD^{tree}`` vs ``HEAD:<path>``) remain separate tokens and
+    never cross-match.
+    """
+    if len(argv) < 2 or argv[0] != "git" or argv[1] != subcommand:
+        return False
+    rest = list(argv[2:])
+    return all(token in rest for token in leading)
+
+
 # ── Fake runner ───────────────────────────────────────────────────────────────
 class FakeOutcome:
     def __init__(self, returncode: int, combined: str = "") -> None:
@@ -145,7 +183,17 @@ def _write_fake_outputs(argv, cwd):
 
 
 class ConfigurableFakeRunner:
-    """Injectable runner that fakes git/version preflight and command outputs."""
+    """Injectable runner that fakes git/version preflight and command outputs.
+
+    Branch matching is semantic, not raw membership: a guard-script branch
+    fires when any argv element's basename equals the script name (so the
+    repo-relative prefixed tokens used by the production command matrices —
+    e.g. ``scripts/ci/guard_ratchet.py`` — match) AND the branch's semantic
+    flags appear verbatim in argv.  Git subcommands match via ``_is_git_cmd``.
+    Anything unmatched falls through explicitly to ``(0, "ok")`` and is
+    recorded in ``fallthroughs`` so tests can assert which commands went
+    unmatched instead of silently succeeding.
+    """
 
     def __init__(self, *, dirty: bool = False, command_returncodes=None,
                  launch_fail_token: str = None, write_reports: bool = True,
@@ -157,49 +205,56 @@ class ConfigurableFakeRunner:
         self.staged_diff = staged_diff
         self.untracked = untracked
         self.calls: list = []
+        # Explicit fallthrough log: every argv that matched no registered
+        # branch (assertable; the fallthrough always returns exit 0).
+        self.fallthroughs: list = []
 
     def __call__(self, argv, cwd):
-        self.calls.append(list(argv))
+        argv = list(argv)
+        self.calls.append(argv)
         if self.launch_fail_token is not None and self.launch_fail_token in argv:
             raise FileNotFoundError("simulated missing executable")
         if argv and argv[0] == "git":
             return self._git(argv)
-        if argv and argv[0].endswith("gradlew"):
+        if argv and _argv_basename(argv[0]) == "gradlew":
             return FakeOutcome(self.command_returncodes.get("gradle", 1), "gradle output")
         if "pytest" in argv:
             return FakeOutcome(self.command_returncodes.get("pytest", 0), "pytest output")
-        if "verify_guard_registry.py" in argv:
+        if _matches(argv, "verify_guard_registry.py"):
             return FakeOutcome(self.command_returncodes.get("registry", 0), "registry ok")
-        if "guard_ratchet.py" in argv:
+        if _matches(argv, "guard_ratchet.py"):
             return FakeOutcome(self.command_returncodes.get("ratchet", 2), "ratchet blocked")
-        if "run_static_guard_suite.py" in argv:
+        if _matches(argv, "run_static_guard_suite.py"):
             if self.write_reports:
                 _write_fake_outputs(argv, cwd)
             return FakeOutcome(self.command_returncodes.get("static", 0), "static ok")
-        if "verify_db_access_boundaries.py" in argv:
-            if "--inventory-only" in argv:
-                rc = self.command_returncodes.get("inventory", 0)
-            else:
-                rc = self.command_returncodes.get("dbcli", 2)
+        if _matches(argv, "verify_db_access_boundaries.py", "--inventory-only"):
+            rc = self.command_returncodes.get("inventory", 0)
             if self.write_reports:
                 _write_fake_outputs(argv, cwd)
-            return FakeOutcome(rc, "db cli blocked" if rc else "inventory ok")
+            return FakeOutcome(rc, "inventory ok" if rc == 0 else "inventory blocked")
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
+            rc = self.command_returncodes.get("dbcli", 2)
+            if self.write_reports:
+                _write_fake_outputs(argv, cwd)
+            return FakeOutcome(rc, "db cli ok" if rc == 0 else "db cli blocked")
+        # Explicit fallthrough: no registered branch matched this command.
+        self.fallthroughs.append(argv)
         if self.write_reports:
             _write_fake_outputs(argv, cwd)
         return FakeOutcome(0, "ok")
 
     def _git(self, argv):
-        sub = argv[1:]
-        if sub[:2] == ["rev-parse", "HEAD"] and len(sub) == 2:
-            return FakeOutcome(0, TEST_SHA)
-        if sub[:2] == ["rev-parse", "HEAD^{tree}"]:
+        if _is_git_cmd(argv, "rev-parse", "HEAD^{tree}"):
             return FakeOutcome(0, TEST_TREE)
-        if sub[:1] == ["rev-parse"] and len(sub) == 2 and sub[1].startswith("HEAD:"):
+        if _is_git_cmd(argv, "rev-parse", "HEAD"):
+            return FakeOutcome(0, TEST_SHA)
+        if len(argv) == 3 and argv[1] == "rev-parse" and argv[2].startswith("HEAD:"):
             # Any committed input resolves to a valid 40-hex blob ID so the
             # forged/missing-blob-ID fail-closed path can be exercised by tests
             # that deliberately return an invalid blob.
             return FakeOutcome(0, "a" * 40)
-        if sub[:2] == ["status", "--porcelain=v1"]:
+        if _is_git_cmd(argv, "status", "--porcelain=v1"):
             base = " M config/guards/db_ownership_policy.yml\n" if self.dirty else ""
             # Surface untracked paths as porcelain ``??`` entries so the
             # preservation checker can observe them.
@@ -208,26 +263,27 @@ class ConfigurableFakeRunner:
                     if u.strip():
                         base += f"?? {u.strip()}\n"
             return FakeOutcome(0, base)
-        if sub[:2] == ["diff", "--exit-code"]:
-            return FakeOutcome(1 if self.dirty else 0, "")
-        if sub[:3] == ["diff", "--cached", "--exit-code"]:
+        if _is_git_cmd(argv, "diff", "--cached", "--exit-code"):
             # Staged changes vs HEAD fail closed when any staged diff exists.
             return FakeOutcome(1 if self.staged_diff else 0, "")
-        if sub[:2] == ["diff", "--name-only"]:
-            return FakeOutcome(0, "")
-        if sub[:3] == ["diff", "--cached", "--name-only"]:
+        if _is_git_cmd(argv, "diff", "--exit-code") and "--cached" not in argv:
+            return FakeOutcome(1 if self.dirty else 0, "")
+        if _is_git_cmd(argv, "diff", "--cached", "--name-only"):
             return FakeOutcome(0, self.staged_diff)
-        if sub[:2] == ["diff", "HEAD"] and "--name-only" in sub:
+        if _is_git_cmd(argv, "diff", "HEAD", "--name-only"):
             # Combined staged + unstaged modifications vs HEAD.
             return FakeOutcome(0, self.staged_diff or "")
-        if sub[:3] == ["log", "--oneline", "-20"]:
+        if _is_git_cmd(argv, "diff", "--name-only") and "--cached" not in argv:
+            return FakeOutcome(0, "")
+        if _is_git_cmd(argv, "log", "--oneline", "-20"):
             return FakeOutcome(0, f"{TEST_SHA} base commit\n")
-        if sub and sub[0] == "ls-files":
-            if "--others" in sub:
-                # Untracked paths (never tracked files).
-                return FakeOutcome(0, self.untracked or "")
+        if _is_git_cmd(argv, "ls-files") and "--others" in argv[2:]:
+            # Untracked paths (never tracked files).
+            return FakeOutcome(0, self.untracked or "")
+        if _is_git_cmd(argv, "ls-files"):
             # Return tracked files matching the requested pathspec patterns.
-            patterns = sub[2:] if "--" in sub else sub[1:]
+            rest = list(argv[2:])
+            patterns = rest[rest.index("--") + 1:] if "--" in rest else rest
             matched = [
                 f for f in TRACKED_FILES
                 if any(fnmatch.fnmatch(f, p) for p in patterns)
@@ -342,6 +398,58 @@ def _db_cli_matrix(root, out, findings_json="03-db-cli.findings.json"):
     )
 
 
+# ── Fixture regression tests: semantic runner matching ────────────────────────
+def test_fake_runner_matches_prefixed_production_argv(tmp_path):
+    """Regression (GR-00): branch matching must be basename-based so the
+    repo-relative prefixed tokens used by the production command matrices
+    (``scripts/verify_db_access_boundaries.py``) reach the intended branch
+    instead of silently hitting the exit-0 fallthrough."""
+    scratch = str(tmp_path)
+    runner = ConfigurableFakeRunner(dirty=False)
+    # The db-cli branch fires with its blocked default, never the fallthrough.
+    dbcli_outcome = runner(["python3", "scripts/verify_db_access_boundaries.py",
+                            "--fail-on-violation"], scratch)
+    assert dbcli_outcome.returncode == 2
+    assert runner.fallthroughs == []
+    # Flag gating keeps sibling invocations of the same script distinct.
+    inv_outcome = runner(["python3", "scripts/verify_db_access_boundaries.py",
+                          "--inventory-only"], scratch)
+    assert inv_outcome.returncode == 0
+    # Prefixed guard-tool commands match their registered branches too.
+    assert runner(["python3", "scripts/ci/verify_guard_registry.py"], scratch).returncode == 0
+    assert runner(["python3", "scripts/ci/run_static_guard_suite.py",
+                   "--output-dir", "out/run-1/05-static-suite"], scratch).returncode == 0
+    # A ratchet command embedding the db script as a ``--command-arg=`` value
+    # fires the ratchet branch, not the db-cli branch (verbatim-flag gating:
+    # ``--command-arg=--fail-on-violation`` is not a verbatim flag).
+    ratchet_outcome = runner(["python3", "scripts/ci/guard_ratchet.py",
+                              "--command-arg=python3",
+                              "--command-arg=scripts/verify_db_access_boundaries.py",
+                              "--command-arg=--fail-on-violation"], scratch)
+    assert ratchet_outcome.returncode == 2
+
+
+def test_fake_runner_git_matching_is_flag_semantic():
+    """Regression (GR-00): git subcommand matching is semantic (subcommand +
+    verbatim flag tokens), so pathspec-bearing preflight/preservation forms
+    match the intended branch regardless of extra arguments."""
+    runner = ConfigurableFakeRunner(dirty=False, staged_diff="config/staged.yml\n")
+    assert runner(["git", "rev-parse", "HEAD"], ".").combined.strip() == TEST_SHA
+    assert runner(["git", "rev-parse", "HEAD^{tree}"], ".").combined.strip() == TEST_TREE
+    assert runner(["git", "rev-parse", "HEAD:scripts/x.py"], ".").combined.strip() == "a" * 40
+    assert runner(["git", "status", "--porcelain=v1"], ".").combined == ""
+    assert runner(["git", "diff", "--cached", "--name-only"], ".").combined == \
+        "config/staged.yml\n"
+    assert runner(["git", "diff", "--name-only"], ".").returncode == 0
+    assert runner(["git", "diff", "HEAD", "--name-only"], ".").combined == \
+        "config/staged.yml\n"
+    # Pathspec-bearing preservation diffs hit the --exit-code branches.
+    assert runner(["git", "diff", "--exit-code", "--", "config/guards/x.yml"],
+                  ".").returncode == 0
+    assert runner(["git", "diff", "--cached", "--exit-code", "--", "app/src/main"],
+                  ".").returncode == 1
+
+
 # ── New tests: forged/missing blob ID is fatal (strict-review item 2) ────────────
 def test_missing_blob_id_fails_closed(tmp_path):
     """A required input whose blob ID is forged/missing fails the capture closed."""
@@ -415,6 +523,9 @@ def test_clean_checkout_succeeds(tmp_path):
     assert (out / "summary.md").is_file()
     assert (out / "semantic-summary.json").is_file()
     assert (out / "output-sha256.txt").is_file()
+    # Every guard-tool command matched a registered runner branch; the only
+    # intentional fallthroughs are the interpreter/version probes.
+    assert all(argv[1] in ("--version", "-version") for argv in runner.fallthroughs)
 
 
 def test_dirty_checkout_fails_by_default(tmp_path):
@@ -497,8 +608,13 @@ def test_invalid_json_report_preserved_but_parser_failure(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
 
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
     def bad_runner(argv, cwd):
-        if "--findings-output" in argv:
+        # Command-aware: ONLY the db-cli stage is blocked and writes the invalid
+        # report; the git preflight/preservation surface stays CLEAN so this
+        # test exercises the invalid-report stage, not preflight rejection.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
             idx = argv.index("--findings-output")
             # Repository-relative argv output paths resolve against the runner
             # ``cwd`` (the repository root), never the process cwd.
@@ -508,7 +624,8 @@ def test_invalid_json_report_preserved_but_parser_failure(tmp_path):
                 os.makedirs(parent, exist_ok=True)
             with open(p, "w", encoding="utf-8") as handle:
                 handle.write("{not valid json")
-        return FakeOutcome(2, "blocked")
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
     rc = cap.capture_evidence(str(root), str(out), runner=bad_runner, command_matrix=matrix,
@@ -833,14 +950,19 @@ def test_v2_report_with_nonzero_findings(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
 
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
     def findings_runner(argv, cwd):
-        if "--findings-output" in argv:
+        # Command-aware: git preflight stays CLEAN; only the db-cli stage is
+        # blocked while writing its findings report.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
             idx = argv.index("--findings-output")
             # Resolve against the runner ``cwd`` (repository root).
             out_path = os.path.join(str(cwd), argv[idx + 1])
             _write_fake_report(out_path, trusted=False,
                                codes=["DB_POLICY_INCOMPLETE_V2"], findings=3)
-        return FakeOutcome(2, "blocked")
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
     rc = cap.capture_evidence(str(root), str(out), runner=findings_runner, command_matrix=matrix,
@@ -1071,14 +1193,19 @@ def test_diagnostic_code_sanitized(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
 
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
     def bad_code_runner(argv, cwd):
-        if "--findings-output" in argv:
+        # Command-aware: git preflight stays CLEAN; only the db-cli stage is
+        # blocked while writing the report with the hostile diagnostic code.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
             idx = argv.index("--findings-output")
             # Resolve against the runner ``cwd`` (repository root).
             out_path = os.path.join(str(cwd), argv[idx + 1])
             _write_fake_report(out_path, trusted=False,
                                codes=["db/policy/C:\\secret\\path"], findings=0)
-        return FakeOutcome(2, "blocked")
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
     rc = cap.capture_evidence(str(root), str(out), runner=bad_code_runner, command_matrix=matrix,
@@ -1104,6 +1231,10 @@ def test_persisted_output_redacts_absolute_paths(tmp_path):
 
         def __call__(self, argv, cwd):
             outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN; only child
+                # command output carries the leaky payload.
+                return outcome
             combined = outcome.combined + \
                 " wrote config to C:\\Users\\tester\\secret.log and /etc/passwd done"
             return FakeOutcome(outcome.returncode, combined)
@@ -1361,6 +1492,10 @@ def test_raw_secret_exception_sql_output(tmp_path):
 
         def __call__(self, argv, cwd):
             outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN; only child
+                # command output carries the leaky payload.
+                return outcome
             combined = outcome.combined + "\n".join([
                 "password=hunter2secret",
                 "api_key=sk_live_abc123",
@@ -1400,6 +1535,11 @@ def test_child_output_bounded(tmp_path):
 
         def __call__(self, argv, cwd):
             outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN (an
+                # oversized status payload would trip the dirty rejection
+                # instead of exercising the output-bounding stage).
+                return outcome
             return FakeOutcome(outcome.returncode, "x" * (cap.CHILD_OUTPUT_LIMIT * 4))
 
     matrix = [cap.CommandSpec(id="huge", log_name="00-huge.log",
@@ -1640,7 +1780,10 @@ def test_preflight_metadata_sanitized_and_bounded(tmp_path):
             return super()._git(argv)
 
     runner = LeakyPreflightRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    # The hostile status lines this test injects mark the checkout dirty by
+    # design; allow_dirty lets the metadata-persistence stage run so the
+    # sanitization of the PERSISTED git state is actually exercised.
+    cap.capture_evidence(str(root), str(out), runner=runner, allow_dirty=True,
                         command_matrix=_fake_matrix(str(root), str(out)))
     gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
     raw = json.dumps(gs)
@@ -1751,7 +1894,9 @@ def test_blob_id_validated(tmp_path):
             self.blob = blob
 
         def __call__(self, argv, cwd):
-            if argv[:2] == ["git", "rev-parse"] and len(argv) == 2 and argv[1].startswith("HEAD:"):
+            # Semantic match for the 3-token blob query ``git rev-parse HEAD:<path>``.
+            if (len(argv) == 3 and argv[:2] == ["git", "rev-parse"]
+                    and argv[2].startswith("HEAD:")):
                 return FakeOutcome(0, self.blob)
             return self._inner(argv, cwd)
 
@@ -1764,7 +1909,9 @@ def test_blob_id_validated(tmp_path):
 
     class FailBlobRunner:
         def __call__(self, argv, cwd):
-            if argv[:2] == ["git", "rev-parse"] and len(argv) == 2 and argv[1].startswith("HEAD:"):
+            # Semantic match for the 3-token blob query ``git rev-parse HEAD:<path>``.
+            if (len(argv) == 3 and argv[:2] == ["git", "rev-parse"]
+                    and argv[2].startswith("HEAD:")):
                 return FakeOutcome(1, "")
             return ConfigurableFakeRunner(dirty=False)(argv, cwd)
 
@@ -1917,10 +2064,11 @@ class LeakyVersionRunner(ConfigurableFakeRunner):
     """Inject an absolute path into the ``python --version`` output."""
 
     def __call__(self, argv, cwd):
-        outcome = self._inner(argv, cwd)
         if argv and argv[0] == "python":
+            self.calls.append(list(argv))
             return FakeOutcome(0, "Python 3.11.4 from /usr/bin/python3 leaked\n")
-        return outcome
+        # Git preflight and every other command keep the clean base behavior.
+        return super().__call__(argv, cwd)
 
 
 def test_version_metadata_sanitized_and_bounded(tmp_path):
@@ -2016,14 +2164,19 @@ def test_diagnostic_codes_overflow_bounded(tmp_path, monkeypatch):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
 
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
     def many_codes_runner(argv, cwd):
-        if "--findings-output" in argv:
+        # Command-aware: git preflight stays CLEAN; only the db-cli stage is
+        # blocked while writing the overflowing diagnostic-code report.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
             idx = argv.index("--findings-output")
             # Resolve against the runner ``cwd`` (repository root).
             out_path = os.path.join(str(cwd), argv[idx + 1])
             _write_fake_report(out_path, trusted=False,
                                codes=[f"CODE{i}" for i in range(5)], findings=0)
-        return FakeOutcome(2, "blocked")
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
     rc = cap.capture_evidence(str(root), str(out), runner=many_codes_runner,
@@ -2040,13 +2193,18 @@ def test_finding_count_overflow_fails_closed(tmp_path, monkeypatch):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
 
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
     def many_findings_runner(argv, cwd):
-        if "--findings-output" in argv:
+        # Command-aware: git preflight stays CLEAN; only the db-cli stage is
+        # blocked while writing the overflowing findings report.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
             idx = argv.index("--findings-output")
             # Resolve against the runner ``cwd`` (repository root).
             out_path = os.path.join(str(cwd), argv[idx + 1])
             _write_fake_report(out_path, trusted=False, codes=["X"], findings=5)
-        return FakeOutcome(2, "blocked")
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
     rc = cap.capture_evidence(str(root), str(out), runner=many_findings_runner,
@@ -2135,6 +2293,10 @@ def test_unc_and_backslash_in_child_output_redacted(tmp_path):
 
         def __call__(self, argv, cwd):
             outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN; only child
+                # command output carries the leaky payload.
+                return outcome
             combined = outcome.combined + "\n".join([
                 "wrote to //server/share/secret.log",
                 "wrote to C:\\Users\\tester\\secret.log",
@@ -2164,6 +2326,10 @@ def test_keyboardinterrupt_stopiteration_in_child_output_redacted(tmp_path):
 
         def __call__(self, argv, cwd):
             outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN; only child
+                # command output carries the leaky payload.
+                return outcome
             combined = outcome.combined + "\n".join([
                 "Traceback (most recent call last):",
                 "KeyboardInterrupt",

@@ -552,9 +552,9 @@ def _absolute_root_anchor(root_abs: str) -> str | None:
     remains above the tail.
     """
     parts = os.path.normpath(root_abs).split(os.sep)
-    if parts[-3:] == ("src", "main", "java"):
+    if tuple(parts[-3:]) == ("src", "main", "java"):
         anchor_parts = parts[:-4]
-    elif parts[-3:] == ("src", "main", "kotlin"):
+    elif tuple(parts[-3:]) == ("src", "main", "kotlin"):
         anchor_parts = parts[:-3]
     else:
         return None
@@ -666,7 +666,7 @@ def _undeclared_kotlin_root_observed(pairs: tuple[tuple[Path, Path], ...]) -> bo
     declared = {os.path.normcase(str(base)) for _anchor, base in pairs}
     for _anchor, base in pairs:
         parts = os.path.normpath(str(base)).split(os.sep)
-        if parts[-3:] != ("src", "main", "java"):
+        if tuple(parts[-3:]) != ("src", "main", "java"):
             continue
         sibling = Path(os.path.dirname(str(base))) / "kotlin"
         if os.path.normcase(str(sibling)) in declared:
