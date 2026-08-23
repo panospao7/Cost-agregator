@@ -692,8 +692,8 @@ def load_db_structural_exceptions(exceptions_path=None):
 #     exception tuples, duplicates in either side, and operation mismatches on
 #     the same (path, class, method_pattern) all fail with exit 2;
 #   * entry-count contract — the manifest's ``counts`` section pins the exact
-#     number of ownership-policy and structural-exceptions entries.  A count
-#     change without an explicit manifest update is a configuration error;
+#     number of structural-exceptions entries.  A count change without an
+#     explicit manifest update is a configuration error;
 #   * source evidence — every manifest tuple must be backed by EXACT source
 #     evidence (canonical path resolves to a real file, class declared exactly
 #     once, method_pattern matches an actual declaration in that class, and —
@@ -704,14 +704,17 @@ def load_db_structural_exceptions(exceptions_path=None):
 # (including ``allowlist``-style metadata) is a config error (exit 2).
 MANIFEST_ALLOWED_TOP_KEYS = frozenset({"baseline", "expected", "fixtures", "counts"})
 
-# Only these keys are accepted inside the ``counts`` section.
-MANIFEST_COUNT_KEYS = frozenset({"ownership_entries", "structural_entries"})
+# Only these keys are accepted inside the ``counts`` section.  Any other key
+# (including ``ownership_entries``) is an unknown-count-key configuration
+# error: the manifest governs structural exceptions only.
+MANIFEST_COUNT_KEYS = frozenset({"structural_entries"})
 
-# Pinned canonical entry counts for the DB policy gate.  The manifest's
-# ``counts`` section must equal these EXACT values, and the current policy
-# files must equal the manifest's counts — a silent count change on either
-# side is a configuration error (exit 2).
-PINNED_OWNERSHIP_ENTRY_COUNT = 99
+# Pinned canonical structural entry count for the DB policy gate.  The
+# manifest's ``counts.structural_entries`` must equal this EXACT value, and
+# the current structural-exceptions file must equal the manifest's count —
+# a silent count change on either side is a configuration error (exit 2).
+# Ownership cardinality is NOT pinned here: it is an observational migration
+# metric, not structural authorization evidence.
 PINNED_STRUCTURAL_ENTRY_COUNT = 62
 
 # ── Immutable checked-in tuple contracts (expected/fixtures classification) ────
@@ -936,8 +939,9 @@ def structural_manifest_metadata_errors(manifest):
          unbounded method_patterns, and unknown entry keys are rejected;
       5. duplicate tuples inside ``expected``, inside ``fixtures``, and across
          the two sections are rejected;
-      6. ``counts`` (when present) must contain non-negative integer
-         ``ownership_entries`` and ``structural_entries``.
+      6. ``counts`` (when present) must contain only ``structural_entries``
+         (a non-negative integer); any other key — including
+         ``ownership_entries`` — is an unknown-count-key error.
     """
     errors = []
     if not isinstance(manifest, dict):
@@ -1153,7 +1157,6 @@ def _manifest_source_file(canonical_path, source_root, cache):
 
 
 def verify_structural_exceptions_manifest(structural_entries, manifest, source_root,
-                                          ownership_count=None,
                                           enforce_canonical_contract=True):
     """Validate the structural expected-methods manifest against the CURRENT
     structural exceptions and the source tree.
@@ -1171,11 +1174,14 @@ def verify_structural_exceptions_manifest(structural_entries, manifest, source_r
          tuple set (path, class, method_pattern, operation) must EXACTLY equal
          the current structural-exceptions tuple set.  Missing manifest tuples,
          extra exception tuples, and duplicates in the current set all fail;
-      3. entry-count contract — the manifest's ``counts`` section must equal
-         the pinned production counts (99 ownership / 62 structural), the
-         current ownership count (``ownership_count`` argument, or a helper)
-         must equal ``counts.ownership_entries``, and the current structural
-         count must equal ``counts.structural_entries``;
+      3. entry-count contract — the manifest governs structural exceptions
+         ONLY: its ``counts.structural_entries`` must equal the pinned
+         production structural count under the canonical contract (or the
+         current structural tuple count for a fixture/custom manifest), and
+         the current structural count must equal
+         ``counts.structural_entries``.  Ownership cardinality is an
+         observational migration metric, not structural authorization
+         evidence, and is never validated here;
       4. source evidence — every tuple is source-verified through EXACT
          mechanisms only: the canonical path must resolve to a real file under
          ``source_root``, the class must be declared exactly once (masked
@@ -1263,32 +1269,19 @@ def verify_structural_exceptions_manifest(structural_entries, manifest, source_r
             "any manifest (expected/fixtures) tuple"
         )
 
-    # 6. Entry-count contract.
+    # 6. Entry-count contract (structural only).  Ownership cardinality is
+    # an observational migration metric tracked elsewhere; it is never
+    # structural authorization evidence and is not validated here.
     counts = manifest.get("counts") or {}
-    manifest_ownership = counts.get("ownership_entries")
     manifest_structural = counts.get("structural_entries")
-    expected_ownership_count = (
-        PINNED_OWNERSHIP_ENTRY_COUNT if enforce_canonical_contract
-        else ownership_count
-    )
     expected_structural_count = (
         PINNED_STRUCTURAL_ENTRY_COUNT if enforce_canonical_contract
         else len(current_tuples)
     )
-    if manifest_ownership != expected_ownership_count:
-        errors.append(
-            f"COUNT_MISMATCH: manifest counts.ownership_entries="
-            f"{manifest_ownership!r} must equal {expected_ownership_count}"
-        )
     if manifest_structural != expected_structural_count:
         errors.append(
             f"COUNT_MISMATCH: manifest counts.structural_entries="
             f"{manifest_structural!r} must equal {expected_structural_count}"
-        )
-    if ownership_count is not None and ownership_count != manifest_ownership:
-        errors.append(
-            f"COUNT_MISMATCH: current ownership policy has {ownership_count} "
-            f"entries but the manifest contract requires {manifest_ownership}"
         )
     if len(current_tuples) != manifest_structural:
         errors.append(
@@ -3437,9 +3430,8 @@ def main(argv=None):
                         structural_entries,
                         manifest_data,
                         os.path.join(project_root, "app", "src", "main", "java"),
-                         ownership_count=len(ownership_entries),
-                         enforce_canonical_contract=args.structural_manifest is None,
-                     ))
+                        enforce_canonical_contract=args.structural_manifest is None,
+                    ))
                 if (not ownership_loaded or evidence_errors or
                         not structural_loaded or not manifest_loaded):
                     diagnostics.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")

@@ -25,7 +25,10 @@ from scripts.db_guard.policy_legacy import (
 )
 # Kept on the CLI module: these tests invoke the real verifier entry point
 # in-process (CLI-level integration) alongside their subprocess runs.
-from scripts.verify_db_access_boundaries import main as verify_main
+from scripts.verify_db_access_boundaries import (
+    main as verify_main,
+    structural_manifest_metadata_errors,
+)
 
 
 SCRIPT = Path(__file__).with_name("verify_db_access_boundaries.py")
@@ -68,24 +71,25 @@ def _write(root: Path, relative: str, text: str) -> Path:
 def _fixture(tmp_path: Path, *, source: str = SOURCE) -> Path:
     _write(tmp_path, CANONICAL, source)
     _write(tmp_path, "config/guards/raw.yml", "entries: []\n")
-    _write_fixture_manifest(tmp_path, ownership_entries=0, structural_entries=[])
+    _write_fixture_manifest(tmp_path, structural_entries=[])
     return tmp_path
 
 
 def _write_fixture_manifest(
-    root: Path, *, ownership_entries: int, structural_entries: list[dict],
+    root: Path, *, structural_entries: list[dict],
 ) -> Path:
     """Write manifest evidence matching the temporary policies in ``root``.
 
-    Fixture scans must not accidentally validate against the production 99/62
-    contract.  Keep this helper deliberately exact: structural entries are
-    copied into ``expected`` and there are no implicit fixture exceptions.
+    Fixture scans must not accidentally validate against the production
+    pinned structural contract.  Keep this helper deliberately exact:
+    structural entries are copied into ``expected``, there are no implicit
+    fixture exceptions, and ``counts`` carries ``structural_entries`` ONLY —
+    ownership cardinality is never manifest metadata (GR-04 decoupling).
     """
     manifest = {
         "expected": structural_entries,
         "fixtures": [],
         "counts": {
-            "ownership_entries": ownership_entries,
             "structural_entries": len(structural_entries),
         },
     }
@@ -94,11 +98,9 @@ def _write_fixture_manifest(
 
 
 def _sync_fixture_manifest(root: Path) -> Path:
-    ownership = yaml.safe_load((root / "config/guards/ownership.yml").read_text(encoding="utf-8"))
     structural = yaml.safe_load((root / "config/guards/structural.yml").read_text(encoding="utf-8"))
     return _write_fixture_manifest(
         root,
-        ownership_entries=len((ownership or {}).get("entries", [])),
         structural_entries=list((structural or {}).get("entries", [])),
     )
 
@@ -1005,7 +1007,6 @@ def test_explicit_structural_manifest_is_selected_for_source_root_fixture(tmp_pa
     linked_issue: D4C-001
 fixtures: []
 counts:
-  ownership_entries: 1
   structural_entries: 1
 """)
     _write(root, "config/guards/db_structural_exceptions_expected_methods.yml",
@@ -1685,7 +1686,9 @@ def test_invalid_inputs_exit_two_without_path_or_exception_leaks(tmp_path: Path,
     assert "Traceback" not in result.stderr
 
 
-@pytest.mark.parametrize("manifest_case", ["missing", "stale", "mismatched"])
+@pytest.mark.parametrize(
+    "manifest_case", ["missing", "stale", "legacy-ownership-count"],
+)
 def test_structural_manifest_failures_are_diagnostic_only_and_overwrite_old_findings(
     tmp_path: Path, manifest_case: str,
 ) -> None:
@@ -1699,6 +1702,9 @@ def test_structural_manifest_failures_are_diagnostic_only_and_overwrite_old_find
         _write(root, "config/guards/db_structural_exceptions_expected_methods.yml",
                manifest.read_text(encoding="utf-8").replace("counts:", "stale: true\ncounts:", 1))
     else:
+        # Old-shape metadata: a counts block that still pins ownership
+        # cardinality.  Under GR-04 this is unknown-count-key configuration,
+        # not a count comparison input.
         _write(root, "config/guards/db_structural_exceptions_expected_methods.yml",
                "expected: []\nfixtures: []\ncounts:\n  ownership_entries: 99\n  structural_entries: 62\n")
     report = root / "manifest.json"
@@ -1722,6 +1728,16 @@ def test_structural_manifest_failures_are_diagnostic_only_and_overwrite_old_find
         ],
         "statistics": {"trusted": False},
     })
+
+    if manifest_case == "legacy-ownership-count":
+        # Explicit GR-04 decoupling assertion: the legacy ownership count key
+        # must be rejected as the ONLY metadata error — the manifest fails
+        # closed as unknown-count-key (never silently accepted, never merely
+        # mismatched against the fixture policies).
+        legacy = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+        assert structural_manifest_metadata_errors(legacy) == [
+            "unknown 'counts' key(s) ['ownership_entries']",
+        ]
 
 
 def test_fixture_manifest_mismatch_is_fail_closed_and_production_defaults_stay_strict(
@@ -1756,6 +1772,19 @@ counts:
         ],
         "statistics": {"trusted": False},
     })
+
+    # Explicit GR-04 decoupling assertion: this manifest fails closed because
+    # its legacy ownership count key is unknown-count-key metadata — not
+    # merely because 99/62 disagrees with the fixture policies.  If ownership
+    # cardinality is ever re-coupled into the manifest contract, this
+    # assertion fails and forces the decoupling to be re-decided.
+    stale_manifest = yaml.safe_load(
+        (root / "config/guards/db_structural_exceptions_expected_methods.yml")
+        .read_text(encoding="utf-8")
+    )
+    assert structural_manifest_metadata_errors(stale_manifest) == [
+        "unknown 'counts' key(s) ['ownership_entries']",
+    ]
 
     # No fixture override is supplied here: production defaults retain the
     # canonical manifest contract instead of inheriting temporary policy paths.

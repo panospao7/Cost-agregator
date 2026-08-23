@@ -651,7 +651,6 @@ def test_structural_loader_rejects_invalid_operation_in_manifest(tmp_path):
     manifest_path = tmp_path / "manifest.yml"
     manifest_path.write_text(
         "counts:\n"
-        "  ownership_entries: 99\n"
         "  structural_entries: 1\n"
         "expected:\n"
         "  - path: app/src/main/java/com/example/SomeClass.kt\n"
@@ -4249,10 +4248,15 @@ def test_source_evidence_invalid_entry_metadata_fails_closed(tmp_path):
     assert "operation: write" in errors[0]["detail"]
 
 
+# GR-04 triage aligned the test to the v2 report contract (pre-existing staleness, not a weakening).
 def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path, monkeypatch, capsys):
-    """The CLI maps a source-evidence failure to exit 2 and prints the
-    controlled DB_POLICY_SOURCE_EVIDENCE diagnostic to stderr — a stale policy
-    entry can never silently approve anything."""
+    """The CLI maps a source-evidence failure to return code 2, prints exactly
+    the single umbrella stderr line, and records the controlled
+    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic in the --findings-output JSON
+    (CLASS_MISSING stays an internal detail string) — a stale policy entry can
+    never silently approve anything."""
+    import json
+
     src = _fixture_source(tmp_path, monkeypatch)
     _write_kt(
         src,
@@ -4264,7 +4268,8 @@ def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path,
 }
 """,
     )
-    # Valid policy metadata, but the referenced class does not exist in the
+    # Valid policy metadata including the callable-signature block (so the
+    # signature gate passes), but the referenced class does not exist in the
     # fixture source — the source-evidence validator fails with CLASS_MISSING.
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/FooRepo.kt
@@ -4276,26 +4281,49 @@ def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path,
     reason: test
     owner: "@test"
     linked_issue: "TEST-001"
+    signature:
+      receiver: null
+      kind: function
+      parameters: []
 """)
     exceptions_path = tmp_path / "exceptions.yml"
     exceptions_path.write_text("entries: []\n", encoding="utf-8")
+
+    # Pass-through seam spy: proves the CLI actually consults the
+    # source-evidence validator while the real CLASS_MISSING detection runs.
+    real_evidence_check = _mod.verify_ownership_policy_source_evidence
+    evidence_codes = []
+
+    def _evidence_spy(*args, **kwargs):
+        errors = real_evidence_check(*args, **kwargs)
+        evidence_codes.extend(error.get("code") for error in errors)
+        return errors
+
+    monkeypatch.setattr(_mod, "verify_ownership_policy_source_evidence", _evidence_spy)
 
     # SOURCE_DIR is computed at import time; pin it (and PROJECT_ROOT) to the
     # fixture tree so main() resolves the fixture policy against fixture source.
     monkeypatch.setattr(_mod, "SOURCE_DIR", str(src))
     monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+    findings_output = tmp_path / "db_guard_findings.json"
     monkeypatch.setattr(sys, "argv", [
         "verify_db_access_boundaries.py",
         "--ownership-policy", policy_path,
         "--structural-exceptions", str(exceptions_path),
+        "--findings-output", str(findings_output),
     ])
 
-    with pytest.raises(SystemExit) as exc_info:
-        _mod.main()
-    assert exc_info.value.code == 2
+    assert _mod.main() == 2
     err = capsys.readouterr().err
-    assert "DB_POLICY_SOURCE_EVIDENCE" in err
-    assert "CLASS_MISSING" in err
+    assert err == "ERROR: DB access discovery infrastructure diagnostics present\n"
+    # The source-evidence stage really ran and really detected the missing class.
+    assert "CLASS_MISSING" in evidence_codes
+    # Detailed codes surface only through the findings JSON, never on stderr.
+    report = json.loads(findings_output.read_text(encoding="utf-8"))
+    codes = [diagnostic.get("code") for diagnostic in report["diagnostics"]]
+    assert codes == ["DB_POLICY_SOURCE_EVIDENCE_INVALID"]
+    assert report["findings"] == []
+    assert report["statistics"]["trusted"] is False
 
 
 # ── 20. Structural expected-methods manifest gate ─────────────────────────────
@@ -4305,8 +4333,10 @@ def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path,
 #   * exact tuple-set equivalence between the manifest's `expected` + `fixtures`
 #     tuple set and the current structural-exception tuple set (missing/extra
 #     tuples and duplicates all fail);
-#   * pinned entry counts (99 ownership / 62 structural) via the manifest's
-#     `counts` section;
+#   * the pinned structural entry count (62) via the manifest's `counts`
+#     section — the manifest governs structural exceptions ONLY, so a
+#     legacy `ownership_entries` counts key is unknown-count-key metadata
+#     that fails closed as MANIFEST_INVALID (GR-04 decoupling);
 #   * exact source evidence for every manifest tuple (canonical path resolves
 #     to a real file, class declared exactly once, method_pattern fullmatches a
 #     declaration, and — for `expected` tuples — the operation token has EXACT
@@ -4333,14 +4363,18 @@ def _manifest_entries_yaml(entries):
 
 
 def _write_manifest_yaml(tmp_path, expected_entries, fixture_entries=(),
-                         ownership=99, structural=62):
-    """Write a structural expected-methods manifest into the temp tree."""
+                         structural=62):
+    """Write a structural expected-methods manifest into the temp tree.
+
+    The manifest governs structural exceptions ONLY: its ``counts`` block
+    carries ``structural_entries`` and nothing else (GR-04 decoupling — an
+    ``ownership_entries`` key is unknown-count-key metadata and fails closed).
+    """
     manifest = tmp_path / "manifest.yml"
     content = (
         "baseline:\n"
         '  commit: "test"\n'
         "counts:\n"
-        f"  ownership_entries: {ownership}\n"
         f"  structural_entries: {structural}\n"
     )
     if expected_entries:
@@ -4355,12 +4389,15 @@ def _write_manifest_yaml(tmp_path, expected_entries, fixture_entries=(),
     return str(manifest)
 
 
-def _manifest_dict(expected_entries, fixture_entries=(), ownership=99, structural=62):
-    """Build a parsed manifest mapping (the validator API input form)."""
+def _manifest_dict(expected_entries, fixture_entries=(), structural=62):
+    """Build a parsed manifest mapping (the validator API input form).
+
+    Counts carry ``structural_entries`` ONLY — the manifest never pins
+    ownership cardinality (GR-04 decoupling).
+    """
     return {
         "baseline": {"commit": "test"},
         "counts": {
-            "ownership_entries": ownership,
             "structural_entries": structural,
         },
         "expected": list(expected_entries),
@@ -4415,8 +4452,8 @@ def _sexc_entries_for(tuples):
 def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, monkeypatch):
     """The manifest's expected tuple set EXACTLY equals the structural
     exceptions YAML's entry tuple set (both copied to temp files and loaded
-    through the production loaders) — with the pinned 99/62 counts and full
-    source evidence the gate passes cleanly."""
+    through the production loaders) — with the pinned structural count and
+    full source evidence the gate passes cleanly."""
     src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
     class_name = "SomeClass"
     tuples = _manifest_tuples(path, class_name)
@@ -4429,8 +4466,9 @@ def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, 
     manifest_path = _write_manifest_yaml(tmp_path, tuples)
     manifest = load_db_structural_expected_methods(manifest_path)
 
+    # Synthetic manifests cannot satisfy the immutable checked-in classification contract; fixture mode isolates the behavior under test.
     errors = verify_structural_exceptions_manifest(
-        structural, manifest, str(src), ownership_count=99
+        structural, manifest, str(src), enforce_canonical_contract=False,
     )
     assert errors == [], errors
 
@@ -4446,7 +4484,7 @@ def test_manifest_missing_tuple_fails_closed(tmp_path, monkeypatch):
     manifest = _manifest_dict(tuples)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     missing = [e for e in errors if e.startswith("MISSING_TUPLE")]
     assert len(missing) == 1, errors
@@ -4467,7 +4505,7 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
     manifest = _manifest_dict(tuples[:-1])
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     extra = [e for e in errors if e.startswith("EXTRA_TUPLE")]
     assert len(extra) == 1, errors
@@ -4487,7 +4525,7 @@ def test_manifest_duplicate_tuple_fails_closed(tmp_path, monkeypatch):
     manifest = _manifest_dict(tuples)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     dup = [e for e in errors if e.startswith("DUPLICATE_TUPLE")]
     assert len(dup) == 1, errors
@@ -4543,7 +4581,7 @@ def test_manifest_malformed_entry_fails_closed(tmp_path):
     invalid = [
         e for e in verify_structural_exceptions_manifest(
             _sexc_entries_for(tuples), _manifest_dict(bad_path),
-            str(tmp_path), ownership_count=99,
+            str(tmp_path),
         )
         if e.startswith("MANIFEST_INVALID")
     ]
@@ -4551,24 +4589,67 @@ def test_manifest_malformed_entry_fails_closed(tmp_path):
     assert any("not canonical" in e for e in invalid), invalid
 
 
-def test_manifest_count_mismatch_fails_closed(tmp_path, monkeypatch):
-    """Manifest counts that drift from the pinned 99/62 contract fail with the
-    controlled COUNT_MISMATCH code — on the manifest side, the current
-    ownership count, and the current structural count."""
+def test_manifest_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
+    """A manifest whose counts.structural_entries drifts from the pinned 62
+    contract fails with the controlled COUNT_MISMATCH code — on both the
+    manifest side and the current-structural side.  Ownership cardinality is
+    never part of this contract (GR-04 decoupling)."""
     src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
     class_name = "SomeClass"
     tuples = _manifest_tuples(path, class_name)
     current = _sexc_entries_for(tuples)
 
-    manifest = _manifest_dict(tuples, ownership=98, structural=61)
+    manifest = _manifest_dict(tuples, structural=61)
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     count_errors = [e for e in errors if e.startswith("COUNT_MISMATCH")]
-    assert len(count_errors) >= 2, errors
-    assert any("ownership_entries" in e for e in count_errors), count_errors
-    assert any("structural_entries" in e for e in count_errors), count_errors
-    assert all("99" in e or "62" in e for e in count_errors), count_errors
+    assert len(count_errors) == 2, errors
+    assert all("structural_entries" in e for e in count_errors), count_errors
+    assert any("61" in e for e in count_errors), count_errors
+    assert all(not e.startswith("MANIFEST_INVALID") for e in errors), errors
+
+
+def test_manifest_legacy_ownership_count_key_fails_closed(tmp_path, monkeypatch):
+    """Old-shape manifest metadata — a ``counts.ownership_entries`` key — is
+    unknown-count-key configuration and fails closed as MANIFEST_INVALID
+    before any tuple, count, or source check (GR-04 decoupling: the manifest
+    governs structural exceptions ONLY).  The identical manifest without the
+    legacy key passes cleanly, so the failure is attributable to the ownership
+    key alone and re-coupling ownership into the manifest cannot pass."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+    current = _sexc_entries_for(tuples)
+
+    # Baseline decoupling assertion: the structurally exact manifest passes
+    # with NO ownership input whatsoever.
+    # Synthetic manifests cannot satisfy the immutable checked-in classification contract; fixture mode isolates the behavior under test.
+    assert verify_structural_exceptions_manifest(
+        current, _manifest_dict(tuples), str(src),
+        enforce_canonical_contract=False,
+    ) == []
+
+    # Adding ONLY the legacy ownership count key fails closed — even though
+    # every structural value (tuples, count, evidence) is correct.
+    legacy = _manifest_dict(tuples)
+    legacy["counts"]["ownership_entries"] = len(current)
+    errors = verify_structural_exceptions_manifest(
+        current, legacy, str(src), enforce_canonical_contract=False,
+    )
+    assert errors, "legacy ownership_entries metadata must fail closed"
+    assert all(e.startswith("MANIFEST_INVALID") for e in errors), errors
+    assert any(
+        "unknown 'counts' key(s) ['ownership_entries']" in e for e in errors
+    ), errors
+    assert all(
+        not e.startswith(("COUNT_MISMATCH", "MISSING_TUPLE", "EXTRA_TUPLE",
+                          "SOURCE_")) for e in errors
+    ), errors
+
+    # The shared metadata validator reports the same unknown-count-key detail.
+    meta = structural_manifest_metadata_errors(legacy)
+    assert "unknown 'counts' key(s) ['ownership_entries']" in meta, meta
 
 
 def test_manifest_source_class_missing_fails_closed(tmp_path, monkeypatch):
@@ -4584,7 +4665,7 @@ def test_manifest_source_class_missing_fails_closed(tmp_path, monkeypatch):
     manifest = _manifest_dict(tuples)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     class_missing = [e for e in errors if e.startswith("SOURCE_CLASS_MISSING")]
     assert len(class_missing) == 1, errors
@@ -4604,7 +4685,7 @@ def test_manifest_source_declaration_missing_fails_closed(tmp_path, monkeypatch)
     manifest = _manifest_dict(tuples)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     decl = [e for e in errors if e.startswith("SOURCE_DECLARATION_MISSING")]
     assert len(decl) == 1, errors
@@ -4624,7 +4705,7 @@ def test_manifest_source_evidence_missing_fails_closed(tmp_path, monkeypatch):
     manifest = _manifest_dict(tuples)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     evidence = [e for e in errors if e.startswith("SOURCE_EVIDENCE_MISSING")]
     assert len(evidence) == 1, errors
@@ -4647,16 +4728,22 @@ def test_manifest_fixture_tuple_requires_declaration_only(tmp_path, monkeypatch)
     current = _sexc_entries_for(tuples)
     manifest = _manifest_dict(expected, fixtures)
 
+    # Synthetic manifests cannot satisfy the immutable checked-in classification contract; fixture mode isolates the behavior under test.
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src), enforce_canonical_contract=False,
     )
     assert errors == [], errors
 
 
+# GR-04 triage aligned the test to the v2 report contract (pre-existing staleness, not a weakening).
 def test_manifest_cli_wiring_exits_2_with_db_structural_manifest(tmp_path, monkeypatch, capsys):
-    """The CLI maps a structural-manifest failure to exit 2 and prints the
-    controlled DB_STRUCTURAL_MANIFEST diagnostic to stderr — a stale manifest
-    can never silently approve file operations."""
+    """The CLI maps a structural-manifest failure to return code 2, prints
+    exactly the single umbrella stderr line, and records the controlled
+    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic in the --findings-output JSON
+    (COUNT_MISMATCH stays an internal detail string) — a stale manifest can
+    never silently approve file operations."""
+    import json
+
     src = _fixture_source(tmp_path, monkeypatch)
     _write_kt(
         src,
@@ -4668,10 +4755,11 @@ def test_manifest_cli_wiring_exits_2_with_db_structural_manifest(tmp_path, monke
 }
 """,
     )
-    # Ownership policy backed by exact source evidence (passes the
-    # source-evidence stage), empty structural exceptions, and a manifest whose
-    # pinned counts do not match the current policy sizes — a COUNT_MISMATCH
-    # that must exit 2 under the DB_STRUCTURAL_MANIFEST prefix.
+    # Ownership policy backed by exact source evidence including the callable
+    # signature block (passes the signature and source-evidence stages), empty
+    # structural exceptions, and a manifest whose pinned structural count does
+    # not match the current structural size — a COUNT_MISMATCH that must exit 2
+    # under the controlled DB_POLICY_SOURCE_EVIDENCE_INVALID report diagnostic.
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/FooRepo.kt
     class: FooRepo
@@ -4682,26 +4770,51 @@ def test_manifest_cli_wiring_exits_2_with_db_structural_manifest(tmp_path, monke
     reason: test
     owner: "@test"
     linked_issue: "TEST-001"
+    signature:
+      receiver: null
+      kind: function
+      parameters: []
 """)
     exceptions_path = tmp_path / "exceptions.yml"
     exceptions_path.write_text("entries: []\n", encoding="utf-8")
-    manifest_path = _write_manifest_yaml(tmp_path, [], ownership=99, structural=62)
+    manifest_path = _write_manifest_yaml(tmp_path, [], structural=62)
 
+    # Pass-through seam spy: proves the CLI actually consults the structural
+    # manifest gate while the real COUNT_MISMATCH detection runs.
+    real_manifest_check = _mod.verify_structural_exceptions_manifest
+    manifest_calls = []
+    manifest_results = []
+
+    def _manifest_spy(*args, **kwargs):
+        result = real_manifest_check(*args, **kwargs)
+        manifest_calls.append(args)
+        manifest_results.append(result)
+        return result
+
+    monkeypatch.setattr(_mod, "verify_structural_exceptions_manifest", _manifest_spy)
     monkeypatch.setattr(_mod, "SOURCE_DIR", str(src))
     monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+    findings_output = tmp_path / "db_guard_findings.json"
     monkeypatch.setattr(sys, "argv", [
         "verify_db_access_boundaries.py",
         "--ownership-policy", policy_path,
         "--structural-exceptions", str(exceptions_path),
         "--structural-manifest", manifest_path,
+        "--findings-output", str(findings_output),
     ])
 
-    with pytest.raises(SystemExit) as exc_info:
-        _mod.main()
-    assert exc_info.value.code == 2
+    assert _mod.main() == 2
     err = capsys.readouterr().err
-    assert "DB_STRUCTURAL_MANIFEST" in err
-    assert "COUNT_MISMATCH" in err
+    assert err == "ERROR: DB access discovery infrastructure diagnostics present\n"
+    # The manifest gate really ran and really detected the count mismatch.
+    assert len(manifest_calls) == 1
+    assert any(error.startswith("COUNT_MISMATCH") for error in manifest_results[0])
+    # Detailed codes surface only through the findings JSON, never on stderr.
+    report = json.loads(findings_output.read_text(encoding="utf-8"))
+    codes = [diagnostic.get("code") for diagnostic in report["diagnostics"]]
+    assert codes == ["DB_POLICY_SOURCE_EVIDENCE_INVALID"]
+    assert report["findings"] == []
+    assert report["statistics"]["trusted"] is False
 
 
 # ── 21. Immutable manifest classification contract ────────────────────────────
@@ -4714,9 +4827,10 @@ def test_manifest_cli_wiring_exits_2_with_db_structural_manifest(tmp_path, monke
 # fixtures bucket.
 #
 # The checked-in contract tests below load the REAL production files through
-# the production loaders (no synthetic temp fixtures): the 99/62 counts, the
-# exact tuple classification, and the full structural-manifest gate must all
-# pass on the actual repo state.
+# the production loaders (no synthetic temp fixtures): the pinned structural
+# count (62 — the manifest carries no ownership count), the exact tuple
+# classification, and the full structural-manifest gate must all pass on the
+# actual repo state.
 
 def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
     """Build a parsed manifest mapping from canonical (path, class,
@@ -4732,7 +4846,6 @@ def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
     return {
         "baseline": {"commit": "test"},
         "counts": {
-            "ownership_entries": 99,
             "structural_entries": 62,
         },
         "expected": [to_entry(t) for t in expected_tuples],
@@ -4853,11 +4966,16 @@ def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     assert len(manifest_tuples) == 62
 
 
-def test_checked_in_99_62_manifest_contract_via_production_apis():
+def test_checked_in_structural_only_manifest_contract_via_production_apis():
     """Canonical checked-in integration test — loads the ACTUAL ownership
     policy, structural policy, and structural manifest from their production
-    paths and validates the 99/62 contract through the production loaders and
-    validators (no synthetic temp fixtures)."""
+    paths and validates the decoupled contract through the production loaders
+    and validators (no synthetic temp fixtures).
+
+    GR-04: the manifest pins the structural count ONLY — its counts block is
+    exactly ``{structural_entries: 62}`` with no ownership cardinality, while
+    the ownership policy's own 99-entry size remains an independent,
+    observational property of the policy file."""
     ownership = load_db_ownership_policy()
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
@@ -4865,13 +4983,405 @@ def test_checked_in_99_62_manifest_contract_via_production_apis():
     assert len(ownership) == 99
     assert len(structural) == 62
     assert manifest["counts"] == {
-        "ownership_entries": 99,
         "structural_entries": 62,
     }
     assert structural_manifest_classification_errors(manifest) == []
 
     errors = verify_structural_exceptions_manifest(
-        structural, manifest, _mod.SOURCE_DIR, ownership_count=len(ownership)
+        structural, manifest, _mod.SOURCE_DIR
     )
     assert errors == [], errors
+
+
+# ── 22. GR-04 decoupling & current-repo regression matrix ────────────────────
+# GR-04 removed ownership cardinality from the structural-manifest contract:
+# the structural verifier takes NO ownership input, the manifest's ``counts``
+# block carries ``structural_entries`` ONLY, and the CLI call site forwards no
+# ownership count.  The tests below pin the decoupling from four angles
+# (verifier signature, verifier result under differing ownership policies,
+# v2-style policy splits, CLI source text), pin the current-repo blocked state
+# as an ACTIVE-POLICY signature/evidence block (never a structural count or
+# classification diagnostic), and close the counts-type rejection gaps.
+
+def test_structural_verifier_signature_has_no_ownership_parameter():
+    """The structural verifier's signature has no ``ownership_count``
+    parameter and the module exposes no pinned ownership count constant
+    (GR-04: ownership cardinality never enters the structural gate)."""
+    import inspect
+
+    parameters = inspect.signature(
+        verify_structural_exceptions_manifest
+    ).parameters
+    assert "ownership_count" not in parameters
+    assert not hasattr(_mod, "PINNED_OWNERSHIP_ENTRY_COUNT")
+
+
+def test_structural_result_independent_of_ownership_cardinality(tmp_path, monkeypatch):
+    """Identical valid structural tuples + manifest verify identically no
+    matter which ownership policy is loaded alongside them: one valid entry vs
+    two valid exact entries both yield the SAME clean verifier result (GR-04:
+    the verifier result is independent of ownership cardinality)."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    tuples = _manifest_tuples(path, "SomeClass")
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(tuples)
+
+    single_dir = tmp_path / "ownership-single"
+    pair_dir = tmp_path / "ownership-pair"
+    single_dir.mkdir()
+    pair_dir.mkdir()
+    single_path = _write_policy_yaml(single_dir, """
+  - path: app/src/main/java/com/example/SomeClass.kt
+    class: SomeClass
+    method: "m0"
+    daos: [expenseDao]
+    operation: insert
+    barrier_required: false
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+""")
+    pair_path = _write_policy_yaml(pair_dir, """
+  - path: app/src/main/java/com/example/SomeClass.kt
+    class: SomeClass
+    method: "m0"
+    daos: [expenseDao]
+    operation: insert
+    barrier_required: false
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+
+  - path: app/src/main/java/com/example/SomeClass.kt
+    class: SomeClass
+    method: "m1"
+    daos: [budgetDao]
+    operation: insert
+    barrier_required: false
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+""")
+
+    # Both ownership variants load cleanly through the production loader and
+    # genuinely differ in cardinality.
+    single = load_db_ownership_policy(single_path)
+    pair = load_db_ownership_policy(pair_path)
+    assert len(single) == 1
+    assert len(pair) == 2
+
+    result_single = tuple(verify_structural_exceptions_manifest(
+        current, manifest, str(src), enforce_canonical_contract=False,
+    ))
+    result_pair = tuple(verify_structural_exceptions_manifest(
+        current, manifest, str(src), enforce_canonical_contract=False,
+    ))
+
+    assert result_single == ()
+    assert result_pair == ()
+    assert result_single == result_pair
+
+
+def test_v2_style_split_cannot_trigger_structural_failure(tmp_path, monkeypatch):
+    """Splitting one legacy multi-DAO ownership row into its 2-row v2-style
+    equivalent cannot change the structural verification outcome: both policy
+    YAML files coexist in tmp, both load cleanly through the production
+    loader, and the structural verification result is identical (and clean)
+    for the legacy row and its split equivalent (GR-04)."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    tuples = _manifest_tuples(path, "SomeClass")
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(tuples)
+
+    legacy_dir = tmp_path / "policy-legacy-row"
+    split_dir = tmp_path / "policy-v2-split"
+    legacy_dir.mkdir()
+    split_dir.mkdir()
+
+    legacy_path = _write_policy_yaml(legacy_dir, """
+  - path: app/src/main/java/com/example/SomeClass.kt
+    class: SomeClass
+    method: "doWork"
+    daos: [expenseDao, budgetDao]
+    operation: insert
+    barrier_required: false
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+""")
+    split_path = _write_policy_yaml(split_dir, """
+  - path: app/src/main/java/com/example/SomeClass.kt
+    class: SomeClass
+    method: "doWork"
+    daos: [expenseDao]
+    operation: insert
+    barrier_required: false
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+
+  - path: app/src/main/java/com/example/SomeClass.kt
+    class: SomeClass
+    method: "doWork"
+    daos: [budgetDao]
+    operation: insert
+    barrier_required: false
+    reason: test
+    owner: "@test"
+    linked_issue: "TEST-001"
+""")
+
+    legacy_entries = load_db_ownership_policy(legacy_path)
+    split_entries = load_db_ownership_policy(split_path)
+    assert len(legacy_entries) == 1
+    assert len(split_entries) == 2
+    # The v2-style split preserves the authorized DAO set exactly.
+    assert (
+        {dao for entry in legacy_entries for dao in entry["daos"]} ==
+        {dao for entry in split_entries for dao in entry["daos"]}
+    )
+
+    outcomes = []
+    for _ownership in (legacy_entries, split_entries):
+        # Identical structural inputs on every run; ONLY the loaded ownership
+        # policy varies (it is not even an input to the structural gate).
+        outcomes.append(tuple(verify_structural_exceptions_manifest(
+            current, manifest, str(src), enforce_canonical_contract=False,
+        )))
+
+    legacy_outcome, split_outcome = outcomes
+    assert legacy_outcome == ()
+    assert split_outcome == ()
+    assert legacy_outcome == split_outcome
+
+
+def test_cli_source_passes_no_ownership_count_to_structural_validation():
+    """The CLI's verify_structural_exceptions_manifest(...) call site forwards
+    no ``ownership_count`` token inside its argument block (bounded extraction
+    of each balanced call region in the CLI source text)."""
+    import re
+
+    cli_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "verify_db_access_boundaries.py",
+    )
+    with open(cli_path, encoding="utf-8") as handle:
+        text = handle.read()
+
+    call_token = "verify_structural_exceptions_manifest("
+    starts = [match.start() for match in re.finditer(re.escape(call_token), text)]
+    assert starts, "expected at least one verifier call site in the CLI source"
+
+    for start in starts:
+        depth = 0
+        end = None
+        for idx in range(start + len(call_token) - 1, min(len(text), start + 2000)):
+            char = text[idx]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    end = idx
+                    break
+        assert end is not None, "unbalanced verifier call region"
+        argument_block = text[start + len(call_token):end]
+        assert "ownership_count" not in argument_block, argument_block
+
+
+def test_no_executable_ownership_pin_references():
+    """No executable (non-test) script under scripts/ references the removed
+    ``PINNED_OWNERSHIP_ENTRY_COUNT`` pin, and no non-test script references an
+    ``ownership_entries`` counts-KEY literal (quoted form) — ownership
+    cardinality is never pinned anywhere executable (GR-04 regression)."""
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    scanned = 0
+    for name in sorted(os.listdir(scripts_dir)):
+        if not name.endswith(".py"):
+            continue
+        with open(os.path.join(scripts_dir, name), encoding="utf-8") as handle:
+            text = handle.read()
+        if name.startswith("test_"):
+            # Test files may reference the removed pin in rejection tests.
+            continue
+        scanned += 1
+        assert "PINNED_OWNERSHIP_ENTRY_COUNT" not in text, name
+        assert '"ownership_entries"' not in text, name
+        assert "'ownership_entries'" not in text, name
+    assert scanned > 0
+
+    # Sanity control: the scan really reads source text — this very test file
+    # contains the pin token inside its own rejection assertions.
+    with open(
+        os.path.join(scripts_dir, "test_verify_db_access_boundaries.py"),
+        encoding="utf-8",
+    ) as handle:
+        assert "PINNED_OWNERSHIP_ENTRY_COUNT" in handle.read()
+
+
+def test_current_db_gate_blocked_for_active_policy_reason_not_structural_count(tmp_path, monkeypatch):
+    """Characterization of the CURRENT repo state (GR-04 regression): invoking
+    the CLI in-process with the REAL config paths exits 2 because the active
+    ownership policy predates D1 callable signatures — the controlled
+    SIGNATURE_MISSING evidence branch that surfaces as the umbrella
+    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic.  The structural-manifest
+    gate is never consulted and NO structural COUNT_MISMATCH /
+    MANIFEST_INVALID diagnostic is produced."""
+    import json
+
+    monkeypatch.delenv("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", raising=False)
+    findings_output = tmp_path / "db_guard_findings.json"
+
+    structural_calls = []
+    monkeypatch.setattr(
+        _mod,
+        "verify_structural_exceptions_manifest",
+        lambda *args, **kwargs: structural_calls.append(args) or [],
+    )
+
+    exit_code = _mod.main([
+        "verify_db_access_boundaries.py",
+        "--fail-on-violation",
+        "--ownership-policy", _mod.OWNERSHIP_POLICY_PATH,
+        "--structural-exceptions", _mod.STRUCTURAL_EXCEPTIONS_PATH,
+        "--structural-manifest", _mod.STRUCTURAL_EXPECTED_METHODS_PATH,
+        "--findings-output", str(findings_output),
+    ])
+    assert exit_code == 2
+
+    # Blocked reason: every active-policy entry lacks a callable signature,
+    # which main() classifies as SIGNATURE_MISSING BEFORE any structural
+    # validation runs.
+    entries, loaded = _mod._read_ownership_entries_for_evidence(
+        _mod.OWNERSHIP_POLICY_PATH
+    )
+    assert loaded
+    assert entries
+    assert any(
+        not isinstance(item, dict) or "signature" not in item
+        for item in entries
+    )
+    # The structural gate never ran: the block is NOT a structural failure.
+    assert structural_calls == []
+
+    report = json.loads(findings_output.read_text(encoding="utf-8"))
+    codes = [diagnostic.get("code") for diagnostic in report["diagnostics"]]
+    assert codes == ["DB_POLICY_SOURCE_EVIDENCE_INVALID"]
+    # The internal evidence detail never leaks into report diagnostics.
+    assert "SIGNATURE_MISSING" not in codes
+    for code in codes:
+        assert "COUNT_MISMATCH" not in code
+        assert "MANIFEST_INVALID" not in code
+    assert report["findings"] == []
+    assert report["statistics"]["trusted"] is False
+
+
+def test_counts_type_rejections():
+    """Boolean True, a negative integer, a string, and a float
+    ``counts.structural_entries`` each fail via
+    structural_manifest_metadata_errors with exactly one bounded error, and an
+    extra unknown count key fails with the distinct unknown-count-key error
+    (GR-04 schema gap-filler)."""
+    type_error = "'counts.structural_entries' must be a non-negative integer"
+    unknown_error = "unknown 'counts' key(s) ['ownership_entries']"
+
+    def counts_errors(mutate):
+        manifest = _manifest_dict([])
+        mutate(manifest["counts"])
+        return structural_manifest_metadata_errors(manifest)
+
+    def set_boolean(counts):
+        counts["structural_entries"] = True
+
+    def set_negative(counts):
+        counts["structural_entries"] = -1
+
+    def set_string(counts):
+        counts["structural_entries"] = "62"
+
+    def set_float(counts):
+        counts["structural_entries"] = 62.0
+
+    def add_unknown_key(counts):
+        counts["ownership_entries"] = 99
+
+    failures = (
+        ("boolean True", set_boolean, type_error),
+        ("negative", set_negative, type_error),
+        ("string", set_string, type_error),
+        ("float 62.0", set_float, type_error),
+        ("extra unknown count key", add_unknown_key, unknown_error),
+    )
+    collected = []
+    for label, mutate, expected_error in failures:
+        errors = counts_errors(mutate)
+        assert errors == [expected_error], (label, errors)
+        collected.extend(errors)
+
+    # Bounded and deterministic: only the two controlled failure shapes.
+    assert set(collected) == {type_error, unknown_error}
+
+
+def test_manifest_fixture_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
+    """A FIXTURE-mode manifest (``enforce_canonical_contract=False``) whose
+    ``counts.structural_entries`` drifts from the CURRENT structural tuple
+    count fails closed with the controlled COUNT_MISMATCH code naming
+    ``structural_entries`` — never MANIFEST_INVALID."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+    current = _sexc_entries_for(tuples)
+
+    # Tuple sets agree exactly; ONLY the pinned count drifts (61 != 62).
+    manifest = _manifest_dict(tuples, structural=len(current) - 1)
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), enforce_canonical_contract=False,
+    )
+    count_errors = [e for e in errors if e.startswith("COUNT_MISMATCH")]
+    assert len(count_errors) == 2, errors
+    assert any("structural_entries" in e for e in count_errors), count_errors
+    assert any(str(len(current) - 1) in e for e in count_errors), count_errors
+    assert all(not e.startswith("MANIFEST_INVALID") for e in errors), errors
+    # The tuple sets are equivalent — the failure is attributable to the
+    # drifted count alone.
+    assert all(
+        not e.startswith(("MISSING_TUPLE", "EXTRA_TUPLE", "DUPLICATE_TUPLE"))
+        for e in errors
+    ), errors
+
+
+def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
+    """A manifest tuple identical to a structural entry EXCEPT its operation
+    can never satisfy exact tuple equivalence: the verifier reports BOTH the
+    swapped tuple as MISSING_TUPLE and the original tuple as EXTRA_TUPLE — an
+    operation change on the same (path, class, method_pattern) is never
+    silently accepted as clean."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+    current = _sexc_entries_for(tuples)
+
+    # Same canonical path / class / method_pattern, DIFFERENT operation
+    # (still inside the supported whitelist so metadata stays valid and the
+    # tuple-set stage is what rejects it).
+    changed = [dict(t) for t in tuples]
+    changed[0]["operation"] = "openDatabase"
+    manifest = _manifest_dict(changed)
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src)
+    )
+    assert errors, "changed-operation manifest must never verify clean"
+    missing = [e for e in errors if e.startswith("MISSING_TUPLE")]
+    extra = [e for e in errors if e.startswith("EXTRA_TUPLE")]
+    assert len(missing) == 1, errors
+    assert len(extra) == 1, errors
+    assert "m0" in missing[0], missing
+    assert "openDatabase" in missing[0], missing
+    assert "m0" in extra[0], extra
+    assert "execSQL" in extra[0], extra
+    # Counts and metadata stay valid — the failure is the operation change.
+    assert all(not e.startswith("MANIFEST_INVALID") for e in errors), errors
+    assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
+    assert all(not e.startswith("DUPLICATE_TUPLE") for e in errors), errors
 

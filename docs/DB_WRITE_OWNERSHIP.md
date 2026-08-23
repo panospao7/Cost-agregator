@@ -7,6 +7,8 @@ Part of: Global Write/Read/Restore Barrier — PR 5
 > **Transitional state (GR-02):** The checked-in candidate `config/guards/db_ownership_policy.signatures.candidate.yml` is **MACHINE-GENERATED** by `scripts/migrate_db_policy_signatures.py` — regenerate it only via that tool, never hand-edit. It is **NOT active policy** and remains explicitly non-authoritative. Unresolved migration rows visible in the migration report are **NOT authorization**; `barrierMode: direct` is metadata only until proven (GR-05/GR-11 own mediated-path classification/proof). GR-05 owns complete policy coverage; GR-07 owns activation.
 >
 > **Transitional state (GR-03):** Production Kotlin source roots are now declared in `config/guards/production_source_roots.yml` — the **single authoritative manifest** (currently the `:app` main source set at `app/src/main/java`). All DB guard subsystems resolve production roots through `scripts/db_guard/source_roots.py`. Undeclared production Kotlin roots fail closed (`DB_SOURCE_ROOT_UNDECLARED` / `DB_SOURCE_ROOT_LAYOUT_UNSUPPORTED`) and no partial inventory is trusted after a root-contract failure: a root-contract failure is an infrastructure/untrusted condition, distinct from architecture violations. Excluded trees: test/androidTest/debug/release/build/generated.
+>
+> **Transitional state (GR-04):** The structural expected-method manifest (`config/guards/db_structural_exceptions_expected_methods.yml`) governs structural exceptions ONLY: exact `(path, class, method_pattern, operation)` tuple classification/equality against the immutable expected/fixtures contracts, duplicate rejection, structural source evidence, and the `structural_entries: 62` audit pin. Ownership cardinality was removed from the manifest and is an observational migration metric, NOT structural authorization evidence; a manifest carrying `counts.ownership_entries` fails closed as an unknown-count-key configuration error. Because no ownership count is pinned, ownership-policy entry splitting (v2) can no longer break structural validation.
 
 Every table family has exactly one approved write owner — an architectural objective, enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations.
 Direct DAO mutation outside the canonical DB ownership policy is a violation caught by the static guard (PR 6/10).
@@ -20,7 +22,10 @@ All ownership authorization is decided by exactly those two files — an archite
 `config/guards/db_structural_exceptions_expected_methods.yml` is a **mandatory
 integrity/classification manifest**: it pins the exact `expected`/`fixtures`
 tuple classification of the structural exceptions file against immutable
-checked-in contracts and enforces the 99/62 entry-count contract (ownership 99 / structural 62; expected 58 + fixtures 4). **The manifest
+checked-in contracts and enforces the structural entry-count audit pin
+(`counts.structural_entries: 62`) — ownership cardinality is not pinned and is
+an observational migration metric only (see the GR-04 transitional note above).
+**The manifest
 grants NO authorization** — only an exact ownership-policy entry or a structural
 exception entry authorizes a write. Ratchet baselines likewise never authorize
 writes (see below).
@@ -134,8 +139,10 @@ All DB write authorization is decided by exactly two files (an architectural obj
 `config/guards/db_structural_exceptions_expected_methods.yml` is a mandatory
 integrity/classification manifest (not an authorization file): it pins the exact
 `expected`/`fixtures` tuple classification of the structural exceptions file
-against immutable checked-in contracts and enforces the 99/62 entry-count
-contract (ownership 99 / structural 62; expected=58 / fixtures=4). **The
+against immutable checked-in contracts and enforces the structural entry-count
+audit pin (`counts.structural_entries: 62`); ownership cardinality is not
+pinned and remains an observational migration metric only (see the GR-04
+transitional note above). **The
 manifest grants no authorization** — only an exact
 ownership-policy entry or a structural exception entry authorizes a write.
 Baselines never authorize writes either (see below).

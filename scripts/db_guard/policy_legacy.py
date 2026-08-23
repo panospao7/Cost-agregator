@@ -16,8 +16,7 @@ Legacy helpers:
     strict allowed-key schemas;
   * ``_legacy_is_wildcard_method`` / ``_legacy_is_valid_method_pattern`` /
     ``_legacy_noncanonical_signature_type`` — field-level predicates;
-  * ``LEGACY_MANIFEST_ALLOWED_TOP_KEYS`` / ``LEGACY_MANIFEST_COUNT_KEYS`` —
-    strict manifest schemas;
+  * ``LEGACY_MANIFEST_ALLOWED_TOP_KEYS`` — strict manifest schema;
   * ``legacy_yaml_safe_load`` / ``legacy_load_ownership_policy`` /
     ``legacy_load_structural_exceptions`` — non-exiting loaders mirroring
     ``_yaml_safe_load_or_exit`` / ``load_db_ownership_policy`` /
@@ -451,7 +450,6 @@ def _legacy_is_valid_method_pattern(method_pattern):
 #
 # Verbatim copies (renamed only):
 #   * MANIFEST_ALLOWED_TOP_KEYS   -> LEGACY_MANIFEST_ALLOWED_TOP_KEYS
-#   * MANIFEST_COUNT_KEYS         -> LEGACY_MANIFEST_COUNT_KEYS
 #   * _MIGRATION_METHOD_PATTERN   -> _LEGACY_MIGRATION_METHOD_PATTERN
 #   * _STRUCT_PATH_*              -> _LEGACY_STRUCT_PATH_*
 
@@ -460,9 +458,6 @@ def _legacy_is_valid_method_pattern(method_pattern):
 LEGACY_MANIFEST_ALLOWED_TOP_KEYS = frozenset(
     {"baseline", "expected", "fixtures", "counts"}
 )
-
-# Only these keys are accepted inside the ``counts`` section.
-LEGACY_MANIFEST_COUNT_KEYS = frozenset({"ownership_entries", "structural_entries"})
 
 _LEGACY_MIGRATION_METHOD_PATTERN = "MIGRATION_\\d+_\\d+"
 

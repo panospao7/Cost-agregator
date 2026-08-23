@@ -60,14 +60,15 @@ baseline:
     Structural source classes are unchanged between the pre-split baseline
     and the current working tree.
 
-# Canonical entry-count contract for the DB policy gate.
+# Canonical structural entry-count contract for the DB policy gate.
 #
-# `verify_db_access_boundaries.py` enforces these EXACT counts at load time.
-# Changing the number of entries in `config/guards/db_ownership_policy.yml` or
-# `config/guards/db_structural_exceptions.yml` WITHOUT updating this contract is
-# a configuration error (exit 2) — a silent count change is never accepted.
+# `verify_db_access_boundaries.py` enforces this EXACT count at load time.
+# Changing the number of entries in `config/guards/db_structural_exceptions.yml`
+# WITHOUT updating this contract is a configuration error (exit 2) — a silent
+# count change is never accepted.  This manifest governs structural exceptions
+# only; ownership cardinality is an observational migration metric and is not
+# pinned here.
 counts:
-  ownership_entries: 99
   structural_entries: 62
 
 expected:

@@ -17,7 +17,9 @@ import java.io.File
  *   backup/restore, diagnostics, privacy export, restore verification).
  * - **Structural manifest:** The checked-in
  *   `config/guards/db_structural_exceptions_expected_methods.yml` is loaded and
- *   validated directly — counts block (ownership 99 / structural 62), expected
+ *   validated directly — counts block (`structural_entries: 62` ONLY; ownership
+ *   cardinality is not manifest metadata and an `ownership_entries` counts key
+ *   fails closed), expected
  *   58 + fixtures 4, exact union equality with the structural YAML tuple set,
  *   expected/fixtures disjointness, a single global tuple-identity set across
  *   BOTH sections (a cross-section duplicate fails closed), and no
@@ -32,7 +34,8 @@ import java.io.File
  *   missing/empty daos fail with entry/path context; manifest tuples reject
  *   blank fields, non-canonical paths, wildcard/unbounded method patterns, and
  *   operations outside the exact whitelist; manifest counts must be known,
- *   non-duplicated, integer, non-negative, and all present.
+ *   non-duplicated, integer, non-negative, and all present — and the legacy
+ *   `ownership_entries` counts key is rejected as unknown-count-key metadata.
  * - **Source evidence:** class-scoped, ambiguity-safe method extraction;
  *   barrier-before-mutation ordering is verified per class/method.
  */
@@ -106,7 +109,11 @@ class DbGuardPolicyFixtureTest {
     // Anything else — inside `baseline:`, `counts:`, or a tuple entry — fails
     // closed instead of being silently ignored.
     private val manifestBaselineKeys = listOf("commit:", "description:", "source_note:")
-    private val manifestCountKeys = listOf("ownership_entries:", "structural_entries:")
+
+    // GR-04 decoupling: the manifest governs structural exceptions ONLY.  The
+    // legacy `ownership_entries` counts key is NOT accepted — it fails closed
+    // as an unknown counts key instead of being silently ignored.
+    private val manifestCountKeys = listOf("structural_entries:")
     private val manifestTupleKeys = listOf(
         "class:", "method_pattern:", "operation:", "reason:", "owner:", "linked_issue:"
     )
@@ -292,7 +299,6 @@ class DbGuardPolicyFixtureTest {
     )
 
     data class StructuralManifest(
-        val ownershipEntries: Int,
         val structuralEntries: Int,
         val expected: List<ManifestTuple>,
         val fixtures: List<ManifestTuple>
@@ -307,8 +313,10 @@ class DbGuardPolicyFixtureTest {
      * `method_pattern` + exact operation.
      *
      * Fail-closed parsing:
-     * - every line in `counts:` must be one of `ownership_entries:` /
-     *   `structural_entries:` and each counts key may appear at most once;
+     * - every line in `counts:` must be the single accepted key
+     *   `structural_entries:` (the legacy `ownership_entries:` key is an
+     *   unknown counts key and fails closed) and each counts key may appear at
+     *   most once;
      * - every key inside a tuple entry must be a known manifest key and may
      *   appear at most once per entry (duplicates fail closed instead of
      *   overwriting the previous value);
@@ -483,23 +491,20 @@ class DbGuardPolicyFixtureTest {
         }
         flushEntry()
 
-        val ownershipRaw = counts["ownership_entries"]
-            ?: error("Manifest missing 'ownership_entries' count")
+        // GR-04 decoupling: the manifest pins the structural count ONLY.
+        // Ownership cardinality is an observational migration metric tracked
+        // in the ownership policy itself — never manifest metadata.  A legacy
+        // `ownership_entries` line never reaches this point: it is rejected
+        // above as an unknown counts key.
         val structuralRaw = counts["structural_entries"]
             ?: error("Manifest missing 'structural_entries' count")
-        val ownershipEntries = ownershipRaw.toIntOrNull()
-            ?: error("Manifest 'ownership_entries' count must be an integer, got '$ownershipRaw'")
         val structuralEntries = structuralRaw.toIntOrNull()
             ?: error("Manifest 'structural_entries' count must be an integer, got '$structuralRaw'")
-        require(ownershipEntries >= 0) {
-            "Manifest 'ownership_entries' count must not be negative, got $ownershipEntries"
-        }
         require(structuralEntries >= 0) {
             "Manifest 'structural_entries' count must not be negative, got $structuralEntries"
         }
 
         return StructuralManifest(
-            ownershipEntries = ownershipEntries,
             structuralEntries = structuralEntries,
             expected = expected,
             fixtures = fixtures
@@ -846,17 +851,46 @@ class DbGuardPolicyFixtureTest {
     }
 
     @Test
-    fun `manifest — counts block pins ownership 99 and structural 62`() {
+    fun `manifest — counts block pins structural 62 only`() {
+        // GR-04 decoupling: the manifest governs structural exceptions ONLY.
+        // Its counts block carries structural_entries and nothing else; the
+        // ownership policy's own 99-entry size is an independent property of
+        // the policy file, never manifest metadata.
         val manifest = parseStructuralManifest(structuralManifestFile)
-        assertEquals("Manifest ownership_entries count", 99, manifest.ownershipEntries)
         assertEquals("Manifest structural_entries count", 62, manifest.structuralEntries)
-        assertEquals(
-            "Manifest ownership count must match the checked-in ownership YAML",
-            parseEntries(ownershipPolicyFile).size, manifest.ownershipEntries
-        )
         assertEquals(
             "Manifest structural count must match the checked-in structural YAML",
             parseEntries(structuralExceptionsFile).size, manifest.structuralEntries
+        )
+    }
+
+    @Test
+    fun `manifest parser fails closed on legacy ownership_entries count key`() {
+        // Old-shape metadata — a counts block that still pins ownership
+        // cardinality — is unknown-count-key configuration and must fail
+        // closed even when every structural value is correct.  If ownership
+        // is ever re-coupled into the manifest contract, this assertion fails.
+        val manifest = writeTempManifest(
+            """
+            counts:
+              ownership_entries: 99
+              structural_entries: 62
+            """.trimIndent()
+        )
+        var thrown: Exception? = null
+        try {
+            parseStructuralManifest(manifest)
+        } catch (e: Exception) {
+            thrown = e
+        }
+        assertNotNull(
+            "Manifest parser must reject the legacy ownership_entries count key",
+            thrown
+        )
+        assertTrue(
+            "Failure must identify 'ownership_entries' as an unknown counts key",
+            thrown!!.message!!.contains("Unknown key") &&
+                thrown.message!!.contains("ownership_entries")
         )
     }
 
@@ -1706,7 +1740,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
               structural_entries: 62
             expected:
               - path: app/src/main/java/com/example/SomeClass.kt
@@ -1742,7 +1775,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
               bogus_count_key: 5
               structural_entries: 62
             """.trimIndent()
@@ -1771,7 +1803,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
               structural_entries: 62
             expected:
               - class: SomeClass
@@ -1801,7 +1832,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
               structural_entries: 62
             expected:
               - path: app/src/main/java/com/example/SomeClass.kt
@@ -1837,7 +1867,6 @@ class DbGuardPolicyFixtureTest {
             val manifest = writeTempManifest(
                 """
                 counts:
-                  ownership_entries: 99
                   structural_entries: 62
                 expected:
                   - path: app/src/main/java/com/example/SomeClass.kt
@@ -1872,7 +1901,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
               structural_entries: 62
             expected:
               - path: app/src/main/java/com/example/SomeClass.kt
@@ -1908,8 +1936,7 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
-              ownership_entries: 99
+              structural_entries: 62
               structural_entries: 62
             """.trimIndent()
         )
@@ -1926,7 +1953,7 @@ class DbGuardPolicyFixtureTest {
         assertTrue(
             "Failure must identify the duplicate counts key",
             thrown!!.message!!.contains("Duplicate counts key") &&
-                thrown.message!!.contains("ownership_entries")
+                thrown.message!!.contains("structural_entries")
         )
     }
 
@@ -1935,7 +1962,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
               structural_entries: 62
             expected:
               - path: app/src/main/java/com/example/SomeClass.kt
@@ -1979,7 +2005,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
               structural_entries: 62
             expected:
               - path: app/src/main/java/com/example/SomeClass.kt
@@ -2031,7 +2056,6 @@ class DbGuardPolicyFixtureTest {
         for ((blankKey, expectedFragment) in blankCases) {
             val lines = mutableListOf(
                 "counts:",
-                "  ownership_entries: 99",
                 "  structural_entries: 62",
                 "expected:",
                 if (blankKey == "path") "  - path: \"\"" else "  - path: app/src/main/java/com/example/SomeClass.kt",
@@ -2075,7 +2099,6 @@ class DbGuardPolicyFixtureTest {
             val manifest = writeTempManifest(
                 """
                 counts:
-                  ownership_entries: 99
                   structural_entries: 62
                 expected:
                   - path: $path
@@ -2111,7 +2134,6 @@ class DbGuardPolicyFixtureTest {
             val manifest = writeTempManifest(
                 """
                 counts:
-                  ownership_entries: 99
                   structural_entries: 62
                 expected:
                   - path: app/src/main/java/com/example/SomeClass.kt
@@ -2149,7 +2171,6 @@ class DbGuardPolicyFixtureTest {
             val manifest = writeTempManifest(
                 """
                 counts:
-                  ownership_entries: 99
                   structural_entries: 62
                 expected:
                   - path: app/src/main/java/com/example/SomeClass.kt
@@ -2184,8 +2205,7 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: -5
-              structural_entries: 62
+              structural_entries: -5
             """.trimIndent()
         )
         var thrown: Exception? = null
@@ -2197,7 +2217,7 @@ class DbGuardPolicyFixtureTest {
         assertNotNull("Manifest parser must reject a negative count", thrown)
         assertTrue(
             "Failure must identify the negative count",
-            thrown!!.message!!.contains("ownership_entries") &&
+            thrown!!.message!!.contains("structural_entries") &&
                 thrown.message!!.contains("negative")
         )
     }
@@ -2207,7 +2227,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
               structural_entries: sixty-two
             """.trimIndent()
         )
@@ -2230,7 +2249,6 @@ class DbGuardPolicyFixtureTest {
         val manifest = writeTempManifest(
             """
             counts:
-              ownership_entries: 99
             """.trimIndent()
         )
         var thrown: Exception? = null
