@@ -14,6 +14,7 @@ from scripts.db_guard import room_inventory
 from scripts.db_guard.dao_accessors import MAX_ANNOTATION_TO_DECLARATION_SPAN, find_dao_declarations, find_dao_method_annotations
 from scripts.db_guard.room_inventory import (
     InventoryWriteError,
+    _absolute_root_anchor,
     _resolve_raw_query_parameters,
     build_room_inventory,
     write_inventory_atomic,
@@ -2434,7 +2435,9 @@ def test_absolute_conventional_java_root_anchors(tmp_path):
     like-for-like so ``.../<module>/src/main/java`` anchors at the module's
     parent directory.  A list-vs-tuple tail comparison made every absolute
     conventional root fail closed with ``DB_ROOM_SOURCE_UNREADABLE`` /
-    ``DB_ROOM_SOURCE_EMPTY`` instead of being walked."""
+    ``DB_ROOM_SOURCE_EMPTY`` instead of being walked; a later drive-relative
+    anchor rebuild ("C:Users\\..." on Windows) broke the same anchoring, so
+    the helper-level ``os.path.isabs`` invariant is asserted directly."""
     relative = "app/src/main/java/com/example/AbsoluteDao.kt"
     _write(
         tmp_path,
@@ -2442,6 +2445,22 @@ def test_absolute_conventional_java_root_anchors(tmp_path):
         "package com.example\n@Dao interface AbsoluteDao { @Insert fun put(v: Item) }\n",
     )
     java_root = tmp_path / "app" / "src" / "main" / "java"
+    # Helper-level anchoring invariant (platform-neutral): the anchor derived
+    # for the absolute fixture root must itself be ABSOLUTE and must resolve
+    # the written file below it.  A drive-relative rebuild ("C:Users\\..."
+    # instead of "C:\\Users\\...") violates os.path.isabs on Windows and made
+    # every downstream relative_to(anchor) fail closed.
+    anchor = _absolute_root_anchor(str(java_root))
+    assert anchor is not None
+    assert os.path.isabs(anchor)
+    # No-information-loss invariant: the fixture root is the enclosing
+    # project of the conventional dir passed directly, so the rebuilt
+    # anchor must reproduce it exactly after normpath -- true on every
+    # platform shape (POSIX "/", Windows drive, UNC).
+    assert anchor == os.path.normpath(str(tmp_path))
+    resolved = os.path.relpath(os.fspath(tmp_path / relative), anchor)
+    assert not os.path.isabs(resolved)
+    assert resolved.replace(os.sep, "/") == relative
     inventory = build_room_inventory(java_root)
     # Anchored discovery: the DAO and its @Insert mutator are found and the
     # emitted canonical path stays repository-relative POSIX below the
@@ -2456,3 +2475,45 @@ def test_absolute_conventional_java_root_anchors(tmp_path):
         for diagnostic in inventory.diagnostics
     )
     assert inventory.diagnostics == ()
+
+
+# Platform-neutral shape coverage for ``_absolute_root_anchor``: synthetic
+# normpath-shaped strings are fed directly (no filesystem).  Branches whose
+# first-component shape only arises under one native separator are skipped
+# elsewhere instead of being faked via monkeypatching.
+_POSIX_ANCHOR_ONLY = pytest.mark.skipif(
+    os.sep != "/", reason="POSIX-absolute branch unreachable under a non-'/' native separator"
+)
+_WINDOWS_ANCHOR_ONLY = pytest.mark.skipif(
+    os.sep != "\\", reason="drive/UNC branches unreachable under a non-backslash native separator"
+)
+
+
+@_POSIX_ANCHOR_ONLY
+def test_anchor_posix_absolute_shape():
+    """A native absolute POSIX source root anchors at its enclosing project."""
+    root = os.sep.join(("", "tmp", "x", "app", "src", "main", "java"))
+    assert _absolute_root_anchor(root) == os.sep + os.path.join("tmp", "x")
+
+
+@_WINDOWS_ANCHOR_ONLY
+def test_anchor_drive_shape_windows_only():
+    """A rooted drive path anchors above the module directory; a drive root
+    whose tail IS the whole path has no component left above it and fails
+    closed."""
+    assert _absolute_root_anchor("C:\\repo\\app\\src\\main\\java") == "C:\\repo"
+    assert _absolute_root_anchor("C:\\src\\main\\java") is None
+
+
+@_WINDOWS_ANCHOR_ONLY
+def test_anchor_unc_shape_windows_only():
+    """A UNC source root keeps both leading separators through the rebuild."""
+    assert _absolute_root_anchor("\\\\server\\share\\proj\\mod\\src\\main\\java") == (
+        "\\\\server\\share\\proj\\mod"
+    )
+
+
+def test_anchor_degenerate_inputs_fail_closed():
+    """Relative and exactly-root-tail inputs return None without raising."""
+    assert _absolute_root_anchor(os.sep.join(("src", "main", "java"))) is None
+    assert _absolute_root_anchor(os.sep.join(("x", "src", "main", "java"))) is None

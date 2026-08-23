@@ -185,3 +185,95 @@ CLIs match every expected state while the unit suites are red.
    expectation given the intentional v2 candidate rewrite; clarify audit-grep rules.
 4. Commit or remove the untracked checklist doc before re-running the Section 5 gate.
 5. Re-run Section 4 remaining tasks (no emulator needed) after Python fixes land.
+
+---
+
+## Re-validation round 2 (2026-08-24) — after commit `882b1bdc` "repair absolute-root anchoring and validation-finding fallout"
+
+Checkout: clean (checklist doc now committed). HEAD `882b1bdcbc63873146a1c668326706f4ac345dd2`.
+
+### Full sweep re-run
+
+`python -m pytest scripts -q` -> exit 1; **357 failed / 1860 passed / 22 skipped** in 283 s
+(previous round: 372/1841/22). NOT near-green; checklist sections 2–6 were therefore not re-run.
+
+What the repair fixed (15 tests):
+
+- All 13 previously failing `scripts/ci/test_capture_db_guard_evidence.py` cases (fixture
+  membership matching + dirty-path runners).
+- `scripts/test_db_guard_policy_v2_current_repo.py::test_candidate_signatures_rejected_by_v2_loader`
+  (premise updated for the v2 candidate).
+- Scanner/evidence edge cases (`test_missing_empty_and_unreadable_production_roots_fail_closed`,
+  `test_invalid_context_at_scan_level_emits_controlled_diagnostic_and_clears_ranges`,
+  `test_undeclared_kotlin_root_fails_closed_without_partial_results`,
+  `test_path_outside_approved_roots_reports_path_outside_roots`).
+
+### NEW root cause #2 (Windows-specific): drive-relative anchor
+
+The tuple comparison is fixed (`tuple(parts[-3:]) == ...`) in BOTH copies, but the anchor is
+rebuilt with a bare join whose first part is a bare drive letter:
+
+```python
+anchor_parts = parts[:-4]              # ['C:', 'Users', ..., '<project>']
+return os.path.join(*anchor_parts)     # -> 'C:Users\\...'  (drive-RELATIVE!)
+```
+
+Live verification: `_absolute_root_anchor("C:\\...\\tmpXXX\\app\\src\\main\\java")` returns
+`'C:Users\\panos\\AppData\\Local\\Temp\\tmpXXX'`. Consequences:
+
+- `_declared_root_files`: walked files raise `ValueError` in `relative_to(anchor)` ->
+  `unreadable=True`, files list empty -> inventory fails closed again with
+  `('DB_ROOM_SOURCE_EMPTY', 'DB_ROOM_SOURCE_UNREADABLE')`.
+- v2 evidence failures CHANGED SHAPE: `_declared_relative_root_set` no longer yields
+  `source-roots-unresolved`; instead every policy path is reported as
+  `POLICY_ERROR_V2_EVIDENCE_PATH_OUTSIDE_ROOTS` (observed:
+  `test_garbage_kotlin_file_returns_controlled_errors_without_raising`,
+  `test_two_dao_fqcns_behind_one_accessor_report_dao_ambiguous`, etc.).
+
+Affected locations (kept "in exact parity", both must change together):
+`scripts/db_guard/room_inventory.py::_absolute_root_anchor` and
+`scripts/db_guard/declaration_scanner.py::_absolute_root_anchor`.
+Suggested shape: preserve the separator after a drive-letter component (e.g.
+`anchor_parts[0] + os.sep` when it matches `^[A-Za-z]:$`) or build via
+`pathlib.PureWindowsPath(*anchor_parts)` semantics.
+
+Evidence that this is platform-specific: the repair commit ADDED regression tests
+`test_absolute_conventional_java_root_anchors` (room_inventory) /
+`test_absolute_conventional_kotlin_root_anchors` (declaration_scanner); both FAIL on this
+Windows workstation precisely at the anchor step, while Linux CI (no drive letters,
+`parts[0] == ''` or `/`) would pass. This explains any CI-green/local-red divergence.
+
+### Failure breakdown after round 2
+
+| File | Failed |
+| --- | --- |
+| scripts/test_db_guard_room_inventory.py | 107 |
+| scripts/test_verify_db_access_v2.py | 66 |
+| scripts/test_db_guard_declaration_scanner.py | 51 |
+| scripts/test_migrate_db_policy_signatures.py | 32 |
+| scripts/test_verify_db_access_boundaries.py | 23 |
+| scripts/test_db_guard_policy_v2_evidence.py | 22 |
+| scripts/test_db_guard_source_roots.py | 16 |
+| scripts/ci/test_gradle_db_guard_contract.py | 13 |
+| scripts/test_kotlin_callable_parser.py | 9 |
+| scripts/test_db_guard_scanner_d4.py | 5 |
+| scripts/test_db_guard_policy_v2.py | 4 |
+| scripts/ci/test_guard_ratchet_v2.py | 4 |
+| scripts/test_db_guard_source_roots_integration.py | 2 |
+| scripts/ci/test_capture_db_guard_evidence.py | 1 |
+| scripts/ci/test_verify_production_source_roots.py | 1 |
+| scripts/ci/test_guard_findings.py | 1 |
+
+### Spot-check beyond the conditional scope
+
+`verify_db_access_boundaries --inventory-only` re-run: exit 2, diagnostics exactly
+`350 DB_ROOM_QUERY_UNCLASSIFIABLE + 1 DB_DAO_INHERITANCE_UNRESOLVED`, zero
+`DB_SOURCE_ROOT_*` codes — production manifest-relative path unaffected by root cause #2.
+
+### Round-2 follow-ups
+
+1. Fix the drive-relative join in BOTH `_absolute_root_anchor` copies (parity), plus a
+   Windows-drive regression case (`C:` first component).
+2. Re-run full sweep; expect the ~350 cascade to collapse once anchoring succeeds on Windows.
+3. Then execute checklist sections 2–6 per Revision 1 (including Section 5 two-run gate —
+   checkout is now clean/committed).

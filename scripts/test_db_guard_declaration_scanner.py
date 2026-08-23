@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from scripts.db_guard.declaration_scanner import (
     MAX_CONTEXT_ITEMS,
     MAX_CONTEXT_NUMBER,
     MAX_LOCATION_NUMBER,
+    _absolute_root_anchor,
     ScanWriteError,
     scan_production_declarations,
     write_scan_delta_atomic,
@@ -1824,10 +1826,29 @@ def test_absolute_conventional_kotlin_root_anchors(tmp_path):
     through a like-for-like native-tail comparison.  A list-vs-tuple tail
     mismatch made ``_absolute_root_anchor`` return ``None``, so the root was
     silently dropped from ``declared_root_pairs`` and the scan failed closed
-    with ``DB_DECLARATION_INVALID_SOURCE`` instead of scanning."""
+    with ``DB_DECLARATION_INVALID_SOURCE`` instead of scanning; a later
+    drive-relative anchor rebuild ("C:Users\\..." on Windows) broke the same
+    anchoring, so the helper-level ``os.path.isabs`` invariant is asserted
+    directly."""
     relative = "src/main/kotlin/example/Plain.kt"
     _write(tmp_path, relative, "package example\n\nclass Plain {\n    fun hold() {}\n}\n")
     kotlin_root = tmp_path / "src" / "main" / "kotlin"
+    # Helper-level anchoring invariant (platform-neutral): the anchor derived
+    # for the absolute fixture root must itself be ABSOLUTE and must resolve
+    # the written file below it.  A drive-relative rebuild ("C:Users\\..."
+    # instead of "C:\\Users\\...") violates os.path.isabs on Windows and made
+    # every downstream relative_to(anchor) fail closed.
+    anchor = _absolute_root_anchor(str(kotlin_root))
+    assert anchor is not None
+    assert os.path.isabs(anchor)
+    # No-information-loss invariant: the fixture root is the enclosing
+    # project of the conventional dir passed directly, so the rebuilt
+    # anchor must reproduce it exactly after normpath -- true on every
+    # platform shape (POSIX "/", Windows drive, UNC).
+    assert anchor == os.path.normpath(str(tmp_path))
+    resolved = os.path.relpath(os.fspath(tmp_path / relative), anchor)
+    assert not os.path.isabs(resolved)
+    assert resolved.replace(os.sep, "/") == relative
     scan = scan_production_declarations(kotlin_root)
     # The declared root was anchored (not dropped) and the file was scanned,
     # emitted repository-relative POSIX below the enclosing module directory.

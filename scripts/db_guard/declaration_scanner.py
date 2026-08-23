@@ -548,6 +548,16 @@ def _absolute_root_anchor(root_abs: str) -> str | None:
     consumers anchor the same declared root at the same enclosing project:
     ``.../<module>/src/main/java`` anchors at the module's parent directory,
     and ``.../src/main/kotlin`` anchors at the enclosing module directory.
+    The first-component rebuild covers every platform shape
+    ``normpath().split(os.sep)`` can produce, because splitting drops
+    leading separators: a relative first component falls through to a
+    plain join; a single leading empty part is a POSIX absolute path
+    (``/tmp/x``) rebuilt with its separator restored; a double leading
+    empty pair is a UNC path (``\\\\server\\share``) rebuilt with both
+    separators restored; a bare drive-letter component (``C:``) is
+    rebuilt as a rooted absolute path (``C:\\...``).  Plain
+    ``os.path.join`` would drop the empty parts or keep the drive
+    relative, and every downstream ``relative_to(anchor)`` would fail.
     Returns ``None`` (fail closed) when the tail does not match or no anchor
     remains above the tail.
     """
@@ -560,6 +570,15 @@ def _absolute_root_anchor(root_abs: str) -> str | None:
         return None
     if not anchor_parts:
         return None
+    first = anchor_parts[0]
+    if first == "":
+        if len(anchor_parts) > 1 and anchor_parts[1] == "":
+            # UNC: preserve the double leading separator
+            return os.sep * 2 + os.path.join(*anchor_parts[2:]) if len(anchor_parts) > 2 else None
+        # POSIX absolute: preserve the single leading separator
+        return os.sep + os.path.join(*anchor_parts[1:]) if len(anchor_parts) > 1 else None
+    if len(first) == 2 and first[1] == ":" and first[0].isalpha():
+        return first + os.sep + os.path.join(*anchor_parts[1:]) if len(anchor_parts) > 1 else first + os.sep
     return os.path.join(*anchor_parts)
 
 
