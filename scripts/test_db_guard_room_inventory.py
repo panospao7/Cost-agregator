@@ -106,8 +106,13 @@ def test_dict_policy_cannot_become_synthetic_path(tmp_path):
     )
     assert written == [DEFAULT_RELATIVE]
     # Fail closed: the malformed dict is reported through the controlled
-    # policy diagnostic channel, never materialized as a path.
-    assert not inventory.mutators
+    # policy diagnostic channel, never materialized as a path.  Per the
+    # trust contract (docs/ci/DB_ROOM_INVENTORY.md §4) the diagnostic-bearing
+    # run is untrusted and every consumer must reject it; mutators present
+    # in such a report are diagnostic context only (§4.2) — here exactly the
+    # unrelated direct @Insert declaration — and nothing is ever classified
+    # THROUGH the broken policy (no RawQuery-derived mutator can exist).
+    assert [item.annotation for item in inventory.mutators] == ["Insert"]
     assert any(diag_code(d) == "DB_ROOM_RAW_QUERY_POLICY_INVALID" for d in inventory.diagnostics)
 
 
@@ -1193,15 +1198,22 @@ def test_stale_policy_only_raw_query_entry_fails_closed(tmp_path):
         "classification": "write", "reason": "Controlled repair query",
         "owner": "@panospao7", "linked_issue": "MIT-003",
     }]}
-    # The source contains a DAO but no @RawQuery at all: the policy entry has
-    # no discovered counterpart, so the exact equality contract fails closed
-    # with STALE and never classifies anything as a mutator.
     inventory = _inventory(
         tmp_path,
         "package example\n@Dao interface D { @Insert fun put(v: Item) }\n",
         policy=policy,
     )
-    assert not inventory.mutators
+    # The source contains a DAO but no @RawQuery at all: the policy entry has
+    # no discovered counterpart, so the exact equality contract fails closed
+    # with STALE and never classifies anything AS a mutator through the
+    # raw-query channel.  Per the trust contract (docs/ci/DB_ROOM_INVENTORY.md
+    # §4/§4.2) the diagnostic-bearing run is untrusted and every consumer must
+    # reject it; the only mutator present is the unrelated direct @Insert
+    # declaration, preserved as diagnostic context — never a
+    # ROOM_MUTATING_QUERY derived from the stale write classification.
+    assert [
+        (item.mutation_kind, item.annotation) for item in inventory.mutators
+    ] == [("ROOM_INSERT", "Insert")]
     assert any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_STALE:") for d in inventory.diagnostics)
     assert not any(d.startswith("DB_ROOM_RAW_QUERY_POLICY_REQUIRED:") for d in inventory.diagnostics)
 

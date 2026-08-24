@@ -546,8 +546,9 @@ def _absolute_root_anchor(root_abs: str) -> str | None:
 
     Kept in exact parity with ``room_inventory._absolute_root_anchor`` so both
     consumers anchor the same declared root at the same enclosing project:
-    ``.../<module>/src/main/java`` anchors at the module's parent directory,
-    and ``.../src/main/kotlin`` anchors at the enclosing module directory.
+    ``.../<module>/src/main/java`` and ``.../<module>/src/main/kotlin`` both
+    anchor at the module's parent directory — one
+    project-root-above-module convention for every supported tail.
     The first-component rebuild covers every platform shape
     ``normpath().split(os.sep)`` can produce, because splitting drops
     leading separators: a relative first component falls through to a
@@ -565,7 +566,7 @@ def _absolute_root_anchor(root_abs: str) -> str | None:
     if tuple(parts[-3:]) == ("src", "main", "java"):
         anchor_parts = parts[:-4]
     elif tuple(parts[-3:]) == ("src", "main", "kotlin"):
-        anchor_parts = parts[:-3]
+        anchor_parts = parts[:-4]
     else:
         return None
     if not anchor_parts:

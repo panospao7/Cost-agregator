@@ -333,3 +333,61 @@ Two Windows-only regression tests were added by the commit; one passes, one fail
    (`test_anchor_unc_shape_windows_only`); (c) ratchet v2 INVALID_JSON path;
    (d) parser nesting-limit `int` vs `str` comparison.
 3. Production gates (Section 3 CLIs) remain exact-match healthy throughout rounds 1–3.
+
+---
+
+## Re-validation round 4 (2026-08-24) — after commit `1c09f525` "align guard suite with current contracts after validation round 3"
+
+HEAD `1c09f5252e4d2e6a4a2cfe56a1a355e4fdeb7061`; checkout clean.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> exit 1; **101 failed / 2120 passed / 23 skipped** in 388 s
+(round 3: 151; round 2: 357; round 1: 372). NOT green -> checklist sections 2–6 not run this
+round; Section 5 gate remains ready once suites pass.
+
+### What round-3 fixes resolved
+
+- v2-evidence `AttributeError` (policy_v2_evidence/migrate cascade) — GONE.
+- `GuardDiagnostic.location` scanner crashes — GONE.
+- Ratchet protocol asymmetry partially addressed (4 -> 3, with new shape below).
+- Gradle contract `"python3"` drift, source_roots context keys, masking literal,
+  UNC anchor expectation, loader dedent mutations, capture/production-roots singles — GONE.
+
+### Residue breakdown (101) with mechanisms
+
+| Family | Count | Observed mechanism |
+| --- | --- | --- |
+| scripts/test_verify_db_access_v2.py | 66 | Evidence pre-gate now PASSES (scope diagnostics flow), but every `_fixture()` scan emits TWO extras vs exact-match reports: `DB_ROOM_RAW_QUERY_POLICY_INVALID` (fixture writes `config/guards/raw.yml` = `entries: []`; current raw-query policy loader rejects that shape) and `DB_DAO_INHERITANCE_UNRESOLVED` (path None) even for fixtures with no DAO inheritance. Actual triple e.g. `[DB_DAO_INHERITANCE_UNRESOLVED, DB_DAO_SCOPE_UNRESOLVED, DB_ROOM_RAW_QUERY_POLICY_INVALID]` vs expected single diagnostic. |
+| scripts/test_db_guard_room_inventory.py | 13 | Raw-query policy contract drift: `DB_ROOM_RAW_QUERY_POLICY_INVALID`/`_STALE:<Dao>` wipes mutators where tests expect partial results (`test_dict_policy_cannot_become_synthetic_path`, `test_stale_policy_only_raw_query_entry_fails_closed`); @RawQuery const-template resolution still yields UNCLASSIFIABLE (`test_query_template_resolves_same_file_literal_const`, multiline continuation); transitive @RawQuery override chain produces 1 mutator vs expected 2 (`..._shadows_deep_chain`, STALE on Middle); bodyless child DAO inheritance mutator missing (0 vs 1); kotlin conventional-root anchor pins project root while implementation anchors module dir (`tmp\app` vs `tmp`). |
+| scripts/test_kotlin_callable_parser.py | 7 | Masking whitespace literal off-by-one persists; nesting-limit boundary `TypeError: '>' not supported between int and str` (`_body_end-{-}` parametrization); function-type normalization/sanitization drift. |
+| scripts/ci/test_guard_ratchet_v2.py | 3 | Legacy-style scenarios still surface `RATCHET_V2_REPORT_INVALID ... INVALID_JSON` instead of expected `RATCHET_BASELINE_MISSING`; PLUS genuine test-file bug: `_write_baseline_v2() got multiple values for argument 'entries'` (helper signature mismatch). |
+| scripts/test_db_guard_scanner_d4.py | 5 | Rule-catalog registration drift: `rule DB_NOT_A_RULE must be registered` fails — catalog no longer registers the unknown-rule sentinel the tests pin. |
+| scripts/test_migrate_db_policy_signatures.py + test_db_guard_policy_v2.py | 5 | Overload fixtures now load with `POLICY_ERROR_MISSING_FIELD daoAccessor index 0..6` (7 errors) where tests expect clean load / rejection boundaries — v2 loader strictness vs legacy-shaped fixture documents. |
+| scripts/test_db_guard_source_roots_integration.py + declaration_scanner | 2 | Kotlin conventional-root anchor expectation (`anchor == tmp_path`) vs implementation (`tmp_path\\app`). |
+
+### Section-3 production CLIs re-verified (round 4)
+
+| CLI | Result |
+| --- | --- |
+| source-roots meta-guard | exit 0, silent |
+| inventory-only | exit 2; exactly 350 DB_ROOM_QUERY_UNCLASSIFIABLE + 1 DB_DAO_INHERITANCE_UNRESOLVED; zero DB_SOURCE_ROOT_* |
+| migrate --check | exit 1; input=99 resolved=9 unresolved=90 duplicateMutationKeys=0 |
+| full gate (four config flags) | exit 2; stderr exactly 1 line; diagnostics exactly `[DB_POLICY_SOURCE_EVIDENCE_INVALID]` |
+
+### Round-4 triage hints for the loop
+
+1. Biggest lever (66 tests): decide the fixture raw-query-policy contract — either update
+   `_fixture()` to write a currently-valid raw policy document, or relax/redirect
+   `DB_ROOM_RAW_QUERY_POLICY_INVALID` emission for empty policies; and settle whether
+   `DB_DAO_INHERITANCE_UNRESOLVED` should be suppressed when the scanned tree declares no
+   inheritance at all.
+2. Real-behavior candidates: bodyless-child DAO mutator inheritance (0 vs 1); transitive
+   @RawQuery override chain (STALE on Middle); @RawQuery const-template UNCLASSIFIABLE;
+   ratchet INVALID_JSON masking baseline-missing cases; `_write_baseline_v2()` helper bug
+   is a TEST defect, not product.
+3. Kotlin anchor convention conflict (project root vs module dir) needs a spec decision and
+   then parity across room_inventory/declaration_scanner/source_roots tests.
+
+Cumulative sweep trend: 372 -> 357 -> 151 -> 101 failures; production gates exact-match
+stable throughout all four rounds.

@@ -124,8 +124,10 @@ def _absolute_root_anchor(root_abs: str) -> str | None:
     directly as ``source_root`` by synthetic fixtures or embedders) are
     anchored at their enclosing project so emitted paths stay
     repository-relative POSIX exactly as for manifest-declared roots:
-    ``.../<module>/src/main/java`` anchors at the module's parent directory,
-    and ``.../src/main/kotlin`` anchors at the enclosing module directory.
+    ``.../<module>/src/main/java`` and ``.../<module>/src/main/kotlin``
+    both anchor at the module's parent directory — one
+    project-root-above-module convention for every supported tail, kept in
+    exact parity with ``declaration_scanner._absolute_root_anchor``.
     The first-component rebuild covers every platform shape
     ``normpath().split(os.sep)`` can produce, because splitting drops
     leading separators: a relative first component falls through to a
@@ -143,7 +145,7 @@ def _absolute_root_anchor(root_abs: str) -> str | None:
     if tuple(parts[-3:]) == ("src", "main", "java"):
         anchor_parts = parts[:-4]
     elif tuple(parts[-3:]) == ("src", "main", "kotlin"):
-        anchor_parts = parts[:-3]
+        anchor_parts = parts[:-4]
     else:
         return None
     if not anchor_parts:
@@ -438,7 +440,12 @@ def _resolve_query_template(template: str, consts: dict[str, tuple[str, ...]]) -
             if resolved is None:
                 return None
             parts.append(resolved)
-            index = dollar + 2 + len(name)
+            # ``dollar`` is the ``$``, ``dollar + 1`` the ``{``, the name spans
+            # ``len(name)`` characters, and one more character skips the
+            # closing ``}``: resuming at the brace would leak a stray ``}``
+            # into the SQL and fail every braced template closed as
+            # unclassifiable.
+            index = dollar + 3 + len(name)
         else:
             match = _QUERY_TEMPLATE_NAME.match(rest)
             if match is None:
@@ -562,9 +569,17 @@ def _type_declarations(source: str) -> tuple[_TypeDeclaration, ...]:
     package_match = re.search(r"\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)\b", masked)
     package = package_match.group(1) if package_match else ""
     declarations: list[_TypeDeclaration] = []
+    # A braced declaration's header ends at its own body ``{``.  The header
+    # must never cross a sibling declaration keyword: a bodyless sibling
+    # (for example ``data class Item(val id: Int)`` declared before
+    # ``interface Dao {``) has no brace of its own, so an untempered
+    # ``[^{}]*`` header would swallow the sibling's body opener and hide
+    # that sibling from this index (failing closed with a spurious
+    # inheritance diagnostic for a DAO with no inheritance at all).
     all_matches = list(re.finditer(
         r"\b(?:(?:public|private|internal|protected|open|abstract|final|sealed)\s+)*"
-        r"(?:class|interface|object)\s+(?P<name>[A-Za-z_]\w*)\b(?P<header>[^{}]*)\{",
+        r"(?:class|interface|object)\s+(?P<name>[A-Za-z_]\w*)\b"
+        r"(?P<header>(?:(?!\b(?:class|interface|object)\b)[^{}])*)\{",
         masked,
     ))
     spans: list[tuple[int, int, str]] = []

@@ -73,7 +73,10 @@ def _write(root: Path, relative: str, text: str) -> Path:
 
 def _fixture(tmp_path: Path, *, source: str = SOURCE) -> Path:
     _write(tmp_path, CANONICAL, source)
-    _write(tmp_path, "config/guards/raw.yml", "entries: []\n")
+    # Canonical raw-query policy document: exactly {"version": 1, "methods":
+    # [...]}. An empty methods list is valid and matches fixtures that
+    # declare no @RawQuery callables, so no policy diagnostic fires.
+    _write(tmp_path, "config/guards/raw.yml", "version: 1\nmethods: []\n")
     _write_fixture_manifest(tmp_path, structural_entries=[])
     return tmp_path
 
@@ -452,7 +455,7 @@ def test_unauthorized_mutation_is_a_finding_and_fail_on_violation_exits_one(
                     "dao": "example.ExpenseDao",
                     "accessor": "expenseDao",
                     "operation": "insert",
-                    "mutation_kind": "insert",
+                    "mutation_kind": "ROOM_INSERT",
                     "call_form": "receiver",
                 },
                 "message": "Database mutation is not owned by an exact policy entry",
@@ -499,7 +502,7 @@ def test_valid_findings_are_strict_exit_one_without_fail_flag(
                     "dao": "example.ExpenseDao",
                     "accessor": "expenseDao",
                     "operation": "insert",
-                    "mutation_kind": "insert",
+                    "mutation_kind": "ROOM_INSERT",
                     "call_form": "receiver",
                 },
                 "message": "Database mutation is not owned by an exact policy entry",
@@ -649,7 +652,7 @@ def test_unrelated_direct_dao_receiver_keeps_structured_identity(
                     "dao": "example.ExpenseDao",
                     "accessor": "otherDao",
                     "operation": "insert",
-                    "mutation_kind": "insert",
+                    "mutation_kind": "ROOM_INSERT",
                     "call_form": "receiver",
                 },
                 "message": "Database mutation is not owned by an exact policy entry",
@@ -698,7 +701,7 @@ def test_positive_finding_contains_complete_callable_identity(
                     "dao": "example.ExpenseDao",
                     "accessor": "expenseDao",
                     "operation": "insert",
-                    "mutation_kind": "insert",
+                    "mutation_kind": "ROOM_INSERT",
                     "call_form": "receiver",
                 },
                 "message": "Database mutation is not owned by an exact policy entry",
@@ -773,7 +776,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                         "dao": "example.ExpenseDao",
                         "accessor": "expenseDao",
                         "operation": "insert",
-                        "mutation_kind": "insert",
+                        "mutation_kind": "ROOM_INSERT",
                         "call_form": "receiver",
                     },
                     "message": "Database mutation is not owned by an exact policy entry",
@@ -815,7 +818,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                         "dao": "example.ExpenseDao",
                         "accessor": "expenseDao",
                         "operation": "insert",
-                        "mutation_kind": "insert",
+                        "mutation_kind": "ROOM_INSERT",
                         "call_form": "receiver",
                     },
                     "message": "Database mutation is not owned by an exact policy entry",
@@ -856,7 +859,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                         "dao": "example.ExpenseDao",
                         "accessor": "expenseDao",
                         "operation": "insert",
-                        "mutation_kind": "insert",
+                        "mutation_kind": "ROOM_INSERT",
                         "call_form": "receiver",
                     },
                     "message": "Database mutation is not owned by an exact policy entry",
@@ -895,7 +898,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                         "dao": "example.ExpenseDao",
                         "accessor": "dao",
                         "operation": "insert",
-                        "mutation_kind": "insert",
+                        "mutation_kind": "ROOM_INSERT",
                         "call_form": "receiver",
                     },
                     "message": "Database mutation is not owned by an exact policy entry",
@@ -934,7 +937,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                         "dao": "example.ExpenseDao",
                         "accessor": "dao",
                         "operation": "insert",
-                        "mutation_kind": "insert",
+                        "mutation_kind": "ROOM_INSERT",
                         "call_form": "receiver",
                     },
                     "message": "Database mutation is not owned by an exact policy entry",
@@ -1978,7 +1981,7 @@ def test_argv_and_canonical_identity_are_platform_neutral(
                     "dao": "example.ExpenseDao",
                     "accessor": "expenseDao",
                     "operation": "insert",
-                    "mutation_kind": "insert",
+                    "mutation_kind": "ROOM_INSERT",
                     "call_form": "receiver",
                 },
                 "message": "Database mutation is not owned by an exact policy entry",
@@ -2098,7 +2101,7 @@ def test_accessor_policy_rejects_wrong_kind_or_parameter_signature(
                     "accessor": "expenseDao",
                     "call_form": "receiver",
                     "dao": "example.ExpenseDao",
-                    "mutation_kind": "insert",
+                    "mutation_kind": "ROOM_INSERT",
                     "operation": "insert",
                 },
                 "message": "Database mutation is not owned by an exact policy entry",
@@ -2119,7 +2122,7 @@ def test_accessor_policy_rejects_wrong_kind_or_parameter_signature(
                     "accessor": "expenseDao",
                     "call_form": "receiver",
                     "dao": "example.ExpenseDao",
-                    "mutation_kind": "insert",
+                    "mutation_kind": "ROOM_INSERT",
                     "operation": "insert",
                 },
                 "message": "Database mutation is not owned by an exact policy entry",
@@ -2455,3 +2458,34 @@ class UnsafeDao
         ],
         "statistics": {"trusted": False},
     })
+
+
+def test_inventory_resolves_dao_after_bodyless_sibling_without_inheritance_diagnostic(
+    tmp_path: Path,
+) -> None:
+    """Regression: a bodyless sibling immediately before a ``@Dao`` interface
+    must not hide the DAO from the inventory.
+
+    ``data class Item(val id: Int)`` has no body of its own.  An untempered
+    declaration-header pattern swallowed the following ``interface
+    ExpenseDao {`` opener as the sibling's body, so ExpenseDao vanished from
+    the lexical declaration index and every scan of this exact file shape —
+    the canonical fixture shape of this suite — failed closed with a
+    spurious ``DB_DAO_INHERITANCE_UNRESOLVED`` for a DAO that declares no
+    inheritance at all.  The inventory must resolve the DAO with its
+    canonical ``ROOM_INSERT`` mutator kind (the same value the scanner
+    reports verbatim in ``identity.mutation_kind``) and zero diagnostics."""
+    _write(tmp_path, CANONICAL, SOURCE)
+    java_root = tmp_path / "app" / "src" / "main" / "java"
+    inventory = room_inventory.build_room_inventory(
+        java_root, {"version": 1, "methods": []}
+    )
+    assert "example.ExpenseDao" in {dao.fqcn for dao in inventory.daos}
+    assert [mutator.mutation_kind for mutator in inventory.mutators] == [
+        "ROOM_INSERT"
+    ]
+    assert not any(
+        diagnostic.split(":", 1)[0] == "DB_DAO_INHERITANCE_UNRESOLVED"
+        for diagnostic in inventory.diagnostics
+    ), inventory.diagnostics
+    assert inventory.diagnostics == ()

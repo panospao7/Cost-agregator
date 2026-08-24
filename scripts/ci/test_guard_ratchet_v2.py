@@ -132,9 +132,19 @@ _DEFAULT_IDENTITY = {
 
 
 def _identity_for(rule: str, **overrides) -> Dict[str, str]:
-    """Build an identity mapping from the catalog-declared ``identity.*`` fields."""
+    """Build an identity mapping from the catalog-declared ``identity.*`` fields.
+
+    Deliberately unregistered rule codes (protocol-failure fixtures such as
+    ``DB_NOT_A_RULE``) get the full default identity: the catalog
+    intentionally registers no sentinel profile for unknown rules -- they are
+    rejected with the controlled ``UNKNOWN_RULE`` diagnostic -- so fixture
+    construction must not require registration.
+    """
     profile = known_rule(rule)
-    assert profile is not None, f"rule {rule} must be registered"
+    if profile is None:
+        identity = dict(_DEFAULT_IDENTITY)
+        identity.update(overrides)
+        return identity
     declared = {f[9:] for f in profile.identity_fields if f.startswith("identity.")}
     identity = {key: _DEFAULT_IDENTITY[key] for key in sorted(declared)}
     identity.update(overrides)
@@ -774,7 +784,7 @@ def test_v2_baseline_missing_entries_exits_two(tmp_path: Path) -> None:
     guard_py = _guard_py(tmp_path)
     _write_mock_guard(guard_py, _report_dict(findings=[finding]), exit_code=1)
     baseline = _baseline(tmp_path)
-    _write_baseline_v2(baseline, _GUARD, [], entries="not-a-list")
+    _write_baseline_v2(baseline, _GUARD, "not-a-list")
 
     result = _run_ratchet(
         _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
@@ -2467,6 +2477,12 @@ def test_v1_baseline_missing_hostile_path_no_leak(tmp_path: Path) -> None:
     may carry a sensitive or hostile directory name) and any raw error are
     never interpolated, and no traceback is emitted.  Regression guard for a
     missing-baseline report that previously echoed the raw baseline path.
+
+    The protocol is pinned to 1 explicitly: ``db_access`` declares
+    ``finding_protocol: 2`` in the guard registry, so without the pin this
+    scenario would auto-resolve to the v2 flow and fail on the empty child
+    report (RATCHET_V2_REPORT_INVALID) before the baseline-missing path is
+    ever reached.
     """
     guard_py = _guard_py(tmp_path)
     _write_legacy_mock_guard(
@@ -2477,7 +2493,7 @@ def test_v1_baseline_missing_hostile_path_no_leak(tmp_path: Path) -> None:
     baseline = tmp_path / "SECRETS" / "prod" / "baseline.json"
 
     result = _run_ratchet(
-        _GUARD, [sys.executable, str(guard_py)], baseline, cwd=tmp_path
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=1, cwd=tmp_path
     )
 
     assert result.returncode == 2, (

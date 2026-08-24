@@ -1822,7 +1822,8 @@ def test_absolute_conventional_kotlin_root_anchors(tmp_path):
     """An absolute conventional ``src/main/kotlin`` root anchors and scans.
 
     Regression for the GR-03 shared-root migration: an implicit absolute
-    ``src/main/kotlin`` root must anchor at its enclosing module directory
+    ``src/main/kotlin`` root must anchor at the module's parent directory —
+    the same single project-root-above-module convention as the java tail —
     through a like-for-like native-tail comparison.  A list-vs-tuple tail
     mismatch made ``_absolute_root_anchor`` return ``None``, so the root was
     silently dropped from ``declared_root_pairs`` and the scan failed closed
@@ -1854,7 +1855,8 @@ def test_absolute_conventional_kotlin_root_anchors(tmp_path):
     assert resolved.replace(os.sep, "/") == relative
     scan = scan_production_declarations(kotlin_root)
     # The declared root was anchored (not dropped) and the file was scanned,
-    # emitted repository-relative POSIX below the enclosing module directory.
+    # emitted repository-relative POSIX below the module's parent directory
+    # (the shared project-root-above-module convention).
     assert scan.files_scanned == (relative,)
     assert scan.diagnostics == ()
     # The plain class is discovered as a helper declaration with its owner.
