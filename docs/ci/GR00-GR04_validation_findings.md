@@ -440,3 +440,42 @@ mutation_kind pins, helper signature bug — resolved.
 Production CLIs were re-verified exact-match healthy after `1c09f525` (round 4); no further
 CLI changes observed this round (sweep only). Cumulative: production gates stable across all
 five rounds while suite failures fell 372 -> 59.
+
+---
+
+## Re-validation round 6 (2026-08-24) — after commit `63cbea2f` "resolve round-5 residue families (barrier fixtures, d4 pipeline realism, parser layering)"
+
+HEAD `63cbea2fe30ac5ab23364b708e05dc85901af80c`; checkout clean.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> **exit 2 — COLLECTION ERROR. Sweep could not run.**
+
+```
+ERROR scripts/test_verify_db_access_v2.py
+SyntaxError: closing parenthesis ')' does not match opening parenthesis '{' on line 2028
+```
+
+Root cause (single-character defect introduced by `63cbea2f`):
+
+- `scripts/test_verify_db_access_v2.py:2028` opens `_report(report, {`
+- `scripts/test_verify_db_access_v2.py:2064` closes the call with bare `    )`
+  instead of `    })`.
+
+Verified via in-memory repair iteration (`ast.parse` after replacing that one line):
+the file parses cleanly with exactly ONE broken close site; no other malformed
+`_report(...)` calls exist (an earlier bracket heuristic suggested 17; tokenizer-level
+verification disproved all but line 2064).
+
+### Consequence and required action
+
+- Sections 2–6 were NOT run (sweep precondition failed; checkout must remain untouched so
+  the Section-5 clean-checkout gate stays satisfiable).
+- Required fix (for the fix loop to commit): line 2064 `    )` -> `    })`.
+  No other changes needed to unblock collection.
+- Once committed, round 6 should be re-run from the sweep onward; the inventory-only
+  diagnostic count may legitimately differ from the historical 350+1 due to the classifier
+  fix noted by the orchestrator (checklist §3 expectation needs a Revision 2 update when
+  the new exact count is known).
+
+Cumulative trend paused at: 372 -> 357 -> 151 -> 101 -> 59 -> BLOCKED (collection).

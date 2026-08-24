@@ -2061,7 +2061,7 @@ def test_argv_and_canonical_identity_are_platform_neutral(
             "inventory_mutators": 1,
             "trusted": True,
         },
-    )
+    })
 
 
 ACCESSOR_SOURCE = SOURCE.replace(
