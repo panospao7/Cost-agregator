@@ -121,26 +121,29 @@ def test_minimal_valid_loads_one_entry(tmp_path):
 
 
 def test_two_overloads_differing_only_in_ordered_parameter_types(tmp_path):
+    # ``_VALID_ENTRY_YAML`` is textwrap.dedent-ed: entry keys sit at 4 spaces
+    # and list items at 6, so this splice must use those indents -- deeper
+    # indents silently no-op the replace() and leave a one-entry document.
     yaml_text = _mutate(
         [
             (
-                "        parameterTypes:\n          - com.example.Group\n",
-                "        parameterTypes:\n          - com.example.Group\n"
-                "      - path: app/src/main/java/com/example/Repo.kt\n"
-                "        ownerFqcn: com.example.Repo\n"
-                "        kind: function\n"
-                "        method: insertGroup\n"
-                "        receiver: null\n"
-                "        parameterTypes:\n"
-                "          - com.example.Options\n"
-                "          - com.example.Group\n"
-                "        daoAccessor: groupDao\n"
-                "        daoFqcn: com.example.data.GroupDao\n"
-                "        operation: insert\n"
-                "        barrierMode: direct\n"
-                "        reason: r\n"
-                "        owner: o\n"
-                "        linkedIssue: X-1\n",
+                "    parameterTypes:\n      - com.example.Group\n",
+                "    parameterTypes:\n      - com.example.Group\n"
+                "  - path: app/src/main/java/com/example/Repo.kt\n"
+                "    ownerFqcn: com.example.Repo\n"
+                "    kind: function\n"
+                "    method: insertGroup\n"
+                "    receiver: null\n"
+                "    parameterTypes:\n"
+                "      - com.example.Options\n"
+                "      - com.example.Group\n"
+                "    daoAccessor: groupDao\n"
+                "    daoFqcn: com.example.data.GroupDao\n"
+                "    operation: insert\n"
+                "    barrierMode: direct\n"
+                "    reason: r\n"
+                "    owner: o\n"
+                "    linkedIssue: X-1\n",
             )
         ]
     )
@@ -346,8 +349,10 @@ def test_malformed_receiver_text_rejected(tmp_path):
 
 
 def test_missing_parameter_types_rejected(tmp_path):
+    # List items sit at 6 spaces in the dedented template; a deeper indent
+    # would silently no-op the replace() and leave the field present.
     yaml_text = _VALID_ENTRY_YAML.replace(
-        "parameterTypes:\n          - com.example.Group\n", ""
+        "parameterTypes:\n      - com.example.Group\n", ""
     )
     path = _write_yaml(tmp_path, yaml_text)
     entries, errors = load_policy_v2(path)
@@ -357,7 +362,7 @@ def test_missing_parameter_types_rejected(tmp_path):
 
 def test_non_list_parameter_types_rejected(tmp_path):
     yaml_text = _VALID_ENTRY_YAML.replace(
-        "parameterTypes:\n          - com.example.Group\n",
+        "parameterTypes:\n      - com.example.Group\n",
         "parameterTypes: com.example.Group\n",
     )
     path = _write_yaml(tmp_path, yaml_text)
@@ -366,16 +371,23 @@ def test_non_list_parameter_types_rejected(tmp_path):
     _assert_rejected(errors)
 
 
-def test_noncanonical_parameter_item_rejected(tmp_path):
-    # Kotlin non-canonical nullable syntax "T ?" (space before ?) is rejected
-    # by the signature normaliser.
+def test_noncanonical_parameter_item_loads_normalized(tmp_path):
+    # Documented current behavior: the shared signature grammar skips
+    # whitespace between tokens, so Kotlin's non-canonical nullable spelling
+    # "T ?" (space before ?) is NOT rejected -- it is normalized on load to
+    # the canonical identity "T?" (same policy as receiver padding above).
+    # The stored parameter type must equal the canonical text, proving
+    # canonicalization ran; identities stay exact-match and duplicate-key
+    # safe because both spellings collapse to one mutation key.
     yaml_text = _mutate(
-        [("          - com.example.Group", "          - com.example.Group ?")]
+        [("      - com.example.Group", "      - com.example.Group ?")]
     )
     path = _write_yaml(tmp_path, yaml_text)
     entries, errors = load_policy_v2(path)
-    assert entries is None
-    _assert_rejected(errors)
+    assert errors == []
+    assert entries is not None
+    assert len(entries) == 1
+    assert entries[0].parameter_types == ("com.example.Group?",)
 
 
 # ===========================================================================

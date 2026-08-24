@@ -4605,7 +4605,10 @@ def test_manifest_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
     )
     count_errors = [e for e in errors if e.startswith("COUNT_MISMATCH")]
     assert len(count_errors) == 2, errors
-    assert all("structural_entries" in e for e in count_errors), count_errors
+    # One error names the manifest counts key drift; the other names the
+    # current structural side's entry count against that manifest contract.
+    assert any("counts.structural_entries" in e for e in count_errors), count_errors
+    assert any("current structural exceptions" in e for e in count_errors), count_errors
     assert any("61" in e for e in count_errors), count_errors
     assert all(not e.startswith("MANIFEST_INVALID") for e in errors), errors
 
@@ -5240,7 +5243,9 @@ def test_current_db_gate_blocked_for_active_policy_reason_not_structural_count(t
     )
 
     exit_code = _mod.main([
-        "verify_db_access_boundaries.py",
+        # ``main(argv)`` forwards the list straight to argparse, which expects
+        # arguments only (no program-name token; sys.argv[0] is never part of
+        # an in-process argv list).
         "--fail-on-violation",
         "--ownership-policy", _mod.OWNERSHIP_POLICY_PATH,
         "--structural-exceptions", _mod.STRUCTURAL_EXCEPTIONS_PATH,

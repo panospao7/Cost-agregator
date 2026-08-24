@@ -1496,7 +1496,11 @@ def test_raw_secret_exception_sql_output(tmp_path):
                 # Keep the git preflight/preservation surface CLEAN; only child
                 # command output carries the leaky payload.
                 return outcome
-            combined = outcome.combined + "\n".join([
+            # ``combined`` carries no trailing newline; join with an explicit
+            # leading separator so each payload stays on its own line (a bare
+            # concatenation would glue ``password=`` onto the previous output
+            # token, where the word-boundary secret pattern cannot match).
+            combined = outcome.combined + "\n" + "\n".join([
                 "password=hunter2secret",
                 "api_key=sk_live_abc123",
                 "Traceback (most recent call last):",

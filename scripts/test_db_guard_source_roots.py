@@ -193,7 +193,11 @@ def test_unsupported_source_set_rejected(source_set):
 def test_absolute_root_path_rejected(path):
     diagnostics = validate_source_root_manifest(_manifest((":app", path)))
     assert _codes(diagnostics) == [DB_SOURCE_ROOT_MANIFEST_INVALID]
-    assert diagnostics[0][1] == {"field": "path", "index": 0}
+    assert diagnostics[0][1] == {
+        "field": "path",
+        "index": 0,
+        "reason": "absolute",
+    }
 
 
 def test_backslash_root_path_rejected():
@@ -201,7 +205,11 @@ def test_backslash_root_path_rejected():
         _manifest((":app", "app\\src\\main\\java"))
     )
     assert _codes(diagnostics) == [DB_SOURCE_ROOT_MANIFEST_INVALID]
-    assert diagnostics[0][1] == {"field": "path", "index": 0}
+    assert diagnostics[0][1] == {
+        "field": "path",
+        "index": 0,
+        "reason": "backslash",
+    }
 
 
 @pytest.mark.parametrize(
@@ -215,14 +223,22 @@ def test_backslash_root_path_rejected():
 def test_traversal_root_path_rejected(path):
     diagnostics = validate_source_root_manifest(_manifest((":app", path)))
     assert _codes(diagnostics) == [DB_SOURCE_ROOT_MANIFEST_INVALID]
-    assert diagnostics[0][1] == {"field": "path", "index": 0}
+    assert diagnostics[0][1] == {
+        "field": "path",
+        "index": 0,
+        "reason": "bad-segment",
+    }
 
 
 @pytest.mark.parametrize("path", ["*/src/main/java", "app/*/src/main/java"])
 def test_wildcard_root_path_rejected(path):
     diagnostics = validate_source_root_manifest(_manifest((":app", path)))
     assert _codes(diagnostics) == [DB_SOURCE_ROOT_MANIFEST_INVALID]
-    assert diagnostics[0][1] == {"field": "path", "index": 0}
+    assert diagnostics[0][1] == {
+        "field": "path",
+        "index": 0,
+        "reason": "wildcard",
+    }
 
 
 def test_root_below_a_source_root_rejected():
@@ -252,7 +268,11 @@ def test_root_below_a_source_root_rejected():
 def test_forbidden_root_segment_rejected(path):
     diagnostics = validate_source_root_manifest(_manifest((":app", path)))
     assert _codes(diagnostics) == [DB_SOURCE_ROOT_MANIFEST_INVALID]
-    assert diagnostics[0][1] == {"field": "path", "index": 0}
+    assert diagnostics[0][1] == {
+        "field": "path",
+        "index": 0,
+        "reason": "forbidden-segment",
+    }
 
 
 def test_duplicate_root_rejected():
@@ -671,12 +691,19 @@ def test_resolve_manifest_declaring_missing_root_fails_closed(tmp_path):
     assert diagnostics[0][1] == {"target": APP_ROOT}
 
 
-def test_resolve_manifest_absent_falls_back_to_app_conventional_root(tmp_path):
+def test_resolve_manifest_absent_falls_back_to_app_conventional_root_absolute(tmp_path):
+    # GR-03: when no manifest exists, the implicit conventional fallback
+    # carries the resolved ``app/src/main/java`` directory as an ABSOLUTE
+    # native-separator path (not the legacy repository-relative POSIX form),
+    # so callers can walk it and anchor emitted relative paths.
     _make_tree(tmp_path, [APP_FILE])
     resolved, diagnostics = resolve_source_root_set(str(tmp_path))
     assert diagnostics == ()
     assert resolved is not None
-    assert resolved.paths == (APP_ROOT,)
+    assert len(resolved.paths) == 1
+    assert os.path.normcase(resolved.paths[0]) == os.path.normcase(
+        os.path.join(str(tmp_path), *APP_ROOT.split("/"))
+    )
 
 
 def test_resolve_bare_src_main_java_dir_input(tmp_path):

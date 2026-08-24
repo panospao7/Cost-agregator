@@ -277,3 +277,59 @@ Windows workstation precisely at the anchor step, while Linux CI (no drive lette
 2. Re-run full sweep; expect the ~350 cascade to collapse once anchoring succeeds on Windows.
 3. Then execute checklist sections 2–6 per Revision 1 (including Section 5 two-run gate —
    checkout is now clean/committed).
+
+---
+
+## Re-validation round 3 (2026-08-24) — after commit `8eb97c43` "make absolute-root anchoring platform-universal (POSIX/UNC/drive)"
+
+HEAD `8eb97c4370389007c9a9ee93eaba1fbb76e49a8c`; checkout clean.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> exit 1; **151 failed / 2069 passed / 23 skipped** in 336 s
+(round 2: 357/1860/22; round 1: 372/1841/22). NOT green/near-green -> checklist sections 2–6
+NOT re-run per the stated condition. The single-cascade era is over: residue is now ~10
+independent drift families.
+
+### Drive-relative bug: FIXED and verified
+
+Manual repro now discovers DAO + mutator with repository-relative POSIX canonical paths.
+New platform-universal anchor handles POSIX `/`, UNC `\\`, and drive letters `C:\`.
+Two Windows-only regression tests were added by the commit; one passes, one fails (below).
+
+### Section-3 production CLIs re-verified (round 3)
+
+| CLI | Result |
+| --- | --- |
+| `verify_production_source_roots --root . --manifest config/guards/production_source_roots.yml` | exit 0, silent |
+| `verify_db_access_boundaries --inventory-only` | exit 2; exactly 350 DB_ROOM_QUERY_UNCLASSIFIABLE + 1 DB_DAO_INHERITANCE_UNRESOLVED; zero DB_SOURCE_ROOT_* |
+| `migrate_db_policy_signatures --check` | exit 1; input=99 resolved=9 unresolved=90 duplicateMutationKeys=0 (exact) |
+| full gate (four config flags) | exit 2; stderr exactly 1 umbrella line; diagnostics exactly `[DB_POLICY_SOURCE_EVIDENCE_INVALID]` |
+
+### Residue breakdown (151) with mechanisms
+
+| Family | Count | Observed mechanism (representative evidence) |
+| --- | --- | --- |
+| scripts/test_verify_db_access_v2.py | 66 | Fixture helper `_policy()` writes v1-shaped YAML (`class:/daos:/signature.parameters/barrier_required`). Pre-scanner gate `verify_db_access_boundaries.py:3409–3437` runs `verify_ownership_policy_source_evidence(...)` BEFORE scanner matching; any failure -> umbrella `DB_POLICY_SOURCE_EVIDENCE_INVALID` (empty context). Tests expect scanner-level diagnostics (`DB_DAO_SCOPE_UNRESOLVED`, findings, etc.). Contract drift: fixtures vs mandatory v2 evidence pre-gate. |
+| scripts/test_db_guard_room_inventory.py | 17 | Mixed: `test_anchor_unc_shape_windows_only` FAILS (`_absolute_root_anchor("\\\\server\\share\\proj\\mod\\src\\main\\java")` returns `\\...\proj`, test expects `\\...\proj\mod` — java-tail cut is `[:-4]` elsewhere, so either the new UNC branch or the new test is inconsistent); manifest-vs-implicit inventory equality; fixture scans leaking real-repo paths (ExpenseDao count 5 vs 1); dump-room-mutators blocked when ANY diagnostic present. |
+| scripts/test_db_guard_source_roots.py | 16 | Diagnostics context schema drift: actual includes extra key `{'reason': 'absolute'}` where tests expect exact `{'field': 'path', 'index': 0}`; `resolve_manifest_absent_falls_back_to_app_conventional_root` expects RELATIVE `('app/src/main/java',)` but implementation returns ABSOLUTE native path (design change vs stale test); loader returns `bool` where profile object expected (`AttributeError: 'bool' object has no attribute 'code'`). |
+| scripts/ci/test_gradle_db_guard_contract.py | 13 | Generated Gradle task no longer contains `"python3"` (`assert '"python3"' in task` fails against current `app/build.gradle.kts` text) — build-script vs contract-test drift. |
+| scripts/test_kotlin_callable_parser.py | 9 | Masking off-by-one whitespace (`val a =     ` vs `val a =    `); `TypeError: '>' not supported between int and str` in nesting-limit boundary (`_body_end-{-}` parametrization); parser error-sanitization drift. |
+| scripts/test_db_guard_policy_v2_evidence.py | 5 | Unexpected `AttributeError` inside per-group evidence processing surfaced as `POLICY_ERROR_V2_EVIDENCE_PARSER_UNCERTAIN` with `exc_type: 'AttributeError'` (never-raise wrapper catching a real bug). |
+| scripts/test_db_guard_scanner_d4.py | 5 | `AttributeError: 'GuardDiagnostic' object has no attribute 'location'` — reporting API rename vs test expectations. |
+| scripts/ci/test_guard_ratchet_v2.py | 4 | `RATCHET_V2_REPORT_INVALID: guard=db_access code=INVALID_JSON` when child runs `--fail-on-violation` scenarios (expected findings JSON missing/unparsable). |
+| scripts/test_migrate_db_policy_signatures.py | 4 | Cascade of the v2-evidence AttributeError family above. |
+| scripts/test_db_guard_policy_v2.py | 4 | Loader strictness drift: entries parsed successfully where tests expect None/exactly-one rejection. |
+| Others (boundaries 2, source_roots_integration 2, declaration_scanner 1, capture 1, guard_findings 1, verify_production_source_roots 1) | 8 | Singles, same drift themes. |
+
+### Round-3 assessment for the fix loop
+
+1. No single cascade remains; each family needs its own decision: update stale fixtures/tests
+   (v1-shaped policies, relative-root expectations, `"python3"` assertion, GuardDiagnostic.location,
+   masking whitespace) OR adjust implementation (UNC anchor consistency, AttributeError in v2
+   evidence processing, ratchet INVALID_JSON handling, source_roots diagnostics context keys).
+2. Highest-suspicion REAL code bugs: (a) `AttributeError` inside
+   `policy_v2_evidence` group processing; (b) UNC java-anchor inconsistency
+   (`test_anchor_unc_shape_windows_only`); (c) ratchet v2 INVALID_JSON path;
+   (d) parser nesting-limit `int` vs `str` comparison.
+3. Production gates (Section 3 CLIs) remain exact-match healthy throughout rounds 1–3.

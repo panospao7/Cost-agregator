@@ -1688,23 +1688,31 @@ def test_v2_mkstemp_failure_is_controlled_infra_error(
 
 
 def test_v2_protocol_default_is_legacy(tmp_path: Path) -> None:
-    """without --finding-protocol 2 the ratchet stays on the legacy stdout path.
+    """without --finding-protocol the ratchet stays on the legacy stdout path
+    for guards whose registry entry declares no finding_protocol.
 
-    A v2-style child (writes a report, prints nothing parseable) run without
-    the flag must NOT be consumed as a report: the legacy path sees empty
-    stdout and treats exit 1 as an unparseable-output infra error (exit 2).
+    A legacy stdout child run without the flag must be consumed by the legacy
+    path: unparseable stdout at exit 1 is an unparseable-output infra error
+    (exit 2).  ``db_access`` deliberately declares ``finding_protocol: 2`` in
+    the guard registry and therefore auto-resolves to v2 without the flag
+    (see ``test_registry_resolves_finding_protocol_for_db_access``), so this
+    premise is exercised with a guard that carries no registry protocol
+    metadata and a legacy stdout-only mock child.
     """
+    legacy_guard = "cancellation"
     guard_py = _guard_py(tmp_path)
-    _write_mock_guard(guard_py, _report_dict(findings=[_finding_dict()]), exit_code=1)
+    _write_legacy_mock_guard(guard_py, "not a parseable fingerprint", exit_code=1)
     baseline = _baseline(tmp_path)
     baseline.write_text(
-        json.dumps({"guard": _GUARD, "generated": "2026-07-10", "fingerprints": []})
+        json.dumps(
+            {"guard": legacy_guard, "generated": "2026-07-10", "fingerprints": []}
+        )
         + "\n",
         encoding="utf-8",
     )
 
     result = _run_ratchet(
-        _GUARD, [sys.executable, str(guard_py)], baseline, cwd=tmp_path
+        legacy_guard, [sys.executable, str(guard_py)], baseline, cwd=tmp_path
     )
 
     assert result.returncode == 2, (

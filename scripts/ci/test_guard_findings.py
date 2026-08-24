@@ -1717,11 +1717,14 @@ def test_controlled_context_depth_and_item_limits() -> None:
     assert exc.value.code == "CONTEXT_TOO_DEEP"
 
     # Exactly MAX_CONTEXT_DEPTH levels of nesting are still accepted.
+    accepted = _nested_context(MAX_CONTEXT_DEPTH - 1)
     ok = GuardDiagnostic(
         code="DB_SIGNATURE_UNRESOLVED",
-        controlled_context=_nested_context(MAX_CONTEXT_DEPTH - 1),
+        controlled_context=accepted,
     )
-    assert ok.controlled_context["n"]["n"]["leaf"] == "x"
+    # Depth-agnostic content check: the accepted chain must survive freezing
+    # unchanged regardless of how deep MAX_CONTEXT_DEPTH currently is.
+    assert ok.controlled_context == accepted
 
     # The statistics mapping uses the same recursive depth limit.
     with pytest.raises(ValidationError) as exc:

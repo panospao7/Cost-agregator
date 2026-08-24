@@ -16,8 +16,11 @@ Three kinds of tests:
          ownership policy, structural exceptions, structural manifest);
        * rejects missing / non-regular / unreadable / outside-root inputs with
          ``GradleException`` (never ``logger.warn`` or an early return);
-       * supports ``-PpythonExecutable`` (default ``python3``) with a
-         ``--version`` preflight treated as an infrastructure error;
+       * resolves the Python interpreter through the shared build-script
+         ``pythonInterpreter()`` helper (``-PpythonExecutable`` property
+         first, then ``python3``/``python`` PATH probes, ``python3``
+         fallback) with a ``--version`` preflight treated as an
+         infrastructure error;
        * uses repeatable single-token ``--command-arg=<value>`` arguments and
          passes ``--ci-mode`` (the legacy ``--command "<shell string>"`` form
          is not used; a split ``--command-arg <value>`` pair would let
@@ -217,8 +220,19 @@ def test_outside_root_path_rejected() -> None:
 
 def test_python_executable_property_with_preflight() -> None:
     task = _verify_task_text()
-    assert "pythonExecutable" in task
-    assert '"python3"' in task
+    build = _gradle_build_text()
+    # Parity gate: the task must resolve the interpreter through the shared
+    # build-script ``pythonInterpreter()`` helper (pinned exactly so any
+    # Gradle-side drift fails here).
+    assert "val pythonExecutable = pythonInterpreter()" in task
+    # Resolver contract: the -PpythonExecutable property always wins ...
+    assert 'findProperty("pythonExecutable")' in build
+    # ... then PATH candidates are probed in this exact order ...
+    assert 'listOf("python3", "python")' in build
+    # ... and this exact final fallback is documented behavior.
+    assert 'return "python3"' in build
+    # The preflight stays inside the task; a launch failure or non-zero
+    # --version exit is an infrastructure error.
     assert "--version" in task
     assert "infrastructure error" in task.lower()
 
@@ -480,12 +494,20 @@ def _run_ratchet_args(
     Every child argument is encoded as one ``--command-arg=<value>`` list
     token (never a split ``--command-arg <value>`` pair) so argparse can never
     re-parse option-like child values as the ratchet's own flags.
+
+    ``--finding-protocol=1`` is pinned because these tests contract-test the
+    LEGACY stdout ratchet surface with stdout-only mock children.
+    ``db_access`` is registered with ``finding_protocol: 2``, so without an
+    explicit protocol the registry silently selects v2 and every mock child
+    leaves the retained report file empty, which fails closed as
+    ``RATCHET_V2_REPORT_INVALID ... code=INVALID_JSON`` (exit 2).
     """
     cmd = [
         sys.executable,
         str(RATCHET_SCRIPT),
         "--guard-name", guard_name,
         "--baseline", str(baseline),
+        "--finding-protocol=1",
     ]
     for arg in command_args:
         cmd += [f"--command-arg={arg}"]
@@ -543,6 +565,8 @@ def test_command_arg_single_token_with_option_like_child_flags(
         str(RATCHET_SCRIPT),
         "--guard-name", "db_access",
         "--baseline", str(baseline),
+        # Legacy stdout contract: keep the registry from auto-selecting v2.
+        "--finding-protocol=1",
         # Child args encoded as single --command-arg=<value> tokens,
         # including option-like values.
         "--command-arg=" + sys.executable,
@@ -719,7 +743,7 @@ def test_malformed_baseline_is_infrastructure_error(tmp_path: Path) -> None:
         cwd=tmp_path,
     )
     assert result.returncode == 2, result.stdout + result.stderr
-    assert "Malformed baseline" in result.stderr
+    assert "RATCHET_BASELINE_MALFORMED" in result.stderr
 
 
 def test_baseline_top_level_non_dict_is_infrastructure_error(tmp_path: Path) -> None:
@@ -921,6 +945,8 @@ def test_legacy_command_metacharacters_are_shell_free(tmp_path: Path) -> None:
             "--guard-name", "db_access",
             "--command", metachar_command,
             "--baseline", str(baseline),
+            # Legacy stdout contract: keep the registry from auto-selecting v2.
+            "--finding-protocol=1",
             "--ci-mode",
             "--fail-on-violation",
         ],
@@ -976,6 +1002,8 @@ def test_legacy_command_quoted_path_with_spaces_runs_shell_free(
             "--guard-name", "db_access",
             "--command", command,
             "--baseline", str(baseline),
+            # Legacy stdout contract: keep the registry from auto-selecting v2.
+            "--finding-protocol=1",
             "--ci-mode",
             "--fail-on-violation",
         ],

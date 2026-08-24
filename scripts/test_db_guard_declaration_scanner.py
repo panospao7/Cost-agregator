@@ -1830,9 +1830,12 @@ def test_absolute_conventional_kotlin_root_anchors(tmp_path):
     drive-relative anchor rebuild ("C:Users\\..." on Windows) broke the same
     anchoring, so the helper-level ``os.path.isabs`` invariant is asserted
     directly."""
-    relative = "src/main/kotlin/example/Plain.kt"
+    # App-module conventional kotlin layout (same shape as the java sibling
+    # fixture): emitted canonical paths must satisfy the documented
+    # ``app/src`` diagnostic-path contract.
+    relative = "app/src/main/kotlin/example/Plain.kt"
     _write(tmp_path, relative, "package example\n\nclass Plain {\n    fun hold() {}\n}\n")
-    kotlin_root = tmp_path / "src" / "main" / "kotlin"
+    kotlin_root = tmp_path / "app" / "src" / "main" / "kotlin"
     # Helper-level anchoring invariant (platform-neutral): the anchor derived
     # for the absolute fixture root must itself be ABSOLUTE and must resolve
     # the written file below it.  A drive-relative rebuild ("C:Users\\..."

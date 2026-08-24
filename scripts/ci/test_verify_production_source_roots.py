@@ -38,7 +38,7 @@ import verify_production_source_roots as vpsr  # noqa: E402
 
 # Importing the module under test puts the repository root on sys.path, so
 # the package-form import below resolves to the same modules it uses.
-from finding_rule_catalog import GUARD_DB_ACCESS, is_known_diagnostic  # noqa: E402
+from finding_rule_catalog import GUARD_DB_ACCESS, known_diagnostic  # noqa: E402
 from scripts.db_guard.source_roots import (  # noqa: E402
     DB_SOURCE_ROOT_LAYOUT_UNSUPPORTED,
     DB_SOURCE_ROOT_MANIFEST_INVALID,
@@ -104,7 +104,9 @@ def test_catalog_registers_five_source_root_codes():
         DB_SOURCE_ROOT_SYMLINK_OUTSIDE,
     }
     for code in expected:
-        profile = is_known_diagnostic(code)
+        # ``known_diagnostic`` returns the registered DiagnosticProfile;
+        # ``is_known_diagnostic`` is the boolean membership predicate.
+        profile = known_diagnostic(code)
         assert profile is not None, code
         assert profile.code == code
         assert profile.guard == GUARD_DB_ACCESS

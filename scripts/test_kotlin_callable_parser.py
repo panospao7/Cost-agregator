@@ -120,7 +120,7 @@ def test_mask_strings_escaped_quotes_and_char_literals():
     source = "\"esc \\\"quote\"\nval c = '\\''\nval a = 'x'\n"
     masked = parser.mask_kotlin_source(source)
     assert len(masked) == len(source)
-    assert masked == "             \nval c =     \nval a =     \n"
+    assert masked == "             \nval c =     \nval a =    \n"
     assert "quote" not in masked
 
 
@@ -213,13 +213,23 @@ class Outer<T,
     (parser._body_end, "{", "}"),
 ])
 def test_structural_nesting_limit_boundary_is_controlled(scanner, opening, closing):
+    def _scan(text: str) -> int:
+        # Contract difference: ``_pairs`` takes the opening delimiter as its
+        # third positional argument, while ``_body_end`` takes the integer
+        # nesting limit there (the brace is implied).  Passing the delimiter
+        # string into ``_body_end`` would crash the ``len(stack) > limit``
+        # comparison with TypeError instead of exercising the boundary.
+        if scanner is parser._body_end:
+            return scanner(text, 0)
+        return scanner(text, 0, opening)
+
     text = opening * parser.MAX_DEPTH + closing * parser.MAX_DEPTH
-    start = scanner(text, 0, opening)
+    start = _scan(text)
     assert start == len(text) - 1
 
     too_deep = opening * (parser.MAX_DEPTH + 1) + closing * (parser.MAX_DEPTH + 1)
     with pytest.raises(parser.ParserError) as excinfo:
-        scanner(too_deep, 0, opening)
+        _scan(too_deep)
     assert excinfo.value.code == "NESTING_TOO_DEEP"
     assert too_deep not in repr(excinfo.value)
 

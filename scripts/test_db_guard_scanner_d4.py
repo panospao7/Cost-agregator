@@ -44,7 +44,7 @@ fun mutate(db: SQLiteDatabase) {
             "code": "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
             "path": "app/src/main/java/Example.kt",
             "symbol": None,
-            "controlled_context": {},
+            "controlled_context": {"line": 3},
         }],
         "statistics": {"files_scanned": 1, "declarations_scanned": 1,
                        "inventory_daos": 0, "inventory_mutators": 0,
@@ -106,7 +106,9 @@ class StructuralRepository {
         "findings": [{
             "rule": "DB_FORBIDDEN_STRUCTURAL_OPERATION", "severity": "error",
             "path": "app/src/main/java/StructuralRepository.kt",
-            "location": {"line": 3, "end_line": 3},
+            # Fixture line literals: ``fun forbidden`` is the fourth source
+            # line of StructuralRepository.kt.
+            "location": {"line": 4, "end_line": 4},
             "symbol": {"owner": "example.StructuralRepository", "name": "forbidden",
                        "receiver": None, "parameters": ["SQLiteDatabase"],
                        "kind": "function"},
@@ -114,7 +116,7 @@ class StructuralRepository {
             "message": "Forbidden structural database operation",
         }],
         "diagnostics": [],
-        "statistics": {"files_scanned": 1, "declarations_scanned": 2,
+        "statistics": {"files_scanned": 1, "declarations_scanned": 3,
                        "inventory_daos": 0, "inventory_mutators": 0,
                        "trusted": True},
     }
@@ -151,20 +153,27 @@ fun SQLiteDatabase.extension(value: Int) {
     first = json.dumps(report.to_dict(), sort_keys=True, separators=(",", ":")).encode()
     second = json.dumps(report.to_dict(), sort_keys=True, separators=(",", ":")).encode()
     assert first == second
+    # Canonical report order is (rule, path, symbol.owner, symbol.name, ...):
+    # owner groups sort before names ("example" < "example.Helper" <
+    # "example.HelperObject"), then by name/kind within each owner.
     expected_symbols = [
+        ("extension", KIND_TOP_LEVEL_FUNCTION, "example", "SQLiteDatabase", ["Int"]),
+        ("topLevel", KIND_TOP_LEVEL_FUNCTION, "example", None, ["SQLiteDatabase", "Long"]),
         ("amount", KIND_INITIALIZER, "example.Helper", None, []),
         ("amount", KIND_PROPERTY_GETTER, "example.Helper", None, []),
         ("amount", KIND_PROPERTY_SETTER, "example.Helper", None, ["String"]),
         ("companion", "function", "example.Helper", None, ["SQLiteDatabase", "Int"]),
-        ("extension", KIND_TOP_LEVEL_FUNCTION, "example", "SQLiteDatabase", ["Int"]),
-        ("init", KIND_INITIALIZER, "example.Helper", None, []),
         ("member", "function", "example.Helper", None, ["String", "Int"]),
         ("objectMethod", "function", "example.HelperObject", None, ["SQLiteDatabase", "Int"]),
-        ("topLevel", KIND_TOP_LEVEL_FUNCTION, "example", None, ["SQLiteDatabase", "Long"]),
     ]
     # These are fixture line literals, not values read from the report.  Keep
-    # them frozen so source movement changes this contract deliberately.
-    expected_lines = (4, 5, 6, 10, 7, 8, 14, 16, 19)
+    # them frozen so source movement changes this contract deliberately:
+    # extension's call sits on ``local.deleteRecursively()`` (line 18),
+    # topLevel on 15, the ``amount`` initializer/getter/setter calls on
+    # 3/4/5, companion on 9, member on 7, and objectMethod on 13.  The
+    # class-level ``init { ... }`` block lies inside the skipped class-owner
+    # range, so it produces no declaration range and no finding.
+    expected_lines = (18, 15, 3, 4, 5, 9, 7, 13)
     expected_findings = [{
         "rule": "DB_FORBIDDEN_STRUCTURAL_OPERATION", "severity": "error",
         "path": "app/src/main/java/Scopes.kt", "location": {"line": line, "end_line": line},
@@ -194,7 +203,7 @@ fun unsupported(value: String) { value.deleteRecursively() }
         "guard": "db_access", "findings": [],
         "diagnostics": [{"code": "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
                          "path": "app/src/main/java/Unsupported.kt", "symbol": None,
-                         "controlled_context": {}}],
+                         "controlled_context": {"line": 2}}],
         "statistics": {"files_scanned": 1, "declarations_scanned": 1,
                        "inventory_daos": 0, "inventory_mutators": 0,
                        "trusted": False},

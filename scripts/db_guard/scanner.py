@@ -135,6 +135,25 @@ def _diag_from_text(value: str) -> GuardDiagnostic | None:
     return GuardDiagnostic(code=code, path=path)
 
 
+# F1 location bound for the controlled ``line`` context value carried by
+# scanner diagnostics (mirrors ``declaration_scanner.MAX_LOCATION_NUMBER``).
+_MAX_DIAGNOSTIC_LINE = 2 ** 31 - 1
+
+
+def _line_diagnostic(code: str, path: str | None, line: int | None) -> GuardDiagnostic:
+    """Controlled diagnostic carrying its source line as bounded context.
+
+    The current ``GuardDiagnostic`` contract has no ``location`` field; the
+    one meaningful coordinate survives as a bounded positive int under the
+    ``controlled_context["line"]`` key.  Sites without a meaningful line
+    omit the key entirely.
+    """
+    context: dict[str, int] = {}
+    if line is not None:
+        context["line"] = min(max(int(line), 1), _MAX_DIAGNOSTIC_LINE)
+    return GuardDiagnostic(code, path=path, controlled_context=context)
+
+
 def _policy_keys(entry: dict[str, Any]) -> tuple[tuple[str, str, str, str, str], ...]:
     try:
         path = entry["path"]
@@ -558,26 +577,26 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 try:
                     call_symbol = _property_symbol_at(source, declaration, call.start())
                 except SignatureError:
-                    diagnostics.append(GuardDiagnostic(
-                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
-                        location=SourceLocation(_line(source, call.start()), end_line=_line(source, call.start())),
+                    diagnostics.append(_line_diagnostic(
+                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
+                        _line(source, call.start()),
                     ))
                     continue
             is_structural = operation in _STRUCTURAL
             if is_structural and (
                 not receiver_is_bare or not _is_structural_receiver(receiver_type)
             ):
-                diagnostics.append(GuardDiagnostic(
-                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
-                    location=SourceLocation(_line(source, call.start()), end_line=_line(source, call.start())),
+                diagnostics.append(_line_diagnostic(
+                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
+                    _line(source, call.start()),
                 ))
                 continue
             if (receiver_is_bare and _is_structural_receiver(receiver_type)
                     and operation not in _STRUCTURAL
                     and not any(key[1] == operation for key in dao_methods)):
-                diagnostics.append(GuardDiagnostic(
-                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
-                    location=SourceLocation(_line(source, call.start()), end_line=_line(source, call.start())),
+                diagnostics.append(_line_diagnostic(
+                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
+                    _line(source, call.start()),
                 ))
                 continue
             # The receiver parser is for DAO operations only.  Ordinary Kotlin
@@ -632,17 +651,15 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                                       and isinstance(item.get("daos"), list)
                                       and receiver in item["daos"]]
             if any("signature" not in item for item in base_policy_candidates):
-                diagnostics.append(GuardDiagnostic("DB_SIGNATURE_UNRESOLVED",
-                                                    path=declaration.path,
-                                                    location=location))
+                diagnostics.append(_line_diagnostic("DB_SIGNATURE_UNRESOLVED",
+                                                    declaration.path, line))
                 continue
             policy_candidates = [item for item in ownership
                                        if _policy_matches(item, declaration, call_symbol, receiver, operation)]
             authorized = len(policy_candidates) == 1
             if authorized and "signature" not in policy_candidates[0]:
-                diagnostics.append(GuardDiagnostic(
-                    "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
-                    location=location,
+                diagnostics.append(_line_diagnostic(
+                    "DB_SIGNATURE_UNRESOLVED", declaration.path, line,
                 ))
                 authorized = False
             if not authorized:
@@ -675,9 +692,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                     and item.start("method") == match.start()
                     for item in calls
                 ):
-                    diagnostics.append(GuardDiagnostic(
-                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
-                        location=SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                    diagnostics.append(_line_diagnostic(
+                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
+                        _line(source, match.start()),
                     ))
                     continue
                 structural_symbol = symbol
@@ -685,9 +702,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                     try:
                         structural_symbol = _property_symbol_at(source, declaration, match.start())
                     except SignatureError:
-                        diagnostics.append(GuardDiagnostic(
-                            "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
-                            location=SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                        diagnostics.append(_line_diagnostic(
+                            "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
+                            _line(source, match.start()),
                         ))
                         continue
                 if not _structural_match(structural, declaration.path,
@@ -705,9 +722,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             receiver, receiver_is_bare = _receiver_expression(masked, match.start())
             receiver_type = receiver_types.get(receiver) if receiver_is_bare else None
             if not receiver_is_bare or not _is_structural_receiver(receiver_type):
-                diagnostics.append(GuardDiagnostic(
-                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
-                    location=SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                diagnostics.append(_line_diagnostic(
+                    "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
+                    _line(source, match.start()),
                 ))
                 continue
             structural_symbol = symbol
@@ -715,9 +732,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 try:
                     structural_symbol = _property_symbol_at(source, declaration, match.start())
                 except SignatureError:
-                    diagnostics.append(GuardDiagnostic(
-                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
-                        location=SourceLocation(_line(source, match.start()), end_line=_line(source, match.start())),
+                    diagnostics.append(_line_diagnostic(
+                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
+                        _line(source, match.start()),
                     ))
                     continue
             if not _structural_match(structural, declaration.path,
@@ -740,12 +757,23 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             }
             for token in token_pattern.finditer(masked, start, end):
                 if token.start() not in supported_starts:
-                    diagnostics.append(GuardDiagnostic(
-                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", path=declaration.path,
-                        location=SourceLocation(_line(source, token.start()), end_line=_line(source, token.start())),
+                    diagnostics.append(_line_diagnostic(
+                        "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
+                        _line(source, token.start()),
                     ))
 
-    diagnostics = tuple(sorted({(item.code, item.path, repr(item.location), item.symbol, repr(item.controlled_context)): item for item in diagnostics}.values(), key=lambda item: (item.code, item.path or "", repr(item.location))))
+    # Deduplicate by full content identity (``FrozenDict`` hashes and
+    # compares by value, so no repr() is needed: object-identity reprs are
+    # neither process-stable nor content-sensitive) and order
+    # deterministically by (code, path, symbol, line).  ``line`` is the
+    # bounded context coordinate; diagnostics without one sort first
+    # within identical code/path/symbol because real lines are >= 1.
+    diagnostics = tuple(sorted(
+        {(item.code, item.path, item.symbol, item.controlled_context): item
+         for item in diagnostics}.values(),
+        key=lambda item: (item.code, item.path or "", item.symbol or "",
+                          item.controlled_context.get("line", 0)),
+    ))
     # Infrastructure diagnostics are never a partial authorization result.
     # Discard all provisional findings so callers cannot baseline an untrusted
     # source/inventory parse.

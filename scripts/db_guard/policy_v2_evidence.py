@@ -504,7 +504,11 @@ def _check_mutations(group, ck, owner, masked, decl, callables, errors):
     for g in group:
         accessor_fqcns.setdefault(g.dao_accessor, set()).add(g.dao_fqcn)
     for (identity, op) in pairs:
-        resolved = _resolved(identity, ck.dao_accessor)
+        # Resolve every body pair's identity canonically (scoped map first,
+        # then the ``\w+Dao`` naming convention).  ``ck`` is a CallableKey
+        # and carries no dao_accessor; the ambiguity/unlisted checks compare
+        # against EVERY listed accessor, not the representative's.
+        resolved = _resolve_dao_identity(identity, merged)
         if resolved is None:
             continue
         if len(accessor_fqcns.get(resolved, ())) > 1:

@@ -2148,7 +2148,11 @@ class NotADao
 interface AlsoNotADao { @Insert fun ignored(v: Item) }
 ''')
     assert inventory.daos == ()
-    assert any(d.startswith("DB_ROOM_") for d in inventory.diagnostics) is False
+    # Documented fail-closed source contract (DB_ROOM_INVENTORY.md §6): a
+    # scan with no discovered DAO emits DB_ROOM_SOURCE_EMPTY.  The assertion
+    # that matters here is that the dangling @Dao discovered NOTHING -- the
+    # class/interface pair never becomes a DAO or a diagnostic of its own.
+    assert inventory.diagnostics == ("DB_ROOM_SOURCE_EMPTY",)
 
 
 def test_large_legal_annotation_whitespace_span_is_discovered(tmp_path):
@@ -2205,12 +2209,16 @@ def test_annotation_to_declaration_span_over_maximum_raised_directly():
 def test_annotation_scope_bound_keeps_sibling_annotation_out(tmp_path):
     """A DAO whose annotation is inside a sibling scope is not accidentally
     discovered; the structural bound keeps scope boundaries intact."""
+    # Explicit empty raw-query policy: the default lookup reads the canonical
+    # production policy and its global equality contract would report the
+    # production entries STALE for this synthetic fixture (documented
+    # post-GR-03 semantics), which is unrelated to the scope bound under test.
     inventory = _inventory(tmp_path, '''package example
 class Outer {
     @Dao
     interface Inner { @Insert fun put(v: Item) }
 }
-''')
+''', policy={"version": 1, "methods": []})
     assert [dao.fqcn for dao in inventory.daos] == ["example.Outer.Inner"]
     assert [item.method.rsplit("#", 1)[1] for item in inventory.mutators] == ["put(Item)"]
     assert inventory.diagnostics == ()
@@ -2461,7 +2469,11 @@ def test_absolute_conventional_java_root_anchors(tmp_path):
     resolved = os.path.relpath(os.fspath(tmp_path / relative), anchor)
     assert not os.path.isabs(resolved)
     assert resolved.replace(os.sep, "/") == relative
-    inventory = build_room_inventory(java_root)
+    # Explicit empty raw-query policy: this test targets anchoring only, and
+    # the default canonical production policy would report its entries STALE
+    # for a synthetic single-DAO fixture under the documented global
+    # equality contract (post-GR-03 semantics).
+    inventory = build_room_inventory(java_root, {"version": 1, "methods": []})
     # Anchored discovery: the DAO and its @Insert mutator are found and the
     # emitted canonical path stays repository-relative POSIX below the
     # enclosing project anchor (the module's parent directory).
@@ -2508,8 +2520,9 @@ def test_anchor_drive_shape_windows_only():
 @_WINDOWS_ANCHOR_ONLY
 def test_anchor_unc_shape_windows_only():
     """A UNC source root keeps both leading separators through the rebuild."""
+    # parts[:-4] cuts src/main/java plus the module dir, so the anchor is the project above it.
     assert _absolute_root_anchor("\\\\server\\share\\proj\\mod\\src\\main\\java") == (
-        "\\\\server\\share\\proj\\mod"
+        "\\\\server\\share\\proj"
     )
 
 

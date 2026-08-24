@@ -7,6 +7,8 @@ the real verifier entry point.  The legacy tuple/stdout tests remain in
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -25,6 +27,7 @@ from scripts.db_guard.policy_legacy import (
 )
 # Kept on the CLI module: these tests invoke the real verifier entry point
 # in-process (CLI-level integration) alongside their subprocess runs.
+import scripts.verify_db_access_boundaries as _verifier_module
 from scripts.verify_db_access_boundaries import (
     main as verify_main,
     structural_manifest_metadata_errors,
@@ -158,19 +161,75 @@ def _run(root: Path, report: Path | None = None, *extra: str,
     if report is not None:
         argv += ["--findings-output", str(report)]
     argv += list(extra)
-    child_env = os.environ.copy()
-    # Tests own the protocol selector.  A developer/CI shell setting must not
-    # make the absent-schema case accidentally exercise another contract.
-    child_env.pop("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", None)
-    if env:
-        child_env.update(env)
-    result = subprocess.run(argv, cwd=str(Path(__file__).parents[1]), env=child_env,
-                            text=True, capture_output=True, check=False)
+    if _EVIDENCE_BYPASS_ACTIVE:
+        # The scanner-isolation fixture patches the verifier module in THIS
+        # interpreter; a child process would reload the real evidence stage
+        # and defeat the isolation.  Dispatch the identical argv in-process.
+        captured_out, captured_err = io.StringIO(), io.StringIO()
+        previous_env = os.environ.copy()
+        try:
+            # Tests own the protocol selector (same rule as the subprocess
+            # path below): a developer/CI shell setting must not leak in.
+            os.environ.pop("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", None)
+            if env:
+                os.environ.update(env)
+            with contextlib.redirect_stdout(captured_out), \
+                    contextlib.redirect_stderr(captured_err):
+                returncode = verify_main(argv[2:])
+        finally:
+            os.environ.clear()
+            os.environ.update(previous_env)
+        result = subprocess.CompletedProcess(
+            argv, returncode,
+            stdout=captured_out.getvalue(), stderr=captured_err.getvalue(),
+        )
+    else:
+        child_env = os.environ.copy()
+        # Tests own the protocol selector.  A developer/CI shell setting must
+        # not make the absent-schema case accidentally exercise another
+        # contract.
+        child_env.pop("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", None)
+        if env:
+            child_env.update(env)
+        result = subprocess.run(argv, cwd=str(Path(__file__).parents[1]), env=child_env,
+                                text=True, capture_output=True, check=False)
     # Protocol-v2 reports are the complete machine-readable output contract;
     # the child must not put human PASS/FAIL/status lines on stdout or leak
     # filesystem/source/exception payloads on stderr.
     _assert_cli_streams(result, root, diagnostic=result.returncode == 2)
     return result
+
+
+# Module-level toggle: when True, ``_run`` dispatches the identical argv
+# through ``verify_main`` in-process so the evidence-bypass patch below is
+# visible to the CLI pipeline (a child interpreter would reload the real
+# stage and silently defeat the isolation).
+_EVIDENCE_BYPASS_ACTIVE = False
+
+
+@pytest.fixture
+def _bypass_evidence(monkeypatch: pytest.MonkeyPatch):
+    """Scanner-stage isolation for protocol-v2 CLI tests.
+
+    Since GR-01, ``main()`` runs ``verify_ownership_policy_source_evidence``
+    BEFORE scanner matching and collapses any evidence failure into the
+    context-free umbrella ``DB_POLICY_SOURCE_EVIDENCE_INVALID``, so synthetic
+    fixtures never reach the scanner stage these tests target.  Tests pinned
+    by this fixture stub ONLY that one stage to pass; structural-manifest
+    verification, scanning, inventory, reporting, and every later stage stay
+    real.  Source-evidence behavior itself keeps dedicated coverage in
+    ``test_verify_db_access_boundaries.py`` and the ``db_guard`` policy
+    suites, plus the ordering pin in
+    ``test_evidence_gate_runs_before_scanner_matching``.
+    """
+    global _EVIDENCE_BYPASS_ACTIVE
+    monkeypatch.setattr(
+        _verifier_module, "verify_ownership_policy_source_evidence",
+        lambda *args, **kwargs: [],
+    )
+    _EVIDENCE_BYPASS_ACTIVE = True
+    yield
+    _EVIDENCE_BYPASS_ACTIVE = False
 
 
 REPORT_KEYS = {"schema", "schema_version", "guard", "findings", "diagnostics", "statistics"}
@@ -274,7 +333,9 @@ def _codes(data: dict, key: str) -> list[str]:
             for item in data[key]]
 
 
-def test_clean_run_writes_valid_guard_report_v2(tmp_path: Path) -> None:
+def test_clean_run_writes_valid_guard_report_v2(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _policy(root)
     _structural_policy(root)
@@ -299,7 +360,9 @@ def test_clean_run_writes_valid_guard_report_v2(tmp_path: Path) -> None:
     })
 
 
-def test_successful_report_bytes_are_deterministic(tmp_path: Path) -> None:
+def test_successful_report_bytes_are_deterministic(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _policy(root)
     _structural_policy(root)
@@ -326,7 +389,9 @@ def test_successful_report_bytes_are_deterministic(tmp_path: Path) -> None:
     _assert_deterministic_bytes(first, second)
 
 
-def test_diagnostics_only_report_bytes_are_deterministic(tmp_path: Path) -> None:
+def test_diagnostics_only_report_bytes_are_deterministic(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _policy(root)
     _structural_policy(root)
@@ -355,7 +420,9 @@ def test_diagnostics_only_report_bytes_are_deterministic(tmp_path: Path) -> None
     _assert_deterministic_bytes(first, second)
 
 
-def test_unauthorized_mutation_is_a_finding_and_fail_on_violation_exits_one(tmp_path: Path) -> None:
+def test_unauthorized_mutation_is_a_finding_and_fail_on_violation_exits_one(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _write(root, "config/guards/ownership.yml", "entries: []\n")
     _structural_policy(root)
@@ -402,7 +469,9 @@ def test_unauthorized_mutation_is_a_finding_and_fail_on_violation_exits_one(tmp_
     })
 
 
-def test_valid_findings_are_strict_exit_one_without_fail_flag(tmp_path: Path) -> None:
+def test_valid_findings_are_strict_exit_one_without_fail_flag(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _write(root, "config/guards/ownership.yml", "entries: []\n")
     _structural_policy(root)
@@ -447,7 +516,9 @@ def test_valid_findings_are_strict_exit_one_without_fail_flag(tmp_path: Path) ->
     })
 
 
-def test_name_only_policy_cannot_authorize_same_name_overloads(tmp_path: Path) -> None:
+def test_name_only_policy_cannot_authorize_same_name_overloads(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     source = SOURCE.replace(
         "fun insert(item: Item)",
         "fun insert(item: Item)\n    @androidx.room.Insert\n    fun insert(label: String)",
@@ -464,7 +535,7 @@ def test_name_only_policy_cannot_authorize_same_name_overloads(tmp_path: Path) -
 
 
 def test_overloaded_dao_with_unresolved_argument_type_is_not_authorized(
-    tmp_path: Path,
+    tmp_path: Path, _bypass_evidence,
 ) -> None:
     source = SOURCE.replace(
         "fun insert(item: Item)",
@@ -505,7 +576,7 @@ def test_overloaded_dao_with_unresolved_argument_type_is_not_authorized(
     "((context.expenseDao)).insert(item)",
 ])
 def test_qualified_dao_receiver_is_unresolved_in_structured_report(
-    tmp_path: Path, expression: str,
+    tmp_path: Path, expression: str, _bypass_evidence,
 ) -> None:
     source = SOURCE.replace("expenseDao.insert(item)", expression)
     root = _fixture(tmp_path, source=source)
@@ -526,7 +597,9 @@ def test_qualified_dao_receiver_is_unresolved_in_structured_report(
     assert diagnostic["path"] == CANONICAL
 
 
-def test_direct_dao_receiver_remains_exactly_authorized_in_structured_report(tmp_path: Path) -> None:
+def test_direct_dao_receiver_remains_exactly_authorized_in_structured_report(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _policy(root)
     _structural_policy(root)
@@ -540,7 +613,9 @@ def test_direct_dao_receiver_remains_exactly_authorized_in_structured_report(tmp
     assert data["diagnostics"] == []
 
 
-def test_unrelated_direct_dao_receiver_keeps_structured_identity(tmp_path: Path) -> None:
+def test_unrelated_direct_dao_receiver_keeps_structured_identity(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     source = SOURCE.replace(
         "private val expenseDao: ExpenseDao",
         "private val expenseDao: ExpenseDao, private val otherDao: ExpenseDao",
@@ -591,7 +666,9 @@ def test_unrelated_direct_dao_receiver_keeps_structured_identity(tmp_path: Path)
     })
 
 
-def test_positive_finding_contains_complete_callable_identity(tmp_path: Path) -> None:
+def test_positive_finding_contains_complete_callable_identity(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _write(root, "config/guards/ownership.yml", "entries: []\n")
     _structural_policy(root)
@@ -638,7 +715,9 @@ def test_positive_finding_contains_complete_callable_identity(tmp_path: Path) ->
     })
 
 
-def test_property_body_is_not_silently_skipped(tmp_path: Path) -> None:
+def test_property_body_is_not_silently_skipped(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     source = SOURCE + """
 class PropertyRepository(private val expenseDao: ExpenseDao) {
     val saved: Item
@@ -873,7 +952,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
     ),
 ])
 def test_d4_executable_declarations_are_discovered_with_structured_identity(
-    tmp_path: Path, body: str, expected_report: dict,
+    tmp_path: Path, body: str, expected_report: dict, _bypass_evidence,
 ) -> None:
     source = SOURCE + "\n" + body + "\n"
     root = _fixture(tmp_path, source=source)
@@ -887,7 +966,9 @@ def test_d4_executable_declarations_are_discovered_with_structured_identity(
     _report(report, expected_report)
 
 
-def test_unknown_argument_expression_is_not_authorized_by_arity(tmp_path: Path) -> None:
+def test_unknown_argument_expression_is_not_authorized_by_arity(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     source = SOURCE + """
 class ExpressionRepository(private val expenseDao: ExpenseDao) {
     fun saveUnknown(value: Any) { expenseDao.insert(value) }
@@ -986,7 +1067,9 @@ def test_default_project_root_uses_canonical_manifest(tmp_path: Path) -> None:
     })
 
 
-def test_explicit_structural_manifest_is_selected_for_source_root_fixture(tmp_path: Path) -> None:
+def test_explicit_structural_manifest_is_selected_for_source_root_fixture(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path, source=STRUCTURAL_SOURCE)
     _policy(root)
     structural = _structural_policy(root, """  - path: app/src/main/java/example/Fixture.kt
@@ -1013,7 +1096,10 @@ counts:
            "entries: []\n")
 
     default_report = root / "default-manifest.json"
-    default_result = _run(root / "app/src/main/java", default_report)
+    # sync_manifest=False: the corrupted canonical manifest above IS the
+    # fixture input under test; the helper must not repair it before the run.
+    default_result = _run(root / "app/src/main/java", default_report,
+                          sync_manifest=False)
     assert default_result.returncode == 2
     _report(default_report, {
         "schema": "cost-aggregator.guard-findings",
@@ -1053,7 +1139,9 @@ counts:
     })
 
 
-def test_required_barrier_is_reported(tmp_path: Path) -> None:
+def test_required_barrier_is_reported(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _policy(root, barrier=True)
     _structural_policy(root)
@@ -1097,7 +1185,9 @@ def test_required_barrier_is_reported(tmp_path: Path) -> None:
     })
 
 
-def test_structural_operation_is_reported(tmp_path: Path) -> None:
+def test_structural_operation_is_reported(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path, source=STRUCTURAL_SOURCE)
     _policy(root)
     _structural_policy(root)
@@ -1138,7 +1228,9 @@ def test_structural_operation_is_reported(tmp_path: Path) -> None:
     })
 
 
-def test_typed_structural_receiver_is_authorized_by_exact_fixture_entry(tmp_path: Path) -> None:
+def test_typed_structural_receiver_is_authorized_by_exact_fixture_entry(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path, source=STRUCTURAL_SOURCE)
     _policy(root)
     structural = _structural_policy(root, """  - path: app/src/main/java/example/Fixture.kt
@@ -1183,7 +1275,9 @@ class WritableRepository(private val db: SQLiteDatabase) {
 """
 
 
-def test_writable_database_property_has_exact_structural_identity(tmp_path: Path) -> None:
+def test_writable_database_property_has_exact_structural_identity(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path, source=WRITABLE_DATABASE_SOURCE)
     _policy(root)
     structural = _structural_policy(root, """  - path: app/src/main/java/example/Fixture.kt
@@ -1239,7 +1333,7 @@ def test_writable_database_property_has_exact_structural_identity(tmp_path: Path
     "db.other.writableDatabase",
 ])
 def test_writable_database_property_rejects_prefix_other_and_unresolved_receivers(
-    tmp_path: Path, expression: str,
+    tmp_path: Path, expression: str, _bypass_evidence,
 ) -> None:
     source = SOURCE + f"""
 
@@ -1267,14 +1361,19 @@ class WritableRepository(private val db: SQLiteDatabase, private val other: Stri
                 "code": "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
                 "path": "app/src/main/java/example/Fixture.kt",
                 "symbol": None,
-                "controlled_context": {},
+                # The unsupported writableDatabase token sits on line 20 of
+                # the fixture (SOURCE is 15 lines + blank/class/fun preamble);
+                # _line_diagnostic carries it as bounded context.
+                "controlled_context": {"line": 20},
             },
         ],
         "statistics": {"trusted": False},
     })
 
 
-def test_infrastructure_diagnostic_discards_partial_findings(tmp_path: Path) -> None:
+def test_infrastructure_diagnostic_discards_partial_findings(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _policy(root)
     _structural_policy(root)
@@ -1549,7 +1648,9 @@ def test_ownership_signature_metadata_accepts_exact_canonical_identity():
     assert ownership_entry_metadata_errors(entry) == []
 
 
-def test_findings_file_environment_transport(tmp_path: Path) -> None:
+def test_findings_file_environment_transport(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _policy(root)
     _structural_policy(root)
@@ -1651,6 +1752,7 @@ def test_findings_file_environment_transport(tmp_path: Path) -> None:
 ])
 def test_findings_schema_environment_is_strict_and_report_remains_v2(
     tmp_path: Path, schema: str | None, expected_exit: int, expected_report: dict,
+    _bypass_evidence,
 ) -> None:
     root = _fixture(tmp_path)
     _policy(root)
@@ -1815,7 +1917,9 @@ counts:
     })
 
 
-def test_report_does_not_depend_on_stdout_summary_parsing(tmp_path: Path) -> None:
+def test_report_does_not_depend_on_stdout_summary_parsing(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _policy(root)
     _structural_policy(root)
@@ -1840,7 +1944,9 @@ def test_report_does_not_depend_on_stdout_summary_parsing(tmp_path: Path) -> Non
     })
 
 
-def test_argv_and_canonical_identity_are_platform_neutral(tmp_path: Path) -> None:
+def test_argv_and_canonical_identity_are_platform_neutral(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     root = _fixture(tmp_path)
     _write(root, "config/guards/ownership.yml", "entries: []\n")
     _structural_policy(root)
@@ -1922,7 +2028,7 @@ def _accessor_policy(root: Path, kind: str, parameters: str = "[]") -> Path:
     ("property_setter", "[Item]"),
 ])
 def test_accessor_policy_uses_exact_structured_callable_identity(
-    tmp_path: Path, kind: str, parameters: str,
+    tmp_path: Path, kind: str, parameters: str, _bypass_evidence,
 ) -> None:
     source = ACCESSOR_SOURCE
     if kind == "property_getter":
@@ -1961,7 +2067,7 @@ def test_accessor_policy_uses_exact_structured_callable_identity(
     ("property_getter", "[Item]"),
 ])
 def test_accessor_policy_rejects_wrong_kind_or_parameter_signature(
-    tmp_path: Path, kind: str, parameters: str,
+    tmp_path: Path, kind: str, parameters: str, _bypass_evidence,
 ) -> None:
     root = _fixture(tmp_path, source=ACCESSOR_SOURCE)
     _accessor_policy(root, kind, parameters)
@@ -2030,7 +2136,9 @@ def test_accessor_policy_rejects_wrong_kind_or_parameter_signature(
     })
 
 
-def test_accessor_unknown_argument_type_is_not_authorized(tmp_path: Path) -> None:
+def test_accessor_unknown_argument_type_is_not_authorized(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     source = ACCESSOR_SOURCE.replace("expenseDao.insert(item); return field",
                                     "expenseDao.insert(field); return field")
     root = _fixture(tmp_path, source=source)
@@ -2058,7 +2166,9 @@ def test_accessor_unknown_argument_type_is_not_authorized(tmp_path: Path) -> Non
     })
 
 
-def test_accessor_unknown_constructor_expression_is_not_authorized(tmp_path: Path) -> None:
+def test_accessor_unknown_constructor_expression_is_not_authorized(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     source = ACCESSOR_SOURCE.replace(
         "val item: Item = Item(0); expenseDao.insert(item)",
         "expenseDao.insert(UnknownItem())",
@@ -2160,12 +2270,73 @@ def test_stale_ownership_policy_is_source_evidence_diagnostic(tmp_path: Path) ->
     })
 
 
+def test_evidence_gate_runs_before_scanner_matching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Pin the GR-01 pipeline ORDER: source evidence gates scanner matching.
+
+    The policy names a method the source never declared (stale evidence)
+    while the scanned tree still contains a real unauthorized mutation.  The
+    evidence stage must run FIRST and win: the report carries ONLY the
+    context-free umbrella diagnostic with zero findings — scanner output for
+    the very same tree would have been DB_UNAUTHORIZED_MUTATION.  A
+    pass-through spy proves the CLI consulted the evidence stage with the
+    loaded policy entries before any matching happened.
+    """
+    root = _fixture(tmp_path)
+    _policy(root, method="removedWriter")
+    _structural_policy(root)
+    report = root / "ordering.json"
+
+    real_evidence_check = _verifier_module.verify_ownership_policy_source_evidence
+    evidence_calls = []
+
+    def _evidence_spy(entries, source_root):
+        evidence_calls.append(len(entries))
+        return real_evidence_check(entries, source_root)
+
+    monkeypatch.setattr(
+        _verifier_module, "verify_ownership_policy_source_evidence", _evidence_spy,
+    )
+
+    assert verify_main([
+        "--root", str(root),
+        "--ownership-policy", str(root / "config/guards/ownership.yml"),
+        "--structural-exceptions", str(root / "config/guards/structural.yml"),
+        "--structural-manifest", str(root / "config/guards/db_structural_exceptions_expected_methods.yml"),
+        "--raw-query-policy", str(root / "config/guards/raw.yml"),
+        "--findings-output", str(report),
+    ]) == 2
+
+    # The pre-gate really ran (with the loaded entries) and blocked the
+    # pipeline before scanner matching could produce anything.
+    assert evidence_calls == [1]
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "ERROR: DB access discovery infrastructure diagnostics present\n"
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [
+            {
+                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+                "path": None,
+                "symbol": None,
+                "controlled_context": {},
+            }
+        ],
+        "statistics": {"trusted": False},
+    })
+
+
 @pytest.mark.parametrize("accessors", [
     "get() { expenseDao.insert(Item(1)); return field }\n        get() { return field }",
     "set(value: Item) { expenseDao.insert(value); field = value }\n        set(value: Item) { field = value }",
 ])
 def test_duplicate_property_accessor_identity_is_unresolved(
-    tmp_path: Path, accessors: str,
+    tmp_path: Path, accessors: str, _bypass_evidence,
 ) -> None:
     source = SOURCE.replace(
         "class Repository(private val expenseDao: ExpenseDao) {\n    fun save(item: Item) {\n        expenseDao.insert(item)\n    }\n}",
@@ -2197,7 +2368,9 @@ def test_duplicate_property_accessor_identity_is_unresolved(
     })
 
 
-def test_receiver_scope_does_not_cross_sibling_methods(tmp_path: Path) -> None:
+def test_receiver_scope_does_not_cross_sibling_methods(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
     source = SOURCE.replace(
         "class Repository(private val expenseDao: ExpenseDao) {\n    fun save(item: Item) {\n        expenseDao.insert(item)\n    }\n}",
         """class Repository {
@@ -2241,7 +2414,7 @@ class UnsafeDao
 
 
 def test_receiver_scope_prefers_local_shadow_and_rejects_ambiguous_shadow(
-    tmp_path: Path,
+    tmp_path: Path, _bypass_evidence,
 ) -> None:
     source = SOURCE.replace(
         "class Repository(private val expenseDao: ExpenseDao) {\n    fun save(item: Item) {\n        expenseDao.insert(item)\n    }\n}",
