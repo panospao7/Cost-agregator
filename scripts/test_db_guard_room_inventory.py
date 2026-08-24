@@ -66,9 +66,16 @@ def _mock_directory_barrier(monkeypatch):
     real_close = room_inventory.os.close
     directory_fd = 987654
     monkeypatch.setattr(room_inventory.os, "O_DIRECTORY", 0x10000, raising=False)
+    # ``tempfile.mkstemp`` (used by ``write_inventory_atomic``) invokes
+    # ``os.open(path, flags, mode)`` with THREE positional arguments, so the
+    # seam must forward the trailing mode instead of dropping it (a 2-arg
+    # lambda turns every temp-file creation into a TypeError, which the
+    # writer sanitizes into InventoryWriteError).
     monkeypatch.setattr(
         room_inventory.os, "open",
-        lambda path, flags: directory_fd if flags & 0x10000 else real_open(path, flags),
+        lambda path, flags, *rest: (
+            directory_fd if flags & 0x10000 else real_open(path, flags, *rest)
+        ),
     )
     monkeypatch.setattr(
         room_inventory.os, "fsync",
@@ -2190,8 +2197,12 @@ def test_large_legal_annotation_whitespace_span_is_discovered(tmp_path):
     whitespace span (beyond the old 2048-character window but within the
     documented safe maximum) must still be discovered; it must never be
     silently omitted."""
-    gap = " " * (MAX_ANNOTATION_TO_DECLARATION_SPAN - 1024)
-    assert gap > 2048  # exceeds the old arbitrary search window
+    # The window comparison happens on the INTEGER span at its source, never
+    # on the constructed whitespace string (a str-vs-int comparator is a
+    # TypeError, and length checks belong to the value that owns the count).
+    span = MAX_ANNOTATION_TO_DECLARATION_SPAN - 1024
+    assert span > 2048  # exceeds the old arbitrary search window
+    gap = " " * span
     source = f"package example\n@Dao{gap}interface Wide {{ @Insert fun put(v: Item) }}\n"
     inventory = _inventory(tmp_path, source, policy={"version": 1, "methods": []})
     assert [dao.fqcn for dao in inventory.daos] == ["example.Wide"]

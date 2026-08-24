@@ -325,7 +325,16 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
 def _pairs(text: str, a: int, b: str, limit: int = MAX_DEPTH) -> int:
     close = {"(": ")", "{": "}", "[": "]", "<": ">"}
     stack: list[str] = []
-    for i in range(a, len(text)):
+    i = a
+    while i < len(text):
+        if text.startswith("->", i):
+            # A Kotlin ``->`` arrow is not a closing angle bracket: skip its
+            # ``>`` without touching the delimiter stack (same rule as
+            # ``declaration_scanner._header_opening``), so function-type
+            # parameter spans such as ``(Int) -> String`` stay parseable
+            # instead of failing closed as MALFORMED_SOURCE.
+            i += 2
+            continue
         c = text[i]
         if c in close:
             stack.append(close[c])
@@ -333,6 +342,7 @@ def _pairs(text: str, a: int, b: str, limit: int = MAX_DEPTH) -> int:
         elif c in ")}]>":
             if not stack or stack.pop() != c: _fail("MALFORMED_SOURCE")
             if not stack: return i
+        i += 1
     _fail("MALFORMED_SOURCE")
 
 
@@ -355,7 +365,10 @@ def _owner_body(text: str, start: int, scope_end: int, limit: int = MAX_DEPTH) -
     """Find only a declaration header's body delimiter.
 
     In particular, never use a later brace belonging to a sibling declaration
-    as the body of a bodyless class/object.
+    as the body of a bodyless class/object.  A ``fun`` keyword at the top
+    level of the enclosing scope is such a sibling too: a bodyless owner must
+    stop there instead of adopting the function's body brace (which would
+    hide the function from its real owner's callable scan).
     """
     stack: list[str] = []
     close = {"(": ")", "[": "]", "<": ">"}
@@ -370,7 +383,7 @@ def _owner_body(text: str, start: int, scope_end: int, limit: int = MAX_DEPTH) -
         elif not stack:
             if c == "{": return i, i
             if c == "}": return None, i
-            if re.match(r"(?:class|object)\b", text[i:]): return None, i
+            if re.match(r"(?:fun|class|object)\b", text[i:]): return None, i
         i += 1
     if stack: _fail("MALFORMED_SOURCE")
     return None, scope_end
@@ -397,6 +410,12 @@ def _header_body_start(text: str, start: int, scope_end: int, limit: int = MAX_D
     close = {"(": ")", "[": "]", "<": ">"}
     i = start
     while i < scope_end:
+        if text.startswith("->", i):
+            # A Kotlin ``->`` arrow (e.g. a function-typed return type such as
+            # ``(Int) -> String``) is not a closing angle bracket: skip its
+            # ``>`` without touching the delimiter stack.
+            i += 2
+            continue
         c = text[i]
         if c in close:
             stack.append(close[c])

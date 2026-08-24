@@ -238,11 +238,9 @@ def test_inventory_only_cli_trusted_exit_zero(tmp_path):
     )
     combined = result.stdout + result.stderr
 
-    # Both declared outputs must exist regardless of platform barrier
-    # support (the mutators dump is atomically replaced before the
-    # durability check runs).
+    # The findings output must exist regardless of platform barrier support
+    # or pre-existing debt: the findings writer has no directory-barrier gate.
     assert findings_output.is_file(), combined
-    assert mutators_output.is_file(), combined
 
     report = json.loads(findings_output.read_text(encoding="utf-8"))
     codes = [
@@ -266,16 +264,19 @@ def test_inventory_only_cli_trusted_exit_zero(tmp_path):
         assert report.get("statistics", {}).get("trusted") is False
         assert not mutators_output.exists(), combined
     elif _HAS_DIRECTORY_BARRIER:
-        # Clean scan on a barrier-capable platform: full trusted contract.
+        # Clean scan on a barrier-capable platform: full trusted contract,
+        # including the mutators dump.
         assert result.returncode == 0, combined
         assert codes == []
         assert report.get("statistics", {}).get("trusted") is True
+        assert mutators_output.is_file(), combined
     else:
         # Clean scan without a confirmable directory durability barrier
         # (Windows): the dump itself succeeded (atomic replace precedes the
-        # barrier check) and the CLI reports exactly the single controlled
-        # INVENTORY_DURABILITY_UNCONFIRMED diagnostic with an untrusted
-        # report.
+        # barrier check), so both outputs still exist while the CLI reports
+        # exactly the single controlled INVENTORY_DURABILITY_UNCONFIRMED
+        # diagnostic with an untrusted report.
         assert result.returncode == 2, combined
         assert codes == ["INVENTORY_DURABILITY_UNCONFIRMED"], codes
         assert report.get("statistics", {}).get("trusted") is False
+        assert mutators_output.is_file(), combined

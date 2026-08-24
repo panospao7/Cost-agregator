@@ -297,12 +297,18 @@ def test_implicit_table_alias_after_from_still_parses():
     "SELECT * FROM things ORDER BY id ASC",
     "SELECT * FROM things ORDER BY id DESC LIMIT ?1",
     "SELECT * FROM things ORDER BY kind ASC, id DESC",
-    "SELECT * FROM things WHERE id = :id ORDER BY id DESC",
+    "SELECT * FROM things ORDER BY kind DESC, id",
+    "SELECT * FROM things ORDER BY kind ASC, id ASC, value DESC",
+    "SELECT * FROM things WHERE id = :id ORDER BY kind DESC, id ASC LIMIT ?1",
+    # Commas inside key expressions never split keys: each parenthesized
+    # function call stays one key with its own optional direction.
+    "SELECT * FROM things ORDER BY substr(kind, 2) DESC, id ASC",
 ])
 def test_directed_order_by_remains_a_read(sql):
-    """One trailing ASC/DESC sort-direction keyword belongs to the ORDER BY
-    clause; both are reserved words, so the expression grammar must exclude
-    the single trailing direction instead of failing closed on it."""
+    """Each comma-separated ORDER BY key may carry its own single trailing
+    ASC/DESC sort-direction keyword; both are reserved words, so the
+    per-key grammar must exclude exactly one trailing direction instead of
+    failing closed on it."""
     result = classify_sql(sql)
     assert result.operation == "SELECT"
     assert result.is_read and not result.is_unknown
@@ -322,6 +328,14 @@ def test_directed_order_by_in_mutation_tails_remain_classified(sql):
     "SELECT * FROM things ORDER BY DESC LIMIT 1",
     # Doubled directions are not a SQLite sort specification.
     "SELECT * FROM things ORDER BY id ASC DESC",
+    # A malformed key fails closed even when its sibling keys are well
+    # formed: every key of the list is validated independently.
+    "SELECT * FROM things ORDER BY kind ASC, DESC",
+    "SELECT * FROM things ORDER BY kind, id ASC DESC, value",
+    # Empty keys (leading/trailing/doubled comma) never classify.
+    "SELECT * FROM things ORDER BY kind ASC,",
+    "SELECT * FROM things ORDER BY , kind",
+    "SELECT * FROM things ORDER BY kind ASC,, id DESC",
 ])
 def test_malformed_direction_shapes_still_fail_closed(sql):
     result = classify_sql(sql)

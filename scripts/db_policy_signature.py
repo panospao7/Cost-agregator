@@ -47,6 +47,14 @@ __all__ = ["FunctionSignature", "SignatureError", "normalize_type_text"]
 
 
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# Control characters rejected in TYPE text.  Standard Kotlin token
+# separators (tab, newline, carriage return) are whitespace, not hostile
+# control payload: multi-line type expressions are legal Kotlin and the
+# grammar's tokenizer skips them, so they must not fail the CONTROL_TYPE
+# gate.  Every other C0 control plus DEL stays rejected -- including the
+# whitespace-like ``\x1c``-``\x1f`` anti-evasion set at leading/trailing
+# positions.
+_TYPE_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # Owner FQCNs are a strict dotted chain of Kotlin identifiers only; no
 # generics, nullability markers, array suffixes, function types, whitespace,
@@ -459,10 +467,12 @@ def normalize_type_text(value: Any, *, allow_vararg: bool = False) -> str:
     ``NESTING_TOO_DEEP``). The length bound is enforced on the raw input
     before trimming, so whitespace padding cannot bypass it. Control
     characters are likewise validated against the raw input before trimming:
-    whitespace-like control characters (for example ``\x1c``-``\x1f``, which
-    ``isspace()``/``strip()`` treat as whitespace) at leading or trailing
-    positions are rejected with ``CONTROL_TYPE`` and can never be silently
-    stripped away.
+    standard Kotlin token separators (tab, newline, carriage return) are
+    accepted between tokens (multi-line type expressions are legal), while
+    every other control character -- including the whitespace-like
+    ``\x1c``-``\x1f`` set, which ``isspace()``/``strip()`` treat as
+    whitespace, at leading or trailing positions -- is rejected with
+    ``CONTROL_TYPE`` and can never be silently stripped away.
 
     ``vararg`` is rejected by default in every context. When
     ``allow_vararg=True`` a single leading ``vararg `` prefix is accepted on
@@ -479,12 +489,14 @@ def normalize_type_text(value: Any, *, allow_vararg: bool = False) -> str:
     if len(value) > MAX_TYPE_INPUT_LENGTH:
         _reject("TYPE_TOO_LONG", "type text is too long")
     # Control characters are validated against the raw input before
-    # strip()/trimming, for the same reason as the length bound:
-    # whitespace-like control characters (for example \x1c-\x1f, which
-    # isspace()/strip() treat as whitespace) at leading or trailing
-    # positions must be rejected with CONTROL_TYPE, never silently stripped
-    # away or folded into a blank rejection.
-    if _CONTROL_RE.search(value):
+    # strip/normalization, so whitespace padding can never bypass it.  Tab,
+    # newline, and carriage return are accepted Kotlin token separators
+    # (multi-line type expressions are legal); every other control character,
+    # including the whitespace-like ``\x1c``-``\x1f`` set (which
+    # ``isspace()``/``strip()`` treat as whitespace) at leading or trailing
+    # positions, is rejected with ``CONTROL_TYPE`` and can never be silently
+    # stripped away.
+    if _TYPE_CONTROL_RE.search(value):
         _reject("CONTROL_TYPE", "control characters are not allowed in a type")
     text = value.strip()
     if not text:

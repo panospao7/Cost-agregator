@@ -410,6 +410,17 @@ def test_empty_function_types_are_normalized_exactly():
 
 
 def test_empty_function_type_parameter_keeps_signature(parse_file):
+    """Empty-parameter function types keep their normalized spacing, and
+    their components resolve through the SAME closed-world atom resolution
+    as bare parameter types.
+
+    Layering: normalization (spacing/grammar) is the shared
+    ``db_policy_signature`` grammar's job; resolution is the parser's ordered
+    nested-owner/package/import/builtin chain.  The project-local ``Result``
+    therefore resolves to its package-qualified FQCN inside the function
+    type exactly as a bare ``Result`` parameter would, while the builtin
+    ``Unit`` keeps its simple name.
+    """
     declarations = parse_file("""package example
 class Result
 class Fixture {
@@ -418,7 +429,7 @@ class Fixture {
 """)
     _assert_declaration(
         declarations[0], owner="example.Fixture", name="callbacks",
-        parameter_types=("() -> Unit", "() -> Result"),
+        parameter_types=("() -> Unit", "() -> example.Result"),
     )
 
 

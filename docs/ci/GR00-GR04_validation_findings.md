@@ -479,3 +479,90 @@ verification disproved all but line 2064).
   the new exact count is known).
 
 Cumulative trend paused at: 372 -> 357 -> 151 -> 101 -> 59 -> BLOCKED (collection).
+
+---
+
+## Re-validation round 6b (2026-08-24) — after commit `486fb6c3` "repair _report dict close blocking suite collection"
+
+HEAD `486fb6c3fba356b0d8278ff883f70ed270a2c042`; checkout clean. Collection blocker resolved;
+sweep runs again.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> exit 1; **27 failed / 2207 passed / 23 skipped** in 307 s
+(round 5: 59). NOT green -> checklist sections 2–6 remain deferred. Trend:
+372 -> 357 -> 151 -> 101 -> 59 -> blocked -> **27**.
+
+### Inventory-debt Revision-2 input (checklist §3)
+
+`verify_db_access_boundaries --inventory-only`: exit 2; NEW debt =
+**143 x DB_ROOM_QUERY_UNCLASSIFIABLE**, inheritance diagnostic GONE (was 350 + 1);
+zero `DB_SOURCE_ROOT_*` codes (invariant HOLDS); statistics.trusted=false.
+The checklist §3 "350+1" expectation needs a Revision-2 update to the captured number.
+
+### Residue (27) with node IDs
+
+A. Platform-fallback / Windows durability family (5) — os.O_DIRECTORY fail-closed per
+   design; candidates for platform-conditional skip or documented Windows expectation:
+   1. scripts/test_db_guard_room_inventory.py::test_inventory_write_is_canonical_and_atomic —
+      `InventoryWriteError: DB_ROOM_INVENTORY_WRITE_FAILED`
+   2. scripts/test_db_guard_room_inventory.py::test_inventory_write_success_reloads_report — same code
+   3. scripts/test_verify_db_access_v2.py::test_clean_run_writes_valid_guard_report_v2 —
+      exit 2, stderr `ERROR: DB_FINDINGS_WRITE_FAILED`
+   4. scripts/test_verify_db_access_v2.py::test_inventory_only_writes_inventory_schema_and_rejects_diagnostics —
+      verify_main returned 2 vs expected 0 (mutator dump path)
+   5. scripts/test_db_guard_source_roots_integration.py::test_inventory_only_cli_trusted_exit_zero —
+      CLI diagnostics present; room-mutators.json not written
+
+B. SQL classifier edge (1):
+   6. scripts/test_db_guard_sql_classifier.py::test_directed_order_by_remains_a_read[SELECT * FROM things ORDER BY kind ASC, id DESC] —
+      multi-key ORDER BY classified UNCLASSIFIABLE instead of SELECT (the new directed-
+      ORDER-BY classifier handles single-key only)
+
+C. Kotlin callable parser error layering (5) — generic ParserError/StopIteration/
+   SignatureError("control characters are not allowed in a type") where typed codes pinned:
+   7. scripts/test_kotlin_callable_parser.py::test_nested_generic_and_function_depth_boundaries_keep_status
+   8. scripts/test_kotlin_callable_parser.py::test_function_type_parameter_has_exact_signature
+   9. scripts/test_kotlin_callable_parser.py::test_empty_function_types_are_normalized_exactly
+   10. scripts/test_kotlin_callable_parser.py::test_empty_function_type_parameter_keeps_signature
+   11. scripts/test_kotlin_callable_parser.py::test_unqualified_nested_owner_type_beats_same_package_type —
+       StopIteration: declaration with signature.function_name == 'f' not discovered
+
+D. D4 structural pipeline (8):
+   12. scripts/test_db_guard_scanner_d4.py::test_property_initializer_and_accessors_have_distinct_exact_symbols —
+       ValueError: substring not found (fixture source text mismatch)
+   13. scripts/test_db_guard_scanner_d4.py::test_delete_recursively_uses_exact_structural_token_and_policy_path —
+       ValidationError: rule 'DB_FORBIDDEN_STRUCTURAL_OPERATION' emitted as finding WITHOUT
+       resolved callable signature; contract requires diagnostic 'DB_SIGNATURE_UNRESOLVED'
+   14. scripts/test_db_guard_scanner_d4.py::test_large_legal_annotation_whitespace_span_is_discovered —
+       TypeError: '>' not supported between str and int (persists since round 4)
+   15.–19. scripts/test_verify_db_access_v2.py::test_d4_executable_declarations_are_discovered_with_structured_identity[expected_report0..4] —
+       exit 2 "DB access discovery infrastructure diagnostics present" where exit 1 + findings
+       expected; one variant pins wrong location line (actual 13 vs expected 18, init block)
+
+E. Accessor authorization semantics (5):
+   20.–21. scripts/test_verify_db_access_v2.py::test_accessor_policy_uses_exact_structured_callable_identity[property_getter-[]]/[property_setter-[Item]] — report mismatch
+   22.–23. scripts/test_verify_db_access_v2.py::test_accessor_policy_rejects_wrong_kind_or_parameter_signature[property_setter-[]]/[property_getter-[Item]] — report mismatch / exit drift
+   24. scripts/test_verify_db_access_v2.py::test_duplicate_property_accessor_identity_is_unresolved[set(value: Item)...] — setter variant only (getter now passes)
+
+F. Mutator counting / overload semantics (2):
+   25. scripts/test_verify_db_access_v2.py::test_name_only_policy_cannot_authorize_same_name_overloads —
+       REAL behavioral diff: inventory_mutators actual 2 vs expected 1 (extra mutator
+       discovered in fixture)
+   26. scripts/test_verify_db_access_v2.py::test_writable_database_property_has_exact_structural_identity —
+       exit 2 + infrastructure diagnostics stderr vs expected exit 1
+
+(Count check: A=5, B=1, C=5, D=8, E=5, F=2 -> 27.)
+
+### Round-6b triage hints
+
+1. Product-behavior suspects: #6 multi-key ORDER BY; #13 signature-unresolved finding
+   contract violation; #14 str-vs-int comparator; #15–19 D4 property/init/object/topLevel
+   discovery emitting infrastructure diagnostics; #25 double mutator count.
+2. Parser layering (#7–11): decide typed-code surface vs generic ParserError; StopIteration
+   at #11 suggests a discovery regression for nested owner types.
+3. A-family: either platform-conditional skips or pin documented Windows behavior; confirm
+   whether DB_FINDINGS_WRITE_FAILED shares the O_DIRECTORY gate.
+
+Production gates stable across all rounds; inventory §3 numbers above supersede the
+historical 350+1 for Revision 2.

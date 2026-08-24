@@ -809,7 +809,8 @@ def _valid_select_tail(tokens: List[_Token]) -> bool:
         elif _word(tokens, i, "ORDER"):
             if not _word(tokens, i + 1, "BY"): return False
             i += 2; end = _next_clause(tokens, i)
-            if not _valid_expression(_order_expression(tokens, i, end)): return False
+            keys = _order_expression(tokens, i, end)
+            if not keys or not all(_valid_expression(key) for key in keys): return False
             i = end
         elif _word(tokens, i, "LIMIT"):
             i += 1; end = _next_clause(tokens, i)
@@ -849,39 +850,41 @@ def _next_clause(tokens: List[_Token], start: int) -> int:
     return len(tokens)
 
 
-def _order_expression(tokens: List[_Token], start: int, end: int) -> List[_Token]:
-    """ORDER BY expression tokens from ``tokens[start:end]`` with every
-    comma-separated key's single optional trailing sort direction removed.
+def _order_expression(tokens: List[_Token], start: int, end: int) -> List[List[_Token]]:
+    """ORDER BY keys from ``tokens[start:end]`` as one token slice per key,
+    with each key's single optional trailing sort direction removed.
 
     SQLite's ORDER BY grammar is ``expr [ASC|DESC] [, expr [ASC|DESC]]*``.
     Both direction keywords are reserved words, so leaving a direction
     inside an expression slice makes every directed ORDER BY fail closed as
-    an illegal bare reserved word.  Each key may drop exactly ONE trailing
-    direction; a key reduced to nothing (a lone direction, doubled
-    directions) keeps the clause malformed so it still fails closed through
-    the ordinary expression grammar.
+    an illegal bare reserved word.  The key list is split on top-level
+    commas only (parenthesis-depth aware; commas inside function-call
+    parentheses never split, and bracket-quoted identifiers are single
+    tokens), and the caller validates every key independently, so each key
+    may carry its own optional direction.  Each key drops exactly ONE
+    trailing direction; any malformed key -- a lone direction, doubled
+    directions, or an empty key from a leading/trailing/doubled comma --
+    makes this return no keys at all so the clause still fails closed
+    through the caller's non-empty check and the ordinary expression
+    grammar.
     """
     groups: List[List[_Token]] = []
-    separators: List[_Token] = []
     group_start = start
     for index in range(start, end):
         if (tokens[index].kind == "OP" and tokens[index].text == ","
                 and tokens[index].depth == 0):
             groups.append(tokens[group_start:index])
-            separators.append(tokens[index])
             group_start = index + 1
     groups.append(tokens[group_start:end])
-    result: List[_Token] = []
-    for position, group in enumerate(groups):
+    keys: List[List[_Token]] = []
+    for group in groups:
         if (len(group) >= 2 and group[-1].kind == "WORD"
                 and group[-1].text.upper() in ("ASC", "DESC")):
             group = group[:-1]
         if not group:
             return []
-        if position:
-            result.append(separators[position - 1])
-        result.extend(group)
-    return result
+        keys.append(group)
+    return keys
 
 
 def _join_operator_end(tokens: List[_Token], index: int) -> int:
@@ -1072,7 +1075,8 @@ def _valid_statement_grammar(keyword: str, tail: List[_Token]) -> bool:
         elif _word(tail, i, "ORDER"):
             if not _word(tail, i + 1, "BY"): return False
             i += 2; end = _next_clause(tail, i)
-            if not _valid_expression(_order_expression(tail, i, end)): return False
+            keys = _order_expression(tail, i, end)
+            if not keys or not all(_valid_expression(key) for key in keys): return False
             i = end
         elif _word(tail, i, "LIMIT") or _word(tail, i, "OFFSET"):
             i += 1; end = _next_clause(tail, i)

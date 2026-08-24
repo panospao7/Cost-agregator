@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover
     yaml = None
 
 from ..ci.guard_findings import (
+    _is_unresolved_symbol,
     CallableSymbol, GuardDiagnostic, GuardFinding, GuardRunReport,
     SourceLocation, KIND_FUNCTION, KIND_INITIALIZER, KIND_PROPERTY_GETTER,
     KIND_PROPERTY_SETTER, KIND_VALUES,
@@ -518,6 +519,22 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             diagnostics.append(GuardDiagnostic("DB_METHOD_BODY_UNSUPPORTED", path=declaration.path))
             continue
         masked = mask_kotlin_source(source)
+        if declaration.kind == "property":
+            # Duplicated accessor kinds make the property's callable identity
+            # ambiguous (which ``set`` would a policy authorize?): fail
+            # closed with the controlled unresolved-signature diagnostic
+            # instead of letting the first accessor silently stand in for
+            # the whole property's identity.
+            accessor_span = masked[_line_start(source, declaration.start_line):
+                                   _line_end(source, declaration.end_line)]
+            accessor_kinds = [
+                item.group("kind") for item in _ACCESSOR.finditer(accessor_span)
+            ]
+            if len(accessor_kinds) != len(set(accessor_kinds)):
+                diagnostics.append(GuardDiagnostic(
+                    "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                ))
+                continue
         try:
             owners = find_owner_declarations(source)
             owner = next((item for item in owners if item.owner == declaration.owner_fqcn), None)
@@ -559,6 +576,25 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         except (ParserError, SignatureError):
             diagnostics.append(GuardDiagnostic("DB_SIGNATURE_UNRESOLVED", path=declaration.path))
             continue
+        # A property's accessor parameter lists live AFTER the first body
+        # brace (the getter's), so the callable-header scan inside
+        # ``_receiver_types`` never sees them.  Collect every accessor
+        # parameter of THIS property once so a setter argument such as
+        # ``value`` resolves exactly like a declared parameter; without it,
+        # second-accessor mutations fail closed with a spurious
+        # DB_SIGNATURE_UNRESOLVED.  The raw declared spelling is kept, the
+        # same way ``_PARAM`` candidates store it.
+        accessor_parameters: dict[str, str] = {}
+        if declaration.kind == "property":
+            property_text = masked[_line_start(source, declaration.start_line):
+                                   _line_end(source, declaration.end_line)]
+            for accessor_match in re.finditer(r"\bset\s*\(([^)]*)\)", property_text):
+                param_match = re.fullmatch(
+                    r"([A-Za-z_]\w*)\s*:\s*(.+)",
+                    accessor_match.group(1).strip(), re.S,
+                )
+                if param_match:
+                    accessor_parameters[param_match.group(1)] = param_match.group(2).strip()
         calls = list(_METHOD_CALL.finditer(masked, start, end))
         for call in sorted(calls, key=lambda item: item.start()):
             receiver_types = _receiver_types(
@@ -569,6 +605,10 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 owner_end=owner.end_offset if owner is not None else None,
                 use_offset=call.start(),
             )
+            if accessor_parameters:
+                merged = dict(accessor_parameters)
+                merged.update(receiver_types)
+                receiver_types = merged
             receiver, receiver_is_bare = _receiver_expression(masked, call.start())
             operation = call.group("method")
             receiver_type = receiver_types.get(receiver) if receiver_is_bare else None
@@ -707,6 +747,17 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                             _line(source, match.start()),
                         ))
                         continue
+                if _is_unresolved_symbol(structural_symbol):
+                    # Findings must never lack resolved callable identity:
+                    # the structural rule declares symbol.* identity fields,
+                    # so an unresolved signature takes the controlled
+                    # DB_SIGNATURE_UNRESOLVED diagnostic path -- the same
+                    # shape every other unresolved path here uses -- and the
+                    # finding is skipped.  Identical emissions deduplicate.
+                    diagnostics.append(GuardDiagnostic(
+                        "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                    ))
+                    continue
                 if not _structural_match(structural, declaration.path,
                                          declaration.owner_fqcn.rsplit(".", 1)[-1],
                                          structural_symbol.name, operation):
@@ -720,7 +771,21 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         for match in _PROPERTY_STRUCTURAL_ACCESS.finditer(masked, start, end):
             operation = match.group("property")
             receiver, receiver_is_bare = _receiver_expression(masked, match.start())
-            receiver_type = receiver_types.get(receiver) if receiver_is_bare else None
+            # The property-access path runs OUTSIDE the method-call loop, so
+            # it must resolve the receiver environment at ITS OWN position.
+            # Reusing the last call's environment leaked a sibling
+            # declaration's lexical scope (or raised NameError when the
+            # declaration had no earlier method call), misclassifying every
+            # writableDatabase access after an unrelated mutation.
+            receiver_types_at_access = _receiver_types(
+                source, start, end,
+                callable_start=callable_item.start_offset if callable_item is not None else start,
+                callable_end=callable_item.end_offset if callable_item is not None else end,
+                owner_start=owner.start_offset if owner is not None else None,
+                owner_end=owner.end_offset if owner is not None else None,
+                use_offset=match.start(),
+            )
+            receiver_type = receiver_types_at_access.get(receiver) if receiver_is_bare else None
             if not receiver_is_bare or not _is_structural_receiver(receiver_type):
                 diagnostics.append(_line_diagnostic(
                     "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
@@ -737,6 +802,15 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                         _line(source, match.start()),
                     ))
                     continue
+            if _is_unresolved_symbol(structural_symbol):
+                # Same resolved-identity contract as the method-shaped
+                # structural path above: an unresolved signature becomes the
+                # controlled DB_SIGNATURE_UNRESOLVED diagnostic, never a
+                # finding.
+                diagnostics.append(GuardDiagnostic(
+                    "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                ))
+                continue
             if not _structural_match(structural, declaration.path,
                                      declaration.owner_fqcn.rsplit(".", 1)[-1],
                                      structural_symbol.name, operation):
