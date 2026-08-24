@@ -772,7 +772,14 @@ class Fixture {
 
 
 @pytest.mark.parametrize(("type_text", "code"), [
-    ("List<", "UNBALANCED_ANGLE"),
+    # ``List<`` breaks STRUCTURAL pairing before the signature grammar runs:
+    # the parser's delimiter scanners (_pairs/_body_end) track ``<``/``>`` as
+    # paired delimiters, so an unbalanced angle in the SOURCE fails closed
+    # earlier with MALFORMED_SOURCE, which ParserError sanitizes to the fixed
+    # generic PARSER_ERROR code.  The signature layer's UNBALANCED_ANGLE stays
+    # reachable and pinned at its own boundary (see
+    # ``test_signature_layer_unbalanced_angle_code`` below).
+    ("List<", "PARSER_ERROR"),
     ("List<" * 33 + "String" + ">" * 33, "NESTING_TOO_DEEP"),
     ("String" + "?" * 2, "DUPLICATE_NULLABLE"),
     ("List<" + ",".join(["String"] * 130) + ">", "TYPE_TOO_MANY_TOKENS"),
@@ -783,6 +790,22 @@ def test_signature_limits_and_delimiters_keep_exact_parser_codes(parse_file, typ
     assert excinfo.value.code == code
     assert str(excinfo.value) == _MASK_MESSAGE
     assert type_text not in repr(excinfo.value)
+
+
+def test_signature_layer_unbalanced_angle_code():
+    """Pin UNBALANCED_ANGLE at the layer that owns it.
+
+    The controlled UNBALANCED_ANGLE code is produced by the shared signature
+    grammar (``db_policy_signature.normalize_type_text``) for type TEXT with
+    unbalanced generic delimiters; the callable parser adopts it verbatim
+    whenever signature validation is reached.  End-to-end sources whose
+    angles break structural pairing are rejected earlier (sanitized generic
+    PARSER_ERROR) — see ``test_signature_limits_and_delimiters_keep_exact_parser_codes``.
+    """
+    with pytest.raises(dbsig.SignatureError) as excinfo:
+        dbsig.normalize_type_text("List<")
+    assert excinfo.value.code == "UNBALANCED_ANGLE"
+    assert excinfo.value.message == "unbalanced generic delimiters"
 
 
 def test_imported_type_resolves_to_fqcn(parse_file):
@@ -925,9 +948,15 @@ def test_parser_errors_are_sanitized(parse_file, hostile):
     with pytest.raises(parser.ParserError) as excinfo:
         parse_file(hostile)
     error = excinfo.value
+    # ``Not<closed`` breaks STRUCTURAL delimiter pairing (the parser's
+    # scanners track ``<``/``>`` as paired delimiters), so the source is
+    # rejected before signature validation with MALFORMED_SOURCE, which
+    # ParserError sanitizes to the fixed generic PARSER_ERROR code.  The
+    # signature layer's UNBALANCED_ANGLE remains pinned at its own boundary
+    # by ``test_signature_layer_unbalanced_angle_code``.
     expected_codes = {
         "unterminated /* raw-comment-payload": "PARSER_ERROR",
-        "class Leaked { fun value(x: Not<closed) {} }": "UNBALANCED_ANGLE",
+        "class Leaked { fun value(x: Not<closed) {} }": "PARSER_ERROR",
         "class Leaked { fun value(x: String & Int) {} }": "UNSUPPORTED_TOKEN",
         "class Fixture { fun bad(value: MissingType) {} }": "TYPE_UNRESOLVED",
     }

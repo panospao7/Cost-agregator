@@ -124,11 +124,15 @@ def test_two_overloads_differing_only_in_ordered_parameter_types(tmp_path):
     # ``_VALID_ENTRY_YAML`` is textwrap.dedent-ed: entry keys sit at 4 spaces
     # and list items at 6, so this splice must use those indents -- deeper
     # indents silently no-op the replace() and leave a one-entry document.
+    # The second entry must be appended AFTER the first entry's final field
+    # (``linkedIssue``): splicing mid-entry would leave the first entry
+    # without its trailing required fields and re-attach them to the second
+    # entry as duplicate keys.
     yaml_text = _mutate(
         [
             (
-                "    parameterTypes:\n      - com.example.Group\n",
-                "    parameterTypes:\n      - com.example.Group\n"
+                "    linkedIssue: X-1\n",
+                "    linkedIssue: X-1\n"
                 "  - path: app/src/main/java/com/example/Repo.kt\n"
                 "    ownerFqcn: com.example.Repo\n"
                 "    kind: function\n"

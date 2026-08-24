@@ -114,6 +114,14 @@ def _sync_fixture_manifest(root: Path) -> Path:
 def _policy(root: Path, *, method: str = "save", barrier: bool = False,
             class_name: str = "Repository", dao: str = "expenseDao",
             operation: str = "insert") -> Path:
+    # ``parameters`` must use the matcher's RESOLVED canonical spelling:
+    # kotlin_callable_parser._resolve_type resolves project-local parameter
+    # types to their package-qualified FQCN (closed-world resolution; only
+    # builtins keep simple names), and _policy_matches compares the policy
+    # signature against that resolved identity exactly.  A simple-name
+    # ``[Item]`` entry is valid metadata but matches nothing, so the mutation
+    # would be reported DB_UNAUTHORIZED_MUTATION instead of authorized (or,
+    # with barrier_required=true, instead of DB_MISSING_WRITE_BARRIER).
     text = f"""entries:
   - path: {CANONICAL}
     class: {class_name}
@@ -123,7 +131,7 @@ def _policy(root: Path, *, method: str = "save", barrier: bool = False,
     signature:
       receiver: null
       kind: function
-      parameters: [Item]
+      parameters: [example.Item]
     barrier_required: {'true' if barrier else 'false'}
     reason: fixture
     owner: '@d4c'
@@ -448,7 +456,8 @@ def test_unauthorized_mutation_is_a_finding_and_fail_on_violation_exits_one(
                     "owner": "example.Repository",
                     "name": "save",
                     "receiver": None,
-                    "parameters": ["Item"],
+                    # Resolved canonical spelling (package-qualified FQCN).
+                    "parameters": ["example.Item"],
                     "kind": "function",
                 },
                 "identity": {
@@ -495,7 +504,8 @@ def test_valid_findings_are_strict_exit_one_without_fail_flag(
                     "owner": "example.Repository",
                     "name": "save",
                     "receiver": None,
-                    "parameters": ["Item"],
+                    # Resolved canonical spelling (package-qualified FQCN).
+                    "parameters": ["example.Item"],
                     "kind": "function",
                 },
                 "identity": {
@@ -540,12 +550,17 @@ def test_name_only_policy_cannot_authorize_same_name_overloads(
 def test_overloaded_dao_with_unresolved_argument_type_is_not_authorized(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
+    # The probe argument must be an expression with NO resolvable type
+    # (unknown constructor), so ``_argument_types`` returns None and the
+    # scanner fails closed with DB_SIGNATURE_UNRESOLVED before any overload
+    # filtering.  A known-typed argument that matches no overload would
+    # instead report DB_CALL_TARGET_AMBIGUOUS.
     source = SOURCE.replace(
         "fun insert(item: Item)",
         "fun insert(item: Item)\n    @androidx.room.Insert\n    fun insert(label: String)",
     ).replace(
         "    }\n}\n",
-        "    }\n\n    fun saveUnknown(value: Any) {\n        expenseDao.insert(value)\n    }\n}\n",
+        "    }\n\n    fun saveUnknown(value: Any) {\n        expenseDao.insert(UnknownItem())\n    }\n}\n",
         1,
     )
     root = _fixture(tmp_path, source=source)
@@ -645,7 +660,8 @@ def test_unrelated_direct_dao_receiver_keeps_structured_identity(
                     "owner": "example.Repository",
                     "name": "save",
                     "receiver": None,
-                    "parameters": ["Item"],
+                    # Resolved canonical spelling (package-qualified FQCN).
+                    "parameters": ["example.Item"],
                     "kind": "function",
                 },
                 "identity": {
@@ -694,7 +710,8 @@ def test_positive_finding_contains_complete_callable_identity(
                     "owner": "example.Repository",
                     "name": "save",
                     "receiver": None,
-                    "parameters": ["Item"],
+                    # Resolved canonical spelling (package-qualified FQCN).
+                    "parameters": ["example.Item"],
                     "kind": "function",
                 },
                 "identity": {
@@ -721,6 +738,14 @@ def test_positive_finding_contains_complete_callable_identity(
 def test_property_body_is_not_silently_skipped(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
+    """A property accessor body is scanned, never skipped.
+
+    The getter's ``expenseDao.insert(Item(1))`` mutation IS discovered inside
+    the property declaration range; its constructor argument has no resolvable
+    type, so the scan fails closed with the controlled DB_SIGNATURE_UNRESOLVED
+    diagnostic (exit 2, findings withheld) instead of silently ignoring the
+    body or guessing an authorization.
+    """
     source = SOURCE + """
 class PropertyRepository(private val expenseDao: ExpenseDao) {
     val saved: Item
@@ -740,7 +765,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
         "findings": [],
         "diagnostics": [
             {
-                "code": "DB_METHOD_BODY_UNSUPPORTED",
+                "code": "DB_SIGNATURE_UNRESOLVED",
                 "path": "app/src/main/java/example/Fixture.kt",
                 "symbol": None,
                 "controlled_context": {},
@@ -751,9 +776,14 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
 
 
 @pytest.mark.parametrize(("body", "expected_report"), [
+    # Mutation arguments must use forms the scanner can resolve (locals with
+    # explicit type annotations or constructor parameters).  A bare
+    # ``Item(1)`` constructor expression has no resolvable argument type and
+    # fails closed with DB_SIGNATURE_UNRESOLVED before authorization.
     (
-        "class PropertyInitializer(private val expenseDao: ExpenseDao) {\n"
-        "    val cached = expenseDao.insert(Item(1))\n"
+        "class PropertyInitializer(private val expenseDao: ExpenseDao,\n"
+        "        private val known: Item) {\n"
+        "    val cached = expenseDao.insert(known)\n"
         "}",
         {
             "schema": "cost-aggregator.guard-findings",
@@ -764,7 +794,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                     "rule": "DB_UNAUTHORIZED_MUTATION",
                     "severity": "error",
                     "path": "app/src/main/java/example/Fixture.kt",
-                    "location": {"line": 18, "end_line": 18},
+                    "location": {"line": 19, "end_line": 19},
                     "symbol": {
                         "owner": "example.PropertyInitializer",
                         "name": "cached",
@@ -795,7 +825,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
     (
         "class PropertyGetter(private val expenseDao: ExpenseDao) {\n"
         "    val cached: Item\n"
-        "        get() { expenseDao.insert(Item(1)); return Item(1) }\n"
+        "        get() { val item: Item = Item(1); expenseDao.insert(item); return item }\n"
         "}",
         {
             "schema": "cost-aggregator.guard-findings",
@@ -836,7 +866,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
     ),
     (
         "class Initializer(private val expenseDao: ExpenseDao) {\n"
-        "    init { expenseDao.insert(Item(1)) }\n"
+        "    init { val item: Item = Item(1); expenseDao.insert(item) }\n"
         "}",
         {
             "schema": "cost-aggregator.guard-findings",
@@ -876,7 +906,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
         },
     ),
     (
-        "object Helper { fun write(dao: ExpenseDao) { dao.insert(Item(1)) } }",
+        "object Helper { fun write(dao: ExpenseDao) { val item: Item = Item(1); dao.insert(item) } }",
         {
             "schema": "cost-aggregator.guard-findings",
             "schema_version": 2,
@@ -891,7 +921,8 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                         "owner": "example.Helper",
                         "name": "write",
                         "receiver": None,
-                        "parameters": ["ExpenseDao"],
+                        # Resolved canonical spelling (package-qualified FQCN).
+                        "parameters": ["example.ExpenseDao"],
                         "kind": "function",
                     },
                     "identity": {
@@ -915,7 +946,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
         },
     ),
     (
-        "fun topLevel(dao: ExpenseDao) { dao.insert(Item(1)) }",
+        "fun topLevel(dao: ExpenseDao) { val item: Item = Item(1); dao.insert(item) }",
         {
             "schema": "cost-aggregator.guard-findings",
             "schema_version": 2,
@@ -930,7 +961,8 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                         "owner": "example",
                         "name": "topLevel",
                         "receiver": None,
-                        "parameters": ["ExpenseDao"],
+                        # Resolved canonical spelling (package-qualified FQCN).
+                        "parameters": ["example.ExpenseDao"],
                         "kind": "top_level_function",
                     },
                     "identity": {
@@ -1167,7 +1199,10 @@ def test_required_barrier_is_reported(
                     "owner": "example.Repository",
                     "name": "save",
                     "receiver": None,
-                    "parameters": ["Item"],
+                    # Resolved canonical spelling (package-qualified FQCN);
+                    # the barrier branch is only reachable once the policy
+                    # entry's exact signature matches the resolved symbol.
+                    "parameters": ["example.Item"],
                     "kind": "function",
                 },
                 "identity": {
@@ -1186,6 +1221,35 @@ def test_required_barrier_is_reported(
             "trusted": True,
         },
     })
+
+
+def test_satisfied_barrier_requirement_authorizes_the_mutation(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
+    """Pin the complementary reachable barrier outcome.
+
+    ``barrier_required: true`` with REAL ``writeBarrier.checkWritesAllowed``
+    evidence before the mutation authorizes cleanly: no finding, trusted
+    scan, exit 0.  Together with ``test_required_barrier_is_reported`` this
+    pins both outcomes of the scanner's barrier branch (the branch is only
+    reachable once the policy entry's exact resolved signature matches).
+    """
+    source = SOURCE.replace(
+        "    fun save(item: Item) {\n        expenseDao.insert(item)\n    }",
+        "    fun save(item: Item) {\n"
+        "        writeBarrier.checkWritesAllowed()\n"
+        "        expenseDao.insert(item)\n"
+        "    }",
+    )
+    root = _fixture(tmp_path, source=source)
+    _policy(root, barrier=True)
+    _structural_policy(root)
+    report = root / "barrier-ok.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 0
+    _report(report, _expected())
 
 
 def test_structural_operation_is_reported(
@@ -1213,7 +1277,8 @@ def test_structural_operation_is_reported(
                     "owner": "example.StructuralRepository",
                     "name": "structural",
                     "receiver": None,
-                    "parameters": ["Item"],
+                    # Resolved canonical spelling (package-qualified FQCN).
+                    "parameters": ["example.Item"],
                     "kind": "function",
                 },
                 "identity": {"operation": "getDatabasePath"},
@@ -1974,7 +2039,8 @@ def test_argv_and_canonical_identity_are_platform_neutral(
                     "owner": "example.Repository",
                     "name": "save",
                     "receiver": None,
-                    "parameters": ["Item"],
+                    # Resolved canonical spelling (package-qualified FQCN).
+                    "parameters": ["example.Item"],
                     "kind": "function",
                 },
                 "identity": {
@@ -1995,7 +2061,7 @@ def test_argv_and_canonical_identity_are_platform_neutral(
             "inventory_mutators": 1,
             "trusted": True,
         },
-    })
+    )
 
 
 ACCESSOR_SOURCE = SOURCE.replace(
@@ -2211,18 +2277,34 @@ def test_accessor_unknown_constructor_expression_is_not_authorized(
 def test_malformed_ownership_policy_is_source_evidence_diagnostic(
     tmp_path: Path, bad_entry: str,
 ) -> None:
+    """Malformed ownership entries fail closed with the controlled umbrella.
+
+    The CLI deliberately collapses every per-entry evidence failure — the
+    loader/metadata validator's ENTRY_INVALID reasons and the missing-signature
+    pre-gate alike — into the single context-free
+    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic (exit 2, findings withheld).
+    These parametrizations pin that actual controlled code; internal stage
+    codes (e.g. SIGNATURE_MISSING) are intentionally not part of the CLI
+    contract.  The base policy is written by ``_policy`` so the test owns its
+    complete input instead of reading a shared fixture default.
+    """
     root = _fixture(tmp_path)
-    policy = (root / "config/guards/ownership.yml").read_text(encoding="utf-8")
+    policy_path = _policy(root)
+    policy = policy_path.read_text(encoding="utf-8")
     if bad_entry.startswith("    #"):
-        policy = policy.replace("    signature:\n      receiver: null\n      kind: function\n      parameters: [Item]\n", "")
+        policy = policy.replace(
+            "    signature:\n      receiver: null\n      kind: function\n"
+            "      parameters: [example.Item]\n",
+            bad_entry.strip() + "\n",
+        )
     elif bad_entry.startswith("      kind:"):
         policy = policy.replace("      kind: function", bad_entry.strip())
-    else:
-        policy = policy.replace("    daos: [expenseDao]", bad_entry if "daos" in bad_entry else "    daos: [expenseDao]")
-        if "parameters" in bad_entry:
-            policy = policy.replace("      parameters: [Item]", bad_entry)
-        if "operation" in bad_entry:
-            policy = policy.replace("    operation: insert", bad_entry)
+    elif "parameters" in bad_entry:
+        policy = policy.replace("      parameters: [example.Item]", bad_entry.strip())
+    elif "daos" in bad_entry:
+        policy = policy.replace("    daos: [expenseDao]", bad_entry.strip())
+    elif "operation" in bad_entry:
+        policy = policy.replace("    operation: insert", bad_entry.strip())
     _write(root, "config/guards/ownership.yml", policy)
     _structural_policy(root)
     report = root / "malformed-policy.json"

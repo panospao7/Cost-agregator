@@ -1915,6 +1915,24 @@ def test_conflicting_room_annotations_on_one_callable_are_not_last_wins(tmp_path
     assert any(d.startswith("DB_ROOM_ANNOTATION_CONFLICT:") for d in inventory.diagnostics)
 
 
+def test_conflicting_annotation_records_share_one_declaration_site(tmp_path):
+    """Both records of a double-annotated fun carry the SAME function start.
+
+    The inventory counts callable ambiguity over distinct declaration sites,
+    so a conflicting multi-annotation declaration must stay a single site
+    (and reach the ``DB_ROOM_ANNOTATION_CONFLICT`` path) instead of being
+    miscounted as two ambiguous callables."""
+    source = (
+        "package example\n"
+        "@Dao interface D { @Insert @Query(\"UPDATE items SET value = 1\") fun save(v: Item) }\n"
+    )
+    dao = find_dao_declarations(source, "app/src/main/java/example/Fixtures.kt")[0]
+    records = find_dao_method_annotations(source, dao)
+    assert [record.kind for record in records] == ["Insert", "Query"]
+    assert len({record.function_start for record in records}) == 1
+    assert all(record.function_start >= 0 for record in records)
+
+
 def test_duplicate_and_ambiguous_declarations_are_diagnostics(tmp_path):
     inventory = _inventory(tmp_path, """package example
         @Dao interface D { @Insert fun put(v: Item) }

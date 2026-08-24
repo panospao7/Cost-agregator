@@ -294,6 +294,42 @@ def test_implicit_table_alias_after_from_still_parses():
 
 
 @pytest.mark.parametrize("sql", [
+    "SELECT * FROM things ORDER BY id ASC",
+    "SELECT * FROM things ORDER BY id DESC LIMIT ?1",
+    "SELECT * FROM things ORDER BY kind ASC, id DESC",
+    "SELECT * FROM things WHERE id = :id ORDER BY id DESC",
+])
+def test_directed_order_by_remains_a_read(sql):
+    """One trailing ASC/DESC sort-direction keyword belongs to the ORDER BY
+    clause; both are reserved words, so the expression grammar must exclude
+    the single trailing direction instead of failing closed on it."""
+    result = classify_sql(sql)
+    assert result.operation == "SELECT"
+    assert result.is_read and not result.is_unknown
+
+
+@pytest.mark.parametrize("sql", [
+    "UPDATE things SET value = 1 WHERE id = 2 ORDER BY id DESC LIMIT 1",
+    "DELETE FROM things WHERE id = 2 ORDER BY id ASC",
+])
+def test_directed_order_by_in_mutation_tails_remain_classified(sql):
+    assert classify_sql(sql).error_code is None
+
+
+@pytest.mark.parametrize("sql", [
+    # A direction with no ordered expression at all stays malformed.
+    "SELECT * FROM things ORDER BY ASC",
+    "SELECT * FROM things ORDER BY DESC LIMIT 1",
+    # Doubled directions are not a SQLite sort specification.
+    "SELECT * FROM things ORDER BY id ASC DESC",
+])
+def test_malformed_direction_shapes_still_fail_closed(sql):
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+
+
+@pytest.mark.parametrize("sql", [
     'SELECT * FROM "things" "where"',
     'SELECT * FROM things "order"',
     'SELECT * FROM things AS "group"',

@@ -61,6 +61,11 @@ _MSG_PATH_COLLISION = "output/report paths collide with the active policy or eac
 class CliFailure(Exception):
     """CLI failure carrying only a fixed bounded public message."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        #: Fixed bounded diagnostic; never exception text or paths.
+        self.message = message
+
 
 # ── Legacy input loading ──────────────────────────────────────────────────────
 

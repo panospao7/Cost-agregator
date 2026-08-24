@@ -14,6 +14,24 @@ from scripts.ci.guard_findings import (
 )
 
 
+# Full-pipeline fixtures: scan_db_access wires Room-inventory AND signature
+# resolution, so every structural fixture carries (1) a minimal valid @Dao so
+# the inventory leg succeeds (a DAO-free scan fails closed with
+# DB_ROOM_SOURCE_EMPTY), (2) an import making ``SQLiteDatabase`` resolvable by
+# the closed-world type resolver (an unresolvable parameter type fails closed
+# with DB_SIGNATURE_UNRESOLVED), and (3) an explicit EMPTY raw-query policy —
+# with a discovered DAO and no policy override, the production default policy
+# would fail the stale-key comparison.
+_EMPTY_RAW_QUERY_POLICY = {"version": 1, "methods": []}
+
+_PROBE_DAO = """@androidx.room.Dao
+interface ScanProbeDao {
+    @androidx.room.Insert
+    fun probe(value: Int)
+}
+"""
+
+
 def _source_root(tmp_path: Path) -> Path:
     root = tmp_path / "app" / "src" / "main" / "java"
     root.mkdir(parents=True)
@@ -23,14 +41,15 @@ def _source_root(tmp_path: Path) -> Path:
 def test_structural_scope_unsupported_is_registered_and_never_a_finding(tmp_path):
     root = _source_root(tmp_path)
     source = """package example
+import android.database.sqlite.SQLiteDatabase
 fun mutate(db: SQLiteDatabase) {
     db.execSQL
 }
-"""
+""" + _PROBE_DAO
     path = root / "Example.kt"
     path.write_text(source, encoding="utf-8")
 
-    report = scan_db_access(root)
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
 
     assert known_diagnostic("DB_STRUCTURAL_SCOPE_UNSUPPORTED").code == (
         "DB_STRUCTURAL_SCOPE_UNSUPPORTED"
@@ -44,10 +63,11 @@ fun mutate(db: SQLiteDatabase) {
             "code": "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
             "path": "app/src/main/java/Example.kt",
             "symbol": None,
-            "controlled_context": {"line": 3},
+            # Fixture line literal: ``db.execSQL`` is the fourth source line.
+            "controlled_context": {"line": 4},
         }],
         "statistics": {"files_scanned": 1, "declarations_scanned": 1,
-                       "inventory_daos": 0, "inventory_mutators": 0,
+                       "inventory_daos": 1, "inventory_mutators": 1,
                        "trusted": False},
     }
     assert report.to_dict() == expected
@@ -84,11 +104,12 @@ class Holder {
 def test_delete_recursively_uses_exact_structural_token_and_policy_path(tmp_path):
     root = _source_root(tmp_path)
     source = """package example
+import android.database.sqlite.SQLiteDatabase
 class StructuralRepository {
     fun allowed(db: SQLiteDatabase) { db.deleteRecursively() }
     fun forbidden(db: SQLiteDatabase) { db.deleteRecursively() }
 }
-"""
+""" + _PROBE_DAO
     path = root / "StructuralRepository.kt"
     path.write_text(source, encoding="utf-8")
     structural = [{
@@ -98,7 +119,8 @@ class StructuralRepository {
         "operation": "deleteRecursively",
     }]
 
-    report = scan_db_access(root, structural_policy=structural)
+    report = scan_db_access(root, structural_policy=structural,
+                            raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
 
     expected = {
         "schema": "cost-aggregator.guard-findings", "schema_version": 2,
@@ -106,18 +128,19 @@ class StructuralRepository {
         "findings": [{
             "rule": "DB_FORBIDDEN_STRUCTURAL_OPERATION", "severity": "error",
             "path": "app/src/main/java/StructuralRepository.kt",
-            # Fixture line literals: ``fun forbidden`` is the fourth source
-            # line of StructuralRepository.kt.
-            "location": {"line": 4, "end_line": 4},
+            # Fixture line literals: ``fun forbidden`` is the fifth source
+            # line of StructuralRepository.kt (after the import line).
+            "location": {"line": 5, "end_line": 5},
             "symbol": {"owner": "example.StructuralRepository", "name": "forbidden",
-                       "receiver": None, "parameters": ["SQLiteDatabase"],
+                       "receiver": None,
+                       "parameters": ["android.database.sqlite.SQLiteDatabase"],
                        "kind": "function"},
             "identity": {"operation": "deleteRecursively"},
             "message": "Forbidden structural database operation",
         }],
         "diagnostics": [],
         "statistics": {"files_scanned": 1, "declarations_scanned": 3,
-                       "inventory_daos": 0, "inventory_mutators": 0,
+                       "inventory_daos": 1, "inventory_mutators": 1,
                        "trusted": True},
     }
     assert report.to_dict() == expected
@@ -126,6 +149,7 @@ class StructuralRepository {
 def test_d4_structural_findings_serialize_every_supported_callable_scope_exactly(tmp_path):
     root = _source_root(tmp_path)
     source = """package example
+import android.database.sqlite.SQLiteDatabase
 class Helper(private val db: SQLiteDatabase) {
     var amount = db.deleteRecursively()
         get() { db.deleteRecursively(); return field }
@@ -144,10 +168,10 @@ fun SQLiteDatabase.extension(value: Int) {
     val local: SQLiteDatabase = this
     local.deleteRecursively()
 }
-"""
+""" + _PROBE_DAO
     (root / "Scopes.kt").write_text(source, encoding="utf-8")
 
-    report = scan_db_access(root)
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
 
     serialized = [finding.to_dict() for finding in report.findings]
     first = json.dumps(report.to_dict(), sort_keys=True, separators=(",", ":")).encode()
@@ -155,25 +179,31 @@ fun SQLiteDatabase.extension(value: Int) {
     assert first == second
     # Canonical report order is (rule, path, symbol.owner, symbol.name, ...):
     # owner groups sort before names ("example" < "example.Helper" <
-    # "example.HelperObject"), then by name/kind within each owner.
+    # "example.HelperObject"), then by name/kind within each owner.  Parameter
+    # and receiver types use the resolver's canonical imported spelling.
     expected_symbols = [
-        ("extension", KIND_TOP_LEVEL_FUNCTION, "example", "SQLiteDatabase", ["Int"]),
-        ("topLevel", KIND_TOP_LEVEL_FUNCTION, "example", None, ["SQLiteDatabase", "Long"]),
+        ("extension", KIND_TOP_LEVEL_FUNCTION, "example",
+         "android.database.sqlite.SQLiteDatabase", ["Int"]),
+        ("topLevel", KIND_TOP_LEVEL_FUNCTION, "example", None,
+         ["android.database.sqlite.SQLiteDatabase", "Long"]),
         ("amount", KIND_INITIALIZER, "example.Helper", None, []),
         ("amount", KIND_PROPERTY_GETTER, "example.Helper", None, []),
         ("amount", KIND_PROPERTY_SETTER, "example.Helper", None, ["String"]),
-        ("companion", "function", "example.Helper", None, ["SQLiteDatabase", "Int"]),
+        ("companion", "function", "example.Helper", None,
+         ["android.database.sqlite.SQLiteDatabase", "Int"]),
         ("member", "function", "example.Helper", None, ["String", "Int"]),
-        ("objectMethod", "function", "example.HelperObject", None, ["SQLiteDatabase", "Int"]),
+        ("objectMethod", "function", "example.HelperObject", None,
+         ["android.database.sqlite.SQLiteDatabase", "Int"]),
     ]
     # These are fixture line literals, not values read from the report.  Keep
     # them frozen so source movement changes this contract deliberately:
-    # extension's call sits on ``local.deleteRecursively()`` (line 18),
-    # topLevel on 15, the ``amount`` initializer/getter/setter calls on
-    # 3/4/5, companion on 9, member on 7, and objectMethod on 13.  The
+    # extension's call sits on ``local.deleteRecursively()`` (line 19),
+    # topLevel on 16, the ``amount`` initializer/getter/setter calls on
+    # 4/5/6, companion on 10, member on 8, and objectMethod on 14.  The
     # class-level ``init { ... }`` block lies inside the skipped class-owner
-    # range, so it produces no declaration range and no finding.
-    expected_lines = (18, 15, 3, 4, 5, 9, 7, 13)
+    # range, so it produces no declaration range and no finding.  (All lines
+    # shifted +1 when the SQLiteDatabase import line was added.)
+    expected_lines = (19, 16, 4, 5, 6, 10, 8, 14)
     expected_findings = [{
         "rule": "DB_FORBIDDEN_STRUCTURAL_OPERATION", "severity": "error",
         "path": "app/src/main/java/Scopes.kt", "location": {"line": line, "end_line": line},
@@ -186,25 +216,26 @@ fun SQLiteDatabase.extension(value: Int) {
     assert report.to_dict()["diagnostics"] == []
     assert report.to_dict()["statistics"] == {
         "files_scanned": 1, "declarations_scanned": 9,
-        "inventory_daos": 0, "inventory_mutators": 0, "trusted": True,
+        "inventory_daos": 1, "inventory_mutators": 1, "trusted": True,
     }
 
 
 def test_unsupported_structural_scope_has_exact_diagnostic_code(tmp_path):
     root = _source_root(tmp_path)
     (root / "Unsupported.kt").write_text("""package example
+import android.database.sqlite.SQLiteDatabase
 fun unsupported(value: String) { value.deleteRecursively() }
-""", encoding="utf-8")
+""" + _PROBE_DAO, encoding="utf-8")
 
-    report = scan_db_access(root)
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
 
     assert report.to_dict() == {
         "schema": "cost-aggregator.guard-findings", "schema_version": 2,
         "guard": "db_access", "findings": [],
         "diagnostics": [{"code": "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
                          "path": "app/src/main/java/Unsupported.kt", "symbol": None,
-                         "controlled_context": {"line": 2}}],
+                         "controlled_context": {"line": 3}}],
         "statistics": {"files_scanned": 1, "declarations_scanned": 1,
-                       "inventory_daos": 0, "inventory_mutators": 0,
+                       "inventory_daos": 1, "inventory_mutators": 1,
                        "trusted": False},
     }

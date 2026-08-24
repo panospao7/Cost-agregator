@@ -1133,6 +1133,17 @@ def build_room_inventory(
     daos: list[DaoId] = []
     methods: list[DaoMethodId] = []
     method_annotations: dict[tuple[str, str, str, str | None, tuple[str, ...]], list[DaoMethodAnnotation]] = {}
+    # One callable DECLARATION can carry several Room annotation records
+    # (``@Insert @Query(...) fun save``): those records share one declaration
+    # site, so callable ambiguity below is counted over distinct declaration
+    # sites — never raw annotation records.  A conflicting multi-annotation
+    # declaration then reaches ``direct_mutator``, which emits the controlled
+    # ``DB_ROOM_ANNOTATION_CONFLICT`` diagnostic; genuinely duplicated
+    # declarations (distinct sites) stay ambiguous.
+    declaration_sites: dict[
+        tuple[str, str, str | None, tuple[str, ...]],
+        set[tuple[str, int]],
+    ] = {}
     sources: dict[str, str] = {}
     for canonical, path in files:
         try:
@@ -1145,6 +1156,10 @@ def build_room_inventory(
                     methods.append(record.method)
                     method = record.method
                     method_annotations.setdefault((method.dao.canonical_path, method.dao.fqcn, method.name, method.receiver, method.parameters), []).append(record)
+                    declaration_sites.setdefault(
+                        (method.dao.fqcn, method.name, method.receiver, method.parameters),
+                        set(),
+                    ).add((method.dao.canonical_path, record.function_start))
         except (OSError, UnicodeError):
             diagnostics.append(_diag("DB_ROOM_SOURCE_UNREADABLE", canonical))
         except AccessorError as error:
@@ -1222,11 +1237,13 @@ def build_room_inventory(
 
     # Callable identity is independent of source path.  Duplicate declarations
     # are ambiguous even when their annotations happen to agree; claiming one
-    # would make the inventory dependent on traversal order.
-    callable_counts: dict[tuple[str, str, str | None, tuple[str, ...]], int] = {}
-    for method in methods:
-        identity = (method.dao.fqcn, method.name, method.receiver, method.parameters)
-        callable_counts[identity] = callable_counts.get(identity, 0) + 1
+    # would make the inventory dependent on traversal order.  Ambiguity counts
+    # DISTINCT declaration sites: several annotation records decorating one
+    # declaration are an annotation conflict (reported by ``direct_mutator``),
+    # not several callables.
+    callable_counts: dict[tuple[str, str, str | None, tuple[str, ...]], int] = {
+        identity: len(sites) for identity, sites in declaration_sites.items()
+    }
     ambiguous_callables = {identity for identity, count in callable_counts.items() if count > 1}
     duplicate_daos_pre = {dao.fqcn for dao in daos if sum(candidate.fqcn == dao.fqcn for candidate in daos) > 1}
     for identity in sorted(ambiguous_callables):

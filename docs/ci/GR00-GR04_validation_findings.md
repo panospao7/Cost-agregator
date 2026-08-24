@@ -391,3 +391,52 @@ round; Section 5 gate remains ready once suites pass.
 
 Cumulative sweep trend: 372 -> 357 -> 151 -> 101 failures; production gates exact-match
 stable throughout all four rounds.
+
+---
+
+## Re-validation round 5 (2026-08-24) — after commit `606b6175` "resolve remaining validation residue families"
+
+HEAD `606b617528889b35a2673f9b24aa74977f8c7eff`; checkout clean.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> exit 1; **59 failed / 2163 passed / 23 skipped** in 310 s
+(round 4: 101). NOT green -> checklist sections 2–6 remain deferred. Trend:
+372 -> 357 -> 151 -> 101 -> 59.
+
+### What round-4 fixes resolved
+
+Raw-query-policy fixture extras (`DB_ROOM_RAW_QUERY_POLICY_INVALID`) and repo-wide spurious
+`DB_DAO_INHERITANCE_UNRESOLVED` are GONE from fixture scans; braced single-const @RawQuery
+resolution fixed; ratchet INVALID_JSON masking resolved except one shape; UNC expectation,
+mutation_kind pins, helper signature bug — resolved.
+
+### Residue breakdown (59)
+
+| Family | Count | Observed mechanism |
+| --- | --- | --- |
+| scripts/test_verify_db_access_v2.py | 36 | Authorization semantics drift for v1-shaped `_policy()` fixtures: `barrier_required: true` entries now produce `DB_UNAUTHORIZED_MUTATION` (full structured identity) instead of expected `DB_MISSING_WRITE_BARRIER`; "clean run" scenarios exit 1 (unauthorized finding present) instead of 0; `test_malformed_ownership_policy_is_source_evidence_diagnostic[...]` parametrizations expect specific evidence codes but get different diagnostics; `test_clean_run_writes_valid_guard_report_v2` hits `DB_FINDINGS_WRITE_FAILED` (catch-all at `verify_db_access_boundaries.py:3276–3283`; likely the same os.O_DIRECTORY-style durability fail-closed as `room_inventory.py:1478–1480` — i.e. Windows-by-design, needs explicit confirmation + platform-pinned test). |
+| scripts/test_kotlin_callable_parser.py | 7 | Error-path contract drift: parser raises generic `ParserError("kotlin callable parser error")`, bare `StopIteration`, or `SignatureError("control characters are not allowed in a type")` where tests pin typed codes (`UNBALANCED_ANGLE`, exact normalization). Affects nesting-limit boundary, empty/function-type normalization, unqualified nested owner type. |
+| scripts/test_db_guard_scanner_d4.py | 5 | D4 structural-fixture scans now emit extra `[DB_ROOM_SOURCE_EMPTY (path None), DB_SIGNATURE_UNRESOLVED (path Fixture)]` alongside/before expected `DB_STRUCTURAL_SCOPE_UNSUPPORTED` or clean reports; statistics differ. Inventory/signature resolution is now wired into scan_db_access but D4 fixtures carry no DAOs. |
+| scripts/test_db_guard_room_inventory.py | 5 | `test_query_template_resolves_multiline_const_continuation`: multiline const continuation @RawQuery STILL yields UNCLASSIFIABLE (round-4 fix covered same-file literal const only); annotation-conflict diagnostic `DB_ROOM_ANNOTATION_CONFLICT:` NOT emitted where pinned; `InventoryWriteError: DB_ROOM_INVENTORY_WRITE_FAILED` in write-reload tests — documented Windows fail-closed (os.O_DIRECTORY unavailable), consistent with checklist §3 note ("exit 0 only on Linux CI"). |
+| scripts/test_migrate_db_policy_signatures.py | 4 | REAL PRODUCT BUG: migrate CLI failure handler crashes with `AttributeError: 'CliFailure' object has no attribute '.message'` -> exit 1 instead of exit 2 in candidate-collision / active-policy-overwrite / malformed-YAML / temp-file-cleanup scenarios. |
+| scripts/test_db_guard_policy_v2.py | 1 | `test_two_overloads_differing_only_in_ordered_parameter_types`: STILL REPRODUCIBLE — overload fixtures load with 7× `POLICY_ERROR_MISSING_FIELD daoAccessor index 0..6` where tests expect clean load (contradicts round-4 "not reproducible" note; persists since round 3). |
+| scripts/test_db_guard_source_roots_integration.py | 1 | Kotlin conventional-root anchor still pins project root (`tmp`) vs implementation module dir (`tmp\\app`). |
+
+### Round-5 triage hints
+
+1. Genuine product bugs first: (a) migrate `CliFailure.message` handler crash; (b) multiline
+   const continuation @RawQuery; (c) missing `DB_ROOM_ANNOTATION_CONFLICT` emission;
+   (d) confirm whether `DB_FINDINGS_WRITE_FAILED` on Windows is intended durability behavior
+   and pin it platform-conditionally.
+2. Contract decisions needed: barrier-required v1-shaped fixture policies must map to
+   `DB_MISSING_WRITE_BARRIER` (or fixtures upgraded to v2 shape with barrierMode); D4
+   fixtures need DAO-free inventory tolerance (suppress SOURCE_EMPTY/SIGNATURE_UNRESOLVED
+   extras) or dedicated structural-only entry point; kotlin anchor convention (project root
+   vs module dir) final decision + parity; parser typed error codes vs generic ParserError.
+3. Platform-expected failures to quarantine: inventory/findings write-barrier tests should be
+   skipped-or-conditioned on os.O_DIRECTORY availability per the checklist's own §3 note.
+
+Production CLIs were re-verified exact-match healthy after `1c09f525` (round 4); no further
+CLI changes observed this round (sweep only). Cumulative: production gates stable across all
+five rounds while suite failures fell 372 -> 59.

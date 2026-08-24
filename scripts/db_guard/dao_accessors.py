@@ -76,6 +76,12 @@ class DaoMethodAnnotation:
     start: int
     end: int
     argument: str | None
+    #: Offset of the ``fun`` declaration this annotation decorates.  Records
+    #: sharing one method identity AND one function start come from a single
+    #: callable declaration (for example ``@Insert @Query(...) fun save``),
+    #: which lets consumers distinguish an annotation conflict on one
+    #: declaration from genuinely duplicated callable declarations.
+    function_start: int = -1
 
 
 __all__ = [
@@ -501,7 +507,8 @@ def _method_annotations(source: str, dao_decl: DaoId, original: str | None = Non
                 params,
             )
         records.append(DaoMethodAnnotation(method, annotation.group(1), annotation.start(), end,
-                                            _annotation_argument(original or source, annotation.start(), end)))
+                                            _annotation_argument(original or source, annotation.start(), end),
+                                            function.start()))
     records.sort(key=lambda item: (item.method.name, item.method.receiver or "", item.method.parameters))
     return tuple(records)
 
