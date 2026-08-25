@@ -763,3 +763,53 @@ equality; tracked-candidate and tracked-accounting byte equality. These
 tests were validated by read-only probes under `build/guard-debug/gr05/`;
 the pytest suites themselves have **not** been executed in this editing pass
 and remain **pending**. No green/blocked status is asserted for any SHA here.
+
+## PR-GR-06 Slice 3 applied (v2 evidence shadow CLI) — pending human validation
+
+PR-GR-06 Slice 3 changes were applied to `scripts/ci/verify_db_policy_v2_evidence.py`
+(new), `scripts/ci/test_verify_db_policy_v2_evidence.py` (new, 16 tests),
+`docs/DB_WRITE_OWNERSHIP.md`, and this ledger. Status: **pending human
+validation** — no DONE/GREEN/complete claim is made here; the pytest suite
+has **not** been executed in this editing pass and remains **pending**.
+
+State pinned by this revision:
+
+- **Shadow-only CLI**: verifies the v2 signatures candidate via
+  `load_policy_v2` -> declared source-root manifest (`--manifest`) ->
+  `build_room_inventory` (so the `daoFqcn` cross-check is ACTIVE) ->
+  `verify_v2_policy_source_evidence`, then writes one deterministic JSON
+  report (`schema`/`version`, policy path+sha256, tree sha256, trusted,
+  groups, diagnostics, mutation-key counts). Exit `0` only for a TRUSTED
+  candidate; every other outcome — untrusted candidate, loader/root/
+  inventory diagnostics, unreadable inputs, output collision, report-write
+  failure — exits `2` (uncertainty is an infrastructure condition).
+- **No activation surface**: read-only over all inputs; the only file it
+  writes is `--output`; an output colliding with the active policy, the
+  candidate, the manifest, the accounting artifact, or the legacy report
+  input is rejected before any work; no ratchet interaction; no activation
+  mode.
+- **Legacy shadow comparison (report-only)**: with `--legacy-shadow-report`
+  (a `verify_db_access_boundaries` protocol-v2 findings report), differences
+  are classified against the GR-05 accounting artifact into exactly five
+  closed classes — `EXPECTED_LEGACY_OVERLOAD_UNION`,
+  `LEGACY_STALE_ENTRY`, `PARSER_OR_RESOLVER_DEFECT`, `CANDIDATE_GAP`,
+  `UNREVIEWED_DIFFERENCE` — attributed through the reduced callable identity
+  `path|owner|kind|method` (legacy findings carry no exact overload
+  signatures). The comparison NEVER influences the v2 exit code; the section
+  carries `reviewed: false`, per-class counts plus bounded entries, and the
+  explicit note that `CANDIDATE_GAP`, `PARSER_OR_RESOLVER_DEFECT`, and
+  `UNREVIEWED_DIFFERENCE` deltas block GR-07 activation pending human review.
+- **Bounded degradation**: an unusable legacy report disables the
+  legacy-dependent rules (absence proves nothing) while v2-intrinsic
+  parser/resolver defects still surface; an unusable accounting artifact
+  degrades row-dependent dispositions to `UNREVIEWED_DIFFERENCE`. Reports
+  carry repository-relative POSIX paths, controlled codes, hashes, and
+  counts only — never absolute paths or raw payloads.
+
+Known limitation pinned here: unresolved legacy rows carry no canonical
+mutation keys, so their disposition is reachable only through the accounting
+artifact's `sourceMutations` coverage intents — and the checked-in artifact
+still ships the pre-coverage empty section. Until both artifacts are
+regenerated via `--generate` (already required and pending from GR-05),
+`LEGACY_STALE_ENTRY` / `CANDIDATE_GAP` cannot fire against the checked-in
+artifact and such differences land in `UNREVIEWED_DIFFERENCE` instead.

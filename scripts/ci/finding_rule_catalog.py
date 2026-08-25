@@ -30,9 +30,10 @@ Infrastructure diagnostics (never baseline-able; exit 2):
   * ``DB_DAO_INHERITANCE_UNRESOLVED``
   * ``DB_DAO_ANNOTATION_SCOPE_UNRESOLVED``
   * ``DB_STRUCTURAL_SCOPE_UNSUPPORTED``
-  * Room inventory discovery, inheritance, policy, and atomic-write diagnostics
-  * Production source-root manifest/topology diagnostics (PR-GR-03)
-  * ``UNKNOWN_RULE`` (unknown/unregistered rule code; direct protocol error)
+   * Room inventory discovery, inheritance, policy, and atomic-write diagnostics
+   * Production source-root manifest/topology diagnostics (PR-GR-03)
+   * v2 policy source-evidence diagnostics (PR-GR-06; ``DB_V2_POLICY_*``)
+   * ``UNKNOWN_RULE`` (unknown/unregistered rule code; direct protocol error)
 
 Public API:
 
@@ -433,6 +434,93 @@ _DIAGNOSTIC_ENTRIES: Dict[str, DiagnosticProfile] = {
         code="DB_SOURCE_ROOT_SYMLINK_OUTSIDE",
         guard=GUARD_DB_ACCESS,
         description="Production source root resolves outside the repository via symlink",
+    ),
+    # PR-GR-06 Slice 1: v2 policy source-evidence diagnostics
+    # (scripts/db_guard/policy_v2_evidence.py).  One-to-one with the closed
+    # DB_V2_POLICY_* vocabulary in scripts/db_guard/policy_errors.py; every
+    # code marks a group/batch untrusted and is never baseline-able.
+    "DB_V2_POLICY_PATH_OUTSIDE_ROOTS": DiagnosticProfile(
+        code="DB_V2_POLICY_PATH_OUTSIDE_ROOTS",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry path is outside the declared production source roots",
+    ),
+    "DB_V2_POLICY_FILE_UNREADABLE": DiagnosticProfile(
+        code="DB_V2_POLICY_FILE_UNREADABLE",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry source file cannot be read",
+    ),
+    "DB_V2_POLICY_OWNER_MISSING": DiagnosticProfile(
+        code="DB_V2_POLICY_OWNER_MISSING",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry owner class cannot be found in source",
+    ),
+    "DB_V2_POLICY_OWNER_AMBIGUOUS": DiagnosticProfile(
+        code="DB_V2_POLICY_OWNER_AMBIGUOUS",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry owner class is declared more than once",
+    ),
+    "DB_V2_POLICY_CALLABLE_MISSING": DiagnosticProfile(
+        code="DB_V2_POLICY_CALLABLE_MISSING",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry callable cannot be found in its owner",
+    ),
+    "DB_V2_POLICY_CALLABLE_AMBIGUOUS": DiagnosticProfile(
+        code="DB_V2_POLICY_CALLABLE_AMBIGUOUS",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry callable matches more than one overload",
+    ),
+    "DB_V2_POLICY_KIND_UNSUPPORTED": DiagnosticProfile(
+        code="DB_V2_POLICY_KIND_UNSUPPORTED",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry callable kind is unsupported for source evidence",
+    ),
+    "DB_V2_POLICY_PARSER_UNCERTAIN": DiagnosticProfile(
+        code="DB_V2_POLICY_PARSER_UNCERTAIN",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy evidence verification hit parser uncertainty",
+    ),
+    "DB_V2_POLICY_BODY_UNSUPPORTED": DiagnosticProfile(
+        code="DB_V2_POLICY_BODY_UNSUPPORTED",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry callable body cannot be analyzed",
+    ),
+    "DB_V2_POLICY_DAO_ACCESSOR_UNRESOLVED": DiagnosticProfile(
+        code="DB_V2_POLICY_DAO_ACCESSOR_UNRESOLVED",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry DAO accessor cannot be resolved in source",
+    ),
+    "DB_V2_POLICY_DAO_FQCN_MISMATCH": DiagnosticProfile(
+        code="DB_V2_POLICY_DAO_FQCN_MISMATCH",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry DAO FQCN does not match the resolved source identity",
+    ),
+    "DB_V2_POLICY_MUTATION_NOT_FOUND": DiagnosticProfile(
+        code="DB_V2_POLICY_MUTATION_NOT_FOUND",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry mutation pair is absent from the verified callable body",
+    ),
+    "DB_V2_POLICY_UNLISTED_MUTATION": DiagnosticProfile(
+        code="DB_V2_POLICY_UNLISTED_MUTATION",
+        guard=GUARD_DB_ACCESS,
+        description="Verified callable body performs a mutation absent from the v2 policy",
+    ),
+    "DB_V2_POLICY_DAO_AMBIGUOUS": DiagnosticProfile(
+        code="DB_V2_POLICY_DAO_AMBIGUOUS",
+        guard=GUARD_DB_ACCESS,
+        description="One v2 policy accessor resolves to several DAO identities",
+    ),
+    "DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT": DiagnosticProfile(
+        code="DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT",
+        guard=GUARD_DB_ACCESS,
+        description="direct barrierMode claim lacks local direct-barrier evidence before every mutation",
+    ),
+    # GR-06 repair: a v2 policy target whose every same-name declaration is
+    # retained under the parser's tolerant TYPE_UNRESOLVED status -- the
+    # callable exists but its own signature types cannot be resolved exactly.
+    "DB_V2_POLICY_SIGNATURE_UNRESOLVED": DiagnosticProfile(
+        code="DB_V2_POLICY_SIGNATURE_UNRESOLVED",
+        guard=GUARD_DB_ACCESS,
+        description="v2 policy entry callable signature contains types unresolvable in source",
     ),
     "UNKNOWN_RULE": DiagnosticProfile(
         code="UNKNOWN_RULE",
