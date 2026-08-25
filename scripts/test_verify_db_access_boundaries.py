@@ -5390,3 +5390,80 @@ def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
     assert all(not e.startswith("DUPLICATE_TUPLE") for e in errors), errors
 
+
+# ── PR-GR-03 part 2: no executable app/src/main topology gate ────────────────
+
+
+class TestNoExecutableAppSrcMainTopologyGate:
+    """Assert no executable app/src/main topology gate remains outside
+    source_roots/tests/docs/data.
+
+    PR-GR-03 part 2 removed hidden app-only topology authorities from the
+    signature module, declaration scanner, and scanner diagnostic parser.
+    This test scans the allowed executable files to ensure no hardcoded
+    app/src/main path decisions remain that would act as topology
+    authorities.
+    """
+
+    def test_no_app_src_prefix_gate_in_db_policy_signature(self):
+        """db_policy_signature._normalize_canonical_path has no app/src gate."""
+        import inspect
+        # Import from the scripts directory
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, scripts_dir)
+        import db_policy_signature as mod
+        source = inspect.getsource(mod._normalize_canonical_path)
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+                continue
+            assert 'startswith("app/src' not in stripped, (
+                f"Executable app/src topology gate found in "
+                f"_normalize_canonical_path: {stripped}"
+            )
+            assert "startswith('app/src" not in stripped, (
+                f"Executable app/src topology gate found in "
+                f"_normalize_canonical_path: {stripped}"
+            )
+
+    def test_no_app_src_prefix_gate_in_declaration_scanner_validate_path(self):
+        """declaration_scanner._validate_diagnostic_path has no app/src gate."""
+        import inspect
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, scripts_dir)
+        from db_guard.declaration_scanner import _validate_diagnostic_path
+        source = inspect.getsource(_validate_diagnostic_path)
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+                continue
+            assert 'startswith("app/src' not in stripped, (
+                f"Executable app/src topology gate found in "
+                f"_validate_diagnostic_path: {stripped}"
+            )
+
+    def test_no_app_src_prefix_gate_in_scanner_diag_from_text(self):
+        """scanner._diag_from_text has no app/src gate."""
+        import inspect
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, scripts_dir)
+        from db_guard.scanner import _diag_from_text
+        source = inspect.getsource(_diag_from_text)
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+                continue
+            assert 'startswith("app/src' not in stripped, (
+                f"Executable app/src topology gate found in "
+                f"_diag_from_text: {stripped}"
+            )
+
+    def test_no_app_src_prefix_constant_in_signature_module(self):
+        """The _APP_SRC_PREFIX constant has been removed from db_policy_signature."""
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, scripts_dir)
+        import db_policy_signature as mod
+        assert not hasattr(mod, "_APP_SRC_PREFIX"), (
+            "_APP_SRC_PREFIX should be removed; path validation is topology-neutral"
+        )
+

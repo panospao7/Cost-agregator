@@ -632,9 +632,26 @@ class Fixture {
 
 
 def test_canonical_path_acceptance():
+    """Syntax-only acceptance: app entries unchanged, non-app trees valid.
+
+    ``canonical_source_path`` carries no topology knowledge: any
+    repository-relative POSIX ``.kt`` path passes, including module trees
+    outside ``app/src/main`` and non-production source sets.  Whether a
+    path lives under a DECLARED production root is decided later by
+    root-aware stages (``source_roots.is_declared_production_path``),
+    never here.
+    """
     for good in (
+        # App entries: unchanged behavior.
         "app/src/main/java/example/Fixture.kt",
         "app/src/main/java/com/yourname/expensetracker/data/ExpenseDao.kt",
+        # Non-app module trees are now syntactically valid.
+        "feature/src/main/kotlin/com/example/Fixture.kt",
+        "lib/core/src/main/java/com/example/CoreDao.kt",
+        # Topology ignorance: non-main source sets and unknown roots pass
+        # syntax too; membership is a later, root-aware concern.
+        "app/src/test/java/example/Fixture.kt",
+        "outside/module/Fixture.kt",
     ):
         assert parser.canonical_source_path(good) == good
 
@@ -644,40 +661,74 @@ def test_canonical_path_accepts_relative_path_object():
     assert parser.canonical_source_path(relative) == CANONICAL
 
 
-@pytest.mark.parametrize(("path", "code"), [
-    ("app/src/main/" + "/".join(["x"] * 30) + "/Fixture.kt", "PATH_TOO_DEEP"),
-    ("app/src/main/" + "x" * 129 + "/Fixture.kt", "PATH_SEGMENT_TOO_LONG"),
-    ("app/src/main/" + "x" * 500 + ".kt", "PATH_TOO_LONG"),
-])
-def test_canonical_path_bounds_have_exact_codes(path, code):
+def test_canonical_path_component_bound_is_exact():
+    boundary = "/".join(["d"] * 15 + ["Fixture.kt"])
+    assert len(boundary.split("/")) == parser.MAX_SOURCE_PATH_COMPONENTS
+    assert parser.canonical_source_path(boundary) == boundary
+
+    too_deep = "/".join(["d"] * 16 + ["Fixture.kt"])
+    assert len(too_deep.split("/")) == parser.MAX_SOURCE_PATH_COMPONENTS + 1
     with pytest.raises(parser.ParserError) as excinfo:
-        parser.canonical_source_path(path)
-    assert excinfo.value.code == code
+        parser.canonical_source_path(too_deep)
+    assert excinfo.value.code == "PATH_TOO_DEEP"
+    assert str(excinfo.value) == _MASK_MESSAGE
+    assert too_deep not in repr(excinfo.value)
 
 
-@pytest.mark.parametrize("bad_path", [
-    "outside/Fixture.kt",
-    "app/src/test/java/example/Fixture.kt",
-    "app/src/main/java/example/Fixture.txt",
-    "app/src/main/java/../secret/Fixture.kt",
-    "app//src/main/java/example/Fixture.kt",
-    "C:/app/src/main/java/Fixture.kt",
-    "/app/src/main/java/Fixture.kt",
-    "app\\src\\main\\java\\example\\Fixture.kt",
+def test_canonical_path_length_bound_is_exact():
+    boundary = "d/" + "x" * 251 + ".kt"
+    assert len(boundary) == parser.MAX_SOURCE_PATH_LENGTH
+    assert parser.canonical_source_path(boundary) == boundary
+
+    too_long = "d/" + "x" * 252 + ".kt"
+    assert len(too_long) == parser.MAX_SOURCE_PATH_LENGTH + 1
+    with pytest.raises(parser.ParserError) as excinfo:
+        parser.canonical_source_path(too_long)
+    assert excinfo.value.code == "PATH_TOO_LONG"
+    assert str(excinfo.value) == _MASK_MESSAGE
+    assert too_long not in repr(excinfo.value)
+
+
+@pytest.mark.parametrize(("bad_path", "code"), [
+    # One distinct controlled code per rejection class.
+    ("", "PATH_EMPTY"),
+    ("/abs/path/Fixture.kt", "PATH_ABSOLUTE"),
+    ("//server/share/Fixture.kt", "PATH_UNC"),
+    ("C:/repo/Fixture.kt", "PATH_DRIVE"),
+    ("repo\\src\\Fixture.kt", "PATH_BACKSLASH"),
+    # Backslash is classified before the drive prefix, deterministically.
+    ("C:\\repo\\Fixture.kt", "PATH_BACKSLASH"),
+    ("repo/../secret/Fixture.kt", "PATH_TRAVERSAL"),
+    ("./repo/Fixture.kt", "PATH_DOT_SEGMENT"),
+    ("repo/./src/Fixture.kt", "PATH_DOT_SEGMENT"),
+    ("repo//src/Fixture.kt", "PATH_DOUBLE_SLASH"),
+    # Trailing slash is classified before duplicate slash.
+    ("repo/src/", "PATH_TRAILING_SLASH"),
+    ("repo//", "PATH_TRAILING_SLASH"),
+    ("repo/src/Fixture.txt", "PATH_NOT_KOTLIN"),
 ])
-def test_canonical_path_rejection_is_sanitized(bad_path):
+def test_canonical_path_rejection_classes_have_distinct_codes(bad_path, code):
     with pytest.raises(parser.ParserError) as excinfo:
         parser.canonical_source_path(bad_path)
-    assert excinfo.value.code == "PARSER_ERROR"
+    assert excinfo.value.code == code
     assert str(excinfo.value) == _MASK_MESSAGE
     assert bad_path not in repr(excinfo.value)
+
+
+@pytest.mark.parametrize("not_text", [None, 123, b"repo/Fixture.kt", ["repo/Fixture.kt"]])
+def test_canonical_path_non_text_input_fails_closed(not_text):
+    with pytest.raises(parser.ParserError) as excinfo:
+        parser.canonical_source_path(not_text)
+    assert excinfo.value.code == "PATH_NOT_TEXT"
+    assert str(excinfo.value) == _MASK_MESSAGE
+    assert "Fixture" not in repr(excinfo.value)
 
 
 def test_parse_rejects_non_kt_canonical_path(parse_file):
     relative = "app/src/main/java/example/Fixture.txt"
     with pytest.raises(parser.ParserError) as excinfo:
         parse_file("class Fixture { fun ok() {} }\n", relative=relative)
-    assert excinfo.value.code == "PARSER_ERROR"
+    assert excinfo.value.code == "PATH_NOT_KOTLIN"
     assert str(excinfo.value) == _MASK_MESSAGE
 
 
@@ -691,7 +742,7 @@ def test_parse_canonicalizes_before_reading_hostile_path(monkeypatch):
     monkeypatch.setattr(parser.Path, "read_text", read_hook)
     with pytest.raises(parser.ParserError) as excinfo:
         parser.parse_kotlin_file("../outside/app/src/main/java/Fixture.kt")
-    assert excinfo.value.code == "PARSER_ERROR"
+    assert excinfo.value.code == "PATH_TRAVERSAL"
     assert opened == []
 
 

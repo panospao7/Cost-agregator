@@ -31,10 +31,12 @@ characters, deeper than 32 segments, or carrying a segment longer than
 pathological inputs cannot create oversized canonical identities.
 
 The canonical signature identity is the GR-09 readable form
-``app/src/.../File.kt::owner#function(receiver)(param, param)`` where the
-receiver group is present only for non-null receivers. Frame delimiter
-characters inside field values are backslash-escaped so the composite
-string is collision safe while ordinary inputs stay readable.
+``<repo-relative-posix-path>::owner#function(receiver)(param, param)``
+where the receiver group is present only for non-null receivers. The
+path is syntax-only (any repo-relative POSIX ``.kt`` path is accepted);
+topology membership is validated separately by root-aware stages. Frame
+delimiter characters inside field values are backslash-escaped so the
+composite string is collision safe while ordinary inputs stay readable.
 """
 
 from __future__ import annotations
@@ -94,8 +96,12 @@ _KEY_SET = frozenset(_KEYS)
 # ``#``, and the parenthesis/comma groups are the unescaped frame.
 _CANONICAL_ESCAPE_RE = re.compile(r"([\\:#(),])")
 
-# Canonical source paths are POSIX, repo-relative, rooted under app/src/.
-_APP_SRC_PREFIX = "app/src/"
+# Canonical source paths are POSIX, repo-relative, ending in .kt.
+# Topology membership (which module/source-set a path lives under) is NOT
+# enforced here -- that is the responsibility of root-aware stages via
+# ``source_roots.is_declared_production_path``.  This module performs
+# syntax-only validation so any module tree (``app/src/main/java``,
+# ``feature/src/main/kotlin``, ``lib/core/src/main/java``, ...) is accepted.
 _PATH_DRIVE_RE = re.compile(r"^[A-Za-z]:")
 
 # Bounded resource limits for type-text validation. Inputs exceeding these
@@ -572,14 +578,20 @@ def _escape_canonical_text(value: str) -> str:
 
 
 def _normalize_canonical_path(value: Any) -> str:
-    """Validate and return a canonical POSIX repo-relative app/src path.
+    """Validate and return a canonical POSIX repo-relative ``.kt`` path.
 
-    Rejects non-strings, absolute paths and drive prefixes, backslashes,
-    traversal/empty/current-directory segments, whitespace, control
-    characters, and paths outside ``app/src/``. Control characters are
-    rejected with the dedicated CONTROL_PATH code; whitespace is rejected
-    with BAD_PATH. Accepted values are already canonical and are returned
-    unchanged.
+    Syntax-only validation: rejects non-strings, absolute paths and drive
+    prefixes, backslashes, traversal/empty/current-directory segments,
+    whitespace, control characters, and paths not ending in ``.kt``.
+    Topology membership (which module/source-set a path lives under) is
+    NOT enforced here -- that is the responsibility of root-aware stages
+    via ``source_roots.is_declared_production_path``.  Any module tree
+    (``app/src/main/java``, ``feature/src/main/kotlin``,
+    ``lib/core/src/main/java``, ...) is syntactically valid.
+
+    Control characters are rejected with the dedicated CONTROL_PATH code;
+    whitespace is rejected with BAD_PATH. Accepted values are already
+    canonical and are returned unchanged.
 
     Bounded resource limits apply before structural checks: a path longer
     than ``MAX_CANONICAL_PATH_LENGTH`` is rejected with PATH_TOO_LONG, a
@@ -613,7 +625,7 @@ def _normalize_canonical_path(value: Any) -> str:
         _reject("BAD_PATH")
     if value.startswith("/") or _PATH_DRIVE_RE.match(value):
         _reject("BAD_PATH")
-    if not value.startswith(_APP_SRC_PREFIX):
+    if not value.endswith(".kt"):
         _reject("BAD_PATH")
     segments = value.split("/")
     if any(part in ("", ".", "..") for part in segments):

@@ -139,7 +139,7 @@ def legacy_canonical_path_error(raw):
       * not bare basenames (must contain a directory component);
       * ending in ``.kt``;
       * under an approved production source root
-        (``app/src/main/java``).
+        (resolved through ``source_roots.APPROVED_PRODUCTION_SOURCE_ROOTS``).
 
     Bare basenames are rejected because duplicate basenames exist across
     packages; suffix/ambiguous paths are rejected because matching is exact
@@ -187,9 +187,12 @@ def legacy_canonical_path(raw):
 def _legacy_scanned_file_canonical_path(filepath):
     """Return the repository-relative POSIX path of a scanned file.
 
-    For production files under ``app/src/main/java`` this equals the canonical
-    policy path form; for any other tree it produces a path that no canonical
-    policy path can equal (fail closed).
+    Topology-neutral: produces a repository-relative POSIX path for ANY
+    scanned file.  Authorization is performed separately by root-aware
+    stages (``_legacy_canonical_path_file`` resolves through the declared
+    production root set via ``source_roots``).  A file outside every
+    declared root cannot be resolved there and fails closed at the
+    authorization layer, not here.
     """
     return os.path.relpath(filepath, PROJECT_ROOT).replace("\\", "/")
 

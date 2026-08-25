@@ -14,6 +14,12 @@ Per-entry contract (exact required fields, no others):
     ``path ownerFqcn kind method receiver parameterTypes daoAccessor
     daoFqcn operation barrierMode reason owner linkedIssue``
 
+``path`` is validated for GENERIC repository-relative POSIX ``.kt``
+syntax only (via ``canonical_source_path``, which carries no topology
+knowledge).  Root MEMBERSHIP — whether the path lives under a declared
+production source root — is intentionally NOT checked here; root-aware
+stages enforce it later via ``source_roots.is_declared_production_path``.
+
 Unknown keys — including the v1 legacy keys ``class``, ``daos``,
 ``signature``, ``barrier_required``, ``barrier_via``, ``private``, and
 ``delegate_of`` — are rejected with ``POLICY_ERROR_UNKNOWN_FIELD``; there
@@ -185,7 +191,13 @@ def _enum_or_none(enum_cls, value):
 
 
 def _validate_path_field(value, index, errors):
-    """Validate one ``path`` value; append controlled errors."""
+    """Validate one ``path`` value's repo-Kotlin syntax; append errors.
+
+    Syntax only: ``canonical_source_path`` performs generic
+    repository-relative POSIX ``.kt`` validation and carries no
+    source-root/topology knowledge.  Root MEMBERSHIP is validated later
+    by root-aware stages via ``source_roots.is_declared_production_path``.
+    """
     if not isinstance(value, str):
         errors.append(
             PolicyError(
@@ -260,8 +272,11 @@ def build_policy_entry(raw_mapping, index):
       * missing required field     -> POLICY_ERROR_MISSING_FIELD;
       * unknown / legacy key       -> POLICY_ERROR_UNKNOWN_FIELD;
       * mistyped simple field      -> POLICY_ERROR_INVALID_TYPE;
-      * non-canonical ``path``     -> POLICY_ERROR_V2_PATH_NOT_CANONICAL
-        (the parser's controlled code rides in ``context.parser_code``);
+      * syntactically invalid ``path``
+                                   -> POLICY_ERROR_V2_PATH_NOT_CANONICAL
+        (the parser's controlled code rides in ``context.parser_code``).
+        Syntax only: declared-root membership is validated later by
+        root-aware stages via ``source_roots.is_declared_production_path``;
       * malformed parameter type   -> POLICY_ERROR_INVALID_SIGNATURE
         (the signature code rides in ``context.signature_code``);
       * wildcard metacharacter (``*``, ``?``, ``[``, ``]``) in ``method``

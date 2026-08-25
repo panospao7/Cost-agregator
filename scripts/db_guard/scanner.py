@@ -20,8 +20,9 @@ except ImportError:  # pragma: no cover
 from ..ci.guard_findings import (
     _is_unresolved_symbol,
     CallableSymbol, GuardDiagnostic, GuardFinding, GuardRunReport,
-    SourceLocation, KIND_FUNCTION, KIND_INITIALIZER, KIND_PROPERTY_GETTER,
-    KIND_PROPERTY_SETTER, KIND_VALUES,
+    SourceLocation, ValidationError, canonical_path, KIND_FUNCTION,
+    KIND_INITIALIZER, KIND_PROPERTY_GETTER, KIND_PROPERTY_SETTER,
+    KIND_VALUES,
 )
 from ..ci.finding_rule_catalog import is_known_diagnostic
 from ..db_policy_signature import SignatureError, normalize_type_text
@@ -127,12 +128,27 @@ def _diag_from_text(value: str) -> GuardDiagnostic | None:
     if not is_known_diagnostic(code):
         return GuardDiagnostic("DB_DECLARATION_UNRESOLVED")
     path = None
-    if rest.startswith("app/src/"):
+    if rest:
+        # Topology-neutral: any repo-relative POSIX .kt path is accepted.
+        # The last colon-separated segment is the line number; everything
+        # before it is the path.
         path_text, separator, line_text = rest.rpartition(":")
-        if separator and path_text.startswith("app/src/") and line_text.isdigit():
-            path = path_text
-        elif not separator:
-            path = rest
+        candidate = None
+        if separator and path_text.endswith(".kt") and line_text.isdigit():
+            candidate = path_text
+        elif not separator and rest.endswith(".kt"):
+            candidate = rest
+        if candidate is not None:
+            try:
+                canonical_path(candidate)
+            except ValidationError:
+                # Absolute, drive-prefixed, or traversal text fails the
+                # canonical-path contract that ``GuardDiagnostic`` enforces
+                # downstream.  Degrade to the bare controlled diagnostic
+                # (``path=None``) instead of raising through the inventory
+                # conversion; the raw text is never carried onward.
+                candidate = None
+        path = candidate
     return GuardDiagnostic(code=code, path=path)
 
 

@@ -82,7 +82,7 @@ MAX_CONTEXT_ITEMS = 256
 MAX_CONTEXT_NUMBER = 10 ** 18
 
 # Diagnostic shape bounds: ``path`` must be a canonical repository-relative
-# POSIX ``app/src`` path (protocol MAX_PATH=500), and ``location`` line and
+# POSIX ``.kt`` path (protocol MAX_PATH=500), and ``location`` line and
 # column values must be finite, bounded positive ints (or None for column).
 MAX_DIAGNOSTIC_PATH = 500
 MAX_LOCATION_NUMBER = 2 ** 31 - 1
@@ -249,7 +249,7 @@ def _looks_like_raw_path(value: str) -> bool:
     Relative path shapes are rejected even when they are not rooted: a
     slash-separated value with traversal (``.``/``..``) or empty segments,
     with a filename-like dotted component (``secret/file.kt``), or with a
-    deep hierarchy (three or more segments, ``app/src/main/java/...``) is
+    deep hierarchy (three or more segments, ``module/src/main/java/...``) is
     path-shaped rather than a controlled reason identifier.  Short
     controlled identifiers with a single namespace separator
     (``writer/helper``) are retained.
@@ -360,10 +360,12 @@ def _validate_controlled_context(value: Any, *, depth: int = 0) -> None:
 
 
 def _validate_diagnostic_path(path: Any) -> str:
-    """Validate a canonical repository-relative POSIX ``app/src`` path.
+    """Validate a canonical repository-relative POSIX ``.kt`` path.
 
-    Absolute, drive-letter, backslash, traversal (``.``/``..``), control,
-    whitespace, and out-of-root paths are rejected with a controlled code.
+    Syntax-only: absolute, drive-letter, backslash, traversal (``.``/``..``),
+    control, whitespace, and non-``.kt`` paths are rejected with a controlled
+    code.  Topology membership (which module/source-set a path lives under)
+    is NOT enforced here -- that is the responsibility of root-aware stages.
     The offending value is never echoed in the error.
     """
     if not isinstance(path, str):
@@ -378,7 +380,7 @@ def _validate_diagnostic_path(path: Any) -> str:
         raise DiagnosticContextError("INVALID_DIAGNOSTIC_PATH")
     if any(segment in ("", ".", "..") for segment in path.split("/")):
         raise DiagnosticContextError("INVALID_DIAGNOSTIC_PATH")
-    if not path.startswith("app/src/"):
+    if not path.endswith(".kt"):
         raise DiagnosticContextError("INVALID_DIAGNOSTIC_PATH")
     return path
 
@@ -439,7 +441,7 @@ class Diagnostic:
     ``DiagnosticContextError`` carrying the controlled
     ``DB_DECLARATION_UNRESOLVED`` code, never the offending value.
 
-    ``path`` must be a canonical repository-relative POSIX ``app/src`` path
+    ``path`` must be a canonical repository-relative POSIX ``.kt`` path
     and ``location`` must be a structured ``{"line": <int>, "column": <int
     | None>}`` mapping with finite, bounded, positive values; invalid values
     are rejected with a controlled code and never echoed.

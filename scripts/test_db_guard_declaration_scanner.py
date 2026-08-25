@@ -1865,3 +1865,125 @@ def test_absolute_conventional_kotlin_root_anchors(tmp_path):
         for item in scan.helper_ranges
     )
     assert scan.dao_declarations == ()
+
+
+# ── PR-GR-03 part 2: topology-neutral diagnostic paths ───────────────────────
+
+
+def _diagnostic(code, path=None):
+    """Build a Diagnostic with the given code and optional path."""
+    return Diagnostic(code, path=path)
+
+
+class TestDiagnosticPathTopologyNeutral:
+    """Diagnostic path validation accepts any repo-relative POSIX .kt path.
+
+    PR-GR-03 part 2: the declaration_scanner's diagnostic-path contract
+    no longer requires an app/src prefix. Any repo-relative POSIX .kt path
+    is syntactically valid; topology membership is validated separately.
+    """
+
+    def test_accepts_app_src_main_java(self):
+        d = _diagnostic("DB_DECLARATION_UNRESOLVED", "app/src/main/java/example/File.kt")
+        assert d.path == "app/src/main/java/example/File.kt"
+
+    def test_accepts_feature_src_main_kotlin(self):
+        d = _diagnostic("DB_DECLARATION_UNRESOLVED", "feature/src/main/kotlin/example/File.kt")
+        assert d.path == "feature/src/main/kotlin/example/File.kt"
+
+    def test_accepts_lib_core_src_main_java(self):
+        d = _diagnostic("DB_DECLARATION_UNRESOLVED", "lib/core/src/main/java/example/File.kt")
+        assert d.path == "lib/core/src/main/java/example/File.kt"
+
+    def test_accepts_shallow_path(self):
+        d = _diagnostic("DB_DECLARATION_UNRESOLVED", "src/File.kt")
+        assert d.path == "src/File.kt"
+
+    def test_rejects_non_kt_suffix(self):
+        with pytest.raises(DiagnosticContextError):
+            _diagnostic("DB_DECLARATION_UNRESOLVED", "app/src/main/java/example/File.java")
+
+    def test_rejects_no_suffix(self):
+        with pytest.raises(DiagnosticContextError):
+            _diagnostic("DB_DECLARATION_UNRESOLVED", "app/src/main/java/example/File")
+
+    def test_rejects_absolute(self):
+        with pytest.raises(DiagnosticContextError):
+            _diagnostic("DB_DECLARATION_UNRESOLVED", "/app/src/main/java/example/File.kt")
+
+    def test_rejects_backslash(self):
+        with pytest.raises(DiagnosticContextError):
+            _diagnostic("DB_DECLARATION_UNRESOLVED", "app\\src\\main\\java\\example\\File.kt")
+
+    def test_rejects_traversal(self):
+        with pytest.raises(DiagnosticContextError):
+            _diagnostic("DB_DECLARATION_UNRESOLVED", "app/src/../java/example/File.kt")
+
+    def test_rejects_drive_prefix(self):
+        with pytest.raises(DiagnosticContextError):
+            _diagnostic("DB_DECLARATION_UNRESOLVED", "C:/app/src/main/java/example/File.kt")
+
+
+class TestDeclarationScannerNonAppRoot:
+    """Declaration scanner behavior for a declared non-app feature root.
+
+    With ``feature/src/main/kotlin`` declared through an explicit
+    ``SourceRootSet`` (the ``root_set=`` seam, no manifest), the scanner must
+    discover the root's real declarations and report any diagnostic under the
+    exact repository-relative POSIX path.  When the kotlin root is NOT
+    declared, the complete scan fails closed with nothing scanned.
+    """
+
+    def test_diagnostic_path_for_feature_root(self, tmp_path):
+        """A declared feature root yields concrete discovery plus a
+        repository-relative diagnostic path."""
+        root_set = SourceRootSet(roots=(
+            SourceRoot(module=":feature", source_set="main",
+                       path="feature/src/main/kotlin"),
+        ))
+        path = "feature/src/main/kotlin/feature/example/Feature.kt"
+        _write(tmp_path, path,
+               "package feature.example\nclass Feature {\n    fun load() {}\n}\n")
+        trusted = scan_production_declarations(tmp_path, root_set=root_set)
+        # Concrete discovery: the declared feature-root file is scanned and
+        # its declaration inventoried under the repository-relative POSIX
+        # path, with no diagnostic.
+        assert trusted.files_scanned == (path,)
+        assert trusted.diagnostics == ()
+        owner = next(item for item in trusted.helper_ranges
+                     if item.owner_fqcn == "feature.example.Feature")
+        assert (owner.kind, owner.path) == ("class", path)
+        # A parse failure in the SAME declared root is reported with the
+        # exact repository-relative POSIX diagnostic path (never absolute,
+        # never rejected for lacking an app/src prefix), and the fail-closed
+        # scan clears every range.
+        _write(tmp_path, path, "package feature.example\nclass Feature {\n")
+        broken = scan_production_declarations(tmp_path, root_set=root_set)
+        assert broken.files_scanned == (path,)
+        assert broken.diagnostics == (
+            _diagnostic("DB_DECLARATION_UNRESOLVED", path),
+        )
+        assert broken.dao_declarations == ()
+        assert broken.skipped_dao_declaration_ranges == ()
+        assert broken.helper_ranges == ()
+
+    def test_undeclared_feature_root_is_rejected_without_partial_results(self, tmp_path):
+        """The same feature fixture fails closed when its kotlin root is NOT
+        declared: production Kotlin beside a declared java root is a
+        declared-vs-observed mismatch and nothing — not even a range — is
+        scanned."""
+        _write(tmp_path, "feature/src/main/kotlin/feature/example/Feature.kt",
+               "package feature.example\nclass Feature {\n    fun load() {}\n}\n")
+        java_only = SourceRootSet(roots=(
+            SourceRoot(module=":feature", source_set="main",
+                       path="feature/src/main/java"),
+        ))
+        scan = scan_production_declarations(tmp_path, root_set=java_only)
+        assert [item.code for item in scan.diagnostics] == [
+            "DB_DECLARATION_INVALID_SOURCE",
+            "DB_SOURCE_ROOT_UNDECLARED",
+        ]
+        assert scan.files_scanned == ()
+        assert scan.dao_declarations == ()
+        assert scan.skipped_dao_declaration_ranges == ()
+        assert scan.helper_ranges == ()

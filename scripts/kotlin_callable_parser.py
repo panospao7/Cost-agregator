@@ -20,6 +20,11 @@ __all__ = [
 MAX_SOURCE = 2_000_000
 MAX_DEPTH = 128
 MAX_TOKENS = 250_000
+#: Generic repo-Kotlin-path bounds for ``canonical_source_path``: at most
+#: 16 path components and 256 characters.  Purely syntactic -- no
+#: source-root/topology knowledge lives in this module.
+MAX_SOURCE_PATH_COMPONENTS = 16
+MAX_SOURCE_PATH_LENGTH = 256
 _MESSAGE = "kotlin callable parser error"
 
 # Signature failures retain their controlled codes at this boundary.  The
@@ -35,6 +40,17 @@ _SIGNATURE_ERROR_CODES = frozenset({
     "BAD_RECEIVER", "INVALID_SIGNATURE_ERROR",
 })
 
+# Controlled path-syntax codes for ``canonical_source_path``: exactly one
+# code per rejection class.  The set is closed so unknown reason codes
+# cannot leak into diagnostics; the codes are safe to expose, input text
+# is not.
+_PATH_SYNTAX_ERROR_CODES = frozenset({
+    "PATH_NOT_TEXT", "PATH_EMPTY", "PATH_BACKSLASH", "PATH_ABSOLUTE",
+    "PATH_UNC", "PATH_DRIVE", "PATH_TRAILING_SLASH", "PATH_DOUBLE_SLASH",
+    "PATH_TRAVERSAL", "PATH_DOT_SEGMENT", "PATH_TOO_LONG", "PATH_TOO_DEEP",
+    "PATH_NOT_KOTLIN",
+})
+
 
 class ParserError(Exception):
     """An error with a deliberately fixed, non-data-bearing diagnostic."""
@@ -42,7 +58,7 @@ class ParserError(Exception):
         allowed_codes = {
             "PARSER_ERROR", "SIGNATURE_UNSUPPORTED", "TYPE_UNRESOLVED",
             "PATH_TOO_LONG", "PATH_TOO_DEEP", "PATH_SEGMENT_TOO_LONG",
-        } | _SIGNATURE_ERROR_CODES
+        } | _SIGNATURE_ERROR_CODES | _PATH_SYNTAX_ERROR_CODES
         self.code = code if code in allowed_codes else "PARSER_ERROR"
         self.message = _MESSAGE
         super().__init__(self.message)
@@ -99,29 +115,78 @@ def mask_kotlin_source(text: str) -> str:
 
 
 def canonical_source_path(path: str | Path) -> str:
-    """Return the repository-relative POSIX app/src path, or fail closed."""
+    """Return a syntactically valid repository-relative POSIX ``.kt`` path.
+
+    GENERIC repo-Kotlin-path syntax validation only: repository-relative
+    POSIX form, ``.kt`` extension, bounded length and depth.  There is
+    deliberately no source-root/topology knowledge left in this module --
+    any module tree (``app/src/main/java``, ``feature/src/main/kotlin``,
+    ``lib/core/src/main/java``, ...) is syntactically valid, and so is any
+    source set.  Root MEMBERSHIP is a separate concern, validated later by
+    root-aware stages via ``source_roots.is_declared_production_path``.
+
+    Exactly one controlled ``ParserError`` code per rejection class:
+
+      * non-string input          -> PATH_NOT_TEXT
+      * blank                     -> PATH_EMPTY
+      * backslash separator       -> PATH_BACKSLASH
+      * leading ``/``             -> PATH_ABSOLUTE
+      * leading ``//`` (UNC)      -> PATH_UNC
+      * drive prefix (``C:``)     -> PATH_DRIVE
+      * trailing ``/``            -> PATH_TRAILING_SLASH
+      * duplicate slash           -> PATH_DOUBLE_SLASH
+      * ``..`` segment            -> PATH_TRAVERSAL
+      * ``.`` segment             -> PATH_DOT_SEGMENT
+      * more than MAX_SOURCE_PATH_LENGTH characters     -> PATH_TOO_LONG
+      * more than MAX_SOURCE_PATH_COMPONENTS components -> PATH_TOO_DEEP
+      * missing ``.kt`` suffix    -> PATH_NOT_KOTLIN
+
+    The input is never normalized before validation: normalization would
+    turn an invalid path into a valid-looking one and hide traversal or
+    foreign roots.
+    """
     try:
         if isinstance(path, Path):
-            if path.is_absolute() or path.drive or path.root:
-                _fail()
+            if path.drive:
+                # pathlib spells UNC drives as ``//server/share``.
+                _fail("PATH_UNC" if path.drive.startswith(("//", "\\")) else "PATH_DRIVE")
+            if path.root or path.is_absolute():
+                _fail("PATH_ABSOLUTE")
             if any("\\" in part for part in path.parts):
-                _fail()
+                _fail("PATH_BACKSLASH")
             raw = "/".join(path.parts)
+        elif isinstance(path, str):
+            raw = path
         else:
-            raw = str(path)
+            _fail("PATH_NOT_TEXT")
         # Do not normalize first: normalization would turn an invalid path into
-        # a valid-looking suffix (and would hide traversal or foreign roots).
-        if not raw or "\\" in raw or raw.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", raw):
-            _fail()
+        # a valid-looking one (and would hide traversal or foreign roots).
+        if not raw:
+            _fail("PATH_EMPTY")
+        if "\\" in raw:
+            _fail("PATH_BACKSLASH")
+        if raw.startswith("//"):
+            _fail("PATH_UNC")
+        if raw.startswith("/"):
+            _fail("PATH_ABSOLUTE")
+        if re.match(r"^[A-Za-z]:", raw):
+            _fail("PATH_DRIVE")
+        if raw.endswith("/"):
+            _fail("PATH_TRAILING_SLASH")
         parts = raw.split("/")
-        if any(part in ("", ".", "..") for part in parts): _fail()
-        if len(parts) < 4 or parts[:3] != ["app", "src", "main"]: _fail()
-        result = "/".join(parts)
-        if len(result) > 512: _fail("PATH_TOO_LONG")
-        if len(parts) > 32: _fail("PATH_TOO_DEEP")
-        if any(len(part) > 128 for part in parts): _fail("PATH_SEGMENT_TOO_LONG")
-        if not result.endswith(".kt"): _fail()
-        return result
+        if any(part == "" for part in parts):
+            _fail("PATH_DOUBLE_SLASH")
+        if any(part == ".." for part in parts):
+            _fail("PATH_TRAVERSAL")
+        if any(part == "." for part in parts):
+            _fail("PATH_DOT_SEGMENT")
+        if len(raw) > MAX_SOURCE_PATH_LENGTH:
+            _fail("PATH_TOO_LONG")
+        if len(parts) > MAX_SOURCE_PATH_COMPONENTS:
+            _fail("PATH_TOO_DEEP")
+        if not raw.endswith(".kt"):
+            _fail("PATH_NOT_KOTLIN")
+        return raw
     except ParserError:
         raise
     except Exception:
@@ -584,7 +649,7 @@ def parse_kotlin_file(path: str | Path) -> tuple[CallableDeclaration, ...]:
         canonical = canonical_source_path(path)
         # Validate the caller-supplied path before touching the filesystem.
         # This is intentionally separate from Path.read_text so rejected
-        # absolute, foreign-root, and traversal paths cannot be opened.
+        # absolute, backslash, and traversal paths cannot be opened.
         text = Path(path).read_text(encoding="utf-8")
         owners = find_owner_declarations(text)
         out: list[CallableDeclaration] = []

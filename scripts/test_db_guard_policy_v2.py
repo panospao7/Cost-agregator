@@ -2,8 +2,9 @@
 
 Covers valid loading, schema validation, unknown/legacy keys, required-field
 checks, type/format validation, wildcard rejection, duplicate-mutation
-detection, distinct-operation/daoAccessor allowance, path canonicalization,
-and build_policy_entry edge cases.
+detection, distinct-operation/daoAccessor allowance, path syntax validation
+(generic repo-Kotlin syntax only; root membership is a later, root-aware
+concern), and build_policy_entry edge cases.
 """
 
 from __future__ import annotations
@@ -16,11 +17,13 @@ try:
     from scripts.db_guard.policy_errors import (
         POLICY_ERROR_INVALID_SIGNATURE,
         POLICY_ERROR_V2_DUPLICATE_MUTATION_KEY,
+        POLICY_ERROR_V2_PATH_NOT_CANONICAL,
     )
 except ImportError:
     from db_guard.policy_errors import (
         POLICY_ERROR_INVALID_SIGNATURE,
         POLICY_ERROR_V2_DUPLICATE_MUTATION_KEY,
+        POLICY_ERROR_V2_PATH_NOT_CANONICAL,
     )
 
 try:
@@ -652,7 +655,12 @@ def test_backslash_path_rejected(tmp_path):
     _assert_rejected(errors)
 
 
-def test_basename_only_path_rejected(tmp_path):
+def test_basename_only_path_passes_syntax_only_validation(tmp_path):
+    # Documented current behavior (PR-GR-03R part 1): the loader validates
+    # GENERIC repo-Kotlin SYNTAX only.  A bare basename is repository-
+    # relative POSIX ``.kt`` syntax, so it loads; whether it points under a
+    # declared production root is decided later by root-aware stages via
+    # ``source_roots.is_declared_production_path``.
     yaml_text = _mutate(
         [
             (
@@ -663,8 +671,99 @@ def test_basename_only_path_rejected(tmp_path):
     )
     path = _write_yaml(tmp_path, yaml_text)
     entries, errors = load_policy_v2(path)
+    assert errors == []
+    assert entries is not None
+    assert len(entries) == 1
+    assert entries[0].path == "Repo.kt"
+
+
+def test_feature_module_kotlin_path_loads(tmp_path):
+    # PR-GR-03R part 1: ``path`` validation is GENERIC repo-Kotlin syntax,
+    # so a feature-module tree is a syntactically valid v2 entry path.
+    # Root membership is enforced later by root-aware stages via
+    # ``source_roots.is_declared_production_path``.
+    yaml_text = _mutate(
+        [
+            (
+                "path: app/src/main/java/com/example/Repo.kt",
+                "path: feature/src/main/kotlin/com/example/Repo.kt",
+            )
+        ]
+    )
+    path = _write_yaml(tmp_path, yaml_text)
+    entries, errors = load_policy_v2(path)
+    assert errors == []
+    assert entries is not None
+    assert len(entries) == 1
+    assert entries[0].path == "feature/src/main/kotlin/com/example/Repo.kt"
+
+
+def test_library_module_java_root_kotlin_path_loads(tmp_path):
+    # Same syntax-only contract for a library module using a java root:
+    # the source-root NAME carries no weight at load time.
+    yaml_text = _mutate(
+        [
+            (
+                "path: app/src/main/java/com/example/Repo.kt",
+                "path: lib/core/src/main/java/com/example/Repo.kt",
+            )
+        ]
+    )
+    path = _write_yaml(tmp_path, yaml_text)
+    entries, errors = load_policy_v2(path)
+    assert errors == []
+    assert entries is not None
+    assert len(entries) == 1
+    assert entries[0].path == "lib/core/src/main/java/com/example/Repo.kt"
+
+
+@pytest.mark.parametrize(("bad_path", "parser_code"), [
+    ("", "PATH_EMPTY"),
+    ("/absolute/path/Repo.kt", "PATH_ABSOLUTE"),
+    ("//server/share/Repo.kt", "PATH_UNC"),
+    ("C:/repo/Repo.kt", "PATH_DRIVE"),
+    ("app\\src\\main\\java\\com\\example\\Repo.kt", "PATH_BACKSLASH"),
+    ("../outside/Repo.kt", "PATH_TRAVERSAL"),
+    ("app/src/main/java/com/../example/Repo.kt", "PATH_TRAVERSAL"),
+    ("./app/src/main/java/com/example/Repo.kt", "PATH_DOT_SEGMENT"),
+    ("app//src/main/java/com/example/Repo.kt", "PATH_DOUBLE_SLASH"),
+    ("app/src/main/java/com/example/Repo.kt/", "PATH_TRAILING_SLASH"),
+    ("app/src/main/java/com/example/Repo.java", "PATH_NOT_KOTLIN"),
+    ("/".join(["dir"] * 16) + "/Repo.kt", "PATH_TOO_DEEP"),
+    ("d/" + "x" * 252 + ".kt", "PATH_TOO_LONG"),
+])
+def test_path_syntax_rejection_matrix_keeps_distinct_parser_codes(
+    tmp_path, bad_path, parser_code
+):
+    """Loader-level mirror of the parser's syntax rejection matrix.
+
+    Every rejection class maps to POLICY_ERROR_V2_PATH_NOT_CANONICAL with
+    the parser's controlled code riding in ``context.parser_code`` (a
+    bounded constant -- never the offending path text).
+    """
+    yaml_value = bad_path if bad_path else "''"
+    yaml_text = _mutate(
+        [
+            (
+                "path: app/src/main/java/com/example/Repo.kt",
+                "path: " + yaml_value,
+            )
+        ]
+    )
+    path = _write_yaml(tmp_path, yaml_text)
+    entries, errors = load_policy_v2(path)
     assert entries is None
     _assert_rejected(errors)
+    path_errors = [
+        err
+        for err in errors
+        if err.code == POLICY_ERROR_V2_PATH_NOT_CANONICAL
+    ]
+    assert len(path_errors) == 1
+    assert path_errors[0].context.get("parser_code") == parser_code
+    # Bounded context: the offending path text never leaks into diagnostics.
+    if bad_path:
+        assert bad_path not in repr(path_errors[0].context)
 
 
 def test_absolute_path_rejected(tmp_path):

@@ -1053,6 +1053,29 @@ def test_diag_text_keeps_path_canonical_and_parses_line() -> None:
             )
 
 
+@pytest.mark.parametrize("raw", [
+    "/abs/example/Fixture.kt",               # absolute POSIX path
+    "C:/app/src/main/java/Fixture.kt",       # drive-prefixed path
+    "C:\\app\\src\\main\\java\\Fixture.kt",  # drive + backslash form
+    "app/src/../main/java/Fixture.kt",       # traversal segment
+])
+def test_diag_text_degrades_non_canonical_path_to_pathless_diagnostic(
+    raw: str,
+) -> None:
+    """Non-canonical .kt text must never raise through the diagnostic
+    conversion: it degrades to the bare controlled diagnostic with no path."""
+    with_line = _diag_from_text(f"DB_SOURCE_UNREADABLE:{raw}:17")
+    assert (with_line.code, with_line.path, with_line.symbol,
+            with_line.controlled_context) == (
+                "DB_SOURCE_UNREADABLE", None, None, {},
+            )
+    without_line = _diag_from_text(f"DB_SOURCE_UNREADABLE:{raw}")
+    assert (without_line.code, without_line.path, without_line.symbol,
+            without_line.controlled_context) == (
+                "DB_SOURCE_UNREADABLE", None, None, {},
+            )
+
+
 def test_source_root_uses_project_defaults_for_policies(tmp_path: Path) -> None:
     root = _fixture(tmp_path)
     project_config = Path(__file__).parents[1] / "config/guards"

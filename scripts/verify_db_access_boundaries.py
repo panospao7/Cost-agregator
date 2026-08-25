@@ -3,7 +3,7 @@
 verify_db_access_boundaries.py
 Coherent Exact DB Access Boundary Scanner (Write/Read/Restore Barrier)
 
-Scans app/src/main/java for:
+Scans declared production source roots for:
   1. Direct DAO mutation calls outside the canonical ownership policy.
   2. DAO mutation pairs that are only partially approved — mixed
      approved/unapproved pairs in the same method fail.
@@ -22,7 +22,7 @@ Approval sources:
 
 Canonical policy paths (both policy files):
   * repository-relative POSIX paths under an approved production source root
-    (``app/src/main/java``), e.g.
+    (resolved through ``source_roots.APPROVED_PRODUCTION_SOURCE_ROOTS``), e.g.
     ``app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt``;
   * bare basenames, ``..``, backslashes, absolute paths, non-``.kt`` paths,
     and ambiguous suffix paths are rejected at load time (fail closed);
@@ -381,7 +381,7 @@ def canonical_policy_path_error(raw):
       * not bare basenames (must contain a directory component);
       * ending in ``.kt``;
       * under an approved production source root
-        (``app/src/main/java``).
+        (resolved through ``source_roots.APPROVED_PRODUCTION_SOURCE_ROOTS``).
 
     Bare basenames are rejected because duplicate basenames exist across
     packages; suffix/ambiguous paths are rejected because matching is exact
@@ -403,9 +403,12 @@ def canonical_policy_path(raw):
 def _scanned_file_canonical_path(filepath):
     """Return the repository-relative POSIX path of a scanned file.
 
-    For production files under ``app/src/main/java`` this equals the canonical
-    policy path form; for any other tree it produces a path that no canonical
-    policy path can equal (fail closed).
+    Topology-neutral: produces a repository-relative POSIX path for ANY
+    scanned file.  Authorization is performed separately by root-aware
+    stages (``_canonical_path_file`` resolves through the declared
+    production root set via ``source_roots``).  A file outside every
+    declared root cannot be resolved there and fails closed at the
+    authorization layer, not here.
     """
     return os.path.relpath(filepath, PROJECT_ROOT).replace("\\", "/")
 
@@ -551,7 +554,8 @@ def load_db_ownership_policy(policy_path=None):
       * non-empty string ``path``, ``class``, ``method``, ``operation``,
         ``reason``, ``owner``, ``linked_issue``;
       * ``path`` in CANONICAL form — a repository-relative POSIX path under an
-        approved production source root (``app/src/main/java``).  Bare
+        approved production source root (resolved through
+        ``source_roots.APPROVED_PRODUCTION_SOURCE_ROOTS``).  Bare
         basenames, ``..``, backslashes, absolute paths, non-``.kt`` paths, and
         ambiguous suffix paths are rejected with exit 2;
       * ``operation`` equal to the EXACT DAO method name authorized by the
@@ -642,7 +646,7 @@ def load_db_structural_exceptions(exceptions_path=None):
     Each entry must have: path, class, method_pattern, operation, reason, owner.
 
     ``path`` must be a canonical policy path (repository-relative POSIX path
-    under ``app/src/main/java``) and ``method_pattern`` must be an exact method
+    under an approved production source root) and ``method_pattern`` must be an exact method
     name or the single bounded migration form ``MIGRATION_\\d+_\\d+``.
     Broad regex patterns are rejected with exit 2.
     """
