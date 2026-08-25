@@ -436,6 +436,50 @@ def test_command_construction_uses_single_token_command_arg() -> None:
     assert '"--ci-mode"' in command_region
 
 
+def test_task_invokes_authoritative_cli_argv_without_legacy_paths() -> None:
+    """Gradle-plane wiring: the inner child command is the authoritative
+    protocol-v2 CLI argv and nothing else.
+
+    ``guardFile`` is resolved from ``scripts/verify_db_access_boundaries.py``
+    (pairing pinned by
+    ``test_parity_default_paths_paired_with_exact_override_properties``) and
+    must be passed to the ratchet together with the single-token
+    ``--command-arg=--fail-on-violation`` child flag.  The task source must
+    never reference the retired legacy shadow-report flag or the archived
+    legacy policy path: the ratchet consumes protocol-v2 reports only.  A
+    legacy v1 baseline surfaces as the controlled
+    RATCHET_V1_BASELINE_INCOMPATIBLE exit 2 until GR-09 migrates it (pinned
+    in test_guard_ratchet_v2.py).
+    """
+    task = _verify_task_text()
+    command_region = _command_construction_region(task)
+
+    # The invoked argv targets verify_db_access_boundaries.py ...
+    assert (
+        'resolveDbGuardPath("scripts/verify_db_access_boundaries.py", '
+        '"dbGuardScriptPath")' in task
+    ), "task must resolve the guard script from its canonical path"
+    assert '"--command-arg=${guardFile.absolutePath}"' in command_region, (
+        "inner command does not pass the resolved guard script path"
+    )
+    # ... with --fail-on-violation as a single-token child argument.
+    assert '"--command-arg=--fail-on-violation"' in command_region, (
+        "inner command lacks the --fail-on-violation child flag"
+    )
+
+    # No legacy shadow-report or archived-policy references anywhere in the
+    # task: protocol-v2 reports are the only consumed input.
+    assert "--legacy-shadow-report" not in task, (
+        "task references the retired legacy shadow-report flag"
+    )
+    assert "legacy-shadow" not in task, (
+        "task references a legacy shadow artifact"
+    )
+    assert "db_ownership_policy.legacy.yml" not in task, (
+        "task references the archived legacy policy path"
+    )
+
+
 def test_relative_overrides_resolve_against_repository_root() -> None:
     """Relative override paths must resolve against rootDir, not projectDir.
 

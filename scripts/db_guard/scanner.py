@@ -5,6 +5,20 @@ consume legacy guard stdout, infer identity from filenames, or create policy
 rules.  Uncertainty is represented by registered protocol diagnostics and
 therefore makes the returned report untrusted. Clean v2 reports exit 0,
 findings exit 1, and diagnostics exit 2.
+
+Activation (PR-GR-07 Slice 2): D4 authorization is TYPED.  The ownership
+policy input is a sequence of immutable
+:class:`~scripts.db_guard.policy_model.PolicyEntry` objects loaded from a
+schemaVersion-2 document, and every discovered direct DAO mutation is
+authorized by EXACT equality on the full mutation identity via
+``PolicyEntry``/``match_mutation``: path + ownerFqcn + kind + method +
+receiver + ordered parameterTypes + daoAccessor + daoFqcn + operation.  The
+legacy authorization paths are removed from this module: no simple-name
+(owner_fqcn.rsplit) comparison, no legacy ``class``/``daos``/``signature``
+dict fields, no name-only operation matching, no cross-overload unions, no
+v1 fallback, and no wildcards.  Unmatched discovered mutations become
+findings; unresolved targets become diagnostics — never guessed findings.
+Structural exception matching is unchanged.
 """
 from __future__ import annotations
 
@@ -35,10 +49,10 @@ from .declaration_scanner import (
     declared_root_pairs,
     scan_production_declarations,
 )
+from .policy_model import BarrierMode, CallableKind, PolicyEntry, match_mutation
 from .room_inventory import build_room_inventory
 from .source_roots import resolve_source_root_set
 from .policy_legacy import (
-    legacy_ownership_entry_metadata_errors as ownership_entry_metadata_errors,
     legacy_structural_entry_metadata_errors as structural_entry_metadata_errors,
 )
 
@@ -171,27 +185,6 @@ def _line_diagnostic(code: str, path: str | None, line: int | None) -> GuardDiag
     return GuardDiagnostic(code, path=path, controlled_context=context)
 
 
-def _policy_keys(entry: dict[str, Any]) -> tuple[tuple[str, str, str, str, str], ...]:
-    try:
-        path = entry["path"]
-        owner = entry.get("class")
-        method = entry.get("method")
-        operation = entry.get("operation")
-        daos = entry.get("daos")
-        if not all(isinstance(x, str) and x for x in (path, owner, method, operation)):
-            return ()
-        if not isinstance(daos, list) or not daos or any(not isinstance(item, str) or not item for item in daos):
-            return ()
-        return tuple((path, owner, method, dao, operation) for dao in daos)
-    except (KeyError, TypeError):
-        return ()
-
-
-def _ownership_entry_errors(entry: Any) -> list[str]:
-    """Use the CLI's complete ownership validator for direct API calls."""
-    return ownership_entry_metadata_errors(entry)
-
-
 def _property_symbol_at(source: str, declaration, offset: int) -> CallableSymbol:
     """Resolve a property initializer/getter/setter at an exact source offset."""
     begin = _line_start(source, declaration.start_line)
@@ -261,26 +254,6 @@ def _receiver_expression(masked: str, dot_start: int) -> tuple[str, bool]:
         i -= 1
     expression = masked[i + 1:end].strip()
     return expression, (not safe and bool(re.fullmatch(r"[A-Za-z_]\w*", expression)))
-
-
-def _policy_matches(entry: dict[str, Any], declaration, symbol, receiver: str, operation: str) -> bool:
-    """Match the complete callable identity, not just its display name."""
-    if (entry.get("path"), entry.get("class"), entry.get("method"),
-            entry.get("operation")) != (
-                declaration.path, declaration.owner_fqcn.rsplit(".", 1)[-1],
-                symbol.name, operation):
-        return False
-    if not isinstance(entry.get("daos"), list) or receiver not in entry["daos"]:
-        return False
-    signature = entry.get("signature")
-    if signature is None:
-        return False
-    if not isinstance(signature, dict):
-        return False
-    parameters = signature.get("parameters")
-    return (signature.get("receiver") == symbol.receiver and
-            signature.get("kind") == symbol.kind and
-            isinstance(parameters, list) and tuple(parameters) == tuple(symbol.parameters))
 
 
 def _structural_match(entries, path: str, owner: str, method: str, operation: str) -> bool:
@@ -455,19 +428,28 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     """Return a deterministic protocol-v2 report for one DB discovery run.
 
     ``source_root`` accepts the same project/source-root forms as the D2
-    scanners.  Policies may be parsed mappings/lists or YAML paths.  The
-    scanner is deliberately conservative: unresolved callable, receiver, or
-    operation signatures become diagnostics rather than guessed findings.
+    scanners.  ``ownership_policy`` is the ACTIVATED typed contract: a
+    sequence of immutable :class:`~scripts.db_guard.policy_model.PolicyEntry`
+    objects (or ``None``), loaded from a schemaVersion-2 document by the CLI
+    via ``load_policy_v2``.  Every discovered direct DAO mutation is
+    authorized by exact full-identity equality (``match_mutation``); anything
+    that is not a ``PolicyEntry`` fails closed as an infrastructure
+    diagnostic.  ``structural_policy`` may be parsed mappings/lists or YAML
+    paths.  The scanner is deliberately conservative: unresolved callable,
+    receiver, or operation signatures become diagnostics rather than guessed
+    findings.
     """
-    ownership, own_ok = _load_policy(ownership_policy)
+    # Typed v2 authorization input only.  A non-PolicyEntry item can never be
+    # matched, so it fails closed as DB_POLICY_SOURCE_EVIDENCE_INVALID instead
+    # of silently authorizing or silently rejecting mutations.
+    ownership = (
+        list(ownership_policy) if ownership_policy is not None else []
+    )
+    own_ok = all(isinstance(item, PolicyEntry) for item in ownership)
     structural, structural_ok = _load_policy(structural_policy)
-    # Validate the complete canonical ownership schema before any policy is
+    # Validate the complete canonical structural schema before any policy is
     # indexed or matched.  In particular, malformed signatures must become an
     # infrastructure diagnostic, never an unauthorized mutation finding.
-    own_ok = own_ok and all(
-        not _ownership_entry_errors(item) and bool(_policy_keys(item))
-        for item in ownership
-    )
     structural_ok = structural_ok and all(
         not structural_entry_metadata_errors(item) for item in structural
     )
@@ -511,11 +493,16 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         except (OSError, UnicodeError):
             diagnostics.append(GuardDiagnostic("DB_SOURCE_UNREADABLE", path=path))
 
-    own_keys = {
-        key: item
-        for item in ownership
-        for key in _policy_keys(item)
-    }
+    # Typed authorization index: bucket entries by (canonical path, exact
+    # operation) so each discovered mutation is compared only against the
+    # entries that could possibly authorize it, then by FULL identity
+    # equality via ``match_mutation`` (path + ownerFqcn + kind + method +
+    # receiver + ordered parameterTypes + daoAccessor + daoFqcn + operation).
+    policy_by_path_operation: dict[tuple[str, str], list[PolicyEntry]] = {}
+    for item in ownership:
+        policy_by_path_operation.setdefault(
+            (item.path, item.operation), []
+        ).append(item)
     for declaration in declarations.helper_ranges:
         source = sources.get(declaration.path)
         if source is None:
@@ -698,44 +685,53 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 continue
             line = _line(source, call.start())
             location = SourceLocation(line=line, end_line=line)
-            base_policy_candidates = [item for item in ownership
-                                      if (item.get("path"), item.get("class"),
-                                          item.get("method"), item.get("operation")) ==
-                                         (declaration.path,
-                                          declaration.owner_fqcn.rsplit(".", 1)[-1],
-                                          symbol.name, operation)
-                                      and isinstance(item.get("daos"), list)
-                                      and receiver in item["daos"]]
-            if any("signature" not in item for item in base_policy_candidates):
-                diagnostics.append(_line_diagnostic("DB_SIGNATURE_UNRESOLVED",
-                                                    declaration.path, line))
-                continue
-            policy_candidates = [item for item in ownership
-                                       if _policy_matches(item, declaration, call_symbol, receiver, operation)]
-            authorized = len(policy_candidates) == 1
-            if authorized and "signature" not in policy_candidates[0]:
+            # Typed v2 authorization (PR-GR-07 Slice 2): EXACT full-identity
+            # equality against PolicyEntry objects.  The discovered mutation's
+            # kind must be a real CallableKind; an unknown kind is unresolved
+            # signature debt and takes the controlled diagnostic path — never
+            # a guessed finding.  There is no simple-name owner comparison, no
+            # legacy class/daos/signature fields, no name-only operation
+            # matching, no cross-overload union, and no wildcard.
+            try:
+                callable_kind = CallableKind(call_symbol.kind)
+            except ValueError:
                 diagnostics.append(_line_diagnostic(
                     "DB_SIGNATURE_UNRESOLVED", declaration.path, line,
                 ))
-                authorized = False
-            if not authorized:
+                continue
+            matched_entries = [
+                item for item in policy_by_path_operation.get(
+                    (declaration.path, operation), ())
+                if match_mutation(
+                    item,
+                    path=declaration.path,
+                    owner_fqcn=declaration.owner_fqcn,
+                    kind=callable_kind,
+                    method=call_symbol.name,
+                    receiver=call_symbol.receiver,
+                    parameter_types=tuple(call_symbol.parameters),
+                    dao_accessor=receiver,
+                    dao_fqcn=dao,
+                    operation=operation,
+                )
+            ]
+            if not matched_entries:
                 findings.append(GuardFinding(
                     "DB_UNAUTHORIZED_MUTATION", "error", declaration.path,
                      location, call_symbol,
-                    {"dao": dao, "accessor": receiver, "operation": operation,
-                     "mutation_kind": mutator.mutation_kind, "call_form": "receiver"},
+                     {"dao": dao, "accessor": receiver, "operation": operation,
+                      "mutation_kind": mutator.mutation_kind, "call_form": "receiver"},
                     "Database mutation is not owned by an exact policy entry",
                 ))
-            else:
-                entry = policy_candidates[0]
-                if entry.get("barrier_required") is True:
-                    before = masked[start:call.start()]
-                    if not re.search(r"\bwriteBarrier\s*\.\s*(?:checkWritesAllowed|runWrite)\s*\(", before):
-                        findings.append(GuardFinding(
-                            "DB_MISSING_WRITE_BARRIER", "error", declaration.path,
-                            location, call_symbol, {"dao": dao, "operation": operation},
-                            "Database write lacks required barrier evidence",
-                        ))
+            elif any(item.barrier_mode is BarrierMode.DIRECT
+                     for item in matched_entries):
+                before = masked[start:call.start()]
+                if not re.search(r"\bwriteBarrier\s*\.\s*(?:checkWritesAllowed|runWrite)\s*\(", before):
+                    findings.append(GuardFinding(
+                        "DB_MISSING_WRITE_BARRIER", "error", declaration.path,
+                        location, call_symbol, {"dao": dao, "operation": operation},
+                        "Database write lacks required barrier evidence",
+                    ))
 
         for operation, pattern in _STRUCTURAL.items():
             # ``writableDatabase`` is a property access, not a method call;

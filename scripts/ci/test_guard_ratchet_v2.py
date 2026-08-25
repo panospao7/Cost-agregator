@@ -3473,3 +3473,80 @@ def test_registry_resolves_finding_protocol_for_db_access() -> None:
     assert resolved == 2, (
         f"Expected resolved protocol=2 for db_access, got {resolved}"
     )
+
+
+# -- Wiring: authoritative db_access child argv ------------------------------------
+
+
+def test_db_access_child_argv_targets_authoritative_cli(tmp_path: Path) -> None:
+    """Ratchet-plane wiring: the db_access child command is the authoritative
+    protocol-v2 CLI argv and nothing else.
+
+    The ratchet is driven exactly the way every control plane drives it for
+    db_access -- ``--command-arg=<python>``,
+    ``--command-arg=<...>/verify_db_access_boundaries.py``, and
+    ``--command-arg=--fail-on-violation`` as single tokens -- and the mock
+    child records its own argv to prove:
+
+      * the invoked argv targets ``verify_db_access_boundaries.py``;
+      * the option-like ``--fail-on-violation`` value stays inside the CHILD
+        command (single-token pass-through; argparse never steals it);
+      * the run succeeds through the v2 report transport alone.
+
+    The module source must additionally never reference the retired legacy
+    shadow-report flag or the archived legacy policy path: the ratchet
+    consumes protocol-v2 reports only.  The transitional legacy-baseline
+    state (v1 baseline -> controlled RATCHET_V1_BASELINE_INCOMPATIBLE exit 2
+    until GR-09) is pinned separately by the dedicated v1-baseline tests
+    above.
+    """
+    # The mock child is literally named after the authoritative CLI so the
+    # recorded argv proves the wiring target without executing the real
+    # scanner (which depends on repository config state).
+    guard_py = tmp_path / "verify_db_access_boundaries.py"
+    argv_marker = tmp_path / "child_argv.json"
+    report = _report_dict(findings=[])
+    _write_mock_guard(guard_py, report, exit_code=0)
+    # Extend the generated mock with argv recording so the test can prove
+    # exactly which arguments the child received.
+    text = guard_py.read_text(encoding="utf-8")
+    text = text.replace(
+        "import sys\n",
+        "import sys\n"
+        f"with open({str(argv_marker)!r}, 'w', encoding='utf-8') as f:\n"
+        "    f.write(json.dumps(sys.argv))\n",
+        1,
+    )
+    text = text.replace("import os\n", "import json\nimport os\n", 1)
+    guard_py.write_text(text, encoding="utf-8")
+
+    baseline = _baseline(tmp_path)
+    _write_baseline_v2(baseline, _GUARD, [])
+
+    result = _run_ratchet(
+        _GUARD,
+        [sys.executable, str(guard_py), "--fail-on-violation"],
+        baseline,
+        protocol=2,
+        cwd=tmp_path,
+    )
+
+    assert result.returncode == 0, (
+        f"Expected exit 0, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert argv_marker.exists(), "mock child did not record its argv"
+    # A child's sys.argv never includes the interpreter: it must be exactly
+    # [verify_db_access_boundaries.py, --fail-on-violation].
+    child_argv = json.loads(argv_marker.read_text(encoding="utf-8"))
+    assert child_argv == [
+        str(guard_py),
+        "--fail-on-violation",
+    ], child_argv
+
+    # No legacy shadow-report or archived-policy references anywhere in the
+    # ratchet plane: protocol-v2 reports are the only consumed input.
+    ratchet_source = RATCHET_SCRIPT.read_text(encoding="utf-8")
+    assert "--legacy-shadow-report" not in ratchet_source
+    assert "legacy-shadow" not in ratchet_source
+    assert "db_ownership_policy.legacy.yml" not in ratchet_source

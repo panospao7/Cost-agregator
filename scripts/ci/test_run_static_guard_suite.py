@@ -692,6 +692,41 @@ class TestDbAccessSuiteCommandTokens:
                 return
         assert False, "db_access not found in GUARD_MANIFEST"
 
+    def test_db_access_child_argv_is_authoritative_v2_cli(self):
+        """The db_access child command must be the authoritative protocol-v2
+        CLI argv: scripts/verify_db_access_boundaries.py invoked with
+        --fail-on-violation, and the full command must never reference the
+        retired legacy shadow-report flag or the archived legacy policy path.
+
+        The ratchet consumes protocol-v2 reports only; a legacy v1 baseline
+        surfaces as the controlled RATCHET_V1_BASELINE_INCOMPATIBLE exit 2
+        until GR-09 migrates it (pinned in test_guard_ratchet_v2.py).
+        """
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                assert (
+                    "--command-arg=scripts/verify_db_access_boundaries.py"
+                    in command
+                ), (
+                    "child command does not target "
+                    f"verify_db_access_boundaries.py: {command}"
+                )
+                assert "--command-arg=--fail-on-violation" in command, (
+                    f"child command lacks --fail-on-violation: {command}"
+                )
+                joined = " ".join(command)
+                assert "--legacy-shadow-report" not in joined, (
+                    f"legacy shadow report referenced by db_access: {command}"
+                )
+                assert "legacy-shadow" not in joined, (
+                    f"legacy shadow artifact referenced by db_access: {command}"
+                )
+                assert "db_ownership_policy.legacy.yml" not in joined, (
+                    f"archived legacy policy referenced by db_access: {command}"
+                )
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
     def test_db_access_mode_is_blocking(self):
         """The db_access entry must be blocking mode."""
         for name, _, mode in _runner.GUARD_MANIFEST:

@@ -3,6 +3,25 @@
 verify_db_access_boundaries.py
 Coherent Exact DB Access Boundary Scanner (Write/Read/Restore Barrier)
 
+ACTIVATED (PR-GR-07 Slice 2): the CLI runs the authoritative protocol-v2
+pipeline only.  The legacy v1 active-policy parsing (including the retired
+SIGNATURE_MISSING pre-gate) has been removed; a v1-shaped active policy can
+never authorize anything and is a controlled untrusted configuration error
+(classified ``DB_V2_ACTIVE_POLICY_NOT_V2``).  Run
+``scripts/ci/promote_db_policy_v2.py`` to promote the verified v2 candidate
+over the legacy active file.
+
+Pipeline (in order; every failure is an untrusted exit 2 with no partial
+findings):
+
+  1. source-root validation (declared manifest + topology);
+  2. Room inventory build;
+  3. active v2 loader — ``load_policy_v2`` (schemaVersion 2 required);
+  4. v2 exact source evidence — ``verify_v2_policy_source_evidence``;
+  5. structural policy/manifest validation (unchanged semantics);
+  6. D4 discovery + full-v2 typed authorization;
+  7. protocol-v2 findings report.
+
 Scans declared production source roots for:
   1. Direct DAO mutation calls outside the canonical ownership policy.
   2. DAO mutation pairs that are only partially approved — mixed
@@ -10,11 +29,11 @@ Scans declared production source roots for:
   3. Forbidden DB file operations outside approved structural exceptions.
 
 Approval sources:
-  1. Ownership policy — EXACT match on (canonical path, class, method, DAO,
-     operation).  The ``operation`` field must be the EXACT DAO method name
-     that the method body invokes (e.g. ``insertOrIgnore``, ``archiveGroup``,
-     ``staleAbortIfStillRunning``, ``deleteAllForGroup``).  The universal
-     ``operation: write`` is rejected as invalid policy metadata.
+  1. Ownership policy (v2, authoritative) — EXACT equality on the full
+     mutation identity via immutable ``PolicyEntry`` objects: canonical path,
+     ownerFqcn, kind, method, receiver, ordered parameterTypes, daoAccessor,
+     daoFqcn, operation.  There are no wildcards, no simple-name owner
+     comparison, no cross-overload unions, and no legacy fields.
   2. Structural exceptions — EXACT match on (canonical path, class,
      method_pattern, operation).  method_pattern is bounded: an exact Kotlin
      identifier or the single migration form ``MIGRATION_\\d+_\\d+``.
@@ -28,19 +47,6 @@ Canonical policy paths (both policy files):
     and ambiguous suffix paths are rejected at load time (fail closed);
   * matching is exact canonical path equality — never basename or suffix.
 
-Scan semantics:
-  * class/object/interface names are parsed from the ACTUAL Kotlin
-    declarations of the referenced file — never derived from the filename;
-  * every mutation is associated with its exact enclosing class and its exact
-    enclosing method (balanced body) inside that class; there is no
-    file-wide or filename-wide fallback;
-  * DAO identities resolve through class-scoped properties/constructor
-    params and method-scoped locals to the Room accessor names used by the
-    policy (e.g. ``private val groupDao: ExpenseGroupDao`` ->
-    ``expenseGroupDao``);
-  * authorization requires every extracted ``(dao_identity, operation)`` pair
-    to be covered by an exact policy entry; a single uncovered pair fails.
-
 Exit codes:
   0 — clean trusted scan (or inventory-only success)
   1 — one or more protocol-v2 findings
@@ -49,12 +55,21 @@ Exit codes:
 Usage:
   python3 scripts/verify_db_access_boundaries.py
   python3 scripts/verify_db_access_boundaries.py --fail-on-violation
+  python3 scripts/verify_db_access_boundaries.py --legacy-shadow-report PATH
 
 The ``--fail-on-violation`` option is accepted for compatibility.  Protocol-v2
 findings always exit 1; clean trusted scans exit 0; diagnostics exit 2.
+
+``--legacy-shadow-report PATH`` runs the RETIRED legacy analysis in-process
+and writes a JSON report marked ``reportOnly: true``.  The shadow report is
+strictly informational: it is written after the authoritative exit code is
+fixed, can NEVER change that exit code, and MUST NOT be passed to
+guard_ratchet.py (the ratchet consumes protocol-v2 reports only).
 """
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import sys
@@ -70,6 +85,27 @@ try:
     from scripts.db_policy_signature import SignatureError, normalize_type_text
 except ModuleNotFoundError:  # direct execution from outside the repository root
     from db_policy_signature import SignatureError, normalize_type_text
+
+try:
+    from scripts.db_guard.policy_errors import POLICY_ERROR_SCHEMA_MISMATCH
+    from scripts.db_guard.policy_v2_evidence import verify_v2_policy_source_evidence
+    from scripts.db_guard.policy_v2_loader import load_policy_v2
+    from scripts.db_guard.source_roots import (
+        SOURCE_ROOT_MANIFEST_RELPATH,
+        SourceRoot,
+        SourceRootSet,
+        resolve_source_root_set,
+    )
+except ImportError:  # direct execution from outside the repository root
+    from db_guard.policy_errors import POLICY_ERROR_SCHEMA_MISMATCH
+    from db_guard.policy_v2_evidence import verify_v2_policy_source_evidence
+    from db_guard.policy_v2_loader import load_policy_v2
+    from db_guard.source_roots import (
+        SOURCE_ROOT_MANIFEST_RELPATH,
+        SourceRoot,
+        SourceRootSet,
+        resolve_source_root_set,
+    )
 
 try:
     from scripts.db_guard.policy_legacy import (
@@ -357,6 +393,22 @@ OWNERSHIP_POLICY_PATH = os.path.join(
 STRUCTURAL_EXCEPTIONS_PATH = os.path.join(
     PROJECT_ROOT, "config", "guards", "db_structural_exceptions.yml"
 )
+
+# ── Activation contract (PR-GR-07 Slice 2) ────────────────────────────────────
+# Controlled internal classification for an active ownership-policy document
+# that is not an activatable schemaVersion 2 policy.  Like the retired
+# SIGNATURE_MISSING classification, this code stays internal: the CLI report
+# carries only the registered umbrella diagnostic, while this constant names
+# the failure mode for operators and tests.  Remediation is always the same:
+# run scripts/ci/promote_db_policy_v2.py.
+DB_V2_ACTIVE_POLICY_NOT_V2 = "DB_V2_ACTIVE_POLICY_NOT_V2"
+
+# The only activatable active-policy schema version and the bounded,
+# controlled statistics identifiers reported by trusted scans.
+ACTIVE_POLICY_SCHEMA_VERSION = 2
+ACTIVATION_POLICY_MODE = "authoritative-v2"
+ACTIVATION_SCANNER_MODE = "protocol-v2"
+ACTIVATION_SCANNER_VERSION = 2
 # Canonical structural expected-methods manifest — the contract that the
 # production CLI enforces against db_structural_exceptions.yml (exact tuple
 # set equivalence + entry counts + source evidence).
@@ -546,65 +598,41 @@ def _yaml_safe_load_or_exit(filepath, label):
 
 
 def load_db_ownership_policy(policy_path=None):
-    """Load and validate the DB ownership policy.
+    """Load the ACTIVE DB ownership policy as an immutable v2 document.
 
-    Returns a list of policy entry dicts.
+    Activation contract (PR-GR-07 Slice 2): loading goes exclusively through
+    ``scripts.db_guard.policy_v2_loader.load_policy_v2``, which requires a
+    ``schemaVersion: 2`` document with the exact per-entry field set
+    (path ownerFqcn kind method receiver parameterTypes daoAccessor daoFqcn
+    operation barrierMode reason owner linkedIssue) and returns a tuple of
+    immutable :class:`~scripts.db_guard.policy_model.PolicyEntry` objects.
 
-    Every entry is validated at load time and must have:
-      * non-empty string ``path``, ``class``, ``method``, ``operation``,
-        ``reason``, ``owner``, ``linked_issue``;
-      * ``path`` in CANONICAL form — a repository-relative POSIX path under an
-        approved production source root (resolved through
-        ``source_roots.APPROVED_PRODUCTION_SOURCE_ROOTS``).  Bare
-        basenames, ``..``, backslashes, absolute paths, non-``.kt`` paths, and
-        ambiguous suffix paths are rejected with exit 2;
-      * ``operation`` equal to the EXACT DAO method name authorized by the
-        entry.  The universal ``operation: write`` is rejected as invalid
-        policy metadata (exit 2) — it would authorize every mutation and make
-        the per-operation guard meaningless;
-      * ``daos`` — a non-empty list of non-empty strings;
-      * ``barrier_required`` — present and a REAL boolean;
-      * ``barrier_via`` — either absent or a non-empty string documenting the
-        mediation layer (e.g. ``WorkerExecutionGuard``).
+    There is NO tolerant legacy parsing: a v1-shaped active file (legacy
+    ``class``/``daos``/``signature`` fields, no ``schemaVersion: 2``) is a
+    controlled untrusted configuration error — exit 2, classified internally
+    as :data:`DB_V2_ACTIVE_POLICY_NOT_V2`.  Run
+    ``scripts/ci/promote_db_policy_v2.py`` to promote the verified candidate.
 
-    Malformed entries exit 2 with entry/path context.  Optional metadata (never
-    relaxes exact matching):
-      * ``private: true``  — the method is a private implementation writer.
-      * ``delegate_of``    — the public method that delegates to this writer
-        (the delegated-to method is the one approved; the public delegating
-        method is NOT approved unless separately listed).
-
-    Wildcard/pattern methods are rejected with exit 2.
+    Every rejection prints only controlled ``PolicyError`` codes and exits 2;
+    raw payloads, file contents, and exception text are never emitted.
     """
     if policy_path is None:
         policy_path = OWNERSHIP_POLICY_PATH
 
-    data = _yaml_safe_load_or_exit(policy_path, "DB ownership policy")
-    entries = data.get("entries", data) if isinstance(data, dict) else data
-
-    if not isinstance(entries, list):
+    entries, errors = load_policy_v2(policy_path)
+    if entries is None:
+        for error in errors:
+            # Bounded context only: controlled codes plus fixed labels,
+            # indices, counts, and type names — never paths or payloads.
+            print(f"ERROR: {error.code}: {dict(sorted(error.context.items()))}",
+                  file=sys.stderr)
         print(
-            f"ERROR: Ownership policy entries must be a list, "
-            f"got {type(entries).__name__}",
+            f"ERROR: {DB_V2_ACTIVE_POLICY_NOT_V2}: active ownership policy "
+            "is not a schemaVersion 2 document; run "
+            "scripts/ci/promote_db_policy_v2.py",
             file=sys.stderr,
         )
         sys.exit(2)
-
-    for i, entry in enumerate(entries):
-        # Stable, human-readable context for every error below: prefer the
-        # entry's own path, fall back to class, then index.
-        label = _entry_label(entry, i, "ownership policy entry")
-
-        # Complete validation — the SAME validator scan()'s direct API uses.
-        # Rejects unknown keys, missing/non-string required fields, non-canonical
-        # paths, universal ``operation: write``, wildcard methods, missing/empty
-        # daos, non-real booleans, and malformed optional metadata with exit 2.
-        errors = ownership_entry_metadata_errors(entry)
-        if errors:
-            for error in errors:
-                print(f"ERROR: {error} in {label}: {entry}", file=sys.stderr)
-            sys.exit(2)
-
     return entries
 
 # ── Structural method_pattern validation (fail-closed whitelist) ──────────────
@@ -3288,11 +3316,13 @@ def _safe_report(path, report):
 
 
 def _read_ownership_entries_for_evidence(path):
-    """Load ownership entries without dropping malformed items.
+    """Load STRUCTURAL exception entries without dropping malformed items.
 
-    The canonical source-evidence verifier must see every entry, including a
-    malformed one, before scanner matching starts.  This small loader keeps
-    the CLI boundary fail-closed without using the legacy stdout/error path.
+    The structural gate keeps its dict-based entry contract (unchanged
+    semantics).  The ACTIVE ownership policy no longer flows through here:
+    post-activation it is loaded exclusively via ``load_policy_v2``.  This
+    small loader keeps the CLI boundary fail-closed without using the legacy
+    stdout/error path.
     """
     if not _HAS_YAML:
         return [], False
@@ -3303,6 +3333,142 @@ def _read_ownership_entries_for_evidence(path):
         return [], False
     entries = data.get("entries", data) if isinstance(data, dict) else data
     return (entries, isinstance(entries, list))
+
+
+def _read_active_policy_schema_version(path):
+    """Best-effort bounded read of the active document's ``schemaVersion``.
+
+    Used ONLY to classify a failed active-policy load: an int is echoed into
+    the untrusted report statistics so operators can see WHICH schema version
+    was rejected; any absent/non-integer value yields ``None``.  Never raises.
+    """
+    data, _loaded = _read_yaml_document_for_evidence(path)
+    if not isinstance(data, dict):
+        return None
+    version = data.get("schemaVersion")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None
+    return version
+
+
+def _anchored_relative_root_set(project_root, root_set):
+    """Re-anchor a resolved root set to repository-relative POSIX paths.
+
+    Manifest-declared roots are already repository-relative; implicit
+    conventional roots carry ABSOLUTE native-separator paths, which the v2
+    evidence stage cannot use for membership checks against relative policy
+    paths.  Anchoring mirrors ``declaration_scanner.declared_root_pairs``
+    parity: every root is converted with ``os.path.relpath`` against the
+    project root.  A root that cannot be anchored (outside the project)
+    fails closed by yielding ``None`` for the whole set — no path can
+    authorize anything without a fully anchored declared root set.
+    """
+    normalized = []
+    for root in root_set.roots:
+        path = root.path
+        if os.path.isabs(path):
+            try:
+                path = os.path.relpath(path, project_root).replace(os.sep, "/")
+            except ValueError:
+                return None
+            if path.startswith(".."):
+                return None
+        normalized.append(
+            SourceRoot(module=root.module, source_set=root.source_set, path=path)
+        )
+    if not normalized:
+        return None
+    return SourceRootSet(roots=tuple(normalized))
+
+
+def _source_root_manifest_sha256(project_root):
+    """SHA-256 hex digest of the declared source-root manifest bytes.
+
+    A safe identifier only: the digest never exposes manifest content.  A
+    missing/unreadable manifest (synthetic fixtures without one) yields
+    ``None`` rather than a misleading digest of empty input.
+    """
+    manifest_path = os.path.join(
+        project_root, *SOURCE_ROOT_MANIFEST_RELPATH.split("/")
+    )
+    try:
+        with open(manifest_path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _activation_statistics(scan_statistics, findings_count, diagnostics_count,
+                           project_root):
+    """Merge scanner counters with the bounded activation identifiers."""
+    statistics = dict(scan_statistics)
+    statistics.update({
+        "activePolicySchemaVersion": ACTIVE_POLICY_SCHEMA_VERSION,
+        "policyMode": ACTIVATION_POLICY_MODE,
+        "scannerMode": ACTIVATION_SCANNER_MODE,
+        "scannerVersion": ACTIVATION_SCANNER_VERSION,
+        "sourceRootManifestSha256": _source_root_manifest_sha256(project_root),
+        "findingCount": findings_count,
+        "diagnosticCount": diagnostics_count,
+    })
+    return statistics
+
+
+def _write_legacy_shadow_report(report_path, project_root, ownership_path,
+                                structural_path, source_dir):
+    """Run the RETIRED legacy analysis in-process; write a reportOnly JSON.
+
+    The shadow report is strictly informational:
+
+      * it is written AFTER the authoritative exit code has been fixed and
+        can NEVER change that exit code (every failure below is swallowed);
+      * it MUST NOT be passed to guard_ratchet.py — the ratchet consumes
+        protocol-v2 reports only, and this payload is not one;
+      * violation payloads are bounded to path/line/reason; raw source lines
+        are deliberately omitted.
+    """
+    payload = {
+        "reportOnly": True,
+        "guard": "db_access",
+        "schema": "cost-aggregator.db-guard-legacy-shadow",
+        "violations": [],
+        "filesScanned": 0,
+    }
+    try:
+        from scripts.db_guard.policy_legacy import (
+            legacy_load_ownership_policy,
+            legacy_load_structural_exceptions,
+        )
+
+        ownership_entries, ownership_errors = legacy_load_ownership_policy(
+            ownership_path
+        )
+        structural_entries, structural_errors = legacy_load_structural_exceptions(
+            structural_path
+        )
+        if ownership_errors or structural_errors:
+            payload["shadowAnalysisFailed"] = True
+        else:
+            violations, files_scanned = scan(
+                source_dir, list(ownership_entries), list(structural_entries),
+            )
+            payload["violations"] = [
+                {"path": item[0], "line": item[1], "reason": item[3]}
+                for item in violations
+            ]
+            payload["filesScanned"] = files_scanned
+    except (Exception, SystemExit):
+        # The shadow analysis is best-effort documentation only; its failure
+        # modes are reported inside the report and never propagate.
+        payload["violations"] = []
+        payload["filesScanned"] = 0
+        payload["shadowAnalysisFailed"] = True
+    try:
+        with open(report_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+    except OSError:
+        pass
 
 
 def _read_yaml_document_for_evidence(path):
@@ -3323,10 +3489,28 @@ def _read_yaml_document_for_evidence(path):
 
 
 def main(argv=None):
-    """Run the protocol-v2 DB discovery guard.
+    """Run the authoritative protocol-v2 DB discovery guard.
 
-    The old scanner remains importable for compatibility with its unit tests,
-    but the CLI intentionally has no dependency on its tuple/stdout format.
+    Activated pipeline order (PR-GR-07 Slice 2):
+
+      1. source-root validation (declared manifest + topology);
+      2. Room inventory build;
+      3. active v2 loader — ``load_policy_v2``, schemaVersion 2 required.  A
+         v1-shaped active file is a controlled untrusted configuration error
+         classified :data:`DB_V2_ACTIVE_POLICY_NOT_V2`: run
+         ``scripts/ci/promote_db_policy_v2.py``.  There is no tolerant legacy
+         parsing and the retired SIGNATURE_MISSING pre-gate is removed;
+      4. v2 exact source evidence — ``verify_v2_policy_source_evidence``
+         over the loaded ``PolicyEntry`` objects, the declared root set, and
+         the built Room inventory;
+      5. structural policy/manifest validation (unchanged semantics);
+      6. D4 discovery + full-v2 typed authorization;
+      7. protocol-v2 findings report.
+
+    Every stage failure is an untrusted exit 2 with NO partial findings.
+    ``--legacy-shadow-report PATH`` additionally runs the retired legacy
+    analysis in-process and writes a ``reportOnly: true`` JSON document that
+    can never change the authoritative exit code and is not a ratchet input.
     """
     parser = argparse.ArgumentParser(description="Verify DB access boundaries (protocol v2)")
     parser.add_argument("--root", default=PROJECT_ROOT, help="Project root or app/src/main/java")
@@ -3334,6 +3518,10 @@ def main(argv=None):
     parser.add_argument("--dump-room-mutators", default=None)
     parser.add_argument("--inventory-only", action="store_true")
     parser.add_argument("--fail-on-violation", action="store_true")
+    # Report-only legacy analysis (see _write_legacy_shadow_report): the
+    # output states reportOnly, cannot affect the exit code, and must never
+    # be passed through to guard_ratchet.py.
+    parser.add_argument("--legacy-shadow-report", default=None)
     # These are deliberate test seams. Production invocations use the
     # canonical defaults and do not need policy-path overrides.
     parser.add_argument("--ownership-policy", default=None)
@@ -3357,6 +3545,11 @@ def main(argv=None):
     scan_result = None
     inventory = None
     operation_failed = False
+    active_policy_schema_version = None
+    project_root = None
+    root = None
+    ownership = None
+    structural = None
 
     # The findings protocol is selected only by the exact v2 contract.  Do
     # this before any scan so an inherited/hostile environment cannot produce
@@ -3400,53 +3593,85 @@ def main(argv=None):
                 "db_structural_exceptions_expected_methods.yml",
             )
             raw_query = policy_path(args.raw_query_policy, "db_raw_query_classification.yml")
-            if args.inventory_only:
-                inventory = build_room_inventory(root, raw_query)
+
+            # Stage 1: source-root validation (declared manifest + topology).
+            # A failed resolution is infrastructure truth, never a finding.
+            root_set, root_diagnostics = resolve_source_root_set(project_root)
+            if root_set is None or root_diagnostics:
+                diagnostics.extend(
+                    sorted({code for code, _context in root_diagnostics})
+                )
+                operation_failed = True
+
+            # Stage 2: Room inventory build.  Diagnostics make the whole run
+            # untrusted before any policy is consulted (no partial findings).
+            if not operation_failed:
+                inventory = build_room_inventory(
+                    root, raw_query, source_root_set=root_set,
+                )
                 diagnostics.extend(inventory.diagnostics)
                 if inventory.diagnostics:
                     operation_failed = True
-            else:
-                # Validate policy/source truth before scanner matching.  A
-                # stale or malformed entry is infrastructure failure, not an
-                # authorization result; scanner findings are never produced
-                # for a partially trusted policy.
-                ownership_entries, ownership_loaded = _read_ownership_entries_for_evidence(ownership)
-                evidence_errors = []
-                if ownership_loaded:
-                    # D1 signature migration is not complete.  A policy entry
-                    # without exact callable identity is not source evidence
-                    # for a trusted D4 scan; reject the whole policy before
-                    # scanner matching rather than allowing a partial success.
-                    if any(
-                        not isinstance(item, dict) or "signature" not in item
-                        for item in ownership_entries
-                    ):
-                        evidence_errors = [{"code": "SIGNATURE_MISSING"}]
-                    else:
-                        evidence_errors = verify_ownership_policy_source_evidence(
-                            ownership_entries,
-                            os.path.join(project_root, "app", "src", "main", "java"),
-                        )
-                structural_entries, structural_loaded = _read_ownership_entries_for_evidence(structural)
-                manifest_data, manifest_loaded = _read_yaml_document_for_evidence(manifest)
-                if structural_loaded and manifest_loaded and ownership_loaded and not evidence_errors:
-                    evidence_errors.extend(verify_structural_exceptions_manifest(
-                        structural_entries,
-                        manifest_data,
-                        os.path.join(project_root, "app", "src", "main", "java"),
-                        enforce_canonical_contract=args.structural_manifest is None,
-                    ))
-                if (not ownership_loaded or evidence_errors or
-                        not structural_loaded or not manifest_loaded):
+
+            if args.inventory_only:
+                # Inventory-only runs stop here by contract: no policy is
+                # loaded and no authorization decision is made.
+                pass
+            elif not operation_failed:
+                # Stage 3: active v2 loader.  schemaVersion 2 required; there
+                # is no tolerant legacy parsing.  A v1-shaped active file is
+                # classified DB_V2_ACTIVE_POLICY_NOT_V2 (internal constant):
+                # the report carries only the registered umbrella diagnostic,
+                # and remediation is scripts/ci/promote_db_policy_v2.py.
+                policy_entries, policy_errors = load_policy_v2(ownership)
+                if policy_entries is None:
+                    active_policy_schema_version = _read_active_policy_schema_version(
+                        ownership
+                    )
                     diagnostics.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
                     operation_failed = True
                 else:
-                    scan_result = scan_db_access(root, ownership, structural, raw_query)
-                if args.dump_room_mutators:
-                    inventory = build_room_inventory(root, raw_query)
-                    diagnostics.extend(inventory.diagnostics)
-                    if inventory.diagnostics:
+                    # Stage 4: v2 exact source evidence over the loaded typed
+                    # entries, the declared root set, and the built inventory.
+                    evidence_result = verify_v2_policy_source_evidence(
+                        policy_entries,
+                        project_root,
+                        source_roots=_anchored_relative_root_set(
+                            project_root, root_set
+                        ),
+                        room_inventory=inventory,
+                    )
+                    if not evidence_result.trusted:
+                        diagnostics.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
                         operation_failed = True
+                    else:
+                        # Stage 5: structural policy/manifest validation —
+                        # unchanged semantics, still gated on trusted policy
+                        # evidence so an untrusted run never reaches matching.
+                        structural_entries, structural_loaded = (
+                            _read_ownership_entries_for_evidence(structural)
+                        )
+                        manifest_data, manifest_loaded = (
+                            _read_yaml_document_for_evidence(manifest)
+                        )
+                        manifest_errors = []
+                        if structural_loaded and manifest_loaded:
+                            manifest_errors = verify_structural_exceptions_manifest(
+                                structural_entries,
+                                manifest_data,
+                                os.path.join(project_root, "app", "src", "main", "java"),
+                                enforce_canonical_contract=args.structural_manifest is None,
+                            )
+                        if (not structural_loaded or not manifest_loaded
+                                or manifest_errors):
+                            diagnostics.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
+                            operation_failed = True
+                        else:
+                            # Stage 6: D4 discovery + full-v2 typed
+                            # authorization over the PolicyEntry objects.
+                            scan_result = scan_db_access(
+                                root, policy_entries, structural, raw_query,
+                            )
     except (OSError, TypeError, ValueError):
         diagnostics.append("DB_ROOM_INVALID_INPUT")
         operation_failed = True
@@ -3476,11 +3701,19 @@ def main(argv=None):
     # successful earlier phase (especially when the output path already exists).
     from scripts.ci.guard_findings import GuardRunReport
     scan_diagnostics = scan_result.diagnostics if scan_result is not None else ()
+    untrusted_statistics = {"trusted": False}
+    if active_policy_schema_version is not None:
+        # Bounded classification context for a rejected active-policy
+        # document (see DB_V2_ACTIVE_POLICY_NOT_V2): the detected integer
+        # schemaVersion, when the document declared one.
+        untrusted_statistics["activePolicySchemaVersion"] = (
+            active_policy_schema_version
+        )
     if operation_failed or diagnostics or scan_diagnostics:
         report = GuardRunReport(
             "db_access", schema_version=2, findings=(),
             diagnostics=scan_diagnostics + _v2_diagnostics(diagnostics),
-            statistics={"trusted": False},
+            statistics=untrusted_statistics,
         )
     elif args.inventory_only:
         report = GuardRunReport(
@@ -3495,18 +3728,41 @@ def main(argv=None):
         report = scan_result or GuardRunReport(
             "db_access", schema_version=2, diagnostics=(), statistics={"trusted": True},
         )
+        if scan_result is not None:
+            # Stage 7: protocol-v2 findings report carrying the bounded
+            # activation identifiers alongside the scanner counters.
+            report = GuardRunReport(
+                "db_access",
+                schema_version=2,
+                findings=scan_result.findings,
+                diagnostics=scan_result.diagnostics,
+                statistics=_activation_statistics(
+                    scan_result.statistics,
+                    len(scan_result.findings),
+                    len(scan_result.diagnostics),
+                    project_root,
+                ),
+            )
 
+    exit_code = 0
     if report_requested and not _safe_report(findings_path, report):
-        return 2
-    if diagnostics or report.diagnostics:
+        exit_code = 2
+    elif diagnostics or report.diagnostics:
         print("ERROR: DB access discovery infrastructure diagnostics present", file=sys.stderr)
-        return 2
+        exit_code = 2
+    elif args.inventory_only:
+        exit_code = 0
+    elif report.findings:
+        exit_code = 1
 
-    if args.inventory_only:
-        return 0
-    if report.findings:
-        return 1
-    return 0
+    # The legacy shadow report is written after the exit code is fixed and is
+    # structurally unable to change it (all failures are swallowed).
+    if args.legacy_shadow_report and None not in (project_root, ownership, structural, root):
+        _write_legacy_shadow_report(
+            args.legacy_shadow_report, project_root, ownership, structural, root,
+        )
+
+    return exit_code
 
 
 if __name__ == "__main__":

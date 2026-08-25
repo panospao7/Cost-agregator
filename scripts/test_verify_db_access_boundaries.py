@@ -298,6 +298,9 @@ def test_ownership_loader_rejects_missing_method(tmp_path):
 
 
 def test_ownership_loader_rejects_noncanonical_path_bare_basename(tmp_path, capsys):
+    """Post-activation the active loader is the v2 loader: a legacy-shaped
+    document is rejected with CONTROLLED CODES ONLY — raw policy path text
+    never reaches stderr — plus the fixed not-v2 promotion guidance."""
     policy_path = _write_policy_yaml(tmp_path, """
   - path: SomeRepo.kt
     class: SomeRepo
@@ -313,8 +316,10 @@ def test_ownership_loader_rejects_noncanonical_path_bare_basename(tmp_path, caps
         load_db_ownership_policy(policy_path)
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "not canonical" in err
-    assert "SomeRepo.kt" in err
+    assert "POLICY_ERROR_" in err
+    assert _mod.DB_V2_ACTIVE_POLICY_NOT_V2 in err
+    # Privacy: raw policy path/payload text is never echoed.
+    assert "SomeRepo.kt" not in err
 
 
 def test_ownership_loader_rejects_noncanonical_path_backslash(tmp_path):
@@ -335,6 +340,8 @@ def test_ownership_loader_rejects_noncanonical_path_backslash(tmp_path):
 
 
 def test_ownership_loader_rejects_missing_daos(tmp_path, capsys):
+    """A legacy-shaped document without DAO identity is rejected by the v2
+    loader with controlled codes only (bounded stderr, no payload echo)."""
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
     class: SomeRepo
@@ -349,8 +356,9 @@ def test_ownership_loader_rejects_missing_daos(tmp_path, capsys):
         load_db_ownership_policy(policy_path)
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "daos" in err
-    assert "SomeRepo.kt" in err
+    assert "POLICY_ERROR_" in err
+    assert _mod.DB_V2_ACTIVE_POLICY_NOT_V2 in err
+    assert "SomeRepo.kt" not in err
 
 
 def test_ownership_loader_rejects_empty_daos(tmp_path):
@@ -371,6 +379,8 @@ def test_ownership_loader_rejects_empty_daos(tmp_path):
 
 
 def test_ownership_loader_rejects_missing_barrier_required(tmp_path, capsys):
+    """A legacy-shaped document without barrier metadata is rejected by the
+    v2 loader with controlled codes only (bounded stderr, no payload echo)."""
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
     class: SomeRepo
@@ -385,8 +395,9 @@ def test_ownership_loader_rejects_missing_barrier_required(tmp_path, capsys):
         load_db_ownership_policy(policy_path)
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "barrier_required" in err
-    assert "SomeRepo.kt" in err
+    assert "POLICY_ERROR_" in err
+    assert _mod.DB_V2_ACTIVE_POLICY_NOT_V2 in err
+    assert "SomeRepo.kt" not in err
 
 
 def test_ownership_loader_rejects_string_barrier_required(tmp_path):
@@ -424,6 +435,9 @@ def test_ownership_loader_rejects_integer_barrier_required(tmp_path):
 
 
 def test_ownership_loader_rejects_unknown_field(tmp_path, capsys):
+    """Unknown keys are configuration errors: the v2 loader reports the
+    controlled unknown-field code (the mistyped key label is bounded
+    configuration metadata) plus the fixed not-v2 classification."""
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
     class: SomeRepo
@@ -439,45 +453,66 @@ def test_ownership_loader_rejects_unknown_field(tmp_path, capsys):
         load_db_ownership_policy(policy_path)
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "unknown key" in err
-    assert "SomeRepo.kt" in err
+    assert "POLICY_ERROR_UNKNOWN_FIELD" in err
+    assert _mod.DB_V2_ACTIVE_POLICY_NOT_V2 in err
+    assert "SomeRepo.kt" not in err
 
 
 def test_ownership_loader_accepts_exact_entry(tmp_path):
+    """Post-activation the loader returns immutable typed PolicyEntry objects
+    loaded from a schemaVersion-2 document."""
+    from scripts.db_guard.policy_model import BarrierMode, CallableKind
+
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
-    class: SomeRepo
+    ownerFqcn: com.example.SomeRepo
+    kind: function
     method: "doWork"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insertOrIgnore
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     entries = load_db_ownership_policy(policy_path)
     assert len(entries) == 1
-    assert entries[0]["method"] == "doWork"
-    assert entries[0]["operation"] == "insertOrIgnore"
+    entry = entries[0]
+    assert entry.method == "doWork"
+    assert entry.operation == "insertOrIgnore"
+    assert entry.owner_fqcn == "com.example.SomeRepo"
+    assert entry.kind is CallableKind.FUNCTION
+    assert entry.dao_accessor == "expenseDao"
+    assert entry.dao_fqcn == "com.example.ExpenseDao"
+    assert entry.barrier_mode is BarrierMode.HELPER
 
 
-def test_ownership_loader_accepts_worker_barrier_via_metadata(tmp_path):
+def test_ownership_loader_accepts_worker_mediated_metadata(tmp_path):
+    """workerMediated barrierMode metadata loads as the activated equivalent
+    of the retired worker ``barrier_via`` documentation field."""
+    from scripts.db_guard.policy_model import BarrierMode
+
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
-    class: DataRetentionWorker
+    ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
+    kind: function
     method: "doWork"
-    daos: [privacyAuditDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: privacyAuditDao
+    daoFqcn: com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
     operation: insert
-    barrier_required: false
-    barrier_via: WorkerExecutionGuard
+    barrierMode: workerMediated
     reason: WorkerExecutionGuard-mediated write protection
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     entries = load_db_ownership_policy(policy_path)
     assert len(entries) == 1
-    assert entries[0]["barrier_required"] is False
-    assert entries[0]["barrier_via"] == "WorkerExecutionGuard"
+    assert entries[0].barrier_mode is BarrierMode.WORKER_MEDIATED
 
 
 # ── 3. Structural exception loader (bounded contract) ─────────────────────────
@@ -4255,57 +4290,75 @@ def test_source_evidence_invalid_entry_metadata_fails_closed(tmp_path):
 
 
 # GR-04 triage aligned the test to the v2 report contract (pre-existing staleness, not a weakening).
+# PR-GR-07 Slice 2: the consulted stage is now the ACTIVATED v2 evidence gate.
 def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path, monkeypatch, capsys):
-    """The CLI maps a source-evidence failure to return code 2, prints exactly
-    the single umbrella stderr line, and records the controlled
+    """The CLI maps a v2 source-evidence failure to return code 2, prints
+    exactly the single umbrella stderr line, and records the controlled
     DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic in the --findings-output JSON
-    (CLASS_MISSING stays an internal detail string) — a stale policy entry can
-    never silently approve anything."""
+    (OWNER_MISSING stays an internal detail) — a stale policy entry can never
+    silently approve anything."""
     import json
 
     src = _fixture_source(tmp_path, monkeypatch)
     _write_kt(
         src,
         "com/example/FooRepo.kt",
-        """class FooRepo {
-    fun doWork() {
-        expenseDao.insert(e)
+        """package com.example
+
+data class Item(val id: Int)
+
+@androidx.room.Dao
+interface ExpenseDao {
+    @androidx.room.Insert
+    fun insert(item: Item)
+}
+
+class FooRepo(private val expenseDao: ExpenseDao) {
+    fun doWork(item: Item) {
+        expenseDao.insert(item)
     }
 }
 """,
     )
-    # Valid policy metadata including the callable-signature block (so the
-    # signature gate passes), but the referenced class does not exist in the
-    # fixture source — the source-evidence validator fails with CLASS_MISSING.
+    # Valid schemaVersion-2 metadata whose ownerFqcn does not exist in the
+    # fixture source — the activated v2 evidence validator fails with
+    # OWNER_MISSING before any scanner matching runs.
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/FooRepo.kt
-    class: MissingRepo
+    ownerFqcn: com.example.MissingRepo
+    kind: function
     method: "doWork"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: [com.example.Item]
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
-    signature:
-      receiver: null
-      kind: function
-      parameters: []
+    linkedIssue: "TEST-001"
 """)
     exceptions_path = tmp_path / "exceptions.yml"
     exceptions_path.write_text("entries: []\n", encoding="utf-8")
 
-    # Pass-through seam spy: proves the CLI actually consults the
-    # source-evidence validator while the real CLASS_MISSING detection runs.
-    real_evidence_check = _mod.verify_ownership_policy_source_evidence
+    # Canonical raw-query classification policy at its DEFAULT location so
+    # the activated pipeline's inventory stage stays clean and the run
+    # reaches the v2 evidence stage under test.
+    raw_policy_path = tmp_path / "config" / "guards" / "db_raw_query_classification.yml"
+    raw_policy_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_policy_path.write_text("version: 1\nmethods: []\n", encoding="utf-8")
+
+    # Pass-through seam spy: proves the CLI actually consults the activated
+    # v2 evidence stage while the real OWNER_MISSING detection runs.
+    real_evidence_check = _mod.verify_v2_policy_source_evidence
     evidence_codes = []
 
-    def _evidence_spy(*args, **kwargs):
-        errors = real_evidence_check(*args, **kwargs)
-        evidence_codes.extend(error.get("code") for error in errors)
-        return errors
+    def _evidence_spy(entries, repo_root, *args, **kwargs):
+        result = real_evidence_check(entries, repo_root, *args, **kwargs)
+        evidence_codes.extend(d.code for d in result.diagnostics)
+        return result
 
-    monkeypatch.setattr(_mod, "verify_ownership_policy_source_evidence", _evidence_spy)
+    monkeypatch.setattr(_mod, "verify_v2_policy_source_evidence", _evidence_spy)
 
     # SOURCE_DIR is computed at import time; pin it (and PROJECT_ROOT) to the
     # fixture tree so main() resolves the fixture policy against fixture source.
@@ -4322,8 +4375,9 @@ def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path,
     assert _mod.main() == 2
     err = capsys.readouterr().err
     assert err == "ERROR: DB access discovery infrastructure diagnostics present\n"
-    # The source-evidence stage really ran and really detected the missing class.
-    assert "CLASS_MISSING" in evidence_codes
+    # The activated v2 evidence stage really ran and really detected the
+    # missing owner.
+    assert "DB_V2_POLICY_OWNER_MISSING" in evidence_codes
     # Detailed codes surface only through the findings JSON, never on stderr.
     report = json.loads(findings_output.read_text(encoding="utf-8"))
     codes = [diagnostic.get("code") for diagnostic in report["diagnostics"]]
@@ -4757,36 +4811,54 @@ def test_manifest_cli_wiring_exits_2_with_db_structural_manifest(tmp_path, monke
     _write_kt(
         src,
         "com/example/FooRepo.kt",
-        """class FooRepo {
-    fun doWork() {
-        expenseDao.insert(e)
+        """package com.example
+
+data class Item(val id: Int)
+
+@androidx.room.Dao
+interface ExpenseDao {
+    @androidx.room.Insert
+    fun insert(item: Item)
+}
+
+class FooRepo(private val expenseDao: ExpenseDao) {
+    fun doWork(item: Item) {
+        expenseDao.insert(item)
     }
 }
 """,
     )
-    # Ownership policy backed by exact source evidence including the callable
-    # signature block (passes the signature and source-evidence stages), empty
-    # structural exceptions, and a manifest whose pinned structural count does
-    # not match the current structural size — a COUNT_MISMATCH that must exit 2
-    # under the controlled DB_POLICY_SOURCE_EVIDENCE_INVALID report diagnostic.
+    # Ownership policy backed by exact schemaVersion-2 metadata AND exact
+    # source evidence (passes the activated loader and v2 evidence stages),
+    # empty structural exceptions, and a manifest whose pinned structural
+    # count does not match the current structural size — a COUNT_MISMATCH
+    # that must exit 2 under the controlled DB_POLICY_SOURCE_EVIDENCE_INVALID
+    # report diagnostic.
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/FooRepo.kt
-    class: FooRepo
+    ownerFqcn: com.example.FooRepo
+    kind: function
     method: "doWork"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: [com.example.Item]
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
-    signature:
-      receiver: null
-      kind: function
-      parameters: []
+    linkedIssue: "TEST-001"
 """)
     exceptions_path = tmp_path / "exceptions.yml"
     exceptions_path.write_text("entries: []\n", encoding="utf-8")
     manifest_path = _write_manifest_yaml(tmp_path, [], structural=62)
+
+    # Canonical raw-query classification policy at its DEFAULT location so
+    # the activated pipeline's inventory stage stays clean and the run
+    # reaches the structural-manifest gate under test.
+    raw_policy_path = tmp_path / "config" / "guards" / "db_raw_query_classification.yml"
+    raw_policy_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_policy_path.write_text("version: 1\nmethods: []\n", encoding="utf-8")
 
     # Pass-through seam spy: proves the CLI actually consults the structural
     # manifest gate while the real COUNT_MISMATCH detection runs.
@@ -4976,20 +5048,29 @@ def test_manifest_current_structural_yaml_tuple_set_remains_exact():
 
 
 def test_checked_in_structural_only_manifest_contract_via_production_apis():
-    """Canonical checked-in integration test — loads the ACTUAL ownership
-    policy, structural policy, and structural manifest from their production
-    paths and validates the decoupled contract through the production loaders
-    and validators (no synthetic temp fixtures).
+    """Canonical checked-in integration test — loads the ACTUAL structural
+    policy and structural manifest from their production paths and validates
+    the decoupled contract through the production loaders and validators (no
+    synthetic temp fixtures).
 
     GR-04: the manifest pins the structural count ONLY — its counts block is
-    exactly ``{structural_entries: 62}`` with no ownership cardinality, while
-    the ownership policy's own 99-entry size remains an independent,
-    observational property of the policy file."""
-    ownership = load_db_ownership_policy()
+    exactly ``{structural_entries: 62}`` with no ownership cardinality.
+
+    PR-GR-07 Slice 2 activation: the ACTIVE ownership policy is still a
+    legacy v1 document until promotion runs, so the activated v2 loader must
+    REJECT it with exit 2 (classified DB_V2_ACTIVE_POLICY_NOT_V2) — a legacy
+    policy can never authorize anything post-activation.  The structural
+    contract itself remains fully verifiable without any ownership input.
+    """
+    from scripts.db_guard.source_roots import load_source_root_manifest
+
+    with pytest.raises(SystemExit) as exc_info:
+        load_db_ownership_policy()
+    assert exc_info.value.code == 2
+
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
 
-    assert len(ownership) == 99
     assert len(structural) == 62
     assert manifest["counts"] == {
         "structural_entries": 62,
@@ -5000,6 +5081,17 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
         structural, manifest, _mod.SOURCE_DIR
     )
     assert errors == [], errors
+
+    # The declared source-root manifest is present and shape-valid: the
+    # activated pipeline's first stage resolves it cleanly.
+    manifest_set, manifest_diagnostics = load_source_root_manifest(
+        os.path.join(
+            _mod.PROJECT_ROOT,
+            "config", "guards", "production_source_roots.yml",
+        )
+    )
+    assert manifest_set is not None
+    assert manifest_diagnostics == ()
 
 
 # ── 22. GR-04 decoupling & current-repo regression matrix ────────────────────
@@ -5041,35 +5133,47 @@ def test_structural_result_independent_of_ownership_cardinality(tmp_path, monkey
     pair_dir.mkdir()
     single_path = _write_policy_yaml(single_dir, """
   - path: app/src/main/java/com/example/SomeClass.kt
-    class: SomeClass
+    ownerFqcn: com.example.SomeClass
+    kind: function
     method: "m0"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     pair_path = _write_policy_yaml(pair_dir, """
   - path: app/src/main/java/com/example/SomeClass.kt
-    class: SomeClass
+    ownerFqcn: com.example.SomeClass
+    kind: function
     method: "m0"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 
   - path: app/src/main/java/com/example/SomeClass.kt
-    class: SomeClass
+    ownerFqcn: com.example.SomeClass
+    kind: function
     method: "m1"
-    daos: [budgetDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: budgetDao
+    daoFqcn: com.example.BudgetDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
 
     # Both ownership variants load cleanly through the production loader and
@@ -5109,45 +5213,73 @@ def test_v2_style_split_cannot_trigger_structural_failure(tmp_path, monkeypatch)
 
     legacy_path = _write_policy_yaml(legacy_dir, """
   - path: app/src/main/java/com/example/SomeClass.kt
-    class: SomeClass
+    ownerFqcn: com.example.SomeClass
+    kind: function
     method: "doWork"
-    daos: [expenseDao, budgetDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
+
+  - path: app/src/main/java/com/example/SomeClass.kt
+    ownerFqcn: com.example.SomeClass
+    kind: function
+    method: "doWork"
+    receiver: null
+    parameterTypes: []
+    daoAccessor: budgetDao
+    daoFqcn: com.example.BudgetDao
+    operation: insert
+    barrierMode: helper
+    reason: test
+    owner: "@test"
+    linkedIssue: "TEST-001"
 """)
     split_path = _write_policy_yaml(split_dir, """
   - path: app/src/main/java/com/example/SomeClass.kt
-    class: SomeClass
+    ownerFqcn: com.example.SomeClass
+    kind: function
     method: "doWork"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 
   - path: app/src/main/java/com/example/SomeClass.kt
-    class: SomeClass
+    ownerFqcn: com.example.SomeClass
+    kind: function
     method: "doWork"
-    daos: [budgetDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: budgetDao
+    daoFqcn: com.example.BudgetDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
 
     legacy_entries = load_db_ownership_policy(legacy_path)
     split_entries = load_db_ownership_policy(split_path)
-    assert len(legacy_entries) == 1
+    # v2 has no multi-DAO row: the retired single row and its split
+    # equivalent are both two typed entries covering the same DAO set.
+    assert len(legacy_entries) == 2
     assert len(split_entries) == 2
     # The v2-style split preserves the authorized DAO set exactly.
     assert (
-        {dao for entry in legacy_entries for dao in entry["daos"]} ==
-        {dao for entry in split_entries for dao in entry["daos"]}
+        {entry.dao_accessor for entry in legacy_entries} ==
+        {entry.dao_accessor for entry in split_entries}
     )
 
     outcomes = []
@@ -5228,14 +5360,16 @@ def test_no_executable_ownership_pin_references():
         assert "PINNED_OWNERSHIP_ENTRY_COUNT" in handle.read()
 
 
-def test_current_db_gate_blocked_for_active_policy_reason_not_structural_count(tmp_path, monkeypatch):
-    """Characterization of the CURRENT repo state (GR-04 regression): invoking
-    the CLI in-process with the REAL config paths exits 2 because the active
-    ownership policy predates D1 callable signatures — the controlled
-    SIGNATURE_MISSING evidence branch that surfaces as the umbrella
-    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic.  The structural-manifest
-    gate is never consulted and NO structural COUNT_MISMATCH /
-    MANIFEST_INVALID diagnostic is produced."""
+def test_current_db_gate_blocks_legacy_active_policy_post_activation(tmp_path, monkeypatch):
+    """Activated truth (PR-GR-07 Slice 2): invoking the CLI in-process with
+    the REAL config paths exits 2 because the active ownership policy is
+    still a legacy v1 document — the activated v2 loader rejects it
+    (classified internally as DB_V2_ACTIVE_POLICY_NOT_V2; remediation:
+    run scripts/ci/promote_db_policy_v2.py) and surfaces only the umbrella
+    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic.  A legacy policy can never
+    authorize anything post-activation, and the structural-manifest gate is
+    never consulted (NO structural COUNT_MISMATCH / MANIFEST_INVALID
+    diagnostic is produced)."""
     import json
 
     monkeypatch.delenv("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", raising=False)
@@ -5260,25 +5394,32 @@ def test_current_db_gate_blocked_for_active_policy_reason_not_structural_count(t
     ])
     assert exit_code == 2
 
-    # Blocked reason: every active-policy entry lacks a callable signature,
-    # which main() classifies as SIGNATURE_MISSING BEFORE any structural
-    # validation runs.
+    # Blocked reason: the active document predates v2 activation — it carries
+    # legacy entry fields and no schemaVersion 2, so the activated loader
+    # rejects it BEFORE any structural validation runs.
     entries, loaded = _mod._read_ownership_entries_for_evidence(
         _mod.OWNERSHIP_POLICY_PATH
     )
     assert loaded
     assert entries
-    assert any(
-        not isinstance(item, dict) or "signature" not in item
+    assert all(
+        isinstance(item, dict) and "class" in item and "signature" not in item
         for item in entries
     )
+    document, _document_loaded = _mod._read_yaml_document_for_evidence(
+        _mod.OWNERSHIP_POLICY_PATH
+    )
+    assert isinstance(document, dict)
+    assert document.get("schemaVersion") != 2
     # The structural gate never ran: the block is NOT a structural failure.
     assert structural_calls == []
 
     report = json.loads(findings_output.read_text(encoding="utf-8"))
     codes = [diagnostic.get("code") for diagnostic in report["diagnostics"]]
     assert codes == ["DB_POLICY_SOURCE_EVIDENCE_INVALID"]
-    # The internal evidence detail never leaks into report diagnostics.
+    # The internal activation classification never leaks into report
+    # diagnostics, and no structural codes appear either.
+    assert "DB_V2_ACTIVE_POLICY_NOT_V2" not in codes
     assert "SIGNATURE_MISSING" not in codes
     for code in codes:
         assert "COUNT_MISMATCH" not in code

@@ -3,6 +3,11 @@
 These tests deliberately use throw-away ``app/src/main/java`` trees and invoke
 the real verifier entry point.  The legacy tuple/stdout tests remain in
 ``test_verify_db_access_boundaries.py`` and are intentionally not changed.
+
+Activation (PR-GR-07 Slice 2): fixture ownership policies are schemaVersion-2
+documents; the CLI pipeline is source-root validation -> Room inventory ->
+active v2 loader -> v2 exact source evidence -> structural manifest gate ->
+D4 typed authorization -> protocol-v2 report.
 """
 
 from __future__ import annotations
@@ -22,9 +27,7 @@ from scripts.ci.guard_findings import GuardRunReport
 from scripts.db_guard.scanner import _diag_from_text
 from scripts.db_guard import reporting
 from scripts.db_guard import room_inventory
-from scripts.db_guard.policy_legacy import (
-    legacy_ownership_entry_metadata_errors as ownership_entry_metadata_errors,
-)
+from scripts.db_guard.policy_v2_evidence import EvidenceResult
 # Kept on the CLI module: these tests invoke the real verifier entry point
 # in-process (CLI-level integration) alongside their subprocess runs.
 import scripts.verify_db_access_boundaries as _verifier_module
@@ -113,35 +116,61 @@ def _sync_fixture_manifest(root: Path) -> Path:
 
 def _policy(root: Path, *, method: str = "save", barrier: bool = False,
             class_name: str = "Repository", dao: str = "expenseDao",
-            operation: str = "insert") -> Path:
-    # ``parameters`` must use the matcher's RESOLVED canonical spelling:
-    # kotlin_callable_parser._resolve_type resolves project-local parameter
-    # types to their package-qualified FQCN (closed-world resolution; only
-    # builtins keep simple names), and _policy_matches compares the policy
-    # signature against that resolved identity exactly.  A simple-name
-    # ``[Item]`` entry is valid metadata but matches nothing, so the mutation
-    # would be reported DB_UNAUTHORIZED_MUTATION instead of authorized (or,
-    # with barrier_required=true, instead of DB_MISSING_WRITE_BARRIER).
-    text = f"""entries:
+            operation: str = "insert", owner_fqcn: str | None = None,
+            kind: str = "function", receiver: str = "null",
+            parameters: str = "[example.Item]",
+            dao_fqcn: str = "example.ExpenseDao") -> Path:
+    """Write a schemaVersion-2 ownership policy document (activated contract).
+
+    ``parameterTypes`` must use the matcher's RESOLVED canonical spelling:
+    kotlin_callable_parser._resolve_type resolves project-local parameter
+    types to their package-qualified FQCN (closed-world resolution; only
+    builtins keep simple names), and typed matching compares the entry's
+    ordered parameterTypes against that resolved identity exactly.  A
+    simple-name ``[Item]`` entry is valid metadata but matches nothing, so
+    the mutation would be reported DB_UNAUTHORIZED_MUTATION instead of
+    authorized (or, with barrierMode direct, instead of
+    DB_MISSING_WRITE_BARRIER).
+
+    ``barrier=False`` maps to ``barrierMode: helper`` — the least-claiming
+    mode that carries no local direct-barrier requirement; ``barrier=True``
+    maps to ``barrierMode: direct``.
+    """
+    if owner_fqcn is None:
+        owner_fqcn = f"example.{class_name}"
+    text = f"""schemaVersion: 2
+entries:
   - path: {CANONICAL}
-    class: {class_name}
+    ownerFqcn: {owner_fqcn}
+    kind: {kind}
     method: {method}
-    daos: [{dao}]
+    receiver: {receiver}
+    parameterTypes: {parameters}
+    daoAccessor: {dao}
+    daoFqcn: {dao_fqcn}
     operation: {operation}
-    signature:
-      receiver: null
-      kind: function
-      parameters: [example.Item]
-    barrier_required: {'true' if barrier else 'false'}
+    barrierMode: {'direct' if barrier else 'helper'}
     reason: fixture
     owner: '@d4c'
-    linked_issue: D4C-001
+    linkedIssue: D4C-001
 """
     return _write(root, "config/guards/ownership.yml", text)
 
 
 def _structural_policy(root: Path, entries: str = "") -> Path:
     return _write(root, "config/guards/structural.yml", "entries: []\n" if not entries else "entries:\n" + entries)
+
+
+def _unmatched_policy(root: Path) -> Path:
+    """Write a VALID v2 policy that authorizes nothing in this tree.
+
+    Post-activation an EMPTY v2 document is invalid (the loader rejects empty
+    ``entries`` with exit 2), so tests that need a completely unauthorized
+    tree install a well-formed entry targeting a callable that does not exist
+    here.  Every discovered mutation therefore stays unauthorized (exit 1
+    findings) for genuine matcher reasons, not loader reasons.
+    """
+    return _policy(root, class_name="UnrelatedRepository")
 
 
 def _run(root: Path, report: Path | None = None, *extra: str,
@@ -222,21 +251,24 @@ _EVIDENCE_BYPASS_ACTIVE = False
 def _bypass_evidence(monkeypatch: pytest.MonkeyPatch):
     """Scanner-stage isolation for protocol-v2 CLI tests.
 
-    Since GR-01, ``main()`` runs ``verify_ownership_policy_source_evidence``
-    BEFORE scanner matching and collapses any evidence failure into the
+    Since PR-GR-07 Slice 2 activation, ``main()`` runs the v2 exact
+    source-evidence stage (``verify_v2_policy_source_evidence``) BEFORE
+    scanner matching and collapses any evidence failure into the
     context-free umbrella ``DB_POLICY_SOURCE_EVIDENCE_INVALID``, so synthetic
     fixtures never reach the scanner stage these tests target.  Tests pinned
-    by this fixture stub ONLY that one stage to pass; structural-manifest
-    verification, scanning, inventory, reporting, and every later stage stay
-    real.  Source-evidence behavior itself keeps dedicated coverage in
-    ``test_verify_db_access_boundaries.py`` and the ``db_guard`` policy
-    suites, plus the ordering pin in
-    ``test_evidence_gate_runs_before_scanner_matching``.
+    by this fixture stub ONLY that one stage to pass; active-v2 loading,
+    structural-manifest verification, scanning, inventory, reporting, and
+    every later stage stay real.  Source-evidence behavior itself keeps
+    dedicated coverage in ``test_db_guard_policy_v2_evidence.py`` and the
+    ordering pin in ``test_evidence_gate_runs_before_scanner_matching``.
     """
     global _EVIDENCE_BYPASS_ACTIVE
     monkeypatch.setattr(
-        _verifier_module, "verify_ownership_policy_source_evidence",
-        lambda *args, **kwargs: [],
+        _verifier_module, "verify_v2_policy_source_evidence",
+        lambda *args, **kwargs: EvidenceResult(
+            trusted=True, groups=(), diagnostics=(),
+            mutation_key_count=0, policy_mutation_key_count=0,
+        ),
     )
     _EVIDENCE_BYPASS_ACTIVE = True
     yield
@@ -291,13 +323,35 @@ def _report(path: Path, expected_report: dict) -> dict:
     return data
 
 
-_CLEAN_STATISTICS = {
-    "files_scanned": 1,
-    "declarations_scanned": 3,
-    "inventory_daos": 1,
-    "inventory_mutators": 1,
-    "trusted": True,
+# Activation statistics identifiers reported by every trusted scan report
+# (PR-GR-07 Slice 2).  Fixtures declare no production source-root manifest,
+# so ``sourceRootManifestSha256`` is None unless a test overrides it.
+_ACTIVATION_STATISTICS = {
+    "activePolicySchemaVersion": 2,
+    "policyMode": "authoritative-v2",
+    "scannerMode": "protocol-v2",
+    "scannerVersion": 2,
+    "sourceRootManifestSha256": None,
 }
+
+
+def _clean_statistics(*, files_scanned: int = 1, declarations_scanned: int = 3,
+                      inventory_daos: int = 1, inventory_mutators: int = 1,
+                      finding_count: int = 0, diagnostic_count: int = 0,
+                      manifest_sha256: str | None = None) -> dict:
+    """Full trusted-scan statistics: scanner counters + activation fields."""
+    statistics = {
+        "files_scanned": files_scanned,
+        "declarations_scanned": declarations_scanned,
+        "inventory_daos": inventory_daos,
+        "inventory_mutators": inventory_mutators,
+        "trusted": True,
+    }
+    statistics.update(_ACTIVATION_STATISTICS)
+    statistics["sourceRootManifestSha256"] = manifest_sha256
+    statistics["findingCount"] = finding_count
+    statistics["diagnosticCount"] = diagnostic_count
+    return statistics
 
 
 def _expected(*, findings=None, diagnostics=None, statistics=None):
@@ -309,7 +363,7 @@ def _expected(*, findings=None, diagnostics=None, statistics=None):
     never derived from the actual report under test.
     """
     if statistics is None:
-        statistics = {"trusted": False} if diagnostics else _CLEAN_STATISTICS
+        statistics = {"trusted": False} if diagnostics else _clean_statistics()
     return {
         "schema": "cost-aggregator.guard-findings",
         "schema_version": 2,
@@ -366,13 +420,7 @@ def test_clean_run_writes_valid_guard_report_v2(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(),
     })
 
 
@@ -392,13 +440,7 @@ def test_successful_report_bytes_are_deterministic(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(),
     }
     _report(first, expected)
     _report(second, expected)
@@ -440,7 +482,7 @@ def test_unauthorized_mutation_is_a_finding_and_fail_on_violation_exits_one(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
     root = _fixture(tmp_path)
-    _write(root, "config/guards/ownership.yml", "entries: []\n")
+    _unmatched_policy(root)
     _structural_policy(root)
     report = root / "unauthorized.json"
 
@@ -476,13 +518,7 @@ def test_unauthorized_mutation_is_a_finding_and_fail_on_violation_exits_one(
             }
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(finding_count=1),
     })
 
 
@@ -490,7 +526,7 @@ def test_valid_findings_are_strict_exit_one_without_fail_flag(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
     root = _fixture(tmp_path)
-    _write(root, "config/guards/ownership.yml", "entries: []\n")
+    _unmatched_policy(root)
     _structural_policy(root)
     report = root / "findings.json"
     result = _run(root, report)
@@ -524,13 +560,7 @@ def test_valid_findings_are_strict_exit_one_without_fail_flag(
             }
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(finding_count=1),
     })
 
 
@@ -554,13 +584,9 @@ def test_name_only_policy_cannot_authorize_same_name_overloads(
     report = root / "overload.json"
     result = _run(root, report)
     assert result.returncode == 0
-    data = _report(report, _expected(statistics={
-        "files_scanned": 1,
-        "declarations_scanned": 3,
-        "inventory_daos": 1,
-        "inventory_mutators": 2,
-        "trusted": True,
-    }))
+    data = _report(report, _expected(statistics=_clean_statistics(
+        inventory_mutators=2,
+    )))
     assert data["findings"] == []
     assert data["diagnostics"] == []
 
@@ -693,13 +719,7 @@ def test_unrelated_direct_dao_receiver_keeps_structured_identity(
             }
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(finding_count=1),
     })
 
 
@@ -707,7 +727,7 @@ def test_positive_finding_contains_complete_callable_identity(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
     root = _fixture(tmp_path)
-    _write(root, "config/guards/ownership.yml", "entries: []\n")
+    _unmatched_policy(root)
     _structural_policy(root)
     report = root / "complete-identity.json"
 
@@ -743,13 +763,7 @@ def test_positive_finding_contains_complete_callable_identity(
             }
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(finding_count=1),
     })
 
 
@@ -831,13 +845,9 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                 }
             ],
             "diagnostics": [],
-            "statistics": {
-                "files_scanned": 1,
-                "declarations_scanned": 5,
-                "inventory_daos": 1,
-                "inventory_mutators": 1,
-                "trusted": True,
-            },
+            "statistics": _clean_statistics(
+                declarations_scanned=5, finding_count=1,
+            ),
         },
     ),
     (
@@ -873,13 +883,9 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                 }
             ],
             "diagnostics": [],
-            "statistics": {
-                "files_scanned": 1,
-                "declarations_scanned": 5,
-                "inventory_daos": 1,
-                "inventory_mutators": 1,
-                "trusted": True,
-            },
+            "statistics": _clean_statistics(
+                declarations_scanned=5, finding_count=1,
+            ),
         },
     ),
     (
@@ -900,13 +906,7 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
             "guard": "db_access",
             "findings": [],
             "diagnostics": [],
-            "statistics": {
-                "files_scanned": 1,
-                "declarations_scanned": 4,
-                "inventory_daos": 1,
-                "inventory_mutators": 1,
-                "trusted": True,
-            },
+            "statistics": _clean_statistics(declarations_scanned=4),
         },
     ),
     (
@@ -940,13 +940,9 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                 }
             ],
             "diagnostics": [],
-            "statistics": {
-                "files_scanned": 1,
-                "declarations_scanned": 5,
-                "inventory_daos": 1,
-                "inventory_mutators": 1,
-                "trusted": True,
-            },
+            "statistics": _clean_statistics(
+                declarations_scanned=5, finding_count=1,
+            ),
         },
     ),
     (
@@ -980,13 +976,9 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
                 }
             ],
             "diagnostics": [],
-            "statistics": {
-                "files_scanned": 1,
-                "declarations_scanned": 4,
-                "inventory_daos": 1,
-                "inventory_mutators": 1,
-                "trusted": True,
-            },
+            "statistics": _clean_statistics(
+                declarations_scanned=4, finding_count=1,
+            ),
         },
     ),
 ])
@@ -1198,13 +1190,7 @@ counts:
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 5,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(declarations_scanned=5),
     })
 
 
@@ -1247,13 +1233,7 @@ def test_required_barrier_is_reported(
             },
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(finding_count=1),
     })
 
 
@@ -1320,13 +1300,9 @@ def test_structural_operation_is_reported(
             },
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 5,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(
+            declarations_scanned=5, finding_count=1,
+        ),
     })
 
 
@@ -1354,13 +1330,7 @@ def test_typed_structural_receiver_is_authorized_by_exact_fixture_entry(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 5,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(declarations_scanned=5),
     })
 
 
@@ -1418,13 +1388,9 @@ def test_writable_database_property_has_exact_structural_identity(
             },
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 6,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(
+            declarations_scanned=6, finding_count=1,
+        ),
     })
 
 
@@ -1728,37 +1694,6 @@ def test_inventory_controlled_write_errors_preserve_catalog_code(
     _report(report, expected_report)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("kind", "unknown"),
-    ("kind", "not-a-kind"),
-    ("receiver", "*"),
-    ("receiver", "List < String >"),
-    ("parameters", ["*"]),
-    ("parameters", ["List < String >"]),
-])
-def test_ownership_signature_metadata_rejects_noncanonical_identity(field, value):
-    entry = {
-        "path": CANONICAL, "class": "Repository", "method": "save",
-        "daos": ["expenseDao"], "operation": "insert", "barrier_required": False,
-        "reason": "fixture", "owner": "@d4c", "linked_issue": "D4C-001",
-        "signature": {"receiver": None, "kind": "function", "parameters": ["Item"]},
-    }
-    entry["signature"][field] = value
-    errors = ownership_entry_metadata_errors(entry)
-    assert errors
-    assert all(isinstance(error, str) and error for error in errors)
-
-
-def test_ownership_signature_metadata_accepts_exact_canonical_identity():
-    entry = {
-        "path": CANONICAL, "class": "Repository", "method": "save",
-        "daos": ["expenseDao"], "operation": "insert", "barrier_required": False,
-        "reason": "fixture", "owner": "@d4c", "linked_issue": "D4C-001",
-        "signature": {"receiver": None, "kind": "function", "parameters": ["Item"]},
-    }
-    assert ownership_entry_metadata_errors(entry) == []
-
-
 def test_findings_file_environment_transport(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
@@ -1776,13 +1711,7 @@ def test_findings_file_environment_transport(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(),
     })
 
 
@@ -1793,13 +1722,7 @@ def test_findings_file_environment_transport(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(),
     }),
     ("2", 0, {
         "schema": "cost-aggregator.guard-findings",
@@ -1807,13 +1730,7 @@ def test_findings_file_environment_transport(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(),
     }),
     ("1", 2, {
         "schema": "cost-aggregator.guard-findings",
@@ -2045,13 +1962,7 @@ def test_report_does_not_depend_on_stdout_summary_parsing(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(),
     })
 
 
@@ -2059,7 +1970,7 @@ def test_argv_and_canonical_identity_are_platform_neutral(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
     root = _fixture(tmp_path)
-    _write(root, "config/guards/ownership.yml", "entries: []\n")
+    _unmatched_policy(root)
     _structural_policy(root)
     report = root / "platform.json"
 
@@ -2097,13 +2008,7 @@ def test_argv_and_canonical_identity_are_platform_neutral(
             }
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        "statistics": _clean_statistics(finding_count=1),
     })
 
 
@@ -2118,20 +2023,21 @@ ACCESSOR_SOURCE = SOURCE.replace(
 
 
 def _accessor_policy(root: Path, kind: str, parameters: str = "[]") -> Path:
-    return _write(root, "config/guards/ownership.yml", f"""entries:
+    return _write(root, "config/guards/ownership.yml", f"""schemaVersion: 2
+entries:
   - path: {CANONICAL}
-    class: Repository
+    ownerFqcn: example.Repository
+    kind: {kind}
     method: cached
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: {parameters}
+    daoAccessor: expenseDao
+    daoFqcn: example.ExpenseDao
     operation: insert
-    signature:
-      receiver: null
-      kind: {kind}
-      parameters: {parameters}
-    barrier_required: false
+    barrierMode: helper
     reason: fixture
     owner: '@d4c'
-    linked_issue: D4C-001
+    linkedIssue: D4C-001
 """)
 
 
@@ -2164,17 +2070,11 @@ def test_accessor_policy_uses_exact_structured_callable_identity(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            # A property and its accessors are ONE declaration range
-            # (declaration_scanner._property_bounds consumes header,
-            # initializer, and every accessor as a single declaration), so
-            # the scan sees Item + Repository + cached = 3 ranges.
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        # A property and its accessors are ONE declaration range
+        # (declaration_scanner._property_bounds consumes header,
+        # initializer, and every accessor as a single declaration), so
+        # the scan sees Item + Repository + cached = 3 ranges.
+        "statistics": _clean_statistics(),
     })
 
 
@@ -2242,17 +2142,11 @@ def test_accessor_policy_rejects_wrong_kind_or_parameter_signature(
             },
         ],
         "diagnostics": [],
-        "statistics": {
-            "files_scanned": 1,
-            # A property and its accessors are ONE declaration range
-            # (declaration_scanner._property_bounds consumes header,
-            # initializer, and every accessor as a single declaration), so
-            # the scan sees Item + Repository + cached = 3 ranges.
-            "declarations_scanned": 3,
-            "inventory_daos": 1,
-            "inventory_mutators": 1,
-            "trusted": True,
-        },
+        # A property and its accessors are ONE declaration range
+        # (declaration_scanner._property_bounds consumes header,
+        # initializer, and every accessor as a single declaration), so
+        # the scan sees Item + Repository + cached = 3 ranges.
+        "statistics": _clean_statistics(finding_count=2),
     })
 
 
@@ -2319,41 +2213,41 @@ def test_accessor_unknown_constructor_expression_is_not_authorized(
 
 
 @pytest.mark.parametrize("bad_entry", [
-    "    parameters: Item",
-    "    # signature omitted",
-    "      kind: invalid_kind",
-    "    daos: []",
+    "    parameterTypes: Item",
+    "    # daoAccessor omitted",
+    "    kind: invalid_kind",
+    "    daoAccessor: ''",
     "    operation: ''",
 ])
 def test_malformed_ownership_policy_is_source_evidence_diagnostic(
     tmp_path: Path, bad_entry: str,
 ) -> None:
-    """Malformed ownership entries fail closed with the controlled umbrella.
+    """Malformed v2 ownership entries fail closed with the controlled umbrella.
 
-    The CLI deliberately collapses every per-entry evidence failure — the
-    loader/metadata validator's ENTRY_INVALID reasons and the missing-signature
-    pre-gate alike — into the single context-free
-    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic (exit 2, findings withheld).
-    These parametrizations pin that actual controlled code; internal stage
-    codes (e.g. SIGNATURE_MISSING) are intentionally not part of the CLI
-    contract.  The base policy is written by ``_policy`` so the test owns its
-    complete input instead of reading a shared fixture default.
+    The CLI deliberately collapses every active-policy failure — the v2
+    loader's controlled PolicyError codes and the evidence stage's per-group
+    codes alike — into the single context-free DB_POLICY_SOURCE_EVIDENCE_INVALID
+    diagnostic (exit 2, findings withheld).  These parametrizations pin that
+    actual controlled code; internal stage codes are intentionally not part
+    of the CLI contract.  The base policy is written by ``_policy`` so the
+    test owns its complete input instead of reading a shared fixture default.
     """
     root = _fixture(tmp_path)
     policy_path = _policy(root)
     policy = policy_path.read_text(encoding="utf-8")
     if bad_entry.startswith("    #"):
         policy = policy.replace(
-            "    signature:\n      receiver: null\n      kind: function\n"
-            "      parameters: [example.Item]\n",
+            "    daoAccessor: expenseDao\n",
             bad_entry.strip() + "\n",
         )
-    elif bad_entry.startswith("      kind:"):
-        policy = policy.replace("      kind: function", bad_entry.strip())
-    elif "parameters" in bad_entry:
-        policy = policy.replace("      parameters: [example.Item]", bad_entry.strip())
-    elif "daos" in bad_entry:
-        policy = policy.replace("    daos: [expenseDao]", bad_entry.strip())
+    elif bad_entry.startswith("    kind:"):
+        policy = policy.replace("    kind: function", bad_entry.strip())
+    elif "parameterTypes" in bad_entry:
+        policy = policy.replace(
+            "    parameterTypes: [example.Item]", bad_entry.strip(),
+        )
+    elif "daoAccessor" in bad_entry:
+        policy = policy.replace("    daoAccessor: expenseDao", bad_entry.strip())
     elif "operation" in bad_entry:
         policy = policy.replace("    operation: insert", bad_entry.strip())
     _write(root, "config/guards/ownership.yml", policy)
@@ -2409,7 +2303,7 @@ def test_stale_ownership_policy_is_source_evidence_diagnostic(tmp_path: Path) ->
 def test_evidence_gate_runs_before_scanner_matching(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Pin the GR-01 pipeline ORDER: source evidence gates scanner matching.
+    """Pin the ACTIVATED pipeline ORDER: v2 evidence gates scanner matching.
 
     The policy names a method the source never declared (stale evidence)
     while the scanned tree still contains a real unauthorized mutation.  The
@@ -2417,22 +2311,22 @@ def test_evidence_gate_runs_before_scanner_matching(
     context-free umbrella diagnostic with zero findings — scanner output for
     the very same tree would have been DB_UNAUTHORIZED_MUTATION.  A
     pass-through spy proves the CLI consulted the evidence stage with the
-    loaded policy entries before any matching happened.
+    loaded typed policy entries before any matching happened.
     """
     root = _fixture(tmp_path)
     _policy(root, method="removedWriter")
     _structural_policy(root)
     report = root / "ordering.json"
 
-    real_evidence_check = _verifier_module.verify_ownership_policy_source_evidence
+    real_evidence_check = _verifier_module.verify_v2_policy_source_evidence
     evidence_calls = []
 
-    def _evidence_spy(entries, source_root):
+    def _evidence_spy(entries, repo_root, *args, **kwargs):
         evidence_calls.append(len(entries))
-        return real_evidence_check(entries, source_root)
+        return real_evidence_check(entries, repo_root, *args, **kwargs)
 
     monkeypatch.setattr(
-        _verifier_module, "verify_ownership_policy_source_evidence", _evidence_spy,
+        _verifier_module, "verify_v2_policy_source_evidence", _evidence_spy,
     )
 
     assert verify_main([
@@ -2622,3 +2516,411 @@ def test_inventory_resolves_dao_after_bodyless_sibling_without_inheritance_diagn
         for diagnostic in inventory.diagnostics
     ), inventory.diagnostics
     assert inventory.diagnostics == ()
+
+
+# ── PR-GR-07 Slice 2: activation matrix ───────────────────────────────────────
+
+def test_fully_matching_v2_mutation_passes_end_to_end(tmp_path: Path) -> None:
+    """Activation positive: a v2 policy whose single entry exactly matches the
+    discovered mutation passes the WHOLE activated pipeline — active v2
+    loader, REAL v2 source evidence, structural manifest gate, and typed D4
+    authorization — with no bypassed stage and the full activation statistics.
+    """
+    root = _fixture(tmp_path)
+    _policy(root)
+    _structural_policy(root)
+    report = root / "activated-clean.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 0
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [],
+        "statistics": _clean_statistics(),
+    })
+
+
+def test_wrong_owner_fqcn_cannot_authorize(tmp_path: Path, _bypass_evidence) -> None:
+    """A policy entry whose ownerFqcn differs from the discovered owner's FULL
+    FQCN can never authorize it: the mutation stays a finding."""
+    root = _fixture(tmp_path)
+    _policy(root, class_name="WrongRepository")
+    _structural_policy(root)
+    report = root / "wrong-owner.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 1
+    data = _report(report, _expected(
+        findings=[{
+            "rule": "DB_UNAUTHORIZED_MUTATION",
+            "severity": "error",
+            "path": CANONICAL,
+            "location": {"line": 13, "end_line": 13},
+            "symbol": {
+                "owner": "example.Repository",
+                "name": "save",
+                "receiver": None,
+                "parameters": ["example.Item"],
+                "kind": "function",
+            },
+            "identity": {
+                "dao": "example.ExpenseDao",
+                "accessor": "expenseDao",
+                "operation": "insert",
+                "mutation_kind": "ROOM_INSERT",
+                "call_form": "receiver",
+            },
+            "message": "Database mutation is not owned by an exact policy entry",
+        }],
+        statistics=_clean_statistics(finding_count=1),
+    ))
+    assert _codes(data, "findings") == ["DB_UNAUTHORIZED_MUTATION"]
+
+
+NESTED_COLLISION_SOURCE = """\
+package example
+
+data class Item(val id: Int)
+
+@androidx.room.Dao
+interface ExpenseDao {
+    @androidx.room.Insert
+    fun insert(item: Item)
+}
+
+class Outer {
+    class Inner(private val expenseDao: ExpenseDao) {
+        fun save(item: Item) {
+            expenseDao.insert(item)
+        }
+    }
+}
+
+class Other {
+    class Inner(private val expenseDao: ExpenseDao) {
+        fun save(item: Item) {
+            expenseDao.insert(item)
+        }
+    }
+}
+"""
+
+
+def test_nested_owner_simple_name_collision_cannot_authorize(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
+    """Two nested owners sharing the simple name ``Inner`` are distinct
+    identities: an entry naming example.Other.Inner authorizes ONLY that
+    owner's mutation; example.Outer.Inner stays a finding.  (Legacy matching
+    compared simple names and would have authorized both.)"""
+    root = _fixture(tmp_path, source=NESTED_COLLISION_SOURCE)
+    _policy(root, class_name="Other.Inner")
+    _structural_policy(root)
+    report = root / "nested-collision.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 1
+    payload, data = _read_report_bytes(report)
+    assert [item["rule"] for item in data["findings"]] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = data["findings"][0]
+    # The unauthorized mutation is attributed to its EXACT nested owner FQCN,
+    # never to the colliding simple name.
+    assert finding["symbol"]["owner"] == "example.Outer.Inner"
+    assert finding["path"] == CANONICAL
+    assert data["diagnostics"] == []
+    assert data["statistics"]["trusted"] is True
+    assert data["statistics"]["findingCount"] == 1
+
+
+OVERLOAD_COLLISION_SOURCE = SOURCE.replace(
+    "fun insert(item: Item)",
+    "fun insert(item: Item)\n    @androidx.room.Insert\n    fun insert(label: String)",
+).replace(
+    "class Repository(private val expenseDao: ExpenseDao) {",
+    "class Repository(private val expenseDao: ExpenseDao) {\n"
+    "    fun saveLabel(label: String) {\n"
+    "        expenseDao.insert(label)\n"
+    "    }",
+)
+
+
+def test_overload_collision_cannot_authorize_cross_overload(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
+    """An entry for save(item: Item) -> insert must NOT authorize the sibling
+    callable saveLabel(label: String) reaching the SAME operation name through
+    a different overload: no name-only or cross-overload union exists."""
+    root = _fixture(tmp_path, source=OVERLOAD_COLLISION_SOURCE)
+    _policy(root)
+    _structural_policy(root)
+    report = root / "overload-collision.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 1
+    payload, data = _read_report_bytes(report)
+    assert [item["rule"] for item in data["findings"]] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = data["findings"][0]
+    assert finding["symbol"]["owner"] == "example.Repository"
+    assert finding["symbol"]["name"] == "saveLabel"
+    assert finding["symbol"]["parameters"] == ["String"]
+    assert finding["identity"]["operation"] == "insert"
+    assert data["diagnostics"] == []
+    assert data["statistics"]["trusted"] is True
+    assert data["statistics"]["findingCount"] == 1
+
+
+NULLABLE_PARAMETER_SOURCE = SOURCE.replace(
+    "class Repository(private val expenseDao: ExpenseDao) {",
+    "class Repository(private val expenseDao: ExpenseDao) {\n"
+    "    fun saveNullable(item: Item?) {\n"
+    "        expenseDao.insert(item)\n"
+    "    }",
+)
+
+
+def test_nullable_parameter_mismatch_is_a_finding(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
+    """Nullability is part of the ordered parameter identity: an entry for
+    save(item: Item) cannot authorize saveNullable(item: Item?)."""
+    root = _fixture(tmp_path, source=NULLABLE_PARAMETER_SOURCE)
+    _policy(root)
+    _structural_policy(root)
+    report = root / "nullable-param.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 1
+    payload, data = _read_report_bytes(report)
+    assert [item["rule"] for item in data["findings"]] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = data["findings"][0]
+    assert finding["symbol"]["name"] == "saveNullable"
+    assert finding["symbol"]["parameters"] == ["example.Item?"]
+    assert data["diagnostics"] == []
+    assert data["statistics"]["trusted"] is True
+    assert data["statistics"]["findingCount"] == 1
+
+
+def test_legacy_v1_active_policy_cannot_authorize_post_activation(
+    tmp_path: Path,
+) -> None:
+    """Post-activation truth: a legacy v1-shaped active policy is not an
+    authorization source at all.  It fails the active v2 loader and exits 2
+    untrusted with zero findings — never scanner findings."""
+    root = _fixture(tmp_path)
+    _write(root, "config/guards/ownership.yml", f"""schemaVersion: 1
+entries:
+  - path: {CANONICAL}
+    class: Repository
+    method: save
+    daos: [expenseDao]
+    operation: insert
+    signature:
+      receiver: null
+      kind: function
+      parameters: [example.Item]
+    barrier_required: false
+    reason: fixture
+    owner: '@d4c'
+    linked_issue: D4C-001
+""")
+    _structural_policy(root)
+    report = root / "legacy-policy.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 2
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [
+            {
+                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+                "path": None,
+                "symbol": None,
+                "controlled_context": {},
+            }
+        ],
+        # The bounded classification context records WHICH schema version was
+        # rejected (see DB_V2_ACTIVE_POLICY_NOT_V2): run promotion.
+        "statistics": {"trusted": False, "activePolicySchemaVersion": 1},
+    })
+
+
+def test_missing_v2_active_policy_exits_two_untrusted(tmp_path: Path) -> None:
+    root = _fixture(tmp_path)
+    _policy(root)
+    _structural_policy(root)
+    (root / "config/guards/ownership.yml").unlink()
+    report = root / "missing-policy.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 2
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [
+            {
+                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+                "path": None,
+                "symbol": None,
+                "controlled_context": {},
+            }
+        ],
+        "statistics": {"trusted": False},
+    })
+
+
+def test_invalid_v2_schema_version_exits_two_untrusted(tmp_path: Path) -> None:
+    """A well-formed v2 document carrying the wrong schemaVersion integer is
+    rejected by the loader; the detected version rides in the untrusted
+    statistics as bounded classification context."""
+    root = _fixture(tmp_path)
+    policy = _policy(root).read_text(encoding="utf-8").replace(
+        "schemaVersion: 2", "schemaVersion: 3", 1,
+    )
+    _write(root, "config/guards/ownership.yml", policy)
+    _structural_policy(root)
+    report = root / "wrong-schema.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 2
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [
+            {
+                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+                "path": None,
+                "symbol": None,
+                "controlled_context": {},
+            }
+        ],
+        "statistics": {"trusted": False, "activePolicySchemaVersion": 3},
+    })
+
+
+# ── PR-GR-07 Slice 2: --legacy-shadow-report ──────────────────────────────────
+
+def test_legacy_shadow_report_is_report_only_and_cannot_change_exit_code(
+    tmp_path: Path,
+) -> None:
+    """The shadow report runs the retired legacy analysis in-process purely
+    for documentation: output states reportOnly, violations stay bounded
+    (path/line/reason), and the authoritative exit code is unchanged.
+
+    With a legacy v1-shaped active policy the activated pipeline exits 2
+    untrusted (no tolerant parsing), while the shadow analysis — which uses
+    the RETIRED loaders — still documents what the old scanner would have
+    reported.  The shadow payload is NOT a GuardRunReport and MUST NOT be
+    fed to the ratchet.
+    """
+    root = _fixture(tmp_path)
+    _write(root, "config/guards/ownership.yml", f"""entries:
+  - path: {CANONICAL}
+    class: Repository
+    method: save
+    daos: [expenseDao]
+    operation: insert
+    signature:
+      receiver: null
+      kind: function
+      parameters: [example.Item]
+    barrier_required: false
+    reason: fixture
+    owner: '@d4c'
+    linked_issue: D4C-001
+""")
+    _structural_policy(root)
+    report = root / "shadow-run.json"
+    shadow = root / "legacy-shadow.json"
+
+    result = _run(root, report, "--legacy-shadow-report", str(shadow))
+
+    # Authoritative outcome unchanged: the v1 active policy cannot authorize,
+    # so the run is untrusted exit 2 with zero findings.
+    assert result.returncode == 2
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [
+            {
+                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+                "path": None,
+                "symbol": None,
+                "controlled_context": {},
+            }
+        ],
+        "statistics": {"trusted": False},
+    })
+
+    shadow_payload = json.loads(shadow.read_text(encoding="utf-8"))
+    assert shadow_payload["reportOnly"] is True
+    assert shadow_payload["guard"] == "db_access"
+    assert shadow_payload["schema"] == "cost-aggregator.db-guard-legacy-shadow"
+    assert isinstance(shadow_payload["violations"], list)
+    assert shadow_payload["filesScanned"] >= 1
+    for violation in shadow_payload["violations"]:
+        # Bounded fields only — raw source lines are never persisted.
+        assert set(violation) == {"path", "line", "reason"}
+
+
+def test_legacy_shadow_report_failure_cannot_change_exit_code(
+    tmp_path: Path,
+) -> None:
+    """When BOTH the authoritative pipeline and the shadow analysis fail, the
+    exit code comes from the pipeline alone (2 here); the shadow failure is
+    recorded inside the reportOnly payload instead of propagating."""
+    root = _fixture(tmp_path)
+    # Malformed active policy: the authoritative v2 loader rejects it AND the
+    # retired legacy loaders cannot parse it either, so both pipeline and
+    # shadow analysis fail — and only the pipeline decides the exit code.
+    _write(root, "config/guards/ownership.yml", "entries: [\n")
+    _structural_policy(root)
+    report = root / "shadow-failure.json"
+    shadow = root / "legacy-shadow.json"
+
+    result = _run(root, report, "--legacy-shadow-report", str(shadow))
+
+    assert result.returncode == 2
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [
+            {
+                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+                "path": None,
+                "symbol": None,
+                "controlled_context": {},
+            }
+        ],
+        "statistics": {"trusted": False},
+    })
+    shadow_payload = json.loads(shadow.read_text(encoding="utf-8"))
+    assert shadow_payload["reportOnly"] is True
+    assert shadow_payload.get("shadowAnalysisFailed") is True

@@ -1,10 +1,17 @@
-"""Focused D4 contracts for fail-closed structural discovery."""
+"""Focused D4 contracts for fail-closed structural discovery.
+
+PR-GR-07 Slice 2: D4 authorization is TYPED.  The matrix below pins exact
+full-identity equality (``PolicyEntry``/``match_mutation``) for every
+discovered direct DAO mutation: path + ownerFqcn + kind + method + receiver +
+ordered parameterTypes + daoAccessor + daoFqcn + operation.
+"""
 
 import json
 from pathlib import Path
 
 from scripts.ci.finding_rule_catalog import known_diagnostic
 from scripts.db_guard.declaration_scanner import DeclarationRange
+from scripts.db_guard.policy_model import BarrierMode, CallableKind, PolicyEntry
 from scripts.db_guard.scanner import _property_symbol_at, scan_db_access
 from scripts.ci.guard_findings import (
     KIND_INITIALIZER,
@@ -255,4 +262,223 @@ fun unsupported(value: String) { value.deleteRecursively() }
         "statistics": {"files_scanned": 1, "declarations_scanned": 1,
                        "inventory_daos": 1, "inventory_mutators": 1,
                        "trusted": False},
+    }
+
+
+# ── PR-GR-07 Slice 2: typed v2 authorization matrix ───────────────────────────
+
+_TYPED_SOURCE = """package example
+
+data class Item(val id: Int)
+
+@androidx.room.Dao
+interface ExpenseDao {
+    @androidx.room.Insert
+    fun insert(item: Item)
+
+    @androidx.room.Insert
+    fun insert(first: String, second: Item)
+
+    @androidx.room.Delete
+    fun remove(item: Item)
+}
+
+class Repository(private val expenseDao: ExpenseDao,
+                 private val otherDao: ExpenseDao) {
+    fun save(item: Item) {
+        expenseDao.insert(item)
+    }
+}
+"""
+
+_TYPED_PATH = "app/src/main/java/example/TypedRepository.kt"
+
+
+def _typed_entry(**overrides) -> PolicyEntry:
+    """The EXACT entry for Repository.save(item: Item) -> expenseDao.insert."""
+    values = dict(
+        path=_TYPED_PATH,
+        owner_fqcn="example.Repository",
+        kind=CallableKind.FUNCTION,
+        method="save",
+        receiver=None,
+        parameter_types=("example.Item",),
+        dao_accessor="expenseDao",
+        dao_fqcn="example.ExpenseDao",
+        operation="insert",
+        barrier_mode=BarrierMode.HELPER,
+        reason="matrix",
+        owner="@d4",
+        linked_issue="D4-MATRIX",
+    )
+    values.update(overrides)
+    return PolicyEntry(**values)
+
+
+def _typed_root(tmp_path: Path, source: str = _TYPED_SOURCE) -> Path:
+    root = _source_root(tmp_path)
+    (root / "TypedRepository.kt").write_text(source + "\n" + _PROBE_DAO,
+                                             encoding="utf-8")
+    return root
+
+
+def test_typed_exact_entry_authorizes_the_mutation(tmp_path):
+    """Positive: the fully matching typed entry authorizes cleanly — no
+    finding, no diagnostic, trusted scan."""
+    root = _typed_root(tmp_path)
+
+    report = scan_db_access(
+        root, [_typed_entry()], raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    assert report.to_dict() == {
+        "schema": "cost-aggregator.guard-findings", "schema_version": 2,
+        "guard": "db_access", "findings": [], "diagnostics": [],
+        # Declaration ranges: Item + Repository + save (both @Dao interfaces
+        # are excluded from the scanned-range count, matching every other D4
+        # fixture's accounting).
+        "statistics": {"files_scanned": 1, "declarations_scanned": 3,
+                       "inventory_daos": 2, "inventory_mutators": 4,
+                       "trusted": True},
+    }
+
+
+def test_typed_non_policy_entry_fails_closed_as_diagnostic(tmp_path):
+    """Anything that is not a PolicyEntry can never authorize: the run is
+    untrusted with the controlled policy diagnostic and zero findings."""
+    root = _typed_root(tmp_path)
+    legacy_shape = {
+        "path": _TYPED_PATH, "class": "Repository", "method": "save",
+        "daos": ["expenseDao"], "operation": "insert",
+        "signature": {"receiver": None, "kind": "function",
+                      "parameters": ["example.Item"]},
+        "barrier_required": False, "reason": "legacy", "owner": "@v1",
+        "linked_issue": "V1-1",
+    }
+
+    report = scan_db_access(
+        root, [legacy_shape], raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    payload = report.to_dict()
+    assert payload["findings"] == []
+    assert [item["code"] for item in payload["diagnostics"]] == [
+        "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+    ]
+    assert payload["statistics"]["trusted"] is False
+
+
+def test_typed_matrix_rejects_each_mismatched_identity_dimension(tmp_path):
+    """Every identity dimension is exact: flipping ANY single field of the
+    entry yields exactly one DB_UNAUTHORIZED_MUTATION finding for the same
+    mutation — never an authorization.  This pins the removal of the legacy
+    paths: simple-name owner comparison (owner_fqcn.rsplit), name-only
+    operation matching, cross-overload unions, wildcards, and v1 fallbacks.
+
+    Parametrization note: ``owner_simple_collision`` keeps a DIFFERENT FQCN
+    whose simple name matches what a legacy rsplit comparison would have
+    seen; ``overload_union`` targets the sibling String overload of the same
+    operation; ``parameter_order`` swaps the ordered parameterTypes.
+    """
+    cases = {
+        "wrong_owner_fqcn": dict(
+            owner_fqcn="evil.example.Repository",
+            expected_owner="example.Repository",
+        ),
+        "owner_simple_name_collision": dict(
+            # Same simple name tail ("Repository") as the discovered owner —
+            # only FULL FQCN equality may authorize.
+            owner_fqcn="other.example.Repository",
+            expected_owner="example.Repository",
+        ),
+        "wrong_method": dict(method="saveOther"),
+        "wrong_kind": dict(kind=CallableKind.PROPERTY_GETTER),
+        "wrong_receiver": dict(receiver="String"),
+        "wrong_parameter_type": dict(parameter_types=("example.OtherItem",)),
+        "nullable_parameter": dict(parameter_types=("example.Item?",)),
+        "wrong_dao_accessor": dict(dao_accessor="otherDao"),
+        "wrong_dao_fqcn": dict(dao_fqcn="example.OtherDao"),
+        "wrong_operation": dict(operation="remove"),
+        "cross_overload_union": dict(
+            # The String/Item overload of `insert` must not authorize the
+            # Item-only call site.
+            parameter_types=("String", "example.Item"),
+        ),
+    }
+    for label, overrides in cases.items():
+        expected_owner = overrides.pop("expected_owner", "example.Repository")
+        root = _typed_root(tmp_path)
+
+        report = scan_db_access(
+            root, [_typed_entry(**overrides)],
+            raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+        )
+
+        payload = report.to_dict()
+        assert [finding["rule"] for finding in payload["findings"]] == [
+            "DB_UNAUTHORIZED_MUTATION",
+        ], label
+        finding = payload["findings"][0]
+        assert finding["symbol"]["owner"] == expected_owner, label
+        assert finding["symbol"]["name"] == "save", label
+        assert finding["identity"]["dao"] == "example.ExpenseDao", label
+        assert finding["identity"]["accessor"] == "expenseDao", label
+        assert finding["identity"]["operation"] == "insert", label
+        assert payload["diagnostics"] == [], label
+        assert payload["statistics"]["trusted"] is True, label
+
+
+def test_typed_parameter_order_is_exact(tmp_path):
+    """Ordered parameterTypes are part of the identity: the swapped-order
+    entry cannot authorize the (Item) call site even though the type SET
+    overlaps with the two-parameter overload."""
+    root = _typed_root(tmp_path)
+
+    report = scan_db_access(
+        root, [_typed_entry(parameter_types=("example.Item", "String"))],
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    payload = report.to_dict()
+    assert [finding["rule"] for finding in payload["findings"]] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    assert payload["diagnostics"] == []
+
+
+def test_typed_direct_barrier_mode_requires_local_barrier_evidence(tmp_path):
+    """barrierMode direct keeps the local-barrier contract: without exact
+    writeBarrier evidence before the mutation the authorization becomes a
+    DB_MISSING_WRITE_BARRIER finding; with it the scan is clean."""
+    barrier_source = _TYPED_SOURCE.replace(
+        "    fun save(item: Item) {\n        expenseDao.insert(item)\n    }",
+        "    fun save(item: Item) {\n"
+        "        writeBarrier.checkWritesAllowed()\n"
+        "        expenseDao.insert(item)\n"
+        "    }",
+    )
+    plain_root = _typed_root(tmp_path)
+    barrier_root = _typed_root(tmp_path / "barrier", barrier_source)
+
+    missing = scan_db_access(
+        plain_root, [_typed_entry(barrier_mode=BarrierMode.DIRECT)],
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+    assert [finding.rule for finding in missing.findings] == [
+        "DB_MISSING_WRITE_BARRIER",
+    ]
+    assert missing.diagnostics == ()
+
+    satisfied = scan_db_access(
+        barrier_root, [_typed_entry(barrier_mode=BarrierMode.DIRECT)],
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+    assert satisfied.to_dict() == {
+        "schema": "cost-aggregator.guard-findings", "schema_version": 2,
+        "guard": "db_access", "findings": [], "diagnostics": [],
+        # Same accounting as the positive test: Item + Repository + save;
+        # both @Dao interfaces are excluded from the scanned-range count.
+        "statistics": {"files_scanned": 1, "declarations_scanned": 3,
+                       "inventory_daos": 2, "inventory_mutators": 4,
+                       "trusted": True},
     }
