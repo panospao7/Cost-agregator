@@ -680,3 +680,145 @@ shape for non-matching callables.
 Sections 2–6 remain deferred until this last failure closes. Everything else in the
 checklist has been green or platform-exact throughout rounds 1–8; production gate CLIs have
 never regressed.
+
+---
+
+## Round 8b (2026-08-24) — after GR-00R `70c04f47` (run-pinned capture) + GR-03R `e7b75970` (source-root authority split)
+
+HEAD `e7b7597098dc2e7ac0a35f8342b20f9f4a420f41`; checkout clean.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> exit 1; **12 failed / 2324 passed / 23 skipped** in 375 s.
+REGRESSION vs round 8 (1 failed): GR-03R/GR-00R fixed nothing observable here and introduced
+11 new failures; the round-8 straggler persists. **Evidence-capture gates NOT executed** —
+see blocker below.
+
+### BLOCKER: do not capture trusted evidence with the current tool
+
+Two failures prove the current evidence bundle violates the bounded-fields privacy rule by
+persisting RAW child output into `evidence.json`:
+
+- scripts/ci/test_capture_db_guard_evidence.py::test_evidence_records_log_state_without_raw_payload —
+  `'hunter2secret'` present in persisted evidence (`"python3_version": "registry ok
+  password=hunter2secret <redacted-path>"`)
+- ::test_over_cap_log_incomplete_exit_2_never_silent_truncation — over-cap child payload
+  (`xxxx…<truncated>`) written into the bundle instead of fail-closed exit 2
+
+Capturing now would create exactly the untrusted bundles GR-05 decisions must not rest on.
+
+### Residue (12) with node IDs
+
+A. GR-00R evidence-capture defects (3):
+   1. scripts/ci/test_capture_db_guard_evidence.py::test_sha_mismatch_rejects_before_any_matrix_command —
+      on expected-sha mismatch the capture still ran `./gradlew --version`; pin must gate
+      BEFORE any matrix command
+   2. ::test_over_cap_log_incomplete_exit_2_never_silent_truncation — raw over-cap payload persisted
+   3. ::test_evidence_records_log_state_without_raw_payload — secret leaked into python3_version field
+
+B. GR-03R authority-split regressions (8):
+   4.–5. scripts/test_db_guard_declaration_scanner.py::test_diagnostic_rejects_invalid_path_without_echoing[src/main/java/example/File.kt]/[lib/src/main/java/example/File.kt] —
+      DiagnosticContextError NOT raised for non-canonical roots (fail-open regression)
+   6. scripts/test_db_policy_signature.py::TestNoHiddenAppSrcTopologyGate::test_normalize_canonical_path_source_has_no_app_src_check —
+      `_normalize_canonical_path` source still contains 'app/src' literal (docstring counts)
+   7.–8. TestNoExecutableAppSrcMainTopologyGate::test_no_executable_app_src_main_gate_in_declaration_scanner / _in_scanner_diag_from_text —
+      ImportError: attempted relative import beyond top-level package (tests import
+      `db_guard.scanner` top-level while modules use package-relative imports)
+   9.–10. scripts/test_verify_db_access_boundaries.py::TestNoExecutableAppSrcMainTopologyGate::test_no_app_src_prefix_gate_in_declaration_scanner_validate_path / _in_scanner_diag_from_text — same ImportError
+   11. scripts/test_kotlin_callable_parser.py::test_canonical_path_rejection_classes_have_distinct_codes[-PATH_EMPTY] —
+       rejection-code contract broken (empty code / ParserError surface), plus relative-import error in block
+
+C. Standing straggler (1):
+   12. scripts/test_db_guard_scanner_d4.py::test_delete_recursively_uses_exact_structural_token_and_policy_path —
+       unchanged from round 8: structural matcher ignores method_pattern authorization
+       (finds BOTH allowed line 4 and forbidden line 5)
+
+### Recommendation
+
+Fix A(1–3) before ANY capture run (trusted-evidence precondition); B items are mechanical
+(import style `from scripts.db_guard...`, path-validation restoration or test re-pin,
+docstring literal); C unchanged. Then rerun sweep -> green -> capture run-1/run-2 per §5.
+
+---
+
+## Addendum — round-8 straggler disposition and corrective PRs (2026-08-25)
+
+This addendum connects to the round-8 straggler
+(`scripts/test_db_guard_scanner_d4.py::test_delete_recursively_uses_exact_structural_token_and_policy_path`,
+diagnosed at lines 655–676) and to the Round 8b corrective commits. No code changes were made
+during the writing of this note; status wording is intentionally non-completion.
+
+### 1. Round-8 straggler — static-trace disposition
+
+A static trace against the round-8 tree `c7aace49` located the `method_pattern`
+authorization gate and confirmed it is **present and correct at both structural emission
+sites** — `scanner.py` near lines 761 and 814, reached via `_structural_match` using
+`fullmatch` on the policy entry's method pattern. The gate logic itself was therefore not
+missing at the point of emission; the recorded round-8 failure (two findings, including the
+policy-authorized `allowed` callable at line 4) most likely reflects a **stale
+`.pytest_cache` `lastfailed` state** carried into the round-8 run rather than a live
+authorization defect at those sites.
+
+Fresh-sweep confirmation that the straggler is actually resolved (or still live) is
+**pending** — this is a human gate, not a verified result. The addendum does not claim the
+straggler is closed.
+
+### 2. External guardrail reassessment (response 15) — corrective PRs
+
+An independent external guardrail reassessment (response 15) re-confirmed the GR-00..GR-04
+direction and identified two corrective gaps. Both gaps are now implemented as corrective
+PRs/commits:
+
+- **GR-00R** (commit `70c04f47`) — evidence-capture run-pinning:
+  - Capture is now run-pinned via a mandatory `--expected-sha`; the old fixed `TARGET_SHA`
+    lock was removed.
+  - Log-completeness contract: only two states are permitted (complete or fail-closed); no
+    silent truncation; only complete logs are hashed into the bundle.
+  - Post-capture drift check added.
+  - Matrix runs with a zero-side-effect pin (`-p no:cacheprovider`) to avoid cache
+    self-pollution.
+  - Strict review found and fixed the `.pytest_cache` self-pollution blocker (the same class
+    of stale-cache issue noted in §1).
+
+- **GR-03R** (commit `e7b75970`) — syntax/membership authority split:
+  - `canonical_source_path` and `FunctionSignature` are now syntax-only constructs.
+  - `source_roots.is_declared_production_path` is the sole membership authority.
+  - Scanner / declaration-scanner diagnostic paths are topology-neutral.
+  - Candidate byte-identity is reasoned under the current single-root manifest.
+
+These two commits correspond to the Round 8b HEAD lineage; the Round 8b residue (A/B/C
+families) is addressed by the GR-00R/GR-03R fixes described above, but re-verification is
+still pending (see §5).
+
+### 3. Inventory-debt note for checklist Revision 2
+
+The historical §3 expectation of `350 DB_ROOM_QUERY_UNCLASSIFIABLE + 1
+DB_DAO_INHERITANCE_UNRESOLVED` was superseded during rounds 5–6b: after the classifier fixes
+the inventory-only debt became **143 UNCLASSIFIABLE / 0 inheritance** (captured at round 6b,
+lines 496–501). The multi-key `ORDER BY` classifier fix (round 6b batch 1, item B.6) reduces
+the count further. The **exact new count is to be captured at the next real inventory-only
+run** and is not asserted here.
+
+### 4. Ledger corrections flagged for Revision 3
+
+The round-6b A-family premises (lines 505–515) were partially misdiagnosed:
+
+- **A.3** (`test_clean_run_writes_valid_guard_report_v2`, `DB_FINDINGS_WRITE_FAILED`): the
+  failure has **no platform seam** — the real cause was a missing output parent directory, not
+  an `os.O_DIRECTORY` Windows durability gate.
+- **A.5** (`test_inventory_only_cli_trusted_exit_zero`, mutator-dump withholding on debt): the
+  withholding behavior is a **documented contract**, not a defect.
+
+These corrections should be reflected in the Revision 3 ledger before any "resolved" claim is
+made for the A-family.
+
+### 5. Pending human gates before GR-05 planning concludes
+
+- **Fresh full sweep** to confirm the round-8 straggler disposition (§1) and to validate the
+  GR-00R/GR-03R corrective fixes against the Round 8b residue (§2).
+- **Two clean captures at the caller-stated SHA via `--expected-sha`** (first trusted bundle),
+  per the §5 two-run gate — only after the evidence-capture defects (Round 8b A.1–3) are
+  confirmed fixed and the privacy/raw-payload blocker is cleared.
+
+Status: **pending / conditional** — no DONE/GREEN claim. GR-05 planning should not be
+concluded until both human gates above pass.
