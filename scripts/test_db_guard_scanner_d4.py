@@ -127,23 +127,34 @@ class StructuralRepository {
 
     # Resolved-identity contract: DB_FORBIDDEN_STRUCTURAL_OPERATION declares
     # symbol.* identity fields, so a finding may never be emitted without a
-    # resolved callable signature.  When the enclosing callable's signature
-    # is unresolved at the structural emission path, the scanner reports the
-    # controlled DB_SIGNATURE_UNRESOLVED infrastructure diagnostic instead
-    # (deduplicated across this file's declarations) and emits no findings.
+    # resolved callable signature -- and an unresolved one takes the
+    # controlled DB_SIGNATURE_UNRESOLVED diagnostic path instead.  Both
+    # determinations share the single ``_is_unresolved_symbol`` helper with
+    # the finding-validation gate: kind==unknown or missing owner/name.
+    # Here both enclosing signatures RESOLVE exactly (owner, name,
+    # import-resolved parameters, function kind), so the unauthorized
+    # ``forbidden`` callable is reported as a fully signed finding while the
+    # policy-authorized ``allowed`` callable stays silent.
     expected = {
         "schema": "cost-aggregator.guard-findings", "schema_version": 2,
         "guard": "db_access",
-        "findings": [],
-        "diagnostics": [{
-            "code": "DB_SIGNATURE_UNRESOLVED",
+        "findings": [{
+            "rule": "DB_FORBIDDEN_STRUCTURAL_OPERATION", "severity": "error",
             "path": "app/src/main/java/StructuralRepository.kt",
-            "symbol": None,
-            "controlled_context": {},
+            # Fixture line literal: ``db.deleteRecursively()`` inside
+            # ``forbidden`` is the fifth source line.
+            "location": {"line": 5, "end_line": 5},
+            "symbol": {"owner": "example.StructuralRepository",
+                       "name": "forbidden", "receiver": None,
+                       "parameters": ["android.database.sqlite.SQLiteDatabase"],
+                       "kind": "function"},
+            "identity": {"operation": "deleteRecursively"},
+            "message": "Forbidden structural database operation",
         }],
+        "diagnostics": [],
         "statistics": {"files_scanned": 1, "declarations_scanned": 3,
                        "inventory_daos": 1, "inventory_mutators": 1,
-                       "trusted": False},
+                       "trusted": True},
     }
     assert report.to_dict() == expected
 

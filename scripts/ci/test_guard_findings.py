@@ -460,20 +460,22 @@ def test_blank_owner_and_name_rejected_before_finding() -> None:
     assert exc.value.code == "EMPTY_STRING"
 
 
-def test_blank_parameters_unresolved_symbol_blocked_in_finding() -> None:
-    # An empty parameters tuple is a valid CallableSymbol, but a missing/empty
-    # required signature component counts as unresolved: a finding in a
-    # resolved rule is blocked with UNRESOLVED_SYMBOL_BLOCKING.
-    blank_params = CallableSymbol(
+def test_zero_parameter_resolved_kind_symbol_serializes_in_finding() -> None:
+    # An empty parameters tuple is a valid CallableSymbol and a FULLY SIGNED
+    # one: initializers, property getters, and zero-argument functions
+    # legitimately carry no parameters, so emptiness alone never marks a
+    # symbol unresolved.  Only ``kind == unknown`` (or a missing owner/name)
+    # is blocking; a resolved-kind zero-parameter symbol serializes exactly
+    # like any other resolved signature.
+    zero_params = CallableSymbol(
         owner="com.example.Worker",
         name="doWork",
         receiver=None,
         parameters=(),
         kind=KIND_FUNCTION,
     )
-    with pytest.raises(ValidationError) as exc:
-        _make_finding(symbol=blank_params)
-    assert exc.value.code == "UNRESOLVED_SYMBOL_BLOCKING"
+    finding = _make_finding(symbol=zero_params)
+    assert finding.symbol.parameters == ()
 
 
 def test_unresolved_symbol_error_never_echoes_hostile_values() -> None:
@@ -2463,10 +2465,12 @@ def test_structural_fingerprint_parameter_order_changes_baseline() -> None:
 
 
 def test_structural_unresolved_symbol_blocked() -> None:
-    # The structural rule requires symbol.* identity, so a symbol without a
-    # resolved signature (empty parameters) is blocking and must become a
-    # diagnostic, never a baseline-able finding.
-    blank = _symbol(parameters=())
+    # The structural rule requires symbol.* identity, so an unresolved symbol
+    # is blocking and must become a diagnostic, never a baseline-able
+    # finding.  Unresolved means ``kind == unknown`` (or a missing owner or
+    # name) -- an empty parameter list is NOT unresolved, because
+    # initializers, getters, and zero-argument functions are fully signed.
+    blank = _symbol(parameters=(), kind=KIND_UNKNOWN)
     with pytest.raises(ValidationError) as exc:
         _make_finding(rule=_STRUCTURAL_RULE, symbol=blank)
     assert exc.value.code == "UNRESOLVED_SYMBOL_BLOCKING"

@@ -35,8 +35,9 @@ writes always serialize the canonicalized report.
 
 Unknown blocking symbol contract: a DB policy finding (a rule whose profile
 requires ``symbol.*`` identity fields) whose ``CallableSymbol`` has
-``kind == unknown`` or an unresolved required signature (missing/empty
-owner, name, or parameters) is never serialized as a baseline-able
+``kind == unknown`` or an unresolved required identity component
+(missing/empty owner or name; a zero-parameter callable is fully signed) is
+never serialized as a baseline-able
 ``GuardFinding``; constructing it fails report validation with the
 controlled ``UNRESOLVED_SYMBOL_BLOCKING`` error and directs the emitter to
 the controlled ``DB_SIGNATURE_UNRESOLVED`` diagnostic (protocol /
@@ -576,18 +577,22 @@ def _is_unresolved_symbol(symbol):
     """Return ``True`` when ``symbol`` cannot back a baseline-able finding.
 
     A callable symbol is unresolved when its kind is ``unknown`` (allowed
-    only in non-blocking discovery scans) or a required signature component
-    (owner, name, parameters) is missing/empty.  Blocking findings that
-    require symbol identity must reject such symbols with the
-    ``UNRESOLVED_SYMBOL_BLOCKING`` protocol/infrastructure failure (exit 2)
-    and the emitter must create the controlled ``DB_SIGNATURE_UNRESOLVED``
-    diagnostic instead of serializing a baseline-able finding.
+    only in non-blocking discovery scans) or a required identity component
+    (owner, name) is missing/empty.  An empty ``parameters`` tuple is NOT
+    unresolved: initializers, property getters, and zero-argument functions
+    are fully-signed callables whose signature legitimately has no
+    parameters, so every structural/DAO emission site shares this exact
+    determination and emits a signed finding for them.  Blocking findings
+    that require symbol identity must still reject unknown-kind symbols with
+    the ``UNRESOLVED_SYMBOL_BLOCKING`` protocol/infrastructure failure
+    (exit 2) and the emitter must create the controlled
+    ``DB_SIGNATURE_UNRESOLVED`` diagnostic instead of serializing a
+    baseline-able finding.
     """
     return (
         symbol.kind == KIND_UNKNOWN
         or not symbol.owner
         or not symbol.name
-        or not symbol.parameters
     )
 
 def unresolved_symbol_diagnostic(symbol=None, *, path=None, code=DIAGNOSTIC_SIGNATURE_UNRESOLVED, **context):
@@ -596,7 +601,8 @@ def unresolved_symbol_diagnostic(symbol=None, *, path=None, code=DIAGNOSTIC_SIGN
 
     Emitters call this when a blocking finding's ``CallableSymbol`` cannot
     back a baseline-able ``GuardFinding`` (``kind == unknown`` or a
-    missing/empty owner, name, or parameters).  The returned diagnostic is
+    missing/empty owner or name; an empty parameter list is a fully signed
+    zero-parameter callable, never unresolved).  The returned diagnostic is
     validated and deep-frozen like any ``GuardDiagnostic``: ``path`` must be
     canonical, ``symbol`` is a bounded controlled string (derived from
     ``symbol.owner``/``symbol.name`` when a ``CallableSymbol`` is passed),

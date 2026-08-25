@@ -566,3 +566,67 @@ F. Mutator counting / overload semantics (2):
 
 Production gates stable across all rounds; inventory §3 numbers above supersede the
 historical 350+1 for Revision 2.
+
+---
+
+## Re-validation round 7 (2026-08-24) — after commit `8b4ef1f5` "resolve round-6b residue (parser arrow/nesting, scanner accessor env, seam repairs)"
+
+HEAD `8b4ef1f527e2346cea5499073b9adbae05839220`; checkout clean.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> exit 1; **10 failed / 2232 passed / 23 skipped** in 357 s
+(round 6b: 27). NOT green -> checklist sections 2–6 remain deferred. Trend:
+372 -> 357 -> 151 -> 101 -> 59 -> blocked -> 27 -> **10**.
+
+### What round-6b fixes resolved (17 of 27)
+
+ALL five platform-fallback/durability failures now PASS (inventory write x2,
+findings write, mutator-dump x2 — barrier path evidently repaired or conditioned);
+multi-key directed ORDER BY classifier case PASSES; two of five parser layering cases PASS;
+duplicate-property-accessor setter-only variant of round 6b resolved to getter+setter pair
+below; name-only-overload mutator count corrected; d4 executable init/object/topLevel
+variants PASS.
+
+### Residue (10) with node IDs — two clusters + parser trio
+
+Cluster 1 — structural-findings contract is internally inconsistent (2):
+  1. scripts/test_db_guard_scanner_d4.py::test_delete_recursively_uses_exact_structural_token_and_policy_path —
+     scanner emits `DB_FORBIDDEN_STRUCTURAL_OPERATION` finding with identity
+     `{operation: deleteRecursively}` only (no resolved signature) and empty diagnostics;
+     pinned contract: emit diagnostic `DB_SIGNATURE_UNRESOLVED` instead of an unsigned finding.
+  2. scripts/test_db_guard_scanner_d4.py::test_d4_structural_findings_serialize_every_supported_callable_scope_exactly —
+     opposite pole: report contains ZERO findings where 8 fully-signed
+     `DB_FORBIDDEN_STRUCTURAL_OPERATION` findings are pinned across every callable scope
+     (extension line 19, topLevel 16, amount initializer/getter/setter 4/5/6, companion 10,
+     member 8, objectMethod 14). Structural discovery currently produces neither signed
+     findings nor signature-unresolved diagnostics consistently.
+
+Cluster 2 — property-accessor fixtures fail the whole scan closed (5):
+  3. scripts/test_verify_db_access_v2.py::test_writable_database_property_has_exact_structural_identity —
+     CLI exit 2 "ERROR: DB access discovery infrastructure diagnostics present" vs expected exit 1
+  4.–5. scripts/test_verify_db_access_v2.py::test_accessor_policy_rejects_wrong_kind_or_parameter_signature[property_setter-[]]/[property_getter-[Item]] — same exit-2 shape
+  6.–7. scripts/test_verify_db_access_v2.py::test_d4_executable_declarations_are_discovered_with_structured_identity[
+        class PropertyInitializer(...)-expected_report0]/[class PropertyGetter(...)-expected_report1] —
+     same shape (init/object/topLevel variants pass since this round)
+  Likely single root cause: accessor-scope callables surface an unresolved-signature /
+  inventory diagnostic during scan, tripping the fail-closed umbrella before findings.
+  Needs the same contract decision as Cluster 1 (diagnostic vs finding vs tolerance).
+
+Parser trio (3) — unchanged since round 6b:
+  8. scripts/test_kotlin_callable_parser.py::test_nested_generic_and_function_depth_boundaries_keep_status — generic ParserError vs typed codes
+  9. scripts/test_kotlin_callable_parser.py::test_function_type_parameter_has_exact_signature — ParserError / SignatureError("control characters...")
+  10. scripts/test_kotlin_callable_parser.py::test_empty_function_type_parameter_keeps_signature — ParserError
+
+### Round-7 triage hints
+
+1. Decide ONE structural-op contract: unsigned finding forbidden -> always emit
+   `DB_SIGNATURE_UNRESOLVED` diagnostic when signature can't resolve; then make scope
+   serialization (#2) produce signed findings wherever signatures DO resolve. Clusters 1
+   and 2 should collapse together once accessor/signature resolution stops leaking
+   infrastructure diagnostics into the umbrella gate.
+2. Parser: surface typed codes (`UNBALANCED_ANGLE`, normalization results) instead of the
+   generic ParserError wrapper for the three remaining shapes.
+
+Production gates stable across all seven rounds. Cumulative: 372 -> 10 with zero
+production-gate regressions at any point.

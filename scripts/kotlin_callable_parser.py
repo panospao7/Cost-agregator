@@ -391,7 +391,18 @@ def _owner_body(text: str, start: int, scope_end: int, limit: int = MAX_DEPTH) -
 
 def _split_top(text: str, sep: str = ",") -> list[str]:
     result, start, stack = [], 0, []
-    for i, c in enumerate(text):
+    i = 0
+    while i < len(text):
+        if text.startswith("->", i):
+            # A Kotlin ``->`` arrow is not a closing angle bracket: skip its
+            # ``>`` without touching the delimiter stack (same rule as
+            # ``_pairs``/``_header_body_start``), so function-type parameter
+            # spans such as ``(Int) -> String`` and generics containing them
+            # split at real top-level commas instead of failing closed as
+            # MALFORMED_SOURCE when the arrow's ``>`` reaches this scanner.
+            i += 2
+            continue
+        c = text[i]
         if c in "(<[{": stack.append(c)
         elif c in ")>]}" :
             expected = {"(": ")", "<": ">", "[": "]", "{": "}"}
@@ -399,6 +410,7 @@ def _split_top(text: str, sep: str = ",") -> list[str]:
             stack.pop()
         elif c == sep and not stack:
             result.append(text[start:i]); start = i + 1
+        i += 1
     if stack: _fail("MALFORMED_SOURCE")
     result.append(text[start:])
     return result
