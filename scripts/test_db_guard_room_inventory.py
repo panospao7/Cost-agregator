@@ -425,6 +425,93 @@ def test_query_unsupported_kotlin_escape_fails_closed_without_decoding(tmp_path)
     assert any(d.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:") for d in inventory.diagnostics)
 
 
+# ---------------------------------------------------------------------------
+# GR-05A extraction repair: adjacent Kotlin string-literal concatenation in
+# @Query arguments must be joined into one SQL text before classification.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("argument,expected", [
+    ('"UPDATE things SET a = 1"', "UPDATE things SET a = 1"),
+    ('"UPDATE scanned_receipts " +\n "SET expenseId = :expenseId"',
+     "UPDATE scanned_receipts SET expenseId = :expenseId"),
+    ('"a" + "b" + "c"', "abc"),
+    ('"x" +\n            "y" + "z"', "xyz"),
+    ('"""SELECT 1 FROM things"""', "SELECT 1 FROM things"),
+    ('value = "SELECT 1"', "SELECT 1"),
+])
+def test_constant_query_joins_plus_joined_string_literals(argument, expected):
+    """Only plain literal + literal chains join into one SQL text."""
+    assert room_inventory._constant_query(argument) == expected
+
+
+@pytest.mark.parametrize("argument", [
+    '"a" + tableName',
+    '"a" + buildQuery()',
+    '"a" + 1',
+    '"a" ++ "b"',
+    '"a" +',
+    "'a' + \"b\"",
+    '"unterminated + "b"',
+])
+def test_constant_query_rejects_non_literal_chain_operands(argument):
+    """Any non-literal chain operand (variable, call, number, empty slot,
+    single-quoted char, unterminated literal) stays None fail-closed."""
+    assert room_inventory._constant_query(argument) is None
+
+
+def test_query_plus_joined_literals_classify_as_a_mutator(tmp_path):
+    """Production claimForAutoMatch shape: a plus-joined multi-line @Query
+    argument is joined before classification and yields its mutator."""
+    inventory = _inventory(tmp_path, '''package example
+        @Dao interface D {
+            @Query(
+                "UPDATE scanned_receipts " +
+                    "SET expenseId = :expenseId, matchStatus = 'AUTO_MATCHED', " +
+                    "matchConfidence = :confidence, suggestedExpenseId = NULL, updatedAt = :now " +
+                    "WHERE id = :receiptId AND matchStatus IN ('UNMATCHED', 'SUGGESTED')"
+            )
+            fun claim(receiptId: Long, expenseId: Long, confidence: Long, now: Long)
+        }
+    ''')
+    assert len(inventory.mutators) == 1
+    assert inventory.mutators[0].mutation_kind == "ROOM_MUTATING_QUERY"
+    assert inventory.mutators[0].query_kind == "UPDATE"
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_query_plus_join_with_non_literal_operand_fails_closed(tmp_path):
+    inventory = _inventory(tmp_path, '''package example
+        @Dao interface D {
+            @Query("UPDATE things SET a = " + tableName)
+            fun run()
+        }
+    ''')
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+def test_query_triple_quoted_not_in_update_is_a_mutator(tmp_path):
+    """The production RecommendationDao.archiveActiveOverflow shape: IS NULL,
+    comparison, and NOT IN (:param) predicates inside a triple-quoted UPDATE
+    classify as a confident mutation."""
+    inventory = _inventory(tmp_path, '''package example
+        @Dao interface D {
+            @Query("""
+                UPDATE recommendations
+                SET status = 'ARCHIVED', dismissedAt = :nowMillis, updatedAt = :nowMillis
+                WHERE userId = :userId AND status = 'ACTIVE'
+                  AND dismissedAt IS NULL AND expiresAt > :nowMillis
+                  AND id NOT IN (:retainedIds)
+            """)
+            fun archiveActiveOverflow(userId: String, retainedIds: List<String>, nowMillis: Long): Int
+        }
+    ''')
+    assert len(inventory.mutators) == 1
+    assert inventory.mutators[0].query_kind == "UPDATE"
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
 def test_query_template_resolves_same_file_consts_to_a_read(tmp_path):
     inventory = _inventory(tmp_path, """package example
         const val TABLE_NAME = "users"
@@ -630,6 +717,427 @@ def test_query_direct_const_reference_unknown_fails_closed(tmp_path):
     assert not inventory.mutators
     assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
                for diagnostic in inventory.diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# GR-05 residual repair: production aggregate/derived-table @Query shapes
+# classify as reads; cross-file const interpolation stays fail-closed.
+# ---------------------------------------------------------------------------
+
+_PRODUCTION_AMOUNT_CONST = '''const val AMOUNT_SQL: String =
+            "CASE WHEN isNotMine = 1 THEN 0.0 " +
+            "WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount " +
+            "WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL " +
+            "THEN amount * mySharePercentage / 100.0 " +
+            "ELSE amount END"'''
+
+
+def test_query_aggregate_full_expression_multi_key_group_by_is_a_read(tmp_path):
+    """Production ExpenseDao A.9 Batch 5 shape (getCategoryTotalsBetweenByCurrency):
+    SUM over the full effective-amount CASE fragment with UPPER() projections
+    and a multi-key GROUP BY classifies as a confident read."""
+    inventory = _inventory(tmp_path, f"""package example
+        {_PRODUCTION_AMOUNT_CONST}
+        @Dao interface D {{
+            @Query("SELECT categoryId, UPPER(currency) AS currency, SUM($AMOUNT_SQL) AS total, COUNT(*) AS txCount FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0 GROUP BY categoryId, UPPER(currency) ORDER BY total DESC")
+            fun categoryTotals()
+        }}
+    """)
+    assert not inventory.mutators
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_query_coalesce_case_and_nested_upper_group_by_is_a_read(tmp_path):
+    """Production ExpenseDao shape (getLocatedMerchantTotalsByCurrency):
+    SUM(COALESCE(CASE ... END, 0)) and UPPER(COALESCE(currency, 'EUR')) with a
+    multi-key GROUP BY classify as a confident read."""
+    inventory = _inventory(tmp_path, f"""package example
+        {_PRODUCTION_AMOUNT_CONST}
+        @Dao interface D {{
+            @Query("SELECT MIN(merchant) AS merchant, UPPER(COALESCE(currency, 'EUR')) AS currency, SUM(COALESCE($AMOUNT_SQL, 0)) AS total, COUNT(*) AS txCount FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND merchantKey IS NOT NULL GROUP BY merchantKey, UPPER(COALESCE(currency, 'EUR')) ORDER BY total DESC")
+            fun locatedMerchantTotals()
+        }}
+    """)
+    assert not inventory.mutators
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_query_avg_over_derived_table_with_strftime_group_by_is_a_read(tmp_path):
+    """Production ExpenseDao shape (getAverageDailySpend): AVG(daily_total)
+    over a derived table whose inner SELECT aggregates the CASE fragment and
+    groups by strftime(...) classifies as a confident read."""
+    inventory = _inventory(tmp_path, f"""package example
+        {_PRODUCTION_AMOUNT_CONST}
+        @Dao interface D {{
+            @Query("SELECT AVG(daily_total) FROM (SELECT SUM($AMOUNT_SQL) as daily_total FROM expenses WHERE transactionType = 'PURCHASE' AND date >= :startMs AND date < :endMs AND isNotMine = 0 GROUP BY strftime('%Y-%m-%d', date/1000, 'unixepoch', 'localtime'))")
+            fun averageDailySpend()
+        }}
+    """)
+    assert not inventory.mutators
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_query_derived_table_duplicate_count_with_neq_is_a_read(tmp_path):
+    """Production ScannedReceiptDao P3-BLOCKER-J shape
+    (countDuplicateImageHashGroups): COUNT(*) over a derived table with an
+    != predicate, GROUP BY, and HAVING COUNT(*) > 1 classifies as a
+    confident read."""
+    inventory = _inventory(tmp_path, """package example
+        @Dao interface D {
+            @Query("SELECT COUNT(*) FROM (SELECT imageHash FROM scanned_receipts WHERE imageHash IS NOT NULL AND imageHash != '' GROUP BY imageHash HAVING COUNT(*) > 1)")
+            fun countDuplicateImageHashGroups(): Int
+        }
+    """)
+    assert not inventory.mutators
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_query_cross_file_const_interpolation_fails_closed(tmp_path):
+    """The identified empty-resolved-SQL producer (ExpenseDao.getMerchantLocationClusters,
+    ExpenseDao.kt:2036): ``${CONST}`` names declared in ANOTHER file are never
+    resolved by the same-file const contract, so ``_query_sql`` returns None,
+    classification reports INVALID_INPUT, and the method stays fail-closed
+    unclassifiable instead of being guessed."""
+    inventory = _inventory(tmp_path, """package example
+        @Dao interface D {
+            @Query("SELECT AVG(latitude) AS centerLat, AVG(longitude) AS centerLon, COUNT(*) AS count FROM expenses WHERE merchantKey = :merchantKey AND latitude IS NOT NULL AND longitude IS NOT NULL GROUP BY ${LATITUDE_BUCKET_SQL}, ${LONGITUDE_BUCKET_SQL} ORDER BY count DESC LIMIT 5")
+            fun clusters(merchantKey: String)
+        }
+    """)
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+# ---------------------------------------------------------------------------
+# GR-05A: bounded, deterministic, fail-closed cross-file ``${Object.CONST}``
+# template resolution (ExpenseDao.getMerchantLocationClusters,
+# ExpenseDao.kt:2036).  Same-file const precedence is unchanged; a dotted or
+# unresolved plain reference may only leave the DAO file through an exact,
+# unambiguous import onto exactly one file below the declared production
+# roots, within a two-hop budget and a visited-set cycle check.
+# ---------------------------------------------------------------------------
+
+_CROSS_FILE_GRID_RELATIVE = "app/src/main/java/example/grid/MerchantLocationGrid.kt"
+
+_CROSS_FILE_GRID_OBJECT = """package example.grid
+
+// CROSS-FILE-GRID-MARKER keeps this fixture uniquely identifiable.
+object MerchantLocationGrid {
+    private const val CELL_DEGREES_SQL = "0.045"
+    const val LATITUDE_BUCKET_SQL: String =
+        "CAST((latitude / $CELL_DEGREES_SQL) AS INTEGER)"
+    const val LONGITUDE_BUCKET_SQL: String =
+        "CAST((longitude / $CELL_DEGREES_SQL) AS INTEGER)"
+}
+"""
+
+
+def test_cross_file_object_const_resolves_production_cluster_shape(tmp_path):
+    """GR-05A positive: ``${Object.CONST}`` backed by an exact import resolves
+    cross-file and classifies the production getMerchantLocationClusters
+    shape as a confident read.  The imported object mirrors the production
+    MerchantLocationGrid shape (const fragments whose own values carry nested
+    ``$INNER_CONST`` interpolation)."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.grid.MerchantLocationGrid
+        @Dao interface D {
+            @Query("SELECT AVG(latitude) AS centerLat, AVG(longitude) AS centerLon, COUNT(*) AS count FROM expenses WHERE merchantKey = :merchantKey AND latitude IS NOT NULL AND longitude IS NOT NULL GROUP BY ${MerchantLocationGrid.LATITUDE_BUCKET_SQL}, ${MerchantLocationGrid.LONGITUDE_BUCKET_SQL} ORDER BY count DESC LIMIT 5")
+            fun clusters(merchantKey: String)
+        }
+    """)
+    _write(tmp_path, _CROSS_FILE_GRID_RELATIVE, _CROSS_FILE_GRID_OBJECT)
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_object_const_join_where_fragment_classifies_read(tmp_path):
+    """GR-05A positive: an imported const holding a JOIN/WHERE fragment is
+    substituted into the template and the completed statement classifies as
+    a confident read."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.data.ExpenseJoins
+        @Dao interface D {
+            @Query("SELECT e.id AS id ${ExpenseJoins.ACTIVE_JOINS_SQL} ORDER BY e.id LIMIT 10")
+            fun activeExpenses()
+        }
+    """)
+    _write(tmp_path, "app/src/main/java/example/data/ExpenseJoins.kt", """package example.data
+
+object ExpenseJoins {
+    const val ACTIVE_JOINS_SQL: String =
+        "FROM expenses e JOIN labels l ON e.id = l.expenseId WHERE e.amount > 0"
+}
+""")
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_object_const_mutation_is_detected(tmp_path):
+    """GR-05A positive: a mutator whose entire statement arrives through an
+    imported const is classified as a ROOM_MUTATING_QUERY with the resolved
+    operation, proving the substituted SQL genuinely feeds classification."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.maint.ExpenseMaintenance
+        @Dao interface D {
+            @Query("${ExpenseMaintenance.PRUNE_SQL}")
+            fun prune()
+        }
+    """)
+    _write(tmp_path, "app/src/main/java/example/maint/ExpenseMaintenance.kt", """package example.maint
+
+object ExpenseMaintenance {
+    const val PRUNE_SQL: String =
+        "UPDATE expenses SET flagged = 1 WHERE amount < 0"
+}
+""")
+    inventory = build_room_inventory(tmp_path)
+    assert len(inventory.mutators) == 1
+    mutator = inventory.mutators[0]
+    assert mutator.mutation_kind == "ROOM_MUTATING_QUERY"
+    assert mutator.annotation == "Query"
+    assert mutator.query_kind == "UPDATE"
+    assert mutator.inherited_from is None
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_two_hop_chain_within_budget_resolves(tmp_path):
+    """GR-05A hop policy: DAO -> object A -> object B consumes exactly the two
+    allowed hops, so the chained const resolves and classifies."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.hop_a.HopA
+        @Dao interface D {
+            @Query("SELECT id FROM expenses ${HopA.PREDICATE_SQL}")
+            fun bigSpends()
+        }
+    """)
+    _write(tmp_path, "app/src/main/java/example/hop_a/HopA.kt", """package example.hop_a
+
+import example.hop_b.HopB
+
+object HopA {
+    const val PREDICATE_SQL: String = "WHERE amount > " + HopB.THRESHOLD_SQL
+}
+""")
+    _write(tmp_path, "app/src/main/java/example/hop_b/HopB.kt", """package example.hop_b
+
+object HopB {
+    const val THRESHOLD_SQL = "0"
+}
+""")
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_three_hop_chain_exceeds_hop_budget_fails_closed(tmp_path):
+    """GR-05A hop policy: a third file transition exceeds
+    ``_CROSS_FILE_MAX_HOPS``, so the chain fails closed instead of
+    resolving; no partial SQL is ever classified."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.hop_a.HopA
+        @Dao interface D {
+            @Query("SELECT id FROM expenses ${HopA.PREDICATE_SQL}")
+            fun bigSpends()
+        }
+    """)
+    _write(tmp_path, "app/src/main/java/example/hop_a/HopA.kt", """package example.hop_a
+
+import example.hop_b.HopB
+
+object HopA {
+    const val PREDICATE_SQL: String = "WHERE amount > " + HopB.MIDDLE_SQL
+}
+""")
+    _write(tmp_path, "app/src/main/java/example/hop_b/HopB.kt", """package example.hop_b
+
+import example.hop_c.HopC
+
+object HopB {
+    const val MIDDLE_SQL: String = "(" + HopC.EXTRA_SQL + ")"
+}
+""")
+    _write(tmp_path, "app/src/main/java/example/hop_c/HopC.kt", """package example.hop_c
+
+object HopC {
+    const val EXTRA_SQL = "1"
+}
+""")
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_import_outside_declared_roots_fails_closed(tmp_path):
+    """The imported object exists in the tree but below a NON-declared root;
+    the FQCN can never map onto a walked production file, so resolution
+    fails closed."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.grid.MerchantLocationGrid
+        @Dao interface D {
+            @Query("SELECT id FROM expenses GROUP BY ${MerchantLocationGrid.LATITUDE_BUCKET_SQL}")
+            fun clusters()
+        }
+    """)
+    _write(tmp_path, "app/src/test/java/example/grid/MerchantLocationGrid.kt",
+           _CROSS_FILE_GRID_OBJECT)
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_missing_const_in_target_fails_closed(tmp_path):
+    """An exact import onto an existing declared-root file whose object does
+    not declare the referenced const fails closed."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.grid.MerchantLocationGrid
+        @Dao interface D {
+            @Query("SELECT id FROM expenses GROUP BY ${MerchantLocationGrid.LATITUDE_BUCKET_SQL}, ${MerchantLocationGrid.LONGITUDE_BUCKET_SQL}")
+            fun clusters()
+        }
+    """)
+    _write(tmp_path, _CROSS_FILE_GRID_RELATIVE, """package example.grid
+
+object MerchantLocationGrid {
+    const val LATITUDE_BUCKET_SQL: String =
+        "CAST((latitude / 0.045) AS INTEGER)"
+}
+""")
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_const_cycle_fails_closed(tmp_path):
+    """A references B references A: the visited-set cycle check (and the hop
+    budget behind it) fails the whole template closed."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.cycle_a.CycleA
+        @Dao interface D {
+            @Query("SELECT id FROM expenses WHERE ${CycleA.PREDICATE_SQL}")
+            fun cycled()
+        }
+    """)
+    _write(tmp_path, "app/src/main/java/example/cycle_a/CycleA.kt", """package example.cycle_a
+
+import example.cycle_b.CycleB
+
+object CycleA {
+    const val PREDICATE_SQL: String = "amount > 0 AND " + CycleB.OTHER_SQL
+}
+""")
+    _write(tmp_path, "app/src/main/java/example/cycle_b/CycleB.kt", """package example.cycle_b
+
+import example.cycle_a.CycleA
+
+object CycleB {
+    const val OTHER_SQL: String = "count > 1 AND " + CycleA.PREDICATE_SQL
+}
+""")
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_ambiguous_simple_name_imports_fail_closed(tmp_path):
+    """Two imports sharing one simple name make the owner ambiguous; the
+    reference must never pick either file by traversal order."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.grid_one.MerchantLocationGrid
+        import example.grid_two.MerchantLocationGrid
+        @Dao interface D {
+            @Query("SELECT id FROM expenses GROUP BY ${MerchantLocationGrid.LATITUDE_BUCKET_SQL}")
+            fun clusters()
+        }
+    """)
+    _write(tmp_path, "app/src/main/java/example/grid_one/MerchantLocationGrid.kt",
+           """package example.grid_one
+
+object MerchantLocationGrid {
+    const val LATITUDE_BUCKET_SQL = "latitude / 1"
+}
+""")
+    _write(tmp_path, "app/src/main/java/example/grid_two/MerchantLocationGrid.kt",
+           """package example.grid_two
+
+object MerchantLocationGrid {
+    const val LATITUDE_BUCKET_SQL = "latitude / 2"
+}
+""")
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_unmaskable_target_file_fails_closed(tmp_path, monkeypatch):
+    """A target file that cannot be masked (unreadable to the bounded
+    extractor) fails closed instead of resolving from a partial view."""
+    real_mask = room_inventory.mask_kotlin_source
+
+    def failing_mask(source: str) -> str:
+        if "CROSS-FILE-GRID-MARKER" in source:
+            raise room_inventory.ParserError("unmaskable cross-file target")
+        return real_mask(source)
+
+    monkeypatch.setattr(room_inventory, "mask_kotlin_source", failing_mask)
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.grid.MerchantLocationGrid
+        @Dao interface D {
+            @Query("SELECT id FROM expenses GROUP BY ${MerchantLocationGrid.LATITUDE_BUCKET_SQL}")
+            fun clusters()
+        }
+    """)
+    _write(tmp_path, _CROSS_FILE_GRID_RELATIVE, _CROSS_FILE_GRID_OBJECT)
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+def test_cross_file_dotted_reference_without_import_fails_closed(tmp_path):
+    """The target file exists at the mapped production path, but without an
+    exact import there is no deterministic owner: fail closed."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        @Dao interface D {
+            @Query("SELECT id FROM expenses GROUP BY ${MerchantLocationGrid.LATITUDE_BUCKET_SQL}")
+            fun clusters()
+        }
+    """)
+    _write(tmp_path, _CROSS_FILE_GRID_RELATIVE, _CROSS_FILE_GRID_OBJECT)
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert any(diagnostic.startswith("DB_ROOM_QUERY_UNCLASSIFIABLE:")
+               for diagnostic in inventory.diagnostics)
+
+
+def test_same_file_const_precedence_unchanged_over_imported_name(tmp_path):
+    """Same-file consts keep absolute precedence: ``RULE_SQL`` resolves from
+    the DAO file even though an import of the same simple name exists; the
+    imported mutation-bearing value must never leak into classification."""
+    _write(tmp_path, DEFAULT_RELATIVE, """package example
+        import example.grid.RuleGrid
+        const val RULE_SQL = "amount > 0"
+        @Dao interface D {
+            @Query("SELECT id FROM expenses WHERE ${RULE_SQL}")
+            fun cheapExpenses()
+        }
+    """)
+    _write(tmp_path, "app/src/main/java/example/grid/RuleGrid.kt", """package example.grid
+
+object RuleGrid {
+    const val RULE_SQL: String = "DELETE FROM expenses"
+}
+""")
+    inventory = build_room_inventory(tmp_path)
+    assert not inventory.mutators
+    assert not any("UNCLASSIFIABLE" in diagnostic for diagnostic in inventory.diagnostics)
 
 
 @pytest.mark.parametrize("signature", [

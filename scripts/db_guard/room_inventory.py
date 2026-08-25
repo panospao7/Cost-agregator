@@ -215,20 +215,20 @@ def _declared_root_files(repo_root: Any, root_set: SourceRootSet) -> tuple[list[
     return result, unreadable
 
 
-def _constant_query(argument: str | None) -> str | None:
-    if argument is None:
-        return None
-    value = argument.strip()
-    named = re.fullmatch(r"(?:value|query)\s*=\s*(.*)", value, re.S)
-    if named:
-        value = named.group(1).strip()
-    if value.startswith('"""') and value.endswith('"""'):
-        return value[3:-3]
-    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
-        body = value[1:-1]
-        # Decode only the small, ASCII Kotlin escape subset which can occur in
-        # an SQL annotation.  ``unicode_escape`` is deliberately not used: it
-        # silently turns malformed/non-ASCII escapes into different SQL.
+def _decoded_query_literal(text: str) -> str | None:
+    """Decode exactly one complete Kotlin string literal, or return None.
+
+    Accepts a triple-double-quoted literal or a plain double-quoted literal
+    and decodes only the small, ASCII Kotlin escape subset which can occur in
+    an SQL annotation.  ``unicode_escape`` is deliberately not used: it
+    silently turns malformed/non-ASCII escapes into different SQL.  Anything
+    else (an identifier, call, number, single-quoted char, or partial
+    literal) returns None fail-closed.
+    """
+    if text.startswith('"""') and text.endswith('"""'):
+        return text[3:-3]
+    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+        body = text[1:-1]
         decoded: list[str] = []
         index = 0
         escapes = {"\\": "\\", '"': '"', "'": "'", "n": "\n", "r": "\r", "t": "\t", "b": "\b", "f": "\f", "$": "$"}
@@ -246,10 +246,91 @@ def _constant_query(argument: str | None) -> str | None:
     return None
 
 
+def _split_plus_joined_literals(value: str) -> tuple[str, ...] | None:
+    """Split a Kotlin ``literal + literal`` argument into its operand texts.
+
+    Scanning is quote-aware: ``+`` splits only outside plain double-quoted
+    and single-quoted regions (with backslash escapes) and outside
+    triple-double-quoted regions, so a ``+`` inside any literal never splits.
+    Returns None when a quote is left unterminated (fail closed).
+    """
+    operands: list[str] = []
+    start = 0
+    index = 0
+    length = len(value)
+    while index < length:
+        char = value[index]
+        if char == '"' and value.startswith('"""', index):
+            closing = value.find('"""', index + 3)
+            if closing < 0:
+                return None
+            index = closing + 3
+            continue
+        if char in "\"'":
+            quote = char
+            index += 1
+            terminated = False
+            while index < length:
+                inner = value[index]
+                if inner == "\\":
+                    index += 2
+                    continue
+                index += 1
+                if inner == quote:
+                    terminated = True
+                    break
+            if not terminated:
+                return None
+            continue
+        if char == "+":
+            operands.append(value[start:index])
+            start = index + 1
+        index += 1
+    operands.append(value[start:])
+    return tuple(operands)
+
+
+def _constant_query(argument: str | None) -> str | None:
+    """Decode a @Query argument holding only Kotlin string literals.
+
+    A single literal decodes to its text.  Adjacent plus-joined string
+    literals across lines (``"fragment1 " +\\n "fragment2" + " fragment3"``)
+    are joined into one SQL text before classification.  Every chain operand
+    must be a plain literal: identifiers, function calls, numbers, or any
+    other expression shape leave the argument undecoded (None, fail closed).
+    """
+    if argument is None:
+        return None
+    value = argument.strip()
+    named = re.fullmatch(r"(?:value|query)\s*=\s*(.*)", value, re.S)
+    if named:
+        value = named.group(1).strip()
+    operands = _split_plus_joined_literals(value)
+    if operands is None:
+        return None
+    if len(operands) > 1:
+        parts: list[str] = []
+        for operand in operands:
+            literal = _decoded_query_literal(operand.strip())
+            if literal is None:
+                return None
+            parts.append(literal)
+        return "".join(parts)
+    return _decoded_query_literal(value)
+
+
 # Bounds for @Query template constant resolution.  Resolution is bounded so
 # adversarial or malformed const chains cannot consume unbounded work; cycles
 # are detected explicitly and fail closed.
 _QUERY_TEMPLATE_MAX_DEPTH = 64
+# Cross-file template resolution hops (GR-05A).  A ``${Object.CONST}``
+# reference may leave the DAO file at most this many times along one
+# resolution chain: DAO -> imported object file is the first hop, and each
+# further dotted reference found inside another imported file's const values
+# costs one more.  Exceeding the budget, revisiting a ``(file, const)``
+# identity, or any other cross-file uncertainty fails closed exactly like an
+# unknown same-file name.
+_CROSS_FILE_MAX_HOPS = 2
 # Whitespace and newlines are allowed between the name, the optional type,
 # and ``=`` so ``const val NAME = "..."``, ``const val NAME: String = ...``,
 # and line-broken declarations such as
@@ -350,14 +431,18 @@ def _split_const_rhs_operands(source: str, start: int) -> tuple[str, ...] | None
 
 def _resolve_const_operands(operands: tuple[str, ...],
                             consts: dict[str, tuple[str, ...]],
-                            depth: int, chain: tuple[str, ...]) -> str | None:
+                            depth: int, chain: tuple[str, ...],
+                            cross_file: "_CrossFileChain | None" = None) -> str | None:
     """Resolve one ``const val`` RHS to a plain string, bounded and safe.
 
     Each operand is either a string literal (decoded with the same small
     escape subset as ``_constant_query``) or an identifier naming another
-    collected constant.  Unknown names, conflicting duplicates, malformed
-    values, excessive depth, and cycles all return None so the caller fails
-    closed.  No code is ever evaluated; this is pure string handling.
+    collected constant.  A dotted ``Object.CONST`` operand continues through
+    the attached cross-file chain (same depth budget; each file transition
+    consumes one hop); without a chain it fails closed.  Unknown names,
+    conflicting duplicates, malformed values, excessive depth, and cycles
+    all return None so the caller fails closed.  No code is ever evaluated;
+    this is pure string handling.
     """
     if depth > _QUERY_TEMPLATE_MAX_DEPTH:
         return None
@@ -368,11 +453,21 @@ def _resolve_const_operands(operands: tuple[str, ...],
         if literal is not None:
             parts.append(literal)
             continue
+        if "." in text:
+            # Dotted references leave the current file's const map and
+            # continue through the bounded cross-file chain.
+            if cross_file is None:
+                return None
+            resolved = cross_file.continue_reference(text, depth + 1)
+            if resolved is None:
+                return None
+            parts.append(resolved)
+            continue
         if not _QUERY_TEMPLATE_NAME.fullmatch(text):
             return None
         if text in chain or text not in consts:
             return None
-        value = _resolve_const_operands(consts[text], consts, depth + 1, chain + (text,))
+        value = _resolve_const_operands(consts[text], consts, depth + 1, chain + (text,), cross_file)
         if value is None:
             return None
         parts.append(value)
@@ -409,12 +504,206 @@ def _file_query_consts(source: str) -> dict[str, tuple[str, ...]] | None:
     return {name: operands for name, operands in consts.items() if operands}
 
 
-def _resolve_query_template(template: str, consts: dict[str, tuple[str, ...]]) -> str | None:
+class _CrossFileQueryContext:
+    """Per-inventory lookup seam for bounded cross-file const resolution.
+
+    Maps an imported FQCN to exactly one Kotlin file below the DECLARED
+    production source roots and exposes that file's collected ``const val``
+    map.  The candidate repository-relative path is derived deterministically
+    from the FQCN (package segments + simple name + ``.kt``) and matched
+    against the files already discovered by the declared-root walk, so an
+    import pointing outside the declared roots, a missing target, an
+    ambiguous multi-root match, or a target that was unreadable at walk time
+    can never resolve.  The target's package declaration must also equal the
+    FQCN's package.  Values are extracted with the exact same bounded
+    same-file extractor (``_file_query_consts``) and cached per file for the
+    run; nothing here ever evaluates code or touches the filesystem beyond
+    what the walk already read.
+    """
+
+    def __init__(self, repo_root: Any, root_set: SourceRootSet,
+                 files: list[tuple[str, Path]], sources: dict[str, str]) -> None:
+        repo_abs = os.path.abspath(repo_root)
+        bases: list[str] = []
+        for root in root_set.roots:
+            declared = root.path
+            if os.path.isabs(declared):
+                bases.append(os.path.normpath(declared))
+            else:
+                bases.append(os.path.join(repo_abs, *declared.split("/")))
+        self._bases = tuple(bases)
+        self._sources = sources
+        self._canonical_by_path: dict[str, str] = {}
+        for canonical, path in files:
+            self._canonical_by_path.setdefault(
+                os.path.normcase(os.path.abspath(path)), canonical
+            )
+        self._consts_cache: dict[str, dict[str, tuple[str, ...]] | None] = {}
+
+    def chain_for(self, dao_source: str) -> "_CrossFileChain":
+        """Open one resolution chain rooted at the DAO file's import scope."""
+        return _CrossFileChain(self, dao_source)
+
+    def locate_const(
+        self, fqcn: str, const_name: str
+    ) -> tuple[str, str, tuple[str, ...], dict[str, tuple[str, ...]]] | None:
+        """Resolve ``fqcn.const_name`` to ``(canonical, source, operands, consts)``.
+
+        Returns None (fail closed) when the FQCN is malformed, maps to zero
+        or several walked files, the file text is unavailable, the file
+        cannot be masked, its package declaration disagrees with the FQCN,
+        or the named const is absent.
+        """
+        parts = fqcn.split(".")
+        if not parts or not all(_QUERY_TEMPLATE_NAME.fullmatch(part) for part in parts):
+            return None
+        matches: list[str] = []
+        for base in self._bases:
+            candidate = os.path.normcase(
+                os.path.join(base, *parts[:-1], parts[-1] + ".kt")
+            )
+            canonical = self._canonical_by_path.get(candidate)
+            if canonical is not None and canonical not in matches:
+                matches.append(canonical)
+        if len(matches) != 1:
+            return None
+        canonical = matches[0]
+        source = self._sources.get(canonical)
+        if source is None:
+            return None
+        if canonical not in self._consts_cache:
+            self._consts_cache[canonical] = self._load_target_consts(
+                source, ".".join(parts[:-1])
+            )
+        consts = self._consts_cache[canonical]
+        if consts is None:
+            return None
+        operands = consts.get(const_name)
+        if operands is None:
+            return None
+        return canonical, source, operands, consts
+
+    def _load_target_consts(self, source: str,
+                            expected_package: str) -> dict[str, tuple[str, ...]] | None:
+        """Extract the target file's const map after a package identity check."""
+        consts = _file_query_consts(source)
+        if consts is None:
+            return None
+        try:
+            masked = mask_kotlin_source(source)
+        except ParserError:
+            return None
+        package_match = re.search(r"\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)\b", masked)
+        package = package_match.group(1) if package_match else ""
+        if package != expected_package:
+            return None
+        return consts
+
+
+class _CrossFileChain:
+    """One bounded cross-file resolution chain (deterministic, fail closed).
+
+    A chain starts at the DAO file's import scope.  Every dotted
+    ``Object.CONST`` reference resolves the object's simple name through the
+    CURRENT file's exact imports (ambiguous simple names and wildcard scopes
+    fail closed), maps the FQCN to exactly one declared-root file through
+    ``_CrossFileQueryContext``, and continues with that file's const map.
+    Policies:
+
+    - Hops: each file transition consumes one hop; a chain may take at most
+      ``_CROSS_FILE_MAX_HOPS`` transitions.  Each top-level template
+      reference starts with a fresh hop budget (``resolve_reference``);
+      nested dotted references continue the active budget
+      (``continue_reference``).
+    - Cycles: the visited set records ``(file, const)`` identities along the
+      active resolution path; revisiting one fails closed immediately, and
+      the set is shared across the whole template so a cycle spanning
+      several references is still caught.
+    - Depth: the ordinary ``_QUERY_TEMPLATE_MAX_DEPTH`` const-chain budget
+      applies unchanged; cross-file steps participate in it.
+
+    Import scopes are re-read from the current file on every step so nested
+    references inside an imported file resolve through THAT file's imports,
+    never the DAO's.
+    """
+
+    def __init__(self, context: _CrossFileQueryContext, dao_source: str) -> None:
+        self._context = context
+        self._dao_source = dao_source
+        self._current_source = dao_source
+        self._hops = 0
+        self._visited: set[tuple[str, str]] = set()
+
+    def resolve_reference(self, reference: str, depth: int) -> str | None:
+        """Resolve one top-level template reference with a fresh hop budget."""
+        self._hops = 0
+        self._current_source = self._dao_source
+        return self._resolve(reference, depth)
+
+    def continue_reference(self, reference: str, depth: int) -> str | None:
+        """Continue the active chain with a nested dotted reference."""
+        return self._resolve(reference, depth)
+
+    def _resolve(self, reference: str, depth: int) -> str | None:
+        if depth > _QUERY_TEMPLATE_MAX_DEPTH:
+            return None
+        owner, separator, const_name = reference.partition(".")
+        if not separator:
+            # Plain name: the import maps the simple name itself and the
+            # same-named const is looked up in the mapped file.
+            const_name = owner
+        elif not owner or not const_name or "." in const_name:
+            return None
+        try:
+            exact, _wildcards, ambiguous = _type_imports(self._current_source)
+        except ParserError:
+            return None
+        if owner in ambiguous:
+            return None
+        fqcn = exact.get(owner)
+        if not fqcn:
+            return None
+        if self._hops >= _CROSS_FILE_MAX_HOPS:
+            return None
+        located = self._context.locate_const(fqcn, const_name)
+        if located is None:
+            return None
+        self._hops += 1
+        canonical, source, operands, consts = located
+        identity = (canonical, const_name)
+        if identity in self._visited:
+            return None
+        previous_source = self._current_source
+        self._current_source = source
+        self._visited.add(identity)
+        try:
+            return _resolve_const_operands(operands, consts, depth, (const_name,), self)
+        finally:
+            self._visited.discard(identity)
+            self._current_source = previous_source
+
+
+def _resolve_query_template(template: str, consts: dict[str, tuple[str, ...]],
+                            cross_file: "_CrossFileChain | None" = None) -> str | None:
     """Substitute ``${NAME}``/``$NAME`` in a decoded @Query template.
 
-    Only names present in the same-file const map are replaced.  Unknown
-    names, runtime expressions, and malformed ``$`` forms return None so
-    the caller emits ``DB_ROOM_QUERY_UNCLASSIFIABLE``.
+    Same-file consts keep absolute precedence: a name present in *consts*
+    resolves exactly as before through the bounded cycle-checked chain.
+    GR-05A extension: when *cross_file* supplies a resolution chain,
+    references the same-file map cannot satisfy are attempted cross-file --
+    a dotted ``${Object.CONST}`` resolves ``Object`` through the current
+    file's exact imports to exactly one file below the declared production
+    roots and reads ``CONST`` from that file's const map, and a plain name
+    missing from *consts* attempts the same lookup treating itself as both
+    the imported simple name and the const name.  Every cross-file step
+    reuses the same-file bounds (extractor, depth budget, duplicate rules)
+    plus the ``_CROSS_FILE_MAX_HOPS`` hop budget and the visited-set cycle
+    check documented on ``_CrossFileChain``.  Without a context, or on ANY
+    uncertainty -- no such import, ambiguous simple name, wildcard scope,
+    target outside the declared roots, unreadable/unmaskable target,
+    package mismatch, absent const, exceeded hop budget, or cycle -- the
+    reference fails closed with None so the caller emits
+    ``DB_ROOM_QUERY_UNCLASSIFIABLE``.
     """
     parts: list[str] = []
     index = 0
@@ -431,12 +720,13 @@ def _resolve_query_template(template: str, consts: dict[str, tuple[str, ...]]) -
             if closing < 0:
                 return None
             name = rest[1:closing]
-            if not _QUERY_TEMPLATE_NAME.fullmatch(name):
-                return None
             operands = consts.get(name)
-            if operands is None:
-                return None
-            resolved = _resolve_const_operands(operands, consts, 0, (name,))
+            if operands is not None:
+                resolved = _resolve_const_operands(operands, consts, 0, (name,), cross_file)
+            elif cross_file is not None:
+                resolved = cross_file.resolve_reference(name, 0)
+            else:
+                resolved = None
             if resolved is None:
                 return None
             parts.append(resolved)
@@ -452,9 +742,12 @@ def _resolve_query_template(template: str, consts: dict[str, tuple[str, ...]]) -
                 return None
             name = match.group(0)
             operands = consts.get(name)
-            if operands is None:
-                return None
-            resolved = _resolve_const_operands(operands, consts, 0, (name,))
+            if operands is not None:
+                resolved = _resolve_const_operands(operands, consts, 0, (name,), cross_file)
+            elif cross_file is not None:
+                resolved = cross_file.resolve_reference(name, 0)
+            else:
+                resolved = None
             if resolved is None:
                 return None
             parts.append(resolved)
@@ -489,14 +782,22 @@ def _direct_const_query(argument: str | None, source: str) -> str | None:
     return _resolve_const_operands(operands, consts, 0, (value,))
 
 
-def _query_sql(argument: str | None, source: str) -> str | None:
-    """Decode a @Query argument and resolve same-file constant templates.
+def _query_sql(argument: str | None, source: str,
+               cross_file: "_CrossFileQueryContext | None" = None) -> str | None:
+    """Decode a @Query argument and resolve constant templates.
 
     Returns the plain SQL when the argument is a literal with no
-    interpolation, a literal whose ``${NAME}``/``$NAME`` references all
+    interpolation, a plus-joined chain of plain string literals across
+    lines, a literal whose ``${NAME}``/``$NAME`` references all
     resolve to collected same-file consts, or a bare identifier naming a
-    same-file const (``@Query(SELECT_FROM)``).  Returns None otherwise
-    (fail closed); the caller reports ``DB_ROOM_QUERY_UNCLASSIFIABLE``.
+    same-file const (``@Query(SELECT_FROM)``).  Same-file resolution keeps
+    absolute precedence and is unchanged.  GR-05A extension: when
+    *cross_file* supplies the per-inventory context, template references the
+    same-file map cannot satisfy (dotted ``${Object.CONST}`` forms and
+    unresolved plain names) are resolved cross-file through the bounded,
+    fail-closed chain documented on ``_CrossFileChain``.  Returns None
+    otherwise (fail closed); the caller reports
+    ``DB_ROOM_QUERY_UNCLASSIFIABLE``.
     """
     template = _constant_query(argument)
     if template is not None:
@@ -505,7 +806,8 @@ def _query_sql(argument: str | None, source: str) -> str | None:
         consts = _file_query_consts(source)
         if consts is None:
             return None
-        return _resolve_query_template(template, consts)
+        chain = None if cross_file is None else cross_file.chain_for(source)
+        return _resolve_query_template(template, consts, chain)
     return _direct_const_query(argument, source)
 
 
@@ -1175,6 +1477,12 @@ def build_room_inventory(
         return RoomInventory(
             INVENTORY_SCHEMA, INVENTORY_VERSION, (), (), (), tuple(sorted(set(diagnostics)))
         )
+    # GR-05A cross-file @Query template resolution seam.  Built from the
+    # already-walked, already-read declared-root files; it performs no
+    # filesystem access of its own and fails closed whenever an imported
+    # const target is not exactly one of those files (see
+    # ``_CrossFileQueryContext``).
+    cross_file_context = _CrossFileQueryContext(source_root, root_set, files, sources)
     if not daos:
         diagnostics.append(_diag("DB_ROOM_SOURCE_EMPTY"))
 
@@ -1211,7 +1519,7 @@ def build_room_inventory(
             if kind in {"Insert", "Update", "Delete", "Upsert"}:
                 return RoomMutator(_method_signature(method), f"ROOM_{kind.upper()}", kind, None, None, location)
             if kind == "Query":
-                classification = classify_sql(_query_sql(record.argument, source))
+                classification = classify_sql(_query_sql(record.argument, source, cross_file_context))
                 if classification.is_mutation:
                     return RoomMutator(_method_signature(method), "ROOM_MUTATING_QUERY", kind, classification.operation, None, location)
                 if classification.is_read:

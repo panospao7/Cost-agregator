@@ -41,6 +41,13 @@ Design
   ``SELECT 1(2)``, and ``UPDATE t SET x = 1(2)`` fail closed, while
   ``COUNT(*)``, ``CAST(...)``, ``REPLACE(...)``, grouped ``(a + b)``,
   and parenthesized subqueries keep their existing valid shape.
+* Bounded aggregate/read shapes: a ``FROM (subquery)`` derived table keeps
+  the complete nested-select grammar (an optional ``[AS] alias`` after the
+  closing parenthesis is consumed like a table alias), and GROUP BY accepts
+  a comma-separated key list validated per key (commas inside function-call
+  parentheses never split keys).  Malformed forms -- an empty or non-SELECT
+  derived-table group, a malformed inner statement, or an empty/duplicated
+  GROUP BY key -- fail closed with ``DB_ROOM_QUERY_UNCLASSIFIABLE``.
 * Bounded JOIN grammar: ``JOIN``, ``INNER JOIN``, ``CROSS JOIN``, and
   ``LEFT/RIGHT/FULL [OUTER] JOIN`` are validated with ``ON`` expressions
   or ``USING (column, ...)`` constraints, table and alias names, quoted
@@ -50,6 +57,18 @@ Design
   missing/empty/invalid ON or USING, unknown tails, or unsupported forms
   such as NATURAL JOIN and a bare OUTER JOIN) fail closed with
   ``DB_ROOM_QUERY_UNCLASSIFIABLE``.
+* Production predicate/expression shapes are validated structurally:
+  ``<expr> IS [NOT] NULL`` in WHERE/ON/HAVING/CASE/SET contexts,
+  ``[NOT] EXISTS (subquery)`` boolean factors (the subquery keeps the
+  nested-select rules), ``[NOT] IN (value-list | subquery)``,
+  ``CASE [operand] WHEN <cond> THEN <expr> ... [ELSE <expr>] END`` value
+  expressions usable in SET and SELECT lists, the zero-argument SQLite
+  ``changes()`` function, and a parenthesized boolean expression as an
+  UPDATE SET value (``SET col = (a = :b)``).  Malformed shapes -- ``IS``
+  without ``NULL``, a bare ``NOT NULL``, ``EXISTS`` without a
+  parenthesized subquery, a ``CASE`` missing ``END``/``WHEN``/``THEN``,
+  an empty ``IN ()`` list, ``changes(x)`` with arguments, or an
+  unbalanced parenthesized value -- fail closed.
 * Multi-statement SQL is split on top-level semicolons; each statement is
   classified independently and the results are combined fail-closed: any
   unclassifiable statement makes the whole input unclassifiable, otherwise
@@ -603,15 +622,125 @@ def _matching_group(tokens: List[_Token], index: int) -> int:
     return -1
 
 
+def _matching_case_end(tokens: List[_Token], start: int) -> int:
+    """Index of the END token matching the CASE at ``start``, or ``-1``.
+
+    Nesting is tracked with a keyword counter (depth-agnostic), so CASE
+    spans are found identically at any parenthesis depth.
+    """
+    depth = 0
+    for index in range(start, len(tokens)):
+        if tokens[index].kind != "WORD":
+            continue
+        upper = tokens[index].text.upper()
+        if upper == "CASE":
+            depth += 1
+        elif upper == "END":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def _top_level_keyword_index(tokens: List[_Token], keyword: str) -> int:
+    """First depth-0 ``keyword`` outside nested CASE...END spans, or ``-1``."""
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.kind == "WORD":
+            upper = token.text.upper()
+            if upper == "CASE":
+                nested = _matching_case_end(tokens, index)
+                if nested < 0:
+                    return -1
+                index = nested + 1
+                continue
+            if upper == keyword and token.depth == 0:
+                return index
+        index += 1
+    return -1
+
+
+def _valid_case_expression(tokens: List[_Token]) -> bool:
+    """Validate a full ``CASE ... END`` span as a structured value expression.
+
+    Grammar: ``CASE [operand] WHEN <cond> THEN <expr>
+    [WHEN <cond> THEN <expr>]... [ELSE <expr>] END``.  Conditions and result
+    expressions reuse the ordinary expression grammar; a missing END, WHEN,
+    or THEN, an empty branch, or a misplaced ELSE fails closed.
+    """
+    if len(tokens) < 2 or tokens[0].kind != "WORD" or tokens[0].text.upper() != "CASE":
+        return False
+    end = _matching_case_end(tokens, 0)
+    if end < 0 or end != len(tokens) - 1:
+        return False
+    body = tokens[1:end]
+    whens: List[int] = []
+    else_at: Optional[int] = None
+    index = 0
+    while index < len(body):
+        token = body[index]
+        if token.kind == "WORD":
+            upper = token.text.upper()
+            if upper == "CASE":
+                # A nested CASE...END belongs to a branch expression, never
+                # to this span's WHEN/ELSE structure.
+                nested = _matching_case_end(body, index)
+                if nested < 0:
+                    return False
+                index = nested + 1
+                continue
+            if token.depth == 0 and upper == "WHEN":
+                whens.append(index)
+            elif token.depth == 0 and upper == "ELSE":
+                if else_at is not None:
+                    return False
+                else_at = index
+        index += 1
+    if not whens:
+        return False
+    if else_at is not None and else_at < whens[-1]:
+        return False
+    operand = body[:whens[0]]
+    if operand and not _valid_expression(operand):
+        return False
+    limits = whens[1:] + [else_at if else_at is not None else len(body)]
+    for position, when in enumerate(whens):
+        segment = body[when + 1:limits[position]]
+        then_at = _top_level_keyword_index(segment, "THEN")
+        if then_at <= 0 or then_at == len(segment) - 1:
+            return False
+        if not (_valid_expression(segment[:then_at]) and
+                _valid_expression(segment[then_at + 1:])):
+            return False
+    if else_at is not None:
+        tail = body[else_at + 1:]
+        if not tail or not _valid_expression(tail):
+            return False
+    return True
+
+
 def _valid_expression(tokens: List[_Token]) -> bool:
     """Validate token shape without interpreting names or schema contents."""
     if not tokens:
         return False
-    # Treat a parenthesized SELECT as one expression operand after validating
-    # the nested SELECT with the same complete-tail grammar.
+    # Collapse structured operands into single value tokens before the
+    # linear scan: a parenthesized SELECT (validated with the same
+    # complete-tail grammar) and a CASE...END span (validated structurally).
     normalized: List[_Token] = []
     index = 0
     while index < len(tokens):
+        if (tokens[index].kind == "WORD" and
+                tokens[index].text.upper() == "CASE"):
+            end = _matching_case_end(tokens, index)
+            # The span is rebased to the CASE's own depth so the structural
+            # WHEN/ELSE scan sees relative depth 0 inside any parenthesis.
+            if end < 0 or not _valid_case_expression(
+                    _rebase_tokens(tokens[index:end + 1], tokens[index].depth)):
+                return False
+            normalized.append(_Token("WORD", "__case", tokens[index].depth))
+            index = end + 1
+            continue
         if (tokens[index].kind == "LPAREN" and index + 1 < len(tokens) and
                 tokens[index + 1].kind == "WORD" and tokens[index + 1].text.upper() == "SELECT"):
             end = _matching_group(tokens, index)
@@ -625,6 +754,7 @@ def _valid_expression(tokens: List[_Token]) -> bool:
     tokens = normalized
     expect_value = True
     parens = 0
+    call_open: List[Optional[str]] = []
     index = 0
     previous: Optional[_Token] = None
     while index < len(tokens):
@@ -646,11 +776,50 @@ def _valid_expression(tokens: List[_Token]) -> bool:
                 if expect_value:
                     return False
                 expect_value = True
-            elif upper in {"NOT", "NULL", "TRUE", "FALSE", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP"}:
-                if upper == "NOT":
-                    if not expect_value:
+            elif upper == "NOT":
+                follow = next((n for n in range(index + 1, len(tokens))
+                               if tokens[n].kind not in ("COMMENT_LINE", "COMMENT_BLOCK")), -1)
+                if follow < 0:
+                    return False
+                follower = tokens[follow]
+                if expect_value:
+                    # Prefix NOT negates a boolean factor only before a
+                    # parenthesized group, an EXISTS predicate, or the NULL
+                    # of an ``IS [NOT] NULL`` predicate.  A bare ``NOT NULL``
+                    # value (``SET a = NOT NULL``, ``WHERE NOT NULL``) fails
+                    # closed.
+                    prefix_ok = (
+                        follower.kind == "LPAREN" or
+                        (follower.kind == "WORD" and follower.text.upper() == "EXISTS") or
+                        (previous is not None and previous.kind == "WORD" and
+                         previous.text.upper() == "IS")
+                    )
+                    if not prefix_ok:
                         return False
-                elif not expect_value:
+                    # The operand follows; keep expecting a value.
+                else:
+                    # Postfix NOT may only introduce a negated IN predicate
+                    # (``x NOT IN (...)``); ``x NOT NULL`` and every other
+                    # follower fails closed.  IN is processed on the next
+                    # iteration and expects its own right-hand operand.
+                    if follower.kind != "WORD" or follower.text.upper() != "IN":
+                        return False
+            elif upper == "EXISTS":
+                # An EXISTS predicate is a boolean factor whose only operand
+                # is a parenthesized subquery (normalized to ``__subquery``
+                # above under the nested-select rules); a bare EXISTS or an
+                # ``EXISTS <expr>`` fails closed.
+                if not expect_value:
+                    return False
+                follow = next((n for n in range(index + 1, len(tokens))
+                               if tokens[n].kind not in ("COMMENT_LINE", "COMMENT_BLOCK")), -1)
+                if (follow < 0 or tokens[follow].kind != "WORD" or
+                        tokens[follow].text != "__subquery"):
+                    return False
+                index = follow
+                expect_value = False
+            elif upper in {"NULL", "TRUE", "FALSE", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP"}:
+                if not expect_value:
                     # A function name followed by '(' is handled below; a
                     # second value is never silently accepted.
                     return False
@@ -659,10 +828,6 @@ def _valid_expression(tokens: List[_Token]) -> bool:
                 if expect_value:
                     return False
                 expect_value = True
-            elif upper in {"CASE", "WHEN", "THEN", "ELSE", "END"}:
-                # CASE syntax is deliberately only accepted when token-shaped;
-                # its operands still have to be present.
-                expect_value = upper in {"CASE", "WHEN", "THEN", "ELSE"}
             else:
                 # Identifier or function name.  A bare reserved keyword is
                 # never a valid identifier or value here (``1 = UPDATE`` is
@@ -687,11 +852,28 @@ def _valid_expression(tokens: List[_Token]) -> bool:
                 if (previous is None or previous.kind not in ("WORD", "QUOTED_IDENT") or
                         (previous.kind == "WORD" and previous.text == "__subquery")):
                     return False
+                # Remember the callee so the zero-argument form stays bounded
+                # to SQLite's ``changes()`` function.
+                call_open.append(previous.text.upper() if previous.kind == "WORD" else None)
+            else:
+                call_open.append(None)
             parens += 1
             expect_value = True
         elif token.kind == "RPAREN":
-            if expect_value or parens == 0:
+            if expect_value:
+                # An empty argument list is valid only as the zero-argument
+                # SQLite ``changes()`` call; ``()``, ``foo()``, and any other
+                # empty group fail closed.
+                if not call_open or call_open[-1] != "CHANGES":
+                    return False
+            elif parens == 0:
                 return False
+            elif call_open and call_open[-1] == "CHANGES":
+                # ``changes()`` never takes arguments: ``changes(x)`` with a
+                # non-empty argument list fails closed.
+                return False
+            if call_open:
+                call_open.pop()
             parens -= 1
             expect_value = False
         elif token.kind == "OP":
@@ -738,6 +920,30 @@ def _split_top(tokens: List[_Token], separator: str = ",") -> List[List[_Token]]
     return result
 
 
+def _top_level_assignment_equals(tokens: List[_Token]) -> List[int]:
+    """Indices of ``=`` tokens outside parentheses and outside CASE...END
+    spans.
+
+    An UPDATE assignment has exactly one such separator; ``=`` signs inside
+    a parenthesized value (``SET col = (a = :b)``) or inside a CASE
+    expression's conditions (``SET a = CASE WHEN b = 1 THEN ... END``)
+    belong to the assigned value, never to the assignment itself.
+    """
+    indices: List[int] = []
+    case_depth = 0
+    for index, token in enumerate(tokens):
+        if token.kind == "WORD":
+            upper = token.text.upper()
+            if upper == "CASE":
+                case_depth += 1
+            elif upper == "END" and case_depth > 0:
+                case_depth -= 1
+        elif (token.kind == "OP" and token.text == "=" and token.depth == 0
+              and case_depth == 0):
+            indices.append(index)
+    return indices
+
+
 def _valid_select_tail(tokens: List[_Token]) -> bool:
     if not tokens or not _word(tokens, 0, "SELECT"):
         return False
@@ -772,9 +978,20 @@ def _valid_select_tail(tokens: List[_Token]) -> bool:
     while i < len(tokens):
         if _word(tokens, i, "FROM"):
             i += 1
-            i = _name_at(tokens, i) if i < len(tokens) else -1
-            if i < 0:
-                return False
+            if i < len(tokens) and tokens[i].kind == "LPAREN":
+                # Derived table: ``FROM ( SELECT ... ) [AS alias]``.  The
+                # inner statement keeps the complete nested-select grammar;
+                # an empty or non-SELECT group fails closed.
+                end = _matching_group(tokens, i)
+                if end < 0 or end == i + 1:
+                    return False
+                if not _valid_select_tail(_rebase_tokens(tokens[i + 1:end - 1], 1)):
+                    return False
+                i = end
+            else:
+                i = _name_at(tokens, i) if i < len(tokens) else -1
+                if i < 0:
+                    return False
             if i < len(tokens) and _word(tokens, i, "AS"):
                 # Explicit alias: the name after AS must be a valid
                 # identifier; a missing or reserved name fails closed.
@@ -823,7 +1040,12 @@ def _valid_select_tail(tokens: List[_Token]) -> bool:
         elif _word(tokens, i, "GROUP"):
             if not _word(tokens, i + 1, "BY"): return False
             i += 2; end = _next_clause(tokens, i)
-            if not _valid_expression(tokens[i:end]): return False
+            # GROUP BY keys are a comma-separated expression list; each key
+            # is validated independently (commas inside function-call
+            # parentheses never split, and an empty key from a leading,
+            # trailing, or doubled comma fails closed).
+            keys = _split_top(tokens[i:end])
+            if not keys or any(not key or not _valid_expression(key) for key in keys): return False
             i = end
         elif _word(tokens, i, "HAVING"):
             i += 1; end = _next_clause(tokens, i)
@@ -1037,12 +1259,12 @@ def _valid_statement_grammar(keyword: str, tail: List[_Token]) -> bool:
         end = _next_clause(tail, i + 1)
         assignments = _split_top(tail[i + 1:end])
         def valid_assignment(assignment: List[_Token]) -> bool:
-            equals = [n for n, token in enumerate(assignment)
-                      if token.kind == "OP" and token.text == "="]
+            equals = _top_level_assignment_equals(assignment)
             if len(equals) != 1:
                 return False
             eq = equals[0]
-            # SQLite assignment targets are names, not arbitrary expressions.
+            # SQLite assignment targets are names, not arbitrary expressions,
+            # and the single top-level '=' must directly follow the target.
             return eq > 0 and _name_at(assignment, 0) == eq and _valid_expression(assignment[eq + 1:])
         if not assignments or any(not valid_assignment(a) for a in assignments): return False
         i = end

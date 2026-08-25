@@ -7,6 +7,8 @@ import pytest
 from scripts.db_guard.sql_classifier import (
     ERROR_UNCLASSIFIABLE,
     OPERATION_UNCLASSIFIABLE,
+    REASON_INVALID_INPUT,
+    REASON_NO_STATEMENT,
     classify_sql,
 )
 
@@ -1015,3 +1017,444 @@ def test_malformed_join_forms_fail_closed(sql):
     assert result.error_code == ERROR_UNCLASSIFIABLE
     assert result.is_unknown
     assert not result.is_read and not result.is_mutation
+
+
+# ---------------------------------------------------------------------------
+# GR-05A analyzer repair: IS [NOT] NULL / EXISTS / CASE / NOT IN / changes()
+# parenthesized boolean SET values.
+# ---------------------------------------------------------------------------
+
+# The real production shape (RecommendationDao.archiveActiveOverflow): a
+# plain UPDATE whose only previously-rejected token was the postfix NOT of
+# ``id NOT IN (:retainedIds)``.
+ARCHIVE_OVERFLOW_SQL = (
+    "UPDATE recommendations "
+    "SET status = 'ARCHIVED', dismissedAt = :nowMillis, updatedAt = :nowMillis "
+    "WHERE userId = :userId AND status = 'ACTIVE' "
+    "AND dismissedAt IS NULL AND expiresAt > :nowMillis "
+    "AND id NOT IN (:retainedIds)"
+)
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT * FROM things WHERE a IS NULL",
+    "SELECT * FROM things WHERE a IS NOT NULL",
+    "SELECT * FROM things WHERE a IS NOT NULL AND b IS NULL",
+    "SELECT * FROM a JOIN b ON a.x IS NOT NULL",
+    "SELECT kind, COUNT(*) FROM things GROUP BY kind HAVING MAX(v) IS NOT NULL",
+    "UPDATE things SET note = NULL WHERE b IS NOT NULL",
+    "DELETE FROM things WHERE a IS NOT NULL",
+])
+def test_is_not_null_predicates_are_classified(sql):
+    """``<expr> IS [NOT] NULL`` is a valid predicate in WHERE/ON/HAVING and
+    mutation-tail contexts."""
+    result = classify_sql(sql)
+    assert result.error_code is None
+    assert not result.is_unknown
+
+
+@pytest.mark.parametrize("sql", [
+    # IS without its NULL operand.
+    "SELECT * FROM things WHERE a IS",
+    # IS NOT without its NULL operand.
+    "SELECT * FROM things WHERE a IS NOT",
+    # A bare postfix NOT NULL is not an IS [NOT] NULL predicate.
+    "SELECT * FROM things WHERE a NOT NULL",
+    # A bare prefix NOT NULL value fails closed.
+    "SELECT * FROM things WHERE NOT NULL",
+    "UPDATE things SET a = NOT NULL",
+])
+def test_malformed_is_and_bare_not_null_shapes_fail_closed(sql):
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT EXISTS(SELECT 1 FROM things)",
+    "SELECT EXISTS (SELECT 1 FROM things) AS has_rows",
+    "SELECT * FROM things WHERE EXISTS (SELECT 1 FROM other WHERE other.tid = things.id)",
+    "SELECT * FROM things WHERE NOT EXISTS (SELECT 1 FROM other WHERE other.tid = things.id)",
+    "DELETE FROM things WHERE NOT EXISTS (SELECT 1 FROM other WHERE other.tid = things.id)",
+    "SELECT * FROM things WHERE EXISTS(SELECT 1 FROM other) OR a = 1",
+])
+def test_exists_predicates_are_classified(sql):
+    """``[NOT] EXISTS (subquery)`` is a valid boolean factor; the subquery
+    follows the existing nested-select rules."""
+    result = classify_sql(sql)
+    assert result.error_code is None
+    assert not result.is_unknown
+
+
+@pytest.mark.parametrize("sql", [
+    # Bare EXISTS without any operand.
+    "SELECT EXISTS",
+    "SELECT * FROM things WHERE EXISTS",
+    # EXISTS over a non-subquery operand.
+    "SELECT * FROM things WHERE EXISTS id",
+    "SELECT 1 WHERE EXISTS (a = 1)",
+    # EXISTS at a non-operand position.
+    "SELECT * FROM things WHERE 1 EXISTS (SELECT 1)",
+])
+def test_malformed_exists_shapes_fail_closed(sql):
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    "UPDATE things SET a = CASE WHEN b = 1 THEN 1 ELSE NULL END",
+    "SELECT CASE WHEN a = 1 THEN 'x' ELSE 'y' END FROM things",
+    "SELECT CASE WHEN a = 1 THEN 'x' END FROM things",
+    "SELECT CASE status WHEN 'A' THEN 1 ELSE 0 END FROM things",
+    ("UPDATE things SET a = CASE WHEN b = 1 THEN "
+     "CASE WHEN c = 2 THEN 1 ELSE 0 END ELSE 9 END"),
+    "SELECT * FROM things WHERE CASE WHEN a = 1 THEN 1 ELSE 0 END = 1",
+    "SELECT SUM(CASE WHEN a = 1 THEN 1 ELSE 0 END) FROM things",
+    "SELECT * FROM things ORDER BY CASE WHEN a THEN 1 ELSE 2 END DESC",
+])
+def test_case_expressions_are_classified(sql):
+    """``CASE [operand] WHEN <cond> THEN <expr> ... [ELSE <expr>] END`` is a
+    valid value expression in SET lists, SELECT lists, WHERE comparisons,
+    function arguments, and ORDER BY keys; conditions reuse the boolean
+    grammar (including their own ``=`` signs)."""
+    result = classify_sql(sql)
+    assert result.error_code is None
+    assert not result.is_unknown
+
+
+@pytest.mark.parametrize("sql", [
+    # Missing END.
+    "UPDATE things SET a = CASE WHEN b = 1 THEN 1",
+    "SELECT CASE WHEN a THEN 1 FROM things",
+    # Missing THEN.
+    "SELECT CASE WHEN a = 1 ELSE 0 END FROM things",
+    # Missing WHEN.
+    "SELECT CASE ELSE 1 END FROM things",
+    # Empty CASE body.
+    "SELECT CASE END FROM things",
+    # Missing THEN result expression.
+    "SELECT CASE WHEN a THEN END FROM things",
+    # Missing ELSE result expression.
+    "SELECT CASE WHEN a THEN 1 ELSE END FROM things",
+])
+def test_malformed_case_shapes_fail_closed(sql):
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT * FROM things WHERE id NOT IN (1, 2, 3)",
+    "SELECT * FROM things WHERE id NOT IN (SELECT id FROM keep)",
+    "DELETE FROM things WHERE id NOT IN (SELECT id FROM keep)",
+    ARCHIVE_OVERFLOW_SQL,
+])
+def test_not_in_predicates_are_classified(sql):
+    """``NOT IN (value-list | subquery)`` extends the existing IN handling;
+    the production archive-overflow UPDATE classifies as a mutation."""
+    result = classify_sql(sql)
+    assert result.error_code is None
+    assert not result.is_unknown
+    if sql == ARCHIVE_OVERFLOW_SQL:
+        assert result.operation == "UPDATE"
+        assert result.is_mutation and not result.is_read
+
+
+@pytest.mark.parametrize("sql", [
+    # An empty IN list fails closed.
+    "SELECT * FROM things WHERE id NOT IN ()",
+    "SELECT * FROM things WHERE id IN ()",
+    # NOT IN without its list.
+    "SELECT * FROM things WHERE id NOT IN",
+    # Postfix NOT stays bounded to the negated IN predicate.
+    "SELECT * FROM things WHERE id NOT LIKE 'x'",
+])
+def test_malformed_not_in_shapes_fail_closed(sql):
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT changes()",
+    "SELECT changes() AS affected",
+    "UPDATE things SET v = changes()",
+])
+def test_changes_zero_arg_function_is_classified(sql):
+    """The zero-argument SQLite ``changes()`` function is a valid value."""
+    result = classify_sql(sql)
+    assert result.error_code is None
+    assert not result.is_unknown
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT changes(x)",
+    "SELECT changes(:a)",
+    "SELECT changes(1)",
+])
+def test_changes_with_arguments_fail_closed(sql):
+    """``changes()`` never takes arguments; every argumented form fails
+    closed."""
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    "UPDATE things SET flag = (a = :b)",
+    "UPDATE things SET flag = (a = 1 OR b = 2)",
+    "UPDATE things SET flag = (things.a = :b)",
+])
+def test_parenthesized_boolean_set_values_are_classified(sql):
+    """A parenthesized boolean expression is a valid UPDATE SET value; the
+    inner '=' belongs to the value, never to the assignment."""
+    result = classify_sql(sql)
+    assert result.operation == "UPDATE"
+    assert result.is_mutation and not result.is_read
+    assert result.error_code is None
+
+
+@pytest.mark.parametrize("sql", [
+    # Unbalanced parenthesized boolean values fail closed.
+    "UPDATE things SET flag = (a = :b",
+    "UPDATE things SET flag = (a = :b))",
+    # A second top-level '=' is still never a second assignment separator.
+    "UPDATE things SET a = 1 = 2",
+])
+def test_unbalanced_or_multi_equals_set_values_fail_closed(sql):
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    # Bare select.
+    "SELECT * FROM things",
+    # IS NULL predicate.
+    "SELECT * FROM things WHERE a IS NULL",
+    # COUNT(*).
+    "SELECT COUNT(*) FROM things",
+    # GROUP BY + HAVING.
+    "SELECT kind, COUNT(*) FROM things GROUP BY kind HAVING COUNT(*) > 1",
+    # BETWEEN.
+    "SELECT * FROM things WHERE v BETWEEN :lo AND :hi",
+    # LIKE with || concatenation.
+    "SELECT * FROM things WHERE name LIKE '%' || :suffix",
+    # LENGTH().
+    "SELECT LENGTH(name) FROM things",
+    # WITH CTE.
+    "WITH recent AS (SELECT * FROM things) SELECT * FROM recent",
+    # Multi-key directed ORDER BY forms.
+    "SELECT * FROM things ORDER BY kind ASC, id DESC LIMIT ?1",
+])
+def test_previous_ok_matrix_still_classifies(sql):
+    """Regression: the previously accepted OK matrix keeps classifying after
+    the GR-05A predicate/expression repairs."""
+    result = classify_sql(sql)
+    assert result.operation == "SELECT"
+    assert result.is_read and not result.is_mutation
+    assert result.error_code is None
+
+
+# ---------------------------------------------------------------------------
+# GR-05 residual repair: full-expression aggregate arguments, multi-key
+# GROUP BY, derived tables in FROM, and the != comparison operator.
+# ---------------------------------------------------------------------------
+
+# The real ExpenseDao effective-amount fragment (EFFECTIVE_AMOUNT_SQL), a
+# CASE expression whose WHEN conditions are AND chains with IS [NOT] NULL
+# predicates and whose THEN results are arithmetic expressions.
+EFFECTIVE_AMOUNT_CASE_SQL = (
+    "CASE WHEN isNotMine = 1 THEN 0.0 "
+    "WHEN isSharedExpense = 1 AND myShareAmount IS NOT NULL THEN myShareAmount "
+    "WHEN isSharedExpense = 1 AND mySharePercentage IS NOT NULL "
+    "THEN amount * mySharePercentage / 100.0 "
+    "ELSE amount END"
+)
+
+# The real ScannedReceiptDao duplicate-group diagnostic shape: COUNT(*) over
+# a derived table with an != predicate, GROUP BY, and HAVING COUNT(*) > 1.
+DUPLICATE_GROUP_COUNT_SQL = (
+    "SELECT COUNT(*) FROM (SELECT imageHash FROM scanned_receipts "
+    "WHERE imageHash IS NOT NULL AND imageHash != '' "
+    "GROUP BY imageHash HAVING COUNT(*) > 1)"
+)
+
+
+@pytest.mark.parametrize("sql", [
+    # SUM over the full ownership-adjusted CASE fragment (ExpenseDao
+    # getCategoryTotalsBetweenByCurrency): aggregate argument is a complete
+    # CASE expression, projection carries UPPER()/COUNT() aggregates, and the
+    # GROUP BY has two keys, one of them a function call.
+    f"SELECT categoryId, UPPER(currency) AS currency, "
+    f"SUM({EFFECTIVE_AMOUNT_CASE_SQL}) AS total, COUNT(*) AS txCount "
+    f"FROM expenses WHERE transactionType = 'PURCHASE' AND isNotMine = 0 "
+    f"GROUP BY categoryId, UPPER(currency) ORDER BY total DESC",
+    # MIN(merchant) aggregate plus a multi-key GROUP BY
+    # (getMerchantTotalsBetweenByCurrency).
+    f"SELECT MIN(merchant) AS merchant, UPPER(currency) AS currency, "
+    f"SUM({EFFECTIVE_AMOUNT_CASE_SQL}) AS total, COUNT(*) AS txCount "
+    f"FROM expenses WHERE merchantKey IS NOT NULL "
+    f"GROUP BY merchantKey, UPPER(currency) ORDER BY total DESC",
+    # UPPER(COALESCE(...)) nested function arguments and a COALESCE(CASE ... END,
+    # literal) aggregate argument (getLocatedMerchantTotalsByCurrency).
+    "SELECT MIN(merchant) AS merchant, UPPER(COALESCE(currency, 'EUR')) AS currency, "
+    f"SUM(COALESCE({EFFECTIVE_AMOUNT_CASE_SQL}, 0)) AS total, COUNT(*) AS txCount "
+    "FROM expenses WHERE latitude IS NOT NULL AND longitude IS NOT NULL "
+    "AND merchantKey IS NOT NULL "
+    "GROUP BY merchantKey, UPPER(COALESCE(currency, 'EUR')) ORDER BY total DESC",
+    # strftime with string-literal and arithmetic arguments plus a multi-key
+    # GROUP BY on an alias and a function call (getMonthlyTotalsBetweenByCurrency).
+    "SELECT strftime('%Y-%m', date/1000, 'unixepoch', 'localtime') AS monthKey, "
+    f"UPPER(currency) AS currency, SUM({EFFECTIVE_AMOUNT_CASE_SQL}) AS total, "
+    "COUNT(*) AS txCount FROM expenses WHERE isNotMine = 0 "
+    "GROUP BY monthKey, UPPER(currency) ORDER BY monthKey ASC, total DESC",
+    # COALESCE over a bare column in the GROUP BY key list
+    # (getBusinessCategoryCurrencyTotals).
+    f"SELECT COALESCE(businessCategory, 'Uncategorized') AS businessCategory, "
+    f"currency, SUM({EFFECTIVE_AMOUNT_CASE_SQL}) AS total, COUNT(*) AS txCount "
+    f"FROM expenses WHERE isBusinessExpense = 1 AND isNotMine = 0 "
+    f"GROUP BY COALESCE(businessCategory, 'Uncategorized'), currency "
+    f"ORDER BY businessCategory ASC",
+])
+def test_aggregate_full_expression_and_multi_key_group_by_reads(sql):
+    """Aggregate/function arguments accept the same expression grammar as
+    other value contexts (CASE, arithmetic, nested calls with literal args),
+    and GROUP BY validates each comma-separated key independently."""
+    result = classify_sql(sql)
+    assert result.operation == "SELECT"
+    assert result.is_read and not result.is_mutation
+    assert result.error_code is None
+
+
+@pytest.mark.parametrize("sql", [
+    # AVG over a derived table whose inner SELECT aggregates a full CASE
+    # expression and groups by a strftime call (getAverageDailySpend).
+    f"SELECT AVG(daily_total) FROM (SELECT SUM({EFFECTIVE_AMOUNT_CASE_SQL}) "
+    f"AS daily_total FROM expenses WHERE transactionType = 'PURCHASE' "
+    f"AND isNotMine = 0 "
+    f"GROUP BY strftime('%Y-%m-%d', date/1000, 'unixepoch', 'localtime'))",
+    # The exact ScannedReceiptDao duplicate-diagnostics shape: != predicate,
+    # GROUP BY, and HAVING COUNT(*) > 1 inside the derived table.
+    DUPLICATE_GROUP_COUNT_SQL,
+    # Minimal derived table with and without an alias.
+    "SELECT x FROM (SELECT 1 AS x)",
+    "SELECT x FROM (SELECT 1 AS x) d",
+    "SELECT x FROM (SELECT 1 AS x) AS d",
+    # Nested derived tables keep the nested-select rules at every level.
+    "SELECT y FROM (SELECT x FROM (SELECT 1 AS x) inner_alias) outer_alias",
+    # A join against a derived table keeps the bounded JOIN grammar.
+    "SELECT * FROM (SELECT id FROM t) d JOIN u ON u.id = d.id",
+])
+def test_derived_table_subqueries_are_reads(sql):
+    """``FROM (subquery)`` derived tables keep the complete nested-select
+    grammar, including aggregates, GROUP BY/HAVING, and != inside them."""
+    result = classify_sql(sql)
+    assert result.operation == "SELECT"
+    assert result.is_read and not result.is_mutation
+    assert result.error_code is None
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT * FROM things WHERE a != :value",
+    "SELECT * FROM things WHERE a != 'x' AND b != ?1",
+    DUPLICATE_GROUP_COUNT_SQL,
+])
+def test_not_equals_comparison_operator_remains_a_read(sql):
+    """``!=`` is an ordinary comparison operator alongside =/<>; it never
+    makes a well-formed read unclassifiable or a mutation."""
+    result = classify_sql(sql)
+    assert result.error_code is None
+    assert not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    # A CASE missing END inside an aggregate argument fails closed.
+    "SELECT SUM(CASE WHEN a = 1 THEN 0.0) FROM t",
+    # Unbalanced parentheses in an argument list fail closed.
+    "SELECT SUM((amount + 0.0) FROM t",
+    "SELECT COALESCE(a, 0.0 FROM t",
+    f"SELECT SUM({EFFECTIVE_AMOUNT_CASE_SQL} FROM expenses",
+    # An empty argument slot fails closed.
+    "SELECT COALESCE(a, , 0) FROM t",
+    "SELECT SUM(, amount) FROM t",
+    # A chained/broken comparison sequence around != fails closed.
+    "SELECT 1 FROM t WHERE a != = b",
+    "SELECT 1 FROM t WHERE a != != b",
+])
+def test_malformed_aggregate_argument_shapes_fail_closed(sql):
+    """The new expression-argument acceptance stays bounded: malformed CASE
+    spans, unbalanced/empty argument lists, and broken operator chains are
+    never guessed into reads."""
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    # Empty derived-table group.
+    "SELECT COUNT(*) FROM ()",
+    # A non-SELECT derived-table body fails closed.
+    "SELECT COUNT(*) FROM (imageHash FROM scanned_receipts)",
+    "SELECT * FROM (PRAGMA user_version)",
+    # A malformed inner statement tail fails closed.
+    "SELECT * FROM (SELECT 1 WHERE)",
+    "SELECT * FROM (SELECT FROM t)",
+])
+def test_malformed_derived_table_shapes_fail_closed(sql):
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+@pytest.mark.parametrize("sql", [
+    "SELECT a FROM t GROUP BY",
+    # Leading/trailing/doubled commas create empty keys: fail closed.
+    "SELECT a, COUNT(*) FROM t GROUP BY a,",
+    "SELECT a, COUNT(*) FROM t GROUP BY , a",
+    "SELECT a, COUNT(*) FROM t GROUP BY a,, b",
+    # One malformed key fails closed even among well-formed siblings.
+    "SELECT a, b FROM t GROUP BY a, UPPER(b",
+])
+def test_malformed_group_by_key_lists_fail_closed(sql):
+    result = classify_sql(sql)
+    assert result.operation == OPERATION_UNCLASSIFIABLE
+    assert result.error_code == ERROR_UNCLASSIFIABLE
+    assert not result.is_read and not result.is_mutation
+
+
+def test_empty_and_missing_sql_inputs_keep_failing_closed():
+    """Empty SQL text stays fail-closed with its controlled reason: a None
+    decode result (an unresolved @Query template) reports INVALID_INPUT and
+    blank text reports NO_STATEMENT.  Neither is ever classified."""
+    missing = classify_sql(None)
+    assert missing.operation == OPERATION_UNCLASSIFIABLE
+    assert missing.error_code == ERROR_UNCLASSIFIABLE
+    assert missing.reason == REASON_INVALID_INPUT
+    assert not missing.is_read and not missing.is_mutation
+    for blank in ("", "   ", "\n\t"):
+        blank_result = classify_sql(blank)
+        assert blank_result.operation == OPERATION_UNCLASSIFIABLE
+        assert blank_result.error_code == ERROR_UNCLASSIFIABLE
+        assert blank_result.reason == REASON_NO_STATEMENT
+        assert not blank_result.is_read and not blank_result.is_mutation
+
+
+def test_strftime_non_literal_first_arg_follows_the_generic_argument_grammar():
+    """Documented status quo: SQLite function arguments (including strftime's
+    first argument) are validated by the generic expression grammar, so a
+    non-literal first argument such as ``date/1000`` classifies as a read.
+    No special-case rejection exists to preserve."""
+    result = classify_sql("SELECT strftime(date/1000, 'unixepoch') FROM t")
+    assert result.operation == "SELECT"
+    assert result.is_read and not result.is_mutation
+    assert result.error_code is None
