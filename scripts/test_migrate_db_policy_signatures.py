@@ -29,11 +29,19 @@ if str(_ROOT) not in sys.path:
 
 from scripts.db_guard.policy_model import BarrierMode, CallableKind  # noqa: E402
 from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
+    MIGRATION_STATUSES,
+    MIGRATION_STATUSES_EXTENDED,
+    STATUS_AUTHORIZATION_METADATA_CONFLICT,
     STATUS_BARRIER_MODE_UNRESOLVED,
     STATUS_CALLABLE_MISSING,
     STATUS_DAO_TARGET_AMBIGUOUS,
     STATUS_MUTATION_PAIR_MISSING,
+    STATUS_PARSER_UNCERTAIN,
+    STATUS_PARSER_UNSUPPORTED,
     STATUS_RESOLVED,
+    STATUS_SOURCE_ROOT_UNRESOLVED,
+    UnresolvedRow,
+    convert_barrier_mode,
     find_duplicate_mutation_keys,
     migrate_policy,
 )
@@ -141,7 +149,11 @@ def test_member_function_resolves_to_full_fqcn_and_function_kind(tmp_path):
     assert entry.dao_accessor == "expenseDao"
     assert entry.dao_fqcn == "com.example.ExpenseDao"
     assert entry.operation == "insert"
-    assert entry.barrier_mode is BarrierMode.DIRECT
+    # This identity-only fixture claims barrier_required=true but its body
+    # contains NO direct writeBarrier call: since PR-GR-05 Slice 2 the
+    # unproven direct claim downgrades to helper (the dedicated Slice 2
+    # tests below pin the direct/helper evidence split both ways).
+    assert entry.barrier_mode is BarrierMode.HELPER
 
 
 # ── (2) Nested owner FQCN ─────────────────────────────────────────────────────
@@ -773,52 +785,445 @@ def test_safe_call_and_complex_receivers_fail_closed(tmp_path):
     ]
 
 
-# ── (19) Barrier-mode conversion is closed ────────────────────────────────────
+# ── (19) Barrier-mode conversion is closed (PR-GR-05 Slice 2) ────────────────
 
 
-def test_barrier_required_false_or_barrier_via_is_unresolved(tmp_path):
+def test_barrier_mode_mapping_matrix():
+    """The closed evidence-aware mapping table, cell by cell.
+
+    barrierMode stays METADATA ONLY: it records how the legacy row
+    classified its own write protection and is never control-flow proof.
+    """
+    unresolved = (None, STATUS_BARRIER_MODE_UNRESOLVED)
+    # required=true + no via: decided by direct-syntax evidence.
+    assert convert_barrier_mode(
+        {"barrier_required": True}, has_direct_barrier=True
+    ) == ("direct", None)
+    assert convert_barrier_mode(
+        {"barrier_required": True}, has_direct_barrier=False
+    ) == ("helper", None)
+    # No evidence available: debt, never an invented mode.
+    assert convert_barrier_mode({"barrier_required": True}) == unresolved
+    # Exact legacy helper classification (false + no via).
+    assert convert_barrier_mode({"barrier_required": False}) == ("helper", None)
+    # Exact legacy WorkerExecutionGuard classification — the shape every
+    # mediated row of the active policy uses (false + via).
+    assert convert_barrier_mode(
+        {"barrier_required": False, "barrier_via": "WorkerExecutionGuard"}
+    ) == ("workerMediated", None)
+    # Any other non-empty via names a helper mediator.
+    assert convert_barrier_mode(
+        {
+            "barrier_required": False,
+            "barrier_via": "TransactionLifecycleCoordinator.checkWritesAllowed",
+        }
+    ) == ("helper", None)
+    # Contradictory: a mediation claim together with a direct-barrier-
+    # required claim cannot both be true (legacy truthfulness rule).
+    for via in ("WorkerExecutionGuard", "SomeOtherHelper"):
+        assert convert_barrier_mode(
+            {"barrier_required": True, "barrier_via": via}
+        ) == unresolved
+    # Missing both fields (and an explicit-null via) stays debt.
+    assert convert_barrier_mode({}) == unresolved
+    assert convert_barrier_mode({"barrier_via": None}) == unresolved
+    # Non-bool required is never an exact legacy shape (1 == True must not
+    # sneak through as a real boolean).
+    for bad_required in (None, "yes", 1, 0):
+        assert convert_barrier_mode({"barrier_required": bad_required}) == (
+            unresolved
+        )
+    # Malformed/invalid via values fail closed.
+    for bad_via in (5, ["WorkerExecutionGuard"], "", "   "):
+        assert convert_barrier_mode(
+            {"barrier_required": False, "barrier_via": bad_via}
+        ) == unresolved
+    # Non-mapping input fails closed.
+    assert convert_barrier_mode(None) == unresolved
+    assert convert_barrier_mode(["barrier_required"]) == unresolved
+
+
+def test_slice2_plan_required_statuses_appended_to_closed_vocabulary():
+    """SOURCE_ROOT_UNRESOLVED / PARSER_UNSUPPORTED join the closed set only
+    through the documented append-only extension point."""
+    assert STATUS_SOURCE_ROOT_UNRESOLVED == "SOURCE_ROOT_UNRESOLVED"
+    assert STATUS_PARSER_UNSUPPORTED == "PARSER_UNSUPPORTED"
+    appended = (
+        STATUS_PARSER_UNCERTAIN,
+        STATUS_SOURCE_ROOT_UNRESOLVED,
+        STATUS_PARSER_UNSUPPORTED,
+    )
+    # The original frozenset stays frozen; only the extended set grows...
+    for status in appended:
+        assert status not in MIGRATION_STATUSES
+        assert status in MIGRATION_STATUSES_EXTENDED
+    # ...and UnresolvedRow validation accepts the widened vocabulary.
+    for status in (STATUS_SOURCE_ROOT_UNRESOLVED, STATUS_PARSER_UNSUPPORTED):
+        row = UnresolvedRow(0, "Cls", "method", status, "")
+        assert row.status == status
+
+
+DIRECT_BARRIER_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    fun save(value: Int) {\n"
+    '        writeBarrier.checkWritesAllowed("Repository.save")\n'
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "}\n"
+)
+
+PARTIAL_BARRIER_TWO_MUTATIONS_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    fun upsert(value: Int) {\n"
+    "        expenseDao.insert(value)\n"
+    '        writeBarrier.checkWritesAllowed("Repository.upsert")\n'
+    "        expenseDao.delete(value)\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def test_previously_unresolved_worker_mediated_row_resolves(tmp_path):
+    """Legacy mediated shape (false + via=WorkerExecutionGuard) resolves.
+
+    This exact fixture row was BARRIER_MODE_UNRESOLVED debt before Slice 2;
+    it now migrates with the workerMediated metadata mode.
+    """
     _write_repo(tmp_path, _standard_repo_files())
     entries = [
-        _legacy_entry(REPO_KT, "Repository", "save", barrier_required=False),
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "save",
+            barrier_required=False,
+            barrier_via="WorkerExecutionGuard",
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.barrier_mode is BarrierMode.WORKER_MEDIATED
+    assert entry.barrier_mode.value == "workerMediated"
+
+
+def test_previously_unresolved_helper_row_resolves_as_helper(tmp_path):
+    """Legacy helper shape (false + no via) resolves as helper.
+
+    Also previously BARRIER_MODE_UNRESOLVED debt; the body has no direct
+    barrier call, matching the legacy helper classification exactly.
+    """
+    _write_repo(tmp_path, _standard_repo_files())
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "save", barrier_required=False)
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.barrier_mode is BarrierMode.HELPER
+    assert entry.barrier_mode.value == "helper"
+
+
+def test_other_helper_via_resolves_as_helper(tmp_path):
+    """A non-guard mediator name is still helper-classified metadata."""
+    _write_repo(tmp_path, _standard_repo_files())
+    entries = [
+        _legacy_entry(
+            REPO_KT,
+            "Repository",
+            "save",
+            barrier_required=False,
+            barrier_via="TransactionLifecycleCoordinator.checkWritesAllowed",
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.barrier_mode is BarrierMode.HELPER
+
+
+def test_contradictory_mediated_required_row_stays_unresolved(tmp_path):
+    """required=true TOGETHER WITH a via is contradictory debt.
+
+    Mediation and a direct-barrier-required claim cannot both be true (the
+    legacy truthfulness rule), so this ambiguous row stays fully
+    unresolved even though it would otherwise migrate cleanly.
+    """
+    _write_repo(tmp_path, _standard_repo_files())
+    entries = [
         _legacy_entry(
             REPO_KT,
             "Repository",
             "save",
             barrier_required=True,
             barrier_via="WorkerExecutionGuard",
-        ),
+        )
     ]
     result = migrate_policy(entries, str(tmp_path))
-    # Both entries would otherwise resolve cleanly; the barrier gate runs
-    # first and fails both closed.
     assert result.resolved == ()
-    assert [row.status for row in result.unresolved] == [
-        STATUS_BARRIER_MODE_UNRESOLVED,
-        STATUS_BARRIER_MODE_UNRESOLVED,
-    ]
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_BARRIER_MODE_UNRESOLVED
     assert STATUS_BARRIER_MODE_UNRESOLVED == "BARRIER_MODE_UNRESOLVED"
+    assert row.index == 0
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "save"
 
 
-# ── (20) Duplicate mutation-key detection ─────────────────────────────────────
+def test_direct_syntax_proof_emits_direct(tmp_path):
+    """A real unqualified writeBarrier call before the mutation proves the
+    legacy direct claim, so the emitted metadata mode stays direct."""
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: DIRECT_BARRIER_REPO_SOURCE},
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "save")]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.barrier_mode is BarrierMode.DIRECT
 
 
-def test_duplicate_mutation_keys_detected_by_find_duplicate_mutation_keys(
-    tmp_path,
-):
+def test_required_true_without_direct_syntax_downgrades_to_helper(tmp_path):
+    """An unproven direct claim downgrades to helper instead of emitting
+    unproven ``direct`` metadata."""
+    _write_repo(tmp_path, _standard_repo_files())
+    entries = [_legacy_entry(REPO_KT, "Repository", "save")]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.barrier_mode is BarrierMode.HELPER
+
+
+def test_direct_proof_must_precede_every_mutation(tmp_path):
+    """Per-mutation all-or-nothing: a barrier between two mutations proves
+    nothing for the FIRST one, so the row cannot claim direct."""
+    _write_repo(
+        tmp_path,
+        {
+            DAO_KT: EXPENSE_DAO_SOURCE,
+            REPO_KT: PARTIAL_BARRIER_TWO_MUTATIONS_REPO_SOURCE,
+        },
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "upsert")]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.barrier_mode is BarrierMode.HELPER
+
+
+# ── (20) Dedupe-by-key at emission (PR-GR-05 Slice 4, refined in Slice 5) ────
+#
+# Several legacy rows authorizing the SAME callable+DAO+operation used to
+# emit identical canonical mutation keys and trip the exit-2 duplicate
+# guard.  Slice 4 folded byte-identical emissions; Slice 5 refines the
+# fold rule: emissions sharing a canonical key fold whenever their
+# authorization metadata (barrierMode, owner, linkedIssue) agrees —
+# free-text ``reason`` differences fold away, keeping the lowest-index
+# entry verbatim — while a metadata DISAGREEMENT converts EVERY
+# participating index into one AUTHORIZATION_METADATA_CONFLICT debt row
+# with nothing emitted for the key.  Every source legacy index of a
+# folded key survives in the ``emission_indices`` crosswalk, and the
+# residual duplicate guard remains as defense-in-depth against leaked
+# contradictions.
+
+
+def test_identical_legacy_rows_dedupe_to_one_candidate_entry(tmp_path):
     _write_repo(tmp_path, _standard_repo_files())
     duplicated = _legacy_entry(REPO_KT, "Repository", "save")
     result = migrate_policy([duplicated, dict(duplicated)], str(tmp_path))
     assert result.input_count == 2
     assert result.unresolved == ()
-    assert len(result.resolved) == 2
+    # One entry per unique canonical mutation key: the second legacy row's
+    # identical emission is folded away, keeping only index 0's row.
+    assert len(result.resolved) == 1
+    assert result.resolved[0].index == 0
     expected_key = (
         REPO_KT
         + "|com.example.Repository|function|save|null|Int"
         + "|expenseDao|com.example.ExpenseDao|insert"
     )
-    keys = {row.entry.mutation_key().canonical_key() for row in result.resolved}
-    assert keys == {expected_key}
-    assert find_duplicate_mutation_keys(result) == (expected_key,)
+    assert (
+        result.resolved[0].entry.mutation_key().canonical_key()
+        == expected_key
+    )
+    # Both source indices stay tied to the shared key via the crosswalk...
+    assert dict(result.emission_indices) == {expected_key: (0, 1)}
+    # ...and no residual duplicate collision is reported.
+    assert find_duplicate_mutation_keys(result) == ()
+
+
+def test_dedupe_crosswalk_covers_multi_operation_splits(tmp_path):
+    """Every split operation key records BOTH identical legacy indices."""
+    two_ops_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun upsert(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "        expenseDao.delete(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: two_ops_source},
+    )
+    entry = _legacy_entry(REPO_KT, "Repository", "upsert")
+    result = migrate_policy([entry, dict(entry)], str(tmp_path))
+    assert result.input_count == 2
+    assert result.unresolved == ()
+    # Two unique mutation keys (insert/delete), one kept row each from the
+    # first legacy index; the folded second index appears in both keys.
+    assert len(result.resolved) == 2
+    assert {row.index for row in result.resolved} == {0}
+    crosswalk = dict(result.emission_indices)
+    assert len(crosswalk) == 2
+    for key, indices in crosswalk.items():
+        assert indices == (0, 1)
+    # The two unique keys are exactly the insert/delete split of one
+    # callable+DAO identity.
+    assert sorted(
+        key.rsplit("|", 1)[-1] for key in crosswalk
+    ) == ["delete", "insert"]
+    assert find_duplicate_mutation_keys(result) == ()
+
+
+def test_same_key_with_differing_barrier_metadata_conflicts_to_debt(tmp_path):
+    """Same canonical key, DIFFERENT authorization metadata: conflict debt.
+
+    Slice 5 folds same-key emissions only when (barrierMode, owner,
+    linkedIssue) agree.  A workerMediated classification and a helper
+    classification of the same mutation disagree on barrierMode, so BOTH
+    indices become UNRESOLVED AUTHORIZATION_METADATA_CONFLICT rows, zero
+    candidates are emitted for the key, the crosswalk stays empty, and
+    nothing leaks to the residual duplicate guard.
+    """
+    _write_repo(tmp_path, _standard_repo_files())
+    mediated = _legacy_entry(
+        REPO_KT,
+        "Repository",
+        "save",
+        barrier_required=False,
+        barrier_via="WorkerExecutionGuard",
+    )
+    helper = _legacy_entry(REPO_KT, "Repository", "save", barrier_required=False)
+    result = migrate_policy([mediated, helper], str(tmp_path))
+    assert result.input_count == 2
+    assert result.resolved == ()
+    assert len(result.unresolved) == 2
+    assert [row.index for row in result.unresolved] == [0, 1]
+    for row in result.unresolved:
+        assert row.status == STATUS_AUTHORIZATION_METADATA_CONFLICT
+        assert (
+            STATUS_AUTHORIZATION_METADATA_CONFLICT
+            == "AUTHORIZATION_METADATA_CONFLICT"
+        )
+        # Bounded structured context ONLY: index count plus the conflicted
+        # key's tail segment.  No payloads, no reason text, no full keys.
+        assert row.detail == "conflictingIndices=2 keyTail=insert"
+        assert "workerMediated" not in row.detail
+        assert "controlled migration reason" not in row.detail
+        assert "|" not in row.detail
+    # The conflicted key never enters the emission crosswalk.
+    assert result.emission_indices == ()
+    # Nothing leaked: the defense-in-depth duplicate guard stays silent.
+    assert find_duplicate_mutation_keys(result) == ()
+
+
+def test_reason_only_variants_fold_to_lowest_index_reason(tmp_path):
+    """Three same-key rows differing ONLY in free-text reason -> ONE entry.
+
+    Slice 5 fold contract: the lowest-index entry is kept verbatim (its
+    ``reason`` text survives), every source legacy index maps to the
+    shared key in the ``emission_indices`` crosswalk, and no duplicate
+    collision is reported.
+    """
+    _write_repo(tmp_path, _standard_repo_files())
+    rows = [
+        _legacy_entry(REPO_KT, "Repository", "save", reason="scenario-alpha"),
+        _legacy_entry(REPO_KT, "Repository", "save", reason="scenario-beta"),
+        _legacy_entry(REPO_KT, "Repository", "save", reason="scenario-gamma"),
+    ]
+    result = migrate_policy(rows, str(tmp_path))
+    assert result.input_count == 3
+    assert result.unresolved == ()
+    # One entry per unique canonical mutation key.
+    assert len(result.resolved) == 1
+    kept = result.resolved[0]
+    assert kept.index == 0
+    expected_key = (
+        REPO_KT
+        + "|com.example.Repository|function|save|null|Int"
+        + "|expenseDao|com.example.ExpenseDao|insert"
+    )
+    assert kept.entry.mutation_key().canonical_key() == expected_key
+    # The lowest-index reason text is kept verbatim; later variants fold.
+    assert kept.entry.reason == "scenario-alpha"
+    # All three source indices stay tied to the shared key...
+    assert dict(result.emission_indices) == {expected_key: (0, 1, 2)}
+    # ...and no residual duplicate collision is reported.
+    assert find_duplicate_mutation_keys(result) == ()
+
+
+def test_mixed_batch_folds_reason_variants_and_conflicts_to_debt(tmp_path):
+    """One batch, three outcomes: fold, conflict, clean emission.
+
+    Indices 0/1/4 authorize ``save`` with identical metadata but differing
+    reasons -> folded into index 0's verbatim entry.  Indices 2/3
+    authorize ``store`` with divergent barrier metadata -> both become
+    AUTHORIZATION_METADATA_CONFLICT debt with nothing emitted.  The two
+    outcomes partition the batch exactly one-per-index.
+    """
+    repo_source = (
+        "package com.example\n"
+        "\n"
+        "class Repository {\n"
+        "    fun save(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "    }\n"
+        "\n"
+        "    fun store(value: Int) {\n"
+        "        expenseDao.insert(value)\n"
+        "    }\n"
+        "}\n"
+    )
+    _write_repo(
+        tmp_path, {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: repo_source}
+    )
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "save", reason="r-one"),  # 0
+        _legacy_entry(REPO_KT, "Repository", "save", reason="r-two"),  # 1
+        _legacy_entry(  # 2: mediated classification of store
+            REPO_KT,
+            "Repository",
+            "store",
+            barrier_required=False,
+            barrier_via="WorkerExecutionGuard",
+        ),
+        _legacy_entry(  # 3: helper classification of store -> conflict
+            REPO_KT,
+            "Repository",
+            "store",
+            barrier_required=False,
+        ),
+        _legacy_entry(REPO_KT, "Repository", "save", reason="r-three"),  # 4
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.input_count == 5
+    # save-key folds indices 0, 1, 4 into index 0's verbatim entry; the
+    # conflicted store-key emits NOTHING.
+    assert len(result.resolved) == 1
+    assert result.resolved[0].index == 0
+    assert result.resolved[0].entry.reason == "r-one"
+    assert [(row.index, row.status) for row in result.unresolved] == [
+        (2, STATUS_AUTHORIZATION_METADATA_CONFLICT),
+        (3, STATUS_AUTHORIZATION_METADATA_CONFLICT),
+    ]
+    save_key = (
+        REPO_KT
+        + "|com.example.Repository|function|save|null|Int"
+        + "|expenseDao|com.example.ExpenseDao|insert"
+    )
+    assert dict(result.emission_indices) == {save_key: (0, 1, 4)}
+    assert find_duplicate_mutation_keys(result) == ()
 
 
 # ── Artifact/CLI contract against the real repository ────────────────────────
@@ -843,6 +1248,7 @@ import yaml  # noqa: E402
 
 from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
     MIGRATION_STATUSES_EXTENDED,
+    production_source_manifest_digest,
 )
 from scripts.db_guard.policy_v2_loader import load_policy_v2  # noqa: E402
 
@@ -1025,27 +1431,151 @@ def test_no_fixed_result_totals_enforced(tmp_path):
     counts = payload["counts"]
     assert counts["resolved"] == len(payload["resolved"])
     assert counts["unresolved"] == len(payload["unresolved"])
-    # Every input entry surfaces as at least one row (a splitting entry can
-    # emit several resolved rows), so the row indexes must cover exactly the
-    # input range — consistency is computed from the rows, never pinned to
+    # Since Slice 5, folded reason-variant indices have NO resolved REPORT
+    # row of their own (their emission folded into the lowest-index row),
+    # so the report rows alone no longer cover the input range.  The
+    # embedded accounting section ties EVERY input index to exactly one
+    # outcome — consistency is computed from the evidence, never pinned to
     # fixed artifact totals.
-    indexes = {row["index"] for row in payload["resolved"]} | {
+    report_indexes = {row["index"] for row in payload["resolved"]} | {
         row["index"] for row in payload["unresolved"]
     }
-    assert indexes == set(range(counts["input"]))
+    assert report_indexes <= set(range(counts["input"]))
+    assert "accounting" in payload
+    records = payload["accounting"]["records"]
+    assert {record["index"] for record in records} == set(
+        range(counts["input"])
+    )
+    resolved_records = {
+        record["index"]
+        for record in records
+        if record["outcome"] == "RESOLVED"
+    }
+    unresolved_records = {
+        record["index"]
+        for record in records
+        if record["outcome"] == "UNRESOLVED"
+    }
+    assert not (resolved_records & unresolved_records)
+    assert resolved_records | unresolved_records == set(range(counts["input"]))
+    # Every kept report row's index is a RESOLVED accounting record.
+    assert {
+        row["index"] for row in payload["resolved"]
+    } <= resolved_records
 
 
-def test_real_checked_in_candidate_is_reproducible(tmp_path):
-    """Regenerated candidate bytes must equal the tracked candidate artifact.
+def test_real_run_distribution_pinned_and_reproducible(tmp_path):
+    """Pin the CURRENT post-Slice-5 truth of the real repository run.
 
-    NOTE: this passes only after Step 8 regenerates the tracked candidate
-    (``config/guards/db_ownership_policy.signatures.candidate.yml``) through
-    this very tool; until then this test documents the required end state.
+    The checked-in tracked candidate
+    (``config/guards/db_ownership_policy.signatures.candidate.yml``) is
+    still the stale GR-02-era artifact; byte-equality with it is deferred
+    to the Step 8 regeneration through ``--generate`` and is NOT asserted
+    here.  Pinned instead — derived from the verified current-tree
+    structure (probe10 + policy audit) and pinned as exact observable CLI
+    numbers:
+
+    * 99 inputs; 51 unresolved indices -> 48 resolving indices;
+    * the ONLY same-key emission groups are (a) indices 40-42 — three
+      scenario-reason variants of BudgetRepository.addBudget's insert
+      trio (3 keys x 3 rows each) and (b) indices 22-27 — six per-column
+      update rows on TransactionLifecycleCoordinator's ownership updater
+      (6 keys x 6 rows each), all sharing barrierMode/owner/linkedIssue;
+    * pre-dedupe the run emits 84 resolved rows
+      (3*3 + 6*6 + 39 single-carried keys); Slice 5 folding removes every
+      redundant emission — 3*(3-1) + 6*(6-1) = 36 — leaving EXACTLY 48
+      unique keys.  (The naive 84-9=75 bound miscounts a key carried by n
+      rows as one redundant row instead of n-1.);
+    * duplicates=0 and exit 1 (visible debt, candidate writing allowed);
+    * the accounting records partition range(99) into 48 RESOLVED (kept
+      emitters plus folded reason-variant indices) and 51 UNRESOLVED;
+    * byte-for-byte reproducibility of a second run.
     """
-    regen = tmp_path / "regen.yml"
-    completed = _run_cli("--write-candidate", "--output", str(regen))
-    assert completed.returncode in (0, 1)
-    assert regen.read_bytes() == TRACKED_CANDIDATE.read_bytes()
+    out_dir = tmp_path / "dist"
+    out_dir.mkdir()
+    report = out_dir / "report.json"
+    candidate = out_dir / "candidate.yml"
+    accounting = out_dir / "accounting.json"
+    completed = _run_cli(
+        "--write-candidate",
+        "--output",
+        str(candidate),
+        "--accounting-out",
+        str(accounting),
+        "--report",
+        str(report),
+    )
+    # Visible debt (unresolved rows exist) with candidate writing allowed:
+    # Slice 5 folding removed the duplicate-key exit-2 collision.
+    assert completed.returncode == 1
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    counts = payload["counts"]
+    assert counts["input"] == 99
+    assert counts["resolved"] == 48
+    assert counts["unresolved"] == 51
+    assert payload["duplicateMutationKeys"] == []
+    document, errors = load_policy_v2(candidate)
+    assert errors == []
+    assert document
+    # One entry per unique canonical mutation key, and the report's
+    # resolved count IS that unique-entry count (deduped at emission).
+    candidate_keys = {
+        entry.mutation_key().canonical_key() for entry in document
+    }
+    assert len(candidate_keys) == len(document) == 48
+    assert counts["resolved"] == len(document)
+    # Folded reason-variant indices keep NO resolved report row: only the
+    # lowest-index keeper of each fold group remains (39 single-carried
+    # keys plus one keeper index for group (a)'s 3 keys and one for group
+    # (b)'s 6 keys -> 41 distinct report indexes).
+    report_resolved_indexes = {
+        row["index"] for row in payload["resolved"]
+    }
+    report_unresolved_indexes = {
+        row["index"] for row in payload["unresolved"]
+    }
+    assert not (report_resolved_indexes & report_unresolved_indexes)
+    assert len(report_resolved_indexes) == 41
+    # The accounting records tie EVERY legacy index to exactly one outcome.
+    records = payload["accounting"]["records"]
+    assert len(records) == 99
+    resolved_indexes = {
+        record["index"]
+        for record in records
+        if record["outcome"] == "RESOLVED"
+    }
+    unresolved_indexes = {
+        record["index"]
+        for record in records
+        if record["outcome"] == "UNRESOLVED"
+    }
+    assert not (resolved_indexes & unresolved_indexes)
+    assert resolved_indexes | unresolved_indexes == set(range(99))
+    assert len(resolved_indexes) == 48
+    assert report_resolved_indexes <= resolved_indexes
+    # Every folded index's RESOLVED record carries the shared key of its
+    # keeper's candidate entry.
+    record_keys_by_index = {
+        record["index"]: set(record["mutationKeys"]) for record in records
+    }
+    for index in resolved_indexes - report_resolved_indexes:
+        assert record_keys_by_index[index]
+        assert record_keys_by_index[index] <= candidate_keys
+    # A second run reproduces both artifacts byte-for-byte.
+    out_dir_two = tmp_path / "dist-two"
+    out_dir_two.mkdir()
+    report_two = out_dir_two / "report.json"
+    candidate_two = out_dir_two / "candidate.yml"
+    completed_two = _run_cli(
+        "--write-candidate",
+        "--output",
+        str(candidate_two),
+        "--report",
+        str(report_two),
+    )
+    assert completed_two.returncode == 1
+    assert candidate_two.read_bytes() == candidate.read_bytes()
+    assert report_two.read_bytes() == report.read_bytes()
 
 
 # ── Appended: synthetic tmp legacy policies through the real CLI ─────────────
@@ -1054,10 +1584,13 @@ def test_real_checked_in_candidate_is_reproducible(tmp_path):
 # to the real CLI via ``--policy``; analysis stays pinned to the REAL worktree
 # because the script derives its repo root from its own ``__file__``.  They pin
 # the remaining exit-code table cells end to end:
-#   * duplicate mutation keys -> 2, candidate never written;
-#   * malformed YAML input    -> 2, nothing written;
-#   * fully resolved batch    -> 0, schema-valid candidate written;
-#   * zero-resolved batch     -> 1, candidate never written.
+#   * identical duplicate legacy rows -> deduped to one entry, candidate
+#     written (exit 0/1);
+#   * CONFLICTING same-key emissions  -> 1, AUTHORIZATION_METADATA_CONFLICT
+#     debt on every conflicting index, nothing written;
+#   * malformed YAML input            -> 2, nothing written;
+#   * fully resolved batch            -> 0, schema-valid candidate written;
+#   * zero-resolved batch             -> 1, candidate never written.
 
 
 def _probe_resolving_legacy_entry(report_path: Path):
@@ -1090,7 +1623,14 @@ def _probe_resolving_legacy_entry(report_path: Path):
     }
 
 
-def test_duplicate_mutation_key_exits_2_via_cli(tmp_path):
+def test_identical_duplicate_rows_via_cli_dedupe_and_write(tmp_path):
+    """Identical legacy re-authorizations dedupe; the candidate is written.
+
+    Before Slice 4 this exact input tripped duplicateMutationKeys=9-style
+    collisions and exited 2.  Identical emissions now fold into one entry
+    per unique canonical mutation key, so the run succeeds and the written
+    candidate carries exactly ONE entry.
+    """
     entry = _probe_resolving_legacy_entry(tmp_path / "probe-report.json")
     policy = tmp_path / "duplicate-policy.yml"
     policy.write_text(
@@ -1105,10 +1645,49 @@ def test_duplicate_mutation_key_exits_2_via_cli(tmp_path):
         "--output",
         str(candidate),
     )
-    # Duplicate mutation keys are a collision failure: exit 2, never a write.
-    assert completed.returncode == 2
+    assert completed.returncode in (0, 1)
+    assert "Traceback" not in completed.stderr
+    assert candidate.exists()
+    document, errors = load_policy_v2(candidate)
+    assert errors == []
+    assert len(document) == 1
+
+
+def test_conflicting_metadata_rows_surface_as_conflict_debt_via_cli(tmp_path):
+    """Same canonical key with divergent barrier metadata: conflict debt.
+
+    Slice 5 converts genuine metadata conflicts into closed-vocabulary
+    UNRESOLVED rows instead of colliding candidates: both indices become
+    AUTHORIZATION_METADATA_CONFLICT debt, nothing is emitted (zero
+    resolved rows), so the run exits 1 with visible debt and writes no
+    candidate.
+    """
+    entry = _probe_resolving_legacy_entry(tmp_path / "probe-report.json")
+    mediated = dict(entry)
+    mediated["barrier_required"] = False
+    mediated["barrier_via"] = "WorkerExecutionGuard"
+    helper = dict(entry)
+    helper["barrier_required"] = False
+    helper.pop("barrier_via", None)
+    policy = tmp_path / "conflict-policy.yml"
+    policy.write_text(
+        yaml.safe_dump({"entries": [mediated, helper]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    candidate = tmp_path / "candidate.yml"
+    completed = _run_cli(
+        "--write-candidate",
+        "--policy",
+        str(policy),
+        "--output",
+        str(candidate),
+    )
+    assert completed.returncode == 1
     assert "Traceback" not in completed.stderr
     assert not candidate.exists()
+    # The bounded stdout summary names the closed conflict status with the
+    # exact count of conflicting indices.
+    assert "unresolved AUTHORIZATION_METADATA_CONFLICT=2" in completed.stdout
 
 
 def test_malformed_yaml_policy_exits_2_no_write(tmp_path):
@@ -1458,6 +2037,136 @@ def test_unnormalizable_hint_fails_closed(tmp_path):
     assert STATUS_CALLABLE_KIND_UNSUPPORTED == "CALLABLE_KIND_UNSUPPORTED"
 
 
+# ── Appended (PR-GR-05 Slice 3): narrow type-resolution repair ────────────────
+#
+# Single-family repair: a sibling declaration whose project-local types the
+# closed-world resolver cannot resolve used to abort the WHOLE owner scan,
+# surfacing as PARSER_UNCERTAIN and poisoning rows whose own target resolves
+# exactly.  The migration path now discovers tolerantly, so:
+#   * a row whose target callable resolves EXACTLY migrates normally;
+#   * a row whose target itself carries unresolved types becomes exactly one
+#     PARSER_UNSUPPORTED debt row — never silent success;
+#   * scanner/evidence callers keep the default strict fail-closed mode.
+
+
+UNRESOLVED_SIBLING_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    fun a(unresolvable: ProjectType) {\n"
+    "        expenseDao.insert(1)\n"
+    "    }\n"
+    "\n"
+    "    fun b(x: String) {\n"
+    "        expenseDao.insert(1)\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def test_row_beside_unresolved_type_declaration_now_resolves(tmp_path):
+    """Negative fixture proving the previous false failure.
+
+    Before the Slice 3 repair this single-entry batch was one whole-file
+    PARSER_UNCERTAIN row: discovery aborted on fun a's unresolvable
+    ProjectType parameter even though fun b's own signature resolves
+    exactly.  It must now migrate normally.
+    """
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: UNRESOLVED_SIBLING_REPO_SOURCE},
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "b", params=("String",))]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.method == "b"
+    assert entry.owner_fqcn == "com.example.Repository"
+    assert entry.parameter_types == ("String",)
+    assert entry.dao_accessor == "expenseDao"
+    assert entry.dao_fqcn == "com.example.ExpenseDao"
+    assert entry.operation == "insert"
+
+
+def test_row_targeting_unresolved_type_callable_is_parser_unsupported(tmp_path):
+    """The unresolved target gets the NEW explicit status, never success."""
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: UNRESOLVED_SIBLING_REPO_SOURCE},
+    )
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "a", params=("ProjectType",))
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.input_count == 1
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_PARSER_UNSUPPORTED
+    assert STATUS_PARSER_UNSUPPORTED == "PARSER_UNSUPPORTED"
+    assert row.detail == ""
+    assert row.index == 0
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "a"
+
+
+def test_unresolved_sibling_splits_batch_into_resolved_and_unsupported(tmp_path):
+    """Sibling rows are judged independently within one owner."""
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: UNRESOLVED_SIBLING_REPO_SOURCE},
+    )
+    entries = [
+        _legacy_entry(REPO_KT, "Repository", "b", params=("String",)),
+        _legacy_entry(REPO_KT, "Repository", "a", params=("ProjectType",)),
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.input_count == 2
+    assert len(result.resolved) == 1
+    assert len(result.unresolved) == 1
+    assert result.resolved[0].entry.method == "b"
+    assert result.unresolved[0].status == STATUS_PARSER_UNSUPPORTED
+    assert result.unresolved[0].legacy_method == "a"
+    assert result.unresolved[0].index == 1
+
+
+NESTED_OWNER_UNRESOLVED_TYPES_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    class Nested {\n"
+    "        fun inner(value: ProjectType) {}\n"
+    "    }\n"
+    "\n"
+    "    fun save(value: Int) {\n"
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def test_nested_owner_with_unresolved_types_does_not_block_owner_row(tmp_path):
+    """The merged DAO-map's nested-owner rescan is tolerant too.
+
+    The class-scope DAO variable map rescans every fully contained inner
+    owner; before the repair that strict rescan aborted on Nested.inner's
+    unresolvable parameter and failed the unrelated Repository.save row as
+    PARSER_UNCERTAIN.
+    """
+    _write_repo(
+        tmp_path,
+        {
+            DAO_KT: EXPENSE_DAO_SOURCE,
+            REPO_KT: NESTED_OWNER_UNRESOLVED_TYPES_REPO_SOURCE,
+        },
+    )
+    entries = [_legacy_entry(REPO_KT, "Repository", "save")]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.method == "save"
+    assert entry.owner_fqcn == "com.example.Repository"
+    assert entry.dao_fqcn == "com.example.ExpenseDao"
+
+
 # ── Appended (PR-GR-03 Slice D): Kotlin-root sources through the manifest ─────
 
 
@@ -1513,3 +2222,300 @@ def test_kotlin_root_source_file_resolves_through_manifest(tmp_path):
     assert entry.dao_accessor == "expenseDao"
     assert entry.dao_fqcn == "com.example.ExpenseDao"
     assert entry.operation == "insert"
+
+
+# ── Appended (PR-GR-05 Slice 4): tracked-artifact generation mode ─────────────
+#
+# ``--generate`` writes BOTH tracked artifacts (candidate + standalone
+# accounting) from the SAME run; ``--write-candidate --accounting-out PATH``
+# (alias ``--write-accounting``) pairs them at explicit paths.  Contract
+# under test: crosswalk re-verified over the exact written bytes BEFORE any
+# write; header fields from the real run (source policy path/sha256, tree
+# manifest digest, candidate sha256 of the exact bytes); deterministic
+# ordering; staged temp-first writes landing both-or-nothing; collisions,
+# duplicate keys, malformed output, and pair mismatches rejected with
+# nothing written.  Every run overrides both targets into ``tmp_path`` so
+# the repository itself is never mutated.
+
+
+def _run_generate(out_dir: Path):
+    """``--generate`` run with both targets overridden into ``out_dir``.
+
+    Returns ``(completed, candidate_path, accounting_path)``.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    candidate = out_dir / "candidate.yml"
+    accounting = out_dir / "accounting.json"
+    completed = _run_cli(
+        "--generate",
+        "--output",
+        str(candidate),
+        "--accounting-out",
+        str(accounting),
+    )
+    return completed, candidate, accounting
+
+
+def _conflict_policy(tmp_path: Path) -> Path:
+    """A legacy policy whose two rows authorize one mutation with
+    conflicting barrier metadata (workerMediated vs helper)."""
+    entry = _probe_resolving_legacy_entry(tmp_path / "gen-probe-report.json")
+    mediated = dict(entry)
+    mediated["barrier_required"] = False
+    mediated["barrier_via"] = "WorkerExecutionGuard"
+    helper = dict(entry)
+    helper["barrier_required"] = False
+    helper.pop("barrier_via", None)
+    policy = tmp_path / "gen-conflict-policy.yml"
+    policy.write_text(
+        yaml.safe_dump({"entries": [mediated, helper]}, sort_keys=False),
+        encoding="utf-8",
+    )
+    return policy
+
+
+def test_generate_writes_paired_artifacts_from_one_run(tmp_path):
+    completed, candidate, accounting = _run_generate(tmp_path / "gen")
+    assert completed.returncode in (0, 1)
+    assert candidate.exists()
+    assert accounting.exists()
+    payload = json.loads(accounting.read_text(encoding="utf-8"))
+    # Header fields filled from the REAL run.
+    assert payload["schema"] == "db-policy-migration-accounting"
+    assert payload["version"] == 1
+    assert payload["sourcePolicyPath"] == (
+        "config/guards/db_ownership_policy.yml"
+    )
+    assert payload["sourcePolicySha256"] == hashlib.sha256(
+        ACTIVE_POLICY.read_bytes()
+    ).hexdigest()
+    assert payload["sourceTreeSha"] == production_source_manifest_digest(
+        REPO_ROOT
+    )
+    # candidateSha256 covers the EXACT written candidate bytes.
+    assert payload["candidateSha256"] == hashlib.sha256(
+        candidate.read_bytes()
+    ).hexdigest()
+    # Crosswalk re-verified independently: the union of record keys equals
+    # the canonical key set of the written candidate, and every record
+    # index partitions range(inputCount).
+    document, errors = load_policy_v2(candidate)
+    assert errors == []
+    assert document
+    candidate_keys = {
+        entry.mutation_key().canonical_key() for entry in document
+    }
+    record_keys = {
+        key
+        for record in payload["records"]
+        for key in record["mutationKeys"]
+    }
+    assert record_keys == candidate_keys
+    assert len(candidate_keys) == len(document)
+    assert payload["inputCount"] == 99
+    assert len(payload["records"]) == 99
+    resolved_indexes = {
+        record["index"]
+        for record in payload["records"]
+        if record["outcome"] == "RESOLVED"
+    }
+    unresolved_indexes = {
+        record["index"]
+        for record in payload["records"]
+        if record["outcome"] == "UNRESOLVED"
+    }
+    assert not (resolved_indexes & unresolved_indexes)
+    assert resolved_indexes | unresolved_indexes == set(range(99))
+
+
+def test_generate_is_byte_deterministic(tmp_path):
+    first_completed, first_candidate, first_accounting = _run_generate(
+        tmp_path / "gen-one"
+    )
+    second_completed, second_candidate, second_accounting = _run_generate(
+        tmp_path / "gen-two"
+    )
+    assert first_completed.returncode in (0, 1)
+    assert second_completed.returncode in (0, 1)
+    assert first_candidate.read_bytes() == second_candidate.read_bytes()
+    assert (
+        first_accounting.read_bytes() == second_accounting.read_bytes()
+    )
+
+
+def test_generate_collision_with_active_policy_writes_nothing(tmp_path):
+    before = _fingerprint(ACTIVE_POLICY)
+    out_dir = tmp_path / "gen"
+    out_dir.mkdir()
+    accounting = out_dir / "accounting.json"
+    for collision_flag, collision_path, other_flag, other_path in (
+        ("--output", ACTIVE_POLICY, "--accounting-out", accounting),
+        ("--accounting-out", ACTIVE_POLICY, "--output", out_dir / "c.yml"),
+    ):
+        completed = _run_cli(
+            "--generate",
+            collision_flag,
+            str(collision_path),
+            other_flag,
+            str(other_path),
+        )
+        assert completed.returncode == 2
+        assert "Traceback" not in completed.stderr
+        assert not accounting.exists()
+        assert not (out_dir / "c.yml").exists()
+    assert _fingerprint(ACTIVE_POLICY) == before
+
+
+def test_generate_rejects_candidate_accounting_path_collision(tmp_path):
+    out_dir = tmp_path / "gen"
+    out_dir.mkdir()
+    same = out_dir / "same.artifact"
+    completed = _run_cli(
+        "--generate",
+        "--output",
+        str(same),
+        "--accounting-out",
+        str(same),
+    )
+    assert completed.returncode == 2
+    assert "Traceback" not in completed.stderr
+    # The collision guard fires before any analysis or write begins.
+    assert not same.exists()
+    assert list(out_dir.iterdir()) == []
+
+
+def test_generate_conflicting_metadata_writes_neither_artifact(tmp_path):
+    policy = _conflict_policy(tmp_path)
+    out_dir = tmp_path / "gen"
+    out_dir.mkdir()
+    candidate = out_dir / "candidate.yml"
+    accounting = out_dir / "accounting.json"
+    completed = _run_cli(
+        "--generate",
+        "--policy",
+        str(policy),
+        "--output",
+        str(candidate),
+        "--accounting-out",
+        str(accounting),
+    )
+    # Genuine metadata conflicts become conflict debt: exit 1 (visible
+    # debt, zero resolved rows) and NEITHER artifact of the pair is
+    # written — a candidate may never be produced from a conflicted batch.
+    assert completed.returncode == 1
+    assert "Traceback" not in completed.stderr
+    assert not candidate.exists()
+    assert not accounting.exists()
+    assert list(out_dir.iterdir()) == []
+
+
+def test_generate_zero_resolved_writes_neither_artifact(tmp_path):
+    policy = tmp_path / "missing-source-policy.yml"
+    policy.write_text(
+        yaml.safe_dump(
+            {
+                "entries": [
+                    _legacy_entry(
+                        "app/src/main/java/com/example/DoesNotExist.kt",
+                        "DoesNotExist",
+                        "missing",
+                    )
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "gen"
+    out_dir.mkdir()
+    candidate = out_dir / "candidate.yml"
+    accounting = out_dir / "accounting.json"
+    completed = _run_cli(
+        "--generate",
+        "--policy",
+        str(policy),
+        "--output",
+        str(candidate),
+        "--accounting-out",
+        str(accounting),
+    )
+    assert completed.returncode == 1
+    assert not candidate.exists()
+    assert not accounting.exists()
+
+
+def test_generate_staging_failure_leaves_no_partial_writes(tmp_path):
+    """Both-or-neither: a staging failure after the candidate temp is
+    already staged must clean it up and swap NOTHING."""
+    out_dir = tmp_path / "gen"
+    out_dir.mkdir()
+    blocked = out_dir / "blocked"
+    blocked.write_text("occupied", encoding="utf-8")
+    candidate = out_dir / "candidate.yml"
+    accounting = blocked / "accounting.json"  # parent is a FILE
+    completed = _run_cli(
+        "--generate",
+        "--output",
+        str(candidate),
+        "--accounting-out",
+        str(accounting),
+    )
+    assert completed.returncode == 2
+    assert "Traceback" not in completed.stderr
+    assert not candidate.exists()
+    # Only the blocking file remains: no artifact, no leftover temp.
+    assert sorted(item.name for item in out_dir.iterdir()) == ["blocked"]
+    assert not any(
+        item.name.endswith((".tmp", ".part")) for item in out_dir.rglob("*")
+    )
+
+
+def test_write_candidate_with_accounting_out_pairs_report_and_artifacts(
+    tmp_path,
+):
+    out_dir = tmp_path / "pair"
+    out_dir.mkdir()
+    candidate = out_dir / "candidate.yml"
+    accounting = out_dir / "accounting.json"
+    report = out_dir / "report.json"
+    completed = _run_cli(
+        "--write-candidate",
+        "--output",
+        str(candidate),
+        "--accounting-out",
+        str(accounting),
+        "--report",
+        str(report),
+    )
+    assert completed.returncode in (0, 1)
+    assert candidate.exists()
+    assert accounting.exists()
+    assert report.exists()
+    report_payload = json.loads(report.read_text(encoding="utf-8"))
+    accounting_payload = json.loads(accounting.read_text(encoding="utf-8"))
+    # The report embeds exactly the accounting artifact written beside the
+    # candidate — one run, one evidence payload.
+    assert report_payload["accounting"] == accounting_payload
+    assert accounting_payload["candidateSha256"] == hashlib.sha256(
+        candidate.read_bytes()
+    ).hexdigest()
+
+
+def test_write_accounting_alias_flag_writes_accounting(tmp_path):
+    out_dir = tmp_path / "alias"
+    out_dir.mkdir()
+    candidate = out_dir / "candidate.yml"
+    accounting = out_dir / "accounting.json"
+    completed = _run_cli(
+        "--write-candidate",
+        "--output",
+        str(candidate),
+        "--write-accounting",
+        str(accounting),
+    )
+    assert completed.returncode in (0, 1)
+    assert candidate.exists()
+    assert accounting.exists()
+    payload = json.loads(accounting.read_text(encoding="utf-8"))
+    assert payload["schema"] == "db-policy-migration-accounting"
+    assert payload["inputCount"] == 99

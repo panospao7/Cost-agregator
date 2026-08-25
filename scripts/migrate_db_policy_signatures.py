@@ -7,6 +7,21 @@ Thin CLI adapter over ``scripts.db_guard.policy_v2_candidate`` (steps 3, 4,
 loading, deterministic report/candidate serialization, atomic writes, and
 the exit-code table.
 
+Since PR-GR-05 Slice 4 the adapter also owns TRACKED ARTIFACT GENERATION:
+``--write-candidate --accounting-out PATH`` (alias ``--write-accounting``)
+writes the candidate together with its standalone accounting artifact from
+the SAME run, and ``--generate`` writes both tracked artifacts to their
+canonical repository paths.  A requested pair is crosswalk-verified
+against each other before any byte is written and staged temp-first so it
+lands both-or-nothing.
+
+Since PR-GR-05 Slice 5 the migration itself folds every same-metadata
+re-authorization into one candidate entry (lowest-index reason text kept)
+and converts genuine authorization-metadata conflicts into closed
+``AUTHORIZATION_METADATA_CONFLICT`` debt rows instead of colliding
+candidates; :func:`find_duplicate_mutation_keys` remains as a
+defense-in-depth exit-2 guard against leaked contradictions.
+
 Privacy posture: reports and candidates carry identity fields, controlled
 status constants, and counts only — never raw source text, absolute paths,
 exception text, SQL, or user data.  Stderr diagnostics are fixed bounded
@@ -15,6 +30,7 @@ strings; stdout carries counts plus controlled status constants only.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -37,11 +53,24 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
+    build_accounting_artifact,
     find_duplicate_mutation_keys,
     migrate_policy,
+    production_source_manifest_digest,
 )
+from scripts.db_guard.policy_v2_loader import build_policy_entry  # noqa: E402
 
 DEFAULT_POLICY = "config/guards/db_ownership_policy.yml"
+
+#: Canonical tracked artifact paths used by ``--generate`` (PR-GR-05
+#: Slice 4).  Both are repository-relative POSIX and overridable per run
+#: with ``--output`` / ``--accounting-out`` so tests never touch the repo.
+_TRACKED_CANDIDATE_RELPATH = (
+    "config/guards/db_ownership_policy.signatures.candidate.yml"
+)
+_TRACKED_ACCOUNTING_RELPATH = (
+    "config/guards/db_ownership_policy.signatures.accounting.json"
+)
 
 _REPORT_SCHEMA = "db-policy-migration-report"
 _REPORT_VERSION = 2
@@ -56,6 +85,9 @@ _MSG_INPUT = "malformed or unreadable DB policy input"
 _MSG_INFRASTRUCTURE = "db policy migration infrastructure failure"
 _MSG_OUTPUT_REQUIRED = "--write-candidate requires --output"
 _MSG_PATH_COLLISION = "output/report paths collide with the active policy or each other"
+_MSG_ACCOUNTING_UNAVAILABLE = "accounting artifact could not be assembled from this run"
+_MSG_MALFORMED_OUTPUT = "generated candidate failed verification"
+_MSG_PAIR_MISMATCH = "candidate and accounting artifacts disagree"
 
 
 class CliFailure(Exception):
@@ -129,9 +161,19 @@ def _unresolved_view(row: Any) -> dict[str, Any]:
 
 
 def _build_report_payload(
-    result: Any, duplicates: tuple[str, ...], policy_identifier: str
+    result: Any,
+    duplicates: tuple[str, ...],
+    policy_identifier: str,
+    accounting: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Deterministic v2 report payload; identity fields and counts only."""
+    """Deterministic v2 report payload; identity fields and counts only.
+
+    ``accounting`` is an optional additive section (PR-GR-05 Slice 1): the
+    serialized :class:`AccountingArtifact` tying every legacy row to its
+    candidate keys or closed debt status.  When its inputs cannot be
+    produced deterministically the section is omitted entirely rather than
+    approximated.
+    """
     resolved = [_resolved_view(row) for row in result.resolved]
     resolved.sort(
         key=lambda item: (
@@ -143,7 +185,7 @@ def _build_report_payload(
     )
     unresolved = [_unresolved_view(row) for row in result.unresolved]
     unresolved.sort(key=lambda item: (item["index"], item["status"]))
-    return {
+    payload = {
         "schema": _REPORT_SCHEMA,
         "version": _REPORT_VERSION,
         "policy": policy_identifier,
@@ -156,6 +198,130 @@ def _build_report_payload(
         "unresolved": unresolved,
         "duplicateMutationKeys": list(duplicates),
     }
+    if accounting is not None:
+        payload["accounting"] = accounting
+    return payload
+
+
+# ── Accounting wiring (PR-GR-05 Slice 1) ─────────────────────────────────────
+
+
+def _sha256_bytes(data: bytes) -> str:
+    """Lowercase hex sha256 of ``data``."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def _build_accounting_section(
+    result: Any,
+    policy_path: Path,
+    repo_root: Path,
+    candidate_text: str | None,
+) -> dict[str, Any] | None:
+    """Best-effort accounting artifact payload; ``None`` when unavailable.
+
+    Builds the :class:`AccountingArtifact` for this batch from real input
+    hashes: the legacy policy bytes, the declared production tree manifest
+    digest, and — when a candidate document was produced — the exact
+    candidate text.  Any failure to assemble a fully valid artifact is
+    swallowed into omission (never approximation), so conversion semantics
+    and exit codes are untouched.  Generation runs that REQUEST a
+    standalone accounting artifact use :func:`_require_accounting_section`
+    instead, which fails closed.
+    """
+    try:
+        policy_sha256 = _sha256_bytes(policy_path.read_bytes())
+        source_tree_sha = production_source_manifest_digest(repo_root)
+        if source_tree_sha is None:
+            return None
+        candidate_sha256 = (
+            _sha256_bytes(candidate_text.encode("utf-8"))
+            if candidate_text is not None
+            else None
+        )
+        artifact = build_accounting_artifact(
+            result,
+            [row.entry for row in result.resolved],
+            source_policy_path=_policy_identifier(policy_path, repo_root),
+            source_policy_sha256=policy_sha256,
+            source_tree_sha=source_tree_sha,
+            candidate_sha256=candidate_sha256,
+        )
+        return artifact.to_dict()
+    except Exception:
+        # Accounting is additive evidence and must never change conversion
+        # semantics or exit codes: ANY failure to assemble a fully valid
+        # artifact (unreadable policy bytes, undecidable tree manifest,
+        # contradictory batch, unexpected internal error) omits the section
+        # instead of failing the migration run.  Nothing is logged here —
+        # the report simply carries no "accounting" key.
+        return None
+
+
+def _require_accounting_section(
+    result: Any,
+    policy_path: Path,
+    repo_root: Path,
+    candidate_text: str,
+) -> dict[str, Any]:
+    """Mandatory accounting assembly for generation runs; fails closed.
+
+    Unlike the best-effort report section, a requested standalone
+    accounting artifact MUST be producible from THIS run: any assembly
+    failure raises :class:`CliFailure` so neither artifact of the pair is
+    written (both-or-neither).
+    """
+    payload = _build_accounting_section(
+        result, policy_path, repo_root, candidate_text
+    )
+    if payload is None:
+        raise CliFailure(_MSG_ACCOUNTING_UNAVAILABLE)
+    return payload
+
+
+def _verify_candidate_accounting_pair(
+    candidate_text: str, accounting_payload: dict[str, Any]
+) -> None:
+    """Re-verify the rendered candidate against its accounting artifact.
+
+    Both artifacts were produced from one run; before a single byte is
+    written this gate re-parses the EXACT candidate bytes that will be
+    written and fails closed on:
+
+    * malformed output — unparseable YAML, wrong document shape, or any
+      entry the ordinary v2 entry builder rejects;
+    * duplicate mutation keys inside the rendered document;
+    * candidate/accounting mismatch — the set of canonical mutation keys
+      in the rendered entries differs from the union of the accounting
+      records' keys (the Slice 1 crosswalk, re-verified over the written
+      bytes rather than in-memory objects).
+    """
+    try:
+        document = yaml.safe_load(candidate_text)
+    except yaml.YAMLError:
+        raise CliFailure(_MSG_MALFORMED_OUTPUT)
+    if (
+        not isinstance(document, dict)
+        or document.get("schemaVersion") != _V2_SCHEMA_VERSION
+        or not isinstance(document.get("entries"), list)
+        or not document["entries"]
+    ):
+        raise CliFailure(_MSG_MALFORMED_OUTPUT)
+    built_entries = []
+    for position, raw_entry in enumerate(document["entries"]):
+        entry, errors = build_policy_entry(raw_entry, position)
+        if entry is None or errors:
+            raise CliFailure(_MSG_MALFORMED_OUTPUT)
+        built_entries.append(entry)
+    keys = [entry.mutation_key().canonical_key() for entry in built_entries]
+    if len(set(keys)) != len(keys):
+        raise CliFailure(_MSG_MALFORMED_OUTPUT)
+    record_keys = {
+        key
+        for record in accounting_payload.get("records", [])
+        for key in record.get("mutationKeys", [])
+    }
+    if set(keys) != record_keys:
+        raise CliFailure(_MSG_PAIR_MISMATCH)
 
 
 def _entry_document(entry: Any) -> dict[str, Any]:
@@ -195,8 +361,8 @@ def _candidate_document(result: Any) -> dict[str, Any]:
 # ── Atomic writes ─────────────────────────────────────────────────────────────
 
 
-def _atomic_write_text(target: Path, text: str, temporary_prefix: str) -> None:
-    """Write ``text`` atomically: temp file in the target dir + os.replace."""
+def _stage_temporary(target: Path, text: str, temporary_prefix: str) -> str:
+    """Stage ``text`` in a fsynced temp file beside ``target``; no replace."""
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(
         prefix=temporary_prefix, suffix=".tmp", dir=str(target.parent), text=True
@@ -207,38 +373,119 @@ def _atomic_write_text(target: Path, text: str, temporary_prefix: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, target)
     except Exception:
         try:
             os.unlink(temporary)
         except OSError:
             pass
         raise
+    return temporary
+
+
+def _atomic_write_all(items: list[tuple[Path, str, str]]) -> None:
+    """Write every ``(target, text, temp_prefix)`` item as one group.
+
+    Every temp file is staged and fsynced FIRST; the ``os.replace`` swaps
+    happen only after ALL stages succeeded, so a staging failure (bad
+    target directory, unwritable path, ...) leaves every previous target
+    untouched — the candidate+accounting pair lands both-or-nothing.  Each
+    individual swap is atomic within its directory; a swap failure after
+    an earlier swap succeeded cannot be rolled back on ordinary
+    filesystems and is documented residual risk, not silently swallowed.
+    """
+    staged: list[tuple[str, Path]] = []
+    try:
+        for target, text, temporary_prefix in items:
+            staged.append(
+                (_stage_temporary(target, text, temporary_prefix), target)
+            )
+    except Exception:
+        for temporary, _target in staged:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+        raise
+    for temporary, target in staged:
+        os.replace(temporary, target)
+
+
+def _atomic_write_text(target: Path, text: str, temporary_prefix: str) -> None:
+    """Write ``text`` atomically: temp file in the target dir + os.replace."""
+    _atomic_write_all([(target, text, temporary_prefix)])
 
 
 # ── Path collision guard ──────────────────────────────────────────────────────
 
 
 def _validate_output_paths(
-    report: str | None, output: str | None, policy_path: Path
+    report: str | None,
+    output: str | Path | None,
+    policy_path: Path,
+    accounting: str | Path | None = None,
 ) -> None:
-    """Reject artifact collisions before analysis or either write begins."""
+    """Reject artifact collisions before analysis or any write begins.
+
+    Every requested artifact path (report, candidate output, standalone
+    accounting) must differ from the active policy and from each other.
+    """
     try:
         resolved_policy = policy_path.resolve()
         resolved_report = Path(report).resolve() if report else None
         resolved_output = Path(output).resolve() if output else None
+        resolved_accounting = (
+            Path(accounting).resolve() if accounting else None
+        )
     except (OSError, RuntimeError):
         raise CliFailure(_MSG_PATH_COLLISION)
-    if resolved_report is not None and resolved_report == resolved_policy:
-        raise CliFailure(_MSG_PATH_COLLISION)
-    if resolved_output is not None and resolved_output == resolved_policy:
-        raise CliFailure(_MSG_PATH_COLLISION)
-    if (
-        resolved_report is not None
-        and resolved_output is not None
-        and resolved_report == resolved_output
-    ):
-        raise CliFailure(_MSG_PATH_COLLISION)
+    named = [
+        ("report", resolved_report),
+        ("output", resolved_output),
+        ("accounting", resolved_accounting),
+    ]
+    for name, resolved in named:
+        if resolved is not None and resolved == resolved_policy:
+            raise CliFailure(_MSG_PATH_COLLISION)
+    for position, (first_name, first) in enumerate(named):
+        for second_name, second in named[position + 1 :]:
+            if (
+                first is not None
+                and second is not None
+                and first == second
+            ):
+                raise CliFailure(_MSG_PATH_COLLISION)
+
+
+def _resolve_write_targets(args: Any, repo_root: Path) -> tuple[
+    Path | None, Path | None
+]:
+    """Resolve ``(candidate_target, accounting_target)`` for this mode.
+
+    * ``--check``           -> ``(None, None)``: nothing is ever written;
+    * ``--generate``        -> both tracked artifact paths, each
+      overridable with ``--output`` / ``--accounting-out``;
+    * ``--write-candidate`` -> the required ``--output`` path plus the
+      standalone accounting path only when ``--accounting-out``
+      (alias ``--write-accounting``) was given.
+    """
+    if args.check:
+        return None, None
+    if args.generate:
+        candidate = (
+            Path(args.output)
+            if args.output
+            else repo_root / Path(*_TRACKED_CANDIDATE_RELPATH.split("/"))
+        )
+        accounting = (
+            Path(args.accounting_out)
+            if args.accounting_out
+            else repo_root / Path(*_TRACKED_ACCOUNTING_RELPATH.split("/"))
+        )
+        return candidate, accounting
+    return (
+        Path(args.output),
+        Path(args.accounting_out) if args.accounting_out else None,
+    )
 
 
 # ── Exit-code table ───────────────────────────────────────────────────────────
@@ -247,7 +494,10 @@ def _validate_output_paths(
 def _decide_exit(result: Any, duplicates: tuple[str, ...]) -> tuple[int, bool]:
     """Map the analysis outcome to ``(exit_code, may_write_candidate)``.
 
-    * duplicate mutation keys      -> 2, no candidate write;
+    * duplicate mutation keys      -> 2, no candidate write (defense-in-
+      depth guard only: since Slice 5, genuine authorization-metadata
+      conflicts surface as AUTHORIZATION_METADATA_CONFLICT debt rows and
+      never reach this branch from a real migration);
     * zero resolved rows           -> 1, no candidate write;
     * unresolved debt, some solved -> 1, candidate write allowed;
     * every row resolved           -> 0, candidate write allowed.
@@ -288,9 +538,20 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--write-candidate", action="store_true")
+    mode.add_argument(
+        "--generate",
+        action="store_true",
+        help="write BOTH tracked artifacts (candidate + accounting) atomically",
+    )
     parser.add_argument("--output")
     parser.add_argument("--policy", default=DEFAULT_POLICY)
     parser.add_argument("--report")
+    parser.add_argument(
+        "--accounting-out",
+        "--write-accounting",
+        dest="accounting_out",
+        help="standalone accounting artifact path (paired with the candidate)",
+    )
     args = parser.parse_args(argv)
     try:
         if yaml is None:
@@ -303,29 +564,68 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.write_candidate and not args.output:
             raise CliFailure(_MSG_OUTPUT_REQUIRED)
-        # In check mode the output path is ignored entirely.
+        candidate_target, accounting_target = _resolve_write_targets(
+            args, repo_root
+        )
+        # In check mode both targets are None: nothing is ever written.
         _validate_output_paths(
-            args.report, args.output if args.write_candidate else None, policy_path
+            args.report, candidate_target, policy_path, accounting_target
         )
         entries = _load_legacy_entries(policy_path)
         result = migrate_policy(entries, repo_root, dao_index=None)
         duplicates = find_duplicate_mutation_keys(result)
-        payload = _build_report_payload(
-            result, duplicates, _policy_identifier(policy_path, repo_root)
-        )
+        exit_code, may_write_candidate = _decide_exit(result, duplicates)
+        # The candidate text is rendered first so the accounting artifact
+        # hashes and crosswalk-verifies the EXACT bytes that will be
+        # written; the candidate+accounting pair is then staged temp-first
+        # and swapped together (both-or-neither) BEFORE the optional report.
+        candidate_text = None
+        accounting_payload = None
+        write_pair: list[tuple[Path, str, str]] = []
+        if candidate_target is not None and may_write_candidate:
+            candidate_text = yaml.safe_dump(
+                _candidate_document(result), sort_keys=False, allow_unicode=False
+            ).replace("\r\n", "\n")
+            if accounting_target is not None:
+                accounting_payload = _require_accounting_section(
+                    result, policy_path, repo_root, candidate_text
+                )
+                _verify_candidate_accounting_pair(
+                    candidate_text, accounting_payload
+                )
+                write_pair.append(
+                    (
+                        accounting_target,
+                        json.dumps(
+                            accounting_payload,
+                            sort_keys=False,
+                            separators=(",", ":"),
+                        )
+                        + "\n",
+                        ".db-policy-accounting-",
+                    )
+                )
+            write_pair.insert(
+                0, (candidate_target, candidate_text, ".db-policy-candidate-")
+            )
+        if write_pair:
+            _atomic_write_all(write_pair)
         if args.report:
+            report_accounting = accounting_payload
+            if report_accounting is None:
+                report_accounting = _build_accounting_section(
+                    result, policy_path, repo_root, candidate_text
+                )
+            payload = _build_report_payload(
+                result,
+                duplicates,
+                _policy_identifier(policy_path, repo_root),
+                accounting=report_accounting,
+            )
             _atomic_write_text(
                 Path(args.report),
                 json.dumps(payload, sort_keys=False, separators=(",", ":")) + "\n",
                 ".db-policy-report-",
-            )
-        exit_code, may_write_candidate = _decide_exit(result, duplicates)
-        if args.write_candidate and may_write_candidate:
-            text = yaml.safe_dump(
-                _candidate_document(result), sort_keys=False, allow_unicode=False
-            ).replace("\r\n", "\n")
-            _atomic_write_text(
-                Path(args.output), text, ".db-policy-candidate-"
             )
         _print_summary(result, duplicates)
         return exit_code

@@ -566,7 +566,41 @@ def _type_before(text: str, pos: int) -> tuple[str | None, int]:
     return m.group(1).replace(" ", ""), m.start()
 
 
-def find_callable_declarations(text: str, owner: OwnerDeclaration | str) -> tuple[CallableDeclaration, ...]:
+def _raw_parameter_type(param: str) -> str:
+    """Extract one parameter's raw type text exactly as written (no resolution)."""
+    if ":" not in param: _fail("SIGNATURE_UNSUPPORTED")
+    declaration, typ = param.split(":", 1)
+    vararg_prefix = bool(re.match(r"\s*vararg\b", declaration))
+    typ = typ.split("=", 1)[0].strip()
+    if vararg_prefix:
+        typ = "vararg " + typ
+    return typ
+
+
+def find_callable_declarations(
+    text: str,
+    owner: OwnerDeclaration | str,
+    *,
+    tolerate_unresolved_types: bool = False,
+) -> tuple[CallableDeclaration, ...]:
+    """Discover the member ``fun`` declarations of one owner, fail-closed.
+
+    With the default ``tolerate_unresolved_types=False``, a parameter or
+    receiver type the closed-world resolver cannot resolve aborts the whole
+    discovery with ``ParserError("TYPE_UNRESOLVED")`` -- the exact behavior
+    the scanner and evidence verifiers depend on.
+
+    With ``tolerate_unresolved_types=True`` (PR-GR-05 Slice 3 narrow
+    repair) ONLY that type-resolution family becomes non-fatal, and only
+    per declaration: the affected declaration is retained with status
+    ``"TYPE_UNRESOLVED"`` and its signature kept as grammar-normalized
+    simple names exactly as written (never resolved, never fabricated), so
+    discovery continues with the remaining declarations.  Retained
+    declarations can never act as exactly-resolved candidates downstream
+    (``resolve_callable`` reports ``SIGNATURE_UNSUPPORTED`` for them).
+    Every other failure family (masking, structure, signature grammar)
+    stays fatal in both modes.
+    """
     masked = mask_kotlin_source(text)
     owner_name = owner.owner if isinstance(owner, OwnerDeclaration) else owner
     environment = _type_environment(masked, owner_name)
@@ -612,17 +646,40 @@ def find_callable_declarations(text: str, owner: OwnerDeclaration | str) -> tupl
         pend = _pairs(masked, p, ")")
         params = [] if not masked[p + 1:pend].strip() else _split_top(masked[p + 1:pend])
         types: list[str] = []
-        for param in params:
-            if ":" not in param: _fail("SIGNATURE_UNSUPPORTED")
-            declaration, typ = param.split(":", 1)
-            vararg_prefix = bool(re.match(r"\s*vararg\b", declaration))
-            typ = typ.split("=", 1)[0].strip()
-            if vararg_prefix:
-                typ = "vararg " + typ
-            types.append(_resolve_type(typ, environment, allow_vararg=True))
-        receiver = receiver_text
-        if receiver is not None:
-            receiver = _resolve_type(receiver, environment)
+        unresolved_types = False
+        try:
+            for param in params:
+                types.append(_resolve_type(_raw_parameter_type(param), environment, allow_vararg=True))
+            receiver = receiver_text
+            if receiver is not None:
+                receiver = _resolve_type(receiver, environment)
+        except ParserError as error:
+            # Narrow repair (PR-GR-05 Slice 3): only the closed-world
+            # type-resolution family is tolerable, and only behind the
+            # explicit flag.  The raise happens mid-construction (per
+            # parameter / on the receiver), so the declaration is rebuilt
+            # from its raw parameter texts as grammar-normalized simple
+            # names -- faithful source spelling, never a resolved or
+            # fabricated identity -- and discovery continues after this
+            # one fun.
+            if not tolerate_unresolved_types or error.code != "TYPE_UNRESOLVED":
+                raise
+            try:
+                types = [
+                    normalize_type_text(_raw_parameter_type(param), allow_vararg=True)
+                    for param in params
+                ]
+                receiver = (
+                    normalize_type_text(receiver_text)
+                    if receiver_text is not None
+                    else None
+                )
+            except SignatureError as signature_error:
+                # Grammar validation of the retained simple names is NOT
+                # part of the tolerated family: stay fatal, exactly as the
+                # strict pass would have been when reaching that parameter.
+                _fail_signature(signature_error)
+            unresolved_types = True
         try:
             sig = FunctionSignature(canonical_source_path("app/src/main/unknown.kt"), owner_name, name, receiver, tuple(types))
         except SignatureError as error: _fail_signature(error)
@@ -640,6 +697,12 @@ def find_callable_declarations(text: str, owner: OwnerDeclaration | str) -> tupl
         status = "RESOLVED_EXACTLY"
         if q < scope_end and masked[q] == "=":
             status = "UNSUPPORTED_EXPRESSION_BODY"
+        if unresolved_types:
+            # Tolerant retention names the type-resolution fact -- the
+            # exact failure strict mode died on for this declaration.
+            # Either status keeps the declaration out of exact resolution;
+            # this one is the specific debt this slice exposes.
+            status = "TYPE_UNRESOLVED"
         result.append(CallableDeclaration(sig, owner_name, fm.start(), end, body, status))
     return tuple(result)
 

@@ -45,6 +45,20 @@ entries:
     \ exchangeRateDao.insertOrUpdateAll"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
+  ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
+  kind: function
+  method: doWork
+  receiver: null
+  parameterTypes: []
+  daoAccessor: privacyAuditDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
+  operation: insert
+  barrierMode: workerMediated
+  reason: WorkerExecutionGuard-mediated write protection; direct barrier not claimed.
+    Worker writes privacy audit events for retention purges.
+  owner: '@panospao7'
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/AnomalyAlertRepositoryImpl.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.AnomalyAlertRepositoryImpl
   kind: function
@@ -57,6 +71,92 @@ entries:
   operation: insert
   barrierMode: direct
   reason: "Canonical anomaly alert writer \u2014 inserts alert rows for spending anomalies"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: addBudget
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: insert
+  barrierMode: direct
+  reason: "Canonical budget creation \u2014 inactive-budget insert branch"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: addBudget
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: insertAndActivateCategory
+  barrierMode: direct
+  reason: "Canonical budget creation \u2014 inactive-budget insert branch"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: addBudget
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: insertAndActivateOverall
+  barrierMode: direct
+  reason: "Canonical budget creation \u2014 inactive-budget insert branch"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: deleteBudget
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: delete
+  barrierMode: direct
+  reason: "Canonical budget deletion \u2014 deletes the budget row"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: deleteBudget
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetForecastDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+  operation: deleteForecastsForBudget
+  barrierMode: direct
+  reason: "Canonical budget deletion \u2014 explicit forecast purge (belt-and-suspenders\
+    \ over CASCADE FK) inside transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateBudget
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateAndEnforceActiveScope
+  barrierMode: direct
+  reason: "Canonical budget update \u2014 resets notification flags and enforces active\
+    \ scope"
   owner: '@panospao7'
   linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
@@ -89,6 +189,49 @@ entries:
   barrierMode: direct
   reason: "Canonical category deletion \u2014 guarded by budget-reference and isDefault\
     \ checks"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.PlannedExpenseRepository
+  kind: function
+  method: addPlannedExpense
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.PlannedExpense
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: insertPlannedExpense
+  barrierMode: direct
+  reason: "Canonical planned-expense creation \u2014 insert with lifecycle timestamps\
+    \ and IGNORE conflict check"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.PlannedExpenseRepository
+  kind: function
+  method: deletePlannedExpense
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.PlannedExpense
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: deletePlannedExpense
+  barrierMode: direct
+  reason: Canonical planned-expense deletion by entity
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.PlannedExpenseRepository
+  kind: function
+  method: deletePlannedExpenseById
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: deletePlannedExpenseById
+  barrierMode: direct
+  reason: Canonical planned-expense deletion by id
   owner: '@panospao7'
   linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
@@ -135,5 +278,572 @@ entries:
   barrierMode: direct
   reason: "Canonical prompt-state writer \u2014 records prompt shown; direct writeBarrier\
     \ before promptStateDao.insertPromptState"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+  kind: function
+  method: deleteReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: direct
+  reason: "Canonical receipt deletion \u2014 ASSET_DELETE_FAILED fallback event insert\
+    \ when asset cleanup fails"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+  kind: function
+  method: deleteReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptExpenseLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
+  operation: deleteAllLinksForReceipt
+  barrierMode: direct
+  reason: "Canonical receipt deletion \u2014 deletes receipt-expense links inside\
+    \ transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+  kind: function
+  method: deleteReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: delete
+  barrierMode: direct
+  reason: "Canonical receipt deletion \u2014 deletes the scanned-receipt row"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: bulkUpdateMerchant
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  - String
+  - String?
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateMerchantAndKey
+  barrierMode: helper
+  reason: Bulk merchant rename with key recomputation; barrier via checkWritesAllowed
+    helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: bulkUpdateMerchant
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  - String
+  - String?
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Bulk merchant rename \u2014 BULK_UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: createExpenseMutation
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: insertAtomic
+  barrierMode: helper
+  reason: "Private DB-only expense creation \u2014 atomic insert with IGNORE-on-conflict;\
+    \ barrier via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: createExpenseMutation
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Private DB-only expense creation \u2014 lifecycle event inserts inside\
+    \ transaction; barrier via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateBusinessExpensePatch
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.transaction.BusinessExpensePatch
+  - String
+  - String?
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: update
+  barrierMode: helper
+  reason: Business/tax field patch update; barrier via checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateBusinessExpensePatch
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.transaction.BusinessExpensePatch
+  - String
+  - String?
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Business/tax field patch \u2014 UPDATED / UPDATE_VALIDATION_FAILED lifecycle\
+    \ event inserts; barrier via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long?
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateCategoryNullable
+  barrierMode: helper
+  reason: Category-only expense update; barrier via checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long?
+  - String?
+  - String
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Category-only expense update \u2014 UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateExpense
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Expense
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: update
+  barrierMode: helper
+  reason: "Canonical expense update \u2014 full-row update inside transaction; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateExpense
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Expense
+  - String?
+  - String
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Canonical expense update \u2014 UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateLocation
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  - Double
+  - String
+  - String?
+  - String?
+  - String?
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateLocation
+  barrierMode: helper
+  reason: Location-only expense update; barrier via checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateLocation
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  - Double
+  - String
+  - String?
+  - String?
+  - String?
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Location-only expense update \u2014 UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateMerchant
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateMerchantAndKey
+  barrierMode: helper
+  reason: Merchant rename with key recomputation; barrier via checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateMerchant
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - String
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Merchant rename \u2014 UPDATED lifecycle event insert; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateOwnershipDbOnlyV2
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  - String?
+  - Boolean
+  - String?
+  - Int?
+  - Double?
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateIsNotMine
+  barrierMode: helper
+  reason: "DB-only ownership update \u2014 isNotMine column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateOwnershipDbOnlyV2
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  - String?
+  - Boolean
+  - String?
+  - Int?
+  - Double?
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateIsSharedExpense
+  barrierMode: helper
+  reason: "DB-only ownership update \u2014 isNotMine column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateOwnershipDbOnlyV2
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  - String?
+  - Boolean
+  - String?
+  - Int?
+  - Double?
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateMyShareAmount
+  barrierMode: helper
+  reason: "DB-only ownership update \u2014 isNotMine column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateOwnershipDbOnlyV2
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  - String?
+  - Boolean
+  - String?
+  - Int?
+  - Double?
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateMySharePercentage
+  barrierMode: helper
+  reason: "DB-only ownership update \u2014 isNotMine column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateOwnershipDbOnlyV2
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  - String?
+  - Boolean
+  - String?
+  - Int?
+  - Double?
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateOwnerName
+  barrierMode: helper
+  reason: "DB-only ownership update \u2014 isNotMine column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateOwnershipDbOnlyV2
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  - String?
+  - Boolean
+  - String?
+  - Int?
+  - Double?
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateSharedWithName
+  barrierMode: helper
+  reason: "DB-only ownership update \u2014 isNotMine column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateOwnershipDbOnlyV2
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  - String?
+  - Boolean
+  - String?
+  - Int?
+  - Double?
+  - String?
+  - String
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "DB-only ownership update \u2014 UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateType
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransactionType
+  - String?
+  - String
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateTransactionType
+  barrierMode: helper
+  reason: Transaction-type update with dedupe-key recomputation; barrier via checkWritesAllowed
+    helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateType
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransactionType
+  - String?
+  - String
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Transaction-type update \u2014 UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: writeDuplicateEvent
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Expense
+  - com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+  - Long
+  - Long?
+  - String
+  - String
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: CREATE_DUPLICATE_SKIPPED lifecycle event insert for duplicate resolution;
+    barrier via checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: writeUpdateValidationFailedEventBestEffort
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - String?
+  - List<com.yourname.expensetracker.domain.transaction.validation.TransactionValidationError>
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: Best-effort UPDATE_VALIDATION_FAILED lifecycle event insert; barrier via
+    checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
+  ownerFqcn: com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl
+  kind: function
+  method: start
+  receiver: null
+  parameterTypes:
+  - String
+  - String?
+  - String?
+  - Int?
+  - Int?
+  - String?
+  daoAccessor: backgroundJobRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
+  operation: insert
+  barrierMode: workerMediated
+  reason: WorkerExecutionGuard-mediated insert of RUNNING job-run row via startRunSafely
+    writeBarrier check; direct barrier not claimed.
   owner: '@panospao7'
   linkedIssue: MIT-003

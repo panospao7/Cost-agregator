@@ -916,6 +916,147 @@ class Fixture { fun f(value: First) {} }
     assert excinfo.value.code == "TYPE_UNRESOLVED"
 
 
+# ------------------------------------------------- tolerant type resolution
+#
+# PR-GR-05 Slice 3 narrow repair: exactly ONE failure family (closed-world
+# type-resolution fatality) becomes per-declaration tolerable behind an
+# explicit keyword-only flag.  The default OFF pins the scanner/evidence
+# fail-closed behavior byte-for-byte.
+
+
+_TOLERANT_FIXTURE_SOURCE = """package example
+class Fixture {
+    fun a(unresolvable: ProjectType) {}
+    fun b(x: String) {}
+}
+"""
+
+
+def _tolerant_fixture_declarations():
+    owner = parser.find_owner_declarations(_TOLERANT_FIXTURE_SOURCE)[0]
+    return parser.find_callable_declarations(
+        _TOLERANT_FIXTURE_SOURCE, owner, tolerate_unresolved_types=True
+    )
+
+
+def test_tolerant_discovery_retains_unresolved_and_finds_sibling():
+    """The unresolved declaration is retained (not skipped) under its
+    explicit status while its resolvable sibling is still discovered."""
+    declarations = _tolerant_fixture_declarations()
+    assert [(d.signature.function_name, d.status) for d in declarations] == [
+        ("a", "TYPE_UNRESOLVED"),
+        ("b", "RESOLVED_EXACTLY"),
+    ]
+    # Retained signature = parsed-with-simple-names, faithful to source.
+    unresolved = declarations[0]
+    assert unresolved.owner == "example.Fixture"
+    assert unresolved.signature.function_name == "a"
+    assert unresolved.signature.parameter_types == ("ProjectType",)
+    assert unresolved.signature.receiver is None
+    # The sibling is discovered exactly as in a clean file.
+    _assert_declaration(
+        declarations[1],
+        owner="example.Fixture",
+        name="b",
+        parameter_types=("String",),
+        path="app/src/main/unknown.kt",
+    )
+
+
+def test_tolerant_retained_signature_keeps_every_parameter_in_order():
+    """Reconstruction after a mid-signature failure keeps ALL parameters."""
+    source = """package example
+class Fixture {
+    fun mixed(first: ProjectType, second: Int, third: List<String>) {}
+}
+"""
+    owner = parser.find_owner_declarations(source)[0]
+    declarations = parser.find_callable_declarations(
+        source, owner, tolerate_unresolved_types=True
+    )
+    assert len(declarations) == 1
+    assert declarations[0].status == "TYPE_UNRESOLVED"
+    assert declarations[0].signature.parameter_types == (
+        "ProjectType",
+        "Int",
+        "List<String>",
+    )
+
+
+def test_strict_discovery_still_raises_type_unresolved_exactly():
+    """Default (and explicit False) aborts exactly as before the repair."""
+    owner = parser.find_owner_declarations(_TOLERANT_FIXTURE_SOURCE)[0]
+    with pytest.raises(parser.ParserError) as excinfo:
+        parser.find_callable_declarations(_TOLERANT_FIXTURE_SOURCE, owner)
+    assert excinfo.value.code == "TYPE_UNRESOLVED"
+    assert str(excinfo.value) == _MASK_MESSAGE
+    assert "ProjectType" not in repr(excinfo.value)
+    with pytest.raises(parser.ParserError) as excinfo:
+        parser.find_callable_declarations(
+            _TOLERANT_FIXTURE_SOURCE, owner, tolerate_unresolved_types=False
+        )
+    assert excinfo.value.code == "TYPE_UNRESOLVED"
+
+
+def test_resolve_callable_never_treats_unresolved_declaration_as_candidate():
+    """Disambiguation over tolerant results ignores unresolved decls."""
+    declarations = _tolerant_fixture_declarations()
+    # The resolvable sibling resolves despite the unresolved declaration.
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "b", None, ("String",)
+    ) == "RESOLVED_EXACTLY"
+    # The unresolved declaration can never act as an exactly-resolved
+    # candidate -- not even against its own simple-name spelling.
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "a", None, ("ProjectType",)
+    ) == "SIGNATURE_UNSUPPORTED"
+    # Wrong-hint queries over the same-name group still fail closed.
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "b", None, ("Long",)
+    ) == "SIGNATURE_UNSUPPORTED"
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "missing", None, ()
+    ) == "METHOD_MISSING"
+
+
+def test_tolerant_mode_retains_unresolved_receiver_simple_name():
+    """Receiver resolution failures are retained in the same family."""
+    source = """package example
+class Fixture {
+    fun ext(value: Int) {}
+    fun ProjectType.ext(value: Int) {}
+}
+"""
+    owner = parser.find_owner_declarations(source)[0]
+    declarations = parser.find_callable_declarations(
+        source, owner, tolerate_unresolved_types=True
+    )
+    assert [(d.signature.function_name, d.status) for d in declarations] == [
+        ("ext", "RESOLVED_EXACTLY"),
+        ("ext", "TYPE_UNRESOLVED"),
+    ]
+    assert declarations[1].signature.receiver == "ProjectType"
+    # Only the exactly-resolved null-receiver declaration is selectable.
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "ext", None, ("Int",)
+    ) == "RESOLVED_EXACTLY"
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "ext", "ProjectType", ("Int",)
+    ) == "SIGNATURE_UNSUPPORTED"
+
+
+def test_tolerant_mode_keeps_other_failure_families_fatal():
+    """Signature-grammar failures are a different family: still fatal."""
+    source = "class Fixture { fun bad(value: String & Int) {} }\n"
+    owner = parser.find_owner_declarations(source)[0]
+    with pytest.raises(parser.ParserError) as excinfo:
+        parser.find_callable_declarations(
+            source, owner, tolerate_unresolved_types=True
+        )
+    assert excinfo.value.code == "UNSUPPORTED_TOKEN"
+    assert str(excinfo.value) == _MASK_MESSAGE
+
+
 # ------------------------------------------------------------ duplicate scope
 
 
