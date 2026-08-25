@@ -630,3 +630,53 @@ Parser trio (3) — unchanged since round 6b:
 
 Production gates stable across all seven rounds. Cumulative: 372 -> 10 with zero
 production-gate regressions at any point.
+
+---
+
+## Re-validation round 8 (2026-08-24) — after commit `c7aace49` "unify resolved-symbol contract and complete parser arrow-skip"
+
+HEAD `c7aace49a469deebcaaf6d121e9fc38ac3a68df2`; checkout clean.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> exit 1; **1 failed / 2241 passed / 23 skipped** in 425 s
+(round 7: 10). Trend: 372 -> 357 -> 151 -> 101 -> 59 -> blocked -> 27 -> 10 -> **1**.
+
+### What round-7 fixes resolved (9 of 10)
+
+- Accessor cluster GONE: `test_writable_database_property_has_exact_structural_identity`,
+  both `accessor_policy_rejects_wrong_kind_or_parameter_signature[...]` variants, and both
+  remaining `test_d4_executable_declarations_are_discovered_with_structured_identity`
+  property variants now pass.
+- Parser trio GONE: all three kotlin-callable-parser layering cases pass.
+- `test_d4_structural_findings_serialize_every_supported_callable_scope_exactly` PASSES:
+  signed structural findings across every callable scope are produced with exact pinned lines.
+
+### The single straggler (root cause fully diagnosed)
+
+scripts/test_db_guard_scanner_d4.py::test_delete_recursively_uses_exact_structural_token_and_policy_path
+
+Fixture: class with two functions — `allowed` (line 4) and `forbidden` (line 5), each calling
+`db.deleteRecursively()`; structural policy authorizes ONLY `allowed`
+(`method_pattern: "allowed"`, `operation: deleteRecursively`). Expected: zero finding for
+`allowed`, one fully-signed `DB_FORBIDDEN_STRUCTURAL_OPERATION` finding for `forbidden`
+(line 5).
+
+Observed (reproduced outside pytest via the module's own helpers): scanner emits **TWO**
+findings:
+
+- `{location: {line: 4}, symbol.name: 'allowed'}` — the POLICY-AUTHORIZED callable
+- `{location: {line: 5}, symbol.name: 'forbidden'}` — correct
+
+i.e. the structural matcher reports every call site matching the operation token WITHOUT
+applying the policy's method-pattern authorization filter (`allowed` must stay silent).
+Signature resolution itself is healthy (both findings carry resolved owner/name/kind;
+statistics trusted=true, no diagnostics). Fix direction: filter structural candidates by the
+policy entry's method pattern before emitting, keeping the already-correct signed-finding
+shape for non-matching callables.
+
+### Status
+
+Sections 2–6 remain deferred until this last failure closes. Everything else in the
+checklist has been green or platform-exact throughout rounds 1–8; production gate CLIs have
+never regressed.
