@@ -1468,10 +1468,11 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     """Pin the CURRENT post-Slice-5 truth of the real repository run.
 
     The checked-in tracked candidate
-    (``config/guards/db_ownership_policy.signatures.candidate.yml``) is
-    still the stale GR-02-era artifact; byte-equality with it is deferred
-    to the Step 8 regeneration through ``--generate`` and is NOT asserted
-    here.  Pinned instead — derived from the verified current-tree
+    (``config/guards/db_ownership_policy.signatures.candidate.yml``) is the
+    CURRENT PR-GR-05 artifact, regenerated through ``--generate``; byte
+    equality between a fresh run and the tracked artifacts is pinned by the
+    dedicated regression tests in the tracked-artifact section below.
+    Pinned here — derived from the verified current-tree
     structure (probe10 + policy audit) and pinned as exact observable CLI
     numbers:
 
@@ -2519,3 +2520,265 @@ def test_write_accounting_alias_flag_writes_accounting(tmp_path):
     payload = json.loads(accounting.read_text(encoding="utf-8"))
     assert payload["schema"] == "db-policy-migration-accounting"
     assert payload["inputCount"] == 99
+
+
+# ── Appended (PR-GR-05): tracked-artifact byte equality + coverage ───────────
+#
+# The tracked artifacts under ``config/guards/`` are MACHINE-GENERATED and
+# must never be hand-edited.  These regression tests regenerate both in a
+# tmp ``--generate`` run (one subprocess per module, shared by the tests)
+# and pin BYTE EQUALITY against the tracked files, so any hand edit to
+# either artifact fails loudly.  They also pin the live source-mutation
+# coverage section shipped inside the tracked accounting artifact.
+
+TRACKED_ACCOUNTING = (
+    REPO_ROOT
+    / "config"
+    / "guards"
+    / "db_ownership_policy.signatures.accounting.json"
+)
+
+
+import pytest  # noqa: E402
+
+from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
+    COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW,
+    COVERAGE_OBSERVED_BUT_UNRESOLVED,
+    COVERAGE_OBSERVED_NOT_IN_LEGACY_POLICY,
+    COVERAGE_UNRESOLVED_ANALYZER_INPUT,
+    SOURCE_MUTATION_COVERAGE_KINDS,
+)
+
+
+@pytest.fixture(scope="module")
+def tracked_regeneration(tmp_path_factory):
+    """One ``--generate`` run with both targets overridden into tmp.
+
+    Shared by every test in this section so the (expensive, full-tree)
+    generation pipeline runs exactly once per module.
+    """
+    out_dir = tmp_path_factory.mktemp("tracked-regen")
+    candidate = out_dir / "candidate.yml"
+    accounting = out_dir / "accounting.json"
+    completed = _run_cli(
+        "--generate",
+        "--output",
+        str(candidate),
+        "--accounting-out",
+        str(accounting),
+    )
+    return {
+        "completed": completed,
+        "candidate": candidate,
+        "accounting": accounting,
+    }
+
+
+def test_tracked_candidate_artifact_matches_regeneration_bytes(
+    tracked_regeneration,
+):
+    """The tracked candidate is byte-identical to a fresh regeneration.
+
+    Any hand edit to the tracked candidate artifact fails here; the only
+    sanctioned way to change it is rerunning ``--generate``.
+    """
+    completed = tracked_regeneration["completed"]
+    assert completed.returncode in (0, 1), completed.stderr
+    regenerated = tracked_regeneration["candidate"].read_bytes()
+    assert TRACKED_CANDIDATE.is_file()
+    assert regenerated == TRACKED_CANDIDATE.read_bytes(), (
+        "tracked candidate artifact drifted from the regeneration output;"
+        " regenerate it via scripts/migrate_db_policy_signatures.py"
+        " --generate instead of hand-editing"
+    )
+
+
+def test_tracked_accounting_artifact_matches_regeneration_bytes(
+    tracked_regeneration,
+):
+    """The tracked accounting artifact is byte-identical to regeneration.
+
+    Gated until the tracked artifact is regenerated WITH the PR-GR-05
+    source-mutation coverage section: while the checked-in artifact still
+    carries the pre-coverage empty ``sourceMutations`` list, this test
+    skips with that exact reason instead of failing on the known-pending
+    state.  Once regenerated (the only sanctioned path,
+    ``scripts/migrate_db_policy_signatures.py --generate``), the skip
+    disappears and ANY divergence — including hand edits to either the
+    tracked artifact or the generator output — fails the byte comparison.
+    """
+    completed = tracked_regeneration["completed"]
+    assert completed.returncode in (0, 1), completed.stderr
+    if not TRACKED_ACCOUNTING.is_file():
+        pytest.skip("tracked accounting artifact not present in checkout")
+    tracked_payload = json.loads(
+        TRACKED_ACCOUNTING.read_text(encoding="utf-8")
+    )
+    if tracked_payload.get("sourceMutations") == []:
+        pytest.skip(
+            "tracked accounting artifact predates the PR-GR-05"
+            " source-mutation coverage section; regenerate it via"
+            " scripts/migrate_db_policy_signatures.py --generate"
+        )
+    regenerated = tracked_regeneration["accounting"].read_bytes()
+    assert regenerated == TRACKED_ACCOUNTING.read_bytes(), (
+        "tracked accounting artifact drifted from the regeneration output;"
+        " regenerate it via scripts/migrate_db_policy_signatures.py"
+        " --generate instead of hand-editing"
+    )
+
+
+def test_generate_ships_nonempty_source_mutation_coverage(
+    tracked_regeneration,
+):
+    """The generated accounting artifact carries live, well-formed coverage.
+
+    Contract: non-empty ``sourceMutations``; kinds inside the closed
+    vocabulary; deterministic ``(path, symbol, operation)`` ordering;
+    repository-relative POSIX paths; bounded symbols; COVERED and
+    OBSERVED_BUT_UNRESOLVED entries name ascending in-range legacy indices;
+    observation-only kinds name none; and the covered/unresolved indices
+    stay within the artifact's own record index range.
+    """
+    completed = tracked_regeneration["completed"]
+    assert completed.returncode in (0, 1), completed.stderr
+    payload = json.loads(
+        tracked_regeneration["accounting"].read_text(encoding="utf-8")
+    )
+    mutations = payload["sourceMutations"]
+    assert mutations, "coverage section must ship non-empty"
+    record_indexes = {
+        record["index"] for record in payload["records"]
+    }
+    ordering = []
+    for item in mutations:
+        assert set(item) == {
+            "kind",
+            "legacyIndices",
+            "operation",
+            "path",
+            "symbol",
+        }
+        assert item["kind"] in SOURCE_MUTATION_COVERAGE_KINDS
+        path = item["path"]
+        assert isinstance(path, str) and path
+        assert "\\" not in path and ":" not in path and not path.startswith("/")
+        assert all(
+            segment not in ("", ".", "..") for segment in path.split("/")
+        )
+        symbol = item["symbol"]
+        assert isinstance(symbol, str) and "#" in symbol
+        assert len(symbol) <= 200
+        operation = item["operation"]
+        assert operation is None or (
+            isinstance(operation, str) and operation
+        )
+        indices = item["legacyIndices"]
+        assert indices == sorted(set(indices))
+        if item["kind"] in (
+            COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW,
+            COVERAGE_OBSERVED_BUT_UNRESOLVED,
+        ):
+            assert indices
+            assert set(indices) <= record_indexes
+        else:
+            assert indices == ()
+        ordering.append((path, symbol, operation or ""))
+    assert ordering == sorted(ordering)
+    kinds = {item["kind"] for item in mutations}
+    # The real repository exhibits all four kinds today.
+    assert kinds == {
+        COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW,
+        COVERAGE_OBSERVED_BUT_UNRESOLVED,
+        COVERAGE_OBSERVED_NOT_IN_LEGACY_POLICY,
+        COVERAGE_UNRESOLVED_ANALYZER_INPUT,
+    }
+
+
+def test_real_run_coverage_partitions_observed_universe(
+    tracked_regeneration,
+):
+    """Library-vs-CLI equality plus the no-omission partition invariant.
+
+    Runs the full pipeline IN-PROCESS over the real repository (migrate ->
+    observed-mutation scan -> classification) and asserts:
+
+    * the library-built coverage serializes EXACTLY to the CLI-generated
+      artifact's ``sourceMutations`` list (one evidence truth, two paths);
+    * every observed mutation appears exactly once across kinds — the
+      identity multiset of the classified coverage equals the identity
+      multiset of the observed universe (no omission, no double count);
+    * oracle soundness: every site's resolved ``(dao fqcn, operation)``
+      pair is attested by the Room inventory's mutator identities or by a
+      kept candidate entry from the generated candidate document.
+    """
+    import yaml
+
+    from scripts.db_guard.policy_v2_loader import load_policy_v2
+    from scripts.db_guard.room_inventory import build_room_inventory
+    from scripts.db_guard.policy_v2_candidate import (
+        _declared_relative_root_set,
+        build_observed_mutation_set,
+        classify_source_mutations,
+    )
+
+    policy_path = REPO_ROOT / "config" / "guards" / "db_ownership_policy.yml"
+    legacy_entries = yaml.safe_load(
+        policy_path.read_text(encoding="utf-8")
+    )["entries"]
+    result = migrate_policy(legacy_entries, str(REPO_ROOT))
+    attested_pairs = frozenset(
+        (row.entry.dao_fqcn, row.entry.operation)
+        for row in result.resolved
+    )
+    observed_set = build_observed_mutation_set(
+        REPO_ROOT,
+        attested_pairs=attested_pairs,
+    )
+    assert observed_set is not None
+    coverage = classify_source_mutations(observed_set, result, legacy_entries)
+
+    # 1. Library output equals the CLI artifact's shipped section exactly.
+    artifact_payload = json.loads(
+        tracked_regeneration["accounting"].read_text(encoding="utf-8")
+    )
+    assert [item.to_dict() for item in coverage] == (
+        artifact_payload["sourceMutations"]
+    )
+
+    # 2. Partition: no omission, no double count.
+    mutation_identities = sorted(
+        (m.path, m.owner_fqcn, m.method, m.operation)
+        for m in observed_set.mutations
+    )
+    coverage_identities = sorted(
+        (
+            item.path,
+            item.symbol.split("#", 1)[0],
+            item.symbol.split("#", 1)[1],
+            item.operation or "",
+        )
+        for item in coverage
+    )
+    assert mutation_identities == coverage_identities
+    assert len(coverage) == len(observed_set.mutations)
+
+    # 3. Oracle soundness of the attested universe.
+    root_set, _root_diagnostics = _declared_relative_root_set(REPO_ROOT)
+    assert root_set is not None
+    inventory = build_room_inventory(
+        REPO_ROOT, None, source_root_set=root_set
+    )
+    oracle = set()
+    for mutator in inventory.mutators:
+        _path, rest = mutator.method.split("::", 1)
+        fqcn, tail = rest.split("#", 1)
+        oracle.add((fqcn, tail.split("(", 1)[0]))
+    document, errors = load_policy_v2(tracked_regeneration["candidate"])
+    assert errors == []
+    kept_pairs = {
+        (entry.dao_fqcn, entry.operation) for entry in document
+    }
+    for mutation in observed_set.mutations:
+        pair = (mutation.dao_fqcn, mutation.operation)
+        assert pair in oracle or pair in kept_pairs

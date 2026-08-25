@@ -700,3 +700,66 @@ trusted bundle; the two-clean-capture human gate above still applies, and no
 green/blocked status is asserted for any SHA here. The targeted test suite
 (`pytest scripts/ci/test_capture_db_guard_evidence.py`) has **not** been
 executed in this documentation pass and remains **pending**.
+
+## PR-GR-05 applied (candidate 48/99, accounting artifact, --generate, coverage section) — pending human validation
+
+PR-GR-05 changes were applied to `scripts/db_guard/policy_v2_candidate.py`,
+`scripts/migrate_db_policy_signatures.py`,
+`scripts/test_db_guard_policy_v2_current_repo.py`,
+`scripts/test_migrate_db_policy_signatures.py`,
+`scripts/test_db_guard_policy_accounting.py`, `docs/DB_WRITE_OWNERSHIP.md`,
+and this ledger. Status: **pending human validation** — no DONE/GREEN/
+complete claim is made here.
+
+State pinned by this revision:
+
+- The tracked signatures candidate resolves **48 of 99 legacy inputs** into
+  unique canonical mutation keys; the other **51 inputs are explicit debt
+  rows by closed status** (`PARSER_UNCERTAIN=16`, `DAO_IDENTITY_UNRESOLVED=10`,
+  `CALLABLE_MISSING=8`, `PARSER_UNSUPPORTED=11`, `CALLABLE_AMBIGUOUS=5`,
+  `MUTATION_PAIR_MISSING=1`). Debt is visible, never authorization.
+- A standalone accounting artifact ships beside the candidate; both tracked
+  artifacts are written together only by `--generate` (atomic staging,
+  crosswalk re-verification over the exact written bytes, both-or-nothing).
+- Windows durability amendment: the Room-inventory writer reports a replace
+  on platforms without a confirmable directory durability barrier as
+  `INVENTORY_DURABILITY_UNCONFIRMED` instead of claiming durable success.
+- Source-mutation coverage section: generation runs now build and ship a
+  non-empty `sourceMutations` list classifying every caller-side DAO
+  mutation observed in the declared production tree (Room inventory oracle,
+  widened by kept-candidate pairs to close the `@Transaction` default-method
+  blind spot) into `COVERED_BY_RESOLVED_LEGACY_ROW` /
+  `OBSERVED_BUT_UNRESOLVED` / `OBSERVED_NOT_IN_LEGACY_POLICY` /
+  `UNRESOLVED_ANALYZER_INPUT`. Evidence-only: it never adds candidate
+  entries. Real-tree distribution at this revision: 226 observed sites —
+  48 covered, 15 unresolved-target, 21 analyzer-limited, 142 outside the
+  legacy policy. The checked-in accounting artifact still carries the
+  pre-coverage empty section; **regeneration via `--generate` is required
+  and pending**, and the byte-equality regression test skips with that
+  exact reason until it happens.
+
+Strict-review blockers closed in this revision:
+
+- **Blocker 1 — stale 9-entry pin**: the v2-loader acceptance test now pins
+  the candidate at exactly 48 entries with an updated docstring.
+- **Blocker 2 — empty coverage section**: discovery wired into the CLI
+  generate/write paths (`build_source_mutation_coverage`), classification
+  with exact-key matching against kept candidate keys and reduced-tuple
+  fallback matching for unresolved rows' intents, bounded symbols,
+  repo-relative paths only, deterministic ordering, fail-closed generation
+  when coverage cannot be assembled.
+- **Blocker 3 — byte-equality regressions**: one shared `--generate`
+  subprocess fixture per module regenerates both artifacts into tmp and
+  asserts BYTE EQUALITY against the tracked candidate (active) and tracked
+  accounting artifact (gated on regeneration as described above); any hand
+  edit to either artifact fails once the gate clears.
+
+Tests added/updated: the 48-entry loader pin; four-kind fixture
+classification with legacy-index assertions; partition/no-omission invariant
+over the observed universe; determinism; evidence-only (records unchanged
+when coverage is embedded); fail-closed `None` on an unresolvable tree;
+non-empty well-formed shipped coverage; library-vs-CLI serialization
+equality; tracked-candidate and tracked-accounting byte equality. These
+tests were validated by read-only probes under `build/guard-debug/gr05/`;
+the pytest suites themselves have **not** been executed in this editing pass
+and remain **pending**. No green/blocked status is asserted for any SHA here.

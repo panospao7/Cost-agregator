@@ -84,6 +84,11 @@ __all__ = [
     "AccountingArtifact",
     "build_accounting_artifact",
     "production_source_manifest_digest",
+    "ObservedMutation",
+    "ObservedMutationSet",
+    "build_observed_mutation_set",
+    "classify_source_mutations",
+    "build_source_mutation_coverage",
 ]
 
 # ── Closed migration status vocabulary ────────────────────────────────────────
@@ -1879,3 +1884,536 @@ def production_source_manifest_digest(repo_root):
     return hashlib.sha256(
         "\n".join(sorted(relative_names)).encode("utf-8")
     ).hexdigest()
+
+
+# ── Source-mutation coverage discovery (PR-GR-05) ────────────────────────────
+#
+# Evidence machinery that answers one review question about the migration:
+# of every caller-side DAO mutation the production tree actually performs,
+# how many are covered by a RESOLVED legacy row's candidate entry, how many
+# match a legacy row's intent that ended UNRESOLVED (visible debt targeting
+# a real callable), how many are outside the legacy policy entirely (blind
+# spots), and how many sit on inputs whose own analysis was limited (so
+# coverage truthfulness is bounded).  This is OBSERVATION ONLY: it never
+# adds candidate entries, never authorizes anything, and never changes
+# conversion semantics or exit codes.  Everything below lives at this
+# append point under the same append-only contract as the accounting model.
+#
+# The observed universe is anchored on the Room inventory
+# (``build_room_inventory`` over the DECLARED production roots): its ~400
+# mutator identities ``(dao fqcn, dao method name)`` are the authoritative
+# oracle of which DAO operations are mutations.  A caller-side call site
+# extracted with the migration machinery's OWN discovery primitives
+# (masking, owner/callable discovery, merged class/method DAO variable
+# maps, ``_extract_mutation_matches``) joins the universe when its resolved
+# ``(dao fqcn, operation)`` pair is attested by that oracle — or by a kept
+# candidate entry.  The kept-entry attestation closes ONE known inventory
+# blind spot with the strongest available evidence: Room ``@Transaction``
+# default methods declared WITH a body inside a DAO interface perform writes
+# but carry no Room operation annotation, so the inventory conservatively
+# reports no mutator for them; when a human-reviewed candidate entry
+# authorizes exactly such a pair, excluding its call sites would silently
+# omit covered mutations from the coverage section.  Attestation by a kept
+# entry is therefore deliberately included and documented here; it makes
+# those specific sites COVERED BY CONSTRUCTION (they are covered because a
+# reviewed candidate authorizes them), which is the truthful reading.
+#
+# Known bounded limitation: a production file whose owner scan fails the
+# shared parser contributes NO sites at all (its mutations are invisible to
+# this section).  The artifact schema has no free-text field to persist
+# per-file omissions, so the limitation is documented rather than fabricated;
+# wholesale-failure files are counted in ``ObservedMutationSet`` diagnostics
+# instead.  Sites whose owning declaration was retained under the parser's
+# tolerant TYPE_UNRESOLVED status, whose owner's contained-inner-owner rescan
+# failed, or whose target DAO is named by an inventory diagnostic are
+# classified UNRESOLVED_ANALYZER_INPUT so their rows never overclaim.
+
+try:  # package mode: imported as ``scripts.db_guard.policy_v2_candidate``
+    from ..kotlin_callable_parser import (
+        find_callable_declarations as _coverage_find_callable_declarations,
+        find_owner_declarations as _coverage_find_owner_declarations,
+    )
+except ImportError:  # pragma: no cover - flat mode: standalone tools put ``scripts`` on sys.path
+    from kotlin_callable_parser import (
+        find_callable_declarations as _coverage_find_callable_declarations,
+        find_owner_declarations as _coverage_find_owner_declarations,
+    )
+
+import re as _coverage_re
+
+from .room_inventory import build_room_inventory as _build_room_inventory
+from .policy_parsing import MUTATION_TOKENS as _MUTATION_TOKENS
+
+#: Cheap raw-body prefilter: a mutation extraction match's method group must
+#: start with one of the controlled mutation tokens, so a body without any
+#: token-shaped call word can never yield a site.  One regex per body keeps
+#: the full-tree scan bounded (verified ~10x faster than unconditional map
+#: construction on the production tree, identical results).
+_COVERAGE_MUTATION_PREFILTER = _coverage_re.compile(
+    r"\b(?:"
+    + "|".join(
+        _coverage_re.escape(token)
+        for token in sorted(_MUTATION_TOKENS, key=len, reverse=True)
+    )
+    + r")\w*\s*\("
+)
+
+
+@dataclass(frozen=True)
+class ObservedMutation:
+    """One caller-side DAO mutation site observed in the production tree.
+
+    Identity fields mirror :class:`~scripts.db_guard.policy_model.PolicyEntry`
+    exactly (path / ownerFqcn / kind="function" / method / receiver /
+    parameterTypes / daoAccessor / daoFqcn / operation) so
+    :meth:`canonical_key` is directly comparable to a candidate entry's
+    canonical mutation key.  ``analyzer_limited`` marks sites whose own
+    analysis emitted diagnostics (tolerant TYPE_UNRESOLVED declaration,
+    failed inner-owner rescan, or a target DAO named by an inventory
+    diagnostic); their classification must not overclaim.
+    """
+
+    path: str
+    owner_fqcn: str
+    method: str
+    receiver: str | None
+    parameter_types: tuple[str, ...]
+    dao_accessor: str
+    dao_fqcn: str
+    operation: str
+    analyzer_limited: bool = False
+
+    def canonical_key(self) -> str:
+        """Candidate-key-shaped identity string (kind is always function).
+
+        Discovery only walks member ``fun`` declarations of owner types —
+        the same callable space the migration machinery resolves — so the
+        kind component is the literal ``"function"`` for every site.
+        """
+        return "|".join(
+            [
+                self.path,
+                self.owner_fqcn,
+                "function",
+                self.method,
+                self.receiver if self.receiver is not None else "null",
+                ",".join(self.parameter_types),
+                self.dao_accessor,
+                self.dao_fqcn,
+                self.operation,
+            ]
+        )
+
+    def coverage_symbol(self):
+        """Bounded ``ownerFqcn#method`` symbol, or ``None`` past the bound."""
+        symbol = self.owner_fqcn + "#" + self.method
+        if len(symbol) > MAX_COVERAGE_SYMBOL_LENGTH:
+            return None
+        return symbol
+
+
+@dataclass(frozen=True)
+class ObservedMutationSet:
+    """Deterministic result of one full-tree observed-mutation scan.
+
+    ``mutations`` is sorted ascending by :meth:`ObservedMutation.canonical_key`
+    (keys are unique by construction).  ``unscannable_files`` counts files
+    whose read/mask/owner-scan failed wholesale; their mutations are absent
+    from ``mutations`` (documented bounded limitation, never fabricated).
+    """
+
+    mutations: tuple[ObservedMutation, ...]
+    unscannable_files: int = 0
+
+
+def _coverage_dao_diagnostic_sets(inventory):
+    """Extract bounded DAO-side diagnostic anchors from an inventory.
+
+    Returns ``(paths, fqcns)``: repository-relative POSIX path prefixes and
+    dotted FQCNs named by inventory diagnostic locations.  Diagnostics carry
+    controlled codes plus canonical locations only, so parsing them is pure
+    string handling over already-bounded text.
+    """
+    paths = set()
+    fqcns = set()
+    for diagnostic in inventory.diagnostics:
+        if not isinstance(diagnostic, str) or ":" not in diagnostic:
+            continue
+        location = diagnostic.split(":", 1)[1]
+        if "/" in location:
+            paths.add(location.split(":")[0])
+            tail = location.rsplit(":", 1)[-1]
+            if "." in tail and "/" not in tail:
+                fqcns.add(tail)
+        elif "." in location:
+            fqcns.add(location)
+    return paths, fqcns
+
+
+def _coverage_inventory_oracle(inventory):
+    """The inventory's authoritative ``(dao fqcn, dao method name)`` set."""
+    oracle = set()
+    for mutator in inventory.mutators:
+        signature = mutator.method
+        if not isinstance(signature, str) or "::" not in signature or "#" not in signature:
+            continue
+        _path, rest = signature.split("::", 1)
+        fqcn, tail = rest.split("#", 1)
+        name = tail.split("(", 1)[0]
+        if fqcn and name:
+            oracle.add((fqcn, name))
+    return oracle
+
+
+def build_observed_mutation_set(
+    repo_root,
+    *,
+    dao_index=None,
+    inventory=None,
+    raw_query_policy=None,
+    attested_pairs=frozenset(),
+):
+    """Scan the declared production tree for caller-side DAO mutation sites.
+
+    Returns an :class:`ObservedMutationSet` whose sites were extracted with
+    the migration machinery's own primitives and attested against the Room
+    inventory's mutator oracle.  ``attested_pairs`` optionally widens the
+    universe: an ``(dao fqcn, operation)`` pair authorized by any kept
+    candidate entry also attests its call sites (see the module-level block
+    comment for why this closes the Room ``@Transaction`` default-method
+    blind spot).  Returns ``None``
+    fail-closed when the declared root set cannot be resolved, the walk
+    reports diagnostics, or the inventory cannot be built — callers then
+    omit the coverage section instead of shipping a partial one.
+
+    Deterministic: files in declared-root walk order, owners/callables in
+    declaration order, mutation pairs in first-extraction order, final
+    result sorted by canonical key.  Bounded: bodies failing the cheap
+    mutation-token prefilter skip map construction entirely; no source
+    text, absolute path, or exception detail is retained.
+    """
+    root_set, _root_diagnostics = _declared_relative_root_set(repo_root)
+    if root_set is None:
+        return None
+    if inventory is None:
+        try:
+            inventory = _build_room_inventory(
+                repo_root,
+                raw_query_policy,
+                source_root_set=root_set,
+            )
+        except Exception:
+            return None
+    relative_names, walk_diagnostics = collect_production_kotlin_files(
+        repo_root, root_set
+    )
+    if walk_diagnostics:
+        return None
+    if dao_index is None:
+        dao_index = build_dao_fqcn_index(repo_root)
+    oracle = _coverage_inventory_oracle(inventory)
+    dao_diag_paths, dao_diag_fqcns = _coverage_dao_diagnostic_sets(inventory)
+
+    root_path = Path(repo_root)
+    observed: dict = {}
+    unscannable = 0
+    for relative_posix in relative_names:
+        try:
+            text = (
+                root_path / Path(*relative_posix.split("/"))
+            ).read_text(encoding="utf-8")
+            # File-level prefilter: every route to an extracted mutation
+            # (bare ``*Dao`` receivers, typed DAO properties, database
+            # accessor aliases) requires a ``*Dao`` identifier somewhere in
+            # the file, so a file without the substring can never yield a
+            # site.  Masking preserves identifiers, so checking the raw
+            # text only ever OVER-includes, never excludes a real site.
+            if "Dao" not in text:
+                continue
+            masked_text = mask_kotlin_source(text)
+            canonical = canonical_source_path(relative_posix)
+        except Exception:
+            # Unreadable/unmaskable files contribute nothing and retain no
+            # detail; the count keeps the omission visible and bounded.
+            unscannable += 1
+            continue
+        try:
+            owners = _coverage_find_owner_declarations(masked_text)
+        except ParserError:
+            unscannable += 1
+            continue
+        # Precompute every owner's member callables ONCE per file so the
+        # merged DAO-map construction never re-scans the whole file per
+        # callable (verified ~10x scan speedup, identical results).
+        owner_callables: dict = {}
+        failed_owners = set()
+        for owner_decl in owners:
+            try:
+                owner_callables[owner_decl] = (
+                    _coverage_find_callable_declarations(
+                        masked_text,
+                        owner_decl,
+                        tolerate_unresolved_types=True,
+                    )
+                )
+            except ParserError:
+                owner_callables[owner_decl] = ()
+                failed_owners.add(id(owner_decl))
+        for owner_decl in owners:
+            all_callables = owner_callables[owner_decl]
+            owner_slice = masked_text[
+                owner_decl.body_start : owner_decl.body_end
+            ]
+            slice_lines = owner_slice.splitlines()
+            base_line = masked_text.count("\n", 0, owner_decl.body_start)
+            inner_spans = []
+            inner_failed = False
+            for inner in owners:
+                if inner == owner_decl:
+                    continue
+                if (
+                    owner_decl.body_start <= inner.body_start
+                    and inner.body_end <= owner_decl.body_end
+                ):
+                    if id(inner) in failed_owners:
+                        inner_failed = True
+                    inner_spans.extend(
+                        (d.start_offset, d.end_offset)
+                        for d in owner_callables.get(inner, ())
+                    )
+            for decl in all_callables:
+                body = decl.body if isinstance(decl.body, str) else ""
+                if not body or not _COVERAGE_MUTATION_PREFILTER.search(body):
+                    continue
+                spans = [
+                    (c.start_offset, c.end_offset) for c in all_callables
+                ]
+                spans.append((decl.start_offset, decl.end_offset))
+                spans.extend(inner_spans)
+                excluded = set()
+                for start_offset, end_offset in sorted(spans):
+                    first = masked_text.count("\n", 0, start_offset) - base_line
+                    last = (
+                        masked_text.count("\n", 0, end_offset - 1) - base_line
+                    )
+                    excluded.update(
+                        ln
+                        for ln in range(first, last + 1)
+                        if 0 <= ln < len(slice_lines)
+                    )
+                class_map = build_class_scope_dao_var_map(
+                    slice_lines,
+                    0,
+                    len(slice_lines) - 1,
+                    excluded_line_numbers=excluded,
+                )
+                merged = dict(class_map)
+                merged.update(
+                    build_dao_var_map(
+                        body.splitlines() if isinstance(body, str) else []
+                    )
+                )
+                matches = _extract_mutation_matches(body, var_map=merged)
+                pairs = []
+                pair_seen = set()
+                for match in matches:
+                    pair = (match["dao"], match["op"])
+                    if pair not in pair_seen:
+                        pairs.append(pair)
+                        pair_seen.add(pair)
+                limited = decl.status != "RESOLVED_EXACTLY" or inner_failed
+                for identity, operation in pairs:
+                    accessor = (
+                        identity
+                        if identity in dao_index
+                        else _resolve_dao_identity(identity, merged)
+                    )
+                    if accessor is None or accessor not in dao_index:
+                        continue
+                    fqcns = dao_index[accessor]
+                    if len(fqcns) != 1:
+                        continue
+                    fqcn = fqcns[0]
+                    if (fqcn, operation) not in oracle:
+                        if (
+                            not attested_pairs
+                            or (fqcn, operation) not in attested_pairs
+                        ):
+                            continue
+                    if fqcn in dao_diag_fqcns or canonical in dao_diag_paths:
+                        # A target DAO named by an inventory diagnostic (or
+                        # a site inside a diagnostically-flagged file)
+                        # limits truthfulness for this site.
+                        limited = True
+                    mutation = ObservedMutation(
+                        path=canonical,
+                        owner_fqcn=owner_decl.owner,
+                        method=decl.signature.function_name,
+                        receiver=decl.signature.receiver,
+                        parameter_types=tuple(
+                            decl.signature.parameter_types
+                        ),
+                        dao_accessor=accessor,
+                        dao_fqcn=fqcn,
+                        operation=operation,
+                        analyzer_limited=bool(limited),
+                    )
+                    observed[mutation.canonical_key()] = mutation
+    mutations = tuple(observed[key] for key in sorted(observed))
+    return ObservedMutationSet(
+        mutations=mutations, unscannable_files=unscannable
+    )
+
+
+def classify_source_mutations(observed_set, result, legacy_entries):
+    """Classify observed mutations into closed coverage kinds.
+
+    Precedence (first match wins, documented):
+
+    1. ``COVERED_BY_RESOLVED_LEGACY_ROW`` — the site's canonical key equals
+       a kept candidate entry key; ``legacy_indices`` merges the Slice 4/5
+       emission crosswalk indices with the indices of resolved rows carrying
+       the key (folded re-authorizations stay tied to the shared key);
+    2. ``OBSERVED_BUT_UNRESOLVED`` — otherwise, the site matches at least
+       one UNRESOLVED legacy row's intent by the reduced tuple
+       ``(path, class-hint-resolved owner, method, operation hint)``
+       (unresolved rows' full types may be unknown, so exact-key matching is
+       impossible for them); ``legacy_indices`` lists every matching row;
+    3. ``UNRESOLVED_ANALYZER_INPUT`` — otherwise, the site's own analysis
+       was limited (see :class:`ObservedMutation.analyzer_limited`);
+    4. ``OBSERVED_NOT_IN_LEGACY_POLICY`` — otherwise (blind spot).
+
+    The universe is whatever :func:`build_observed_mutation_set` attested
+    (Room-inventory oracle plus, when supplied, kept-candidate pairs — see
+    the module-level block comment for why kept-entry attestation exists).
+    Every site in that universe is classified into exactly one kind — the
+    four kinds partition it with no omission.  Output is sorted by
+    ``(path, symbol, operation)`` — the artifact's ordering contract — with
+    kind and legacy indices as total-order tie-breakers.  Pure: no I/O, no
+    mutation of inputs, deterministic for identical inputs.
+    """
+    if observed_set is None:
+        return ()
+    kept_indices_by_key: dict = {}
+    for row in result.resolved:
+        key = row.entry.mutation_key().canonical_key()
+        kept_indices_by_key.setdefault(key, set()).add(row.index)
+    for key, indices in result.emission_indices:
+        kept_indices_by_key.setdefault(key, set()).update(indices)
+    # Unresolved intents: reduced tuples with ascending row indices.
+    intents: list = []
+    for row in result.unresolved:
+        if row.index < 0 or row.index >= len(legacy_entries):
+            continue
+        raw_entry = legacy_entries[row.index]
+        if not isinstance(raw_entry, Mapping):
+            continue
+        raw_path = raw_entry.get("path")
+        raw_operation = raw_entry.get("operation")
+        if not isinstance(raw_path, str) or not raw_path:
+            continue
+        if not isinstance(raw_operation, str) or not raw_operation:
+            continue
+        if not row.legacy_class or not row.legacy_method:
+            continue
+        intents.append(
+            (raw_path, row.legacy_class, row.legacy_method, raw_operation, row.index)
+        )
+    intents.sort()
+
+    coverage = []
+    for mutation in observed_set.mutations:
+        symbol = mutation.coverage_symbol()
+        if symbol is None:
+            # Over-bound symbols are skipped, never truncated into a
+            # different identity (bounded; none occur in practice).
+            continue
+        key = mutation.canonical_key()
+        indices: tuple[int, ...] = ()
+        if key in kept_indices_by_key:
+            kind = COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW
+            indices = tuple(sorted(kept_indices_by_key[key]))
+        else:
+            matched = set()
+            for (
+                intent_path,
+                legacy_class,
+                legacy_method,
+                legacy_operation,
+                row_index,
+            ) in intents:
+                if (
+                    intent_path != mutation.path
+                    or legacy_method != mutation.method
+                    or legacy_operation != mutation.operation
+                ):
+                    continue
+                if "." in legacy_class:
+                    owner_matched = legacy_class == mutation.owner_fqcn
+                else:
+                    owner_matched = (
+                        mutation.owner_fqcn.rsplit(".", 1)[-1] == legacy_class
+                    )
+                if owner_matched:
+                    matched.add(row_index)
+            if matched:
+                kind = COVERAGE_OBSERVED_BUT_UNRESOLVED
+                indices = tuple(sorted(matched))
+            elif mutation.analyzer_limited:
+                kind = COVERAGE_UNRESOLVED_ANALYZER_INPUT
+            else:
+                kind = COVERAGE_OBSERVED_NOT_IN_LEGACY_POLICY
+        coverage.append(
+            SourceMutationCoverage(
+                kind=kind,
+                path=mutation.path,
+                symbol=symbol,
+                operation=mutation.operation,
+                legacy_indices=indices,
+            )
+        )
+    coverage.sort(
+        key=lambda item: (
+            item.path,
+            item.symbol,
+            item.operation or "",
+            item.kind,
+            item.legacy_indices,
+        )
+    )
+    return tuple(coverage)
+
+
+def build_source_mutation_coverage(
+    repo_root,
+    result,
+    legacy_entries,
+    *,
+    dao_index=None,
+    inventory=None,
+    raw_query_policy=None,
+):
+    """Build the classified source-mutation coverage tuple for one batch.
+
+    Convenience wrapper over :func:`build_observed_mutation_set` +
+    :func:`classify_source_mutations`; the scan universe is attested by the
+    Room-inventory oracle plus every kept candidate entry's
+    ``(dao fqcn, operation)`` pair.  Returns ``None`` when the tree scan
+    fails closed (callers omit the section instead of approximating), an
+    empty tuple when the tree legitimately observes nothing, and otherwise
+    the deterministic ordered coverage evidence.  Evidence-only: never adds
+    candidate entries, never changes conversion semantics or exit codes.
+    """
+    attested_pairs = frozenset(
+        (row.entry.dao_fqcn, row.entry.operation) for row in result.resolved
+    )
+    observed_set = build_observed_mutation_set(
+        repo_root,
+        dao_index=dao_index,
+        inventory=inventory,
+        raw_query_policy=raw_query_policy,
+        attested_pairs=attested_pairs,
+    )
+    if observed_set is None:
+        return None
+    return classify_source_mutations(observed_set, result, legacy_entries)

@@ -22,6 +22,16 @@ and converts genuine authorization-metadata conflicts into closed
 candidates; :func:`find_duplicate_mutation_keys` remains as a
 defense-in-depth exit-2 guard against leaked contradictions.
 
+Since the PR-GR-05 source-mutation coverage amendment, runs that request a
+standalone accounting artifact also build the observed-mutation coverage
+section (``sourceMutations``) from the Room inventory over the declared
+production roots: every caller-side DAO mutation site the tree performs is
+classified as covered by a resolved legacy row, matching an unresolved
+row's intent, outside the legacy policy, or analyzer-input-limited.  The
+section is evidence-only (it never adds candidate entries); a generation
+run whose coverage cannot be assembled fails closed instead of shipping an
+artifact that silently lacks it.
+
 Privacy posture: reports and candidates carry identity fields, controlled
 status constants, and counts only — never raw source text, absolute paths,
 exception text, SQL, or user data.  Stderr diagnostics are fixed bounded
@@ -54,6 +64,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
     build_accounting_artifact,
+    build_source_mutation_coverage,
     find_duplicate_mutation_keys,
     migrate_policy,
     production_source_manifest_digest,
@@ -216,17 +227,21 @@ def _build_accounting_section(
     policy_path: Path,
     repo_root: Path,
     candidate_text: str | None,
+    source_mutations: Any = (),
 ) -> dict[str, Any] | None:
     """Best-effort accounting artifact payload; ``None`` when unavailable.
 
     Builds the :class:`AccountingArtifact` for this batch from real input
     hashes: the legacy policy bytes, the declared production tree manifest
     digest, and — when a candidate document was produced — the exact
-    candidate text.  Any failure to assemble a fully valid artifact is
-    swallowed into omission (never approximation), so conversion semantics
-    and exit codes are untouched.  Generation runs that REQUEST a
-    standalone accounting artifact use :func:`_require_accounting_section`
-    instead, which fails closed.
+    candidate text.  ``source_mutations`` carries the observed-mutation
+    coverage evidence (PR-GR-05); it is embedded verbatim, so callers that
+    could not build it pass ``()`` and the section ships with an empty
+    coverage list rather than an approximated one.  Any failure to assemble
+    a fully valid artifact is swallowed into omission (never approximation),
+    so conversion semantics and exit codes are untouched.  Generation runs
+    that REQUEST a standalone accounting artifact use
+    :func:`_require_accounting_section` instead, which fails closed.
     """
     try:
         policy_sha256 = _sha256_bytes(policy_path.read_bytes())
@@ -245,6 +260,7 @@ def _build_accounting_section(
             source_policy_sha256=policy_sha256,
             source_tree_sha=source_tree_sha,
             candidate_sha256=candidate_sha256,
+            source_mutations=tuple(source_mutations),
         )
         return artifact.to_dict()
     except Exception:
@@ -262,16 +278,22 @@ def _require_accounting_section(
     policy_path: Path,
     repo_root: Path,
     candidate_text: str,
+    source_mutations: Any = (),
 ) -> dict[str, Any]:
     """Mandatory accounting assembly for generation runs; fails closed.
 
     Unlike the best-effort report section, a requested standalone
     accounting artifact MUST be producible from THIS run: any assembly
     failure raises :class:`CliFailure` so neither artifact of the pair is
-    written (both-or-neither).
+    written (both-or-neither).  A ``source_mutations`` value of ``None``
+    means the coverage machinery failed closed upstream; a generation run
+    never ships an artifact whose coverage silently degraded, so that also
+    raises :class:`CliFailure`.
     """
+    if source_mutations is None:
+        raise CliFailure(_MSG_ACCOUNTING_UNAVAILABLE)
     payload = _build_accounting_section(
-        result, policy_path, repo_root, candidate_text
+        result, policy_path, repo_root, candidate_text, source_mutations
     )
     if payload is None:
         raise CliFailure(_MSG_ACCOUNTING_UNAVAILABLE)
@@ -582,13 +604,30 @@ def main(argv: list[str] | None = None) -> int:
         candidate_text = None
         accounting_payload = None
         write_pair: list[tuple[Path, str, str]] = []
+        # PR-GR-05 source-mutation coverage: built ONCE for runs that
+        # request a standalone accounting artifact.  ``None`` means the
+        # coverage machinery failed closed; best-effort consumers degrade to
+        # an empty section while generation runs fail closed instead of
+        # shipping degraded evidence.
+        coverage_mutations = None
+        if accounting_target is not None and may_write_candidate:
+            try:
+                coverage_mutations = build_source_mutation_coverage(
+                    repo_root, result, entries
+                )
+            except Exception:
+                coverage_mutations = None
         if candidate_target is not None and may_write_candidate:
             candidate_text = yaml.safe_dump(
                 _candidate_document(result), sort_keys=False, allow_unicode=False
             ).replace("\r\n", "\n")
             if accounting_target is not None:
                 accounting_payload = _require_accounting_section(
-                    result, policy_path, repo_root, candidate_text
+                    result,
+                    policy_path,
+                    repo_root,
+                    candidate_text,
+                    coverage_mutations,
                 )
                 _verify_candidate_accounting_pair(
                     candidate_text, accounting_payload
@@ -614,7 +653,11 @@ def main(argv: list[str] | None = None) -> int:
             report_accounting = accounting_payload
             if report_accounting is None:
                 report_accounting = _build_accounting_section(
-                    result, policy_path, repo_root, candidate_text
+                    result,
+                    policy_path,
+                    repo_root,
+                    candidate_text,
+                    coverage_mutations if coverage_mutations is not None else (),
                 )
             payload = _build_report_payload(
                 result,

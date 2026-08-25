@@ -48,6 +48,8 @@ from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
     AccountingRecord,
     COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW,
     COVERAGE_OBSERVED_NOT_IN_LEGACY_POLICY,
+    COVERAGE_OBSERVED_BUT_UNRESOLVED,
+    COVERAGE_UNRESOLVED_ANALYZER_INPUT,
     MIGRATION_STATUSES,
     MIGRATION_STATUSES_EXTENDED,
     MigrationResult,
@@ -64,6 +66,10 @@ from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
     SourceMutationCoverage,
     UnresolvedRow,
     build_accounting_artifact,
+    build_observed_mutation_set,
+    build_source_mutation_coverage,
+    classify_source_mutations,
+    migrate_policy,
 )
 
 POLICY_PATH = "config/guards/db_ownership_policy.yml"
@@ -739,3 +745,279 @@ def test_slice5_conflicted_indices_become_unresolved_records():
         key for record in payload["records"] for key in record["mutationKeys"]
     }
     assert record_keys == {_canonical(clean)}
+
+
+# ── PR-GR-05: source-mutation coverage discovery + classification ────────────
+#
+# The coverage section answers one review question about the migration: of
+# every caller-side DAO mutation the production tree performs, how many are
+# covered by a resolved legacy row, how many match an unresolved row's
+# intent, how many sit outside the legacy policy entirely, and how many are
+# analyzer-input-limited.  The fixtures below run the REAL discovery and
+# classification machinery over a synthetic declared-root tree (annotated
+# Room DAO + caller classes) — no mocking of the evidence primitives.
+
+_COVERAGE_DAO_KT = "app/src/main/java/com/example/ExpenseDao.kt"
+_COVERAGE_CALLERS_KT = "app/src/main/java/com/example/Callers.kt"
+
+#: Empty but VALID raw-query policy so synthetic inventories never consult
+#: (and never go stale against) the real repository's classification file.
+_EMPTY_RAW_QUERY_POLICY = {"version": 1, "methods": []}
+
+_COVERAGE_DAO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "@Dao\n"
+    "interface ExpenseDao {\n"
+    "    @Insert\n"
+    "    fun insert(value: Long): Long\n"
+    "}\n"
+)
+
+_COVERAGE_CALLERS_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Covered {\n"
+    "    fun save(value: Long) {\n"
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "class Stranger {\n"
+    "    fun other(value: Long) {\n"
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "class Debt {\n"
+    "    fun target(value: Long) {\n"
+    "        expenseDao.insert(value)\n"
+    "    }\n"
+    "}\n"
+    "\n"
+    "class Odd {\n"
+    "    fun weird(input: ProjectType) {\n"
+    "        expenseDao.insert(1)\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def _coverage_legacy_entries():
+    """Legacy rows producing one covered, one unresolved-target site."""
+    covered = {
+        "path": _COVERAGE_CALLERS_KT,
+        "class": "Covered",
+        "method": "save",
+        "daos": ["ExpenseDao"],
+        "operation": "insert",
+        "barrier_required": False,
+        "reason": "covered scenario",
+        "owner": "expense-owners",
+        "linked_issue": "ISSUE-100",
+        "signature": {"receiver": None, "parameters": ["Long"]},
+    }
+    # Contradictory barrier metadata (mediation claim + direct-barrier
+    # requirement) fails closed at the phase-1 barrier gate, so this row
+    # ends UNRESOLVED while its path/class/method/operation still name the
+    # Debt.target callable exactly.
+    debt = dict(covered)
+    debt.update(
+        {
+            "class": "Debt",
+            "method": "target",
+            "barrier_required": True,
+            "barrier_via": "WorkerExecutionGuard",
+            "reason": "debt scenario",
+        }
+    )
+    return [covered, debt]
+
+
+def _coverage_repo(tmp_path: Path):
+    (tmp_path / ".keep").touch()
+    for relative, source in (
+        (_COVERAGE_DAO_KT, _COVERAGE_DAO_SOURCE),
+        (_COVERAGE_CALLERS_KT, _COVERAGE_CALLERS_SOURCE),
+    ):
+        target = tmp_path / Path(*relative.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+
+
+def _coverage_result(tmp_path: Path):
+    entries = _coverage_legacy_entries()
+    result = migrate_policy(entries, str(tmp_path))
+    return entries, result
+
+
+def test_coverage_fixture_kinds_are_exact(tmp_path):
+    """One covered, one unresolved-target, one not-in-policy, one limited.
+
+    Four observed sites over the same DAO operation, classified into all
+    four closed kinds with exactly the legacy indices each kind owes.
+    """
+    _coverage_repo(tmp_path)
+    entries, result = _coverage_result(tmp_path)
+    observed_set = build_observed_mutation_set(
+        tmp_path,
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+        attested_pairs=frozenset(
+            (row.entry.dao_fqcn, row.entry.operation)
+            for row in result.resolved
+        ),
+    )
+    assert observed_set is not None
+    by_owner = {}
+    for mutation in observed_set.mutations:
+        by_owner[mutation.owner_fqcn] = mutation
+    assert set(by_owner) == {
+        "com.example.Covered",
+        "com.example.Stranger",
+        "com.example.Debt",
+        "com.example.Odd",
+    }
+    assert not by_owner["com.example.Covered"].analyzer_limited
+    assert by_owner["com.example.Odd"].analyzer_limited
+
+    coverage = classify_source_mutations(observed_set, result, entries)
+    kinds = {}
+    for item in coverage:
+        kinds.setdefault(item.kind, []).append(item)
+    assert set(kinds) == {
+        COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW,
+        COVERAGE_OBSERVED_BUT_UNRESOLVED,
+        COVERAGE_OBSERVED_NOT_IN_LEGACY_POLICY,
+        COVERAGE_UNRESOLVED_ANALYZER_INPUT,
+    }
+    covered = kinds[COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW]
+    assert len(covered) == 1
+    assert covered[0].path == _COVERAGE_CALLERS_KT
+    assert covered[0].symbol == "com.example.Covered#save"
+    assert covered[0].operation == "insert"
+    # The covering legacy row's index survives on the coverage entry.
+    assert covered[0].legacy_indices == (0,)
+    unresolved = kinds[COVERAGE_OBSERVED_BUT_UNRESOLVED]
+    assert len(unresolved) == 1
+    assert unresolved[0].symbol == "com.example.Debt#target"
+    assert unresolved[0].legacy_indices == (1,)
+    stranger = kinds[COVERAGE_OBSERVED_NOT_IN_LEGACY_POLICY]
+    assert len(stranger) == 1
+    assert stranger[0].symbol == "com.example.Stranger#other"
+    assert stranger[0].legacy_indices == ()
+    limited = kinds[COVERAGE_UNRESOLVED_ANALYZER_INPUT]
+    assert len(limited) == 1
+    assert limited[0].symbol == "com.example.Odd#weird"
+    assert limited[0].legacy_indices == ()
+
+
+def test_coverage_partitions_observed_universe_exactly_once(tmp_path):
+    """No omission, no double count: kinds partition the observed universe.
+
+    Every observed mutation appears in exactly one coverage entry (matched
+    by its full identity), the union of kinds equals the universe, and the
+    ordering matches the artifact contract ``(path, symbol, operation)``.
+    """
+    _coverage_repo(tmp_path)
+    entries, result = _coverage_result(tmp_path)
+    observed_set = build_observed_mutation_set(
+        tmp_path,
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+        attested_pairs=frozenset(
+            (row.entry.dao_fqcn, row.entry.operation)
+            for row in result.resolved
+        ),
+    )
+    assert observed_set is not None
+    coverage = classify_source_mutations(observed_set, result, entries)
+    assert len(coverage) == len(observed_set.mutations)
+    mutation_identities = sorted(
+        (m.path, m.owner_fqcn, m.method, m.operation)
+        for m in observed_set.mutations
+    )
+    coverage_identities = sorted(
+        (
+            item.path,
+            item.symbol.split("#", 1)[0],
+            item.symbol.split("#", 1)[1],
+            item.operation or "",
+        )
+        for item in coverage
+    )
+    assert mutation_identities == coverage_identities
+    identity_tuples = [
+        (item.path, item.symbol, item.operation or "") for item in coverage
+    ]
+    assert identity_tuples == sorted(identity_tuples)
+
+
+def test_coverage_classification_is_deterministic(tmp_path):
+    """Two identical builds classify identically (pure evidence)."""
+    _coverage_repo(tmp_path)
+    entries, result = _coverage_result(tmp_path)
+    first = build_source_mutation_coverage(
+        tmp_path,
+        result,
+        entries,
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+    second = build_source_mutation_coverage(
+        tmp_path,
+        result,
+        entries,
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+    assert first is not None and second is not None
+    assert first == second
+    serialized_first = [item.to_dict() for item in first]
+    serialized_second = [item.to_dict() for item in second]
+    assert serialized_first == serialized_second
+
+
+def test_coverage_is_evidence_only_never_adds_candidates(tmp_path):
+    """Embedding coverage leaves records and candidate crosswalk untouched.
+
+    The artifact built with ``source_mutations`` carries exactly the same
+    accounting records as the artifact built without them; only the
+    additive ``sourceMutations`` section differs.
+    """
+    _coverage_repo(tmp_path)
+    entries, result = _coverage_result(tmp_path)
+    coverage = build_source_mutation_coverage(
+        tmp_path,
+        result,
+        entries,
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+    assert coverage  # non-empty on this fixture
+    candidate_entries = [row.entry for row in result.resolved]
+    kwargs = {
+        "source_policy_path": POLICY_PATH,
+        "source_policy_sha256": SHA_A,
+        "source_tree_sha": SHA_B,
+    }
+    without = build_accounting_artifact(
+        result, candidate_entries, **kwargs
+    )
+    with_section = build_accounting_artifact(
+        result, candidate_entries, source_mutations=tuple(coverage), **kwargs
+    )
+    assert without.records == with_section.records
+    assert without.input_count == with_section.input_count
+    assert without.source_mutations == ()
+    assert with_section.source_mutations == tuple(coverage)
+    plain_payload = without.to_dict()
+    covered_payload = with_section.to_dict()
+    plain_payload.pop("sourceMutations")
+    covered_payload.pop("sourceMutations")
+    assert plain_payload == covered_payload
+
+
+def test_coverage_wrapper_returns_none_when_tree_unresolvable(tmp_path):
+    """A tree without any resolvable production root fails closed to None."""
+    empty = tmp_path / "not-a-tree"
+    empty.mkdir()
+    entries, result = _coverage_result(tmp_path / "unused")
+    assert build_source_mutation_coverage(
+        empty, result, entries, raw_query_policy=_EMPTY_RAW_QUERY_POLICY
+    ) is None
