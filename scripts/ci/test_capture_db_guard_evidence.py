@@ -27,9 +27,22 @@ import capture_db_guard_evidence as cap  # noqa: E402
 REPORT_SCHEMA = cap.REPORT_SCHEMA
 REPORT_SCHEMA_VERSION = cap.REPORT_SCHEMA_VERSION
 
+# The fixture repository's checked-out commit.  Since PR-GR-00R part A this is
+# NOT a hard-coded capture target: it is supplied per run as the caller-stated
+# run pin (``expected_sha=`` / ``--expected-sha``) via the ``_capture`` wrapper.
 TEST_SHA = "9b97e7979130de605d164386bbf719cf20579475"
 # Must be a valid 40-hex Git SHA so preflight identity validation accepts it.
 TEST_TREE = "1111111111111111111111111111111111111111"
+# A second valid 40-hex SHA, deliberately different from TEST_SHA (the retired
+# permanent capture target): proves the run pin accepts any caller-declared
+# commit instead of a hard-coded historical one.
+OTHER_SHA = "f5e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d"
+# The SHA a drift-injecting runner switches to AFTER the matrix (mid-capture).
+DRIFT_SHA = "0123456789abcdef0123456789abcdef01234567"
+# The retired permanent TARGET_SHA constant value.  Kept ONLY as the negative-
+# assertion needle for the grep-style source test; it must never appear in the
+# capture tool source and carries no authority.
+RETIRED_TARGET_SHA = "9b97e7979130de605d164386bbf719cf20579475"
 
 # The complete set of tracked input files created by ``_make_root``.  The fake
 # git runner reports exactly these via ``git ls-files`` so the dynamic input
@@ -77,6 +90,20 @@ def _assert_no_absolute(token: str) -> None:
     assert "\\" not in token, f"backslash in argv token: {token!r}"
     assert not token.startswith("/"), f"absolute path in argv token: {token!r}"
     assert not _DRIVE_LETTER_RE.search(token), f"drive letter in argv token: {token!r}"
+
+
+def _capture(*args, **kwargs):
+    """Fixture wrapper: supply the fixture run pin unless a test overrides it.
+
+    PR-GR-00R part A made the expected SHA a mandatory, caller-stated run pin
+    (``expected_sha=`` / ``--expected-sha``); a missing or invalid pin is a
+    controlled pre-command failure.  Every existing fixture capture targets the
+    fake repository checked out at ``TEST_SHA``, so the wrapper injects that pin
+    by default.  Pin-specific tests (missing / invalid / mismatched pins, CLI
+    argparse behavior) call ``cap.capture_evidence`` / ``cap.main`` directly.
+    """
+    kwargs.setdefault("expected_sha", TEST_SHA)
+    return cap.capture_evidence(*args, **kwargs)
 
 
 # ── Semantic command matching (fixture helpers) ───────────────────────────────
@@ -467,7 +494,7 @@ def test_missing_blob_id_fails_closed(tmp_path):
             return super()._git(argv)
 
     runner = BadBlobRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -515,7 +542,7 @@ def test_clean_checkout_succeeds(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                              command_matrix=_fake_matrix(str(root), str(out)),
                              )
     assert rc == 0
@@ -532,7 +559,7 @@ def test_dirty_checkout_fails_by_default(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=True)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                              command_matrix=_fake_matrix(str(root), str(out)),
                              )
     assert rc == 2
@@ -545,6 +572,7 @@ def test_allow_dirty_captures_but_untrusted(tmp_path):
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=True)
     rc = cap.capture_evidence(str(root), str(out), runner=runner, allow_dirty=True,
+                             expected_sha=TEST_SHA,
                              command_matrix=_fake_matrix(str(root), str(out)),
                              )
     assert rc == 0
@@ -552,6 +580,9 @@ def test_allow_dirty_captures_but_untrusted(tmp_path):
     assert evidence["trusted"] is False
     assert evidence["dirty"] is True
     assert evidence["allow_dirty"] is True
+    # The run pin is recorded even for an untrusted (dirty) capture.
+    assert evidence["requested_sha"] == TEST_SHA
+    assert evidence["observed_sha"] == TEST_SHA
 
 
 def test_command_exit_codes_recorded_exactly(tmp_path):
@@ -563,7 +594,7 @@ def test_command_exit_codes_recorded_exactly(tmp_path):
         cap.CommandSpec(id="c2", log_name="02.log", argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation"]),
     ]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix,
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix,
                              )
     assert rc == 0
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -580,7 +611,7 @@ def test_launch_failure_creates_capture_exit_2(tmp_path):
         cap.CommandSpec(id="missing", log_name="00.log", argv=["nonexistent_exe_xyz", "--flag"]),
     ]
     runner = ConfigurableFakeRunner(dirty=False, launch_fail_token="nonexistent_exe_xyz")
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix,
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix,
                              )
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -597,7 +628,7 @@ def test_missing_required_artifact_causes_capture_exit_2(tmp_path):
                         artifact_kinds=(("99-missing.log", "file"),)),
     ]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix,
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix,
                              )
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -628,7 +659,7 @@ def test_invalid_json_report_preserved_but_parser_failure(tmp_path):
         return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
-    rc = cap.capture_evidence(str(root), str(out), runner=bad_runner, command_matrix=matrix,
+    rc = _capture(str(root), str(out), runner=bad_runner, command_matrix=matrix,
                               )
     # A required report that is present but invalid must fail the capture closed.
     assert rc == 2
@@ -646,7 +677,7 @@ def test_v2_diagnostics_parse_correctly(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                              command_matrix=_fake_matrix(str(root), str(out)),
                              )
     assert rc == 0
@@ -666,7 +697,7 @@ def test_output_paths_are_repository_relative(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)),
                         )
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -685,7 +716,7 @@ def test_no_absolute_temp_path_leaks_into_evidence(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)),
                         )
     raw = (out / "evidence.json").read_text(encoding="utf-8")
@@ -712,7 +743,7 @@ def test_command_output_written_atomically(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)),
                         )
     # No leftover temp files anywhere under the bundle.
@@ -731,10 +762,10 @@ def test_semantic_summaries_equal_across_runs(tmp_path):
     out1 = root / "out" / "run-1"
     out2 = root / "out" / "run-2"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out1), runner=runner,
+    _capture(str(root), str(out1), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out1)),
                         )
-    cap.capture_evidence(str(root), str(out2), runner=runner,
+    _capture(str(root), str(out2), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out2)),
                         )
     s1 = json.loads((out1 / "semantic-summary.json").read_text(encoding="utf-8"))
@@ -742,6 +773,9 @@ def test_semantic_summaries_equal_across_runs(tmp_path):
     assert s1 == s2
     assert s1["commit"] == TEST_SHA
     assert s1["tree"] == TEST_TREE
+    # The caller-stated run pin is run-invariant, so it may appear in the
+    # deterministic summary without breaking byte-identical comparison.
+    assert s1["requested_sha"] == TEST_SHA
 
 
 def test_semantic_summary_argv_normalizes_run_specific_paths(tmp_path):
@@ -750,7 +784,7 @@ def test_semantic_summary_argv_normalizes_run_specific_paths(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)))
     s = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
     # The run id must not appear anywhere in the semantic summary.
@@ -792,7 +826,7 @@ def test_semantic_argv_normalizes_output_and_prefix_equals_forms(tmp_path):
         ),
     ]
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     s = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
     # The run id must not appear anywhere in the semantic summary.
     assert "run-1" not in json.dumps(s)
@@ -819,7 +853,7 @@ def test_semantic_argv_normalizes_embedded_bundle_path(tmp_path):
         ),
     ]
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     s = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
     assert "run-1" not in json.dumps(s)
     tok = s["commands"][0]["argv"][2]
@@ -832,7 +866,7 @@ def test_semantic_argv_normalizes_embedded_bundle_path(tmp_path):
                   bundle_rel + "0/sibling.json"],
         ),
     ]
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix2)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix2)
     s2 = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
     # ``out/run-10`` is a distinct component from ``out/run-1`` and must be kept.
     assert "out/run-10/sibling.json" in s2["commands"][0]["argv"]
@@ -853,7 +887,7 @@ def test_command_argv_is_array_not_shell_text(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)),
                         )
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -932,7 +966,7 @@ def test_preservation_failure_makes_evidence_untrusted(tmp_path):
             return self._inner(argv, cwd)
 
     runner = PreservationFailRunner()
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                              command_matrix=_fake_matrix(str(root), str(out)),
                              )
     assert rc == 0
@@ -965,7 +999,7 @@ def test_v2_report_with_nonzero_findings(tmp_path):
         return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
-    rc = cap.capture_evidence(str(root), str(out), runner=findings_runner, command_matrix=matrix,
+    rc = _capture(str(root), str(out), runner=findings_runner, command_matrix=matrix,
                               )
     assert rc == 0
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -981,7 +1015,7 @@ def test_output_sha256_contract_excludes_command_and_report_artifacts(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)),
                         )
     text = (out / "output-sha256.txt").read_text(encoding="utf-8")
@@ -1004,7 +1038,7 @@ def test_output_sha256_uses_bundle_relative_top_level_names(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)))
     text = (out / "output-sha256.txt").read_text(encoding="utf-8")
     rels = [ln.split("  ", 1)[1] for ln in text.splitlines() if ln.strip()]
@@ -1032,7 +1066,7 @@ def test_output_sha256_reflects_rewritten_artifacts_on_failure(tmp_path, monkeyp
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     out_sha = (out / "output-sha256.txt").read_text(encoding="utf-8")
@@ -1056,7 +1090,7 @@ def test_warnings_capped_after_output_hash_failure(tmp_path, monkeypatch):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)))
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     warns = evidence["infrastructure_warnings"]
@@ -1083,7 +1117,7 @@ def test_output_outside_root_rejected(tmp_path):
     # Sibling of the repo root, therefore not contained within it.
     out = tmp_path / "outside" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)),
                               )
     assert rc == 2
@@ -1096,7 +1130,7 @@ def test_output_traversal_rejected(tmp_path):
     root = _make_root(tmp_path)
     out = os.path.join(str(root), "..", "escape", "run-1")
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), out, runner=runner,
+    rc = _capture(str(root), out, runner=runner,
                               command_matrix=_fake_matrix(str(root), out),
                               )
     assert rc == 2
@@ -1110,7 +1144,7 @@ def test_missing_required_input_fails_closed(tmp_path):
     (root / "scripts" / "verify_db_access_boundaries.py").unlink()
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)),
                               )
     assert rc == 2
@@ -1136,7 +1170,7 @@ def test_preflight_failure_fails_closed(tmp_path):
             return self._inner(argv, cwd)
 
     runner = NoIdentityRunner()
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)),
                               )
     assert rc == 2
@@ -1150,7 +1184,7 @@ def test_preflight_commands_recorded(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                          command_matrix=_fake_matrix(str(root), str(out)),
                          )
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -1208,7 +1242,7 @@ def test_diagnostic_code_sanitized(tmp_path):
         return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
-    rc = cap.capture_evidence(str(root), str(out), runner=bad_code_runner, command_matrix=matrix,
+    rc = _capture(str(root), str(out), runner=bad_code_runner, command_matrix=matrix,
                               )
     # The report is valid JSON, so the capture still succeeds; the code is sanitized.
     assert rc == 0
@@ -1244,7 +1278,7 @@ def test_persisted_output_redacts_absolute_paths(tmp_path):
                         argv=["python3", "scripts/ci/verify_guard_registry.py"]),
     ]
     runner = LeakyRunner()
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix,
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix,
                          )
     log = (out / "commands" / "00-leaky.log").read_text(encoding="utf-8")
     assert "<redacted-path>" in log
@@ -1266,7 +1300,7 @@ def test_target_sha_enforced_wrong_sha(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = WrongShaRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -1288,7 +1322,7 @@ def test_preflight_nonzero_exit_rejected(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = NonzeroHeadRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -1310,7 +1344,7 @@ def test_preflight_malformed_sha_rejected(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = MalformedHeadRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -1324,7 +1358,7 @@ def test_input_manifest_built_dynamically(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                          command_matrix=_fake_matrix(str(root), str(out)))
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     rels = {e["rel_path"] for e in evidence["input_manifest"]}
@@ -1359,7 +1393,7 @@ def test_input_manifest_includes_production_source_roots(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     entries = {e["rel_path"]: e for e in evidence["input_manifest"]}
@@ -1390,7 +1424,7 @@ def test_symlink_escape_rejected(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cap.os.path, "realpath", fake_realpath)
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     assert not (out / "evidence.json").is_file()
@@ -1405,7 +1439,7 @@ def test_custom_matrix_absolute_path_rejected(tmp_path):
     abs_path = os.path.abspath(tmp_path / "secret" / "evil.py")
     matrix = [cap.CommandSpec(id="bad", log_name="00.log", argv=["python3", abs_path])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith("invalid-matrix-argv:") for w in evidence["infrastructure_warnings"])
@@ -1455,7 +1489,7 @@ def test_required_artifact_type_mismatch_fails(tmp_path):
         artifact_kinds=(("02-room-inventory.findings.json", "file"),),
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any("invalid-required-artifact-type:02-room-inventory.findings.json" in w
@@ -1467,7 +1501,7 @@ def test_required_artifact_hashes_present(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                          command_matrix=_fake_matrix(str(root), str(out)))
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     hashes = evidence["required_artifact_hashes"]
@@ -1513,7 +1547,7 @@ def test_raw_secret_exception_sql_output(tmp_path):
     matrix = [cap.CommandSpec(id="leaky", log_name="00-leaky.log",
                               argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = LeakyRunner()
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     log = (out / "commands" / "00-leaky.log").read_text(encoding="utf-8")
     assert "<redacted-secret>" in log
     assert "hunter2secret" not in log
@@ -1549,7 +1583,7 @@ def test_child_output_bounded(tmp_path):
     matrix = [cap.CommandSpec(id="huge", log_name="00-huge.log",
                               argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = HugeRunner()
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     log = (out / "commands" / "00-huge.log").read_text(encoding="utf-8")
     assert "<truncated>" in log
     assert len(log) <= cap.CHILD_OUTPUT_LIMIT + len("<truncated>")
@@ -1598,7 +1632,7 @@ def test_required_report_path_directory_rejected(tmp_path):
         required_artifacts=(),
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any("invalid-required-report:db-cli" in w for w in evidence["infrastructure_warnings"])
@@ -1623,7 +1657,7 @@ def test_log_name_traversal_rejected(tmp_path):
     matrix = [cap.CommandSpec(id="bad", log_name="../escape.log",
                               argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     # The hostile traversal token is redacted, never leaked verbatim.
@@ -1648,7 +1682,7 @@ def test_report_path_traversal_rejected(tmp_path):
         required_artifacts=(),
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     # The hostile traversal token is redacted, never leaked verbatim.
@@ -1669,7 +1703,7 @@ def test_required_artifact_traversal_rejected(tmp_path):
         required_artifacts=("../99-missing.log",),
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     # The hostile traversal token is redacted, never leaked verbatim.
@@ -1700,7 +1734,7 @@ def test_actual_symlink_report_path_rejected(tmp_path):
         required_artifacts=(),
     )]
     runner = ConfigurableFakeRunner(dirty=False, write_reports=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any("invalid-bundle-path:db-cli:evil_link" in w
@@ -1728,7 +1762,7 @@ def test_actual_symlink_required_artifact_rejected(tmp_path):
         required_artifacts=("evil_art",),
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any("invalid-bundle-path:needs-artifact:evil_art" in w
@@ -1752,7 +1786,7 @@ def test_actual_symlink_log_name_rejected(tmp_path):
     matrix = [cap.CommandSpec(id="bad", log_name="evil.log",
                               argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any("invalid-bundle-path:bad:commands/evil.log" in w
@@ -1787,7 +1821,7 @@ def test_preflight_metadata_sanitized_and_bounded(tmp_path):
     # The hostile status lines this test injects mark the checkout dirty by
     # design; allow_dirty lets the metadata-persistence stage run so the
     # sanitization of the PERSISTED git state is actually exercised.
-    cap.capture_evidence(str(root), str(out), runner=runner, allow_dirty=True,
+    _capture(str(root), str(out), runner=runner, allow_dirty=True,
                         command_matrix=_fake_matrix(str(root), str(out)))
     gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
     raw = json.dumps(gs)
@@ -1805,9 +1839,13 @@ def test_preflight_metadata_sanitized_and_bounded(tmp_path):
     assert len(gs["diff_name_only"]) <= cap.CHILD_OUTPUT_LIMIT
 
 
-# ── New tests: fixed target SHA is not configurable (req 3) ─────────────────────
-def test_target_sha_not_configurable(tmp_path):
-    """The capture tool must not accept a target_sha override (fixed SHA enforced)."""
+# ── New tests: run-pin API contract (PR-GR-00R part A) ─────────────────────────
+def test_legacy_fixed_target_sha_kwarg_is_gone(tmp_path):
+    """The retired fixed-target API is gone: ``target_sha=`` is not accepted.
+
+    PR-GR-00R part A replaced the permanent constant with a caller-stated run
+    pin (``expected_sha=``); the old kwarg name must not be silently honored.
+    """
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
@@ -1831,7 +1869,7 @@ def test_staged_diff_preserved_in_bundle(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False, staged_diff="config/staged.yml\n")
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)))
     gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
     assert gs["staged_diff_name_only"] == "config/staged.yml"
@@ -1857,7 +1895,7 @@ def test_git_meta_failure_fails_closed(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = GitMetaFailRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -1878,7 +1916,7 @@ def test_git_meta_partial_failure_fails_closed(tmp_path):
             return super()._git(argv)
 
     runner = PartialMetaFailRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -1930,7 +1968,7 @@ def test_custom_matrix_backslash_path_rejected(tmp_path):
     matrix = [cap.CommandSpec(id="bad", log_name="00.log",
                               argv=["python3", "scripts\\evil.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith("invalid-matrix-argv:") for w in evidence["infrastructure_warnings"])
@@ -1945,7 +1983,7 @@ def test_custom_matrix_unc_path_rejected(tmp_path):
     matrix = [cap.CommandSpec(id="bad", log_name="00.log",
                               argv=["python3", "//server/share/evil.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith("invalid-matrix-argv:") for w in evidence["infrastructure_warnings"])
@@ -1965,7 +2003,7 @@ def test_bundle_path_backslash_rejected(tmp_path):
         required_artifacts=(),
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith("invalid-bundle-path:") for w in evidence["infrastructure_warnings"])
@@ -2042,7 +2080,7 @@ def test_warning_payload_sanitized(tmp_path):
     matrix = [cap.CommandSpec(id="bad", log_name="00.log",
                               argv=["python3", "C:\\Users\\tester\\secret.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     raw = json.dumps(evidence)
@@ -2080,7 +2118,7 @@ def test_version_metadata_sanitized_and_bounded(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = LeakyVersionRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                         command_matrix=_fake_matrix(str(root), str(out)))
     gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
     # The leaked absolute path in the version string is redacted.
@@ -2120,7 +2158,7 @@ def test_stop_runner_on_matrix_validation_failure(tmp_path):
             return self._inner(argv, cwd)
 
     runner = SpyRunner()
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     # Validation failed closed, so the capture returns 2 and no matrix command
     # was ever executed (the runner is stopped before any child call).
     assert rc == 2
@@ -2145,7 +2183,7 @@ def test_custom_input_candidate_realpath_containment(tmp_path):
         "scripts\\evil.py",
     ]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)),
                               input_candidates=candidates)
     assert rc == 2
@@ -2183,7 +2221,7 @@ def test_diagnostic_codes_overflow_bounded(tmp_path, monkeypatch):
         return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
-    rc = cap.capture_evidence(str(root), str(out), runner=many_codes_runner,
+    rc = _capture(str(root), str(out), runner=many_codes_runner,
                               command_matrix=matrix)
     assert rc == 0
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -2211,7 +2249,7 @@ def test_finding_count_overflow_fails_closed(tmp_path, monkeypatch):
         return clean_checkout(argv, cwd)
 
     matrix = [_db_cli_matrix(str(root), str(out))]
-    rc = cap.capture_evidence(str(root), str(out), runner=many_findings_runner,
+    rc = _capture(str(root), str(out), runner=many_findings_runner,
                               command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -2227,7 +2265,7 @@ def test_manifest_overflow_fails_closed(tmp_path, monkeypatch):
     out = root / "out" / "run-1"
     candidates = [f"scripts/ci/missing_{i}.py" for i in range(6)]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)),
                               input_candidates=candidates)
     assert rc == 2
@@ -2242,7 +2280,7 @@ def test_warnings_overflow_fails_closed(tmp_path, monkeypatch):
     out = root / "out" / "run-1"
     candidates = [f"scripts/ci/missing_{i}.py" for i in range(3)]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)),
                               input_candidates=candidates)
     assert rc == 2
@@ -2261,7 +2299,7 @@ def test_warnings_capped_at_zero_max_warnings(tmp_path, monkeypatch):
     # Three missing required inputs would normally yield three warnings.
     candidates = [f"scripts/ci/missing_{i}.py" for i in range(3)]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)),
                               input_candidates=candidates)
     assert rc == 2
@@ -2278,7 +2316,7 @@ def test_summary_markdown_bounded(tmp_path, monkeypatch):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                          command_matrix=_fake_matrix(str(root), str(out)))
     summary = (out / "summary.md").read_text(encoding="utf-8")
     assert summary.endswith("<truncated>")
@@ -2311,7 +2349,7 @@ def test_unc_and_backslash_in_child_output_redacted(tmp_path):
     matrix = [cap.CommandSpec(id="leaky", log_name="00-leaky.log",
                               argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = LeakyRunner()
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     log = (out / "commands" / "00-leaky.log").read_text(encoding="utf-8")
     assert "<redacted-path>" in log
     assert "//server/share/secret.log" not in log
@@ -2345,7 +2383,7 @@ def test_keyboardinterrupt_stopiteration_in_child_output_redacted(tmp_path):
     matrix = [cap.CommandSpec(id="leaky", log_name="00-leaky.log",
                               argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = LeakyRunner()
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     log = (out / "commands" / "00-leaky.log").read_text(encoding="utf-8")
     assert "<redacted-exception>" in log
     assert "KeyboardInterrupt" not in log
@@ -2363,7 +2401,7 @@ def test_custom_argv_secret_rejected_and_not_persisted(tmp_path):
         argv=["python3", "scripts/ci/verify_guard_registry.py", "password=hunter2secret"],
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert "password=hunter2secret" not in json.dumps(evidence)
@@ -2407,7 +2445,7 @@ def test_preflight_argv_tokens_sanitized(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                          command_matrix=_fake_matrix(str(root), str(out)))
     gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
     for rec in gs["preflight_commands"]:
@@ -2558,7 +2596,7 @@ def test_missing_artifact_kind_fails_closed_stop_before_run(tmp_path):
         artifact_kinds=(),
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith("missing-artifact-kind:") for w in evidence["infrastructure_warnings"])
@@ -2576,7 +2614,7 @@ def test_custom_command_id_overflow_fails_closed(tmp_path):
         id=long_id, log_name="00.log",
         argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith(cap.OVERFLOW_COMMAND_ID) for w in evidence["infrastructure_warnings"])
@@ -2600,7 +2638,7 @@ def test_command_id_sanitized_before_persistence(tmp_path):
         id=hostile_id, log_name="00.log",
         argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 0
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     cmd_id = evidence["commands"][0]["id"]
@@ -2626,7 +2664,7 @@ def test_custom_path_overflow_fails_closed(tmp_path):
         id="bad", log_name=long_path,
         argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith(cap.OVERFLOW_PATH) for w in evidence["infrastructure_warnings"])
@@ -2639,7 +2677,7 @@ def test_persisted_collections_are_bounded(tmp_path):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    cap.capture_evidence(str(root), str(out), runner=runner,
+    _capture(str(root), str(out), runner=runner,
                          command_matrix=_fake_matrix(str(root), str(out)))
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert len(evidence["input_manifest"]) <= cap.MAX_MANIFEST_ENTRIES
@@ -2717,7 +2755,7 @@ def test_matrix_overflow_stops_runner(tmp_path):
         for i in range(cap.MAX_MATRIX_COMMANDS + 5)
     ]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=big)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=big)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith(cap.OVERFLOW_MATRIX) for w in evidence["infrastructure_warnings"])
@@ -2733,7 +2771,7 @@ def test_persisted_arrays_bounded_under_overflow(tmp_path, monkeypatch):
     out = root / "out" / "run-1"
     candidates = [f"scripts/ci/missing_{i}.py" for i in range(6)]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)),
                               input_candidates=candidates)
     assert rc == 2
@@ -2762,7 +2800,7 @@ def test_required_artifact_hash_failure_fails_closed(tmp_path, monkeypatch):
     out.mkdir(parents=True, exist_ok=True)
     (out / "present.log").write_text("data", encoding="utf-8")
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith(cap.ARTIFACT_HASH_FAILED)
@@ -2770,17 +2808,34 @@ def test_required_artifact_hash_failure_fails_closed(tmp_path, monkeypatch):
 
 
 def test_log_hash_failure_fails_closed(tmp_path, monkeypatch):
-    """A log hash failure sets launch_error and fails the capture closed."""
+    """A finished log that cannot be read back/hashed is INCOMPLETE
+    (``log-unreadable``), is never hashed as valid evidence, and fails the
+    capture closed (PR-GR-00R part B)."""
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
-    monkeypatch.setattr(cap, "_race_safe_hash_file", lambda *a, **k: None)
+    real_hash = cap._race_safe_hash_file
+
+    def log_hash_only(path, *a, **k):
+        # Fail only for the command log; top-level outputs hash normally so
+        # this test isolates the log-unreadable path.
+        if str(path).endswith("00.log"):
+            return None
+        return real_hash(path, *a, **k)
+
+    monkeypatch.setattr(cap, "_race_safe_hash_file", log_hash_only)
     matrix = [cap.CommandSpec(id="c", log_name="00.log",
                               argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
-    assert evidence["commands"][0]["launch_error"] == "LOG_HASH_FAILED"
+    cmd = evidence["commands"][0]
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_UNREADABLE
+    # The unreadable artifact is never hashed as valid evidence.
+    assert cmd["log_sha256"] == ""
+    assert any(w == f"incomplete-command-log:c:{cap.LOG_UNREADABLE}"
+               for w in evidence["infrastructure_warnings"])
 
 
 def test_report_hash_failure_fails_closed(tmp_path, monkeypatch):
@@ -2792,7 +2847,7 @@ def test_report_hash_failure_fails_closed(tmp_path, monkeypatch):
     monkeypatch.setattr(cap, "_race_safe_read_bytes", lambda *a, **k: None)
     matrix = [_db_cli_matrix(str(root), str(out))]
     runner = ConfigurableFakeRunner(dirty=False, write_reports=True)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert evidence["commands"][0]["parser_error"] == "REPORT_HASH_FAILED"
@@ -2838,7 +2893,7 @@ def test_non_command_spec_fails_closed(tmp_path):
     out = root / "out" / "run-1"
     matrix = [{"id": "bad", "argv": ["python3", "x"]}]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith(cap.INVALID_MATRIX_SPEC)
@@ -2858,7 +2913,7 @@ def test_malformed_artifact_kinds_fails_closed(tmp_path):
         artifact_kinds=(("out.json", "file"), "bad-entry"),
     )]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith(cap.INVALID_MATRIX_SPEC)
@@ -2873,7 +2928,7 @@ def test_malformed_argv_type_fails_closed(tmp_path):
     out = root / "out" / "run-1"
     matrix = [cap.CommandSpec(id="c", log_name="00.log", argv=["python3", 123])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith(cap.INVALID_MATRIX_SPEC)
@@ -2928,7 +2983,7 @@ def test_nonstring_log_name_fails_closed_zero_runner(tmp_path):
     out = root / "out" / "run-1"
     matrix = [cap.CommandSpec(id="c", log_name=123, argv=["python3", "scripts/ci/verify_guard_registry.py"])]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith("invalid-bundle-path:") for w in evidence["infrastructure_warnings"])
@@ -2945,7 +3000,7 @@ def test_nonstring_report_path_fails_closed_zero_runner(tmp_path):
         id="c", log_name="00.log", argv=["python3", "scripts/ci/verify_guard_registry.py"],
         report_path=456)]
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith("invalid-bundle-path:") for w in evidence["infrastructure_warnings"])
@@ -2972,7 +3027,7 @@ def test_required_artifact_hash_overflow_fails_closed(tmp_path, monkeypatch):
     for i in range(5):
         (out / f"art{i}.json").write_text("data", encoding="utf-8")
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w == cap.OVERFLOW_REQUIRED_ARTIFACT_HASHES
@@ -2989,7 +3044,7 @@ def test_output_hash_failure_fails_closed(tmp_path, monkeypatch):
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -3026,7 +3081,7 @@ def test_final_output_hash_pass_failure_is_consistent_and_untrusted(tmp_path, mo
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     # The final-pass failure closes the capture.
     assert rc == 2
@@ -3069,7 +3124,7 @@ def test_final_pass_single_output_failure_persisted_and_recomputed(tmp_path, mon
 
     monkeypatch.setattr(cap, "_race_safe_hash_file", fake_hash)
     runner = ConfigurableFakeRunner(dirty=False)
-    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+    rc = _capture(str(root), str(out), runner=runner,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -3114,7 +3169,7 @@ def test_report_hash_and_parse_use_one_snapshot(tmp_path, monkeypatch):
     out = root / "out" / "run-1"
     matrix = [_db_cli_matrix(str(root), str(out))]
     runner = ConfigurableFakeRunner(dirty=False, write_reports=True)
-    cap.capture_evidence(str(root), str(out), runner=runner, command_matrix=matrix)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     cmd = evidence["commands"][0]
     # The hash and the parse both derive from the single ``fixed`` snapshot.
@@ -3219,5 +3274,665 @@ def test_parse_v2_report_rejects_malformed_finding_shape():
         raw=_v2_raw(findings=[{"rule": "X", "severity": "error"}]))
     assert ok["parser_error"] is None
     assert ok["finding_count"] == 1
+
+
+# ── PR-GR-00R part A: caller-stated run pin replaces the fixed TARGET_SHA ──────
+
+def test_no_hardcoded_target_sha_remains_authoritative():
+    """Grep-style: the retired permanent TARGET_SHA authority is fully gone.
+
+    No historical SHA literal may remain authoritative anywhere in the capture
+    tool: the constant, its name, and its value must be absent from the source,
+    and no module attribute may carry the old lock.
+    """
+    with open(cap.__file__, encoding="utf-8") as handle:
+        source = handle.read()
+    # The retired historical SHA literal appears nowhere in the tool source.
+    assert RETIRED_TARGET_SHA not in source
+    # The constant name/authority is gone entirely (no definition, no reference).
+    assert "TARGET_SHA" not in source
+    assert not hasattr(cap, "TARGET_SHA")
+    # The pin contract exists instead: syntax validation for the caller-stated SHA.
+    assert cap._is_valid_sha40(TEST_SHA)
+
+
+class OtherCommitRunner(ConfigurableFakeRunner):
+    """Fixture repo checked out at a commit DIFFERENT from the retired target."""
+
+    def _git(self, argv):
+        if (_is_git_cmd(argv, "rev-parse", "HEAD")
+                and "HEAD^{tree}" not in argv):
+            return FakeOutcome(0, OTHER_SHA)
+        if _is_git_cmd(argv, "log", "--oneline", "-20"):
+            return FakeOutcome(0, f"{OTHER_SHA} base commit\n")
+        return super()._git(argv)
+
+
+def test_arbitrary_valid_sha_accepted_as_run_pin(tmp_path):
+    """Any valid caller-declared SHA is accepted; the retired constant is irrelevant.
+
+    The fixture repository is checked out at OTHER_SHA — a different commit than
+    the retired hard-coded target — and the capture succeeds when the caller
+    pins exactly that commit.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = OtherCommitRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=OTHER_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is True
+    assert evidence["requested_sha"] == OTHER_SHA
+    assert evidence["observed_sha"] == OTHER_SHA
+    assert evidence["tree_sha"] == TEST_TREE
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert semantic["requested_sha"] == OTHER_SHA
+    assert semantic["commit"] == OTHER_SHA
+
+
+def test_missing_expected_sha_fails_closed_before_any_command(tmp_path):
+    """Omitting the run pin is a controlled failure with ZERO runner calls."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    # Controlled failure BEFORE any command: not even a git probe was issued.
+    assert runner.calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == "missing-expected-sha" for w in evidence["infrastructure_warnings"])
+    assert evidence["trusted"] is False
+    assert evidence["commands"] == []
+
+
+@pytest.mark.parametrize("bad_pin", [
+    "9B97E7979130DE605D164386BBF719CF20579475",   # uppercase hex
+    "9b97e7979130de605d164386bbf719cf2057947",    # 39 chars (short)
+    "9b97e7979130de605d164386bbf719cf205794755",  # 41 chars (long)
+    "g" * 40,                                     # non-hex characters
+    "9b97e7979130de605d164386bbf719cf2057947!",   # punctuation
+])
+def test_invalid_expected_sha_syntax_rejected(tmp_path, bad_pin):
+    """A pin that is not exactly 40 lowercase hex fails closed before any command."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=bad_pin,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    assert runner.calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == "invalid-expected-sha" for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+
+
+# Basenames of every guard-suite executable a matrix command could invoke.
+_GUARD_SCRIPT_BASENAMES = frozenset({
+    "verify_guard_registry.py",
+    "verify_db_access_boundaries.py",
+    "guard_ratchet.py",
+    "run_static_guard_suite.py",
+    "gradlew",
+    "pytest",
+})
+
+
+class GuardCallSpyRunner(ConfigurableFakeRunner):
+    """Records every attempted guard-suite (non-git) command invocation."""
+
+    def __init__(self, head_override=None, **kwargs):
+        super().__init__(**kwargs)
+        self.head_override = head_override
+        self.guard_calls: list = []
+
+    def _git(self, argv):
+        if (self.head_override is not None
+                and _is_git_cmd(argv, "rev-parse", "HEAD")
+                and "HEAD^{tree}" not in argv):
+            return FakeOutcome(0, self.head_override)
+        return super()._git(argv)
+
+    def __call__(self, argv, cwd):
+        argv = list(argv)
+        if argv and argv[0] != "git" and any(
+                _argv_basename(tok) in _GUARD_SCRIPT_BASENAMES for tok in argv):
+            self.guard_calls.append(argv)
+        return super().__call__(argv, cwd)
+
+
+def test_sha_mismatch_rejects_before_any_matrix_command(tmp_path):
+    """A pin/HEAD mismatch fails closed PRE-LAUNCH: zero guard commands run.
+
+    Read-only git observations (preflight identity) still happen so the bundle
+    can record requested vs observed SHAs, but no matrix command starts.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = GuardCallSpyRunner(dirty=False, head_override="0" * 40)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    assert runner.guard_calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("wrong-sha:") for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+    # Both sides of the failed comparison are recorded.
+    assert evidence["requested_sha"] == TEST_SHA
+    assert evidence["observed_sha"] == "0" * 40
+
+
+class MidCaptureDriftRunner(ConfigurableFakeRunner):
+    """Serves the pinned identity during preflight, then mutates it post-matrix.
+
+    Observations of the chosen surface beyond ``drift_after`` calls return the
+    drifted value, simulating the repository moving underneath a running
+    capture (the post-matrix re-check observes a different HEAD/tree).
+    """
+
+    def __init__(self, surface="head", drift_after=1, **kwargs):
+        super().__init__(**kwargs)
+        self.surface = surface
+        self.drift_after = drift_after
+        self._surface_calls = 0
+
+    def _git(self, argv):
+        if (self.surface == "head"
+                and _is_git_cmd(argv, "rev-parse", "HEAD")
+                and "HEAD^{tree}" not in argv):
+            self._surface_calls += 1
+            if self._surface_calls > self.drift_after:
+                return FakeOutcome(0, DRIFT_SHA)
+            return FakeOutcome(0, TEST_SHA)
+        if self.surface == "tree" and _is_git_cmd(argv, "rev-parse", "HEAD^{tree}"):
+            self._surface_calls += 1
+            if self._surface_calls > self.drift_after:
+                return FakeOutcome(0, DRIFT_SHA)
+            return FakeOutcome(0, TEST_TREE)
+        return super()._git(argv)
+
+
+@pytest.mark.parametrize("surface", ["head", "tree"])
+def test_post_capture_identity_drift_returns_2(tmp_path, surface):
+    """HEAD/tree changed during the capture -> incomplete/untrusted bundle, exit 2."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = MidCaptureDriftRunner(dirty=False, surface=surface, drift_after=1)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is False
+    assert any(w.startswith("post-capture-drift:")
+               for w in evidence["infrastructure_warnings"])
+    # Unlike the pre-launch pin gate, the matrix DID run before the drift was
+    # observed — the bundle is complete but marked untrusted.
+    assert evidence["commands"]
+
+
+def test_clean_pin_capture_succeeds_with_child_exits_1_and_2(tmp_path):
+    """A clean expected-SHA capture succeeds while observing child exits 1 and 2.
+
+    Nonzero guard-child exits are stored observations, never capture failures;
+    only the capture tool's own completeness gates produce exit 2.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is True
+    by_id = {c["id"]: c["exit_code"] for c in evidence["commands"]}
+    # Fake-runner defaults: the db CLI is blocked (exit 2) and Gradle fails (1).
+    assert by_id["db-cli"] == 2
+    assert by_id["gradle-db"] == 1
+    assert by_id["registry-validation"] == 0
+
+
+def test_evidence_and_git_state_record_pin_metadata(tmp_path):
+    """requested_sha / observed_sha / tree_sha land in git-state AND evidence."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    for record in (evidence, gs):
+        assert record["requested_sha"] == TEST_SHA
+        assert record["observed_sha"] == TEST_SHA
+        assert record["tree_sha"] == TEST_TREE
+    # The legacy top-level fixed-target field is gone.
+    assert "target_sha" not in evidence
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert semantic["requested_sha"] == TEST_SHA
+
+
+def test_cli_requires_expected_sha(tmp_path):
+    """--expected-sha is mandatory on the CLI (argv-only execution)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    with pytest.raises(SystemExit) as excinfo:
+        cap.main(["--root", str(root), "--out", str(out)])
+    assert excinfo.value.code == 2
+    # argparse rejects the invocation before any capture logic runs.
+    assert not (out / "evidence.json").is_file()
+
+
+def test_cli_rejects_invalid_expected_sha_syntax(tmp_path):
+    """Invalid --expected-sha syntax is a controlled pre-command failure."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    with pytest.raises(SystemExit) as excinfo:
+        cap.main(["--root", str(root), "--out", str(out),
+                  "--expected-sha", "9B97E7979130DE605D164386BBF719CF20579475"])
+    assert excinfo.value.code == 2
+    assert not (out / "evidence.json").is_file()
+
+
+# ── PR-GR-00R part B: complete/incomplete command-log capture ──────────────────
+
+class _OversizedOutputRunner:
+    """Wraps the clean fake runner; inflates every non-git command's combined
+    output far past ``CHILD_OUTPUT_LIMIT`` so the cap-exceedance path runs."""
+
+    def __init__(self, multiplier: int = 4) -> None:
+        self._inner = ConfigurableFakeRunner(dirty=False)
+        self._multiplier = multiplier
+
+    def __call__(self, argv, cwd):
+        outcome = self._inner(argv, cwd)
+        if argv and argv[0] == "git":
+            # Keep the git preflight/preservation surface CLEAN.
+            return outcome
+        return FakeOutcome(outcome.returncode,
+                           "x" * (cap.CHILD_OUTPUT_LIMIT * self._multiplier))
+
+
+def _log_record(evidence, index=0):
+    return evidence["commands"][index]
+
+
+def _assert_no_tmp_leftovers(out):
+    leftovers = [name for dirpath, _dirs, files in os.walk(str(out))
+                 for name in files if ".tmp" in name]
+    assert leftovers == []
+
+
+def test_small_log_complete_and_hashed(tmp_path):
+    """A small combined log is COMPLETE: atomically published, sized, hashed,
+    and marked complete with no failure code."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="small", log_name="00-small.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    # The part-B schema fields are present on every command record.
+    for key in ("log_bytes", "log_complete", "log_failure_code"):
+        assert key in cmd
+    assert cmd["log_complete"] is True
+    assert cmd["log_failure_code"] is None
+    log_path = out / "commands" / "00-small.log"
+    assert log_path.is_file()
+    assert cmd["log_bytes"] == log_path.stat().st_size
+    assert cmd["log_bytes"] > 0
+    # The recorded hash matches the published artifact bytes exactly.
+    assert cmd["log_sha256"] == cap.sha256_bytes(log_path.read_bytes())
+    # argv stays an array and the child exit code is preserved.
+    assert isinstance(cmd["argv"], list)
+    assert cmd["exit_code"] == 0
+    _assert_no_tmp_leftovers(out)
+
+
+def test_over_cap_log_incomplete_exit_2_never_silent_truncation(tmp_path):
+    """Cap exceedance is INCOMPLETE: capture exit 2, untrusted, controlled
+    ``output-limit-exceeded`` code, partial artifact preserved but NEVER hashed
+    as valid evidence.  The tool never exits 0 with a truncated log."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="huge", log_name="00-huge.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    rc = _capture(str(root), str(out), runner=_OversizedOutputRunner(),
+                  command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_OUTPUT_LIMIT_EXCEEDED
+    # A partial artifact is never hashed as valid evidence.
+    assert cmd["log_sha256"] == ""
+    # The child exit code is still observed truthfully (incompleteness of the
+    # LOG is signaled separately from the child's status).
+    assert cmd["exit_code"] == 0
+    assert evidence["trusted"] is False
+    assert any(w == f"incomplete-command-log:huge:{cap.LOG_OUTPUT_LIMIT_EXCEEDED}"
+               for w in evidence["infrastructure_warnings"])
+    # The flagged partial artifact is preserved on disk, bounded, and
+    # self-describing (exactly one truncation marker).
+    log_path = out / "commands" / "00-huge.log"
+    assert log_path.is_file()
+    data = log_path.read_text(encoding="utf-8")
+    assert data.endswith(cap.LOG_TRUNCATION_MARKER)
+    assert data.count(cap.LOG_TRUNCATION_MARKER) == 1
+    assert len(data) <= cap.CHILD_OUTPUT_LIMIT + len(cap.LOG_TRUNCATION_MARKER)
+    # Raw payload text never reaches evidence.json; no temp names leak.
+    raw = json.dumps(evidence)
+    assert "x" * 64 not in raw
+    assert ".tmp" not in raw
+    _assert_no_tmp_leftovers(out)
+
+
+def test_semantic_summary_equal_when_logs_incomplete_both_runs(tmp_path):
+    """Log volume metadata (byte counts / completeness / failure code) never
+    reaches semantic-summary.json: two same-SHA runs whose command logs are
+    both INCOMPLETE still compare byte-identical."""
+    root = _make_root(tmp_path)
+    out1 = root / "out" / "run-1"
+    out2 = root / "out" / "run-2"
+    rc1 = _capture(str(root), str(out1), runner=_OversizedOutputRunner(),
+                   command_matrix=_fake_matrix(str(root), str(out1)))
+    rc2 = _capture(str(root), str(out2), runner=_OversizedOutputRunner(),
+                   command_matrix=_fake_matrix(str(root), str(out2)))
+    assert rc1 == 2
+    assert rc2 == 2
+    s1 = json.loads((out1 / "semantic-summary.json").read_text(encoding="utf-8"))
+    s2 = json.loads((out2 / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert s1 == s2
+    dumped = json.dumps(s1)
+    for banned in ("log_bytes", "log_complete", "log_failure_code"):
+        assert banned not in dumped
+
+
+def test_log_temp_open_failure_is_log_write_failed_and_skips_execution(tmp_path, monkeypatch):
+    """A temp log that cannot be created is INCOMPLETE (``log-write-failed``);
+    the uncapturable child command is never executed (no side effects without
+    evidence)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    real_mkstemp = cap.tempfile.mkstemp
+
+    def failing_mkstemp(*args, **kwargs):
+        if os.path.basename(str(kwargs.get("dir", ""))) == "commands":
+            raise OSError("simulated temp-log creation failure")
+        return real_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(cap.tempfile, "mkstemp", failing_mkstemp)
+    matrix = [cap.CommandSpec(id="guarded", log_name="00-guarded.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_WRITE_FAILED
+    assert cmd["log_sha256"] == ""
+    assert cmd["log_bytes"] == 0
+    # The command was never executed, so there is no exit code to observe.
+    assert cmd["exit_code"] is None
+    assert not (out / "commands" / "00-guarded.log").exists()
+    # Only preflight git probes ran; the guarded matrix command did not.
+    executed_tokens = [tok for call in runner.calls for tok in call]
+    assert not any(tok.endswith("verify_guard_registry.py")
+                   for tok in executed_tokens)
+    assert any(w == f"incomplete-command-log:guarded:{cap.LOG_WRITE_FAILED}"
+               for w in evidence["infrastructure_warnings"])
+    _assert_no_tmp_leftovers(out)
+
+
+def test_log_stream_write_failure_is_log_write_failed(tmp_path, monkeypatch):
+    """A write failure while streaming marks the log INCOMPLETE
+    (``log-write-failed``) while the child's exit code is still observed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    def failing_write_chunk(self, chunk):
+        raise OSError("simulated disk-full while streaming")
+
+    monkeypatch.setattr(cap._CommandLogSink, "_write_chunk", failing_write_chunk)
+    matrix = [cap.CommandSpec(id="wfail", log_name="00-wfail.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_WRITE_FAILED
+    assert cmd["log_sha256"] == ""
+    # The child DID run; its status remains a truthful observation.
+    assert cmd["exit_code"] == 0
+    assert any(w.endswith(f":{cap.LOG_WRITE_FAILED}")
+               for w in evidence["infrastructure_warnings"])
+    _assert_no_tmp_leftovers(out)
+
+
+def test_log_publish_failure_is_log_write_failed_without_leftovers(tmp_path, monkeypatch):
+    """An ``os.replace`` publish failure is ``log-write-failed``: nothing is
+    published, no ``*.tmp`` leftover survives, and the capture fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    real_replace = cap.os.replace
+
+    def failing_replace(src, dst):
+        if os.path.basename(str(dst)) == "00-pub.log":
+            raise OSError("simulated atomic-publish failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(cap.os, "replace", failing_replace)
+    matrix = [cap.CommandSpec(id="pub", log_name="00-pub.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_WRITE_FAILED
+    assert cmd["log_sha256"] == ""
+    assert cmd["log_bytes"] == 0
+    assert not (out / "commands" / "00-pub.log").exists()
+    _assert_no_tmp_leftovers(out)
+
+
+def test_production_streaming_runner_captures_merged_output(tmp_path):
+    """The real streaming runner captures merged stdout+stderr through the sink
+    into an atomically published, hashable COMPLETE log (small output)."""
+    final = tmp_path / "merged.log"
+    sink = cap._CommandLogSink(str(final))
+    assert sink.open() is True
+    rc = cap.streaming_subprocess_runner(
+        [sys.executable, "-c",
+         "import sys; sys.stdout.write('out-line\\n'); "
+         "sys.stderr.write('err-line\\n')"],
+        str(tmp_path), sink.sink)
+    sink.finish()
+    assert rc == 0
+    assert sink.failure_code is None
+    assert sink.exceeded is False
+    text = final.read_text(encoding="utf-8")
+    assert "out-line" in text
+    assert "err-line" in text
+    # The published artifact hashes exactly as written.
+    assert cap._race_safe_hash_file(str(final)) == \
+        cap.sha256_bytes(final.read_bytes())
+
+
+def test_production_streaming_runner_caps_output(tmp_path):
+    """The real streaming runner enforces the cap on live merged output:
+    exceedance flags ``output-limit-exceeded``, appends exactly one marker,
+    stays bounded, and keeps draining (child exits normally)."""
+    final = tmp_path / "big.log"
+    sink = cap._CommandLogSink(str(final))
+    assert sink.open() is True
+    rc = cap.streaming_subprocess_runner(
+        [sys.executable, "-c", "print('x' * 30000)"],
+        str(tmp_path), sink.sink)
+    sink.finish()
+    # The child was fully drained (never blocked on a full pipe).
+    assert rc == 0
+    assert sink.failure_code == cap.LOG_OUTPUT_LIMIT_EXCEEDED
+    assert sink.exceeded is True
+    data = final.read_text(encoding="utf-8")
+    assert data.endswith(cap.LOG_TRUNCATION_MARKER)
+    assert data.count(cap.LOG_TRUNCATION_MARKER) == 1
+    assert len(data) <= cap.CHILD_OUTPUT_LIMIT + len(cap.LOG_TRUNCATION_MARKER)
+
+
+def test_evidence_records_log_state_without_raw_payload(tmp_path):
+    """evidence.json carries the bounded log-state fields only: no raw child
+    payload, no secret, no absolute/temp path ever reaches it."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class LeakyRunner:
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                return outcome
+            return FakeOutcome(outcome.returncode,
+                               "registry ok password=hunter2secret "
+                               "C:\\Users\\tester\\x.log")
+
+    matrix = [cap.CommandSpec(id="leaky", log_name="00-leaky.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    rc = _capture(str(root), str(out), runner=LeakyRunner(), command_matrix=matrix)
+    assert rc == 0
+    raw = (out / "evidence.json").read_text(encoding="utf-8")
+    assert "hunter2secret" not in raw
+    assert "C:\\Users\\tester" not in raw
+    assert ".tmp" not in raw
+    evidence = json.loads(raw)
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is True
+    assert cmd["log_failure_code"] is None
+
+
+# ── Strict-review blocker B-1: zero-side-effect command matrix ─────────────────
+
+class UntrackedSideEffectRunner(ConfigurableFakeRunner):
+    """First real matrix command leaves an untracked, non-ignored file behind.
+
+    Mirrors the B-1 failure mode: a matrix command (e.g. an unpinned pytest
+    run) materializes an untracked working-tree path mid-matrix.  Every
+    ``git status --porcelain=v1`` observation after that point reports it as
+    an untracked ``??`` entry, exactly like real git would, while preflight /
+    preservation observations (taken before any matrix command ran) stay
+    clean.  Interpreter/version probes are excluded so the side effect lands
+    strictly inside the matrix, not during preflight.
+    """
+
+    def __init__(self, rel_path: str, **kwargs):
+        super().__init__(**kwargs)
+        self.rel_path = rel_path
+        self.created = False
+
+    def __call__(self, argv, cwd):
+        outcome = super().__call__(argv, cwd)
+        if (not self.created and argv and argv[0] != "git"
+                and len(argv) > 1 and argv[1] not in ("--version", "-version")):
+            target = os.path.join(str(cwd), self.rel_path)
+            parent = os.path.dirname(target)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("untracked side effect\n")
+            self.created = True
+        return outcome
+
+    def _git(self, argv):
+        if self.created and _is_git_cmd(argv, "status", "--porcelain=v1"):
+            base = super()._git(argv).combined
+            return FakeOutcome(0, base + f"?? {self.rel_path}\n")
+        return super()._git(argv)
+
+
+def test_untracked_side_effect_mid_matrix_trips_post_capture_drift_status(tmp_path):
+    """Regression (B-1 class): a fake runner whose matrix command creates an
+    untracked, non-ignored file mid-matrix trips the post-capture drift
+    re-check on the STATUS surface (exit 2, untrusted).
+
+    This locks in the status-surface detection: an unpinned pytest run's
+    ``.pytest_cache/`` output previously surfaced exactly here, breaking the
+    two-clean-capture protocol (run-1 exit 2, run-2 dirty gate).
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = UntrackedSideEffectRunner(".pytest_cache/CACHEDIR.TAG", dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is False
+    # The status surface specifically fired (not head/tree/unverifiable).
+    assert "post-capture-drift:status" in evidence["infrastructure_warnings"]
+    # The matrix DID run before the drift was observed: complete but untrusted.
+    assert evidence["commands"]
+
+
+def test_default_matrix_pins_no_cacheprovider_on_pytest_invocations(tmp_path):
+    """Regression (B-1): every pytest-invoking entry of the default matrix pins
+    ``-p no:cacheprovider`` so the matrix produces zero untracked working-tree
+    side effects (no pytest config file exists and .gitignore has no
+    ``.pytest_cache`` entry, so an unpinned run would create one)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    pytest_specs = [s for s in matrix if "pytest" in s.argv]
+    assert len(pytest_specs) == 1
+    for spec in pytest_specs:
+        assert "-p" in spec.argv
+        assert "no:cacheprovider" in spec.argv
+        # Appended (not inserted): the pin closes the focused-tests argv.
+        assert spec.argv[-2:] == ["-p", "no:cacheprovider"]
+    # Source-level pin: the literal survives in the tool source itself, so the
+    # guarantee cannot silently regress even if the matrix is rebuilt.
+    with open(cap.__file__, encoding="utf-8") as handle:
+        source = handle.read()
+    assert '"-p", "no:cacheprovider"' in source
+
+
+def test_declared_report_absent_is_missing_report_parser_error(tmp_path):
+    """N-1: a declared ``report_path`` whose file never appears yields the
+    controlled ``MISSING_REPORT`` parser error and fails the capture closed
+    (invalid-required-report), never a silent parser_error-free record."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    matrix = [cap.CommandSpec(
+        id="db-cli", log_name="03-db-cli.log",
+        argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+              "--findings-output", "/".join([bundle_rel, "03-db-cli.findings.json"])],
+        report_path="03-db-cli.findings.json",
+        required_artifacts=(),
+    )]
+    # write_reports=False: the child runs but never writes its declared report.
+    runner = ConfigurableFakeRunner(dirty=False, write_reports=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    assert cmd["parser_error"] == "MISSING_REPORT"
+    assert cmd["report_sha256"] is None
+    assert any("invalid-required-report:db-cli" in w
+               for w in evidence["infrastructure_warnings"])
 
 

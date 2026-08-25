@@ -2,8 +2,8 @@
 """
 capture_db_guard_evidence.py
 
-Diagnostic-only, reproducible evidence capture for the DB access guard at one
-exact Git SHA.
+Diagnostic-only, reproducible evidence capture for the DB access guard at the
+caller-pinned exact Git SHA (``--expected-sha``).
 
 This tool is NOT an architecture guard.  It is never registered in the guard
 registry and never mutates policy, baseline, config/guards, production Kotlin,
@@ -16,27 +16,57 @@ What it does
 1. Records a fixed, declared command matrix (preflight + registry validation +
    focused DB Python tests + inventory-only run + normal DB CLI + ratchet +
    full static suite + Gradle wiring).
-2. Captures combined stdout/stderr for every command and preserves the child
-   exit code.  Expected nonzero commands (the DB CLI, the ratchet, Gradle) are
-   observations, never capture failures.
-3. Writes every artifact atomically (sibling temp + fsync + os.replace).
-4. Executes every command as an argv array with ``shell=False`` — never a
+2. Streams combined stdout/stderr for every command (a single merged pipe,
+   read incrementally) into an atomic temporary log file next to the final
+   log path; on completion the temp file is ``os.replace``d onto the final
+   name.  The production runner reads the live merged pipe incrementally;
+   an injected runner's returned output is fed through the identical atomic
+   sink in bounded chunks.  The child exit code is preserved.  Expected
+   nonzero commands (the DB CLI, the ratchet, Gradle) are observations, never
+   capture failures.
+3. Every command log is in exactly one of two states:
+   * ``COMPLETE`` — the entire combined stdout/stderr was captured within the
+     bounded size cap, written atomically, hashed (SHA-256), and marked
+     complete (``logComplete=true``); or
+   * ``INCOMPLETE`` — the size cap was exceeded (``output-limit-exceeded``),
+     the log could not be written (``log-write-failed``), or the finished
+     artifact could not be read back/hashed (``log-unreadable``).  An
+     incomplete log is still preserved on disk as a flagged artifact but is
+     NEVER hashed as valid evidence, and it forces the whole capture to exit
+     ``2`` (incomplete evidence).  The capture never exits ``0`` with a
+     silently truncated log.
+4. Writes every artifact atomically (sibling temp + fsync + os.replace).
+5. Executes every command as an argv array with ``shell=False`` — never a
    shell-string.
-5. Stores repository-relative paths only; never absolute temp/machine paths.
-6. Redacts environment values except an explicit allowlist of version fields.
-7. Hashes every listed input and output artifact (SHA-256).
-8. Rejects a dirty checkout by default; ``--allow-dirty`` captures but marks
+6. Stores repository-relative paths only; never absolute temp/machine paths.
+7. Redacts environment values except an explicit allowlist of version fields.
+8. Hashes every listed input and output artifact (SHA-256).
+9. Rejects a dirty checkout by default; ``--allow-dirty`` captures but marks
    the evidence bundle untrusted.
-9. Emits a deterministic ``semantic-summary.json`` that excludes timestamps,
-   durations, machine paths, Gradle cache paths, and transient temp names, so
-   two clean runs at the same SHA compare equal.
+10. Emits a deterministic ``semantic-summary.json`` that excludes timestamps,
+    durations, machine paths, Gradle cache paths, transient temp names, and
+    per-command log volume metadata (see ``build_semantic_summary``), so two
+    clean runs at the same SHA compare equal.
+
+The expected SHA is a per-run pin supplied by the caller (``--expected-sha`` /
+``expected_sha=``).  It is mandatory, must be exactly 40 lowercase hex
+characters, and is never derived silently from HEAD — the caller must state it.
+Preflight rejects the capture before any matrix command starts unless the
+observed ``git rev-parse HEAD`` equals the pin; after the matrix, HEAD/tree/
+status are re-observed and any drift marks the bundle incomplete/untrusted.
 
 Exit codes (the capture tool itself)
 ------------------------------------
 * ``0`` — capture completed and every required artifact is present.
-* ``2`` — capture incomplete, corrupt, dirty (without ``--allow-dirty``), or a
-  required artifact is missing.  The tool NEVER returns ``1`` merely because a
-  guarded child command returned ``1`` or ``2``; those are stored observations.
+* ``2`` — capture incomplete, corrupt, dirty (without ``--allow-dirty``), a
+  required artifact is missing, the ``--expected-sha`` run pin is missing or
+  syntactically invalid (not exactly 40 lowercase hex), the observed HEAD does
+  not equal the requested pin (rejected before any matrix command starts),
+  HEAD/tree/status drifted during the capture (post-matrix re-check), or any
+  command log ended INCOMPLETE (``output-limit-exceeded`` /
+  ``log-write-failed`` / ``log-unreadable``).  The tool NEVER returns ``1``
+  merely because a guarded child command returned ``1`` or ``2``; those are
+  stored observations.
 
 The DB gate is expected to remain blocked at the tested SHA.  Capturing that
 state truthfully is the deliverable; this tool must not edit policy to change
@@ -67,16 +97,65 @@ REPORT_SCHEMA_VERSION = 2
 EVIDENCE_SCHEMA = "db-guard-evidence/v1"
 SEMANTIC_SCHEMA = "db-guard-evidence.semantic/v1"
 
-# The single approved Git SHA this evidence bundle is allowed to capture.  The
-# capture fails closed when the checkout's HEAD does not equal this exact value
-# (see ``capture_evidence`` / ``run_preflight``).  Tree metadata is captured for
-# reproducibility but the SHA gate is the hard contract.
-TARGET_SHA = "9b97e7979130de605d164386bbf719cf20579475"
+# ── Run pin (PR-GR-00R part A) ────────────────────────────────────────────────
+# There is deliberately NO hard-coded target SHA.  The expected commit is a
+# per-run pin supplied by the caller (``--expected-sha`` / ``expected_sha=``):
+#   * it is mandatory and must be exactly 40 lowercase hex characters;
+#   * preflight fails closed BEFORE any matrix command starts unless the
+#     observed ``git rev-parse HEAD`` equals the requested pin;
+#   * the requested pin, the observed HEAD, and the observed tree SHA
+#     (``git rev-parse HEAD^{tree}``) are recorded in git-state / evidence
+#     metadata;
+#   * after the matrix, HEAD/tree/status are re-observed; any drift marks the
+#     bundle incomplete/untrusted (capture exit 2).
+# The expected SHA is never derived silently from HEAD (tautological) — the
+# caller must state it.
 
 # Maximum number of characters persisted for any single child command's combined
 # stdout/stderr.  Bounding prevents unbounded payloads from reaching the evidence
 # bundle (privacy: no unbounded user/SQL/secret output in artifacts).
 CHILD_OUTPUT_LIMIT = 20000
+
+# ── Command-log capture contract (PR-GR-00R part B) ───────────────────────────
+# A command log is in exactly one of two states:
+#   * COMPLETE — the entire combined stdout/stderr stream was captured within
+#     ``CHILD_OUTPUT_LIMIT``, written atomically, hashed, and marked complete
+#     (``log_complete=True``); or
+#   * INCOMPLETE — the cap was exceeded, a write failed, or the finished
+#     artifact could not be read back/hashed.  The partial artifact is still
+#     preserved on disk (flagged via ``log_complete=False`` plus a controlled
+#     ``log_failure_code`` from ``LOG_FAILURE_CODES``) but is NEVER hashed as
+#     valid evidence: per the existing schema convention its hash is omitted
+#     (``log_sha256=""``, the same "no authoritative hash" sentinel used by
+#     LAUNCH_FAILED / BUNDLE_PATH_ESCAPE records).  Any incomplete log fails
+#     the whole capture closed (exit 2) — a capture must never exit 0 with a
+#     silently truncated log.  The former ``LOG_HASH_FAILED`` launch_error
+#     sentinel is superseded by the structured ``log-unreadable`` code.
+LOG_OUTPUT_LIMIT_EXCEEDED = "output-limit-exceeded"
+LOG_WRITE_FAILED = "log-write-failed"
+LOG_UNREADABLE = "log-unreadable"
+LOG_FAILURE_CODES = frozenset({
+    LOG_OUTPUT_LIMIT_EXCEEDED,
+    LOG_WRITE_FAILED,
+    LOG_UNREADABLE,
+})
+
+# Marker appended exactly once when the persistence cap trips so the preserved
+# partial artifact is self-describing.  The artifact stays flagged incomplete
+# regardless of this marker; the marker never legitimizes it as evidence.
+LOG_TRUNCATION_MARKER = "<truncated>"
+
+# Streaming read size (characters) for the real runner's merged stdout+stderr
+# pipe.  Output is sanitized line-by-line and written incrementally so raw
+# child payloads are never fully materialized in memory.
+LOG_STREAM_CHUNK_CHARS = 8192
+
+# Upper bound for one unterminated line buffered during streaming.  A hostile
+# child emitting no newlines cannot grow memory past this bound: when reached,
+# the buffered fragment is flushed through the normal sanitize path and the
+# buffer restarts (a redaction pattern spanning the flush boundary may then be
+# missed — an accepted bounded-memory tradeoff, documented honestly here).
+MAX_LOG_STREAM_BUFFER = 65536
 
 # Environment keys whose *values* may be recorded.  Everything else is redacted
 # to a bounded marker so secrets/paths never reach the evidence bundle.
@@ -247,15 +326,32 @@ WARNING_CODE_ALLOWLIST = frozenset({
     "preflight-failed",
     "wrong-sha",
     "git-meta-failed",
+    # Run-pin failures (PR-GR-00R part A): missing/invalid caller-stated pin and
+    # post-matrix identity drift (surface token: head/tree/status/unverifiable).
+    "missing-expected-sha",
+    "invalid-expected-sha",
+    "post-capture-drift",
     # Infrastructure observations.
     "missing-test-file",
+    # Command-log capture failures (PR-GR-00R part B): a command log ended
+    # INCOMPLETE (payload is the sanitized command id + controlled
+    # ``LOG_FAILURE_CODES`` constant).
+    "incomplete-command-log",
 })
 
 
 # ── Small value types ─────────────────────────────────────────────────────────
 @dataclass
 class RunOutcome:
-    """Result of running one command via an injectable runner."""
+    """Result of running one command via an injectable runner.
+
+    Preflight, manifest discovery, and the preservation check consume this
+    shape directly.  Matrix commands in production are executed through
+    ``streaming_subprocess_runner`` (the live merged child pipe streamed into
+    the atomic log sink); an *injected* runner returns this shape and its
+    text is fed through the identical sink in ``LOG_STREAM_CHUNK_CHARS``
+    chunks, so both paths share one persistence contract.
+    """
     returncode: int
     combined: str = ""
 
@@ -295,6 +391,17 @@ class CommandResult:
     report_finding_count: Optional[int]
     parser_error: Optional[str]
     launch_error: Optional[str]
+    # Command-log capture state (PR-GR-00R part B).  ``log_bytes`` is the size
+    # in bytes of the published log artifact (0 when none was published).
+    # ``log_complete`` is True iff the ENTIRE combined stream was captured
+    # within ``CHILD_OUTPUT_LIMIT``, published atomically, and read back
+    # successfully.  ``log_failure_code`` is a bounded controlled constant from
+    # ``LOG_FAILURE_CODES`` (None iff the log is complete; a pre-execution
+    # bundle-path escape record is incomplete with no code — ``launch_error``
+    # carries ``BUNDLE_PATH_ESCAPE`` instead).
+    log_bytes: int = 0
+    log_complete: bool = False
+    log_failure_code: Optional[str] = None
 
 
 # ── Path helpers (repository-relative, POSIX separators) ──────────────────────
@@ -748,6 +855,12 @@ def _sanitize_child_output(text: str, limit: int = CHILD_OUTPUT_LIMIT) -> str:
     Redacts absolute paths, secrets, SQL errors, and exception tracebacks, then
     bounds the total length.  Child exit codes are never touched here (they are
     recorded separately and must not be swallowed).
+
+    Scope note (PR-GR-00R part B): this whole-text helper now serves only the
+    bounded *preflight* records (git/version metadata).  Matrix-command logs
+    are persisted through ``_CommandLogSink`` / ``_sanitize_log_line``, which
+    apply the same redactors incrementally and enforce the cap as a fail-closed
+    INCOMPLETE state instead of a silent truncation.
     """
     if not text:
         return text
@@ -758,6 +871,26 @@ def _sanitize_child_output(text: str, limit: int = CHILD_OUTPUT_LIMIT) -> str:
     if len(text) > limit:
         text = text[:limit] + "<truncated>"
     return text
+
+
+def _sanitize_log_line(line: str) -> str:
+    """Sanitize one streamed log line with the same redactors as
+    ``_sanitize_child_output`` (absolute paths, secrets, SQL errors, exception
+    lines).
+
+    Every pattern is line-local (none can span a newline), so per-line
+    application matches whole-text sanitization.  Length bounding is
+    deliberately NOT applied here: the streaming sink enforces
+    ``CHILD_OUTPUT_LIMIT`` across the whole log and turns exceedance into a
+    controlled INCOMPLETE state instead of a silent truncation.
+    """
+    line = _redact_absolute_paths(line)
+    line = _redact_secrets(line)
+    line = _redact_sql_errors(line)
+    if (_EXC_LINE_RE.search(line) or _TRACEBACK_FRAME_RE.search(line)
+            or _EXC_NAME_RE.search(line)):
+        return "<redacted-exception>"
+    return line
 
 
 def _sanitize_preflight_log(text: str) -> str:
@@ -951,6 +1084,189 @@ def subprocess_runner(argv: Sequence[str], cwd: str) -> RunOutcome:
         errors="replace",
     )
     return RunOutcome(proc.returncode, proc.stdout or "")
+
+
+# ── Streaming command-log capture (PR-GR-00R part B) ──────────────────────────
+class _CommandLogSink:
+    """Atomic, capped, sanitized streaming writer for one command log.
+
+    Sanitized chunks of the combined stdout/stderr stream are appended to a
+    sibling temporary file; ``finish`` flushes, fsyncs, and ``os.replace``s it
+    onto the final log path, so a reader only ever sees a fully published
+    artifact.  Once ``CHILD_OUTPUT_LIMIT`` sanitized characters have been
+    persisted the sink flags ``output-limit-exceeded``, appends the single
+    ``LOG_TRUNCATION_MARKER``, and discards further input — the caller keeps
+    draining the child pipe so the child can never block on a full pipe.  Any
+    filesystem failure flags ``log-write-failed`` (sticky) instead of raising;
+    when several faults occur the first one wins as the recorded code.  Raw
+    child payloads are never fully materialized: only the bounded pending-line
+    buffer (capped by ``MAX_LOG_STREAM_BUFFER``) persists between ``sink``
+    calls.
+    """
+
+    def __init__(self, final_path: str) -> None:
+        self.final_path = final_path
+        self.tmp_path: Optional[str] = None
+        self._handle = None
+        self._pending = ""
+        self.persisted_chars = 0
+        self.exceeded = False
+        self.write_failed = False
+        self.failure_code: Optional[str] = None
+        self.published_bytes = 0
+
+    def open(self) -> bool:
+        """Create the sibling temp log.  Returns False (flagged) on failure."""
+        try:
+            parent = os.path.dirname(self.final_path) or "."
+            os.makedirs(parent, exist_ok=True)
+            name = os.path.basename(self.final_path) or "command.log"
+            fd, tmp = tempfile.mkstemp(
+                prefix=f".{name}.", suffix=".tmp", dir=parent)
+            self._handle = os.fdopen(fd, "w", encoding="utf-8", newline="\n")
+            self.tmp_path = tmp
+            return True
+        except Exception:
+            self._flag_write_failed()
+            return False
+
+    def _flag_write_failed(self) -> None:
+        self.write_failed = True
+        if self.failure_code is None:
+            self.failure_code = LOG_WRITE_FAILED
+
+    def sink(self, chunk: str) -> None:
+        """Consume one chunk of combined child output (never raises)."""
+        if self.exceeded or self._handle is None:
+            # Cap already tripped or no temp log: keep draining, persist nothing.
+            return
+        if self.failure_code == LOG_WRITE_FAILED:
+            return  # sticky failure: consume and discard
+        try:
+            self._write_chunk(chunk)
+        except Exception:
+            self._flag_write_failed()
+
+    def _write_chunk(self, chunk: str) -> None:
+        data = self._pending + chunk
+        self._pending = ""
+        if not data:
+            return
+        parts = data.split("\n")
+        self._pending = parts.pop()
+        for line in parts:
+            self._emit_line(line + "\n")
+        if len(self._pending) > MAX_LOG_STREAM_BUFFER:
+            # A hostile child emitting no newlines cannot grow memory past this
+            # bound: flush the buffered fragment through the normal sanitize
+            # path (a redaction pattern spanning the flush boundary may then be
+            # missed — the documented bounded-memory tradeoff).
+            self._emit_line(self._pending)
+            self._pending = ""
+
+    def _emit_line(self, line: str) -> None:
+        sanitized = _sanitize_log_line(line)
+        room = CHILD_OUTPUT_LIMIT - self.persisted_chars
+        if room <= 0:
+            self._trip_cap()
+            return
+        if len(sanitized) <= room:
+            self._handle.write(sanitized)
+            self.persisted_chars += len(sanitized)
+            return
+        self._handle.write(sanitized[:room])
+        self.persisted_chars += room
+        self._trip_cap()
+
+    def _trip_cap(self) -> None:
+        if self.exceeded:
+            return
+        self.exceeded = True
+        if self.failure_code is None:
+            self.failure_code = LOG_OUTPUT_LIMIT_EXCEEDED
+        try:
+            self._handle.write(LOG_TRUNCATION_MARKER)
+            self.persisted_chars += len(LOG_TRUNCATION_MARKER)
+        except Exception:
+            self._flag_write_failed()
+
+    def finish(self) -> None:
+        """Flush, fsync, close, and atomically publish the temp log.
+
+        Never raises.  On any failure the temp file is removed (no ``*.tmp``
+        leftovers), the failure is flagged ``log-write-failed``, and nothing is
+        published; whatever was persisted before an earlier fault stays flagged
+        via ``failure_code`` and is never hashed as valid evidence.
+        """
+        if self._handle is None:
+            return
+        try:
+            if self._pending and not self.exceeded and self.failure_code is None:
+                self._emit_line(self._pending)
+            self._pending = ""
+            self._handle.flush()
+            os.fsync(self._handle.fileno())
+            self._handle.close()
+            self._handle = None
+            with suppress(OSError):
+                os.chmod(self.tmp_path, 0o644)
+            os.replace(self.tmp_path, self.final_path)
+            self.tmp_path = None
+            try:
+                self.published_bytes = os.path.getsize(self.final_path)
+            except OSError:
+                self.published_bytes = 0
+        except Exception:
+            self._flag_write_failed()
+        finally:
+            if self._handle is not None:
+                with suppress(Exception):
+                    self._handle.close()
+                self._handle = None
+            if self.tmp_path is not None:
+                with suppress(OSError):
+                    os.unlink(self.tmp_path)
+                self.tmp_path = None
+
+
+def streaming_subprocess_runner(
+    argv: Sequence[str], cwd: str, sink: Callable[[str], None]
+) -> int:
+    """Run ``argv`` in ``cwd``, streaming merged stdout+stderr through ``sink``.
+
+    A single merged pipe (``stderr=STDOUT``) is read incrementally in
+    ``LOG_STREAM_CHUNK_CHARS`` character chunks and handed to ``sink`` as it
+    arrives, so the raw child payload is never fully materialized in memory and
+    the pipe is always drained — draining continues even after the sink's size
+    cap has tripped, so the child can never block on a full pipe.  Text is
+    decoded UTF-8 with ``errors="replace"``.  Returns the child exit code;
+    launch failures (e.g. a missing executable) raise ``OSError`` so the caller
+    can record a controlled ``LAUNCH_FAILED`` outcome.
+    """
+    proc = subprocess.Popen(
+        list(argv),
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    try:
+        stream = proc.stdout
+        while True:
+            chunk = stream.read(LOG_STREAM_CHUNK_CHARS)
+            if not chunk:
+                break
+            sink(chunk)
+        stream.close()
+    finally:
+        if proc.stdout is not None and not proc.stdout.closed:
+            with suppress(Exception):
+                proc.stdout.close()
+        # Always reap the child, even when the sink or the read loop raised.
+        returncode = proc.wait()
+    return returncode
 
 
 # ── Environment redaction ─────────────────────────────────────────────────────
@@ -1369,6 +1685,26 @@ def preservation_check(
     }
 
 
+def _default_preservation_result() -> Dict[str, Any]:
+    """The fail-closed preservation result used when a capture stage is skipped.
+
+    Used by every stop-before-run path (matrix validation failure, missing or
+    invalid run pin, pre-launch SHA-gate rejection) so a skipped stage never
+    fabricates a passing preservation observation.
+    """
+    return {
+        "ok": False,
+        "policy_ok": False,
+        "production_ok": False,
+        "staged_ok": False,
+        "untracked_ok": False,
+        "checked_paths": [
+            _sanitize_changed_filename(p) for p in FORBIDDEN_PRESERVATION_PATHS
+        ] + ["app/src/main"],
+        "forbidden_changed": [],
+    }
+
+
 # ── v2 report parsing (bounded, no validation of untrusted content) ──────────
 def parse_v2_report(path: str, raw: Optional[bytes] = None) -> Dict[str, Any]:
     """Parse a protocol-v2 report, returning bounded structured fields.
@@ -1521,6 +1857,14 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
                 "scripts/test_verify_db_access_v2.py",
                 "scripts/test_verify_db_access_boundaries.py",
                 "-v", "--tb=short",
+                # Zero-side-effect pin (strict-review blocker B-1): pytest's
+                # cacheprovider is disabled because no pytest config file exists
+                # and .gitignore has no .pytest_cache entry, so a plain run
+                # would materialize an untracked .pytest_cache/ directory,
+                # trip the post-capture drift re-check on the status surface
+                # (exit 2), and make the two-clean-capture protocol
+                # unreachable. The matrix must leave the working tree untouched.
+                "-p", "no:cacheprovider",
             ],
         ),
         CommandSpec(
@@ -1949,7 +2293,28 @@ def run_command(
     root: str,
     runner: Callable[[Sequence[str], str], RunOutcome],
 ) -> CommandResult:
-    """Execute ``spec`` and capture its evidence record."""
+    """Execute ``spec`` and capture its evidence record (PR-GR-00R part B).
+
+    The combined stdout/stderr stream is persisted through ``_CommandLogSink``:
+    sanitized chunks are appended to a sibling temporary log which is fsync'd
+    and ``os.replace``d onto the final name on completion.  The resulting log
+    is in exactly one of two states:
+
+    * ``COMPLETE`` — the entire stream fit within ``CHILD_OUTPUT_LIMIT``, was
+      published atomically, and was read back + hashed (``log_complete=True``,
+      ``log_sha256`` set, ``log_failure_code=None``); or
+    * ``INCOMPLETE`` — the cap was exceeded (``output-limit-exceeded``), a
+      write failed (``log-write-failed``), or the finished artifact could not
+      be read back/hashed (``log-unreadable``).  The partial artifact stays on
+      disk flagged via ``log_complete=False``, its hash is omitted
+      (``log_sha256=""``), and the caller fails the whole capture closed
+      (exit 2).  A capture never exits 0 with a silently truncated log.
+
+    The production runner streams the live merged child pipe; an injected
+    runner's returned text is fed through the identical chunked sink so both
+    paths share one persistence contract.  The child exit code is preserved in
+    every state — it is an observation, never altered by log completeness.
+    """
     bundle_rel = _posix_rel(out_dir, root)
     log_rel = "/".join([bundle_rel, "commands", spec.log_name])
     log_abs = os.path.join(out_dir, "commands", spec.log_name)
@@ -1970,6 +2335,11 @@ def run_command(
             exit_code=None,
             log_path=log_rel,
             log_sha256="",
+            # No log was attempted (pre-execution rejection): incomplete with
+            # no log-capture code; ``launch_error`` carries the escape reason.
+            log_bytes=0,
+            log_complete=False,
+            log_failure_code=None,
             report_path=None,
             report_sha256=None,
             report_schema_version=None,
@@ -1983,38 +2353,64 @@ def run_command(
     start = time.time()
     start_utc = _utc_now()
     launch_error: Optional[str] = None
-    outcome: Optional[RunOutcome] = None
-    try:
-        outcome = runner(list(spec.argv), root)
-    except Exception:
-        # Ordinary launch failures (e.g. OSError / FileNotFoundError for a missing
-        # executable) become a controlled ``LAUNCH_FAILED`` outcome that fails the
-        # capture closed below.  KeyboardInterrupt / SystemExit derive directly
-        # from ``BaseException`` (not ``Exception``) and still propagate unchanged.
-        launch_error = "LAUNCH_FAILED"
+    exit_code: Optional[int] = None
+
+    # Open the atomic temp log BEFORE executing the child (PR-GR-00R part B):
+    # a command whose log cannot be captured is never executed (no
+    # uncapturable side effects) and fails closed with ``log-write-failed``.
+    sink = _CommandLogSink(log_abs)
+    if sink.open():
+        if runner is subprocess_runner:
+            # Production path: stream the live merged child pipe straight into
+            # the atomic log sink (incremental reads, bounded memory, always
+            # drained so the child can never block on a full pipe).
+            try:
+                exit_code = streaming_subprocess_runner(
+                    list(spec.argv), root, sink.sink)
+            except Exception:
+                # Ordinary launch failures (e.g. OSError / FileNotFoundError for
+                # a missing executable) become a controlled ``LAUNCH_FAILED``
+                # outcome that fails the capture closed below.  The empty log is
+                # still published and hashed: zero output was produced, so the
+                # (empty) stream was captured completely.
+                # KeyboardInterrupt / SystemExit derive directly from
+                # ``BaseException`` (not ``Exception``) and still propagate
+                # unchanged.
+                launch_error = "LAUNCH_FAILED"
+        else:
+            # Injected-runner path (tests / alternative engines): the runner
+            # returns the full combined text; it is fed through the IDENTICAL
+            # chunked sink so both paths share one persistence contract.
+            try:
+                outcome = runner(list(spec.argv), root)
+                exit_code = getattr(outcome, "returncode", None)
+                combined = getattr(outcome, "combined", "") or ""
+                for i in range(0, len(combined), LOG_STREAM_CHUNK_CHARS):
+                    sink.sink(combined[i:i + LOG_STREAM_CHUNK_CHARS])
+            except Exception:
+                launch_error = "LAUNCH_FAILED"
     end_utc = _utc_now()
     elapsed_ms = int((time.time() - start) * 1000)
 
-    exit_code: Optional[int] = None
-    combined = ""
-    if outcome is not None:
-        exit_code = outcome.returncode
-        combined = outcome.combined
+    # Flush, fsync, close, and atomically publish the temp log onto the final
+    # name.  Never raises; any publish failure is flagged ``log-write-failed``.
+    sink.finish()
+    failure_code = sink.failure_code
+    log_bytes = sink.published_bytes
 
-    # Sanitize the persisted combined log so absolute paths / secrets / SQL
-    # errors / raw exception text / unbounded payloads from child output never
-    # reach the evidence bundle.  The child exit code is recorded separately and
-    # is never altered by sanitization.
-    combined = _sanitize_child_output(combined)
-
-    # Atomic write of the combined log (never echo raw paths on failure).
-    atomic_write_text(log_abs, combined)
-    # Race-safe hash of the log; a hash failure (symlink / non-regular / replaced /
-    # changed file) fails the capture closed via ``launch_error``.
-    log_sha256 = _race_safe_hash_file(log_abs)
-    if log_sha256 is None:
-        log_sha256 = ""
-        launch_error = launch_error or "LOG_HASH_FAILED"
+    # Hash ONLY a complete log (PR-GR-00R part B): a partial artifact is never
+    # hashed as valid evidence — its hash is omitted (``log_sha256=""``).
+    log_sha256 = ""
+    if failure_code is None:
+        hashed = _race_safe_hash_file(log_abs)
+        if hashed is None:
+            # The finished artifact could not be read back/hashed (symlink,
+            # non-regular file, read error, replaced/changed mid-read): the log
+            # is INCOMPLETE with ``log-unreadable`` and fails the capture closed.
+            failure_code = LOG_UNREADABLE
+        else:
+            log_sha256 = hashed
+    log_complete = failure_code is None
 
     report_path_rel: Optional[str] = None
     report_sha256: Optional[str] = None
@@ -2067,6 +2463,20 @@ def run_command(
             else:
                 report_sha256 = sha256_bytes(raw)
                 parsed = parse_v2_report(report_abs, raw=raw)
+        else:
+            # Defensive (N-1): a declared report that is neither a regular file
+            # nor a directory is simply absent.  Record a controlled
+            # ``MISSING_REPORT`` parser error instead of silently leaving
+            # ``parser_error`` None, so the invalid-required-report gate
+            # observes the absence and the capture fails closed rather than
+            # recording a phantom "no report" success for a declared output.
+            parsed = {
+                "schema_version": None,
+                "trusted": None,
+                "diagnostic_codes": [],
+                "finding_count": None,
+                "parser_error": "MISSING_REPORT",
+            }
 
     return CommandResult(
         id=_sanitize_command_id(spec.id),
@@ -2081,6 +2491,9 @@ def run_command(
         exit_code=exit_code,
         log_path=log_rel,
         log_sha256=log_sha256,
+        log_bytes=log_bytes,
+        log_complete=log_complete,
+        log_failure_code=failure_code,
         report_path=report_path_rel,
         report_sha256=report_sha256,
         report_schema_version=parsed["schema_version"],
@@ -2177,6 +2590,13 @@ def build_semantic_summary(
     Run-specific bundle output paths embedded in command ``argv`` are normalized
     (see ``_normalize_semantic_argv``) so two clean runs at the same SHA compare
     equal.
+
+    Per-command log volume metadata (``log_bytes`` / ``log_complete`` /
+    ``log_failure_code``, PR-GR-00R part B) is deliberately EXCLUDED here:
+    byte counts vary between runs (child verbosity/timing), and log
+    completeness is already reflected in the top-level ``trusted`` flag (any
+    incomplete log fails the capture closed).  Including them would break the
+    byte-identical same-SHA comparison; they appear only in ``evidence.json``.
     """
     semantic_commands = []
     for c in commands:
@@ -2207,6 +2627,11 @@ def build_semantic_summary(
         "schema": SEMANTIC_SCHEMA,
         "commit": commit,
         "tree": tree,
+        # Run-pin metadata (PR-GR-00R part A): the caller-stated pin is
+        # run-invariant (same caller, same SHA, same value), so it may appear in
+        # the deterministic summary without breaking byte-identical comparison
+        # across two runs at the same SHA.  Nothing run-specific leaks here.
+        "requested_sha": git_state.get("requested_sha"),
         "trusted": trusted,
         "preservation_ok": bool(preservation.get("ok", False)),
         "versions": versions,
@@ -2269,28 +2694,73 @@ def build_summary_markdown(
     return result
 
 
+# ── Post-matrix identity re-check (PR-GR-00R part A) ──────────────────────────
+def post_capture_identity_check(
+    root: str,
+    runner: Callable[[Sequence[str], str], RunOutcome],
+    expected_head: Optional[str],
+    expected_tree: Optional[str],
+    expected_status: str,
+) -> Tuple[bool, str]:
+    """Re-observe HEAD / tree / status after the matrix and detect drift.
+
+    Returns ``(ok, surface)`` where ``surface`` names the first drifting or
+    unverifiable observation (``"head"``, ``"tree"``, ``"status"``, or
+    ``"unverifiable"`` when a re-check command itself failed) and is ``""``
+    when every observation still matches the preflight state.  Any drift or
+    observation failure fails the capture closed: the caller marks the bundle
+    incomplete/untrusted (exit 2).  Status output is sanitized exactly like the
+    preflight record before comparison, so both sides are deterministic.
+    """
+    try:
+        head = runner(["git", "rev-parse", "HEAD"], root)
+        tree = runner(["git", "rev-parse", "HEAD^{tree}"], root)
+        status = runner(["git", "status", "--porcelain=v1"], root)
+    except Exception:
+        return False, "unverifiable"
+    head_raw = head.combined.strip()
+    tree_raw = tree.combined.strip()
+    if (head.returncode != 0 or not _is_valid_sha40(head_raw)
+            or head_raw != expected_head):
+        return False, "head"
+    if (tree.returncode != 0 or not _is_valid_sha40(tree_raw)
+            or tree_raw != expected_tree):
+        return False, "tree"
+    if status.returncode != 0:
+        return False, "unverifiable"
+    if _sanitize_git_filenames(status.combined, is_status=True) != expected_status:
+        return False, "status"
+    return True, ""
+
+
 # ── Main capture routine ───────────────────────────────────────────────────────
 def capture_evidence(
     root: str,
     out_dir: str,
     *,
     allow_dirty: bool = False,
+    expected_sha: Optional[str] = None,
     runner: Optional[Callable[[Sequence[str], str], RunOutcome]] = None,
     command_matrix: Optional[Sequence[CommandSpec]] = None,
     input_candidates: Optional[Sequence[str]] = None,
 ) -> int:
-    """Capture a reproducible DB guard evidence bundle.
+    """Capture a reproducible DB guard evidence bundle at a caller-pinned SHA.
 
     Returns ``0`` on a complete, trusted-or-allowed capture; ``2`` when the
     capture is incomplete, dirty (without ``--allow-dirty``), the output escapes
-    the repository root (including via symlink), HEAD does not equal the fixed
-    ``TARGET_SHA`` (which is enforced unconditionally and is not configurable),
-    preflight git identity could not be resolved, a required input is missing, a
-    required report is present but invalid (or is a directory), a required
-    artifact is missing or of the wrong type, a derived log/report/artifact path
-    escapes the bundle (traversal or external symlink), a custom command matrix
-    embeds an absolute/outside path, or a command suffered a launch failure.
-    Never returns ``1`` for a child command's nonzero exit.
+    the repository root (including via symlink), the run pin is missing or not
+    exactly 40 lowercase hex (a controlled failure before any command is issued),
+    the observed HEAD does not equal the caller-stated ``expected_sha`` pin
+    (fails closed pre-launch — no matrix command starts), HEAD/tree/status
+    drifted while the matrix ran (post-matrix re-check marks the bundle
+    incomplete/untrusted), preflight git identity could not be resolved, a
+    required input is missing, a required report is present but invalid (or is a
+    directory), a required artifact is missing or of the wrong type, a derived
+    log/report/artifact path escapes the bundle (traversal or external symlink),
+    a custom command matrix embeds an absolute/outside path, or a command
+    suffered a launch failure.  Never returns ``1`` for a child command's
+    nonzero exit.  The expected SHA is never derived silently from HEAD — the
+    caller must state it.
     """
     runner = runner or subprocess_runner
     root = os.path.realpath(root)
@@ -2310,6 +2780,18 @@ def capture_evidence(
     capture_failed = False
     infrastructure_warnings: List[str] = []
     required_artifact_hashes: Dict[str, str] = {}
+
+    # ── Run-pin validation (PR-GR-00R part A) — before ANY runner invocation ────
+    # The expected SHA is caller-supplied and mandatory; there is no hard-coded
+    # target and it is never derived from HEAD.  A missing or syntactically
+    # invalid pin (not exactly 40 lowercase hex) is a controlled failure before
+    # any command — git probe included — is issued.
+    pin_ok = expected_sha is not None and _is_valid_sha40(expected_sha)
+    if not pin_ok:
+        capture_failed = True
+        infrastructure_warnings.append(make_warning(
+            "missing-expected-sha" if expected_sha is None
+            else "invalid-expected-sha"))
 
     # ── Compute the command matrix early ─────────────────────────────────────────
     matrix = list(command_matrix) if command_matrix is not None else default_command_matrix(root, out_dir)
@@ -2333,31 +2815,33 @@ def capture_evidence(
         matrix_validation_failed = True
         infrastructure_warnings.append(violation)
 
-    if matrix_validation_failed:
+    if matrix_validation_failed or not pin_ok:
         # Stop before any runner call: no preflight, no input-manifest Git calls,
         # no preservation diff, no command execution.  The capture fails closed
-        # with an empty git state / manifest / preservation / command set.
-        git_state: Dict[str, Any] = {}
+        # with an empty git state / manifest / preservation / command set.  The
+        # run-pin metadata is still recorded (schema-stable); an invalid or
+        # missing pin value itself is never persisted verbatim.
+        git_state: Dict[str, Any] = {
+            "requested_sha": expected_sha if pin_ok else None,
+            "observed_sha": None,
+            "tree_sha": None,
+        }
         env_state = collect_environment()
         manifest: List[Dict[str, Any]] = []
         manifest_hash = input_manifest_hash([])
-        preservation = {
-            "ok": False,
-            "policy_ok": False,
-            "production_ok": False,
-            "staged_ok": False,
-            "untracked_ok": False,
-            "checked_paths": [
-                _sanitize_changed_filename(p) for p in FORBIDDEN_PRESERVATION_PATHS
-            ] + ["app/src/main"],
-            "forbidden_changed": [],
-        }
+        preservation = _default_preservation_result()
         dirty = False
         untrusted = True
         results: List[CommandResult] = []
     else:
         # ── Preflight + dirty gate ────────────────────────────────────────────────
         git_state = run_preflight(root, runner)
+        # Record the run pin and the observed identity (PR-GR-00R part A): the
+        # requested pin, the observed HEAD, and the observed tree SHA travel
+        # with the git state into git-state.json and evidence.json.
+        git_state["requested_sha"] = expected_sha
+        git_state["observed_sha"] = git_state.get("commit")
+        git_state["tree_sha"] = git_state.get("tree")
         env_state = collect_environment()
         dirty = bool((git_state.get("status") or "").strip())
         if dirty and not allow_dirty:
@@ -2370,14 +2854,18 @@ def capture_evidence(
         if not git_state.get("preflight_ok", False):
             capture_failed = True
             infrastructure_warnings.append(make_warning("preflight-failed"))
-        else:
-            # Enforce the approved exact target SHA.  The SHA is fixed and not
-            # configurable; a differing HEAD is a hard contract violation and must
-            # fail closed.
-            if git_state.get("commit") != TARGET_SHA:
-                capture_failed = True
-                infrastructure_warnings.append(
-                    make_warning("wrong-sha", str(git_state.get("commit"))))
+
+        # ── Run-pin gate: requested vs observed HEAD, BEFORE any matrix command ───
+        # The caller-stated pin must equal the observed HEAD exactly.  An
+        # unresolved identity (None) can never equal the pin, so a failed
+        # preflight also stops the launch here.  On mismatch the capture fails
+        # closed PRE-LAUNCH: the observed git state is still recorded, but no
+        # matrix command is ever started against an unpinned commit.
+        sha_gate_failed = git_state.get("observed_sha") != expected_sha
+        if sha_gate_failed:
+            capture_failed = True
+            infrastructure_warnings.append(
+                make_warning("wrong-sha", str(git_state.get("observed_sha"))))
 
         # Fail closed when any preflight git metadata command (status / diff /
         # staged-diff) failed.  An unobservable checkout state cannot be trusted, so
@@ -2428,9 +2916,15 @@ def capture_evidence(
         if not preservation.get("ok", False):
             untrusted = True
 
-        # ── Run commands ──────────────────────────────────────────────────────────
+        # ── Run commands (only when the run-pin gate passed) ──────────────────────
+        # PR-GR-00R part A: a pin/HEAD mismatch blocks the launch entirely — no
+        # matrix command, artifact hash, or report validation is performed
+        # against an unpinned commit.  Every derived stage below then no-ops on
+        # the empty executable matrix; the read-only git observations recorded
+        # above (manifest / preservation) stay in the bundle.
+        executable_matrix: List[CommandSpec] = [] if sha_gate_failed else matrix
         results = []
-        for spec in matrix:
+        for spec in executable_matrix:
             try:
                 res = run_command(spec, out_dir, root, runner)
             except Exception:
@@ -2451,6 +2945,12 @@ def capture_evidence(
                     exit_code=None,
                     log_path="/".join([bundle_rel, "commands", spec.log_name]),
                     log_sha256="",
+                    # No log was attempted (internal failure before capture):
+                    # incomplete with no log-capture code; ``launch_error``
+                    # carries the controlled reason.
+                    log_bytes=0,
+                    log_complete=False,
+                    log_failure_code=None,
                     report_path=None,
                     report_sha256=None,
                     report_schema_version=None,
@@ -2463,6 +2963,15 @@ def capture_evidence(
             results.append(res)
             if res.launch_error is not None:
                 capture_failed = True
+            # PR-GR-00R part B: an INCOMPLETE command log (cap exceeded, log
+            # write failure, or unreadable finished artifact) fails the whole
+            # capture closed — the tool never exits 0 with a silently truncated
+            # or unhashed log.  The diagnostic carries the sanitized command id
+            # plus a controlled ``LOG_FAILURE_CODES`` constant only.
+            if res.log_failure_code is not None:
+                capture_failed = True
+                infrastructure_warnings.append(make_warning(
+                    "incomplete-command-log", res.id, res.log_failure_code))
 
         # ── Required-artifact presence + type validation + hashing ─────────────────
         # The collected hash set is bounded by ``MAX_REQUIRED_ARTIFACT_HASHES``.  The
@@ -2471,7 +2980,7 @@ def capture_evidence(
         # marker, so an unbounded custom matrix can never inflate the evidence bundle
         # with unbounded hashes (never materialize more than the bound).
         artifact_hash_overflow = False
-        for spec in matrix:
+        for spec in executable_matrix:
             if artifact_hash_overflow:
                 break
             for art in spec.required_artifacts:
@@ -2538,6 +3047,23 @@ def capture_evidence(
                 capture_failed = True
                 infrastructure_warnings.append(make_warning("invalid-required-report", spec.id))
 
+        # ── Post-matrix identity re-check (PR-GR-00R part A) ──────────────────────
+        # HEAD, tree, and status are re-observed after the matrix ran.  Any drift
+        # (or an unverifiable post-state) marks the bundle incomplete/untrusted
+        # and fails the capture (exit 2).  Skipped when the pin gate already
+        # blocked the launch: nothing ran, so nothing can have drifted.
+        if not sha_gate_failed:
+            post_ok, post_surface = post_capture_identity_check(
+                root, runner,
+                git_state.get("observed_sha"), git_state.get("tree_sha"),
+                git_state.get("status") or "",
+            )
+            if not post_ok:
+                capture_failed = True
+                untrusted = True
+                infrastructure_warnings.append(
+                    make_warning("post-capture-drift", post_surface))
+
     if not capture_failed:
         infrastructure_warnings.extend(collect_infrastructure_warnings(matrix, root))
 
@@ -2553,7 +3079,12 @@ def capture_evidence(
         "root": bundle_rel,
         "commit": git_state.get("commit"),
         "tree": git_state.get("tree"),
-        "target_sha": TARGET_SHA,
+        # Run-pin metadata (PR-GR-00R part A): the caller-stated requested SHA,
+        # the observed HEAD, and the observed tree SHA.  There is no hard-coded
+        # target; the pin is never derived from HEAD.
+        "requested_sha": git_state.get("requested_sha"),
+        "observed_sha": git_state.get("observed_sha"),
+        "tree_sha": git_state.get("tree_sha"),
         "trusted": trusted,
         "allow_dirty": bool(allow_dirty),
         "dirty": dirty,
@@ -2739,17 +3270,35 @@ def capture_evidence(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+def _parse_expected_sha(value: str) -> str:
+    """argparse type for ``--expected-sha``: exactly 40 lowercase hex characters.
+
+    A syntactically invalid pin raises ``argparse.ArgumentTypeError`` so the CLI
+    fails closed (exit 2) before any command is issued.  The pin is never
+    derived from HEAD; the caller must state it.
+    """
+    if not _is_valid_sha40(value):
+        raise argparse.ArgumentTypeError(
+            "--expected-sha must be exactly 40 lowercase hexadecimal characters")
+    return value
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Capture reproducible DB guard evidence at one exact Git SHA "
-                    "(diagnostic-only; never an architecture guard).",
+        description="Capture reproducible DB guard evidence at one caller-pinned "
+                    "exact Git SHA (diagnostic-only; never an architecture guard).",
     )
     parser.add_argument("--root", default=".", help="Repository root (default: .)")
     parser.add_argument("--out", required=True, help="Output bundle directory (repo-relative).")
+    parser.add_argument("--expected-sha", required=True, type=_parse_expected_sha,
+                        metavar="<40-lowercase-hex>",
+                        help="Caller-declared Git SHA this capture must observe at "
+                             "HEAD (mandatory run pin; never derived from HEAD).")
     parser.add_argument("--allow-dirty", action="store_true",
                         help="Capture despite a dirty checkout; marks evidence untrusted.")
     args = parser.parse_args(argv)
-    return capture_evidence(args.root, args.out, allow_dirty=args.allow_dirty)
+    return capture_evidence(args.root, args.out, allow_dirty=args.allow_dirty,
+                            expected_sha=args.expected_sha)
 
 
 if __name__ == "__main__":

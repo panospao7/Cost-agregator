@@ -13,16 +13,7 @@ Status vocabulary is intentionally conservative: `pending`, `partial`,
 ## No trusted bundle without two human clean captures
 
 **No trusted evidence bundle exists until a human performs two clean captures at
-the fixed SHA `9b97e7979130de605d164386bbf719cf20579475`.** Until then, this
-ledger makes no claim that evidence exists and no claim of green status. A single
-capture, a dirty/`--allow-dirty` capture, a capture at any other SHA, or a
-capture that failed closed (preflight, required-input, required-artifact, or
-wrong-SHA) is **not** a trusted bundle and must not be described as evidence of a
-passing state. The capture tool is diagnostic-only; it observes and records, it
-does not certify. A trusted row requires a human to run the capture twice at a
-clean checkout of the exact fixed SHA, confirm both `semantic-summary.json`
-files are byte-identical, and confirm the DB gate remains blocked with no
-failed-closed `infrastructure_warnings`.
+the caller-stated SHA via `--expected-sha`.**
 
 ## How to add a row
 
@@ -642,3 +633,70 @@ Strict-review fixes applied across the four GR-00 files
 These are diagnostic-only corrections. No tests were executed in this editing
 pass; the targeted suite (`pytest scripts/ci/test_capture_db_guard_evidence.py`)
 remains **pending**, and no green/blocked status is asserted for any SHA here.
+
+## GR-00R applied (caller-stated run pin + command-log completeness contract) — pending human validation
+
+PR-GR-00R changes were applied to the four GR-00 files
+(`scripts/ci/capture_db_guard_evidence.py`,
+`scripts/ci/test_capture_db_guard_evidence.py`,
+`docs/ci/DB_GUARD_EVIDENCE_PROTOCOL.md`, `docs/ci/DB_GUARD_HARDENING_LEDGER.md`).
+Status: **pending human validation** — no DONE/GREEN/complete claim is made
+here; the two-clean-capture human gate above still applies.
+
+- **Run-pin replacement (rationale)**: the previous hard-coded target pin
+  (`TARGET_SHA = 9b97e7979130de605d164386bbf719cf20579475`, enforced as an
+  unconditional `HEAD == TARGET_SHA` preflight) made the tool **unusable at
+  current SHAs**: the repository has advanced past the pinned commit, so every
+  capture at any newer HEAD was rejected `wrong-sha` and no fresh evidence
+  could ever be produced. The fixed pin is removed. The expected commit is now
+  a **mandatory, caller-stated per-run pin** (`--expected-sha
+  <40-lowercase-hex>` / `expected_sha=`): exactly 40 lowercase hex characters,
+  **never derived from HEAD**, validated before any runner invocation
+  (`missing-expected-sha` / `invalid-expected-sha`; an invalid value itself is
+  never persisted verbatim). A pre-launch gate requires the observed
+  `git rev-parse HEAD` to equal the requested pin before any matrix command
+  starts (mismatch → `wrong-sha:<observed>`, exit `2`, zero commands run).
+  `git-state.json` and `evidence.json` record `requested_sha` / `observed_sha`
+  / `tree_sha`; `semantic-summary.json` records `requested_sha`
+  (run-invariant, so byte-identical comparison across two runs at the same SHA
+  still holds). A **post-capture drift re-check** re-observes HEAD/tree/status
+  after the matrix; any drift or unverifiable post-state fails the capture
+  closed (exit `2`) with
+  `post-capture-drift:<head|tree|status|unverifiable>`.
+- **Command-log completeness contract**: every command log is in exactly one of
+  two states — **COMPLETE** (entire combined stream captured within
+  `CHILD_OUTPUT_LIMIT`, published atomically, read back, hashed:
+  `log_complete=true`, `log_sha256` set, `log_failure_code=null`) or
+  **INCOMPLETE** (`log_failure_code` a controlled constant from
+  `{output-limit-exceeded, log-write-failed, log-unreadable}`; `log_sha256`
+  empty — never hashed as valid evidence). Logs are persisted through a
+  streaming **atomic temporary-log sink** (sanitized incremental chunks into a
+  sibling temp file, then fsync + `os.replace` onto the final name), shared by
+  the live merged-pipe production runner and injected runners. Cap exceedance
+  appends the single `<truncated>` marker once, keeps draining the child pipe
+  (no deadlock), and fails the whole capture closed (exit `2`). Raw log text
+  never reaches `evidence.json` / `summary.md`. The former
+  `launch_error=LOG_HASH_FAILED` sentinel is superseded by the structured
+  `log-unreadable` code.
+- **New warning codes** (added to the closed `WARNING_CODE_ALLOWLIST`):
+  `missing-expected-sha`, `invalid-expected-sha`, `post-capture-drift`, and
+  `incomplete-command-log:<id>:<code>` (payload is the sanitized command id
+  plus a controlled `LOG_FAILURE_CODES` constant).
+- **Schema field additions**: `evidence.json` and `git-state.json` gain
+  `requested_sha` / `observed_sha` / `tree_sha`; `semantic-summary.json` gains
+  `requested_sha`; per-command records gain `log_bytes` (published log size in
+  bytes), `log_complete`, and `log_failure_code`. The three log-volume fields
+  are deliberately excluded from `semantic-summary.json` (documented
+  determinism choice: byte counts vary between runs; incompleteness already
+  forces exit `2` and is reflected in `trusted`).
+- **Supersession note**: earlier sections of this ledger that require captures
+  "at the fixed SHA `9b97e79…`" describe the retired GR-00 pin. Under GR-00R
+  the tool has no hard-coded target; the two-clean-capture human gate applies
+  at whatever SHA the caller pins with `--expected-sha`, with both runs exiting
+  `0` and producing byte-identical `semantic-summary.json` files.
+
+These are diagnostic-only changes. They do **not** by themselves produce a
+trusted bundle; the two-clean-capture human gate above still applies, and no
+green/blocked status is asserted for any SHA here. The targeted test suite
+(`pytest scripts/ci/test_capture_db_guard_evidence.py`) has **not** been
+executed in this documentation pass and remains **pending**.

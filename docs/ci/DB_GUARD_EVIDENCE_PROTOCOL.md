@@ -1,9 +1,10 @@
 # DB Guard Evidence Protocol
 
 Diagnostic-only, reproducible evidence workflow for the DB access guard at one
-exact Git SHA. This protocol is defined by `scripts/ci/capture_db_guard_evidence.py`
-and is **not** an architecture guard. It never mutates policy, baseline,
-config/guards, production Kotlin, Gradle, workflow, scanner, or ratchet files.
+caller-pinned exact Git SHA (`--expected-sha`). This protocol is defined by
+`scripts/ci/capture_db_guard_evidence.py` and is **not** an architecture guard.
+It never mutates policy, baseline, config/guards, production Kotlin, Gradle,
+workflow, scanner, or ratchet files.
 
 The DB gate is expected to remain **blocked** at the tested SHA. Capturing that
 state truthfully is the deliverable. This tool must not edit policy to change it.
@@ -11,15 +12,19 @@ state truthfully is the deliverable. This tool must not edit policy to change it
 ## No trusted evidence bundle without two human clean captures
 
 **No trusted evidence bundle exists until a human performs two clean captures at
-the fixed SHA `9b97e7979130de605d164386bbf719cf20579475`.** A single capture, a
-dirty capture, an `--allow-dirty` capture, a capture at any other SHA, or a
-capture whose preflight/required-input/required-artifact checks failed closed is
-**never** a trusted bundle and must not be described as evidence of a green or
-passing state. The capture tool is diagnostic-only; it observes and records, it
-does not certify. A trusted bundle requires a human operator to:
+the same caller-stated SHA (`--expected-sha`).** A single capture, a dirty
+capture, an `--allow-dirty` capture, a capture whose preflight /
+required-input/required-artifact checks failed closed, a capture rejected by the
+run-pin gate or the post-capture drift re-check, or a capture that ended
+incomplete (exit `2`, e.g. an INCOMPLETE command log) is **never** a trusted
+bundle and must not be described as evidence of a green or passing state. The
+capture tool is diagnostic-only; it observes and records, it does not certify.
+A trusted bundle requires a human operator to:
 
-1. run the capture twice at a clean checkout of the exact fixed SHA;
-2. confirm both `semantic-summary.json` files are byte-identical; and
+1. run the capture twice at a clean checkout of the exact caller-stated SHA
+   (`--expected-sha <40-lowercase-hex>`);
+2. confirm both runs exited `0` and both `semantic-summary.json` files are
+   byte-identical; and
 3. confirm the DB gate remains blocked (observed child status, not a capture
    success) and no `infrastructure_warnings` indicate a failed-closed condition.
 
@@ -27,6 +32,54 @@ Until those two clean captures are performed and compared by a human, this
 protocol makes **no claim that evidence exists** and **no claim of green
 status**. Any prose ledger row is an index of a capture that already happened,
 not proof of a later SHA's state.
+
+## Caller-stated run pin (`--expected-sha`)
+
+There is deliberately **no hard-coded target SHA**. The expected commit is a
+per-run pin supplied by the caller:
+
+- `--expected-sha <40-lowercase-hex>` is **mandatory** and must be exactly 40
+  lowercase hexadecimal characters; the CLI fails closed (exit `2`) before any
+  command is issued otherwise. It is **never derived from HEAD** — the caller
+  must state it (a pin derived from HEAD would be tautological).
+- **Pre-launch equality gate**: before any matrix command starts, the observed
+  `git rev-parse HEAD` must equal the requested pin. On mismatch the capture
+  fails closed pre-launch (exit `2`, `wrong-sha:<observed>`): the observed git
+  state is still recorded, but no matrix command, artifact hash, or report
+  validation is ever performed against an unpinned commit. A missing pin warns
+  `missing-expected-sha`; a syntactically invalid pin warns
+  `invalid-expected-sha` (the invalid value itself is never persisted).
+- **Recorded identity**: `git-state.json` and `evidence.json` both record
+  `requested_sha` (the caller-stated pin), `observed_sha` (the observed HEAD),
+  and `tree_sha` (the observed `HEAD^{tree}`); `semantic-summary.json` records
+  `requested_sha`, which is run-invariant, so byte-identical comparison across
+  two runs at the same SHA still holds.
+- **Post-capture drift re-check**: after the matrix ran, HEAD, tree, and
+  porcelain status are re-observed. Any drift — or an unverifiable post-state —
+  marks the bundle incomplete/untrusted and fails the capture (exit `2`) with
+  `post-capture-drift:<surface>`, where `<surface>` is `head`, `tree`,
+  `status`, or `unverifiable`. Status is compared after the same sanitization
+  applied to the preflight record, so both sides are deterministic. The
+  re-check is skipped when the pre-launch gate already blocked the launch
+  (nothing ran, so nothing can have drifted).
+
+## Capture exit codes: truthful observation vs failed capture
+
+The capture tool itself exits `0` or `2` — never `1`:
+
+- **Exit `0` — the guard failed truthfully (or passed)**: the capture completed,
+  every required artifact is present, every command log is COMPLETE, and the
+  pinned identity held for the whole run. Expected nonzero child exits (the
+  `db-cli` gate exiting `2`, the blocked Gradle task, the ratchet observation)
+  are stored observations; child exit codes are preserved verbatim in
+  `evidence.json` and never alter the capture tool's own exit code.
+- **Exit `2` — capture failed/incomplete**: the bundle is **not** evidence of
+  anything and must not be indexed as such. Causes include: a dirty checkout
+  without `--allow-dirty`; a missing or invalid `--expected-sha`; observed HEAD
+  ≠ requested pin (pre-launch); post-capture HEAD/tree/status drift; any
+  INCOMPLETE command log; a launch failure; a missing required input/artifact;
+  an invalid required report; a containment/matrix-validation violation; a
+  bounded-collection overflow; or a top-level output-hash failure.
 
 ## Output directory layout
 
@@ -82,12 +135,15 @@ Top-level keys:
 | `root` | string | Repository-relative bundle root |
 | `commit` | string? | Git SHA (from `git rev-parse HEAD`) |
 | `tree` | string? | Git tree (from `git rev-parse HEAD^{tree}`) |
+| `requested_sha` | string? | Caller-stated `--expected-sha` run pin (never derived from HEAD; `null` when the pin itself was missing/invalid) |
+| `observed_sha` | string? | Observed `git rev-parse HEAD` (mirrors `commit`) |
+| `tree_sha` | string? | Observed `git rev-parse HEAD^{tree}` (mirrors `tree`) |
 | `trusted` | bool | Bundle trusted-state (see below) |
 | `allow_dirty` | bool | Whether `--allow-dirty` was passed |
 | `dirty` | bool | Whether the checkout was dirty |
 | `preservation` | object | `{ok, policy_ok, production_ok, staged_ok, untracked_ok, checked_paths, forbidden_changed}` |
 | `environment` | object | Redacted environment snapshot |
-| `git_state` | object | Preflight git/version capture; includes `preflight_ok` and `preflight_commands` (bounded, sanitized records) |
+| `git_state` | object | Preflight git/version capture; includes `preflight_ok`, `preflight_commands` (bounded, sanitized records), and the run-pin identity `requested_sha` / `observed_sha` / `tree_sha` |
 | `input_manifest` | array | One entry per hashed input (includes `scripts/db_guard/*.py` and all policy/baseline/config inputs) |
 | `input_manifest_sha256` | string | SHA-256 of canonical manifest JSON |
 | `commands` | array | One record per command (see below) |
@@ -104,27 +160,33 @@ Per-command record:
 | `elapsed_ms` | int | Volatile |
 | `exit_code` | int? | Child exit code; `null` on launch failure |
 | `log_path` | string | Repository-relative combined-log path |
-| `log_sha256` | string | SHA-256 of the combined log |
+| `log_sha256` | string | SHA-256 of the combined log; **empty** for an INCOMPLETE log (only complete logs are hashed) |
+| `log_bytes` | int | Published log size in bytes (0 when no log was published) |
+| `log_complete` | bool | True iff the entire combined stream was captured within the cap, published atomically, and read back successfully |
+| `log_failure_code` | string? | Controlled constant from `{output-limit-exceeded, log-write-failed, log-unreadable}`; `null` iff the log is complete (a pre-execution rejection record is incomplete with no code; `launch_error` carries the reason) |
 | `report_path` | string? | Repository-relative report path when applicable |
 | `report_sha256` | string? | SHA-256 of the report when present |
 | `report_schema_version` | int? | Parsed v2 schema version |
 | `report_trusted` | bool? | Parsed `statistics.trusted` |
 | `report_diagnostic_codes` | array | Parsed diagnostic `code` values |
 | `report_finding_count` | int? | Parsed finding count |
-| `parser_error` | string? | Controlled code when report absent/invalid |
+| `parser_error` | string? | Controlled code when report absent/invalid (`MISSING_REPORT` when a declared `report_path` never appears on disk) |
 | `launch_error` | string? | `LAUNCH_FAILED` on process launch failure, or when an ordinary internal error occurs while running/recording a command (a controlled fallback record with sanitized argv and `exit_code: null`; `KeyboardInterrupt`/`SystemExit` are never converted) |
 
 ## Semantic vs volatile fields
 
 **Volatile (excluded from `semantic-summary.json`):** `captured_at_utc`,
 per-command `start_utc`/`end_utc`/`elapsed_ms`, all `log_path`/`log_sha256`
-values, all `report_path`/`report_sha256` values, and any absolute/temp path.
+values, the per-command log-volume metadata `log_bytes` / `log_complete` /
+`log_failure_code` (a documented determinism choice — see the command-log
+completeness contract), all `report_path`/`report_sha256` values, and any
+absolute/temp path.
 
-**Semantic (included, stable per SHA):** `commit`, `tree`, `trusted`,
-`preservation_ok`, interpreter/version fields, `input_manifest_sha256`, and per
-command `id` / `argv` / `exit_code` / `launch_error` / `report_schema_version`
-/ `report_trusted` / `report_diagnostic_codes` / `report_finding_count` /
-`parser_error`.
+**Semantic (included, stable per SHA):** `commit`, `tree`, `requested_sha`,
+`trusted`, `preservation_ok`, interpreter/version fields,
+`input_manifest_sha256`, and per command `id` / `argv` / `exit_code` /
+`launch_error` / `report_schema_version` / `report_trusted` /
+`report_diagnostic_codes` / `report_finding_count` / `parser_error`.
 
 The per-command `argv` is included verbatim **except** for run-specific bundle
 output paths: any occurrence of the repository-relative bundle prefix
@@ -138,18 +200,64 @@ untouched. This keeps `semantic-summary.json` byte-identical across runs at the
 same SHA even though the run id differs; the run id itself never reaches the
 semantic summary.
 
-Two clean runs at the same SHA must produce byte-identical
-`semantic-summary.json` files. Logs may differ only in timing.
+Two clean runs at the same requested SHA must produce byte-identical
+`semantic-summary.json` files. Raw `commands/*.log` files may differ between
+runs (timing and child output volume); only the semantic summaries must be
+byte-identical.
+
+## Command-log completeness contract
+
+Every command log is in exactly one of two states — there is no third
+"probably fine" state:
+
+- **COMPLETE** — the entire combined stdout/stderr stream was captured within
+  the bounded cap (`CHILD_OUTPUT_LIMIT`), written atomically, read back, and
+  hashed (`log_complete=true`, `log_sha256` set, `log_failure_code=null`); or
+- **INCOMPLETE** — the cap was exceeded (`output-limit-exceeded`), the log
+  could not be written (`log-write-failed`), or the finished artifact could not
+  be read back/hashed (`log-unreadable`). An incomplete log is still preserved
+  on disk as a flagged artifact but is NEVER hashed as valid evidence: its
+  `log_sha256` is empty, and it forces the whole capture to exit `2` with an
+  `incomplete-command-log:<id>:<code>` warning. The capture never exits `0`
+  with a silently truncated log.
+
+Design properties:
+
+- **Streaming atomic temp log**: sanitized chunks of the single merged
+  stdout+stderr pipe are appended to a sibling temporary file as the child runs
+  (line-local redaction, incremental reads); on completion the temp file is
+  flushed, fsync'd, and `os.replace`d onto the final name, so a reader only
+  ever sees a fully published artifact. Raw child payloads are never fully
+  materialized in memory (bounded pending-line buffer).
+- **Cap exceedance is fail-closed, not silent**: once the cap trips, the single
+  `<truncated>` marker is appended exactly once, further input is discarded,
+  and the child pipe **keeps being drained** so the child can never block on a
+  full pipe (no deadlock); the log stays flagged INCOMPLETE and the capture
+  exits `2`.
+- **Only complete logs are hashed**: an INCOMPLETE log's `log_sha256` is the
+  empty sentinel (the same "no authoritative hash" convention as
+  `LAUNCH_FAILED` records).
+- **Command records carry log-volume metadata**: `log_bytes` (published size in
+  bytes), `log_complete`, and `log_failure_code`.
+- **Raw log text never reaches `evidence.json` / `summary.md`**: only the
+  structured per-command fields above do; log content lives exclusively in
+  `commands/*.log`.
+- **Documented determinism choice**: `log_bytes` / `log_complete` /
+  `log_failure_code` are deliberately **excluded** from
+  `semantic-summary.json` — byte counts vary between runs (child
+  verbosity/timing), and incompleteness already forces exit `2` (reflected in
+  `trusted`), so including them would break the byte-identical same-SHA
+  comparison without adding trust.
 
 ## Command matrix
 
 Executed in this order (plan sections A–H). Preflight (A) is recorded into
 `git-state.json` / `environment.json`, not as a command log.
 
-| ID | Command | Expected at SHA `9b97e79` |
+| ID | Command | Expected observation |
 | --- | --- | --- |
 | registry-validation | `python3 scripts/ci/verify_guard_registry.py` | observation |
-| focused-python-tests | `python3 -m pytest scripts/ci/test_guard_findings.py ... -v --tb=short` | observation |
+| focused-python-tests | `python3 -m pytest scripts/ci/test_guard_findings.py ... -v --tb=short -p no:cacheprovider` | observation |
 | room-inventory | `verify_db_access_boundaries.py --inventory-only` | exit 0, trusted report |
 | db-cli | `verify_db_access_boundaries.py --fail-on-violation ...` | exit 2, untrusted, policy diagnostic |
 | db-ratchet | `guard_ratchet.py --guard-name=db_access --command-arg=... --baseline=config/baselines/db_access.json --ci-mode --finding-protocol=2` | observation (tokenized child args) |
@@ -163,6 +271,29 @@ option-like values such as `--fail-on-violation`, is passed as
 `--command-arg=<value>`) so option-like child values are never re-parsed by a
 shell. Expected nonzero child exits are observations stored in `evidence.json`;
 they never make the capture tool itself return `1`.
+
+**Zero untracked working-tree side effects (hard requirement).** The command
+matrix must leave the working tree exactly as it found it: no matrix command
+may create, modify, or delete any tracked or untracked repository path. A
+single untracked side effect (e.g. an unpinned pytest run materializing
+`.pytest_cache/` — there is no pytest config file and `.gitignore` has no
+entry for it) trips the post-capture drift re-check on the status surface
+(exit `2`, `post-capture-drift:status`), so run-1 can never exit `0` and run-2
+hits the dirty gate — the two-clean-capture protocol becomes unreachable. This
+is enforced in two places:
+
+- **At the source (declaration)**: every pytest invocation in the matrix pins
+  `-p no:cacheprovider`, so pytest never writes its cache directory into the
+  working tree. The focused-python-tests argv ends with
+  `-v --tb=short -p no:cacheprovider`; a source-level regression test asserts
+  the pin on every pytest-invoking matrix entry.
+- **At verification (observation)**: the post-capture drift re-check re-runs
+  `git status --porcelain=v1` after the matrix and fails the capture closed
+  (exit `2`, `post-capture-drift:<head|tree|status|unverifiable>`) when any
+  untracked or modified path appeared mid-matrix. A side-effecting matrix can
+  therefore never yield a trusted bundle, and never the two byte-identical
+  `semantic-summary.json` files (run-1/run-2) that a trusted comparison
+  requires.
 
 ### Required artifacts (ratchet + static suite)
 
@@ -260,12 +391,17 @@ authoritative.
   raw exception text, file paths, or payloads into the bundle.
 - **Persisted output**: each child command's combined stdout/stderr is
   comprehensively sanitized before being written to its `commands/*.log` file.
-  Absolute filesystem paths (Windows drive form and POSIX multi-segment paths)
-  are replaced by `<redacted-path>`; secret assignments (`password=…`,
-  `api_key=…`, etc.) by `<redacted-secret>`; SQL error / exception signatures by
-  `<redacted-sql>`; and exception traceback lines by `<redacted-exception>`. The
-  total length is bounded (`CHILD_OUTPUT_LIMIT`) so no unbounded payload reaches
-  the persisted logs. Child **exit codes are never altered** by sanitization.
+  Matrix-command logs are streamed through the atomic log sink and sanitized
+  **line-by-line** with the same redactors: absolute filesystem paths (Windows
+  drive form, POSIX multi-segment paths, UNC/backslash forms) become
+  `<redacted-path>`; secret assignments (`password=…`, `api_key=…`, etc.) become
+  `<redacted-secret>`; SQL error / exception signatures become
+  `<redacted-sql>`; and exception traceback lines become
+  `<redacted-exception>`. Length bounding is enforced across the whole log by
+  the sink: exceeding `CHILD_OUTPUT_LIMIT` is a fail-closed INCOMPLETE state
+  (see the command-log completeness contract), never a silent truncation.
+  Preflight records (git/version metadata) keep the whole-text bounded
+  truncation. Child **exit codes are never altered** by sanitization.
    No absolute path, secret, SQL error, raw exception text, or unbounded payload
    reaches the persisted logs or `evidence.json`.
 - **Preflight / version / environment metadata**: interpreter version strings
@@ -303,7 +439,9 @@ authoritative.
     `missing-artifact-kind`, `missing-required-input`, `missing-blob-id`,
     `missing-required-artifact`, `invalid-required-artifact-type`,
     `invalid-required-report`, `symlink-artifact`, `artifact-hash-failed`,
-    `preflight-failed`, `wrong-sha`, `git-meta-failed`, `missing-test-file`.
+    `preflight-failed`, `wrong-sha`, `git-meta-failed`,
+    `missing-expected-sha`, `invalid-expected-sha`, `post-capture-drift`,
+    `missing-test-file`, `incomplete-command-log`.
 
     - **Input-candidate realpath containment**: every input manifest candidate
    (including a custom `input_candidates` list) is validated with
@@ -329,10 +467,12 @@ authoritative.
     re-checks are the enforced containment — this is best-effort TOCTOU mitigation,
     not a hard guarantee against a privileged actor able to swap inodes between our
     checks. A rejection (symlink, non-regular, read error, replaced/changed file)
-    returns `None`, which the caller turns into a fail-closed condition: a required
-    artifact whose hash fails sets `artifact-hash-failed:<rel>` and exit `2`; a log
-    hash failure sets `launch_error=LOG_HASH_FAILED`; a report hash failure sets
-    `parser_error=REPORT_HASH_FAILED` (which also triggers `invalid-required-report`).
+     returns `None`, which the caller turns into a fail-closed condition: a required
+     artifact whose hash fails sets `artifact-hash-failed:<rel>` and exit `2`; a
+     finished command log that cannot be read back/hashed is marked INCOMPLETE with
+     `log-unreadable` (fail closed, exit `2` — the former
+     `launch_error=LOG_HASH_FAILED` sentinel is superseded); a report hash failure sets
+     `parser_error=REPORT_HASH_FAILED` (which also triggers `invalid-required-report`).
      - **Report hash and parse share one stable byte snapshot**: a required report is
     read exactly once via `_race_safe_read_bytes`; the same byte snapshot is used for
     BOTH the `report_sha256` digest and the `parse_v2_report` parse, so the evidence
@@ -417,13 +557,16 @@ A bundle is `trusted` only when **all** hold:
     resolves to the bare repository-relative path(s); an untracked forbidden file
     or an untracked `app/src/main` path fails
     the preservation check closed;
-3. no command suffered a launch failure;
+3. no command suffered a launch failure, and every executed command's log is
+   COMPLETE (`log_complete=true`; any `log_failure_code` fails the capture
+   closed);
 4. every required artifact is present **and of the correct type**;
  5. the preflight git identity resolved (both `commit` and `tree` are known and
     are valid 40-hex SHAs from a successful `git rev-parse` — a nonzero exit or
     malformed SHA fails closed even if output text is present);
- 6. `HEAD` equals the approved exact target SHA `9b97e7979130de605d164386bbf719cf20579475`
-    (a differing HEAD fails closed with `wrong-sha:<actual>`);
+  6. the observed `HEAD` equals the caller-stated `--expected-sha` run pin
+     (checked **before any matrix command starts**; a mismatch fails closed
+     pre-launch with `wrong-sha:<observed>` and no command is executed);
   7. every required input candidate is present (none missing at the SHA) **and each
      present input resolves to a valid 40-hex Git blob ID**; the input manifest is
      built **dynamically** from tracked files via `git ls-files` over DB-guard
@@ -437,11 +580,17 @@ A bundle is `trusted` only when **all** hold:
  9. the preflight git metadata commands (`git status --porcelain=v1`, `git diff
     --name-only`, `git diff --cached --name-only`) all succeeded — a failure is
     fatal (`git-meta-failed:<which>`), since an unobservable checkout state cannot
-    be trusted.
+    be trusted;
+ 10. the post-capture identity re-check passed: HEAD, tree, and porcelain status
+     re-observed after the matrix are unchanged from the preflight state (any
+     drift — or an unverifiable post-state — fails closed with
+     `post-capture-drift:<head|tree|status|unverifiable>`).
 
-If any of (5)–(9) fails, the capture **fails closed**: it returns exit code `2`,
+If any of (5)–(10) fails, the capture **fails closed**: it returns exit code `2`,
 marks the bundle untrusted, and records a bounded `infrastructure_warnings`
-  entry (`preflight-failed`, `wrong-sha:<actual>`, `git-meta-failed:<which>`,
+  entry (`preflight-failed`, `missing-expected-sha`, `invalid-expected-sha`,
+  `wrong-sha:<observed>`, `post-capture-drift:<head|tree|status|unverifiable>`,
+  `git-meta-failed:<which>`, `incomplete-command-log:<id>:<code>`,
   `missing-required-input:<rel>`, `missing-blob-id:<rel>`, `symlink-artifact:<rel>`,
   `invalid-required-artifact-type:<rel>`, `invalid-required-report:<id>`,
   `invalid-matrix-argv:<id>:<token>` (including `<empty>` and `<empty-or-non-string>`
@@ -481,9 +630,12 @@ stays stable across run ids:
 It intentionally does **not** include `output-sha256.txt` itself, the
 `commands/` combined logs, or the per-command report artifacts
 (`*.findings.json`, `*.summary.json`, `05-static-suite/`). Those artifacts are
-covered individually by the per-command `log_sha256` / `report_sha256` fields
-inside `evidence.json`; re-hashing them into `output-sha256.txt` would be
-redundant and would make the contract unstable across log-timing differences.
+covered individually by the per-command `report_sha256` fields and — for
+COMPLETE logs — the `log_sha256` field inside `evidence.json`; an INCOMPLETE
+log carries an empty `log_sha256` and is flagged via `log_complete=false` plus
+its controlled `log_failure_code` (failing the capture closed). Re-hashing them
+into `output-sha256.txt` would be redundant and would make the contract unstable
+across log-timing differences.
 This set is the evidence-integrity contract and must not be widened without an
 explicit protocol bump.
 
@@ -503,15 +655,18 @@ and the loop cannot spin.
 
 ## How CI uploads artifacts
 
-CI runs the capture tool with `--root . --out build/guard-evidence/<sha>/run-1`
-(and a second `run-2` for reproducibility). The `build/guard-evidence/`
-directory is uploaded as a CI artifact. Because it is git-ignored, it is never
-committed to the repository.
+CI runs the capture tool with
+`--root . --expected-sha <40-lowercase-hex> --out build/guard-evidence/<sha>/run-1`
+(and a second `run-2` for reproducibility), where the `--expected-sha` value is
+the SHA the caller intends to capture — stated explicitly, never derived from
+HEAD. The `build/guard-evidence/` directory is uploaded as a CI artifact.
+Because it is git-ignored, it is never committed to the repository.
 
 ## How a reviewer compares two bundles
 
-1. Confirm both `git-state.json` `commit`/`tree` values are identical and match
-   the PR base SHA.
+1. Confirm both `git-state.json` `requested_sha` values are identical, and that
+   each capture's `observed_sha`/`tree_sha` equals the requested pin
+   (`commit`/`tree` mirror them) and matches the intended capture SHA.
 2. Confirm both `input-manifest.json` file hashes are identical (same inputs).
 3. Confirm both `semantic-summary.json` files are byte-identical.
 4. Inspect the `db-cli` command: `report_trusted` must be `false` with a
@@ -519,10 +674,16 @@ committed to the repository.
 5. Inspect `room-inventory` independently (expected trusted, no diagnostics).
 6. Confirm no forbidden file changed via `preservation.ok`.
 
+Both captures must have exited `0`. Raw `commands/*.log` files are expected to
+differ between the two runs (timing and child output volume); only
+`semantic-summary.json` must be byte-identical. A capture that exited `2`
+(run-pin rejection, post-capture drift, incomplete command log, or any other
+failed-closed condition) is not comparable evidence at all.
+
 ## Why a checked-in prose ledger must never prove a later SHA
 
 `docs/ci/DB_GUARD_HARDENING_LEDGER.md` is a durable **index** of evidence
-bundles. A ledger row records the SHA, tree, and artifact location of a capture
-that already happened. It is not a substitute for raw artifacts and must never
+bundles. A ledger row records the caller-stated SHA (`--expected-sha`), the
+observed tree, and the artifact location of a capture that already happened. It is not a substitute for raw artifacts and must never
 assert that a later, untested SHA is green or blocked. Each row's claims are
 only as strong as the referenced bundle's `evidence.json` and `semantic-summary.json`.
