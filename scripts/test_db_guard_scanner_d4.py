@@ -116,7 +116,11 @@ class StructuralRepository {
     path = root / "StructuralRepository.kt"
     path.write_text(source, encoding="utf-8")
     structural = [{
-        "path": "app/src/main/java/example/StructuralRepository.kt",
+        # EXACT canonical-path equality is the authorization contract
+        # (_structural_match): the entry must name the path the fixture
+        # actually writes (java root, no example/ segment) — the same path
+        # the expected finding below carries.
+        "path": "app/src/main/java/StructuralRepository.kt",
         "class": "StructuralRepository",
         "method_pattern": "allowed",
         "operation": "deleteRecursively",

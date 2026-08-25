@@ -20,8 +20,14 @@ import sys
 
 import pytest
 
+# Sibling-test convention: put BOTH the scripts directory (flat-mode names)
+# and the repository root (the ``scripts.*`` package namespace used by
+# db_guard modules' package-relative imports) on sys.path.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from db_policy_signature import FunctionSignature, SignatureError
+_REPO_ROOT_STR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT_STR not in sys.path:
+    sys.path.insert(0, _REPO_ROOT_STR)
+from db_policy_signature import FunctionSignature, SignatureError  # noqa: E402
 
 
 def _make_sig(canonical_path="app/src/main/java/example/File.kt",
@@ -162,12 +168,22 @@ class TestNoHiddenAppSrcTopologyGate:
         )
 
     def test_normalize_canonical_path_source_has_no_app_src_check(self):
-        """The _normalize_canonical_path source code contains no app/src gate."""
+        """_normalize_canonical_path has no EXECUTABLE app/src gate.
+
+        Syntax-only semantics: the docstring may legitimately MENTION
+        ``app/src/main`` as one example of a syntactically valid module
+        tree; what must not exist is an executable prefix decision.
+        Mirrors the executable-gate scan used by
+        TestNoExecutableAppSrcMainTopologyGate below.
+        """
         import inspect
         import db_policy_signature as mod
         source = inspect.getsource(mod._normalize_canonical_path)
-        assert "app/src" not in source, (
-            "_normalize_canonical_path should not reference app/src"
+        assert 'startswith("app/src' not in source, (
+            "_normalize_canonical_path must not gate on an app/src prefix"
+        )
+        assert "startswith('app/src" not in source, (
+            "_normalize_canonical_path must not gate on an app/src prefix"
         )
         assert ".kt" in source, (
             "_normalize_canonical_path should check .kt suffix"
@@ -230,7 +246,10 @@ class TestNoExecutableAppSrcMainTopologyGate:
     def test_no_executable_app_src_main_gate_in_declaration_scanner(self):
         """declaration_scanner._validate_diagnostic_path has no app/src gate."""
         import inspect
-        from db_guard.declaration_scanner import _validate_diagnostic_path
+        # Package-mode import (sibling-test convention): db_guard modules use
+        # package-relative imports, so the top-level ``db_guard`` name cannot
+        # load them.
+        from scripts.db_guard.declaration_scanner import _validate_diagnostic_path
         source = inspect.getsource(_validate_diagnostic_path)
         lines = source.split("\n")
         for line in lines:
@@ -245,7 +264,8 @@ class TestNoExecutableAppSrcMainTopologyGate:
     def test_no_executable_app_src_main_gate_in_scanner_diag_from_text(self):
         """scanner._diag_from_text has no app/src gate."""
         import inspect
-        from db_guard.scanner import _diag_from_text
+        # Package-mode import (sibling-test convention); see above.
+        from scripts.db_guard.scanner import _diag_from_text
         source = inspect.getsource(_diag_from_text)
         lines = source.split("\n")
         for line in lines:

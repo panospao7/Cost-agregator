@@ -995,7 +995,19 @@ def test_required_true_without_direct_syntax_downgrades_to_helper(tmp_path):
 
 def test_direct_proof_must_precede_every_mutation(tmp_path):
     """Per-mutation all-or-nothing: a barrier between two mutations proves
-    nothing for the FIRST one, so the row cannot claim direct."""
+    nothing for the FIRST one, so the row cannot claim direct.
+
+    The upsert body performs TWO authorized mutations (insert before the
+    barrier, delete after it).  Authorization filters by ACCESSOR only, so
+    both evidence-derived operations emit — one resolved row per canonical
+    mutation key, sharing one callable key (same split pinned by
+    test_one_callable_two_operations_share_callable_key).  The deferred
+    direct claim is decided ONCE per legacy row over EVERY extracted
+    mutation position (_callable_direct_barrier_evidence returns False
+    unless EVERY mutation is preceded by a real barrier call): the insert
+    has no preceding barrier, so the verdict is False and BOTH emitted rows
+    carry the downgraded helper metadata — neither may claim direct.
+    """
     _write_repo(
         tmp_path,
         {
@@ -1005,8 +1017,26 @@ def test_direct_proof_must_precede_every_mutation(tmp_path):
     )
     entries = [_legacy_entry(REPO_KT, "Repository", "upsert")]
     result = migrate_policy(entries, str(tmp_path))
-    entry = _only_entry(result)
-    assert entry.barrier_mode is BarrierMode.HELPER
+    assert result.input_count == 1
+    assert result.unresolved == ()
+    # Two canonical mutation keys (insert/delete split), both kept: distinct
+    # keys never fold — folding only merges SAME-key re-authorizations.
+    assert len(result.resolved) == 2
+    first, second = result.resolved
+    assert [row.entry.operation for row in result.resolved] == [
+        "insert",
+        "delete",
+    ]
+    assert first.index == second.index == 0
+    assert first.entry.callable_key() == second.entry.callable_key()
+    assert (
+        first.entry.mutation_key().canonical_key()
+        != second.entry.mutation_key().canonical_key()
+    )
+    # The unproven FIRST mutation downgrades the whole row's mode: both
+    # emissions carry helper, never direct.
+    assert first.entry.barrier_mode is BarrierMode.HELPER
+    assert second.entry.barrier_mode is BarrierMode.HELPER
 
 
 # ── (20) Dedupe-by-key at emission (PR-GR-05 Slice 4, refined in Slice 5) ────
@@ -1472,16 +1502,27 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     CURRENT PR-GR-05 artifact, regenerated through ``--generate``; byte
     equality between a fresh run and the tracked artifacts is pinned by the
     dedicated regression tests in the tracked-artifact section below.
-    Pinned here — derived from the verified current-tree
-    structure (probe10 + policy audit) and pinned as exact observable CLI
-    numbers:
+    Pinned here — re-derived statically from checked-in evidence (the 99
+    legacy entries in ``db_ownership_policy.yml``, the tracked candidate's
+    48 entries, and the ledger's closed-status debt breakdown
+    PARSER_UNCERTAIN=16 + DAO_IDENTITY_UNRESOLVED=10 + CALLABLE_MISSING=8 +
+    PARSER_UNSUPPORTED=11 + CALLABLE_AMBIGUOUS=5 + MUTATION_PAIR_MISSING=1
+    = 51) — and pinned as exact observable CLI numbers:
 
     * 99 inputs; 51 unresolved indices -> 48 resolving indices;
-    * the ONLY same-key emission groups are (a) indices 40-42 — three
-      scenario-reason variants of BudgetRepository.addBudget's insert
-      trio (3 keys x 3 rows each) and (b) indices 22-27 — six per-column
-      update rows on TransactionLifecycleCoordinator's ownership updater
-      (6 keys x 6 rows each), all sharing barrierMode/owner/linkedIssue;
+    * the ONLY same-key emission groups among RESOLVED rows are
+      (a) indices 40-42 — three scenario-reason variants of
+      BudgetRepository.addBudget (each row authorizes budgetDao, so each
+      emits the whole insert trio -> 3 keys x 3 rows) and (b) indices 22-27
+      — six per-column expenseDao rows of
+      TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2 (each emits
+      all six column-update keys -> 6 keys x 6 rows), all sharing
+      barrierMode/owner/linkedIssue.  Same-accessor multi-row methods that
+      stayed UNRESOLVED debt (updateTransferDetails 15-17,
+      updateTypeAndTransferDetails 18-21, bulkUpdateCategory 29-31,
+      deleteExpense 34-35, plus every GroupTransactionCoordinator /
+      GroupLifecycleCoordinator / AiChat / WarrantyExpirationWorker row)
+      emit nothing and therefore form no fold groups;
     * pre-dedupe the run emits 84 resolved rows
       (3*3 + 6*6 + 39 single-carried keys); Slice 5 folding removes every
       redundant emission — 3*(3-1) + 6*(6-1) = 36 — leaving EXACTLY 48
@@ -1490,6 +1531,9 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     * duplicates=0 and exit 1 (visible debt, candidate writing allowed);
     * the accounting records partition range(99) into 48 RESOLVED (kept
       emitters plus folded reason-variant indices) and 51 UNRESOLVED;
+    * the report keeps 41 distinct resolved indexes: all 48 emitting
+      indices minus the 7 folded-only ones (41, 42 from group (a);
+      23-27 from group (b));
     * byte-for-byte reproducibility of a second run.
     """
     out_dir = tmp_path / "dist"
@@ -2682,7 +2726,10 @@ def test_generate_ships_nonempty_source_mutation_coverage(
             assert indices
             assert set(indices) <= record_indexes
         else:
-            assert indices == ()
+            # JSON decoding yields a LIST, never a tuple: compare against
+            # the list form (an ``== ()`` pin can never hold here and is
+            # exactly the ``assert [] == ()`` failure this node showed).
+            assert indices == []
         ordering.append((path, symbol, operation or ""))
     assert ordering == sorted(ordering)
     kinds = {item["kind"] for item in mutations}

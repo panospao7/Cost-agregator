@@ -1595,9 +1595,13 @@ def test_diagnostic_rejects_non_string_code():
     "app/src/main/java/example/\x00File.kt",           # NUL byte
     "app/src/main/java/example/\x1fFile.kt",           # control char
     "app/src/main/java/example/File.kt\x7f",           # DEL control
-    "src/main/java/example/File.kt",                   # outside app/src root
-    "lib/src/main/java/example/File.kt",               # outside app/src root
-    "app/src",                                         # not under app/src/
+    # NOTE (PR-GR-03 part 2): paths that are syntactically valid repo-relative
+    # POSIX .kt paths but live outside app/src (``src/main/java/...``,
+    # ``lib/src/main/java/...``) are NO LONGER rejected here.  Path validation
+    # is syntax-only; topology membership is decided by root-aware stages via
+    # source_roots (see _validate_diagnostic_path's contract).  See
+    # test_diagnostic_accepts_non_app_module_trees below.
+    "app/src",                                         # not a .kt path
     "app/src/",                                        # root only, empty tail
     "app//src/main/java/example/File.kt",              # empty segment
     "app/src/main/java/example/File.kt" + "x" * 500,   # unbounded length
@@ -1608,6 +1612,23 @@ def test_diagnostic_rejects_invalid_path_without_echoing(bad):
     assert error.value.code == "INVALID_DIAGNOSTIC_PATH"
     message = str(error.value)
     assert bad not in message
+
+
+def test_diagnostic_accepts_non_app_module_trees():
+    """Syntax-only path contract: non-app module trees are valid diagnostic
+    paths.
+
+    PR-GR-03 part 2 removed the hidden app/src topology authority from
+    ``_validate_diagnostic_path``: any repo-relative POSIX ``.kt`` path is
+    accepted and root membership is a later, root-aware concern.
+    """
+    for good in (
+        "src/main/java/example/File.kt",
+        "lib/src/main/java/example/File.kt",
+        "feature/src/main/kotlin/example/Fixture.kt",
+    ):
+        diagnostic = Diagnostic(code="DB_DECLARATION_UNRESOLVED", path=good)
+        assert diagnostic.path == good
 
 
 def test_diagnostic_rejects_non_string_path():

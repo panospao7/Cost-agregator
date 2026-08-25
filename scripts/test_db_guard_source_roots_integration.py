@@ -253,13 +253,18 @@ def test_inventory_only_cli_trusted_exit_zero(tmp_path):
         for code in codes
     ), codes
 
-    if codes:
-        # Documented current state (DB_ROOM_INVENTORY.md §11/§12): this
-        # repository carries pre-existing, NOT-baselined infrastructure
-        # diagnostics (SQL-classifier debt).  The documented trust contract
-        # (§4/§9) then requires exit 2, an untrusted report, and a withheld
-        # mutators dump -- ANY diagnostic blocks the dump.  The GR-03 proof
-        # point above is unchanged: zero DB_SOURCE_ROOT_* codes even so.
+    if codes and codes != ["INVENTORY_DURABILITY_UNCONFIRMED"]:
+        # Documented trust contract (DB_ROOM_INVENTORY.md §4/§9): ANY
+        # infrastructure diagnostic (e.g. the historical NOT-baselined
+        # SQL-classifier debt) requires exit 2, an untrusted report, and a
+        # withheld mutators dump.  The GR-03 proof point above is unchanged:
+        # zero DB_SOURCE_ROOT_* codes even so.
+        #
+        # The single platform-controlled INVENTORY_DURABILITY_UNCONFIRMED
+        # code is deliberately excluded here: write_inventory_atomic performs
+        # the atomic replace BEFORE its directory-barrier check, so the
+        # documented Windows fallback below (dump exists + untrusted report)
+        # is the correct expectation for that code alone.
         assert result.returncode == 2, combined
         assert report.get("statistics", {}).get("trusted") is False
         assert not mutators_output.exists(), combined

@@ -581,12 +581,19 @@ def _entry(**overrides):
 
 
 def _diagnostics(result):
-    """Flat bounded diagnostics: group order (sorted canonical keys) first,
-    then any batch-level diagnostics -- mirroring EvidenceResult.diagnostics
-    ordering so historical code-list assertions keep their exact semantics."""
-    flat = [d for g in result.groups for d in g.diagnostics]
-    flat.extend(result.diagnostics)
-    return tuple(flat)
+    """Flat bounded diagnostics in EvidenceResult.diagnostics order.
+
+    ``EvidenceResult.diagnostics`` already aggregates every group's
+    diagnostics EXACTLY ONCE, in sorted canonical-key group order (and, for
+    a failed declared-root-set resolution, carries the single batch-level
+    diagnostic with empty groups), so the aggregate itself is the exact
+    historical single-emission sequence these assertions were pinned
+    against.  Flattening ``result.groups`` a second time on top of the
+    aggregate -- as this helper briefly did after the GR-06 EvidenceResult
+    refactor -- re-included every group finding twice and doubled every
+    diagnostic-family expectation.
+    """
+    return tuple(result.diagnostics)
 
 
 def _codes(result):

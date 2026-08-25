@@ -3417,7 +3417,13 @@ def test_sha_mismatch_rejects_before_any_matrix_command(tmp_path):
                               expected_sha=TEST_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
-    assert runner.guard_calls == []
+    # The pin gate stops every MATRIX command pre-launch.  The spy does still
+    # see the read-only PREFLIGHT toolchain probe (``gradlew --version``):
+    # it is part of the git/environment state collected before the gate so a
+    # rejected bundle records the environment it was rejected in, and it
+    # executes no guard logic.  It must be the ONLY guard-suite-looking
+    # invocation — no matrix command may start.
+    assert runner.guard_calls == [["./gradlew", "--version"]]
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
     assert any(w.startswith("wrong-sha:") for w in evidence["infrastructure_warnings"])
     assert evidence["commands"] == []

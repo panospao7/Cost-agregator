@@ -741,6 +741,64 @@ docstring literal); C unchanged. Then rerun sweep -> green -> capture run-1/run-
 
 ---
 
+## Round 9 (2026-08-25) — after GR-05A `17c1a9a3` + GR-05 `272f00e2` + blockers `8cb76ef2` + GR-06 `8bab55d7`
+
+HEAD `8bab55d75ddf341efc6efe014dc56aaa297f66d3`; checkout clean. Suite grew substantially
+(GR-05/GR-06 additions); sweep now takes ~19m36s.
+
+### Full sweep
+
+`python -m pytest scripts -q` -> exit 1; **55 failed / 2535 passed / 24 skipped**.
+Round 8b was 12 on a smaller suite: ALL 12 carry over unchanged, plus 43 new.
+
+### Dominant NEW root cause (38 failures): duplicated diagnostic emission
+
+`verify_v2_policy_source_evidence` emits every group error TWICE. Verified directly:
+`test_unknown_method_name_reports_callable_missing` gets
+`['DB_V2_POLICY_CALLABLE_MISSING', 'DB_V2_POLICY_CALLABLE_MISSING']`.
+Pattern "Left contains one more item: <same code>" across:
+
+- scripts/test_db_guard_policy_v2_evidence.py — 35 cases (OWNER_MISSING/AMBIGUOUS,
+  CALLABLE_MISSING/AMBIGUOUS, PARSER_UNCERTAIN x2+, KIND_UNSUPPORTED, BODY_UNSUPPORTED,
+  MUTATION_NOT_FOUND x3, UNLISTED_MUTATION, PATH_OUTSIDE_ROOTS, FILE_UNREADABLE, DAO_AMBIGUOUS)
+- scripts/ci/test_verify_db_policy_v2_evidence.py — 3 cases (new GR-06 shadow-CLI surface)
+
+Single-fix candidate: the GR-06 wrapper appends each group error twice (likely once from
+the legacy collection and once from the new exact-source pass) or concatenates per-group
+lists without dedup by identity.
+
+### Other NEW failures (5)
+
+- scripts/test_migrate_db_policy_signatures.py::test_direct_proof_must_precede_every_mutation —
+  got 2 ResolvedRows where 1 expected (GR-05 accounting pin)
+- ::test_generate_ships_nonempty_source_mutation_coverage — coverage list empty (`[] == ()`);
+  block also shows ImportError attempted relative import beyond top-level package
+- ::test_real_run_distribution_pinned_and_reproducible — distribution pin drift
+- scripts/test_db_guard_policy_errors.py::test_known_codes_are_upper_snake_constants —
+  code-registry convention check trips on DB_V2_POLICY_* family (expects POLICY_ERROR_
+  prefix) AND shows duplicated-code lists
+- scripts/test_db_guard_source_roots_integration.py::test_inventory_only_cli_trusted_exit_zero —
+  REAPPEARED (passed rounds 7–8): inventory-only child reports infrastructure diagnostics;
+  room-mutators.json written despite failure
+
+### Carried over from round 8b, unchanged (12)
+
+capture x3 (sha-gate ordering; hunter2secret leak; over-cap payload leak),
+declaration_scanner invalid-path x2 (fail-open), policy_signature x3 ('app/src' literal +
+2 ImportErrors), verify_db_access_boundaries topology-gate ImportErrors x2,
+kotlin parser PATH_EMPTY x1, delete_recursively straggler x1.
+
+### Round-9 triage hints
+
+1. Dedup/diagnose the double-append in verify_v2_policy_source_evidence first (38 tests).
+2. Reconcile DB_V2_POLICY_* vs POLICY_ERROR_ naming in the known-codes registry test.
+3. GR-05 migrate accounting pins (direct-proof ordering, coverage non-empty, distribution).
+4. Then the 12 carried-over nodes as listed in Round 8b.
+5. Investigate why test_inventory_only_cli_trusted_exit_zero regressed after being green in
+   rounds 7-8 (GR-06 touched scan paths).
+
+---
+
 ## Addendum — round-8 straggler disposition and corrective PRs (2026-08-25)
 
 This addendum connects to the round-8 straggler

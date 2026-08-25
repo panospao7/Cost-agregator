@@ -712,7 +712,12 @@ def test_canonical_path_rejection_classes_have_distinct_codes(bad_path, code):
         parser.canonical_source_path(bad_path)
     assert excinfo.value.code == code
     assert str(excinfo.value) == _MASK_MESSAGE
-    assert bad_path not in repr(excinfo.value)
+    # The empty string is a substring of every repr, so the no-echo
+    # assertion is only meaningful for non-empty payloads.  For the
+    # PATH_EMPTY case the masked-message assertion above already proves
+    # no payload text is carried.
+    if bad_path:
+        assert bad_path not in repr(excinfo.value)
 
 
 @pytest.mark.parametrize("not_text", [None, 123, b"repo/Fixture.kt", ["repo/Fixture.kt"]])

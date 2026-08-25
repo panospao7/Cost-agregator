@@ -857,7 +857,8 @@ def _sanitize_child_output(text: str, limit: int = CHILD_OUTPUT_LIMIT) -> str:
     recorded separately and must not be swallowed).
 
     Scope note (PR-GR-00R part B): this whole-text helper now serves only the
-    bounded *preflight* records (git/version metadata).  Matrix-command logs
+    version-metadata path (through :func:`_sanitized_version_field`, which
+    adds shape validation on top of these redactors).  Matrix-command logs
     are persisted through ``_CommandLogSink`` / ``_sanitize_log_line``, which
     apply the same redactors incrementally and enforce the cap as a fail-closed
     INCOMPLETE state instead of a silent truncation.
@@ -871,6 +872,36 @@ def _sanitize_child_output(text: str, limit: int = CHILD_OUTPUT_LIMIT) -> str:
     if len(text) > limit:
         text = text[:limit] + "<truncated>"
     return text
+
+
+# A plausible single-line tool-version banner: printable ASCII only,
+# length-bounded.  Version identity fields are STRUCTURED records, never
+# free-text sinks for child output; the additional version-digit requirement
+# is enforced separately so arbitrary payload blobs cannot shape through.
+_VERSION_FIELD_RE = re.compile(r"^[\x20-\x7e]{1,256}$")
+
+
+def _sanitized_version_field(text: str) -> str:
+    """Bounded structured version metadata for evidence identity fields.
+
+    Applies the SAME comprehensive redactors as ``_sanitize_child_output``
+    (absolute paths, secrets, SQL errors, exception lines) and then accepts
+    the result ONLY when its first non-blank line shape-checks as a plausible
+    version banner: a single printable line of at most 256 characters that
+    carries at least one version digit.  Any other observed output —
+    oversized payload blobs, malformed or hostile banners — reduces to the
+    controlled ``REDACTED_MARKER`` so raw untrusted child content can never
+    reach ``evidence.json`` through identity fields.
+    """
+    sanitized = _sanitize_child_output(text or "")
+    candidate = _first_line(sanitized)
+    if (
+        not candidate
+        or not _VERSION_FIELD_RE.fullmatch(candidate)
+        or not any(ch.isdigit() for ch in candidate)
+    ):
+        return REDACTED_MARKER
+    return candidate
 
 
 def _sanitize_log_line(line: str) -> str:
@@ -1338,7 +1369,13 @@ def run_preflight(root: str, runner: Callable[[Sequence[str], str], RunOutcome])
                       ["git", "diff", "--cached", "--name-only"]):
             output = _sanitize_git_filenames(outcome.combined, is_status=False)
         else:
-            output = _sanitize_child_output(outcome.combined)
+            # The only non-git preflight commands are the toolchain version
+            # probes.  Their records are STRUCTURED identity observations,
+            # not free-text sinks: a malformed, hostile, or oversized banner
+            # reduces to the controlled marker (the same contract as the
+            # ``*_version`` identity fields below), so raw untrusted child
+            # payload can never reach git-state.json / evidence.json.
+            output = _sanitized_version_field(outcome.combined)
         records.append({
             # Custom argv tokens are never persisted verbatim: secrets and
             # absolute/UNC/backslash paths are redacted and the token is
@@ -1407,13 +1444,17 @@ def run_preflight(root: str, runner: Callable[[Sequence[str], str], RunOutcome])
         "log_oneline": _sanitize_preflight_log(log_raw),
         "python_available": py.returncode == 0,
         "python3_available": py3.returncode == 0,
-        # Version metadata is bounded and sanitized (absolute paths / secrets
-        # redacted, length capped) so an unusual interpreter version string
+        # Version metadata is a STRUCTURED identity record: comprehensively
+        # sanitized (absolute paths / secrets / SQL errors / exceptions
+        # redacted) and shape-validated (single printable line, length
+        # bounded, carrying version digits).  Any other observed output —
+        # oversized payloads, malformed or hostile banners — reduces to the
+        # controlled REDACTED_MARKER so an unusual interpreter version string
         # cannot leak raw payloads into the evidence bundle.
-        "python_version": _bounded(py.combined.strip(), 256) if py.returncode == 0 else None,
-        "python3_version": _bounded(py3.combined.strip(), 256) if py3.returncode == 0 else None,
-        "java_version": _bounded(_first_line(java.combined), 256) if java.returncode == 0 else None,
-        "gradle_version": _bounded(_first_line(gradle.combined), 256) if gradle.returncode == 0 else None,
+        "python_version": _sanitized_version_field(py.combined) if py.returncode == 0 else None,
+        "python3_version": _sanitized_version_field(py3.combined) if py3.returncode == 0 else None,
+        "java_version": _sanitized_version_field(java.combined) if java.returncode == 0 else None,
+        "gradle_version": _sanitized_version_field(gradle.combined) if gradle.returncode == 0 else None,
         "preflight_ok": preflight_ok,
         "git_meta_ok": git_meta_ok,
         "git_meta_failures": git_meta_failures,

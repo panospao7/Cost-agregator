@@ -52,7 +52,13 @@ import builtins
 import pytest
 
 # Import the module under test directly (its CLI only runs under __main__).
+# Sibling-test convention: put BOTH the scripts directory (flat-mode names)
+# and the repository root (the ``scripts.*`` package namespace used by
+# db_guard modules' package-relative imports) on sys.path.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT_STR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT_STR not in sys.path:
+    sys.path.insert(0, _REPO_ROOT_STR)
 import verify_db_access_boundaries as _mod  # noqa: E402
 
 scan = _mod.scan
@@ -5429,9 +5435,10 @@ class TestNoExecutableAppSrcMainTopologyGate:
     def test_no_app_src_prefix_gate_in_declaration_scanner_validate_path(self):
         """declaration_scanner._validate_diagnostic_path has no app/src gate."""
         import inspect
-        scripts_dir = os.path.dirname(os.path.abspath(__file__))
-        sys.path.insert(0, scripts_dir)
-        from db_guard.declaration_scanner import _validate_diagnostic_path
+        # Package-mode import (sibling-test convention): db_guard modules use
+        # package-relative imports, so the top-level ``db_guard`` name cannot
+        # load them.
+        from scripts.db_guard.declaration_scanner import _validate_diagnostic_path
         source = inspect.getsource(_validate_diagnostic_path)
         for line in source.split("\n"):
             stripped = line.strip()
@@ -5445,9 +5452,8 @@ class TestNoExecutableAppSrcMainTopologyGate:
     def test_no_app_src_prefix_gate_in_scanner_diag_from_text(self):
         """scanner._diag_from_text has no app/src gate."""
         import inspect
-        scripts_dir = os.path.dirname(os.path.abspath(__file__))
-        sys.path.insert(0, scripts_dir)
-        from db_guard.scanner import _diag_from_text
+        # Package-mode import (sibling-test convention); see above.
+        from scripts.db_guard.scanner import _diag_from_text
         source = inspect.getsource(_diag_from_text)
         for line in source.split("\n"):
             stripped = line.strip()

@@ -39,11 +39,17 @@ CANONICAL_PATH = (
 # ── Closed error-code set ─────────────────────────────────────────────────────
 
 def test_known_codes_are_upper_snake_constants():
+    # The closed set spans TWO sanctioned vocabularies: the ``POLICY_ERROR_*``
+    # family (scan findings, path canonicalization, entry metadata, YAML load,
+    # v2 document codes) and the v2 source-evidence ``DB_V2_POLICY_*`` family
+    # registered one-to-one as DiagnosticProfiles in
+    # scripts/ci/finding_rule_catalog.py.  Both prefixes are legal; anything
+    # else still fails.
     assert KNOWN_POLICY_ERROR_CODES
     for code in KNOWN_POLICY_ERROR_CODES:
         assert isinstance(code, str)
         assert code == code.upper()
-        assert code.startswith("POLICY_ERROR_")
+        assert code.startswith(("POLICY_ERROR_", "DB_V2_POLICY_"))
         assert all(ch.isupper() or ch.isdigit() or ch == "_" for ch in code)
 
 
