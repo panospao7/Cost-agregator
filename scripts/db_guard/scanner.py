@@ -500,6 +500,12 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     # receiver + ordered parameterTypes + daoAccessor + daoFqcn + operation).
     policy_by_path_operation: dict[tuple[str, str], list[PolicyEntry]] = {}
     for item in ownership:
+        # A non-PolicyEntry can never authorize (``own_ok`` already flagged
+        # the run untrusted above); indexing it here would crash on its
+        # missing attributes instead of failing closed through the
+        # controlled DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic path.
+        if not isinstance(item, PolicyEntry):
+            continue
         policy_by_path_operation.setdefault(
             (item.path, item.operation), []
         ).append(item)

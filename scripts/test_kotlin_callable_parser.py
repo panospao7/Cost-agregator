@@ -1188,3 +1188,92 @@ def test_source_decode_error_is_sanitized(tmp_path, monkeypatch):
     assert "user-secret-source" not in str(error)
     assert "user-secret-source" not in repr(error)
     assert "UnicodeDecodeError" not in repr(error)
+
+
+# ------------------------------------------------- GR-07: template-aware mask
+#
+# ``${...}`` template expressions are part of their enclosing literal: a
+# quote or nested template inside the expression can neither terminate the
+# literal early nor leak structural braces into the masked output.
+
+
+def test_mask_string_template_with_embedded_quotes_stays_masked():
+    """A quote inside ``${...}`` no longer terminates the literal: the whole
+    template expression masks as literal text with zero structural leakage."""
+    source = 'val s = "a ${x.replace("\\"", "")} b"\n'
+    masked = parser.mask_kotlin_source(source)
+    assert len(masked) == len(source)
+    # Offsets and the code prefix are untouched; the literal region is blank.
+    assert masked.startswith("val s = ")
+    assert set(masked[8:-1]) <= {" "}
+    assert masked.endswith("\n")
+    # No structural delimiter from inside the template survives.
+    for structural in "{}()\"":
+        assert structural not in masked[8:-1]
+
+
+def test_mask_nested_template_inside_template_expression():
+    """A template inside a nested string inside a template (the real
+    JSON-building shape ``"...joinToString { \\"${it}\\"" }..."``) unwinds its
+    context stack exactly: nothing leaks as structural source."""
+    source = 'val j = "[${items.joinToString { "\\"${it}\\"" }}]"\n'
+    masked = parser.mask_kotlin_source(source)
+    assert len(masked) == len(source)
+    assert masked.startswith("val j = ")
+    assert set(masked[8:-1]) <= {" "}
+    for structural in "{}[]\"$":
+        assert structural not in masked[8:-1]
+
+
+def test_mask_simple_template_output_is_flat_blanked():
+    """Sources without embedded quotes mask byte-for-byte like the previous
+    non-template-aware masker: template code stays blanked, never exposed."""
+    source = 'val s = "${x}"\n'
+    masked = parser.mask_kotlin_source(source)
+    assert masked == 'val s = ' + ' ' * 6 + '\n'
+
+
+def test_mask_triple_quoted_string_with_template_and_quotes():
+    """Triple-quoted literals track ``${...}`` the same way: braces and
+    quotes of embedded JSON-shaped text never leak."""
+    source = 'val t = """json: {"k": "${v()}"}"""\n'
+    masked = parser.mask_kotlin_source(source)
+    assert len(masked) == len(source)
+    assert masked.startswith("val t = ")
+    assert set(masked[8:-1]) <= {" "}
+
+
+@pytest.mark.parametrize("source", [
+    'val s = "${x',
+    'val s = "${x"',
+])
+def test_mask_unterminated_template_fails_closed(source):
+    """A ``${`` that never closes leaves the literal end unknowable: the
+    masker fails closed with the fixed sanitized parser error."""
+    with pytest.raises(parser.ParserError) as excinfo:
+        parser.mask_kotlin_source(source)
+    assert excinfo.value.code == "PARSER_ERROR"
+    assert str(excinfo.value) == _MASK_MESSAGE
+
+
+def test_parse_kotlin_file_json_builder_with_template_quotes_resolves(parse_file):
+    """The real failing repository shape (an ``appendLine`` of JSON text with
+    escaped quotes AND string templates on one line) parses: the member is
+    discovered RESOLVED_EXACTLY instead of the file mis-masking."""
+    source = '''package example
+class JsonBuilder {
+    fun merchantLine(merchant: String): String {
+        appendLine("      \\"merchant\\": \\"${merchant.replace("\\"", "\\\\\\"")}\\",")
+        return "done"
+    }
+}
+'''
+    declarations = parse_file(source)
+    assert len(declarations) == 1
+    _assert_declaration(
+        declarations[0],
+        owner="example.JsonBuilder",
+        name="merchantLine",
+        parameter_types=("String",),
+    )
+    assert declarations[0].body is not None

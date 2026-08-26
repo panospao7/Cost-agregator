@@ -73,11 +73,26 @@ def _fail_signature(error: SignatureError) -> None:
 
 
 def mask_kotlin_source(text: str) -> str:
-    """Blank comments, strings, and character literals without changing offsets."""
+    """Blank comments, strings, and character literals without changing offsets.
+
+    String templates are tracked: ``${...}`` inside a literal is part of the
+    literal, so a quote or a nested template inside the template expression
+    can neither terminate the enclosing literal early nor leak structural
+    braces/quotes into the masked output.  Template-expression characters are
+    blanked exactly like the rest of the literal (newlines preserved), and a
+    ``${`` that is never closed fails closed as MALFORMED_SOURCE.  Sources
+    without ``${`` inside literals mask byte-for-byte identically to the
+    previous non-template-aware masker.
+    """
     if not isinstance(text, str) or len(text) > MAX_SOURCE:
         _fail()
     out = list(text)
     i, n, mode, depth = 0, len(text), None, 0
+    #: Saved ``(mode, template_depth)`` return points.  Entering ``${...}``
+    #: saves the enclosing literal; entering a nested literal from template
+    #: code saves the template expression with its current brace depth.
+    saved: list[tuple[str | None, int]] = []
+    template_depth = 0
     while i < n:
         c = text[i]
         if mode == "line":
@@ -89,19 +104,55 @@ def mask_kotlin_source(text: str) -> str:
                 depth -= 1; out[i] = out[i + 1] = " "; i += 1
                 if depth == 0: mode = None
             elif c not in "\r\n": out[i] = " "
-        elif mode in ("string", "triple", "char"):
-            end = ((mode == "triple" and text.startswith('"""', i)) or
-                   (mode == "string" and c == '"') or
-                   (mode == "char" and c == "'"))
-            if end:
-                width = 3 if mode == "triple" else 1
-                for j in range(width): out[i + j] = " "
-                i += width - 1; mode = None
-            else:
-                if c not in "\r\n": out[i] = " "
-                if mode != "triple" and c == "\\" and i + 1 < n:
-                    if text[i + 1] not in "\r\n": out[i + 1] = " "
+        elif mode == "template":
+            # Expression code of ``${...}``: still literal text, so blanked,
+            # but structurally walked to find the true end of the literal.
+            if c == "{":
+                template_depth += 1
+                out[i] = " "
+            elif c == "}":
+                out[i] = " "
+                if template_depth == 0:
+                    mode, template_depth = saved.pop()
                     i += 1
+                    continue
+                template_depth -= 1
+            elif text.startswith('"""', i):
+                saved.append(("template", template_depth))
+                mode = "triple"
+                out[i:i + 3] = [" "] * 3
+                i += 2
+            elif c == '"':
+                saved.append(("template", template_depth))
+                mode = "string"
+                out[i] = " "
+            elif c == "'":
+                saved.append(("template", template_depth))
+                mode = "char"
+                out[i] = " "
+            elif c not in "\r\n":
+                out[i] = " "
+        elif mode in ("string", "triple", "char"):
+            if text.startswith("${", i):
+                saved.append((mode, 0))
+                mode = "template"
+                template_depth = 0
+                out[i] = out[i + 1] = " "
+                i += 1
+            else:
+                end = ((mode == "triple" and text.startswith('"""', i)) or
+                       (mode == "string" and c == '"') or
+                       (mode == "char" and c == "'"))
+                if end:
+                    width = 3 if mode == "triple" else 1
+                    for j in range(width): out[i + j] = " "
+                    mode, template_depth = saved.pop() if saved else (None, 0)
+                    i += width - 1
+                else:
+                    if c not in "\r\n": out[i] = " "
+                    if mode != "triple" and c == "\\" and i + 1 < n:
+                        if text[i + 1] not in "\r\n": out[i + 1] = " "
+                        i += 1
         else:
             if text.startswith("//", i): mode = "line"; out[i] = out[i + 1] = " "; i += 1
             elif text.startswith("/*", i): mode = "block"; depth = 1; out[i] = out[i + 1] = " "; i += 1
@@ -109,8 +160,10 @@ def mask_kotlin_source(text: str) -> str:
             elif c == '"': mode = "string"; out[i] = " "
             elif c == "'": mode = "char"; out[i] = " "
         i += 1
-    if mode == "block": _fail("MALFORMED_SOURCE")
-    if mode in ("string", "triple", "char"): _fail("MALFORMED_SOURCE")
+    if mode is not None or saved:
+        # An unterminated comment, literal, or ``${...}`` template leaves the
+        # source structure unverifiable: fail closed.
+        _fail("MALFORMED_SOURCE")
     return "".join(out)
 
 

@@ -2008,3 +2008,423 @@ class TestDeclarationScannerNonAppRoot:
         assert scan.dao_declarations == ()
         assert scan.skipped_dao_declaration_ranges == ()
         assert scan.helper_ranges == ()
+
+
+# --------------------------------------------------------------------- GR-07
+#
+# Expression-bodied members, generic-type property boundaries, comparison
+# operators in declaration headers, and wholly-masked string-literal bodies.
+# Fixtures mirror the REAL repository shapes that previously failed closed
+# with DB_DECLARATION_UNRESOLVED (bounded excerpts, no project identifiers).
+
+
+def test_expression_bodied_members_resolve_with_full_member_range(tmp_path):
+    """``fun f(...)[: T] = <expr>`` resolves; the range covers the whole
+    logical expression (header plus every continuation line), so call sites
+    inside the expression stay inside the declared range."""
+    path = "app/src/main/java/example/BudgetRepository.kt"
+    source = """package example
+
+class BudgetRepository(
+    private val dao: BudgetDao
+) {
+    suspend fun getActiveBudgets(): List<Budget> =
+        dao.getActiveBudgets()
+
+    fun isZero(amount: Double): Boolean = amount == 0.0
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    funs = sorted((item for item in scan.helper_ranges if item.kind == "function"),
+                  key=lambda item: item.start_line)
+    assert [(item.start_line, item.end_line) for item in funs] == [(6, 7), (9, 9)]
+    assert all(item.is_abstract is False and item.body_start is None for item in funs)
+    multi = funs[0]
+    # The declared range spans the header AND the continuation line carrying
+    # the DAO call site.
+    assert "dao.getActiveBudgets()" in source[multi.source_start:multi.source_end]
+    assert multi.source_end == source.index("dao.getActiveBudgets()") + len("dao.getActiveBudgets()")
+
+
+def test_dao_default_expression_body_is_concrete_helper_never_skipped(tmp_path):
+    """A DAO interface method with an expression body is a concrete default
+    implementation: it stays in the caller scan (its call site must be
+    visible) and is never reported as an abstract declaration."""
+    path = "app/src/main/java/example/ExpenseDao.kt"
+    source = """package example
+
+@Dao
+interface ExpenseDao {
+    fun getAllFlowUncapped(): Flow<List<Expense>>
+
+    fun getAllFlow(): Flow<List<Expense>> = getAllFlowUncapped()
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    assert scan.dao_declarations != ()
+    skipped = scan.skipped_dao_declaration_ranges
+    # A bodyless member's structural range ends at the next sibling token
+    # (whose leading indentation shares the sibling's line).
+    assert [(item.start_line, item.end_line, item.is_abstract) for item in skipped] == [
+        (5, 7, True),
+    ]
+    concrete = [item for item in scan.helper_ranges
+                if item.kind == "function" and item.start_line == 7]
+    assert len(concrete) == 1
+    item = concrete[0]
+    assert (item.is_dao, item.is_abstract, item.body_start) == (True, False, None)
+    assert (item.start_line, item.end_line) == (7, 7)
+    assert "getAllFlowUncapped()" in source[item.source_start:item.source_end]
+
+
+def test_when_and_try_catch_expression_bodies_resolve_exactly(tmp_path):
+    """Compound expression bodies (``= when {...}``, ``= try {...} catch
+    {...}``) bound at their final branch close; the following braced sibling
+    keeps its own exact body span."""
+    path = "app/src/main/java/example/Classifier.kt"
+    source = """package example
+
+class Classifier {
+    fun classify(reason: String): String = when {
+        reason.isBlank() -> "BLANK"
+        else -> "OTHER"
+    }
+
+    fun readJournal(): String? = try {
+        null
+    } catch (_: Exception) {
+        null
+    }
+
+    fun next() {}
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    funs = sorted((item for item in scan.helper_ranges if item.kind == "function"),
+                  key=lambda item: item.start_line)
+    assert [(item.start_line, item.end_line) for item in funs] == [(4, 7), (9, 13), (15, 15)]
+    # The braced sibling is untouched by the compound expression bodies.
+    assert funs[2].body_start is not None and funs[2].body_end is not None
+
+
+def test_wholly_masked_string_literal_expression_body_resolves(tmp_path):
+    """An expression body consisting solely of a string literal is invisible
+    in the masked view yet resolves: the member fails closed only when the
+    RAW source between ``=`` and the sibling boundary carries no text."""
+    path = "app/src/main/java/example/Keys.kt"
+    source = """package example
+
+object Keys {
+    fun localRaw(notificationId: Long): String =
+        "local:raw_notification:$notificationId"
+
+    fun next() {}
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    funs = [item for item in scan.helper_ranges if item.kind == "function"]
+    assert [(item.start_line, item.end_line) for item in funs] == [(4, 5), (7, 7)]
+    literal = funs[0]
+    assert "local:raw_notification" in source[literal.source_start:literal.source_end]
+    assert literal.body_start is None and literal.is_abstract is False
+
+
+def test_anonymous_object_expression_body_resolves_without_truncation(tmp_path):
+    """``= object : Supertype { ... }`` is an expression, never a sibling
+    ``object`` declaration: the member spans the whole anonymous body and the
+    nested ``override fun`` never truncates it or leaks as a member."""
+    path = "app/src/main/java/example/Gates.kt"
+    source = """package example
+
+class Gates {
+    val gate: PrivacyGate = makeGate()
+
+    fun failClosedGate(): PrivacyGate = object : PrivacyGate {
+        override suspend fun check(capability: String): Boolean = false
+    }
+
+    fun after() {}
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    outer = [item for item in scan.helper_ranges
+             if item.kind == "function" and item.start_line == 6]
+    assert len(outer) == 1
+    assert (outer[0].start_line, outer[0].end_line) == (6, 8)
+    # The nested override is local code inside the expression body: it is
+    # never inventoried as a direct member of Gates.
+    assert all(item.start_line != 7 for item in scan.helper_ranges
+               if item.kind == "function")
+    after = [item for item in scan.helper_ranges
+             if item.kind == "function" and item.start_line == 10]
+    assert len(after) == 1
+
+
+def test_expression_body_ends_before_next_member_fresh_line_annotation(tmp_path):
+    """A multi-line expression body terminates exactly at the next member's
+    fresh-line annotation block: the annotation opens the sibling, and the
+    annotated member is resolved independently."""
+    path = "app/src/main/java/example/Members.kt"
+    source = """package example
+
+class Members {
+    fun first(): String =
+        build()
+
+    @Deprecated("use other")
+    fun second(): String = "other"
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    funs = sorted((item for item in scan.helper_ranges if item.kind == "function"),
+                  key=lambda item: item.start_line)
+    assert [(item.start_line, item.end_line) for item in funs] == [(4, 5), (8, 8)]
+    # ``first`` ends on its own continuation line, never absorbing the
+    # sibling's annotation or header.
+    assert funs[0].end_line == 5
+    # The annotated sibling starts at its own ``fun`` keyword line and its
+    # expression body resolves independently.
+    assert funs[1].start_line == 8 and funs[1].is_abstract is False
+
+
+@pytest.mark.parametrize("tail", [
+    # Nothing after ``=`` but the enclosing close.
+    "    fun dangling() =\n",
+    # Nothing after ``=`` but a fresh-line annotated sibling.
+    "    fun dangling() =\n\n    @Deprecated\n    fun next() {}\n",
+])
+def test_empty_expression_body_fails_closed(tmp_path, tail):
+    """``fun f() =`` with nothing but whitespace before the boundary is
+    unresolved: one controlled diagnostic, zero ranges."""
+    path = "app/src/main/java/example/BrokenExpr.kt"
+    source = "package example\n\nclass Broken {\n" + tail + "}\n"
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == (_diagnostic("DB_DECLARATION_UNRESOLVED", path),)
+    assert scan.dao_declarations == ()
+    assert scan.skipped_dao_declaration_ranges == ()
+    assert scan.helper_ranges == ()
+
+
+def test_unbalanced_delimiter_in_expression_body_fails_closed(tmp_path):
+    """An expression body whose paren never closes cannot be bounded: the
+    file stays a controlled diagnostic with no partial ranges."""
+    path = "app/src/main/java/example/BrokenExpr.kt"
+    source = """package example
+
+class Broken {
+    fun compute(): Int = foo(
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == (_diagnostic("DB_DECLARATION_UNRESOLVED", path),)
+    assert scan.helper_ranges == ()
+
+
+def test_val_inside_when_condition_is_local_code_never_a_property(tmp_path):
+    """A ``when (val result = ...)`` condition sits at owner brace depth
+    (expression bodies add no braces) yet is local to the member: it is never
+    claimed as a standalone property, and real siblings still resolve."""
+    path = "app/src/main/java/example/Engine.kt"
+    source = """package example
+
+class Engine(private val repo: Repo) {
+    fun total(startMs: Long): Money? =
+        when (val result = repo.result(startMs)) {
+            is Result.Available -> result.aggregate
+            is Result.Unavailable -> null
+        }
+
+    val standalone: Int = 1
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    assert [item for item in scan.helper_ranges
+            if item.kind == "property" and item.start_line == 5] == []
+    total = [item for item in scan.helper_ranges
+             if item.kind == "function" and item.start_line == 4]
+    assert len(total) == 1
+    assert (total[0].start_line, total[0].end_line) == (4, 8)
+    standalone = [item for item in scan.helper_ranges
+                  if item.kind == "property" and item.start_line == 10]
+    assert len(standalone) == 1
+
+
+def test_generic_property_type_with_next_line_getter_resolves(tmp_path):
+    """``val x: Generic<Type>`` followed by a fresh-line ``get() = ...``
+    accessor is ONE structural range ending at the accessor expression (the
+    real DatabaseSchemaPolicy/BudgetViewModel shape)."""
+    path = "app/src/main/java/example/Schema.kt"
+    source = """package example
+
+class Schema {
+    val all: List<String>
+        get() = loadAll()
+
+    private fun loadAll(): List<String> = emptyList()
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    prop = [item for item in scan.helper_ranges
+            if item.kind == "property" and item.start_line == 4]
+    assert len(prop) == 1
+    assert (prop[0].start_line, prop[0].end_line) == (4, 5)
+    loader = [item for item in scan.helper_ranges
+              if item.kind == "function" and item.start_line == 7]
+    assert len(loader) == 1
+    assert loader[0].is_abstract is False
+
+
+def test_generic_factory_call_in_property_initializer_resolves(tmp_path):
+    """Generic type arguments followed by call parentheses (the real
+    ``MutableStateFlow(emptyList<T>())`` shape) leave no stale delimiter
+    expectation behind."""
+    path = "app/src/main/java/example/Store.kt"
+    source = """package example
+
+class Store {
+    private val events = MutableStateFlow(emptyList<Event>())
+
+    val count: Int = events.value.size
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    props = sorted((item for item in scan.helper_ranges if item.kind == "property"),
+                   key=lambda item: item.start_line)
+    assert [(item.start_line, item.end_line) for item in props] == [(4, 4), (6, 6)]
+
+
+def test_multiline_balanced_initializer_ends_at_its_own_close(tmp_path):
+    """A multi-line balanced initializer (``combine(...)`` across lines) ends
+    at its own closing parenthesis, never at the enclosing scope or a later
+    sibling."""
+    path = "app/src/main/java/example/VM.kt"
+    source = """package example
+
+class VM {
+    val uiState: StateFlow<State> = combine(
+        flowA,
+        flowB
+    )
+
+    fun after() {}
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    prop = [item for item in scan.helper_ranges
+            if item.kind == "property" and item.start_line == 4]
+    assert len(prop) == 1
+    assert (prop[0].start_line, prop[0].end_line) == (4, 7)
+    after = [item for item in scan.helper_ranges
+             if item.kind == "function" and item.start_line == 9]
+    assert len(after) == 1
+
+
+def test_comparison_gt_in_constructor_default_keeps_owner_tree(tmp_path):
+    """A comparison ``>`` inside constructor default expressions (the real
+    ``if (rateUsed > 0.0) rateUsed else null`` shape) never breaks the owner
+    header walk, and class-body initializers with bare comparisons resolve."""
+    path = "app/src/main/java/example/Export.kt"
+    source = """package example
+
+data class Export(
+    val rate: Double? = if (rateUsed > 0.0) rateUsed else null,
+    val links: List<Link> = emptyList()
+) {
+    val hasRate: Boolean = rate != null && rate > 0.0
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    owners = [item for item in scan.helper_ranges if item.kind == "class"]
+    assert [(item.owner_fqcn, item.start_line, item.end_line) for item in owners] == [
+        ("example.Export", 3, 8),
+    ]
+    # Constructor parameters stay non-properties; the class-body property
+    # with bare comparisons resolves exactly.
+    assert [item for item in scan.helper_ranges
+            if item.kind == "property" and item.start_line == 4] == []
+    has_rate = [item for item in scan.helper_ranges
+                if item.kind == "property" and item.start_line == 7]
+    assert len(has_rate) == 1
+
+
+def test_body_forms_regression_matrix_braced_bodies_unchanged(tmp_path):
+    """Regression matrix: K&R braced bodies keep their exact body spans while
+    expression-bodied and bodyless members resolve alongside them."""
+    path = "app/src/main/java/example/Mixed.kt"
+    source = """package example
+
+class Mixed {
+    fun braced() {
+        val local = 1
+    }
+
+    fun expression(): Int = 42
+
+    fun bodyless()
+
+    val plain = 1
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    funs = sorted((item for item in scan.helper_ranges if item.kind == "function"),
+                  key=lambda item: item.start_line)
+    # The bodyless member's range ends at the next sibling token line (the
+    # ``val plain`` indentation), the established structural convention.
+    assert [(item.start_line, item.end_line) for item in funs] == [(4, 6), (8, 8), (10, 12)]
+    braced, expression, bodyless = funs
+    # Braced: unchanged semantics -- exact body span, concrete.
+    assert (braced.body_start, braced.body_end) == (
+        source.index("{", source.index("fun braced")) + 1,
+        source.index("}", source.index("fun braced")),
+    )
+    assert braced.is_abstract is False
+    # Expression-bodied: full member, no block body, concrete.
+    assert expression.body_start is None and expression.is_abstract is False
+    assert (expression.start_line, expression.end_line) == (8, 8)
+    # Bodyless outside a DAO: retained as a helper, not abstract.
+    assert bodyless.body_start is None and bodyless.is_abstract is False
+    plain = [item for item in scan.helper_ranges
+             if item.kind == "property" and item.start_line == 12]
+    assert len(plain) == 1
+
+
+def test_dao_body_forms_matrix_abstract_default_and_expression(tmp_path):
+    """DAO matrix: only the truly bodyless method is skipped; a braced default
+    keeps its body span and an expression-bodied default stays concrete."""
+    path = "app/src/main/java/example/MixedDao.kt"
+    source = """package example
+
+@Dao
+interface MixedDao {
+    fun abstractFun()
+
+    fun bracedDefault() {
+        println(1)
+    }
+
+    fun exprDefault(): Int = 42
+}
+"""
+    scan = _scan(tmp_path, path, source)
+    assert scan.diagnostics == ()
+    skipped = scan.skipped_dao_declaration_ranges
+    assert [(item.start_line, item.is_abstract) for item in skipped] == [(5, True)]
+    helpers = sorted((item for item in scan.helper_ranges if item.kind == "function"),
+                     key=lambda item: item.start_line)
+    assert [(item.start_line, item.end_line, item.is_abstract, item.body_start is not None)
+            for item in helpers] == [
+        (7, 9, False, True),
+        (11, 11, False, False),
+    ]

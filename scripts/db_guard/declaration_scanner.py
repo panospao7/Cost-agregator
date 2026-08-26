@@ -882,10 +882,41 @@ def _at_sibling_annotation_or_modifier(text: str, index: int) -> bool:
     declaration-modifier set.  The block must start on its own source line:
     the same-line ``@Inject`` or ``private`` of the current declaration's own
     primary constructor is header text, never a sibling boundary.
+
+    A modifier match alone is not enough: the modifier CHAIN must end in a
+    declaration keyword (or another annotation).  A continuation line of an
+    expression body that merely begins with a modifier-spelled identifier
+    (``value is String ...``, ``data.compute()``) is expression text, never a
+    sibling block.
     """
     if not _starts_source_line(text, index):
         return False
-    return text[index] == "@" or _SIBLING_MODIFIER.match(text, index) is not None
+    if text[index] == "@":
+        return True
+    cursor = _SIBLING_MODIFIER.match(text, index)
+    if cursor is None:
+        return False
+    end = len(text)
+    cursor = cursor.end()
+    while cursor < end:
+        while cursor < end and text[cursor] in " \t\r\n":
+            cursor += 1
+        if cursor >= end:
+            return False
+        if text[cursor] == "@":
+            return True
+        # Declaration keywords terminate the chain.  ``typealias`` is both a
+        # declaration keyword and a modifier-set member: it must be treated
+        # as the declaration ENDING the block (``public typealias A = T``),
+        # never consumed as a modifier of a further declaration.
+        if _DIRECT_DECLARATION.match(text, cursor) is not None:
+            return True
+        modifier = _SIBLING_MODIFIER.match(text, cursor)
+        if modifier is not None:
+            cursor = modifier.end()
+            continue
+        return False
+    return False
 
 
 def _header_opening(text: str, start: int, end: int,
@@ -919,9 +950,17 @@ def _header_opening(text: str, start: int, end: int,
             index += 1
         elif char in closing:
             stack.append(closing[char])
-        elif char in ")]>":
+        elif char in ")]":
             if not stack or stack.pop() != char:
                 raise ValueError("header delimiter")
+        elif char == ">":
+            # A ``>`` closes a pending generic expectation (``List<Int>``).
+            # Without one it is a comparison operator inside header/default
+            # expression text (``= if (rate > 0.0) rate else null``) and is
+            # ignored instead of breaking the header walk.  An unclosed ``<``
+            # still fails closed at the trailing stack check below.
+            if stack and stack[-1] == ">":
+                stack.pop()
         elif not stack:
             if char == "{":
                 return index, index
@@ -954,7 +993,23 @@ def _range(path: str, source: str, start: int, end: int, owner: str, kind: str,
 
 def _direct_functions(masked: str, source: str, path: str, start: int, end: int,
                       owner: str, is_dao: bool, pairs: dict[int, int]) -> list[DeclarationRange]:
-    """Parse sibling functions, so a bodyless method never owns a sibling body."""
+    """Parse sibling functions, so a bodyless method never owns a sibling body.
+
+    Three body forms are supported at direct scope:
+
+    * bodyless (``fun f()``) -- abstract in a DAO interface, header ends at
+      the next sibling boundary;
+    * braced (``fun f() { ... }``) -- the balanced block is the body span;
+    * expression-bodied (``fun name(...)[: T] = <expr>``) -- the member
+      extends over the full logical expression: balanced ``()``/``[]``/``{}``
+      spans keep it alive and the shared fresh-line continuation rules of
+      ``_expression_end`` terminate it exactly at the next sibling boundary
+      (including the sibling's annotation/modifier block), a top-level
+      semicolon, or the enclosing scope close.  The declared range therefore
+      covers header plus expression, so call sites inside the expression stay
+      inside the range.  An empty expression (``fun f() =`` with nothing but
+      whitespace or a sibling boundary after ``=``) fails closed.
+    """
     result: list[DeclarationRange] = []
     base_depth = masked[:start].count("{") - masked[:start].count("}")
     for match in _FUN.finditer(masked, start, end):
@@ -975,12 +1030,33 @@ def _direct_functions(masked: str, source: str, path: str, start: int, end: int,
         if brace is None and equals is None:
             body = None
             finish = boundary
+            abstract = is_dao
         elif brace is not None and (equals is None or brace < equals) and brace in pairs:
             body = (brace + 1, pairs[brace])
             finish = pairs[brace] + 1
+            abstract = False
+        elif equals is not None:
+            # Expression-bodied member.  A DAO interface method with an
+            # expression body is a concrete default implementation (its call
+            # sites must be scanned), never an abstract declaration.
+            expr_start = _next_nonblank(masked, equals + 1, end)
+            if expr_start >= end or _is_direct_scope_boundary(masked, expr_start, end):
+                # The masked view can hide a WHOLLY-masked expression (a
+                # string-literal body such as ``= "local:$id"``): the member
+                # fails closed as empty only when the RAW source between
+                # ``=`` and that boundary carries no expression text at all.
+                raw_tail = source[equals + 1:expr_start]
+                if not raw_tail.strip():
+                    raise ValueError("function body")
+                finish = equals + 1 + len(raw_tail.rstrip())
+            else:
+                finish = _expression_end(masked, equals + 1, end)
+                if finish <= expr_start:
+                    raise ValueError("function body")
+            body = None
+            abstract = False
         else:
             raise ValueError("function body")
-        abstract = is_dao and body is None
         result.append(_range(path, source, match.start(), finish, owner, "function",
                              is_dao, abstract, body[0] if body else None,
                              body[1] if body else None))
@@ -1009,8 +1085,15 @@ def _header_tokens(text: str, start: int, end: int) -> tuple[int | None, int | N
             # the first token in the return type/body after it.
             index += 1
         elif c in pairs: stack.append(pairs[c])
-        elif c in ")]>":
+        elif c in ")]":
             if not stack or stack.pop() != c: raise ValueError("header delimiter")
+        elif c == ">":
+            # A ``>`` closes a pending generic expectation; a bare comparison
+            # ``>`` (default-value expressions such as ``= if (x > 0) a else
+            # b``) has none and is ignored.  An unclosed ``<`` still fails
+            # closed at the trailing stack check below.
+            if stack and stack[-1] == ">":
+                stack.pop()
         elif not stack:
             if c == "{": return index, None, index
             if c == "=": return None, index, index
@@ -1060,12 +1143,35 @@ def _next_nonblank(text: str, index: int, end: int) -> int:
     return index
 
 
+def _is_anonymous_object_expression(text: str, index: int, end: int) -> bool:
+    """True when ``index`` starts an ``object :`` expression.
+
+    Kotlin's anonymous-object expression (``object : Supertype { ... }``)
+    begins with the same keyword as an ``object`` declaration but is always
+    followed by ``:``; a declaration always names its object first.  Only the
+    expression form may continue the current member's body.
+    """
+    match = re.match(r"object\b", text[index:end])
+    if match is None:
+        return False
+    cursor = index + match.end()
+    while cursor < end and text[cursor] in " \t\r\n":
+        cursor += 1
+    return cursor < end and text[cursor] == ":"
+
+
 def _is_direct_scope_boundary(text: str, index: int, end: int) -> bool:
-    """Whether ``index`` starts a declaration belonging to the enclosing scope."""
+    """Whether ``index`` starts a declaration belonging to the enclosing scope.
+
+    ``object :`` opens an anonymous-object EXPRESSION (``= object : X {...}``),
+    never a sibling ``object Name`` declaration, so it does not bound the
+    current member.
+    """
     if index >= end or text[index] == "}":
         return True
-    return (_DIRECT_DECLARATION.match(text, index) is not None
-            or _at_sibling_annotation_or_modifier(text, index))
+    if _DIRECT_DECLARATION.match(text, index) is not None:
+        return not _is_anonymous_object_expression(text, index, end)
+    return _at_sibling_annotation_or_modifier(text, index)
 
 
 def _expression_end(masked: str, start: int, scope_end: int) -> int:
@@ -1180,6 +1286,16 @@ def _property_bounds(masked: str, start: int, scope_end: int,
         if char == "-" and index + 1 < scope_end and masked[index + 1] == ">":
             index += 2
             continue
+        if char == ">" and stack and stack[-1] == ">":
+            # A ``>`` closes the pending ``<`` expectation of a generic type
+            # (``StateFlow<List<T>>``).  A bare comparison ``>`` has no
+            # pending expectation and falls through, ignored below, so
+            # initializers such as ``= if (a > b) a else b`` never break the
+            # walk.  An unclosed ``<`` still fails closed (trailing stack or
+            # later mismatch).
+            stack.pop()
+            index += 1
+            continue
         if char == "{":
             if not in_initializer and not stack:
                 closing = pairs.get(index)
@@ -1281,6 +1397,15 @@ def _scan_file(path: str, source: str, diagnostics: list[Diagnostic]) -> tuple[l
             item.start_line == existing.start_line and item.owner_fqcn == existing.owner_fqcn
             for existing in helpers
         ))
+        # A ``val``/``var`` inside a member's EXPRESSION body (e.g. a
+        # ``when (val result = ...)`` condition) sits at the owner's brace
+        # depth -- expression bodies add no braces of their own -- yet it is
+        # local code, never a standalone property.  Every function parsed
+        # above owns a precise source span; matches inside one are skipped.
+        function_spans = [
+            (item.source_start, item.source_end)
+            for item in helpers + skipped if item.kind == "function"
+        ]
         for match in _PROPERTY.finditer(masked):
             depth = masked[:match.start()].count("{") - masked[:match.start()].count("}")
             owner = max((s for s in owners if s.body_start <= match.start() < s.body_end),
@@ -1289,6 +1414,9 @@ def _scan_file(path: str, source: str, diagnostics: list[Diagnostic]) -> tuple[l
             # owner's declaration start and its body ``{``; they are not
             # properties and must never be parsed as standalone declarations.
             if any(s.start <= match.start() < s.body_start for s in owners):
+                continue
+            if any(span_start <= match.start() < span_end
+                   for span_start, span_end in function_spans):
                 continue
             base = masked[:owner.body_start].count("{") - masked[:owner.body_start].count("}") if owner else 0
             if depth != base:

@@ -265,6 +265,139 @@ fun unsupported(value: String) { value.deleteRecursively() }
     }
 
 
+# ── Repository-relative POSIX identity contract ───────────────────────────────
+# Every identity the D4 report carries (diagnostic paths, finding paths) must
+# be a repository-relative POSIX ``.kt`` path anchored at the enclosing
+# project -- never an absolute native path, drive-prefixed text, or a
+# backslash form.  Absolute identities are rejected by the diagnostic-path
+# contract downstream, so leaking one here would degrade the whole scan.
+
+
+def _assert_repo_relative_posix(report, tmp_path):
+    """Every reported path is relative POSIX .kt and leaks no local prefix."""
+    for item in report.diagnostics:
+        assert item.path is not None
+        assert "\\" not in item.path
+        assert ":" not in item.path
+        assert not item.path.startswith("/")
+        assert not item.path.startswith(str(tmp_path))
+        assert item.path.endswith(".kt")
+    for finding in report.findings:
+        assert "\\" not in finding.path
+        assert ":" not in finding.path
+        assert not finding.path.startswith("/")
+        assert not finding.path.startswith(str(tmp_path))
+        assert finding.path.endswith(".kt")
+
+
+def test_deep_nested_tree_identities_stay_repo_relative_posix(tmp_path):
+    """A deeply nested production tree reports identities as repository-
+    relative POSIX paths (forward slashes, project-anchored), never as the
+    absolute native paths the file walker handles internally."""
+    root = _source_root(tmp_path)
+    deep = root / "com" / "example" / "deep" / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    deep.joinpath("DeepDiag.kt").write_text(
+        """package com.example.deep.a.b.c
+
+import android.database.sqlite.SQLiteDatabase
+
+fun mutate(db: SQLiteDatabase) {
+    db.execSQL
+}
+""" + _PROBE_DAO,
+        encoding="utf-8",
+    )
+    deep.joinpath("DeepClean.kt").write_text(
+        """package com.example.deep.a.b.c
+
+class DeepClean {
+    fun noop(): Int {
+        return 1
+    }
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    # Fixture line literal: ``db.execSQL`` is the sixth source line.
+    assert report.to_dict() == {
+        "schema": "cost-aggregator.guard-findings", "schema_version": 2,
+        "guard": "db_access", "findings": [],
+        "diagnostics": [{
+            "code": "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
+            "path": "app/src/main/java/com/example/deep/a/b/c/DeepDiag.kt",
+            "symbol": None,
+            "controlled_context": {"line": 6},
+        }],
+        "statistics": {"files_scanned": 2, "declarations_scanned": 3,
+                       "inventory_daos": 1, "inventory_mutators": 1,
+                       "trusted": False},
+    }
+    _assert_repo_relative_posix(report, tmp_path)
+
+
+def test_multi_file_full_scan_yields_zero_declaration_unresolved(tmp_path):
+    """When every file parses, a full multi-file scan carries ZERO
+    DB_DECLARATION_UNRESOLVED diagnostics and stays trusted; the discovered
+    unauthorized mutation is a fully signed finding whose path identity is
+    the repository-relative POSIX form."""
+    root = _source_root(tmp_path)
+    package = root / "com" / "example" / "multi"
+    package.mkdir(parents=True)
+    package.joinpath("MultiDao.kt").write_text(
+        """package com.example.multi
+
+@androidx.room.Dao
+interface MultiDao {
+    @androidx.room.Insert
+    fun insert(value: Int)
+}
+
+fun daoTag(): String {
+    return "multi"
+}
+""",
+        encoding="utf-8",
+    )
+    package.joinpath("MultiRepository.kt").write_text(
+        """package com.example.multi
+
+class MultiRepository(private val multiDao: MultiDao) {
+    fun save(value: Int) {
+        multiDao.insert(value)
+    }
+}
+""",
+        encoding="utf-8",
+    )
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    payload = report.to_dict()
+    assert [item["code"] for item in payload["diagnostics"]] == []
+    assert [finding["rule"] for finding in payload["findings"]] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = payload["findings"][0]
+    assert finding["path"] == "app/src/main/java/com/example/multi/MultiRepository.kt"
+    # Fixture line literal: ``multiDao.insert(value)`` is the fifth line.
+    assert finding["location"] == {"line": 5, "end_line": 5}
+    assert finding["symbol"]["owner"] == "com.example.multi.MultiRepository"
+    assert finding["symbol"]["name"] == "save"
+    assert finding["symbol"]["parameters"] == ["Int"]
+    assert finding["identity"]["dao"] == "com.example.multi.MultiDao"
+    assert finding["identity"]["accessor"] == "multiDao"
+    assert finding["identity"]["operation"] == "insert"
+    assert payload["statistics"] == {
+        "files_scanned": 2, "declarations_scanned": 3,
+        "inventory_daos": 1, "inventory_mutators": 1, "trusted": True,
+    }
+    _assert_repo_relative_posix(report, tmp_path)
+
+
 # ── PR-GR-07 Slice 2: typed v2 authorization matrix ───────────────────────────
 
 _TYPED_SOURCE = """package example
@@ -317,8 +450,13 @@ def _typed_entry(**overrides) -> PolicyEntry:
 
 def _typed_root(tmp_path: Path, source: str = _TYPED_SOURCE) -> Path:
     root = _source_root(tmp_path)
-    (root / "TypedRepository.kt").write_text(source + "\n" + _PROBE_DAO,
-                                             encoding="utf-8")
+    # The fixture file must live at EXACTLY _TYPED_PATH relative to the
+    # repository root: v2 authorization matches on full path equality, so a
+    # fixture written anywhere else can never be authorized by its entry.
+    package = root / "example"
+    package.mkdir()
+    (package / "TypedRepository.kt").write_text(source + "\n" + _PROBE_DAO,
+                                                encoding="utf-8")
     return root
 
 
@@ -407,7 +545,10 @@ def test_typed_matrix_rejects_each_mismatched_identity_dimension(tmp_path):
     }
     for label, overrides in cases.items():
         expected_owner = overrides.pop("expected_owner", "example.Repository")
-        root = _typed_root(tmp_path)
+        # Each case needs its OWN tree: the fixture helper creates the
+        # conventional root non-idempotently, so reusing one tmp_path across
+        # iterations would collide instead of scanning a fresh fixture.
+        root = _typed_root(tmp_path / label)
 
         report = scan_db_access(
             root, [_typed_entry(**overrides)],
