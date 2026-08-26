@@ -71,7 +71,16 @@ from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
 )
 from scripts.db_guard.policy_v2_loader import build_policy_entry  # noqa: E402
 
-DEFAULT_POLICY = "config/guards/db_ownership_policy.yml"
+# Post-activation alignment (GR-07 wave 2): the default --policy input is the
+# ARCHIVED legacy v1 document, not the activated v2 policy.  Migration is
+# v1 -> v2 ONLY: the active ``db_ownership_policy.yml`` now IS the v2
+# activation output and can never be migration input again.
+DEFAULT_POLICY = "config/guards/db_ownership_policy.legacy.yml"
+
+#: The ACTIVATED v2 policy path.  Artifact writes colliding with it are
+#: refused before any analysis so a migration run can never clobber the
+#: activated authorization truth.
+_ACTIVE_V2_POLICY_RELPATH = "config/guards/db_ownership_policy.yml"
 
 #: Canonical tracked artifact paths used by ``--generate`` (PR-GR-05
 #: Slice 4).  Both are repository-relative POSIX and overridable per run
@@ -99,6 +108,12 @@ _MSG_PATH_COLLISION = "output/report paths collide with the active policy or eac
 _MSG_ACCOUNTING_UNAVAILABLE = "accounting artifact could not be assembled from this run"
 _MSG_MALFORMED_OUTPUT = "generated candidate failed verification"
 _MSG_PAIR_MISMATCH = "candidate and accounting artifacts disagree"
+#: Post-activation guard: migration is v1 -> v2 ONLY.  The message is a fixed
+#: bounded string that names the archived legacy input path — never a payload.
+_MSG_V2_INPUT = (
+    "refusing v2-shaped policy input: migration reads the archived legacy v1"
+    " policy only (config/guards/db_ownership_policy.legacy.yml)"
+)
 
 
 class CliFailure(Exception):
@@ -120,6 +135,11 @@ def _load_legacy_entries(policy_path: Path) -> list[Any]:
     list); every per-entry problem is surfaced later as row-level debt by
     ``migrate_policy`` instead of being rejected up front.  Any read or
     parse failure fails closed with a bounded diagnostic.
+
+    Post-activation guard (GR-07 wave 2): a v2-shaped document
+    (``schemaVersion: 2``) is refused with the controlled ``_MSG_V2_INPUT``
+    diagnostic — migration is v1 -> v2 only, and the activated policy can
+    never be re-ingested as migration input.
     """
     try:
         with open(policy_path, "r", encoding="utf-8") as handle:
@@ -128,6 +148,8 @@ def _load_legacy_entries(policy_path: Path) -> list[Any]:
         raise CliFailure(_MSG_INPUT)
     if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
         raise CliFailure(_MSG_INPUT)
+    if data.get("schemaVersion") == _V2_SCHEMA_VERSION:
+        raise CliFailure(_MSG_V2_INPUT)
     return data["entries"]
 
 
@@ -445,11 +467,16 @@ def _validate_output_paths(
     output: str | Path | None,
     policy_path: Path,
     accounting: str | Path | None = None,
+    repo_root: Path | None = None,
 ) -> None:
     """Reject artifact collisions before analysis or any write begins.
 
     Every requested artifact path (report, candidate output, standalone
-    accounting) must differ from the active policy and from each other.
+    accounting) must differ from the migration input policy and from each
+    other.  Post-activation (GR-07 wave 2) every requested artifact path
+    must ALSO differ from the ACTIVATED v2 policy document under
+    ``repo_root``: a migration run reads the archived legacy input and can
+    never overwrite the activated authorization truth.
     """
     try:
         resolved_policy = policy_path.resolve()
@@ -457,6 +484,11 @@ def _validate_output_paths(
         resolved_output = Path(output).resolve() if output else None
         resolved_accounting = (
             Path(accounting).resolve() if accounting else None
+        )
+        resolved_active_v2 = (
+            (Path(repo_root) / Path(*_ACTIVE_V2_POLICY_RELPATH.split("/"))).resolve()
+            if repo_root is not None
+            else None
         )
     except (OSError, RuntimeError):
         raise CliFailure(_MSG_PATH_COLLISION)
@@ -467,6 +499,12 @@ def _validate_output_paths(
     ]
     for name, resolved in named:
         if resolved is not None and resolved == resolved_policy:
+            raise CliFailure(_MSG_PATH_COLLISION)
+        if (
+            resolved is not None
+            and resolved_active_v2 is not None
+            and resolved == resolved_active_v2
+        ):
             raise CliFailure(_MSG_PATH_COLLISION)
     for position, (first_name, first) in enumerate(named):
         for second_name, second in named[position + 1 :]:
@@ -591,7 +629,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         # In check mode both targets are None: nothing is ever written.
         _validate_output_paths(
-            args.report, candidate_target, policy_path, accounting_target
+            args.report,
+            candidate_target,
+            policy_path,
+            accounting_target,
+            repo_root=repo_root,
         )
         entries = _load_legacy_entries(policy_path)
         result = migrate_policy(entries, repo_root, dao_index=None)

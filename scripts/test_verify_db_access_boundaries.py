@@ -153,6 +153,21 @@ def _write_policy_yaml(tmp_path, entries_body):
     return str(policy)
 
 
+def _write_v2_policy_yaml(tmp_path, entries_body):
+    """Write a schemaVersion-2 ownership policy document (activated contract).
+
+    Post-activation ``load_db_ownership_policy`` accepts ONLY v2 documents,
+    so tests that exercise acceptance/evidence/structural-decoupling paths
+    must install this shape.  ``_write_policy_yaml`` deliberately keeps
+    writing the retired v1 shape for the loader-rejection tests.
+    """
+    policy = tmp_path / "policy.yml"
+    policy.write_text(
+        "schemaVersion: 2\nentries:\n" + entries_body, encoding="utf-8"
+    )
+    return str(policy)
+
+
 def _write_exceptions_yaml(tmp_path, entries_body):
     exceptions = tmp_path / "exceptions.yml"
     exceptions.write_text("entries:\n" + entries_body, encoding="utf-8")
@@ -438,16 +453,20 @@ def test_ownership_loader_rejects_unknown_field(tmp_path, capsys):
     """Unknown keys are configuration errors: the v2 loader reports the
     controlled unknown-field code (the mistyped key label is bounded
     configuration metadata) plus the fixed not-v2 classification."""
-    policy_path = _write_policy_yaml(tmp_path, """
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
-    class: SomeRepo
+    ownerFqcn: com.example.SomeRepo
+    kind: function
     method: "doWork"
+    receiver: null
+    parameterTypes: []
     daoz: [expenseDao]
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     with pytest.raises(SystemExit) as exc_info:
         load_db_ownership_policy(policy_path)
@@ -463,7 +482,7 @@ def test_ownership_loader_accepts_exact_entry(tmp_path):
     loaded from a schemaVersion-2 document."""
     from scripts.db_guard.policy_model import BarrierMode, CallableKind
 
-    policy_path = _write_policy_yaml(tmp_path, """
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
     ownerFqcn: com.example.SomeRepo
     kind: function
@@ -495,7 +514,7 @@ def test_ownership_loader_accepts_worker_mediated_metadata(tmp_path):
     of the retired worker ``barrier_via`` documentation field."""
     from scripts.db_guard.policy_model import BarrierMode
 
-    policy_path = _write_policy_yaml(tmp_path, """
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
     ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
     kind: function
@@ -4323,7 +4342,7 @@ class FooRepo(private val expenseDao: ExpenseDao) {
     # Valid schemaVersion-2 metadata whose ownerFqcn does not exist in the
     # fixture source — the activated v2 evidence validator fails with
     # OWNER_MISSING before any scanner matching runs.
-    policy_path = _write_policy_yaml(tmp_path, """
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/FooRepo.kt
     ownerFqcn: com.example.MissingRepo
     kind: function
@@ -4834,7 +4853,7 @@ class FooRepo(private val expenseDao: ExpenseDao) {
     # count does not match the current structural size — a COUNT_MISMATCH
     # that must exit 2 under the controlled DB_POLICY_SOURCE_EVIDENCE_INVALID
     # report diagnostic.
-    policy_path = _write_policy_yaml(tmp_path, """
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/FooRepo.kt
     ownerFqcn: com.example.FooRepo
     kind: function
@@ -5048,25 +5067,30 @@ def test_manifest_current_structural_yaml_tuple_set_remains_exact():
 
 
 def test_checked_in_structural_only_manifest_contract_via_production_apis():
-    """Canonical checked-in integration test — loads the ACTUAL structural
-    policy and structural manifest from their production paths and validates
-    the decoupled contract through the production loaders and validators (no
+    """Canonical checked-in integration test — loads the ACTUAL policies and
+    structural manifest from their production paths and validates the
+    decoupled contract through the production loaders and validators (no
     synthetic temp fixtures).
 
     GR-04: the manifest pins the structural count ONLY — its counts block is
     exactly ``{structural_entries: 62}`` with no ownership cardinality.
 
-    PR-GR-07 Slice 2 activation: the ACTIVE ownership policy is still a
-    legacy v1 document until promotion runs, so the activated v2 loader must
-    REJECT it with exit 2 (classified DB_V2_ACTIVE_POLICY_NOT_V2) — a legacy
-    policy can never authorize anything post-activation.  The structural
-    contract itself remains fully verifiable without any ownership input.
+    Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
+    promoted schemaVersion-2 document.  It loads cleanly through the
+    production v2 loader into exactly 48 immutable typed entries — a v1
+    document can never occupy the active path again, so there is no
+    not-v2 rejection left to pin here.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
-    with pytest.raises(SystemExit) as exc_info:
-        load_db_ownership_policy()
-    assert exc_info.value.code == 2
+    entries = load_db_ownership_policy()
+    assert len(entries) == 48
+    # Every loaded row is an immutable typed v2 entry: no legacy dict rows.
+    for entry in entries:
+        assert hasattr(entry, "owner_fqcn")
+        assert hasattr(entry, "barrier_mode")
+        assert entry.path.startswith("app/src/main/java/")
+        assert entry.path.endswith(".kt")
 
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
@@ -5131,7 +5155,7 @@ def test_structural_result_independent_of_ownership_cardinality(tmp_path, monkey
     pair_dir = tmp_path / "ownership-pair"
     single_dir.mkdir()
     pair_dir.mkdir()
-    single_path = _write_policy_yaml(single_dir, """
+    single_path = _write_v2_policy_yaml(single_dir, """
   - path: app/src/main/java/com/example/SomeClass.kt
     ownerFqcn: com.example.SomeClass
     kind: function
@@ -5146,7 +5170,7 @@ def test_structural_result_independent_of_ownership_cardinality(tmp_path, monkey
     owner: "@test"
     linkedIssue: "TEST-001"
 """)
-    pair_path = _write_policy_yaml(pair_dir, """
+    pair_path = _write_v2_policy_yaml(pair_dir, """
   - path: app/src/main/java/com/example/SomeClass.kt
     ownerFqcn: com.example.SomeClass
     kind: function
@@ -5211,7 +5235,7 @@ def test_v2_style_split_cannot_trigger_structural_failure(tmp_path, monkeypatch)
     legacy_dir.mkdir()
     split_dir.mkdir()
 
-    legacy_path = _write_policy_yaml(legacy_dir, """
+    legacy_path = _write_v2_policy_yaml(legacy_dir, """
   - path: app/src/main/java/com/example/SomeClass.kt
     ownerFqcn: com.example.SomeClass
     kind: function
@@ -5240,7 +5264,7 @@ def test_v2_style_split_cannot_trigger_structural_failure(tmp_path, monkeypatch)
     owner: "@test"
     linkedIssue: "TEST-001"
 """)
-    split_path = _write_policy_yaml(split_dir, """
+    split_path = _write_v2_policy_yaml(split_dir, """
   - path: app/src/main/java/com/example/SomeClass.kt
     ownerFqcn: com.example.SomeClass
     kind: function
@@ -5360,26 +5384,36 @@ def test_no_executable_ownership_pin_references():
         assert "PINNED_OWNERSHIP_ENTRY_COUNT" in handle.read()
 
 
-def test_current_db_gate_blocks_legacy_active_policy_post_activation(tmp_path, monkeypatch):
-    """Activated truth (PR-GR-07 Slice 2): invoking the CLI in-process with
-    the REAL config paths exits 2 because the active ownership policy is
-    still a legacy v1 document — the activated v2 loader rejects it
-    (classified internally as DB_V2_ACTIVE_POLICY_NOT_V2; remediation:
-    run scripts/ci/promote_db_policy_v2.py) and surfaces only the umbrella
-    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic.  A legacy policy can never
-    authorize anything post-activation, and the structural-manifest gate is
-    never consulted (NO structural COUNT_MISMATCH / MANIFEST_INVALID
-    diagnostic is produced)."""
+def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeypatch):
+    """Activated truth (PR-GR-07 wave 2): invoking the CLI in-process with
+    the REAL config paths runs the FULL activated pipeline — the active
+    schemaVersion-2 policy loads (48 typed entries), the v2 evidence stage
+    runs over the real tree with NO loader/evidence failure, and the
+    structural-manifest gate IS consulted.  The run's exit 2 comes from
+    honest SCANNER-family debt over the real tree (unresolved signatures and
+    scopes are acceptable diagnostics), never from a policy/loader code;
+    untrusted runs withhold findings entirely.  Assertions are structurally
+    strict — shapes, codes families, and trust semantics — never volatile
+    per-diagnostic counts."""
     import json
+
+    from scripts.ci.finding_rule_catalog import known_diagnostic
 
     monkeypatch.delenv("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", raising=False)
     findings_output = tmp_path / "db_guard_findings.json"
 
     structural_calls = []
+    real_structural_check = _mod.verify_structural_exceptions_manifest
+
+    def _structural_spy(*args, **kwargs):
+        result = real_structural_check(*args, **kwargs)
+        structural_calls.append(args)
+        return result
+
     monkeypatch.setattr(
         _mod,
         "verify_structural_exceptions_manifest",
-        lambda *args, **kwargs: structural_calls.append(args) or [],
+        _structural_spy,
     )
 
     exit_code = _mod.main([
@@ -5394,38 +5428,58 @@ def test_current_db_gate_blocks_legacy_active_policy_post_activation(tmp_path, m
     ])
     assert exit_code == 2
 
-    # Blocked reason: the active document predates v2 activation — it carries
-    # legacy entry fields and no schemaVersion 2, so the activated loader
-    # rejects it BEFORE any structural validation runs.
-    entries, loaded = _mod._read_ownership_entries_for_evidence(
-        _mod.OWNERSHIP_POLICY_PATH
-    )
-    assert loaded
-    assert entries
-    assert all(
-        isinstance(item, dict) and "class" in item and "signature" not in item
-        for item in entries
-    )
+    # Activated loading truth: the active document IS a schemaVersion-2
+    # document whose rows load as typed v2 entries.
     document, _document_loaded = _mod._read_yaml_document_for_evidence(
         _mod.OWNERSHIP_POLICY_PATH
     )
     assert isinstance(document, dict)
-    assert document.get("schemaVersion") != 2
-    # The structural gate never ran: the block is NOT a structural failure.
-    assert structural_calls == []
+    assert document.get("schemaVersion") == 2
+    entries, loaded = _mod._read_ownership_entries_for_evidence(
+        _mod.OWNERSHIP_POLICY_PATH
+    )
+    assert loaded
+    assert len(entries) == 48
+
+    # The structural gate really ran (post-activation it is no longer
+    # short-circuited by a loader block) and stayed clean.
+    assert len(structural_calls) == 1
 
     report = json.loads(findings_output.read_text(encoding="utf-8"))
-    codes = [diagnostic.get("code") for diagnostic in report["diagnostics"]]
-    assert codes == ["DB_POLICY_SOURCE_EVIDENCE_INVALID"]
-    # The internal activation classification never leaks into report
-    # diagnostics, and no structural codes appear either.
+    assert set(report) == {
+        "schema", "schema_version", "guard", "findings",
+        "diagnostics", "statistics",
+    }
+    assert report["schema"] == "cost-aggregator.guard-findings"
+    assert report["schema_version"] == 2
+    assert report["guard"] == "db_access"
+    # Scanner-family diagnostics are present and honest...
+    diagnostics = report["diagnostics"]
+    assert diagnostics
+    for diagnostic in diagnostics:
+        assert set(diagnostic) == {"code", "path", "symbol", "controlled_context"}
+        assert diagnostic["symbol"] is None
+        assert diagnostic["controlled_context"] == {}
+        path = diagnostic["path"]
+        assert path is None or (
+            isinstance(path, str)
+            and path.startswith("app/src/main/java/")
+            and path.endswith(".kt")
+        )
+        code = diagnostic["code"]
+        assert known_diagnostic(code) is not None
+    codes = {diagnostic["code"] for diagnostic in diagnostics}
+    # ...but NO loader/evidence/umbrella code may appear: every policy stage
+    # ran clean over the activated configuration.
+    assert "DB_POLICY_SOURCE_EVIDENCE_INVALID" not in codes
     assert "DB_V2_ACTIVE_POLICY_NOT_V2" not in codes
-    assert "SIGNATURE_MISSING" not in codes
     for code in codes:
         assert "COUNT_MISMATCH" not in code
         assert "MANIFEST_INVALID" not in code
+    # Untrusted runs (any diagnostic) withhold findings entirely — findings
+    # remain POSSIBLE on this pipeline, but only via a trusted scan.
     assert report["findings"] == []
-    assert report["statistics"]["trusted"] is False
+    assert report["statistics"] == {"trusted": False}
 
 
 def test_counts_type_rejections():

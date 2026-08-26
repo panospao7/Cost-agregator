@@ -364,6 +364,7 @@ def resolve_callable_for_entry(
     method: str,
     receiver: str | None,
     parameter_types: Iterable[str],
+    project_types: Any = None,
 ) -> tuple[CallableDeclaration | None, str | None]:
     """Resolve exactly one member ``fun`` declaration for a legacy entry.
 
@@ -424,7 +425,8 @@ def resolve_callable_for_entry(
         # fail closed rather than ignoring input.
         return (None, STATUS_CALLABLE_KIND_UNSUPPORTED)
     discovered = find_callable_declarations(
-        masked_text, owner_decl, tolerate_unresolved_types=True
+        masked_text, owner_decl, tolerate_unresolved_types=True,
+        project_types=project_types,
     )
     decls = [
         d
@@ -549,7 +551,10 @@ from .source_roots import (
     is_declared_production_path,
     resolve_source_root_set,
 )
-from .declaration_scanner import declared_root_pairs
+from .declaration_scanner import (
+    build_project_type_index,
+    declared_root_pairs,
+)
 
 
 def _declared_relative_root_set(repo_root):
@@ -654,7 +659,8 @@ def build_dao_fqcn_index(repo_root) -> dict[str, tuple[str, ...]]:
 # ── Merged DAO variable maps ──────────────────────────────────────────────────
 
 
-def _merged_dao_var_maps(owner_decl, decl, masked_text, all_callables) -> dict:
+def _merged_dao_var_maps(owner_decl, decl, masked_text, all_callables,
+                         project_types=None) -> dict:
     """Build the merged class-scope + method-scope DAO variable map.
 
     Class scope: the owner slice ``masked_text[body_start:body_end]`` is
@@ -695,7 +701,8 @@ def _merged_dao_var_maps(owner_decl, decl, masked_text, all_callables) -> dict:
             spans.extend(
                 (d.start_offset, d.end_offset)
                 for d in find_callable_declarations(
-                    masked_text, inner, tolerate_unresolved_types=True
+                    masked_text, inner, tolerate_unresolved_types=True,
+                    project_types=project_types,
                 )
             )
     excluded = set()
@@ -722,7 +729,8 @@ def _merged_dao_var_maps(owner_decl, decl, masked_text, all_callables) -> dict:
 
 
 def resolve_mutations_for_callable(
-    decl, owner_decl, masked_text, all_callables, dao_index
+    decl, owner_decl, masked_text, all_callables, dao_index,
+    project_types=None,
 ):
     """Resolve every DAO mutation pair in ``decl.body`` to concrete targets.
 
@@ -741,7 +749,9 @@ def resolve_mutations_for_callable(
     All pairs are examined — a failure never short-circuits emission of
     other provable triples — but the caller treats ANY failure as row debt.
     """
-    merged = _merged_dao_var_maps(owner_decl, decl, masked_text, all_callables)
+    merged = _merged_dao_var_maps(
+        owner_decl, decl, masked_text, all_callables, project_types,
+    )
     body_text = decl.body if isinstance(decl.body, str) else ""
     matches = _extract_mutation_matches(body_text, var_map=merged)
     pairs = []
@@ -973,6 +983,16 @@ def migrate_policy(legacy_entries, repo_root, dao_index=None) -> MigrationResult
     # resolution failure leaves ``root_set`` None so every path fails the
     # gate closed (same OWNER_MISSING debt as an out-of-root path).
     root_set, _root_diagnostics = _declared_relative_root_set(repo_root)
+    # GR-07 hardening step A: the project-wide type index is built ONCE per
+    # batch over the SAME declared production roots (empty pairs when the
+    # root set failed closed -> an empty index that can only keep types
+    # unresolved, never fabricate a resolution), then threaded into every
+    # callable discovery below.
+    project_types = build_project_type_index(
+        declared_root_pairs(repo_root, root_set)
+        if root_set is not None
+        else ()
+    )
     unresolved_rows = []
     # PR-GR-05 Slice 5 dedupe state.  Emission decisions are DEFERRED to
     # end of batch: ``key_groups`` maps each canonical mutation key to its
@@ -1106,6 +1126,7 @@ def migrate_policy(legacy_entries, repo_root, dao_index=None) -> MigrationResult
                 legacy_method,
                 receiver,
                 parameter_types,
+                project_types,
             )
             if callable_status is not None or decl is None:
                 unresolved_rows.append(
@@ -1116,7 +1137,8 @@ def migrate_policy(legacy_entries, repo_root, dao_index=None) -> MigrationResult
                 continue
 
             all_callables = find_callable_declarations(
-                masked_text, owner_decl, tolerate_unresolved_types=True
+                masked_text, owner_decl, tolerate_unresolved_types=True,
+                project_types=project_types,
             )
         except ParserError:
             unresolved_rows.append(
@@ -1133,7 +1155,8 @@ def migrate_policy(legacy_entries, repo_root, dao_index=None) -> MigrationResult
         try:
             triples, mutation_failure, mutation_linenos = (
                 resolve_mutations_for_callable(
-                    decl, owner_decl, masked_text, all_callables, dao_index
+                    decl, owner_decl, masked_text, all_callables, dao_index,
+                    project_types,
                 )
             )
         except ParserError:
@@ -2111,6 +2134,14 @@ def build_observed_mutation_set(
         return None
     if dao_index is None:
         dao_index = build_dao_fqcn_index(repo_root)
+    # GR-07 hardening step A: the project-wide type index is built ONCE per
+    # coverage scan over the SAME declared production roots and threaded
+    # into every owner callable discovery below, so a parameter/receiver
+    # type declared in another production file resolves through a unique
+    # simple-name match instead of being retained as analyzer-limited debt.
+    project_types = build_project_type_index(
+        declared_root_pairs(repo_root, root_set)
+    )
     oracle = _coverage_inventory_oracle(inventory)
     dao_diag_paths, dao_diag_fqcns = _coverage_dao_diagnostic_sets(inventory)
 
@@ -2154,6 +2185,7 @@ def build_observed_mutation_set(
                         masked_text,
                         owner_decl,
                         tolerate_unresolved_types=True,
+                        project_types=project_types,
                     )
                 )
             except ParserError:

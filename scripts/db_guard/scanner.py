@@ -46,6 +46,7 @@ from ..kotlin_callable_parser import (
 )
 from .declaration_scanner import (
     anchor_for_declared_path,
+    build_project_type_index,
     declared_root_pairs,
     scan_production_declarations,
 )
@@ -481,6 +482,15 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     # exactly as before and every declared root of a multi-root repository
     # resolves to its own enclosing project.
     pairs = declared_root_pairs(source_root, root_set) if root_set is not None else ()
+    # GR-07 hardening step A: the project-wide type index is built ONCE per
+    # scan from the SAME declared production roots the declaration scan
+    # walked, then threaded into every callable discovery below.  A
+    # parameter/receiver type declared in another production file now
+    # resolves through a unique simple-name match; an ambiguous simple name
+    # still fails closed as DB_SIGNATURE_UNRESOLVED.  Deterministic: same
+    # tree -> same index -> same resolutions; no I/O beyond this one reuse
+    # of the existing declared-root walk.
+    project_types = build_project_type_index(pairs)
     files: dict[str, Path] = {}
     for item in declarations.helper_ranges:
         anchor = anchor_for_declared_path(pairs, item.path)
@@ -547,7 +557,10 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         try:
             owners = find_owner_declarations(source)
             owner = next((item for item in owners if item.owner == declaration.owner_fqcn), None)
-            callables = find_callable_declarations(source, owner or declaration.owner_fqcn)
+            callables = find_callable_declarations(
+                source, owner or declaration.owner_fqcn,
+                project_types=project_types,
+            )
             callable_item = next((item for item in callables if item.start_offset <= start <= item.end_offset), None)
             if declaration.kind == "function" and callable_item is None:
                 raise ParserError()

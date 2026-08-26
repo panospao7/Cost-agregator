@@ -22,6 +22,7 @@ from scripts.db_guard.declaration_scanner import (
     MAX_LOCATION_NUMBER,
     _absolute_root_anchor,
     ScanWriteError,
+    declared_root_pairs,
     scan_production_declarations,
     write_scan_delta_atomic,
 )
@@ -2428,3 +2429,128 @@ interface MixedDao {
         (7, 9, False, True),
         (11, 11, False, False),
     ]
+
+
+# ── GR-07 hardening step A: project-wide type index builder ──────────────────
+#
+# ``build_project_type_index`` reuses the declared-root walk (``_files`` over
+# ``declared_root_pairs``) to map every top-level type simple name to its
+# package-qualified FQCNs.  Deterministic, bounded, fail-closed: per-file
+# failures skip silently (the file emits its own diagnostic in the main
+# scan), and ambiguity is preserved as a multi-FQCN tuple so the resolver
+# can refuse it.
+
+
+def _java_root_set() -> SourceRootSet:
+    return SourceRootSet(roots=(
+        SourceRoot(module=":app", source_set="main", path="app/src/main/java"),
+    ))
+
+
+def test_build_project_type_index_maps_simple_names_to_package_fqcns(tmp_path):
+    _write(tmp_path, "app/src/main/java/com/example/a/Expense.kt",
+           "package com.example.a\nclass Expense\n")
+    _write(tmp_path, "app/src/main/java/com/example/b/Shapes.kt",
+           "package com.example.b\ninterface BudgetRepo\nobject Counter\n"
+           "enum class Mode\nannotation class Marker\n")
+
+    index = declaration_scanner.build_project_type_index(
+        declared_root_pairs(tmp_path, _java_root_set())
+    )
+
+    assert index.by_simple_name["Expense"] == ("com.example.a.Expense",)
+    assert index.by_simple_name["BudgetRepo"] == ("com.example.b.BudgetRepo",)
+    assert index.by_simple_name["Counter"] == ("com.example.b.Counter",)
+    assert index.by_simple_name["Mode"] == ("com.example.b.Mode",)
+    assert index.by_simple_name["Marker"] == ("com.example.b.Marker",)
+    assert index.qualified == frozenset({
+        "com.example.a.Expense", "com.example.b.BudgetRepo",
+        "com.example.b.Counter", "com.example.b.Mode",
+        "com.example.b.Marker",
+    })
+
+
+def test_build_project_type_index_excludes_nested_declarations(tmp_path):
+    _write(tmp_path, "app/src/main/java/com/example/Nested.kt",
+           "package com.example\nclass Outer {\n    class Inner\n}\n")
+
+    index = declaration_scanner.build_project_type_index(
+        declared_root_pairs(tmp_path, _java_root_set())
+    )
+
+    assert index.by_simple_name == {"Outer": ("com.example.Outer",)}
+    assert "com.example.Outer.Inner" not in index.qualified
+
+
+def test_build_project_type_index_preserves_cross_package_ambiguity(tmp_path):
+    """The same simple name in two packages stays a two-FQCN tuple so the
+    resolver can fail closed instead of guessing."""
+    _write(tmp_path, "app/src/main/java/com/example/a/Expense.kt",
+           "package com.example.a\nclass Expense\n")
+    _write(tmp_path, "app/src/main/java/com/example/b/Expense.kt",
+           "package com.example.b\nclass Expense\n")
+
+    index = declaration_scanner.build_project_type_index(
+        declared_root_pairs(tmp_path, _java_root_set())
+    )
+
+    assert index.by_simple_name["Expense"] == (
+        "com.example.a.Expense", "com.example.b.Expense",
+    )
+
+
+def test_build_project_type_index_is_deterministic_per_tree(tmp_path):
+    _write(tmp_path, "app/src/main/java/com/example/b/Zeta.kt",
+           "package com.example.b\nclass Zeta\n")
+    _write(tmp_path, "app/src/main/java/com/example/a/Alpha.kt",
+           "package com.example.a\nclass Alpha\n")
+
+    first = declaration_scanner.build_project_type_index(
+        declared_root_pairs(tmp_path, _java_root_set())
+    )
+    second = declaration_scanner.build_project_type_index(
+        declared_root_pairs(tmp_path, _java_root_set())
+    )
+
+    assert first == second
+    assert first.by_simple_name == {
+        "Alpha": ("com.example.a.Alpha",),
+        "Zeta": ("com.example.b.Zeta",),
+    }
+
+
+def test_build_project_type_index_skips_unreadable_and_malformed_silently(
+    tmp_path,
+):
+    """A malformed file contributes nothing and never raises: its own
+    diagnostic surfaces in the declaration scan, and a missing index entry
+    can only keep a type unresolved (fail closed)."""
+    _write(tmp_path, "app/src/main/java/com/example/Good.kt",
+           "package com.example\nclass Good\n")
+    _write(tmp_path, "app/src/main/java/com/example/Broken.kt",
+           "package com.example\n/* unterminated payload class Broken\n")
+
+    index = declaration_scanner.build_project_type_index(
+        declared_root_pairs(tmp_path, _java_root_set())
+    )
+
+    assert index.by_simple_name == {"Good": ("com.example.Good",)}
+
+
+def test_build_project_type_index_file_cap_stays_bounded(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        declaration_scanner, "MAX_PROJECT_TYPE_INDEX_FILES", 1
+    )
+    _write(tmp_path, "app/src/main/java/com/example/a/First.kt",
+           "package com.example.a\nclass First\n")
+    _write(tmp_path, "app/src/main/java/com/example/b/Second.kt",
+           "package com.example.b\nclass Second\n")
+
+    index = declaration_scanner.build_project_type_index(
+        declared_root_pairs(tmp_path, _java_root_set())
+    )
+
+    # Exactly one file contributed (walk order is deterministic), so the
+    # other file's type is simply absent -- unresolved, never fabricated.
+    assert len(index.qualified) == 1
+    assert index.by_simple_name == {"First": ("com.example.a.First",)}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 try:  # package mode: imported as ``scripts.kotlin_callable_parser``
     from .db_policy_signature import FunctionSignature, SignatureError, normalize_type_text
@@ -15,6 +15,7 @@ __all__ = [
     "ParserError", "CallableDeclaration", "OwnerDeclaration", "mask_kotlin_source",
     "canonical_source_path", "parse_kotlin_file", "find_owner_declarations",
     "find_callable_declarations", "resolve_callable",
+    "ProjectTypeIndex", "project_type_declarations",
 ]
 
 MAX_SOURCE = 2_000_000
@@ -279,13 +280,92 @@ _MODIFIERS = re.compile(r"(?:public|private|protected|internal|expect|actual|inl
 # Names which are concrete without a declaration in the source file.  This is
 # deliberately a small, closed list: accepting every capitalised identifier
 # made the old scanner silently authorize misspelled/project-local types.
+#
+# GR-07 hardening step B (guarded stdlib extension): the three names appended
+# below are kotlin.stdlib types evidenced by the REAL production tree -- the
+# distinct unresolved simple names collected per-file across every
+# ``DB_SIGNATURE_UNRESOLVED`` diagnostic file of the activated scan, after the
+# step-A project-wide index.  Evidence (occurrences among retained
+# TYPE_UNRESOLVED declarations): ``Throwable`` x38, ``Exception`` x3,
+# ``MutableList`` x1.  None of them is declared anywhere in the project index,
+# so the addition can never shadow a project type (builtins resolve AFTER
+# same-file scopes, the file's package, imports, and aliases, and BEFORE the
+# project index).  Every other evidenced residual name was deliberately NOT
+# added: java.util/java.time types (``Date``, ``Calendar``, ``InputStream``,
+# ``DateTimeFormatter``, ``ZoneId``), Android types (``Bitmap``,
+# ``StatusBarNotification``), kotlin.text types outside the approved
+# extension set (``Appendable``, ``Regex``), and project-local debt that
+# belongs to the step-A index or explicit imports -- never to this closed
+# builtin set.  The set stays CLOSED; any further addition must repeat this
+# evidence probe first and is a deliberate, documented decision.
 _BUILTINS = frozenset({
     "Any", "Nothing", "Unit", "String", "Char", "Boolean", "Byte", "Short",
     "Int", "Long", "Float", "Double", "Number", "Array", "ByteArray",
     "ShortArray", "IntArray", "LongArray", "FloatArray", "DoubleArray",
     "BooleanArray", "CharArray", "List", "Set", "Map", "Collection",
     "Iterable", "Iterator", "Sequence", "Comparable", "Enum", "Pair", "Triple",
+    # GR-07 step B append point -- evidenced kotlin.stdlib types only.
+    "Throwable", "Exception", "MutableList",
 })
+
+
+@dataclass(frozen=True)
+class ProjectTypeIndex:
+    """Closed-world PROJECT-WIDE type index (GR-07 hardening step A).
+
+    Built once per scan by the root-aware stages (``declaration_scanner``
+    walks the declared production roots) and threaded explicitly into
+    ``find_callable_declarations`` exactly like
+    ``tolerate_unresolved_types``.  It extends -- never replaces -- the
+    same-file closed world: a simple name the file itself cannot resolve is
+    looked up here, and ONLY a unique match resolves.  A simple name
+    declared in two or more packages maps to several FQCNs and fails closed
+    as ``TYPE_UNRESOLVED``: ambiguity is honest debt, never a guessed
+    resolution.
+
+    ``by_simple_name`` maps each declared simple name to the sorted tuple of
+    package-qualified FQCNs declaring it; ``qualified`` carries every
+    indexed fully-qualified spelling so an exact dotted reference can be
+    accepted without an import.  Both members are sorted/frozen so the same
+    tree always yields the same index and therefore the same resolutions.
+    """
+
+    by_simple_name: Mapping[str, tuple[str, ...]]
+    qualified: frozenset[str]
+
+
+_PROJECT_TYPE_DECL = re.compile(
+    r"\b(?:enum\s+class|annotation\s+class|interface|class|object)\s+(%s)" % _ID
+)
+
+
+def project_type_declarations(text: str) -> tuple[str, ...]:
+    """Package-qualified FQCNs of one file's TOP-LEVEL type declarations.
+
+    Covers ``class``/``object``/``interface`` plus ``enum class`` and
+    ``annotation class`` spellings, qualified by the file's package
+    declaration.  Declarations nested inside an owner body are excluded:
+    they are not package-level project types.  Malformed sources fail
+    closed through ``mask_kotlin_source`` exactly like every other parser
+    entry point; index builders skip such files silently because the
+    failing file already emits its own diagnostic.
+    """
+    masked = mask_kotlin_source(text)
+    package_match = re.search(r"\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)", masked)
+    package = package_match.group(1) if package_match else ""
+    owners = find_owner_declarations(masked)
+    names: set[str] = set()
+    for match in _PROJECT_TYPE_DECL.finditer(masked):
+        parent = max(
+            (owner for owner in owners
+             if owner.body_start <= match.start() < owner.body_end),
+            key=lambda owner: owner.body_start,
+            default=None,
+        )
+        if parent is not None:
+            continue
+        names.add(((package + ".") if package else "") + match.group(1))
+    return tuple(sorted(names))
 
 
 @dataclass(frozen=True)
@@ -296,9 +376,14 @@ class _TypeEnvironment:
     aliases: dict[str, str | None]
     type_counts: dict[str, int]
     owner_scope: str = ""
+    project_types: ProjectTypeIndex | None = None
 
 
-def _type_environment(masked: str, owner_scope: str = "") -> _TypeEnvironment:
+def _type_environment(
+    masked: str,
+    owner_scope: str = "",
+    project_types: ProjectTypeIndex | None = None,
+) -> _TypeEnvironment:
     package_match = re.search(r"\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)", masked)
     package = package_match.group(1) if package_match else ""
     imports: dict[str, str | None] = {}
@@ -337,7 +422,8 @@ def _type_environment(masked: str, owner_scope: str = "") -> _TypeEnvironment:
     # the authoritative qualified spelling; the filename is never involved.
     for owner in find_owner_declarations(masked):
         types.add(owner.owner)
-    return _TypeEnvironment(package, frozenset(types), imports, aliases, type_counts, owner_scope)
+    return _TypeEnvironment(package, frozenset(types), imports, aliases,
+                            type_counts, owner_scope, project_types)
 
 
 def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False) -> str:
@@ -359,6 +445,10 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
                 return name
             # Imported symbols may be referenced by their full spelling.
             if name in env.imports.values():
+                return name
+            # GR-07 step A: an exact fully-qualified spelling of a real
+            # project type is concrete even without a same-file import.
+            if env.project_types is not None and name in env.project_types.qualified:
                 return name
             _fail("TYPE_UNRESOLVED")
         # Resolution is deliberately ordered: exact qualified spelling,
@@ -400,6 +490,17 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
             return resolve_expr(target, seen | {name})
         if name in _BUILTINS:
             return name
+        # GR-07 step A, final fallback: the project-wide index.  Same-file
+        # scopes, the file's package, imports, aliases, and builtins all
+        # keep precedence, so every pre-index resolution is unchanged.  A
+        # simple name declared in several packages is ambiguous debt and
+        # fails closed -- never a guessed resolution.
+        if env.project_types is not None:
+            project_candidates = env.project_types.by_simple_name.get(name, ())
+            if len(project_candidates) > 1:
+                _fail("TYPE_UNRESOLVED")
+            if len(project_candidates) == 1:
+                return project_candidates[0]
         _fail("TYPE_UNRESOLVED")
 
     def resolve_expr(expr: str, seen: set[str]) -> str:
@@ -635,6 +736,7 @@ def find_callable_declarations(
     owner: OwnerDeclaration | str,
     *,
     tolerate_unresolved_types: bool = False,
+    project_types: ProjectTypeIndex | None = None,
 ) -> tuple[CallableDeclaration, ...]:
     """Discover the member ``fun`` declarations of one owner, fail-closed.
 
@@ -642,6 +744,15 @@ def find_callable_declarations(
     receiver type the closed-world resolver cannot resolve aborts the whole
     discovery with ``ParserError("TYPE_UNRESOLVED")`` -- the exact behavior
     the scanner and evidence verifiers depend on.
+
+    ``project_types`` (GR-07 hardening step A) optionally supplies the
+    project-wide type index built once per scan from the declared
+    production roots.  It is the LAST resolution fallback, after same-file
+    scopes, the file's package, imports, aliases, and builtins: a unique
+    simple-name match resolves to its package-qualified FQCN, an ambiguous
+    simple name (declared in several packages) still fails closed as
+    ``TYPE_UNRESOLVED``, and ``None`` keeps the pure single-file closed
+    world byte-for-byte.
 
     With ``tolerate_unresolved_types=True`` (PR-GR-05 Slice 3 narrow
     repair) ONLY that type-resolution family becomes non-fatal, and only
@@ -656,7 +767,7 @@ def find_callable_declarations(
     """
     masked = mask_kotlin_source(text)
     owner_name = owner.owner if isinstance(owner, OwnerDeclaration) else owner
-    environment = _type_environment(masked, owner_name)
+    environment = _type_environment(masked, owner_name, project_types)
     scope_start = owner.body_start if isinstance(owner, OwnerDeclaration) else 0
     scope_end = owner.body_end if isinstance(owner, OwnerDeclaration) else len(masked)
     owners = find_owner_declarations(text)

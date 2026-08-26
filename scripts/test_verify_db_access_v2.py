@@ -24,6 +24,7 @@ import pytest
 import yaml
 
 from scripts.ci.guard_findings import GuardRunReport
+from scripts.ci.finding_rule_catalog import known_diagnostic
 from scripts.db_guard.scanner import _diag_from_text
 from scripts.db_guard import reporting
 from scripts.db_guard import room_inventory
@@ -1069,6 +1070,19 @@ def test_diag_text_degrades_non_canonical_path_to_pathless_diagnostic(
 
 
 def test_source_root_uses_project_defaults_for_policies(tmp_path: Path) -> None:
+    """Project-default policy paths resolve from the derived project root.
+
+    Diagnosis (production is CORRECT; this test aligns with the documented
+    global RawQuery equality contract): the inventory stage compares the
+    raw-query classification policy against the scanned tree in BOTH
+    directions.  Copying the PRODUCTION classification policy into a fixture
+    tree that declares no @RawQuery methods makes every policy key stale BY
+    CONSTRUCTION, so the run fails closed in the INVENTORY stage with
+    DB_ROOM_RAW_QUERY_POLICY_STALE — before any policy load — and the report
+    carries exactly that one deduplicated diagnostic with bare untrusted
+    statistics.  Production itself stays clean because the policy matches the
+    production tree it was captured from.
+    """
     root = _fixture(tmp_path)
     project_config = Path(__file__).parents[1] / "config/guards"
     for name in ("db_ownership_policy.yml", "db_structural_exceptions.yml",
@@ -1090,7 +1104,11 @@ def test_source_root_uses_project_defaults_for_policies(tmp_path: Path) -> None:
         "findings": [],
         "diagnostics": [
             {
-                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+                # All three stale policy keys share one DAO location, so the
+                # inventory's set-deduplication collapses them to ONE
+                # controlled diagnostic; the location text is not a .kt path,
+                # so it degrades to path=None with empty bounded context.
+                "code": "DB_ROOM_RAW_QUERY_POLICY_STALE",
                 "path": None,
                 "symbol": None,
                 "controlled_context": {},
@@ -1100,32 +1118,103 @@ def test_source_root_uses_project_defaults_for_policies(tmp_path: Path) -> None:
     })
 
 
-def test_default_project_root_uses_canonical_manifest(tmp_path: Path) -> None:
-    report = tmp_path / "default-root.json"
+# ── Cached real-tree scan (activated defaults) ────────────────────────────────
+#
+# The full activated pipeline over the REAL repository tree (declared roots ->
+# Room inventory -> v2 loader -> v2 evidence -> structural manifest gate -> D4
+# scan) costs minutes per run.  Both canonical-defaults regression tests below
+# share ONE module-scoped subprocess run and assert against the same bytes.
+
+# Activated truth: the real tree's residual debt is SCANNER-family only.  The
+# policy/loader/evidence stages run clean over the checked-in configuration,
+# so no umbrella or loader code may ever appear; every observed diagnostic
+# code must stay inside this closed scanner-debt family (extending it is a
+# deliberate, documented decision — never a silent new failure mode).
+_REAL_TREE_SCANNER_FAMILY = frozenset({
+    "DB_SIGNATURE_UNRESOLVED",
+    "DB_DAO_SCOPE_UNRESOLVED",
+    "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
+    "DB_CALL_TARGET_AMBIGUOUS",
+})
+
+
+def _assert_strict_untrusted_scanner_family_report(report_path: Path) -> dict:
+    """Structurally strict assertions over the cached real-tree report.
+
+    Pins the exact report schema, untrusted trust semantics, findings
+    withholding, bounded diagnostic shape, known scanner-family codes, and
+    canonical path discipline — deliberately NEVER volatile per-diagnostic
+    counts (the real tree's honest debt shrinks as hardening lands).
+    """
+    _payload, data = _read_report_bytes(report_path)
+    assert set(data) == REPORT_KEYS, f"unexpected report keys: {set(data) ^ REPORT_KEYS}"
+    assert data["schema"] == "cost-aggregator.guard-findings"
+    assert data["schema_version"] == 2
+    assert data["guard"] == "db_access"
+    # Untrusted runs withhold findings entirely.
+    assert data["findings"] == []
+    assert data["statistics"] == {"trusted": False}
+    diagnostics = data["diagnostics"]
+    assert diagnostics, "real-tree debt must be reported honestly"
+    for item in diagnostics:
+        assert set(item) == DIAGNOSTIC_KEYS
+        assert item["symbol"] is None
+        assert item["controlled_context"] == {}
+        path = item["path"]
+        assert path is None or (
+            isinstance(path, str)
+            and path.startswith("app/src/main/java/")
+            and path.endswith(".kt")
+        )
+        assert known_diagnostic(item["code"]) is not None
+    codes = {item["code"] for item in diagnostics}
+    # No policy/loader/evidence/umbrella code may appear: those stages ran
+    # clean over the activated configuration.
+    assert "DB_POLICY_SOURCE_EVIDENCE_INVALID" not in codes
+    assert codes <= _REAL_TREE_SCANNER_FAMILY
+    return data
+
+
+@pytest.fixture(scope="module")
+def _real_tree_scan(tmp_path_factory: pytest.TempPathFactory) -> dict:
+    """ONE protocol-v2 CLI scan of the REAL repository tree, cached per module.
+
+    Runs the script with its DEFAULT project root (the canonical production
+    configuration and manifest) exactly once; both consumer tests assert
+    against the same subprocess result and persisted report bytes.
+    """
+    out_dir = tmp_path_factory.mktemp("real-tree-scan")
+    report = out_dir / "real-tree.json"
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--findings-output", str(report)],
-        cwd=str(Path(__file__).parents[1]), text=True, capture_output=True, check=False,
+        cwd=str(Path(__file__).parents[1]), text=True, capture_output=True,
+        check=False,
         env={key: value for key, value in os.environ.items()
              if key != "COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA"},
     )
+    return {
+        "result": result,
+        "report": report,
+        "root": Path(__file__).parents[1],
+    }
 
+
+def test_default_project_root_uses_canonical_manifest(
+    _real_tree_scan: dict,
+) -> None:
+    """The default project root resolves the CANONICAL production contract.
+
+    Activated truth (structurally strict): with no explicit paths the CLI
+    runs the full pipeline over the real repository — active v2 policy loads,
+    evidence passes, the canonical structural manifest verifies — and exits 2
+    solely because the real tree carries honest scanner-family debt.  See
+    ``_assert_strict_untrusted_scanner_family_report`` for the pinned
+    structure; counts are deliberately not pinned.
+    """
+    result = _real_tree_scan["result"]
     assert result.returncode == 2
-    _assert_cli_streams(result, Path(__file__).parents[1], diagnostic=True)
-    _report(report, {
-        "schema": "cost-aggregator.guard-findings",
-        "schema_version": 2,
-        "guard": "db_access",
-        "findings": [],
-        "diagnostics": [
-            {
-                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
-                "path": None,
-                "symbol": None,
-                "controlled_context": {},
-            }
-        ],
-        "statistics": {"trusted": False},
-    })
+    _assert_cli_streams(result, _real_tree_scan["root"], diagnostic=True)
+    _assert_strict_untrusted_scanner_family_report(_real_tree_scan["report"])
 
 
 def test_explicit_structural_manifest_is_selected_for_source_root_fixture(
@@ -1872,6 +1961,7 @@ def test_structural_manifest_failures_are_diagnostic_only_and_overwrite_old_find
 
 def test_fixture_manifest_mismatch_is_fail_closed_and_production_defaults_stay_strict(
     tmp_path: Path,
+    _real_tree_scan: dict,
 ) -> None:
     root = _fixture(tmp_path)
     _policy(root)
@@ -1917,32 +2007,15 @@ counts:
     ]
 
     # No fixture override is supplied here: production defaults retain the
-    # canonical manifest contract instead of inheriting temporary policy paths.
-    canonical_report = tmp_path / "canonical-defaults.json"
-    canonical = subprocess.run(
-        [sys.executable, str(SCRIPT), "--findings-output", str(canonical_report)],
-        cwd=str(Path(__file__).parents[1]), text=True, capture_output=True,
-        check=False,
-        env={key: value for key, value in os.environ.items()
-             if key != "COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA"},
-    )
-    assert canonical.returncode == 2
-    _assert_cli_streams(canonical, Path(__file__).parents[1], diagnostic=True)
-    _report(canonical_report, {
-        "schema": "cost-aggregator.guard-findings",
-        "schema_version": 2,
-        "guard": "db_access",
-        "findings": [],
-        "diagnostics": [
-            {
-                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
-                "path": None,
-                "symbol": None,
-                "controlled_context": {},
-            }
-        ],
-        "statistics": {"trusted": False},
-    })
+    # canonical manifest contract instead of inheriting temporary policy
+    # paths.  Proven by the SHARED module-cached real-tree scan (one full
+    # pipeline run for both consumers): the canonical defaults resolve the
+    # real manifest and proceed past every policy stage into honest
+    # scanner-family debt — never a policy/manifest failure.
+    canonical = _real_tree_scan
+    assert canonical["result"].returncode == 2
+    _assert_cli_streams(canonical["result"], canonical["root"], diagnostic=True)
+    _assert_strict_untrusted_scanner_family_report(canonical["report"])
 
 
 def test_report_does_not_depend_on_stdout_summary_parsing(
@@ -2257,6 +2330,16 @@ def test_malformed_ownership_policy_is_source_evidence_diagnostic(
     result = _run(root, report)
 
     assert result.returncode == 2
+    # Bounded untrusted-statistics classification: the comment parametrization
+    # keeps the document CLEANLY parseable with its schemaVersion: 2 header,
+    # so the failed load echoes the detected schema version into the
+    # statistics.  Every other parametrization corrupts the YAML structure
+    # itself (a column-0 key followed by indented lines), so no schema
+    # version can be detected and the statistics stay bare.
+    if bad_entry.lstrip().startswith("#"):
+        statistics: dict = {"activePolicySchemaVersion": 2, "trusted": False}
+    else:
+        statistics = {"trusted": False}
     _report(report, {
         "schema": "cost-aggregator.guard-findings",
         "schema_version": 2,
@@ -2270,7 +2353,7 @@ def test_malformed_ownership_policy_is_source_evidence_diagnostic(
                 "controlled_context": {},
             }
         ],
-        "statistics": {"trusted": False},
+        "statistics": statistics,
     })
 
 
@@ -2541,6 +2624,102 @@ def test_fully_matching_v2_mutation_passes_end_to_end(tmp_path: Path) -> None:
         "findings": [],
         "diagnostics": [],
         "statistics": _clean_statistics(),
+    })
+
+
+# ── GR-07 hardening step A: project-wide type index, evidence path ────────────
+#
+# Two-file index resolution through the ACTIVATED pipeline end to end: the
+# parameter type is declared ONLY in a second production file, so BOTH root
+# consumers must honor the project-wide type index for the run to succeed —
+# the v2 evidence stage's callable discovery (which verifies the entry's
+# package-qualified parameterTypes against the discovered signature) and the
+# typed D4 matcher (which compares resolved identities).
+
+CROSS_FILE_ENTITY_SOURCE = """\
+package example
+
+data class ExpenseEntity(val id: Int)
+"""
+
+CROSS_FILE_MAIN_SOURCE = """\
+package example
+
+@androidx.room.Dao
+interface ExpenseDao {
+    @androidx.room.Insert
+    fun insert(item: ExpenseEntity)
+}
+
+class Repository(private val expenseDao: ExpenseDao) {
+    fun save(entity: ExpenseEntity) {
+        expenseDao.insert(entity)
+    }
+}
+"""
+
+
+def test_cross_file_project_type_resolves_evidence_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """Entity declared in file B, consumed by file A's signature: trusted run.
+
+    The policy entry names the RESOLVED package-qualified spelling; the
+    evidence stage discovers ``save`` through the project type index and
+    verifies it exactly, and the scanner authorizes the mutation with the
+    fully qualified structured identity.
+    """
+    root = _fixture(tmp_path, source=CROSS_FILE_MAIN_SOURCE)
+    _write(root, "app/src/main/java/example/ExpenseEntity.kt",
+           CROSS_FILE_ENTITY_SOURCE)
+    _policy(root, parameters="[example.ExpenseEntity]")
+    _structural_policy(root)
+    report = root / "cross-file-clean.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 0
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [],
+        # The entity file contributes no helper range or DAO, so every
+        # scanner/inventory counter matches the single-file fixture defaults.
+        "statistics": _clean_statistics(),
+    })
+
+
+def test_missing_declaring_file_fails_evidence_closed(tmp_path: Path) -> None:
+    """Negative control proving the clean run was carried by the index.
+
+    Without the declaring file, ``save``'s own signature stays unresolved
+    debt, so the v2 evidence stage fails closed with the context-free
+    umbrella and bare untrusted statistics — never a guessed authorization.
+    """
+    root = _fixture(tmp_path, source=CROSS_FILE_MAIN_SOURCE)
+    _policy(root, parameters="[example.ExpenseEntity]")
+    _structural_policy(root)
+    report = root / "cross-file-missing.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 2
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [
+            {
+                "code": "DB_POLICY_SOURCE_EVIDENCE_INVALID",
+                "path": None,
+                "symbol": None,
+                "controlled_context": {},
+            }
+        ],
+        "statistics": {"trusted": False},
     })
 
 

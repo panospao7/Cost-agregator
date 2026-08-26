@@ -127,7 +127,10 @@ from .source_roots import (
     is_declared_production_path,
     resolve_source_root_set,
 )
-from .declaration_scanner import declared_root_pairs
+from .declaration_scanner import (
+    build_project_type_index,
+    declared_root_pairs,
+)
 
 __all__ = [
     "verify_v2_policy_source_evidence",
@@ -482,6 +485,17 @@ def verify_v2_policy_source_evidence(
         if room_inventory is not None
         else None
     )
+    # GR-07 hardening step A: the project-wide type index is built ONCE per
+    # verification run over the SAME declared production roots this batch
+    # already resolved, then threaded into every callable discovery below
+    # (the target scan and the nested-owner exclusion rescans alike).  A
+    # parameter/receiver type declared in another production file now
+    # resolves through a unique simple-name match; an ambiguous simple name
+    # still fails closed as TYPE_UNRESOLVED debt.  Deterministic: same tree
+    # -> same index -> same resolutions.
+    project_types = build_project_type_index(
+        declared_root_pairs(repo_root, root_set)
+    )
     for canonical_key in sorted(groups):
         group = groups[canonical_key]
         entry = group[0]
@@ -551,7 +565,7 @@ def verify_v2_policy_source_evidence(
                         else:
                             group_errors, group_actual_keys = _verify_callable_group(
                                 group, ck, owner, masked, text, group_errors,
-                                dao_fqcn_index,
+                                dao_fqcn_index, project_types,
                             )
         except Exception as exc:
             group_errors.append(
@@ -588,17 +602,18 @@ def verify_v2_policy_source_evidence(
 
 
 def _verify_callable_group(group, ck, owner, masked, text, group_errors,
-                           dao_fqcn_index=None):
+                           dao_fqcn_index=None, project_types=None):
     """Stages 2-3 for one group whose owner and kind already resolved.
 
     Discovers the owner's member callables under the parser's tolerant
     type-resolution semantics (GR-06: a sibling retained with
-    ``TYPE_UNRESOLVED`` status can never match or authorize), then resolves
-    the representative callable to exactly one braced declaration
-    (fail-closed on missing/ambiguous/unsupported statuses; a target whose
-    every same-name declaration is type-unresolved fails with the distinct
-    ``DB_V2_POLICY_SIGNATURE_UNRESOLVED`` code), then runs
-    ``_check_mutations`` for DAO resolution, both-direction mutation
+    ``TYPE_UNRESOLVED`` status can never match or authorize) and the GR-07
+    step-A project-wide type index (``None`` keeps the pure single-file
+    closed world), then resolves the representative callable to exactly one
+    braced declaration (fail-closed on missing/ambiguous/unsupported
+    statuses; a target whose every same-name declaration is type-unresolved
+    fails with the distinct ``DB_V2_POLICY_SIGNATURE_UNRESOLVED`` code), then
+    runs ``_check_mutations`` for DAO resolution, both-direction mutation
     completeness, the inventory-backed daoFqcn cross-check (``None`` keeps
     the documented no-inventory limitation), plus the barrierMode metadata
     local-consistency gate.
@@ -607,7 +622,8 @@ def _verify_callable_group(group, ck, owner, masked, text, group_errors,
     emission order and early-return semantics.
     """
     callables = find_callable_declarations(
-        masked, owner, tolerate_unresolved_types=True
+        masked, owner, tolerate_unresolved_types=True,
+        project_types=project_types,
     )
     status = resolve_callable(
         callables,
@@ -723,12 +739,13 @@ def _verify_callable_group(group, ck, owner, masked, text, group_errors,
         return group_errors, ()
     actual_keys = _check_mutations(
         group, ck, owner, masked, text, decl, callables, group_errors,
-        dao_fqcn_index,
+        dao_fqcn_index, project_types,
     )
     return group_errors, actual_keys
 
 
-def _callable_body_slice_line_indices(masked, owner, callables, line_count):
+def _callable_body_slice_line_indices(masked, owner, callables, line_count,
+                                      project_types=None):
     """Map member callable spans to line indices within the owner slice.
 
     Returns the set of 0-based line indices (relative to
@@ -767,7 +784,8 @@ def _callable_body_slice_line_indices(masked, owner, callables, line_count):
             spans.extend(
                 (d.start_offset, d.end_offset)
                 for d in find_callable_declarations(
-                    masked, inner, tolerate_unresolved_types=True
+                    masked, inner, tolerate_unresolved_types=True,
+                    project_types=project_types,
                 )
             )
     excluded = set()
@@ -836,7 +854,7 @@ def _barrier_metadata_consistent(group, ck, text, decl, mutation_linenos):
 
 
 def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
-                     dao_fqcn_index=None):
+                     dao_fqcn_index=None, project_types=None):
     """Stage 3: DAO accessor resolution + both-direction mutation completeness
     + inventory-backed daoFqcn cross-check + barrierMode metadata local
     consistency.
@@ -880,7 +898,7 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
         0,
         len(slice_lines) - 1,
         excluded_line_numbers=_callable_body_slice_line_indices(
-            masked, owner, callables, len(slice_lines)
+            masked, owner, callables, len(slice_lines), project_types,
         ),
     )
     method_map = build_dao_var_map(body_lines)

@@ -1277,3 +1277,420 @@ class JsonBuilder {
         parameter_types=("String",),
     )
     assert declarations[0].body is not None
+
+
+# ------------------------------------------- GR-07 step A: project type index
+#
+# The closed-world resolver only saw same-file declarations, so a parameter
+# or receiver type declared in ANOTHER production file (legal Kotlin when
+# the packages match or an import exists) failed TYPE_UNRESOLVED and, in the
+# D4 scanner, degraded the whole file to DB_SIGNATURE_UNRESOLVED.  The
+# project-wide index extends resolution as the LAST fallback: unique simple
+# name -> its package-qualified FQCN; ambiguous simple name -> still fails
+# closed.  Same-file scopes, package, imports, aliases, and builtins keep
+# precedence, so every pre-index resolution is unchanged.
+
+
+def _index_from_sources(*sources: str) -> parser.ProjectTypeIndex:
+    """Mirror of the declaration_scanner builder over in-memory sources."""
+    by_simple: dict[str, set[str]] = {}
+    qualified: set[str] = set()
+    for source in sources:
+        for fqcn in parser.project_type_declarations(source):
+            qualified.add(fqcn)
+            by_simple.setdefault(fqcn.rsplit(".", 1)[-1], set()).add(fqcn)
+    return parser.ProjectTypeIndex(
+        by_simple_name={
+            name: tuple(sorted(fqcns))
+            for name, fqcns in sorted(by_simple.items())
+        },
+        qualified=frozenset(qualified),
+    )
+
+
+_FILE_A = """package example
+class Fixture {
+    fun save(expense: Expense) {}
+}
+"""
+
+_FILE_B = """package example
+data class Expense(val id: Int)
+"""
+
+
+def test_project_type_declarations_extracts_top_level_types_only():
+    source = """package com.example.app
+class Plain
+data class DataHolder(val id: Int)
+interface Contract
+fun interface FunContract { fun act() }
+enum class Mode { ON }
+annotation class Marker
+object Singleton
+class Outer {
+    class Nested
+    interface InnerContract
+}
+"""
+    assert parser.project_type_declarations(source) == (
+        "com.example.app.Contract",
+        "com.example.app.DataHolder",
+        "com.example.app.FunContract",
+        "com.example.app.Marker",
+        "com.example.app.Mode",
+        "com.example.app.Outer",
+        "com.example.app.Plain",
+        "com.example.app.Singleton",
+    )
+
+
+def test_project_type_declarations_without_package_uses_bare_name():
+    assert parser.project_type_declarations("class Bare\n") == ("Bare",)
+
+
+def test_project_index_resolves_cross_file_type_end_to_end():
+    """Type declared in file B, used in file A's signature: resolves
+    RESOLVED_EXACTLY to its package-qualified FQCN."""
+    index = _index_from_sources(_FILE_A, _FILE_B)
+    owner = parser.find_owner_declarations(_FILE_A)[0]
+    declarations = parser.find_callable_declarations(
+        _FILE_A, owner, project_types=index
+    )
+    assert len(declarations) == 1
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="save",
+        parameter_types=("example.Expense",),
+        path="app/src/main/unknown.kt",
+    )
+    assert declarations[0].status == "RESOLVED_EXACTLY"
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "save", None, ("example.Expense",)
+    ) == "RESOLVED_EXACTLY"
+
+
+def test_project_index_generic_containment_resolves():
+    """Generic arguments recurse through the index: List<Expense> resolves
+    Expense inside the generic."""
+    source = """package example
+class Fixture {
+    fun all(expenses: List<Expense>): Map<String, List<Expense>> {
+        return mapOf()
+    }
+}
+"""
+    index = _index_from_sources(source, _FILE_B)
+    owner = parser.find_owner_declarations(source)[0]
+    declarations = parser.find_callable_declarations(
+        source, owner, project_types=index
+    )
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="all",
+        parameter_types=("List<example.Expense>",),
+        path="app/src/main/unknown.kt",
+    )
+
+
+def test_project_index_receiver_and_nullable_forms_resolve():
+    source = """package example
+class Fixture {
+    fun Expense.persist(): Boolean = true
+    fun maybe(value: Expense?) {}
+}
+"""
+    index = _index_from_sources(source, _FILE_B)
+    owner = parser.find_owner_declarations(source)[0]
+    declarations = parser.find_callable_declarations(
+        source, owner, project_types=index
+    )
+    assert [(d.signature.function_name, d.signature.receiver,
+             d.signature.parameter_types) for d in declarations] == [
+        # ``Boolean`` is persist's RETURN type; its only value channel is
+        # the receiver.
+        ("persist", "example.Expense", ()),
+        ("maybe", None, ("example.Expense?",)),
+    ]
+
+
+def test_project_index_ambiguous_simple_name_fails_closed():
+    """The same simple name declared in two packages is honest debt: strict
+    discovery raises TYPE_UNRESOLVED and tolerant mode retains the
+    declaration under that exact status -- never a guessed resolution."""
+    index = parser.ProjectTypeIndex(
+        by_simple_name={"Expense": ("a.Expense", "b.Expense")},
+        qualified=frozenset({"a.Expense", "b.Expense"}),
+    )
+    owner = parser.find_owner_declarations(_FILE_A)[0]
+    with pytest.raises(parser.ParserError) as excinfo:
+        parser.find_callable_declarations(_FILE_A, owner, project_types=index)
+    assert excinfo.value.code == "TYPE_UNRESOLVED"
+    retained = parser.find_callable_declarations(
+        _FILE_A, owner, tolerate_unresolved_types=True, project_types=index
+    )
+    assert [(d.signature.function_name, d.status) for d in retained] == [
+        ("save", "TYPE_UNRESOLVED"),
+    ]
+    # The retained spelling stays the faithful source simple name.
+    assert retained[0].signature.parameter_types == ("Expense",)
+
+
+def test_project_index_unknown_name_still_fails_closed():
+    index = _index_from_sources(_FILE_B)
+    owner = parser.find_owner_declarations(_FILE_A.replace(
+        "Expense", "Missing"))[0]
+    with pytest.raises(parser.ParserError) as excinfo:
+        parser.find_callable_declarations(
+            _FILE_A.replace("Expense", "Missing"), owner,
+            project_types=index,
+        )
+    assert excinfo.value.code == "TYPE_UNRESOLVED"
+
+
+def test_same_file_import_alias_builtin_precede_index_entries():
+    """Resolution order: same-file declaration > import > alias > builtin >
+    project index.  Each parameter below is resolvable WITHOUT the index;
+    the index deliberately carries conflicting foreign spellings that must
+    all lose."""
+    foreign = parser.ProjectTypeIndex(
+        by_simple_name={
+            "Local": ("foreign.pkg.Local",),
+            "String": ("foreign.pkg.String",),
+            "Imported": ("foreign.pkg.Imported",),
+            "Aliased": ("foreign.pkg.Aliased",),
+        },
+        qualified=frozenset({
+            "foreign.pkg.Local", "foreign.pkg.String",
+            "foreign.pkg.Imported", "foreign.pkg.Aliased",
+        }),
+    )
+    source = """package example
+import other.pkg.Imported
+typealias Aliased = example.AliasTarget
+class Local
+class AliasTarget
+class Fixture {
+    fun ordered(first: Local, second: Imported, third: Aliased, fourth: String) {}
+}
+"""
+    owner = next(o for o in parser.find_owner_declarations(source)
+                 if o.owner == "example.Fixture")
+    declarations = parser.find_callable_declarations(
+        source, owner, project_types=foreign
+    )
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="ordered",
+        parameter_types=(
+            "example.Local",
+            "other.pkg.Imported",
+            "example.AliasTarget",
+            "String",
+        ),
+        path="app/src/main/unknown.kt",
+    )
+
+
+def test_same_file_declaration_beats_foreign_index_entry():
+    source = """package example
+class Expense
+class Fixture {
+    fun local(value: Expense) {}
+}
+"""
+    foreign = parser.ProjectTypeIndex(
+        by_simple_name={"Expense": ("foreign.pkg.Expense",)},
+        qualified=frozenset({"foreign.pkg.Expense"}),
+    )
+    owner = next(o for o in parser.find_owner_declarations(source)
+                 if o.owner == "example.Fixture")
+    declarations = parser.find_callable_declarations(
+        source, owner, project_types=foreign
+    )
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="local",
+        parameter_types=("example.Expense",),
+        path="app/src/main/unknown.kt",
+    )
+
+
+def test_builtin_beats_index_entry():
+    source = """package example
+class Fixture {
+    fun text(value: String) {}
+}
+"""
+    foreign = parser.ProjectTypeIndex(
+        by_simple_name={"String": ("foreign.pkg.String",)},
+        qualified=frozenset({"foreign.pkg.String"}),
+    )
+    owner = parser.find_owner_declarations(source)[0]
+    declarations = parser.find_callable_declarations(
+        source, owner, project_types=foreign
+    )
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="text",
+        parameter_types=("String",),
+        path="app/src/main/unknown.kt",
+    )
+
+
+def test_import_beats_index_entry():
+    source = """package example
+import other.pkg.Expense
+class Fixture {
+    fun imported(value: Expense) {}
+}
+"""
+    foreign = parser.ProjectTypeIndex(
+        by_simple_name={"Expense": ("foreign.pkg.Expense",)},
+        qualified=frozenset({"foreign.pkg.Expense"}),
+    )
+    owner = parser.find_owner_declarations(source)[0]
+    declarations = parser.find_callable_declarations(
+        source, owner, project_types=foreign
+    )
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="imported",
+        parameter_types=("other.pkg.Expense",),
+        path="app/src/main/unknown.kt",
+    )
+
+
+def test_project_qualified_spelling_resolves_without_import():
+    source = """package example
+class Fixture {
+    fun exact(value: com.example.expense.Expense) {}
+}
+"""
+    index = parser.ProjectTypeIndex(
+        by_simple_name={"Expense": ("com.example.expense.Expense",)},
+        qualified=frozenset({"com.example.expense.Expense"}),
+    )
+    owner = parser.find_owner_declarations(source)[0]
+    declarations = parser.find_callable_declarations(
+        source, owner, project_types=index
+    )
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="exact",
+        parameter_types=("com.example.expense.Expense",),
+        path="app/src/main/unknown.kt",
+    )
+
+
+def test_none_index_keeps_single_file_closed_world_byte_for_byte():
+    """Default and explicit None behave exactly as before step A."""
+    owner = parser.find_owner_declarations(_FILE_A)[0]
+    for kwargs in ({}, {"project_types": None}):
+        with pytest.raises(parser.ParserError) as excinfo:
+            parser.find_callable_declarations(_FILE_A, owner, **kwargs)
+        assert excinfo.value.code == "TYPE_UNRESOLVED"
+
+
+def test_tolerant_mode_with_index_resolves_instead_of_retaining():
+    """Tolerant discovery plus the index turns formerly-retained debt into
+    exactly-resolved declarations."""
+    owner = parser.find_owner_declarations(_FILE_A)[0]
+    index = _index_from_sources(_FILE_A, _FILE_B)
+    declarations = parser.find_callable_declarations(
+        _FILE_A, owner, tolerate_unresolved_types=True, project_types=index
+    )
+    assert [d.status for d in declarations] == ["RESOLVED_EXACTLY"]
+
+
+# ------------------------------------------- GR-07 step B: guarded _BUILTINS extension
+#
+# Three evidenced kotlin.stdlib names were appended to the closed builtin set:
+# ``Throwable`` (38 retained TYPE_UNRESOLVED occurrences across the activated
+# real-tree scan), ``Exception`` (3), and ``MutableList`` (1).  None of them is
+# declared anywhere in the project, so the addition can never shadow a project
+# type: builtins resolve AFTER same-file scopes, the file's package, imports,
+# and aliases, and BEFORE the project-wide index.  The tests below pin each
+# name's resolution in the pure single-file closed world (no project_types at
+# all) plus the exact closure of the whole set.
+
+
+def test_builtin_throwable_resolves_by_simple_name(parse_file):
+    """``Throwable`` is concrete without any declaration or import."""
+    declarations = parse_file("""package example
+class Fixture {
+    fun handle(error: Throwable) {}
+}
+""")
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="handle",
+        parameter_types=("Throwable",),
+    )
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "handle", None, ("Throwable",)
+    ) == "RESOLVED_EXACTLY"
+
+
+def test_builtin_exception_resolves_nullable_and_generic_positions(parse_file):
+    """``Exception`` resolves bare and inside generic containment."""
+    declarations = parse_file("""package example
+class Fixture {
+    fun wrap(error: Exception?) {}
+    fun causes(history: List<Exception>) {}
+}
+""")
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="wrap",
+        parameter_types=("Exception?",),
+    )
+    _assert_declaration(
+        declarations[1],
+        owner="example.Fixture",
+        name="causes",
+        parameter_types=("List<Exception>",),
+    )
+
+
+def test_builtin_mutable_list_resolves_with_type_arguments(parse_file):
+    """``MutableList`` resolves as a generic head type; its argument keeps
+    resolving through the ordinary ordered chain."""
+    declarations = parse_file("""package example
+class Fixture {
+    fun collect(items: MutableList<String>) {}
+}
+""")
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="collect",
+        parameter_types=("MutableList<String>",),
+    )
+
+
+def test_builtin_set_closure_pins_evidenced_trio():
+    """The builtin set stays CLOSED: GR-07 step B appended exactly the three
+    evidenced kotlin.stdlib names to the frozen pre-existing set.  Any further
+    addition must repeat the evidence probe first and extend this pin (and the
+    documented append-point comment) deliberately."""
+    assert parser._BUILTINS == frozenset({
+        # Frozen pre-step-B set.
+        "Any", "Nothing", "Unit", "String", "Char", "Boolean", "Byte", "Short",
+        "Int", "Long", "Float", "Double", "Number", "Array", "ByteArray",
+        "ShortArray", "IntArray", "LongArray", "FloatArray", "DoubleArray",
+        "BooleanArray", "CharArray", "List", "Set", "Map", "Collection",
+        "Iterable", "Iterator", "Sequence", "Comparable", "Enum", "Pair",
+        "Triple",
+        # GR-07 step B append point -- evidenced kotlin.stdlib types only.
+        "Throwable", "Exception", "MutableList",
+    })

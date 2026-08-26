@@ -9,6 +9,7 @@ ordered parameterTypes + daoAccessor + daoFqcn + operation.
 import json
 from pathlib import Path
 
+import scripts.db_guard.scanner as db_guard_scanner_module
 from scripts.ci.finding_rule_catalog import known_diagnostic
 from scripts.db_guard.declaration_scanner import DeclarationRange
 from scripts.db_guard.policy_model import BarrierMode, CallableKind, PolicyEntry
@@ -623,3 +624,147 @@ def test_typed_direct_barrier_mode_requires_local_barrier_evidence(tmp_path):
                        "inventory_daos": 2, "inventory_mutators": 4,
                        "trusted": True},
     }
+
+
+# ── GR-07 hardening step A: project-wide type index ───────────────────────────
+#
+# The closed-world resolver only saw same-file declarations, so a repository
+# whose signature named a type declared in ANOTHER production file (legal
+# same-package Kotlin, no import required) died as TYPE_UNRESOLVED and
+# degraded to a DB_SIGNATURE_UNRESOLVED diagnostic.  The scanner now builds
+# ONE deterministic index per scan over the declared production roots and
+# threads it into callable discovery: unique simple name -> package-qualified
+# FQCN; ambiguous simple name -> still fails closed.
+
+_MULTI_ENTITY = """package com.example.multi
+
+data class MultiEntity(val id: Int)
+"""
+
+_MULTI_DAO = """package com.example.multi
+
+@androidx.room.Dao
+interface MultiDao {
+    @androidx.room.Insert
+    fun insert(value: Int)
+}
+"""
+
+_MULTI_REPOSITORY = """package com.example.multi
+
+class MultiRepository(private val multiDao: MultiDao) {
+    fun save(entity: MultiEntity) {
+        multiDao.insert(1)
+    }
+}
+"""
+
+
+def _multi_file_root(tmp_path: Path) -> Path:
+    root = _source_root(tmp_path)
+    package = root / "com" / "example" / "multi"
+    package.mkdir(parents=True)
+    package.joinpath("MultiEntity.kt").write_text(_MULTI_ENTITY, encoding="utf-8")
+    package.joinpath("MultiDao.kt").write_text(_MULTI_DAO, encoding="utf-8")
+    package.joinpath("MultiRepository.kt").write_text(
+        _MULTI_REPOSITORY, encoding="utf-8")
+    return root
+
+
+def test_cross_file_project_type_resolves_end_to_end(tmp_path):
+    """Entity and DAO types declared in OTHER files resolve through the
+    project index: the discovered mutation is a fully signed finding with
+    the package-qualified parameter identity -- no diagnostic, trusted."""
+    root = _multi_file_root(tmp_path)
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    payload = report.to_dict()
+    assert payload["diagnostics"] == []
+    assert [finding["rule"] for finding in payload["findings"]] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = payload["findings"][0]
+    assert finding["path"] == "app/src/main/java/com/example/multi/MultiRepository.kt"
+    # Fixture line literal: ``multiDao.insert(1)`` is the fifth line.
+    assert finding["location"] == {"line": 5, "end_line": 5}
+    assert finding["symbol"]["owner"] == "com.example.multi.MultiRepository"
+    assert finding["symbol"]["name"] == "save"
+    assert finding["symbol"]["receiver"] is None
+    assert finding["symbol"]["parameters"] == ["com.example.multi.MultiEntity"]
+    assert finding["identity"]["dao"] == "com.example.multi.MultiDao"
+    assert finding["identity"]["accessor"] == "multiDao"
+    assert finding["identity"]["operation"] == "insert"
+    assert payload["statistics"] == {
+        # ``files_scanned`` counts files with scanned helper ranges: the
+        # DAO-only file contributes no helper range and is absent.
+        "files_scanned": 2, "declarations_scanned": 3,
+        "inventory_daos": 1, "inventory_mutators": 1, "trusted": True,
+    }
+    _assert_repo_relative_posix(report, tmp_path)
+
+
+def test_ambiguous_cross_package_simple_name_still_fails_closed_in_d4(tmp_path):
+    """The same simple name declared in two packages stays honest debt: the
+    repository's signature cannot be resolved, so the controlled
+    DB_SIGNATURE_UNRESOLVED diagnostic replaces any guessed finding."""
+    root = _source_root(tmp_path)
+    multi = root / "com" / "example" / "multi"
+    multi.mkdir(parents=True)
+    other = root / "com" / "example" / "other"
+    other.mkdir(parents=True)
+    repo = root / "com" / "example" / "repo"
+    repo.mkdir(parents=True)
+    multi.joinpath("MultiEntity.kt").write_text(_MULTI_ENTITY, encoding="utf-8")
+    multi.joinpath("MultiDao.kt").write_text(_MULTI_DAO, encoding="utf-8")
+    other.joinpath("MultiEntity.kt").write_text(
+        "package com.example.other\n\ndata class MultiEntity(val id: Int)\n",
+        encoding="utf-8")
+    repo.joinpath("MultiRepository.kt").write_text(
+        """package com.example.repo
+
+import com.example.multi.MultiDao
+
+class MultiRepository(private val multiDao: MultiDao) {
+    fun save(entity: MultiEntity) {
+        multiDao.insert(1)
+    }
+}
+""", encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    payload = report.to_dict()
+    assert payload["findings"] == []
+    assert payload["diagnostics"] == [{
+        "code": "DB_SIGNATURE_UNRESOLVED",
+        "path": "app/src/main/java/com/example/repo/MultiRepository.kt",
+        "symbol": None,
+        "controlled_context": {},
+    }]
+    assert payload["statistics"]["trusted"] is False
+
+
+def test_project_type_index_is_built_once_per_scan_and_deterministic(tmp_path,
+                                                                     monkeypatch):
+    """One index build per scan (never per declaration), and the same tree
+    yields byte-identical reports across runs."""
+    root = _multi_file_root(tmp_path)
+    calls = []
+    real_builder = db_guard_scanner_module.build_project_type_index
+
+    def counted(pairs):
+        calls.append(1)
+        return real_builder(pairs)
+
+    monkeypatch.setattr(
+        db_guard_scanner_module, "build_project_type_index", counted)
+
+    first = db_guard_scanner_module.scan_db_access(
+        root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+    second = db_guard_scanner_module.scan_db_access(
+        root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert len(calls) == 2  # exactly one build per scan
+    assert first.to_dict() == second.to_dict()
+    assert first.statistics["trusted"] is True

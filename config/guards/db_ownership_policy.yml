@@ -753,6 +753,61 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function
+  method: updateTransferDetails
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - String?
+  - String
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateTransferAccountName
+  barrierMode: helper
+  reason: Transfer-direction update; barrier via checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateTransferDetails
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - String?
+  - String
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateTransferDirection
+  barrierMode: helper
+  reason: Transfer-direction update; barrier via checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateTransferDetails
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - String?
+  - String
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Transfer details update \u2014 UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
   method: updateType
   receiver: null
   parameterTypes:
@@ -785,6 +840,82 @@ entries:
   operation: insert
   barrierMode: helper
   reason: "Transaction-type update \u2014 UPDATED lifecycle event insert; barrier\
+    \ via checkWritesAllowed helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateTypeAndTransferDetails
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransactionType
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - String
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateTransactionType
+  barrierMode: helper
+  reason: "Atomic type+transfer update \u2014 type column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateTypeAndTransferDetails
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransactionType
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - String
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateTransferAccountName
+  barrierMode: helper
+  reason: "Atomic type+transfer update \u2014 type column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateTypeAndTransferDetails
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransactionType
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - String
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateTransferDirection
+  barrierMode: helper
+  reason: "Atomic type+transfer update \u2014 type column; barrier via checkWritesAllowed\
+    \ helper"
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+  kind: function
+  method: updateTypeAndTransferDetails
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransactionType
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - String
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "Atomic type+transfer update \u2014 UPDATED lifecycle event insert; barrier\
     \ via checkWritesAllowed helper"
   owner: '@panospao7'
   linkedIssue: MIT-003

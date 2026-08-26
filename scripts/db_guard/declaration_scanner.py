@@ -17,7 +17,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..kotlin_callable_parser import ParserError, mask_kotlin_source
+from ..kotlin_callable_parser import (
+    ParserError,
+    ProjectTypeIndex,
+    mask_kotlin_source,
+    project_type_declarations,
+)
 from .dao_accessors import AccessorError, find_dao_declarations
 from .source_roots import DB_SOURCE_ROOT_UNDECLARED, resolve_source_root_set
 
@@ -751,6 +756,60 @@ def _files(anchor: Path, source: Path) -> tuple[list[tuple[str, Path]], bool, se
     except OSError:
         failed = True
     return result, failed, symlink_diagnostics
+
+
+# GR-07 hardening step A: bounded size of the project-wide type index.  At
+# most this many production Kotlin files contribute declarations per scan;
+# files beyond the cap are skipped deterministically (declared-root walk
+# order), so the index stays bounded and the same tree always yields the
+# same index.
+MAX_PROJECT_TYPE_INDEX_FILES = 4096
+
+
+def build_project_type_index(pairs: Any) -> ProjectTypeIndex:
+    """Build the deterministic project-wide type index once per scan.
+
+    ``pairs`` is the ordered ``(anchor, base)`` walking contract from
+    :func:`declared_root_pairs` -- the SAME declared production roots the
+    declaration scan walks, reused here so the index never invents a second
+    root topology.  Every ``.kt`` file below the declared roots contributes
+    its top-level class/object/interface (plus enum/annotation class)
+    simple names qualified by their package declaration.
+
+    Deterministic: walk order is the declared manifest order with sorted
+    directories/files, and both index members are sorted/frozen, so the
+    same tree always yields the same index and therefore the same type
+    resolutions.  Bounded: at most ``MAX_PROJECT_TYPE_INDEX_FILES`` files
+    are read; no I/O happens beyond this one reuse of the existing root
+    walk.  A file that cannot be read or masked/parsed is skipped silently:
+    it either already emitted its own diagnostic in the main scan or never
+    enters one, and a missing entry can only keep a type unresolved (fail
+    closed), never fabricate a resolution.
+    """
+    by_simple: dict[str, set[str]] = {}
+    qualified: set[str] = set()
+    accepted = 0
+    for anchor, base in pairs:
+        files, _failed, _symlinks = _files(anchor, base)
+        for _relative, candidate in files:
+            if accepted >= MAX_PROJECT_TYPE_INDEX_FILES:
+                break
+            try:
+                text = candidate.read_text(encoding="utf-8")
+                declarations = project_type_declarations(text)
+            except (OSError, UnicodeError, ParserError, ValueError):
+                continue
+            accepted += 1
+            for fqcn in declarations:
+                qualified.add(fqcn)
+                by_simple.setdefault(fqcn.rsplit(".", 1)[-1], set()).add(fqcn)
+    return ProjectTypeIndex(
+        by_simple_name={
+            name: tuple(sorted(fqcns))
+            for name, fqcns in sorted(by_simple.items())
+        },
+        qualified=frozenset(qualified),
+    )
 
 
 def _pairs(masked: str) -> dict[int, int]:
@@ -1634,4 +1693,4 @@ def write_scan_delta_atomic(path: Any, scan: DaoFileScan) -> None:
                 pass
 
 
-__all__ = ["DeclarationRange", "Diagnostic", "DiagnosticContextError", "DaoFileScan", "anchor_for_declared_path", "declared_root_pairs", "scan_production_declarations", "write_scan_delta_atomic"]
+__all__ = ["DeclarationRange", "Diagnostic", "DiagnosticContextError", "DaoFileScan", "anchor_for_declared_path", "build_project_type_index", "declared_root_pairs", "scan_production_declarations", "write_scan_delta_atomic"]

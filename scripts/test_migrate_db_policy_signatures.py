@@ -1281,10 +1281,17 @@ from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
     production_source_manifest_digest,
 )
 from scripts.db_guard.policy_v2_loader import load_policy_v2  # noqa: E402
+from scripts.migrate_db_policy_signatures import _MSG_V2_INPUT  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATION_CLI = REPO_ROOT / "scripts" / "migrate_db_policy_signatures.py"
 ACTIVE_POLICY = REPO_ROOT / "config" / "guards" / "db_ownership_policy.yml"
+# Post-activation (GR-07 wave 2): the DEFAULT migration input is the ARCHIVED
+# legacy v1 document; the active ``db_ownership_policy.yml`` is the v2
+# activation output and can never be migration input again.
+LEGACY_POLICY = (
+    REPO_ROOT / "config" / "guards" / "db_ownership_policy.legacy.yml"
+)
 TRACKED_CANDIDATE = (
     REPO_ROOT
     / "config"
@@ -1422,6 +1429,14 @@ def test_candidate_report_collision_fails(tmp_path):
 
 
 def test_active_policy_overwrite_fails(tmp_path):
+    """Post-activation this exercises the ACTIVE-V2 collision guard.
+
+    The default input is now the ARCHIVED legacy document, so an
+    ``--output`` equal to ``db_ownership_policy.yml`` no longer collides with
+    the INPUT policy; the run must refuse it because the path equals the
+    ACTIVATED v2 policy under the run's repo root (the collision check only
+    fires when ``main`` forwards ``repo_root`` to ``_validate_output_paths``).
+    """
     before = _fingerprint(ACTIVE_POLICY)
     completed = _run_cli("--write-candidate", "--output", str(ACTIVE_POLICY))
     assert completed.returncode == 2
@@ -1495,45 +1510,86 @@ def test_no_fixed_result_totals_enforced(tmp_path):
 
 
 def test_real_run_distribution_pinned_and_reproducible(tmp_path):
-    """Pin the CURRENT post-Slice-5 truth of the real repository run.
+    """Pin the CURRENT post-GR-07-wave-3 truth of the real repository run.
 
     The checked-in tracked candidate
     (``config/guards/db_ownership_policy.signatures.candidate.yml``) is the
-    CURRENT PR-GR-05 artifact, regenerated through ``--generate``; byte
-    equality between a fresh run and the tracked artifacts is pinned by the
+    CURRENT artifact, regenerated through ``--generate``; byte equality
+    between a fresh run and the tracked artifacts is pinned by the
     dedicated regression tests in the tracked-artifact section below.
     Pinned here — re-derived statically from checked-in evidence (the 99
-    legacy entries in ``db_ownership_policy.yml``, the tracked candidate's
-    48 entries, and the ledger's closed-status debt breakdown
-    PARSER_UNCERTAIN=16 + DAO_IDENTITY_UNRESOLVED=10 + CALLABLE_MISSING=8 +
-    PARSER_UNSUPPORTED=11 + CALLABLE_AMBIGUOUS=5 + MUTATION_PAIR_MISSING=1
-    = 51) — and pinned as exact observable CLI numbers:
+    legacy entries in the archived ``db_ownership_policy.legacy.yml``, the
+    tracked candidate's 55 entries, and the ledger's closed-status debt
+    breakdown
+    PARSER_UNCERTAIN=16 + DAO_IDENTITY_UNRESOLVED=14 + CALLABLE_MISSING=8 +
+    PARSER_UNSUPPORTED=0 + CALLABLE_AMBIGUOUS=5 + MUTATION_PAIR_MISSING=1
+    = 44) — and pinned as exact observable CLI numbers:
 
-    * 99 inputs; 51 unresolved indices -> 48 resolving indices;
-    * the ONLY same-key emission groups among RESOLVED rows are
+    * 99 inputs; 44 unresolved indices -> 55 resolving indices.  Versus
+      the pre-project-types-wiring truth (48/51), the GR-07 project-wide
+      type-index wiring resolved ALL 11 former PARSER_UNSUPPORTED rows:
+      7 of them now fully resolve (updateTransferDetails 15-17 and
+      updateTypeAndTransferDetails 18-21 of
+      TransactionLifecycleCoordinator, whose ``TransferDirection``
+      parameters are declared in another production file), while the
+      remaining 4 progress past signature resolution into
+      DAO_IDENTITY_UNRESOLVED debt (10 -> 14) — the ledger stays closed
+      over controlled constants only;
+
+    * keeper-index recount.  Fold semantics: emissions sharing a canonical
+      mutation key fold only when their authorization metadata
+      (barrierMode, owner, linkedIssue) agrees — free-text ``reason``
+      differences fold away — while DISTINCT keys never fold; and
+      authorization filters by ACCESSOR only, so one legacy row emits one
+      resolved row per authorized-accessor mutation its method body
+      performs.  Reading the archived policy entries against the real
+      method bodies gives TWO new fold groups alongside (a)/(b):
+
+      - (c) updateTransferDetails 15-17: the body performs
+        expenseDao.updateTransferDirection +
+        expenseDao.updateTransferAccountName +
+        transactionEventDao.insert.  Rows 15 and 16 both authorize
+        {expenseDao}, so BOTH emit the same two column keys and fold onto
+        the lowest index 15 (identical helper metadata: required=false,
+        no via, @panospao7, MIT-003); row 17 alone authorizes
+        {transactionEventDao} and keeps its event-insert key.
+        Keepers: 15, 17; folded-only: 16; keys gained: 3;
+      - (d) updateTypeAndTransferDetails 18-21: the body performs the
+        THREE expenseDao column updates (updateTransactionType,
+        updateTransferDirection, updateTransferAccountName) plus
+        transactionEventDao.insert.  Rows 18-20 all authorize
+        {expenseDao} -> 3 keys x 3 rows folding onto index 18; row 21
+        keeps the event-insert key.  Keepers: 18, 21; folded-only:
+        19, 20; keys gained: 4;
+
+    * the same-key emission groups among RESOLVED rows are therefore
       (a) indices 40-42 — three scenario-reason variants of
       BudgetRepository.addBudget (each row authorizes budgetDao, so each
-      emits the whole insert trio -> 3 keys x 3 rows) and (b) indices 22-27
+      emits the whole insert trio -> 3 keys x 3 rows), (b) indices 22-27
       — six per-column expenseDao rows of
       TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2 (each emits
-      all six column-update keys -> 6 keys x 6 rows), all sharing
-      barrierMode/owner/linkedIssue.  Same-accessor multi-row methods that
-      stayed UNRESOLVED debt (updateTransferDetails 15-17,
-      updateTypeAndTransferDetails 18-21, bulkUpdateCategory 29-31,
-      deleteExpense 34-35, plus every GroupTransactionCoordinator /
+      all six column-update keys -> 6 keys x 6 rows), and the new groups
+      (c)/(d) above — all sharing barrierMode/owner/linkedIssue within
+      each group.  Same-accessor multi-row methods that remain
+      UNRESOLVED debt (bulkUpdateCategory 29-31, deleteExpense 34-35,
+      plus every GroupTransactionCoordinator /
       GroupLifecycleCoordinator / AiChat / WarrantyExpirationWorker row)
       emit nothing and therefore form no fold groups;
-    * pre-dedupe the run emits 84 resolved rows
-      (3*3 + 6*6 + 39 single-carried keys); Slice 5 folding removes every
-      redundant emission — 3*(3-1) + 6*(6-1) = 36 — leaving EXACTLY 48
-      unique keys.  (The naive 84-9=75 bound miscounts a key carried by n
-      rows as one redundant row instead of n-1.);
+    * pre-dedupe the run emits 99 resolved rows (prior 84 = 3*3 + 6*6 +
+      39 single-carried keys, plus 15 new emissions: group (c) 2+2+1 and
+      group (d) 3+3+3+1); Slice 5 folding removes every redundant
+      emission — prior 3*(3-1) + 6*(6-1) = 36 plus new 2*(2-1) +
+      3*(3-1) = 8, i.e. 44 removed — leaving EXACTLY 55 unique keys.
+      (A naive subtraction miscounts a key carried by n rows as one
+      redundant row instead of n-1.);
     * duplicates=0 and exit 1 (visible debt, candidate writing allowed);
-    * the accounting records partition range(99) into 48 RESOLVED (kept
-      emitters plus folded reason-variant indices) and 51 UNRESOLVED;
-    * the report keeps 41 distinct resolved indexes: all 48 emitting
-      indices minus the 7 folded-only ones (41, 42 from group (a);
-      23-27 from group (b));
+    * the accounting records partition range(99) into 55 RESOLVED (kept
+      emitters plus folded same-key indices) and 44 UNRESOLVED;
+    * the report keeps 45 distinct resolved indexes: the prior 41
+      keepers plus the 4 new keeper indices (15 and 17 from group (c);
+      18 and 21 from group (d)) — i.e. all 55 emitting indices minus
+      the 10 folded-only ones (41, 42 from group (a); 23-27 from group
+      (b); 16 from group (c); 19, 20 from group (d));
     * byte-for-byte reproducibility of a second run.
     """
     out_dir = tmp_path / "dist"
@@ -1556,8 +1612,8 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     payload = json.loads(report.read_text(encoding="utf-8"))
     counts = payload["counts"]
     assert counts["input"] == 99
-    assert counts["resolved"] == 48
-    assert counts["unresolved"] == 51
+    assert counts["resolved"] == 55
+    assert counts["unresolved"] == 44
     assert payload["duplicateMutationKeys"] == []
     document, errors = load_policy_v2(candidate)
     assert errors == []
@@ -1567,12 +1623,13 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     candidate_keys = {
         entry.mutation_key().canonical_key() for entry in document
     }
-    assert len(candidate_keys) == len(document) == 48
+    assert len(candidate_keys) == len(document) == 55
     assert counts["resolved"] == len(document)
-    # Folded reason-variant indices keep NO resolved report row: only the
+    # Folded same-key indices keep NO resolved report row: only the
     # lowest-index keeper of each fold group remains (39 single-carried
-    # keys plus one keeper index for group (a)'s 3 keys and one for group
-    # (b)'s 6 keys -> 41 distinct report indexes).
+    # keys plus one keeper index for group (a)'s 3 keys, one for group
+    # (b)'s 6 keys, two for group (c) — indices 15 and 17 — and two for
+    # group (d) — indices 18 and 21 -> 45 distinct report indexes).
     report_resolved_indexes = {
         row["index"] for row in payload["resolved"]
     }
@@ -1580,7 +1637,7 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
         row["index"] for row in payload["unresolved"]
     }
     assert not (report_resolved_indexes & report_unresolved_indexes)
-    assert len(report_resolved_indexes) == 41
+    assert len(report_resolved_indexes) == 45
     # The accounting records tie EVERY legacy index to exactly one outcome.
     records = payload["accounting"]["records"]
     assert len(records) == 99
@@ -1596,7 +1653,7 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     }
     assert not (resolved_indexes & unresolved_indexes)
     assert resolved_indexes | unresolved_indexes == set(range(99))
-    assert len(resolved_indexes) == 48
+    assert len(resolved_indexes) == 55
     assert report_resolved_indexes <= resolved_indexes
     # Every folded index's RESOLVED record carries the shared key of its
     # keeper's candidate entry.
@@ -1806,6 +1863,57 @@ def test_zero_resolved_policy_exits_1_no_candidate(tmp_path):
     # (a report may still be written).
     assert completed.returncode == 1
     assert not candidate.exists()
+
+
+def test_v2_shaped_policy_input_is_refused(tmp_path):
+    """Post-activation guard: migration is v1 -> v2 ONLY.
+
+    A ``schemaVersion: 2`` document — the activated policy's shape — is
+    refused with the controlled bounded diagnostic BEFORE any analysis or
+    write begins, so the activated authorization truth can never be
+    re-ingested as migration input.
+    """
+    policy = tmp_path / "v2-shaped-policy.yml"
+    policy.write_text(
+        yaml.safe_dump({"schemaVersion": 2, "entries": []}, sort_keys=False),
+        encoding="utf-8",
+    )
+    candidate = tmp_path / "candidate.yml"
+    report = tmp_path / "report.json"
+    completed = _run_cli(
+        "--write-candidate",
+        "--policy",
+        str(policy),
+        "--output",
+        str(candidate),
+        "--report",
+        str(report),
+    )
+    assert completed.returncode == 2
+    # Exactly the fixed bounded diagnostic — never a traceback or payload.
+    assert completed.stderr == _MSG_V2_INPUT + "\n"
+    assert not candidate.exists()
+    assert not report.exists()
+    assert sorted(item.name for item in tmp_path.iterdir()) == [
+        "v2-shaped-policy.yml",
+    ]
+
+
+def test_default_policy_input_is_the_archived_legacy_document(tmp_path):
+    """The default ``--policy`` input is the ARCHIVED legacy v1 document.
+
+    Post-activation the report's policy identifier names
+    ``db_ownership_policy.legacy.yml`` — never the activated v2 document —
+    and the archived batch still carries the historical 99 legacy entries.
+    """
+    report = tmp_path / "default-report.json"
+    completed = _run_cli("--check", "--report", str(report))
+    assert completed.returncode == 1
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["policy"] == (
+        "config/guards/db_ownership_policy.legacy.yml"
+    )
+    assert payload["counts"]["input"] == 99
 
 
 # ── Appended: class-body property + method-local DAO accessors ────────────────
@@ -2325,14 +2433,16 @@ def test_generate_writes_paired_artifacts_from_one_run(tmp_path):
     assert candidate.exists()
     assert accounting.exists()
     payload = json.loads(accounting.read_text(encoding="utf-8"))
-    # Header fields filled from the REAL run.
+    # Header fields filled from the REAL run.  Post-activation the default
+    # input is the ARCHIVED legacy v1 document, so the source identity names
+    # the archive — never the activated v2 policy.
     assert payload["schema"] == "db-policy-migration-accounting"
     assert payload["version"] == 1
     assert payload["sourcePolicyPath"] == (
-        "config/guards/db_ownership_policy.yml"
+        "config/guards/db_ownership_policy.legacy.yml"
     )
     assert payload["sourcePolicySha256"] == hashlib.sha256(
-        ACTIVE_POLICY.read_bytes()
+        LEGACY_POLICY.read_bytes()
     ).hexdigest()
     assert payload["sourceTreeSha"] == production_source_manifest_digest(
         REPO_ROOT
@@ -2389,6 +2499,12 @@ def test_generate_is_byte_deterministic(tmp_path):
 
 
 def test_generate_collision_with_active_policy_writes_nothing(tmp_path):
+    """Both artifact targets colliding with the ACTIVATED v2 policy refuse.
+
+    Post-activation the migration input is the archive, so these collisions
+    are caught by the active-v2 guard in ``_validate_output_paths`` (fired via
+    the ``repo_root`` forwarding from ``main``), before any analysis or write.
+    """
     before = _fingerprint(ACTIVE_POLICY)
     out_dir = tmp_path / "gen"
     out_dir.mkdir()
@@ -2829,3 +2945,92 @@ def test_real_run_coverage_partitions_observed_universe(
     for mutation in observed_set.mutations:
         pair = (mutation.dao_fqcn, mutation.operation)
         assert pair in oracle or pair in kept_pairs
+
+
+# ── Appended (GR-07 hardening step A): project-wide type index wiring ─────────
+#
+# The migration path builds ONE deterministic project type index per batch
+# over the declared production roots and threads it into every callable
+# discovery.  These two-file fixtures pin the wiring end to end on the
+# candidate path: a parameter type declared ONLY in another production file
+# resolves through the index (unique simple name -> package-qualified FQCN),
+# and removing the declaring file returns the very same row to explicit
+# PARSER_UNSUPPORTED debt — the resolution demonstrably came from the index,
+# never from a guess or a tolerant fallback.
+
+CROSS_ENTITY_KT = "app/src/main/java/com/example/ExpenseEntity.kt"
+
+CROSS_ENTITY_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "data class ExpenseEntity(val id: Int)\n"
+)
+
+CROSS_FILE_REPO_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "class Repository {\n"
+    "    fun store(entity: ExpenseEntity) {\n"
+    "        expenseDao.insert(1)\n"
+    "    }\n"
+    "}\n"
+)
+
+
+def test_cross_file_project_type_resolves_in_candidate_path(tmp_path):
+    """Entity declared in file B, consumed by file A's signature: resolves.
+
+    The legacy parameter hint names the simple spelling; the emitted identity
+    is the declaration's own index-resolved package-qualified FQCN.
+    """
+    _write_repo(
+        tmp_path,
+        {
+            DAO_KT: EXPENSE_DAO_SOURCE,
+            CROSS_ENTITY_KT: CROSS_ENTITY_SOURCE,
+            REPO_KT: CROSS_FILE_REPO_SOURCE,
+        },
+    )
+    entries = [
+        _legacy_entry(
+            REPO_KT, "Repository", "store", params=("ExpenseEntity",)
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    entry = _only_entry(result)
+    assert entry.path == REPO_KT
+    assert entry.owner_fqcn == "com.example.Repository"
+    assert entry.kind.value == "function"
+    assert entry.method == "store"
+    assert entry.parameter_types == ("com.example.ExpenseEntity",)
+    assert entry.dao_accessor == "expenseDao"
+    assert entry.dao_fqcn == "com.example.ExpenseDao"
+    assert entry.operation == "insert"
+
+
+def test_candidate_row_without_declaring_file_stays_parser_unsupported(tmp_path):
+    """Negative control proving the positive case resolved THROUGH the index.
+
+    With the declaring file absent, the same callable exists but its own
+    signature cannot resolve exactly, so the row fails closed as exactly one
+    PARSER_UNSUPPORTED debt row — never a guessed resolution.
+    """
+    _write_repo(
+        tmp_path,
+        {DAO_KT: EXPENSE_DAO_SOURCE, REPO_KT: CROSS_FILE_REPO_SOURCE},
+    )
+    entries = [
+        _legacy_entry(
+            REPO_KT, "Repository", "store", params=("ExpenseEntity",)
+        )
+    ]
+    result = migrate_policy(entries, str(tmp_path))
+    assert result.resolved == ()
+    assert len(result.unresolved) == 1
+    row = result.unresolved[0]
+    assert row.status == STATUS_PARSER_UNSUPPORTED
+    assert STATUS_PARSER_UNSUPPORTED == "PARSER_UNSUPPORTED"
+    assert row.detail == ""
+    assert row.index == 0
+    assert row.legacy_class == "Repository"
+    assert row.legacy_method == "store"
