@@ -1680,9 +1680,11 @@ class Fixture {
 
 def test_builtin_set_closure_pins_evidenced_trio():
     """The builtin set stays CLOSED: GR-07 step B appended exactly the three
-    evidenced kotlin.stdlib names to the frozen pre-existing set.  Any further
-    addition must repeat the evidence probe first and extend this pin (and the
-    documented append-point comment) deliberately."""
+    evidenced kotlin.stdlib names to the frozen pre-existing set, and GR-07
+    step C appended exactly six further names backed by the 2026-08-26
+    activated-scan residual probe (probe_sites_typefail.json).  Any further
+    addition must repeat the evidence probe first and extend this pin (and
+    the documented append-point comment) deliberately."""
     assert parser._BUILTINS == frozenset({
         # Frozen pre-step-B set.
         "Any", "Nothing", "Unit", "String", "Char", "Boolean", "Byte", "Short",
@@ -1693,4 +1695,341 @@ def test_builtin_set_closure_pins_evidenced_trio():
         "Triple",
         # GR-07 step B append point -- evidenced kotlin.stdlib types only.
         "Throwable", "Exception", "MutableList",
+        # GR-07 step C append point -- second evidence probe, 2026-08-26:
+        # default-imported kotlin.collections / kotlin.text types and
+        # java.util wildcard-import members with no source-visible
+        # declaration to resolve through.
+        "MutableSet", "MutableMap", "Appendable", "Regex", "Date", "Calendar",
     })
+
+
+# ------------------------------------------- GR-07 residual: owner-walk repairs
+#
+# Two production-tree failures were traced to the owner parser: (1) a ``->``
+# arrow of a function-typed header parameter was read as a closing angle
+# bracket, failing the whole owner walk with MALFORMED_SOURCE and poisoning
+# every declaration in the file; (2) interfaces were not owners at all, so a
+# bodyless class header before an interface swallowed the interface's body
+# brace and its members were undiscoverable.
+
+
+def test_owner_body_skips_function_type_arrow_in_class_header():
+    source = """package example
+class Formatter(private val resolve: (String) -> String) {
+    fun build(value: Int): String { return "" }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    assert [(o.owner, o.status) for o in owners] == [
+        ("example.Formatter", "RESOLVED_EXACTLY"),
+    ]
+    declarations = parser.find_callable_declarations(source, owners[0])
+    assert [d.signature.function_name for d in declarations] == ["build"]
+
+
+def test_owner_body_multiline_header_arrow_and_secondary_constructors():
+    source = """package example
+class Formatter private constructor(
+    private val resolve: (UiText) -> String
+) {
+    constructor() : this(resolve = { text -> text.asString() })
+
+    fun build(value: Int): String { return "" }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    assert [(o.owner, o.status) for o in owners] == [
+        ("example.Formatter", "RESOLVED_EXACTLY"),
+    ]
+
+
+def test_interface_is_an_owner_with_qualified_members():
+    source = """package example
+interface EmailParser {
+    fun canParse(sender: String): Boolean
+}
+class Impl : EmailParser {
+    override fun canParse(sender: String): Boolean { return false }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    assert [(o.owner, o.name, o.status) for o in owners] == [
+        ("example.EmailParser", "EmailParser", "RESOLVED_EXACTLY"),
+        ("example.Impl", "Impl", "RESOLVED_EXACTLY"),
+    ]
+    declarations = parser.find_callable_declarations(source, owners[0])
+    assert [(d.signature.function_name, d.signature.parameter_types)
+            for d in declarations] == [
+        ("canParse", ("String",)),
+    ]
+
+
+def test_bodyless_class_header_does_not_swallow_following_interface_body():
+    source = """package example
+data class Item(val id: Int)
+interface Dao {
+    fun fetch(id: Long): Item
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    assert [(o.owner, o.name, o.body_start < o.body_end) for o in owners] == [
+        ("example.Item", "Item", False),
+        ("example.Dao", "Dao", True),
+    ]
+    declarations = parser.find_callable_declarations(source, owners[1])
+    assert [d.signature.function_name for d in declarations] == ["fetch"]
+
+
+# ── GR-07 hardening step C: residual TYPE_UNRESOLVED/BAD_TYPE families ───────
+#
+# Evidence: build/guard-debug/gr07/probe_sites_typefail.json (2026-08-26
+# activated-scan reproduction of every retained S2b symbol-construction
+# failure).  Each rule below resolves an evidenced family while keeping the
+# closed world: every newly accepted spelling still participates verbatim in
+# downstream exact signature comparisons, and every non-evidenced unknown
+# name keeps failing closed as TYPE_UNRESOLVED.
+
+
+def _resolve_in(source: str, owner_scope: str, typ: str, index=None) -> str:
+    """Resolve one type text against one file's environment (test helper)."""
+    masked = parser.mask_kotlin_source(source)
+    environment = parser._type_environment(masked, owner_scope, index)
+    return parser._resolve_type(typ, environment)
+
+
+def _expect_type_unresolved(source: str, owner_scope: str, typ: str, index=None) -> None:
+    try:
+        _resolve_in(source, owner_scope, typ, index)
+    except parser.ParserError as error:
+        assert error.code == "TYPE_UNRESOLVED"
+    else:
+        raise AssertionError("expected ParserError(TYPE_UNRESOLVED)")
+
+
+def test_owner_walk_tolerates_comparison_operator_in_constructor_defaults():
+    """A ``>`` comparison inside a constructor default value is an operator,
+    not an angle closer.  The real ExportTransaction.kt poisoned its whole
+    file through this shape and silently dropped it from the project index."""
+    source = """package com.example.export
+class ExportTransaction(
+    val id: String,
+    val rateUsed: Double? = if (rate > 0.0) rate else null,
+) {
+    val isDiscounted: Boolean get() = rateUsed != null
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    assert [(o.owner, o.status) for o in owners] == [
+        ("com.example.export.ExportTransaction", "RESOLVED_EXACTLY"),
+    ]
+    assert parser.project_type_declarations(source) == (
+        "com.example.export.ExportTransaction",
+    )
+
+
+def test_callable_discovery_tolerates_comparison_gt_in_fun_default_args():
+    source = """package example
+class Clamp {
+    fun clamp(value: Int = if (raw > upper) upper else raw): Int { return value }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    declarations = parser.find_callable_declarations(source, owners[0])
+    assert [d.signature.function_name for d in declarations] == ["clamp"]
+
+
+def test_step_c_builtin_extensions_resolve():
+    source = "package example\nclass Holder\n"
+    for name in ("MutableSet", "MutableMap", "Appendable", "Regex",
+                 "Date", "Calendar"):
+        assert _resolve_in(source, "example.Holder", name) == name
+
+
+def test_dotted_builtin_member_spelling_resolves_as_written():
+    source = """package example
+class Cache {
+    class CacheEntry
+    fun evict(eldest: Map.Entry<String, CacheEntry>) {}
+}
+"""
+    assert _resolve_in(
+        source, "example.Cache", "Map.Entry<String,CacheEntry>",
+    ) == "Map.Entry<String,example.Cache.CacheEntry>"
+
+
+def test_external_platform_fqcns_resolve_concretely():
+    source = """package example
+class Repair {
+    fun open(database: androidx.sqlite.db.SupportSQLiteDatabase) {}
+    fun read(cursor: android.database.Cursor) {}
+    fun save(output: java.io.OutputStream) {}
+}
+"""
+    assert _resolve_in(
+        source, "example.Repair", "androidx.sqlite.db.SupportSQLiteDatabase",
+    ) == "androidx.sqlite.db.SupportSQLiteDatabase"
+    assert _resolve_in(
+        source, "example.Repair", "android.database.Cursor",
+    ) == "android.database.Cursor"
+    assert _resolve_in(
+        source, "example.Repair", "java.io.OutputStream",
+    ) == "java.io.OutputStream"
+
+
+def test_non_platform_unknown_fqcn_still_fails_closed():
+    source = "package example\nclass Repair\n"
+    _expect_type_unresolved(source, "example.Repair", "com.misspelled.Nope")
+
+
+def test_nested_project_types_resolve_through_index_qualified_only():
+    index = parser.ProjectTypeIndex(
+        by_simple_name={"Outer": ("pkg.Outer",)},
+        qualified=frozenset({"pkg.Outer", "pkg.Outer.Mode"}),
+    )
+    user_source = """package other
+import pkg.Outer
+class User {
+    fun handle(mode: Outer.Mode) {}
+}
+"""
+    assert _resolve_in(user_source, "other.User", "Outer.Mode", index) == \
+        "pkg.Outer.Mode"
+    bare_source = """package other
+class User2 {
+    fun handle(mode: Mode) {}
+}
+"""
+    _expect_type_unresolved(bare_source, "other.User2", "Mode", index)
+
+
+def test_same_package_declaration_beats_cross_package_duplicate():
+    index = parser.ProjectTypeIndex(
+        by_simple_name={"Thing": ("a.Thing", "b.Thing")},
+        qualified=frozenset({"a.Thing", "b.Thing"}),
+    )
+    source = "package b\nclass Assembler { fun build(input: Thing) {} }\n"
+    assert _resolve_in(source, "b.Assembler", "Thing", index) == "b.Thing"
+
+
+def test_wildcard_project_import_resolves_confirmed_member():
+    index = parser.ProjectTypeIndex(
+        by_simple_name={"PlannedExpense": ("com.example.model.PlannedExpense",)},
+        qualified=frozenset({"com.example.model.PlannedExpense"}),
+    )
+    source = """package logic
+import com.example.model.*
+class Engine {
+    fun plan(expense: PlannedExpense) {}
+}
+"""
+    assert _resolve_in(source, "logic.Engine", "PlannedExpense", index) == \
+        "com.example.model.PlannedExpense"
+
+
+def test_wildcard_project_import_ambiguity_fails_closed():
+    index = parser.ProjectTypeIndex(
+        by_simple_name={"PlannedExpense": (
+            "com.example.model.PlannedExpense",
+            "com.other.model.PlannedExpense",
+        )},
+        qualified=frozenset({
+            "com.example.model.PlannedExpense",
+            "com.other.model.PlannedExpense",
+        }),
+    )
+    source = """package logic
+import com.example.model.*
+import com.other.model.*
+class Engine {
+    fun plan(expense: PlannedExpense) {}
+}
+"""
+    _expect_type_unresolved(source, "logic.Engine", "PlannedExpense", index)
+
+
+def test_wildcard_import_beats_cross_package_duplicate():
+    """Kotlin import precedence: a wildcard-imported candidate resolves the
+    unqualified reference even when another package declares the same simple
+    name (the real SynthesisEngine ``model.*`` vs entity-duplicate shape)."""
+    index = parser.ProjectTypeIndex(
+        by_simple_name={"PlannedExpense": (
+            "com.example.data.database.entity.PlannedExpense",
+            "com.example.domain.model.PlannedExpense",
+        )},
+        qualified=frozenset({
+            "com.example.data.database.entity.PlannedExpense",
+            "com.example.domain.model.PlannedExpense",
+        }),
+    )
+    source = """package logic
+import com.example.domain.model.*
+class Engine {
+    fun plan(expense: PlannedExpense) {}
+}
+"""
+    assert _resolve_in(source, "logic.Engine", "PlannedExpense", index) == \
+        "com.example.domain.model.PlannedExpense"
+
+
+def test_external_rooted_member_chain_resolves_through_import():
+    """``BitmapFactory.Options`` resolves through the imported head: the
+    canonicalized external spelling is concrete without project-index
+    membership (evidence: BitmapFactory.Options x1 in the residual probe)."""
+    source = """package example
+import android.graphics.BitmapFactory
+class Decoder {
+    fun decode(options: BitmapFactory.Options) {}
+}
+"""
+    assert _resolve_in(
+        source, "example.Decoder", "BitmapFactory.Options",
+    ) == "android.graphics.BitmapFactory.Options"
+
+
+def test_suspend_function_type_parameter_resolves_strict_mode():
+    """``suspend () -> T`` stops dying as BAD_TYPE.  The closed signature
+    grammar has no spelling for the suspend modifier, so the resolved
+    identity is the bare function type -- honest within this closed world,
+    since Room DAO signatures can never carry suspend function-type
+    parameters either (the same grammar governs both sides)."""
+    source = """package example
+class WorkerRunContext
+class Guard<T> {
+    fun <T> runExclusive(block: suspend () -> T): T { return block() }
+    fun guarded(block: suspend (WorkerRunContext) -> T): T { return block() }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    guard = next(o for o in owners if o.owner == "example.Guard")
+    declarations = parser.find_callable_declarations(source, guard)
+    by_name = {d.signature.function_name: d for d in declarations}
+    assert by_name["runExclusive"].signature.parameter_types == ("() -> T",)
+    assert by_name["guarded"].signature.parameter_types == \
+        ("(example.WorkerRunContext) -> T",)
+
+
+def test_generic_type_variables_resolve_in_parameters():
+    source = """package example
+class Repo<T : Any> {
+    fun <R> map(default: R, block: (T) -> R): R { return default }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    declarations = parser.find_callable_declarations(source, owners[0])
+    assert [d.signature.parameter_types for d in declarations] == [
+        ("R", "(T) -> R"),
+    ]
+
+
+def test_generic_variance_and_bounds_do_not_leak_as_variables():
+    """Only the DECLARED variable name is collected; ``in``/``out`` variance
+    prefixes and bound names are not variables themselves."""
+    source = """package example
+class Pipe<in T, out R : SecretBound> {
+    fun pump(value: T): R
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    declarations = parser.find_callable_declarations(source, owners[0])
+    assert [d.signature.parameter_types for d in declarations] == [("T",)]
+    _expect_type_unresolved(source, "example.Pipe", "SecretBound")

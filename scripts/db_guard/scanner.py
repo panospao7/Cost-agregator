@@ -88,15 +88,88 @@ _STRUCTURAL_RECEIVER_TYPES = frozenset({
     "android.database.sqlite.SQLiteDatabase",
     "androidx.sqlite.db.SupportSQLiteDatabase",
 })
+# Simple-name spellings of the same handle types.  A receiver EXPRESSION whose
+# text is one of these names (``SQLiteDatabase.openDatabase(...)`` or the
+# fully qualified ``android.database.sqlite.SQLiteDatabase.openDatabase(...)``)
+# addresses the TYPE (static factory), not a variable, so no lexical binding
+# can exist for it; the last segment identifies the handle exactly.
+_STRUCTURAL_TYPE_SIMPLE_NAMES = frozenset({
+    "SQLiteDatabase", "SupportSQLiteDatabase", "RoomDatabase",
+})
+# Closed androidx Room/SQLite accessor-member surface, keyed by MEMBER name.
+# ``RoomDatabase.getOpenHelper()``/``openHelper`` yields the
+# ``SupportSQLiteOpenHelper`` handle and ``SupportSQLiteOpenHelper``
+# exposes ``writableDatabase``/``readableDatabase`` handles.  Member-name
+# keys are deliberate: production subclasses (``AppDatabase : RoomDatabase``)
+# inherit the accessors, and tracking a class hierarchy is out of scope for
+# this fail-closed scanner.  The map only ever feeds the CLOSED structural
+# receiver checks below -- never DAO authorization.
+_STRUCTURAL_MEMBER_TYPES = {
+    "openHelper": "SupportSQLiteOpenHelper",
+    "writableDatabase": "SupportSQLiteDatabase",
+    "readableDatabase": "SupportSQLiteDatabase",
+}
+# Read-only cursor APIs of the raw database handles.  D4 authorizes MUTATIONS;
+# these operations return a Cursor and mutate nothing, so once the receiver is
+# VERIFIED to be a structural database handle they are classified reads and
+# fall outside the mutation-authorization contract (Room-layer @RawQuery reads
+# remain policed by the raw-query policy in the inventory).  Any operation
+# outside this closed set on a structural handle keeps its honest
+# DB_STRUCTURAL_SCOPE_UNSUPPORTED diagnostic.
+_STRUCTURAL_READ_OPERATIONS = frozenset({"query", "rawQuery"})
 # Calls are found from the dot and their receiver is parsed backwards.  A
 # suffix regex is unsafe here: it turns ``context.expenseDao`` and
 # ``holder(expenseDao)`` into the apparently bare ``expenseDao``.
 _METHOD_CALL = re.compile(r"\.(?P<safe>\?)?\s*(?P<method>[A-Za-z_]\w*)\s*\(")
-_TYPE = re.compile(r"\b(?:val|var|private|protected|internal|public|lateinit\s+var)\s+(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
-_PARAM = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)")
+# Type text keeps the FULL source spelling: generic arguments (bounded two
+# nesting levels) and trailing nullability.  Dropping ``List<Expense>`` to
+# ``List`` or ``Long?`` to ``Long`` made call-site argument types never equal
+# to the DAO declaration's parameter spelling and failed every such target
+# with a false DB_CALL_TARGET_AMBIGUOUS.
+_TYPE_TEXT = (
+    r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*"
+    r"(?:<(?:[^<>]|<[^<>]*>)*>)?"
+    r"(?:\?)?"
+)
+_TYPE = re.compile(r"\b(?:val|var|private|protected|internal|public|lateinit\s+var)\s+(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>" + _TYPE_TEXT + r")")
+_PARAM = re.compile(r"\b(?P<name>[A-Za-z_]\w*)\s*:\s*(?P<type>" + _TYPE_TEXT + r")")
 _DECL_PARAM = re.compile(r"(?:fun\s+)?[A-Za-z_]\w*\s*\((?P<body>[^)]*)\)")
 _ACCESSOR = re.compile(r"\b(?P<kind>get|set)\s*\((?P<params>[^)]*)\)")
 _PROPERTY_STRUCTURAL_ACCESS = re.compile(r"\.(?P<property>writableDatabase)\b")
+# Local declarations WITHOUT an explicit type annotation.  Their type is
+# inferred only through the closed shapes below (direct constructor/factory
+# call, or a resolvable androidx member chain); anything else stays
+# unresolved and keeps failing closed exactly as before.
+_UNTYPED_VAL = re.compile(r"\bval\s+(?P<name>[A-Za-z_]\w*)\s*=\s*(?P<init>[^\n]+)")
+_FACTORY_INIT = re.compile(r"(?P<type>[A-Z][A-Za-z0-9_]*)\s*(?:\(|\.\s*[A-Za-z_]\w*\s*\()")
+_DOTTED_INIT = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
+# The closed kotlin.use dispatch: ``handle.use { it.<op>(...) }`` binds the
+# lambda's implicit single parameter to the receiver's type.
+_USE_LAMBDA = re.compile(r"\.\s*(?P<dispatch>use)\s*\{")
+
+
+def _accessor_declaration_matches(span_masked: str) -> list[re.Match]:
+    """Accessor DECLARATIONS inside one property's masked span.
+
+    A property span contains both its ``get(...)``/``set(...)`` accessors and
+    any initializer CALLS spelled ``.get(``/``.set(`` (every
+    ``AtomicInteger.get()``).  Counting calls as accessors made single-getter
+    properties look like duplicated accessors and shifted the accessor offset
+    selection in ``_property_symbol_at``.  Two closed structural rules
+    separate them: an accessor declaration is never preceded by ``.``/``?``
+    (member/safe-call), and its parameter list is always followed by ``=`` or
+    ``{`` (the accessor body).
+    """
+    matches: list[re.Match] = []
+    for match in _ACCESSOR.finditer(span_masked):
+        prefix = span_masked[:match.start()].rstrip()
+        if prefix.endswith(".") or prefix.endswith("?"):
+            continue
+        tail = span_masked[match.end():].lstrip()
+        if not tail.startswith("=") and not tail.startswith("{"):
+            continue
+        matches.append(match)
+    return matches
 
 
 def _load_policy(value: Any) -> tuple[list[dict[str, Any]], bool]:
@@ -195,7 +268,7 @@ def _property_symbol_at(source: str, declaration, offset: int) -> CallableSymbol
     if not name_match:
         raise SignatureError("BAD_NAME")
     name = name_match.group(1)
-    accessors = list(_ACCESSOR.finditer(mask_kotlin_source(text)))
+    accessors = _accessor_declaration_matches(mask_kotlin_source(text))
     selected = None
     for index, accessor in enumerate(accessors):
         absolute = begin + accessor.start()
@@ -240,21 +313,41 @@ def _receiver_expression(masked: str, dot_start: int) -> tuple[str, bool]:
         while i >= 0 and masked[i].isspace():
             i -= 1
     depth = {')': 0, ']': 0, '}': 0}
-    closing = {')': '(', ']': '[', '}': '{'}
+    # Walking LEFT, a closer defers to its opener further left; an opener with
+    # no pending closer is the expression's left boundary.  The map below is
+    # keyed by the OPENING character for exactly that check.  Keying it by the
+    # closing character (as an earlier revision did) made both branches test
+    # closers only, so an unmatched ``(`` was skipped instead of stopping the
+    # walk and ``if (!file.exists()`` parsed as the receiver expression.
+    openers = {'(': ')', '[': ']', '{': '}'}
     while i >= 0:
         char = masked[i]
         if char in depth:
             depth[char] += 1
-        elif char in closing:
-            if depth[char] > 0:
-                depth[char] -= 1
+        elif char in openers:
+            closer = openers[char]
+            if depth[closer] > 0:
+                depth[closer] -= 1
             else:
                 break
-        elif not any(depth.values()) and char in ';={}\n':
+        elif not any(depth.values()) and char in ';=\n':
             break
         i -= 1
     expression = masked[i + 1:end].strip()
-    return expression, (not safe and bool(re.fullmatch(r"[A-Za-z_]\w*", expression)))
+    # Prefix tokens that bind to the CALL RESULT or to the enclosing
+    # STATEMENT -- never to the receiver itself: unary operators
+    # (``!dao.probe(x)``), the elvis operator (``b ?: dao.probe(x)``), and
+    # the statement keywords ``return``/``else`` (``return dao.probe(x)``).
+    # Strip the closed set repeatedly, then classify bareness on what
+    # remains; every other expression shape stays non-bare (fail closed).
+    stripped = expression
+    prefix = re.compile(r"^(?:[!+\-]|\?:|return\b|else\b)\s*")
+    while True:
+        candidate = prefix.sub("", stripped)
+        if candidate == stripped:
+            break
+        stripped = candidate
+    return stripped, (not safe and bool(re.fullmatch(r"[A-Za-z_]\w*", stripped)))
 
 
 def _structural_match(entries, path: str, owner: str, method: str, operation: str) -> bool:
@@ -277,6 +370,80 @@ def _is_structural_receiver(receiver_type: str | None) -> bool:
     return receiver_type in _STRUCTURAL_RECEIVER_TYPES or receiver_type.rsplit(".", 1)[-1] in {
         "SQLiteDatabase", "SupportSQLiteDatabase", "RoomDatabase",
     }
+
+
+def _static_structural_receiver(
+    receiver: str, receiver_types: dict[str, str | None]
+) -> bool:
+    """True when the receiver TEXT is a type spelling, not a variable.
+
+    ``SQLiteDatabase.openDatabase(...)`` and its fully qualified spelling
+    address the companion/type object; no lexical binding can exist for a
+    capitalized type path whose first segment is not a visible name.  A
+    receiver that IS a lexically resolved name is never treated as a type
+    spelling, so a variable shadowing a type name keeps its variable
+    resolution.
+    """
+    if receiver in receiver_types:
+        return False
+    return receiver.rsplit(".", 1)[-1] in _STRUCTURAL_TYPE_SIMPLE_NAMES
+
+
+def _chain_structural_access_type(
+    receiver: str, operation: str, receiver_types: dict[str, str | None]
+) -> str | None:
+    """Resolve ``root.member...operation`` over the closed androidx surface.
+
+    The root segment must resolve to a lexical type; every further segment
+    (including the terminal operation) must be a member of the closed
+    ``_STRUCTURAL_MEMBER_TYPES`` accessor map.  Any unknown link returns None
+    (fail closed) -- the chain is never guessed.
+    """
+    segments = receiver.split(".") + [operation]
+    current = receiver_types.get(segments[0])
+    if not isinstance(current, str):
+        return None
+    for segment in segments[1:]:
+        current = _STRUCTURAL_MEMBER_TYPES.get(segment)
+        if current is None:
+            return None
+    return current
+
+
+def _structural_access_supported(
+    receiver: str,
+    receiver_is_bare: bool,
+    receiver_type: str | None,
+    operation: str,
+    receiver_types: dict[str, str | None],
+) -> bool:
+    """True when THIS access's receiver is a verified database handle.
+
+    Supported forms: a variable/parameter resolved to a structural handle
+    type; a ``SupportSQLiteOpenHelper``-typed receiver accessing
+    ``writableDatabase``/``readableDatabase``; a TYPE-spelled receiver
+    (static factory such as ``SQLiteDatabase.openDatabase``); and a dotted
+    chain fully resolved through the closed androidx member map.
+    """
+    if receiver_is_bare:
+        if _is_structural_receiver(receiver_type):
+            return True
+        # A bare receiver whose TEXT is a structural handle type name is a
+        # static/companion access (``SQLiteDatabase.openDatabase``): no
+        # variable of that name can exist in scope for these closed names.
+        if receiver in _STRUCTURAL_TYPE_SIMPLE_NAMES:
+            return True
+        return (
+            operation in ("writableDatabase", "readableDatabase")
+            and isinstance(receiver_type, str)
+            and receiver_type.rsplit(".", 1)[-1] == "SupportSQLiteOpenHelper"
+        )
+    if _static_structural_receiver(receiver, receiver_types):
+        return True
+    if "." in receiver:
+        chain_type = _chain_structural_access_type(receiver, operation, receiver_types)
+        return chain_type is not None and _is_structural_receiver(chain_type)
+    return False
 
 
 def _argument_types(masked: str, opening: int, receiver_types: dict[str, str]) -> tuple[str, ...] | None:
@@ -312,6 +479,20 @@ def _argument_types(masked: str, opening: int, receiver_types: dict[str, str]) -
         else:
             return None
     return tuple(result)
+
+
+def _normalized_type_tuple(types: tuple[str, ...]) -> tuple[str, ...] | None:
+    """Grammar-normalized parameter tuple, or None when unnormalizable.
+
+    Both sides of the overload comparison go through the same normalizer, so
+    equivalent spellings (``Long?`` vs ``Long ?``, generic argument spacing)
+    compare equal while any grammar failure keeps the raw tuple out of the
+    comparison instead of crashing the scan.
+    """
+    try:
+        return tuple(normalize_type_text(item, allow_vararg=True) for item in types)
+    except SignatureError:
+        return None
 
 
 def _brace_scopes(masked: str) -> tuple[tuple[int, int], ...]:
@@ -389,27 +570,112 @@ def _receiver_types(
 
     # Locals are deliberately limited to the current callable body and are
     # visible only after their declaration.  The scope range supplies the
-    # innermost-shadowing rule.
+    # innermost-shadowing rule.  Locals WITHOUT an explicit annotation are
+    # collected too, but their type is only filled through the closed
+    # inference shapes (constructor/factory call or androidx member chain)
+    # after the annotated environment has been resolved.
     body_start = masked.find("{", cstart, cend)
+    untyped_locals: list[tuple[str, str, int, tuple[int, int]]] = []
     if body_start >= 0:
         body_scope = scope_for(body_start + 1, (body_start, cend))
         for match in _TYPE.finditer(source, body_start + 1, cend):
             declaration_scope = scope_for(match.start(), body_scope)
             candidates.append((match.group("name"), match.group("type"),
                                match.start(), declaration_scope))
+        for match in _UNTYPED_VAL.finditer(masked, body_start + 1, cend):
+            # Masked text: initializer string literals are blanked, so literal
+            # content can never look like a constructor/factory shape.  Names
+            # an annotated declaration already defines keep the annotated
+            # spelling; inference below must never widen it.
+            declaration_scope = scope_for(match.start(), body_scope)
+            untyped_locals.append((match.group("name"), match.group("init").strip(),
+                                   match.start(), declaration_scope))
 
-    resolved: dict[str, str | None] = {}
-    by_name: dict[str, list[tuple[str, int, tuple[int, int]]]] = {}
-    for name, typ, declared, scope in candidates:
-        if declared >= use or not (scope[0] <= use <= scope[1]):
+    def finalize(env: list[tuple[str, str, int, tuple[int, int]]]) -> dict[str, str | None]:
+        by_name: dict[str, list[tuple[str, int, tuple[int, int]]]] = {}
+        for name, typ, declared, scope in env:
+            if declared >= use or not (scope[0] <= use <= scope[1]):
+                continue
+            by_name.setdefault(name, []).append((typ, declared, scope))
+        resolved: dict[str, str | None] = {}
+        for name, values in by_name.items():
+            innermost = min(item[2][1] - item[2][0] for item in values)
+            visible = [item for item in values
+                       if item[2][1] - item[2][0] == innermost]
+            types = {item[0] for item in visible}
+            resolved[name] = next(iter(types)) if len(visible) == 1 else None
+        return resolved
+
+    resolved = finalize(candidates)
+
+    # Closed-shape inference for untyped locals: ``val x = Foo(...)`` and
+    # ``val x = Foo.bar(...)`` construct/carry ``Foo``; a pure dotted chain
+    # (``val db = database.openHelper.writableDatabase``) resolves link by
+    # link over the closed androidx member map from its root's resolved type.
+    # Anything else stays unresolved and keeps failing closed.
+    inferred: list[tuple[str, str, int, tuple[int, int]]] = []
+    seen_untyped: set[str] = {name for name, _t, _o, _s in candidates}
+    for name, init, declared, scope in untyped_locals:
+        if name in seen_untyped:
             continue
-        by_name.setdefault(name, []).append((typ, declared, scope))
-    for name, values in by_name.items():
-        innermost = min(item[2][1] - item[2][0] for item in values)
-        visible = [item for item in values
-                   if item[2][1] - item[2][0] == innermost]
-        types = {item[0] for item in visible}
-        resolved[name] = next(iter(types)) if len(visible) == 1 else None
+        inferred_type: str | None = None
+        # GR-07 hardening: the initializer must BEGIN with the constructor /
+        # companion-factory shape (``Foo(...)`` / ``Foo.bar(...)``).  The
+        # previous ``search`` matched mid-identifier substrings because the
+        # pattern has no word boundary: ``operationRunDao.getByCorrelationId(``
+        # yielded ``RunDao``, ``timeProvider.now()`` yielded ``Provider``, and
+        # ``categorizationEngineProvider.get()`` yielded ``EngineProvider``.
+        # Those fabricated bindings flowed into ``_argument_types`` through
+        # the lexical environment and produced wrong-but-confident overload
+        # comparisons (DB_CALL_TARGET_AMBIGUOUS with argtypes like ``RunDao``
+        # against a ``Long`` signature).  Anchoring at position 0 keeps every
+        # legitimate leading-shape inference and turns mid-expression roots
+        # into honest unresolved locals (fail closed).
+        factory = _FACTORY_INIT.match(init)
+        if factory:
+            inferred_type = factory.group("type")
+        elif _DOTTED_INIT.fullmatch(init):
+            root_type = resolved.get(init.split(".", 1)[0])
+            if isinstance(root_type, str):
+                inferred_type = root_type
+                for segment in init.split(".")[1:]:
+                    inferred_type = _STRUCTURAL_MEMBER_TYPES.get(segment)
+                    if inferred_type is None:
+                        break
+        if inferred_type is not None:
+            seen_untyped.add(name)
+            inferred.append((name, inferred_type, declared, scope))
+    if inferred:
+        resolved = finalize(candidates + inferred)
+
+    # ``handle.use { it.op(...) }`` binds the lambda's implicit single
+    # parameter to the receiver's type.  Only the closed ``use`` dispatch is
+    # modelled; the receiver must resolve through the environment above.
+    if body_start >= 0:
+        bindings: list[tuple[str, str, int, tuple[int, int]]] = []
+        for match in _USE_LAMBDA.finditer(masked, body_start, cend):
+            open_brace = match.end() - 1
+            lambda_scope = scope_for(open_brace + 1, (open_brace, cend))
+            if lambda_scope[0] < open_brace:
+                continue
+            receiver_text, receiver_is_bare = _receiver_expression(masked, match.start())
+            receiver_kind: str | None = None
+            if receiver_is_bare:
+                candidate_type = resolved.get(receiver_text)
+                receiver_kind = candidate_type if isinstance(candidate_type, str) else None
+            elif "." in receiver_text:
+                first, rest = receiver_text.split(".", 1)
+                root_type = resolved.get(first)
+                if isinstance(root_type, str):
+                    receiver_kind = root_type
+                    for segment in rest.split("."):
+                        receiver_kind = _STRUCTURAL_MEMBER_TYPES.get(segment)
+                        if receiver_kind is None:
+                            break
+            if receiver_kind is not None:
+                bindings.append(("it", receiver_kind, open_brace + 1, lambda_scope))
+        if bindings:
+            resolved = finalize(candidates + inferred + bindings)
     return resolved
 
 
@@ -475,6 +741,11 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         diagnostics.append(GuardDiagnostic("DB_POLICY_SOURCE_EVIDENCE_INVALID"))
 
     dao_simple, dao_methods = _dao_maps(inventory)
+    # Exact mutator identity strings, for the mutation-only arity gate: an
+    # unresolvable argument list is fail-closed debt ONLY when the call
+    # could reach an authorization decision (a mutator); read-only targets
+    # end at the mutator gate either way.
+    mutator_methods = {item.method for item in inventory.mutators}
     findings: list[GuardFinding] = []
     # Read each file once; declaration ranges are the authoritative scan
     # units.  Paths map back through the SAME declared-root anchors the
@@ -519,6 +790,13 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         policy_by_path_operation.setdefault(
             (item.path, item.operation), []
         ).append(item)
+    # Per-scan discovery memo (deterministic pure functions of the file
+    # text): owners per path, callables per (path, owner-identity).  A stored
+    # exception instance is re-raised for every declaration of the same
+    # poisoned owner so the controlled diagnostic path stays identical while
+    # the duplicated parse work disappears.
+    owner_cache: dict[str, Any] = {}
+    callable_cache: dict[tuple[str, str], Any] = {}
     for declaration in declarations.helper_ranges:
         source = sources.get(declaration.path)
         if source is None:
@@ -543,11 +821,14 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             # ambiguous (which ``set`` would a policy authorize?): fail
             # closed with the controlled unresolved-signature diagnostic
             # instead of letting the first accessor silently stand in for
-            # the whole property's identity.
+            # the whole property's identity.  Initializer CALLS spelled
+            # ``.get(``/``.set(`` are not accessors -- see
+            # ``_accessor_declaration_matches``.
             accessor_span = masked[_line_start(source, declaration.start_line):
                                    _line_end(source, declaration.end_line)]
             accessor_kinds = [
-                item.group("kind") for item in _ACCESSOR.finditer(accessor_span)
+                item.group("kind")
+                for item in _accessor_declaration_matches(accessor_span)
             ]
             if len(accessor_kinds) != len(set(accessor_kinds)):
                 diagnostics.append(GuardDiagnostic(
@@ -555,12 +836,36 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 ))
                 continue
         try:
-            owners = find_owner_declarations(source)
+            # Discovery is deterministic per (file, owner), so memoize it for
+            # the scan: every declaration range of one owner re-ran the full
+            # owner/callable parse, and one poisoned owner re-emitted the same
+            # failure once per declaration (thousands of duplicate emissions).
+            owners = owner_cache.get(declaration.path)
+            if owners is None:
+                try:
+                    owners = find_owner_declarations(source)
+                except (ParserError, SignatureError) as error:
+                    owners = error
+                owner_cache[declaration.path] = owners
+            if isinstance(owners, BaseException):
+                raise owners
             owner = next((item for item in owners if item.owner == declaration.owner_fqcn), None)
-            callables = find_callable_declarations(
-                source, owner or declaration.owner_fqcn,
-                project_types=project_types,
+            discovery_key = (
+                declaration.path,
+                owner.owner if owner is not None else declaration.owner_fqcn,
             )
+            callables = callable_cache.get(discovery_key)
+            if callables is None:
+                try:
+                    callables = find_callable_declarations(
+                        source, owner or declaration.owner_fqcn,
+                        project_types=project_types,
+                    )
+                except (ParserError, SignatureError) as error:
+                    callables = error
+                callable_cache[discovery_key] = callables
+            if isinstance(callables, BaseException):
+                raise callables
             callable_item = next((item for item in callables if item.start_offset <= start <= item.end_offset), None)
             if declaration.kind == "function" and callable_item is None:
                 raise ParserError()
@@ -645,16 +950,23 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                     ))
                     continue
             is_structural = operation in _STRUCTURAL
-            if is_structural and (
-                not receiver_is_bare or not _is_structural_receiver(receiver_type)
-            ):
+            receiver_supported = _structural_access_supported(
+                receiver, receiver_is_bare, receiver_type, operation, receiver_types,
+            )
+            if is_structural and not receiver_supported:
                 diagnostics.append(_line_diagnostic(
                     "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
                     _line(source, call.start()),
                 ))
                 continue
-            if (receiver_is_bare and _is_structural_receiver(receiver_type)
+            # A VERIFIED structural handle used for an operation that is
+            # neither a supported structural operation, a classified
+            # read-only cursor API, nor any known DAO operation is an
+            # unsupported database access shape: honest controlled
+            # diagnostic, never a guess.
+            if (receiver_supported
                     and operation not in _STRUCTURAL
+                    and operation not in _STRUCTURAL_READ_OPERATIONS
                     and not any(key[1] == operation for key in dao_methods)):
                 diagnostics.append(_line_diagnostic(
                     "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
@@ -689,16 +1001,68 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             candidates = dao_methods.get((dao, operation), [])
             argument_types = _argument_types(masked, call.end() - 1, receiver_types)
             if argument_types is None:
-                diagnostics.append(GuardDiagnostic(
-                    "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
-                ))
+                # An unresolvable argument list is honest fail-closed debt
+                # for MUTATIONS: without the argument types the exact
+                # overload -- and therefore the authorized identity -- can
+                # never be confirmed.  A READ-only candidate set however
+                # ends at the mutator gate below without any authorization
+                # decision, so its target identity cannot affect the
+                # report; skipping it here records no finding and no
+                # diagnostic, exactly as an resolved-but-unmatched read
+                # already did.
+                if any(
+                    f"{item.dao.canonical_path}::{dao}#{operation}"
+                    f"({', '.join(item.parameters)})" in mutator_methods
+                    for item in candidates
+                ):
+                    diagnostics.append(GuardDiagnostic(
+                        "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                    ))
+                    continue
                 continue
-            candidates = [item for item in candidates
-                          if tuple(item.parameters) == argument_types]
-            if len(candidates) != 1:
+            # Overload disambiguation by NORMALIZED ordered-parameter
+            # equality on BOTH sides: source spellings may differ in
+            # whitespace around generics/nullability while naming the same
+            # overload.  A nullability-insensitive second pass is provably
+            # safe for target SELECTION -- Kotlin forbids same-erasure
+            # overloads differing only in ``?`` -- so ``Item?`` at the call
+            # site still selects the single ``insert(Item)`` declaration
+            # (and any later policy mismatch stays a visible finding).  A
+            # different type NAME never matches: the ambiguity stays an
+            # honest DB_CALL_TARGET_AMBIGUOUS.
+            normalized_arguments = _normalized_type_tuple(argument_types)
+            matching: list[Any] = []
+            for item in candidates:
+                if normalized_arguments is None:
+                    if tuple(item.parameters) == argument_types:
+                        matching.append(item)
+                    continue
+                normalized_item = _normalized_type_tuple(item.parameters)
+                if normalized_item is None:
+                    if tuple(item.parameters) == argument_types:
+                        matching.append(item)
+                    continue
+                if normalized_item == normalized_arguments:
+                    matching.append(item)
+            if not matching and normalized_arguments is not None:
+                insensitive_arguments = tuple(
+                    item[:-1] if item.endswith("?") else item
+                    for item in normalized_arguments
+                )
+                for item in candidates:
+                    normalized_item = _normalized_type_tuple(item.parameters)
+                    if normalized_item is None:
+                        continue
+                    insensitive_item = tuple(
+                        part[:-1] if part.endswith("?") else part
+                        for part in normalized_item
+                    )
+                    if insensitive_item == insensitive_arguments:
+                        matching.append(item)
+            if len(matching) != 1:
                 diagnostics.append(GuardDiagnostic("DB_CALL_TARGET_AMBIGUOUS", path=declaration.path))
                 continue
-            method = candidates[0]
+            method = matching[0]
             mutator = next((item for item in inventory.mutators if item.method == f"{method.dao.canonical_path}::{dao}#{operation}({', '.join(method.parameters)})"), None)
             if mutator is None:
                 continue
@@ -817,7 +1181,16 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 use_offset=match.start(),
             )
             receiver_type = receiver_types_at_access.get(receiver) if receiver_is_bare else None
-            if not receiver_is_bare or not _is_structural_receiver(receiver_type):
+            # Same verified-handle contract as the method-call structural
+            # gate: a bare variable of a structural handle type, an
+            # openHelper-typed receiver, a TYPE-spelled static path, or a
+            # dotted chain fully resolved over the closed androidx member
+            # map.  Anything else stays an honest unsupported-shape
+            # diagnostic.
+            if not _structural_access_supported(
+                receiver, receiver_is_bare, receiver_type, operation,
+                receiver_types_at_access,
+            ):
                 diagnostics.append(_line_diagnostic(
                     "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
                     _line(source, match.start()),

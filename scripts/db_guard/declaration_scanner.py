@@ -21,6 +21,7 @@ from ..kotlin_callable_parser import (
     ParserError,
     ProjectTypeIndex,
     mask_kotlin_source,
+    project_nested_type_declarations,
     project_type_declarations,
 )
 from .dao_accessors import AccessorError, find_dao_declarations
@@ -774,7 +775,11 @@ def build_project_type_index(pairs: Any) -> ProjectTypeIndex:
     declaration scan walks, reused here so the index never invents a second
     root topology.  Every ``.kt`` file below the declared roots contributes
     its top-level class/object/interface (plus enum/annotation class)
-    simple names qualified by their package declaration.
+    simple names qualified by their package declaration.  GR-07 hardening
+    step C additionally contributes NESTED declarations as fully qualified
+    ``Outer.Inner`` spellings in ``qualified`` only (never in
+    ``by_simple_name``), so exact dotted references resolve while bare
+    nested simple names stay out of scope.
 
     Deterministic: walk order is the declared manifest order with sorted
     directories/files, and both index members are sorted/frozen, so the
@@ -803,6 +808,21 @@ def build_project_type_index(pairs: Any) -> ProjectTypeIndex:
             for fqcn in declarations:
                 qualified.add(fqcn)
                 by_simple.setdefault(fqcn.rsplit(".", 1)[-1], set()).add(fqcn)
+            # GR-07 hardening step C: NESTED declarations (``Outer.Inner``)
+            # join the qualified set so an exact dotted reference resolves
+            # across files.  They deliberately stay OUT of ``by_simple``:
+            # Kotlin requires an import for a bare nested simple name from
+            # another file's owner, and admitting it would widen the closed
+            # world instead of resolving real spellings.
+            try:
+                nested = project_nested_type_declarations(text)
+            except (ParserError, ValueError):
+                # Same masking/structure failure family as above; the
+                # top-level pass already skipped or admitted this file on
+                # the identical text, so this branch is unreachable in
+                # practice and can only keep entries absent (fail closed).
+                nested = ()
+            qualified.update(nested)
     return ProjectTypeIndex(
         by_simple_name={
             name: tuple(sorted(fqcns))

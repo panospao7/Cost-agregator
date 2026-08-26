@@ -2685,9 +2685,12 @@ def test_cross_file_project_type_resolves_evidence_end_to_end(
         "guard": "db_access",
         "findings": [],
         "diagnostics": [],
-        # The entity file contributes no helper range or DAO, so every
-        # scanner/inventory counter matches the single-file fixture defaults.
-        "statistics": _clean_statistics(),
+        # The entity file registers exactly ONE helper range -- its own
+        # top-level class scope (a bodyless data class has no executable
+        # members, and the D4 scanner skips class-kind ranges) -- so
+        # files_scanned counts both production files while every other
+        # counter matches the single-file fixture defaults.
+        "statistics": dict(_clean_statistics(), files_scanned=2),
     })
 
 

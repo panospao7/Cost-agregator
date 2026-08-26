@@ -2471,6 +2471,10 @@ def test_build_project_type_index_maps_simple_names_to_package_fqcns(tmp_path):
 
 
 def test_build_project_type_index_excludes_nested_declarations(tmp_path):
+    """GR-07 hardening step C: nested declarations join ``qualified`` (so an
+    exact dotted ``Outer.Inner`` reference resolves across files) but stay out
+    of ``by_simple_name`` (a bare nested simple name from another file remains
+    out of scope, exactly as Kotlin requires without an import)."""
     _write(tmp_path, "app/src/main/java/com/example/Nested.kt",
            "package com.example\nclass Outer {\n    class Inner\n}\n")
 
@@ -2479,7 +2483,10 @@ def test_build_project_type_index_excludes_nested_declarations(tmp_path):
     )
 
     assert index.by_simple_name == {"Outer": ("com.example.Outer",)}
-    assert "com.example.Outer.Inner" not in index.qualified
+    assert "com.example.Outer.Inner" in index.qualified
+    assert index.qualified == frozenset({
+        "com.example.Outer", "com.example.Outer.Inner",
+    })
 
 
 def test_build_project_type_index_preserves_cross_package_ambiguity(tmp_path):

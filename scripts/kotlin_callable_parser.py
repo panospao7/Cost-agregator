@@ -16,6 +16,7 @@ __all__ = [
     "canonical_source_path", "parse_kotlin_file", "find_owner_declarations",
     "find_callable_declarations", "resolve_callable",
     "ProjectTypeIndex", "project_type_declarations",
+    "project_nested_type_declarations",
 ]
 
 MAX_SOURCE = 2_000_000
@@ -273,7 +274,13 @@ class CallableDeclaration:
 
 
 _ID = r"[A-Za-z_][A-Za-z0-9_]*"
-_OWNER = re.compile(r"\b(class|object)\s+(%s)" % _ID)
+# Interfaces are owners too: every Kotlin declaration container (class,
+# object, interface) qualifies its members.  The D4 declaration scan inventories
+# ``interface`` members with interface-qualified owners; an owner parser that
+# only knew class/object left those members ownerless, so their containing
+# callables could never be matched (and a bodyless class header before an
+# interface swallowed the interface's body brace, hiding its members entirely).
+_OWNER = re.compile(r"\b(class|object|interface)\s+(%s)" % _ID)
 _FUN = re.compile(r"\bfun\b")
 _MODIFIERS = re.compile(r"(?:public|private|protected|internal|expect|actual|inline|infix|operator|tailrec|override|final|open|abstract|external|suspend|crossinline|noinline|reified|const|lateinit|\s)+")
 
@@ -306,7 +313,38 @@ _BUILTINS = frozenset({
     "Iterable", "Iterator", "Sequence", "Comparable", "Enum", "Pair", "Triple",
     # GR-07 step B append point -- evidenced kotlin.stdlib types only.
     "Throwable", "Exception", "MutableList",
+    # GR-07 hardening step C (second evidence probe, 2026-08-26 activated-scan
+    # residual ``TYPE_UNRESOLVED`` reproduction, build/guard-debug/gr07/
+    # probe_sites_typefail.json): ``MutableSet`` x1 and ``MutableMap`` x1 are
+    # the same default-imported kotlin.collections family as the already
+    # accepted ``MutableList``; ``Appendable`` x13 and ``Regex`` x4 are
+    # default-imported kotlin.text types (no import statement is required for
+    # them in Kotlin, which is why no import-based resolution can ever see
+    # them); ``Date`` x7 and ``Calendar`` x3 arrive through ``import
+    # java.util.*`` wildcard imports, whose members are outside source-visible
+    # closed-world knowledge.  None is declared anywhere in the project index,
+    # so none can shadow a project type.  The earlier step-B note declined
+    # these names when they were single-digit noise; with the C1 argument-type
+    # pollution fixed they are now dominant honest residual debt, and this
+    # append repeats the documented evidence-first process.
+    "MutableSet", "MutableMap", "Appendable", "Regex", "Date", "Calendar",
 })
+
+# Closed root packages of EXTERNAL (non-project) platform/SDK types.  A fully
+# qualified spelling under one of these roots is concrete without an import:
+# the compiler resolves it syntactically and no project declaration can share
+# the root.  GR-07 hardening step C evidence (same probe): fully qualified
+# parameter spellings ``androidx.sqlite.db.SupportSQLiteDatabase`` x144,
+# ``android.database.Cursor`` x5, ``java.util.regex.Matcher`` x3,
+# ``android.content.Context`` x2, ``android.os.Bundle`` x2, ``android.net.Uri``
+# x2, ``java.io.File`` x3, ``java.io.OutputStream`` x1,
+# ``java.math.BigDecimal`` x1, ``androidx.room.RoomDatabase.Builder<...>`` x1,
+# ``android.graphics.BitmapFactory.Options`` x1.  Accepting only these five
+# ROOTS keeps the set closed and auditable; a misspelled external FQCN now
+# resolves, but its exact spelling still participates verbatim in every
+# downstream signature comparison, so a fabricated identity can never match a
+# real DAO authorization target -- it stays visible as an unmatched call.
+_EXTERNAL_TYPE_ROOTS = frozenset({"java", "javax", "kotlin", "android", "androidx"})
 
 
 @dataclass(frozen=True)
@@ -368,6 +406,34 @@ def project_type_declarations(text: str) -> tuple[str, ...]:
     return tuple(sorted(names))
 
 
+def project_nested_type_declarations(text: str) -> tuple[str, ...]:
+    """Parent-qualified FQCNs of one file's NESTED type declarations.
+
+    GR-07 hardening step C companion to :func:`project_type_declarations`:
+    ``class Outer { class Inner }`` yields ``<package>.Outer.Inner`` (nested
+    chains qualify through their full parent chain, which owner discovery
+    already provides).  Top-level declarations are excluded -- the sibling
+    function owns those.  The project type index uses this to accept exact
+    ``Outer.Inner`` REFERENCES without ever adding nested simple names to the
+    simple-name resolution map, so a bare ``Inner`` stays out of scope exactly
+    as Kotlin requires without an import.
+    """
+    masked = mask_kotlin_source(text)
+    owners = find_owner_declarations(masked)
+    names: set[str] = set()
+    for match in _PROJECT_TYPE_DECL.finditer(masked):
+        parent = max(
+            (owner for owner in owners
+             if owner.body_start <= match.start() < owner.body_end),
+            key=lambda owner: owner.body_start,
+            default=None,
+        )
+        if parent is None:
+            continue
+        names.add(parent.owner + "." + match.group(1))
+    return tuple(sorted(names))
+
+
 @dataclass(frozen=True)
 class _TypeEnvironment:
     package: str
@@ -377,6 +443,59 @@ class _TypeEnvironment:
     type_counts: dict[str, int]
     owner_scope: str = ""
     project_types: ProjectTypeIndex | None = None
+    #: Packages of ``import pkg.*`` wildcard imports (GR-07 hardening step C).
+    #: Sorted so the same file always yields the same environment.  A wildcard
+    #: package alone proves nothing about membership; resolution only accepts
+    #: ``pkg.Name`` spellings that the PROJECT index independently confirms.
+    wildcards: tuple[str, ...] = ()
+    #: Generic type-parameter names declared in this file's owner headers and
+    #: ``fun <T>`` headers (GR-07 hardening step C).  A bare ``T`` in a
+    #: parameter list is a declared type variable, not a misspelled class.
+    #: Collected per FILE (not per fun) on purpose: the set only ever admits
+    #: names that are declared generics somewhere in the same file, and every
+    #: resolved identity still participates verbatim in downstream exact
+    #: signature comparisons.
+    type_variables: frozenset[str] = frozenset()
+
+
+def _generic_parameter_names(masked: str) -> frozenset[str]:
+    """Collect declared generic type-parameter names from one masked file.
+
+    Bounded closed-world extraction: a ``<...>`` group is considered a generic
+    parameter list only when it directly follows ``fun `` or an
+    ``class|object|interface`` header name.  Each top-level comma segment
+    contributes its declared variable: optional ``in``/``out`` variance prefix,
+    then the name, then an optional `` : bound`` (bounds may contain nested
+    angles and are ignored -- only the DECLARED variable name is collected).
+    """
+    names: set[str] = set()
+    # ``fun <T>`` carries its parameter list directly after the keyword; an
+    # owner spells its NAME first (``class Repo<T : Any>``).  Both shapes are
+    # covered; a ``<`` following anything else is never a parameter list.
+    for keyword_match in re.finditer(
+        r"\b(?:fun|(?:enum\s+)?class|interface|object)\s+(?:[A-Za-z_]\w*\s*)?<", masked,
+    ):
+        opening = keyword_match.end() - 1
+        depth = 0
+        end = -1
+        for i in range(opening, len(masked)):
+            char = masked[i]
+            if char == "<":
+                depth += 1
+            elif char == ">":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end < 0:
+            continue
+        for segment in _split_top(masked[opening + 1:end]):
+            declaration = segment.split(":", 1)[0].strip()
+            declaration = re.sub(r"^(?:in|out|reified)\s+", "", declaration)
+            name_match = re.fullmatch(r"[A-Za-z_]\w*", declaration)
+            if name_match:
+                names.add(declaration)
+    return frozenset(sorted(names))
 
 
 def _type_environment(
@@ -394,6 +513,12 @@ def _type_environment(
             imports[key] = None
         else:
             imports[key] = fqcn
+    # GR-07 hardening step C: wildcard imports carry no member knowledge, but
+    # the project index can later confirm ``pkg.Name`` spellings concretely.
+    wildcards = tuple(sorted({
+        match.group(1)
+        for match in re.finditer(r"\bimport\s+([A-Za-z_][A-Za-z0-9_.]*)\.\*", masked)
+    }))
     aliases: dict[str, str | None] = {}
     for match in re.finditer(r"\btypealias\s+(%s)\s*=\s*([^\n;]+)" % _ID, masked):
         key, target = match.group(1), match.group(2).strip()
@@ -423,11 +548,25 @@ def _type_environment(
     for owner in find_owner_declarations(masked):
         types.add(owner.owner)
     return _TypeEnvironment(package, frozenset(types), imports, aliases,
-                            type_counts, owner_scope, project_types)
+                            type_counts, owner_scope, project_types,
+                            wildcards,
+                            _generic_parameter_names(masked))
 
 
 def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False) -> str:
     """Normalize and resolve every named component of a type expression."""
+    # GR-07 hardening step C: ``suspend`` is a modifier of FUNCTION TYPES, not
+    # a type name, and the closed signature grammar has no spelling for it
+    # (``normalize_type_text`` rejects every ``suspend ...`` form).  The
+    # modifier is therefore stripped before normalization and NOT re-attached:
+    # ``suspend () -> T`` resolves to the bare function type.  This is honest
+    # within the closed world -- Room DAO signatures can never carry suspend
+    # function-type parameters (the same grammar governs both sides), so no
+    # cross-side identity mismatch is introduced, while real Kotlin files
+    # whose helpers take ``suspend () -> T`` blocks stop dying as BAD_TYPE.
+    suspend_match = re.match(r"suspend\s+", typ)
+    if suspend_match:
+        typ = typ[suspend_match.end():]
     try:
         normalized = normalize_type_text(typ, allow_vararg=allow_vararg)
     except SignatureError as error:
@@ -448,7 +587,62 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
                 return name
             # GR-07 step A: an exact fully-qualified spelling of a real
             # project type is concrete even without a same-file import.
+            # Step C extends this to NESTED project types (``Outer.Inner``):
+            # the index's qualified set carries them, its simple-name map
+            # deliberately does not.
             if env.project_types is not None and name in env.project_types.qualified:
+                return name
+            # GR-07 step C: member references on a RESOLVABLE root.
+            # ``Outer.Mode`` (imported Outer), ``Owner.Inner`` (same-file
+            # owner), and ``Map.Entry`` (builtin root) are relative spellings
+            # of concrete types.  The head resolves through the ordinary
+            # simple-name rules; every further segment must be verifiable in
+            # the same-file type set or the project index -- except members
+            # of BUILTIN roots, whose default-imported nesting
+            # (kotlin.collections.Map.Entry) lies outside source visibility
+            # and is accepted as spelled (evidence: Map.Entry<String,
+            # CacheEntry> x1 in the activated-scan residual probe).
+            head, _, rest = name.partition(".")
+            if rest:
+                try:
+                    root = resolve_atom(head, seen)
+                except ParserError:
+                    root = None
+                if root is not None:
+                    if root in _BUILTINS:
+                        return name
+                    if root.split(".", 1)[0] in _EXTERNAL_TYPE_ROOTS:
+                        # GR-07 step C: external-rooted member chains resolve
+                        # through an IMPORTED head (``import android.graphics.
+                        # BitmapFactory`` then ``BitmapFactory.Options``).
+                        # Platform API surfaces are outside the project index,
+                        # so the canonicalized spelling is accepted as
+                        # concrete (evidence: BitmapFactory.Options x1).
+                        return root + "." + rest
+                    current = root
+                    verified = True
+                    for segment in rest.split("."):
+                        candidate = current + "." + segment
+                        if candidate in env.types or (
+                            env.project_types is not None
+                            and candidate in env.project_types.qualified
+                        ):
+                            current = candidate
+                        else:
+                            verified = False
+                            break
+                    if verified:
+                        return current
+            # GR-07 step C, closed external-platform rule: a dotted spelling
+            # whose ROOT is one of the five platform packages (java/javax/
+            # kotlin/android/androidx) is an external SDK type no project
+            # declaration can share.  Evidence: androidx.sqlite.db.
+            # SupportSQLiteDatabase x144 and ~25 further android/java FQCN
+            # parameter spellings in the activated-scan residual probe.  A
+            # misspelled external FQCN resolves here but keeps its exact
+            # spelling for every downstream comparison, so it can never match
+            # a real authorization target silently.
+            if name.split(".", 1)[0] in _EXTERNAL_TYPE_ROOTS:
                 return name
             _fail("TYPE_UNRESOLVED")
         # Resolution is deliberately ordered: exact qualified spelling,
@@ -490,17 +684,45 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
             return resolve_expr(target, seen | {name})
         if name in _BUILTINS:
             return name
+        # GR-07 step C: a bare generic type variable declared in this file's
+        # owner or fun headers (``class Repo<T>``, ``fun <T> run(...)``) is a
+        # declared name, not a misspelled class.  Checked after every real
+        # declaration source so it can never shadow one.
+        if name in env.type_variables:
+            return name
         # GR-07 step A, final fallback: the project-wide index.  Same-file
         # scopes, the file's package, imports, aliases, and builtins all
         # keep precedence, so every pre-index resolution is unchanged.  A
         # simple name declared in several packages is ambiguous debt and
         # fails closed -- never a guessed resolution.
+        #
+        # GR-07 step C refines the fallback with Kotlin import precedence:
+        # explicit imports (handled above) > wildcard imports > same-package
+        # declarations > other packages.  A wildcard-imported candidate
+        # therefore BEATS a same-named declaration in another package
+        # (``import com.example.model.*`` resolves ``PlannedExpense`` to the
+        # model package even though the entity package declares the same
+        # name), and only a wildcard collision between several wildcard
+        # packages still fails closed.
         if env.project_types is not None:
-            project_candidates = env.project_types.by_simple_name.get(name, ())
+            wildcard_candidates = set()
+            for wildcard_package in env.wildcards:
+                wildcard_candidate = wildcard_package + "." + name
+                if wildcard_candidate in env.project_types.qualified:
+                    wildcard_candidates.add(wildcard_candidate)
+            if len(wildcard_candidates) > 1:
+                _fail("TYPE_UNRESOLVED")
+            if len(wildcard_candidates) == 1:
+                return next(iter(wildcard_candidates))
+            if env.package:
+                same_package = env.package + "." + name
+                if same_package in env.project_types.qualified:
+                    return same_package
+            project_candidates = set(env.project_types.by_simple_name.get(name, ()))
             if len(project_candidates) > 1:
                 _fail("TYPE_UNRESOLVED")
             if len(project_candidates) == 1:
-                return project_candidates[0]
+                return next(iter(project_candidates))
         _fail("TYPE_UNRESOLVED")
 
     def resolve_expr(expr: str, seen: set[str]) -> str:
@@ -542,7 +764,14 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
 
 
 def _pairs(text: str, a: int, b: str, limit: int = MAX_DEPTH) -> int:
-    close = {"(": ")", "{": "}", "[": "]", "<": ">"}
+    # GR-07 hardening step C: ``<``/``>`` are NOT tracked as a bracket pair
+    # here.  This walker spans PARAMETER LISTS, whose default-value
+    # expressions legally contain comparison operators (``if (rate > 0.0)``);
+    # treating such a ``>`` as an angle closer failed the whole file with
+    # MALFORMED_SOURCE and silently dropped it from the project type index.
+    # Generic grammar inside each parameter stays validated later by
+    # ``_split_top``/``_resolve_type``, so nothing malformed passes silently.
+    close = {"(": ")", "{": "}", "[": "]"}
     stack: list[str] = []
     i = a
     while i < len(text):
@@ -558,7 +787,7 @@ def _pairs(text: str, a: int, b: str, limit: int = MAX_DEPTH) -> int:
         if c in close:
             stack.append(close[c])
             if len(stack) > limit: _fail("NESTING_TOO_DEEP")
-        elif c in ")}]>":
+        elif c in ")}]":
             if not stack or stack.pop() != c: _fail("MALFORMED_SOURCE")
             if not stack: return i
         i += 1
@@ -590,19 +819,33 @@ def _owner_body(text: str, start: int, scope_end: int, limit: int = MAX_DEPTH) -
     hide the function from its real owner's callable scan).
     """
     stack: list[str] = []
-    close = {"(": ")", "[": "]", "<": ">"}
+    # GR-07 hardening step C: no ``<``/``>`` bracket pairing (see ``_pairs``).
+    # Owner headers legally contain comparison operators in constructor
+    # default values; generic parameter lists need no tracking to locate the
+    # body brace or the next sibling declaration.
+    close = {"(": ")", "[": "]"}
     i = start
     while i < scope_end:
         c = text[i]
+        if text.startswith("->", i):
+            # A Kotlin ``->`` arrow (e.g. a function-typed constructor
+            # parameter such as ``(UiText) -> String``) is not a closing
+            # angle bracket: skip its ``>`` without touching the delimiter
+            # stack, exactly like ``_pairs``/``_header_body_start``.
+            # Treating that ``>`` as an angle close failed the whole owner
+            # walk with MALFORMED_SOURCE and poisoned every declaration in
+            # the file.
+            i += 2
+            continue
         if c in close:
             stack.append(close[c])
             if len(stack) > limit: _fail("NESTING_TOO_DEEP")
-        elif c in ")]>":
+        elif c in ")]":
             if not stack or stack.pop() != c: _fail("MALFORMED_SOURCE")
         elif not stack:
             if c == "{": return i, i
             if c == "}": return None, i
-            if re.match(r"(?:fun|class|object)\b", text[i:]): return None, i
+            if re.match(r"(?:fun|class|object|interface)\b", text[i:]): return None, i
         i += 1
     if stack: _fail("MALFORMED_SOURCE")
     return None, scope_end
@@ -622,9 +865,20 @@ def _split_top(text: str, sep: str = ",") -> list[str]:
             i += 2
             continue
         c = text[i]
-        if c in "(<[{": stack.append(c)
-        elif c in ")>]}" :
-            expected = {"(": ")", "<": ">", "[": "]", "{": "}"}
+        if c in "(<[{":
+            stack.append(c)
+        elif c == ">":
+            # GR-07 hardening step C: a ``>`` that does not close an open
+            # generic is a comparison OPERATOR inside a default-value
+            # expression (``= if (rate > 0.0) rate else null`` -- the real
+            # ExportTransaction.kt poisoning shape) and is ignored instead of
+            # failing the whole parameter list as MALFORMED_SOURCE.  An
+            # UNCLOSED ``<`` stays structurally fatal below, so genuinely
+            # broken angle pairing keeps its early sanitized rejection.
+            if stack and stack[-1] == "<":
+                stack.pop()
+        elif c in ")]}":
+            expected = {"(": ")", "[": "]", "{": "}"}
             if not stack or expected[stack[-1]] != c: _fail("MALFORMED_SOURCE")
             stack.pop()
         elif c == sep and not stack:
@@ -638,7 +892,10 @@ def _split_top(text: str, sep: str = ",") -> list[str]:
 def _header_body_start(text: str, start: int, scope_end: int, limit: int = MAX_DEPTH) -> tuple[int | None, int]:
     """Find a function body after a header, allowing multiline return types."""
     stack: list[str] = []
-    close = {"(": ")", "[": "]", "<": ">"}
+    # GR-07 hardening step C: no ``<``/``>`` bracket pairing (see ``_pairs``).
+    # Headers legally contain comparison operators in default-value
+    # expressions; return-type generics need no tracking to locate the body.
+    close = {"(": ")", "[": "]"}
     i = start
     while i < scope_end:
         if text.startswith("->", i):
@@ -651,7 +908,7 @@ def _header_body_start(text: str, start: int, scope_end: int, limit: int = MAX_D
         if c in close:
             stack.append(close[c])
             if len(stack) > limit: _fail("NESTING_TOO_DEEP")
-        elif c in ")]>":
+        elif c in ")]":
             if not stack or stack.pop() != c:
                 _fail("MALFORMED_SOURCE")
         elif not stack:
@@ -729,6 +986,22 @@ def _raw_parameter_type(param: str) -> str:
     if vararg_prefix:
         typ = "vararg " + typ
     return typ
+
+
+def _normalize_retaining_suspend(typ: str, *, allow_vararg: bool = False) -> str:
+    """Grammar-normalize ``typ`` after stripping a leading ``suspend`` modifier.
+
+    ``suspend`` modifies FUNCTION TYPES (``suspend () -> T``); the closed
+    signature grammar has no spelling for it, so the modifier is stripped
+    before normalization and not re-attached -- the retained identity is the
+    bare function type (see :func:`_resolve_type` for why that is honest
+    within this closed world).  Used by the tolerant retention path, which
+    keeps grammar-normalized source spellings without resolving them.
+    """
+    suspend_match = re.match(r"suspend\s+", typ)
+    if suspend_match:
+        return normalize_type_text(typ[suspend_match.end():], allow_vararg=allow_vararg)
+    return normalize_type_text(typ, allow_vararg=allow_vararg)
 
 
 def find_callable_declarations(
@@ -830,7 +1103,7 @@ def find_callable_declarations(
                 raise
             try:
                 types = [
-                    normalize_type_text(_raw_parameter_type(param), allow_vararg=True)
+                    _normalize_retaining_suspend(_raw_parameter_type(param), allow_vararg=True)
                     for param in params
                 ]
                 receiver = (
