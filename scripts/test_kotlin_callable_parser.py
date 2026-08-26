@@ -1680,11 +1680,14 @@ class Fixture {
 
 def test_builtin_set_closure_pins_evidenced_trio():
     """The builtin set stays CLOSED: GR-07 step B appended exactly the three
-    evidenced kotlin.stdlib names to the frozen pre-existing set, and GR-07
+    evidenced kotlin.stdlib names to the frozen pre-existing set, GR-07
     step C appended exactly six further names backed by the 2026-08-26
-    activated-scan residual probe (probe_sites_typefail.json).  Any further
-    addition must repeat the evidence probe first and extend this pin (and
-    the documented append-point comment) deliberately."""
+    activated-scan residual probe (probe_sites_typefail.json), and the GR-07
+    convergence round appended ``Class`` backed by the 2026-08-27 third
+    evidence probe (probe15_token.py; java.lang default import, no project
+    type named Class).  Any further addition must repeat the evidence probe
+    first and extend this pin (and the documented append-point comment)
+    deliberately."""
     assert parser._BUILTINS == frozenset({
         # Frozen pre-step-B set.
         "Any", "Nothing", "Unit", "String", "Char", "Boolean", "Byte", "Short",
@@ -1700,6 +1703,9 @@ def test_builtin_set_closure_pins_evidenced_trio():
         # java.util wildcard-import members with no source-visible
         # declaration to resolve through.
         "MutableSet", "MutableMap", "Appendable", "Regex", "Date", "Calendar",
+        # GR-07 convergence round append point -- third evidence probe,
+        # 2026-08-27: java.lang default-imported ``Class``.
+        "Class",
     })
 
 
@@ -2033,3 +2039,146 @@ class Pipe<in T, out R : SecretBound> {
     declarations = parser.find_callable_declarations(source, owners[0])
     assert [d.signature.parameter_types for d in declarations] == [("T",)]
     _expect_type_unresolved(source, "example.Pipe", "SecretBound")
+
+
+# ── GR-07 convergence round: star projections + erase-only grammar families ──
+#
+# Evidence: build/guard-debug/gr07/probe_star_postfix.py (star spellings killed
+# WHOLE-FILE callable discovery: AiServiceResult<*> x1 made all three
+# HybridDedupeJudgeService callables vanish) and probe15_token.py (per-family
+# reproduction of every retained S2b failure).  Each rule below ERASES a
+# spelling to its closed-grammar equivalent; both sides of every downstream
+# exact signature comparison pass through the same normalizer, so no identity
+# can be fabricated.  Malformed uses keep failing closed.
+
+
+def test_star_projection_erases_to_any_question_mark():
+    """``Type<*>`` is Kotlin's erased wildcard; the canonical closed-grammar
+    spelling is ``Type<Any?>`` (Kotlin's own semantic equivalent)."""
+    assert parser.erase_star_projections("AiServiceResult<*>") == \
+        "AiServiceResult<Any?>"
+    assert parser.erase_star_projections("Map<String, *>") == \
+        "Map<String, Any?>"
+    assert parser.erase_star_projections("Pair<*, Int>") == "Pair<Any?, Int>"
+    assert parser.erase_star_projections("List<List<*>>") == \
+        "List<List<Any?>>"
+    assert parser.erase_star_projections("Foo<*>?") == "Foo<Any?>?"
+    assert parser.erase_star_projections(
+        "suspend () -> Flow<AiServiceResult<*>>",
+    ) == "suspend () -> Flow<AiServiceResult<Any?>>"
+
+
+def test_malformed_star_projection_keeps_failing_closed():
+    """A star outside a legal generic-argument position is left untouched so
+    the signature normalizer keeps rejecting it (UNSUPPORTED_TOKEN)."""
+    for text in ("Int*", "List<**>", "List<String*>", "*"):
+        try:
+            parser.normalize_type_text(parser.erase_star_projections(text))
+        except parser.SignatureError as error:
+            assert error.code in ("UNSUPPORTED_TOKEN", "BAD_TYPE")
+        else:
+            raise AssertionError(f"expected rejection for {text!r}")
+
+
+def test_star_projection_parameter_no_longer_kills_file_discovery():
+    """The exact production shape: one ``AiServiceResult<*>`` parameter used
+    to abort discovery of the whole owner (UNSUPPORTED_TOKEN); now every
+    callable resolves and the wildcard carries its erased identity."""
+    source = """package example
+
+class AiServiceResult<T>
+class DedupeJudgeSuggestion
+
+class Fixture {
+    fun errorMessage(result: AiServiceResult<*>): String {
+        return "x"
+    }
+
+    fun safeExecute(block: suspend () -> AiServiceResult<DedupeJudgeSuggestion>) {
+        TODO()
+    }
+
+    fun both(m: Map<String, *>, p: Pair<*, Int>): List<List<*>> = TODO()
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    fixture = next(o for o in owners if o.owner.endswith("Fixture"))
+    declarations = parser.find_callable_declarations(source, fixture)
+    by_name = {d.signature.function_name: d for d in declarations}
+    assert by_name["errorMessage"].signature.parameter_types == \
+        ("example.AiServiceResult<Any?>",)
+    assert by_name["both"].signature.parameter_types == (
+        "Map<String, Any?>", "Pair<Any?, Int>",
+    )
+    assert by_name["both"].status == "UNSUPPORTED_EXPRESSION_BODY"
+
+
+def test_function_type_named_parameters_are_erased():
+    """``suspend (groupId: Long) -> Unit`` x28 (GroupTransactionCoordinator)
+    died as UNSUPPORTED_TOKEN because the signature grammar has no ``:``.
+    Argument names are erased -- Kotlin ignores them for function-type
+    identity."""
+    source = """package example
+
+class Fixture {
+    fun run(onInsideTransaction: suspend (groupId: Long) -> Unit) {
+        onInsideTransaction(1L)
+    }
+
+    fun mixed(block: (key: String, value: Int) -> Boolean): Boolean {
+        return block("a", 1)
+    }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    fixture = next(o for o in owners if o.owner.endswith("Fixture"))
+    declarations = parser.find_callable_declarations(source, fixture)
+    by_name = {d.signature.function_name: d for d in declarations}
+    assert by_name["run"].signature.parameter_types == ("(Long) -> Unit",)
+    assert by_name["mixed"].signature.parameter_types == \
+        ("(String, Int) -> Boolean",)
+
+
+def test_jvm_suppress_wildcards_annotation_is_erased():
+    source = """package example
+
+class RetentionTarget
+
+class RetentionModule {
+    fun targets(targets: Set<@JvmSuppressWildcards RetentionTarget>): Int {
+        return targets.size
+    }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    module = next(o for o in owners if o.owner.endswith("RetentionModule"))
+    declarations = parser.find_callable_declarations(source, module)
+    assert declarations[0].signature.parameter_types == \
+        ("Set<example.RetentionTarget>",)
+
+
+def test_use_site_variance_prefixes_are_erased():
+    source = """package example
+
+class ListenableWorker
+
+class WorkerSpecScheduler {
+    fun schedule(workerClass: Class<out ListenableWorker>): String {
+        return workerClass.name
+    }
+}
+"""
+    owners = parser.find_owner_declarations(source)
+    scheduler = next(o for o in owners if o.owner.endswith("WorkerSpecScheduler"))
+    declarations = parser.find_callable_declarations(source, scheduler)
+    assert declarations[0].signature.parameter_types == \
+        ("Class<example.ListenableWorker>",)
+
+
+def test_java_lang_class_resolves_as_default_imported_builtin():
+    """``Class`` requires no import in Kotlin (java.lang default import), so
+    no import-based resolution could ever see it.  Evidence: bare
+    ``Class<out ListenableWorker>`` x2; no project type is named Class."""
+    source = "package example\nclass Holder\n"
+    assert _resolve_in(source, "example.Holder", "Class<String>") == \
+        "Class<String>"

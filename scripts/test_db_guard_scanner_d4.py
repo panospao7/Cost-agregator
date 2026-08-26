@@ -1122,3 +1122,289 @@ interface ScanProbeDao {
         "DB_SIGNATURE_UNRESOLVED",
     ]
     assert report.statistics["trusted"] is False
+
+
+# ── GR-07 convergence round: evidenced structural shapes + honest read C1 ────
+#
+# Evidence: build/guard-debug/gr07/probe11_baseline_lines.json (line-level
+# baseline of all 33 DB_STRUCTURAL_SCOPE_UNSUPPORTED emissions) and
+# probe14_classify.json (post-fix residual classification).  Every rule below
+# closes ONE evidenced receiver/operation shape while authorization stays
+# with the structural policy's exact tuples; each positive test is paired
+# with a negative proving non-evidenced shapes still fail closed.
+
+
+def test_context_get_database_path_is_supported_and_policy_gated(tmp_path):
+    """``context.getDatabasePath(...)`` x10 (DatabaseBackupRepositoryImpl,
+    FinancialRescueCoordinator): a Context-typed receiver resolves the
+    platform shape; the exact structural tuple still authorizes it."""
+    root = _source_root(tmp_path)
+    rel = _write(root, "Backup.kt", """package example
+
+class Context
+
+class Repo(private val context: Context) {
+    fun path() {
+        context.getDatabasePath("app.db")
+    }
+}
+""" + "\n" + _PROBE_DAO)
+    structural = [{
+        "path": rel, "class": "Repo", "method_pattern": "path",
+        "operation": "getDatabasePath",
+    }]
+
+    report = scan_db_access(root, structural_policy=structural,
+                            raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_get_database_path_on_non_context_receiver_stays_unsupported(tmp_path):
+    root = _source_root(tmp_path)
+    _write(root, "Weird.kt", """package example
+
+class NotContext
+
+class Repo(private val weird: NotContext) {
+    fun path() {
+        weird.getDatabasePath("app.db")
+    }
+}
+""" + "\n" + _PROBE_DAO)
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
+    ]
+    assert report.statistics["trusted"] is False
+
+
+def test_file_delete_recursively_is_supported_when_receiver_resolves(tmp_path):
+    """``tempDir.deleteRecursively()`` x11 inside restoreCostBackup: the
+    File-typed local resolves through constructor inference; the structural
+    tuple authorizes the deletion."""
+    root = _source_root(tmp_path)
+    rel = _write(root, "Cleanup.kt", """package example
+
+class File
+
+class Repo {
+    fun cleanup(): Int {
+        val tempDir = File()
+        tempDir.deleteRecursively()
+        return 0
+    }
+}
+""" + "\n" + _PROBE_DAO)
+    structural = [{
+        "path": rel, "class": "Repo", "method_pattern": "cleanup",
+        "operation": "deleteRecursively",
+    }]
+
+    report = scan_db_access(root, structural_policy=structural,
+                            raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_delete_recursively_without_policy_entry_is_a_finding(tmp_path):
+    """Receiver verification only classifies the access as database
+    evidence; without the exact structural tuple it stays an accusation."""
+    root = _source_root(tmp_path)
+    _write(root, "Cleanup.kt", """package example
+
+class File
+
+class Repo {
+    fun cleanup(): Int {
+        val tempDir = File()
+        tempDir.deleteRecursively()
+        return 0
+    }
+}
+""" + "\n" + _PROBE_DAO)
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.rule for item in report.findings] == [
+        "DB_FORBIDDEN_STRUCTURAL_OPERATION",
+    ]
+    assert report.diagnostics == ()
+
+
+def test_verified_handle_transaction_lifecycle_operations_are_supported(tmp_path):
+    """close/beginTransaction/setTransactionSuccessful/endTransaction on a
+    VERIFIED SQLiteDatabase handle manage connection state only -- they are
+    classified like the read-only cursor APIs and never reach an
+    authorization decision (evidence: repairBudgetsSchemaToV86 triad,
+    BackupVerifier close x2)."""
+    root = _source_root(tmp_path)
+    _write(root, "Maintain.kt", """package example
+
+import android.database.sqlite.SQLiteDatabase
+
+class Maintain {
+    fun run(db: SQLiteDatabase) {
+        db.beginTransaction()
+        db.setTransactionSuccessful()
+        db.endTransaction()
+        db.close()
+    }
+}
+""" + "\n" + _PROBE_DAO)
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_unknown_operation_on_verified_handle_stays_unsupported(tmp_path):
+    root = _source_root(tmp_path)
+    _write(root, "Maintain.kt", """package example
+
+import android.database.sqlite.SQLiteDatabase
+
+class Maintain {
+    fun run(db: SQLiteDatabase) {
+        db.someUnknownHandleOp()
+    }
+}
+""" + "\n" + _PROBE_DAO)
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
+    ]
+    assert report.statistics["trusted"] is False
+
+
+def test_open_helper_chain_with_unresolved_root_is_supported(tmp_path):
+    """The freshDb shape x3: ``val freshDb =
+    restoreDatabaseOpener.openFreshDatabase()`` needs cross-file return-type
+    knowledge no closed scanner has, but ``x.openHelper.writableDatabase``
+    is verified by its exact androidx member chain.  Authorization stays
+    policy-gated."""
+    root = _source_root(tmp_path)
+    rel = _write(root, "Verify.kt", """package example
+
+class Opener {
+    fun openFreshDatabase(): AppDatabase {
+        return AppDatabase()
+    }
+}
+
+class AppDatabase
+
+class Repo(private val restoreDatabaseOpener: Opener) {
+    fun verify() {
+        val freshDb = restoreDatabaseOpener.openFreshDatabase()
+        freshDb.openHelper.writableDatabase
+    }
+}
+""" + "\n" + _PROBE_DAO)
+    structural = [{
+        "path": rel, "class": "Repo", "method_pattern": "verify",
+        "operation": "writableDatabase",
+    }]
+
+    report = scan_db_access(root, structural_policy=structural,
+                            raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_single_member_writable_database_chain_stays_unsupported(tmp_path):
+    """No intermediate member: ``wrapper.db.writableDatabase`` has no
+    evidenced androidx chain (only ``x.openHelper.writableDatabase`` exists
+    in production), so the dotted shape keeps failing closed."""
+    root = _source_root(tmp_path)
+    _write(root, "Holder.kt", """package example
+
+class Holder
+class Wrapper(val db: Holder)
+
+class Repo(private val wrapper: Wrapper) {
+    fun touch() {
+        wrapper.db.writableDatabase
+    }
+}
+""" + "\n" + _PROBE_DAO)
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
+    ]
+    assert report.statistics["trusted"] is False
+
+
+def test_expression_body_callable_locals_are_visible(tmp_path):
+    """Expression-bodied callables (``fun f(): X = withContext(io) { ... }``)
+    keep the parser's span at the header, but their locals extend to the
+    declaration range's end.  Hiding them made every access on such a local
+    fail closed (restoreCostBackup x11 deleteRecursively)."""
+    root = _source_root(tmp_path)
+    rel = _write(root, "Restore.kt", """package example
+
+class File
+
+class Repo {
+    fun cleanup(): Int = withCleanup {
+        val tempDir = File()
+        tempDir.deleteRecursively()
+    }
+}
+""" + "\n" + _PROBE_DAO)
+    structural = [{
+        "path": rel, "class": "Repo", "method_pattern": "cleanup",
+        "operation": "deleteRecursively",
+    }]
+
+    report = scan_db_access(root, structural_policy=structural,
+                            raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_read_only_unique_target_with_mismatched_argument_types_is_silent(tmp_path):
+    """The C1 evidence shape: a fabricated argument type (untyped-local
+    factory inference ``TimePeriodUtils.startOfMonth(...)`` ->
+    "TimePeriodUtils") against a single-candidate READ.  A read never
+    reaches an authorization decision, so the non-unique target cannot
+    affect the report.  A MUTATION with the same mismatch keeps its pinned
+    DB_CALL_TARGET_AMBIGUOUS (test_verify_db_access_v2)."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class TimePeriodUtils
+
+class Repo(private val dao: ScanProbeDao) {
+    suspend fun load(marker: Long): Int {
+        val start = TimePeriodUtils.startOfMonth(marker)
+        return dao.countByRun(start)
+    }
+}
+""" + "\n" + _read_probe_dao(
+        "SELECT COUNT(*) FROM probe WHERE runId = :runId",
+        method="countByRun", param="runId: Long", returns=": Int",
+    )
+    (root / "Repo.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True

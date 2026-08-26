@@ -41,8 +41,8 @@ from ..ci.guard_findings import (
 from ..ci.finding_rule_catalog import is_known_diagnostic
 from ..db_policy_signature import SignatureError, normalize_type_text
 from ..kotlin_callable_parser import (
-    ParserError, find_callable_declarations, find_owner_declarations,
-    mask_kotlin_source,
+    ParserError, erase_star_projections, find_callable_declarations,
+    find_owner_declarations, mask_kotlin_source,
 )
 from .declaration_scanner import (
     anchor_for_declared_path,
@@ -117,6 +117,27 @@ _STRUCTURAL_MEMBER_TYPES = {
 # outside this closed set on a structural handle keeps its honest
 # DB_STRUCTURAL_SCOPE_UNSUPPORTED diagnostic.
 _STRUCTURAL_READ_OPERATIONS = frozenset({"query", "rawQuery"})
+# GR-07 convergence round: transactional lifecycle operations of a VERIFIED
+# database handle.  Evidence (2026-08-27 line-level baseline scan,
+# build/guard-debug/gr07/probe11_baseline_lines.json): ``close`` x5
+# (DatabaseBackupRepositoryImpl.kt:230, FinancialRescueCoordinator.kt:136/769,
+# BackupVerifier.kt:264/464), and ``beginTransaction``/``
+# setTransactionSuccessful``/``endTransaction`` triads on the annotated
+# ``android.database.sqlite.SQLiteDatabase`` parameter of
+# repairBudgetsSchemaToV86 (DatabaseBackupRepositoryImpl.kt:2144/2207/2209).
+# These operations never touch application tables -- they manage the handle's
+# connection/transaction state -- so on a VERIFIED structural handle they are
+# classified like the read-only cursor APIs above.  Receivers that are NOT
+# verified handles keep falling through silently exactly as before (these
+# names are not DAO operations, so an unverified receiver never reaches this
+# gate).  ``inTransaction`` completes the closed androidx transaction-state
+# family named by the approved round scope; it has zero production occurrences
+# today, so adding it is a zero-delta map completion, recorded here for the
+# next evidence probe.
+_STRUCTURAL_HANDLE_OPERATIONS = frozenset({
+    "close", "beginTransaction", "endTransaction", "setTransactionSuccessful",
+    "inTransaction",
+})
 # Calls are found from the dot and their receiver is parsed backwards.  A
 # suffix regex is unsafe here: it turns ``context.expenseDao`` and
 # ``holder(expenseDao)`` into the apparently bare ``expenseDao``.
@@ -146,6 +167,20 @@ _DOTTED_INIT = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
 # The closed kotlin.use dispatch: ``handle.use { it.<op>(...) }`` binds the
 # lambda's implicit single parameter to the receiver's type.
 _USE_LAMBDA = re.compile(r"\.\s*(?P<dispatch>use)\s*\{")
+# GR-07 convergence round: closed PLATFORM return-type facts for untyped-local
+# inference.  Evidence (probe14_classify.json D2 family): ``val dbFile =
+# context.getDatabasePath(...)`` leaves ``dbFile`` unresolved because the
+# initializer root is a lower-case receiver, and the following
+# ``dbFile.exists()``/``dbFile.delete()`` collide with DAO operation names
+# (DatabaseBackupRepositoryImpl.kt x4+, CostbackupBundle.kt,
+# DefaultCloudPayloadPolicy.kt).  Only method names with one exact platform
+# return type belong here; anything else stays unresolved (fail closed).
+_PLATFORM_FACTORY_RETURNS = {
+    "getDatabasePath": "File",
+}
+_PLATFORM_CALL_INIT = re.compile(
+    r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\.\s*(?P<method>[A-Za-z_]\w*)\s*\("
+)
 
 
 def _accessor_declaration_matches(span_masked: str) -> list[re.Match]:
@@ -288,7 +323,9 @@ def _property_symbol_at(source: str, declaration, offset: int) -> CallableSymbol
         match = re.fullmatch(r"[A-Za-z_]\w*\s*:\s*(.+)", raw, re.S)
         if not match:
             raise SignatureError("BAD_PARAMS")
-        parameters = (normalize_type_text(match.group(1).strip()),)
+        parameters = (normalize_type_text(
+            erase_star_projections(match.group(1).strip()),
+        ),)
         kind = KIND_PROPERTY_SETTER
     return CallableSymbol(owner=declaration.owner_fqcn, name=name,
                           receiver=None, parameters=parameters, kind=kind)
@@ -331,6 +368,18 @@ def _receiver_expression(masked: str, dot_start: int) -> tuple[str, bool]:
             else:
                 break
         elif not any(depth.values()) and char in ';=\n':
+            break
+        elif (not any(depth.values()) and char == ">"
+                and i > 0 and masked[i - 1] == "-"):
+            # GR-07 convergence round: a ``->`` arrow at bracket depth zero is
+            # a lambda/``when`` branch boundary, not part of the receiver.
+            # ``chunks.forEach { chunk -> memberDao.insertAll(chunk) }`` used
+            # to parse its receiver as ``chunk -> memberDao`` (and ``when (x)
+            # { true -> budgetDao.insert(..) }`` as ``... -> budgetDao``),
+            # failing every such call as DB_DAO_SCOPE_UNRESOLVED.  Only the
+            # arrow's ``>`` needs checking: walking left, it is reached before
+            # the ``-``, and inside brackets the depth guard keeps comparison
+            # operators (``if (a > b) dao.op()``) behaving as before.
             break
         i -= 1
     expression = masked[i + 1:end].strip()
@@ -394,14 +443,28 @@ def _chain_structural_access_type(
 ) -> str | None:
     """Resolve ``root.member...operation`` over the closed androidx surface.
 
-    The root segment must resolve to a lexical type; every further segment
-    (including the terminal operation) must be a member of the closed
-    ``_STRUCTURAL_MEMBER_TYPES`` accessor map.  Any unknown link returns None
-    (fail closed) -- the chain is never guessed.
+    Every segment after the root (including the terminal operation) must be a
+    member of the closed ``_STRUCTURAL_MEMBER_TYPES`` accessor map; any
+    unknown link returns None (fail closed) -- the chain is never guessed.
+
+    GR-07 convergence round: the ROOT no longer has to resolve to a lexical
+    type.  Evidence: ``freshDb.openHelper.writableDatabase`` where
+    ``val freshDb = restoreDatabaseOpener.openFreshDatabase()`` needs cross-
+    file return-type knowledge no closed scanner has (x3:
+    DatabaseBackupRepositoryImpl.kt:994/2261, AppStartupCoordinator.kt:262).
+    Verification comes from the chain SHAPE itself: at least one INTERMEDIATE
+    member plus the terminal operation, ALL drawn from the closed androidx
+    accessor map (``x.openHelper.writableDatabase``), is not a spelling any
+    non-Room expression can carry.  A bare ``x.writableDatabase`` (no
+    intermediate member) keeps failing closed -- no such production shape
+    exists.  Acceptance here only classifies the access as database evidence;
+    authorization still flows through the structural policy's exact
+    (path, class, method, operation) tuples, so an unauthorized location
+    becomes a finding, never a silent pass.
     """
     segments = receiver.split(".") + [operation]
-    current = receiver_types.get(segments[0])
-    if not isinstance(current, str):
+    if len(segments) < 3:
+        # No intermediate member: ``x.writableDatabase`` is not evidenced.
         return None
     for segment in segments[1:]:
         current = _STRUCTURAL_MEMBER_TYPES.get(segment)
@@ -422,8 +485,12 @@ def _structural_access_supported(
     Supported forms: a variable/parameter resolved to a structural handle
     type; a ``SupportSQLiteOpenHelper``-typed receiver accessing
     ``writableDatabase``/``readableDatabase``; a TYPE-spelled receiver
-    (static factory such as ``SQLiteDatabase.openDatabase``); and a dotted
-    chain fully resolved through the closed androidx member map.
+    (static factory such as ``SQLiteDatabase.openDatabase``); a dotted
+    chain fully resolved through the closed androidx member map; and -- GR-07
+    convergence round -- the two evidenced platform shapes whose receivers
+    resolve to exactly ``Context`` (``getDatabasePath``) or ``File``
+    (``deleteRecursively``).  Both stay inside the structural policy's exact
+    tuple authorization; only the receiver-verification gate is closed here.
     """
     if receiver_is_bare:
         if _is_structural_receiver(receiver_type):
@@ -432,6 +499,20 @@ def _structural_access_supported(
         # static/companion access (``SQLiteDatabase.openDatabase``): no
         # variable of that name can exist in scope for these closed names.
         if receiver in _STRUCTURAL_TYPE_SIMPLE_NAMES:
+            return True
+        # GR-07 convergence round, evidenced per-method shapes:
+        # ``context.getDatabasePath(...)`` x10 and ``tempDir.deleteRecursively()``
+        # x11 (line-level baseline, probe11_baseline_lines.json).  The
+        # receiver type must have been RESOLVED from the declaration's lexical
+        # scope to the exact platform type -- a name-guess never qualifies --
+        # and the operation stays policy-gated downstream.
+        simple_type = (
+            receiver_type.rsplit(".", 1)[-1]
+            if isinstance(receiver_type, str) else None
+        )
+        if operation == "getDatabasePath" and simple_type == "Context":
+            return True
+        if operation == "deleteRecursively" and simple_type == "File":
             return True
         return (
             operation in ("writableDatabase", "readableDatabase")
@@ -634,14 +715,18 @@ def _receiver_types(
         factory = _FACTORY_INIT.match(init)
         if factory:
             inferred_type = factory.group("type")
-        elif _DOTTED_INIT.fullmatch(init):
-            root_type = resolved.get(init.split(".", 1)[0])
-            if isinstance(root_type, str):
-                inferred_type = root_type
-                for segment in init.split(".")[1:]:
-                    inferred_type = _STRUCTURAL_MEMBER_TYPES.get(segment)
-                    if inferred_type is None:
-                        break
+        elif init.endswith(")"):
+            platform_call = _PLATFORM_CALL_INIT.match(init)
+            if platform_call and platform_call.group("method") in _PLATFORM_FACTORY_RETURNS:
+                inferred_type = _PLATFORM_FACTORY_RETURNS[platform_call.group("method")]
+            elif _DOTTED_INIT.fullmatch(init):
+                root_type = resolved.get(init.split(".", 1)[0])
+                if isinstance(root_type, str):
+                    inferred_type = root_type
+                    for segment in init.split(".")[1:]:
+                        inferred_type = _STRUCTURAL_MEMBER_TYPES.get(segment)
+                        if inferred_type is None:
+                            break
         if inferred_type is not None:
             seen_untyped.add(name)
             inferred.append((name, inferred_type, declared, scope))
@@ -676,7 +761,17 @@ def _receiver_types(
                 bindings.append(("it", receiver_kind, open_brace + 1, lambda_scope))
         if bindings:
             resolved = finalize(candidates + inferred + bindings)
-    return resolved
+    # GR-07 convergence round: captured type TEXTS keep their source spelling
+    # (including star projections) until this boundary.  Erasing ``Type<*>``
+    # to its canonical ``Type<Any?>`` form here keeps every environment value
+    # comparable with the parser-resolved DAO signatures on the other side of
+    # the overload comparison; a raw star spelling would fail signature
+    # normalization and fall back to a raw-tuple comparison that can never
+    # match (a false DB_CALL_TARGET_AMBIGUOUS).
+    return {
+        name: erase_star_projections(value) if isinstance(value, str) else value
+        for name, value in resolved.items()
+    }
 
 
 def _dao_maps(inventory) -> tuple[dict[str, set[str]], dict[tuple[str, str], list[Any]]]:
@@ -921,13 +1016,40 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                     accessor_match.group(1).strip(), re.S,
                 )
                 if param_match:
-                    accessor_parameters[param_match.group(1)] = param_match.group(2).strip()
+                    accessor_parameters[param_match.group(1)] = erase_star_projections(
+                        param_match.group(2).strip()
+                    )
+        # GR-07 convergence round: expression-bodied callables
+        # (``fun f(): X = withContext(io) { ... }``) keep the parser's span at
+        # the header ``=`` boundary, but their executable body -- and every
+        # local declared inside it -- extends to the declaration range's end.
+        # Restricting the lexical environment to the header-only span hid all
+        # such locals, so ``val stagedDatabase = AppDatabase.fileBuilder(...).
+        # build()`` / ``val tempDir = File(...)`` / ``val freshDb =
+        # restoreDatabaseOpener.openFreshDatabase()`` stayed unresolved and
+        # every downstream access failed closed (evidence:
+        # DatabaseBackupRepositoryImpl.kt restoreCostBackup /
+        # restoreFromSafetyBackup in probe11_baseline_lines.json).  The
+        # parameters still come from the real header; only the LOCALS window
+        # widens to the range the scanner already scans for calls.
+        env_callable_start = (
+            callable_item.start_offset if callable_item is not None else start
+        )
+        env_callable_end = (
+            callable_item.end_offset if callable_item is not None else end
+        )
+        if (
+            callable_item is not None
+            and callable_item.status == "UNSUPPORTED_EXPRESSION_BODY"
+            and env_callable_end < end
+        ):
+            env_callable_end = end
         calls = list(_METHOD_CALL.finditer(masked, start, end))
         for call in sorted(calls, key=lambda item: item.start()):
             receiver_types = _receiver_types(
                 source, start, end,
-                callable_start=callable_item.start_offset if callable_item is not None else start,
-                callable_end=callable_item.end_offset if callable_item is not None else end,
+                callable_start=env_callable_start,
+                callable_end=env_callable_end,
                 owner_start=owner.start_offset if owner is not None else None,
                 owner_end=owner.end_offset if owner is not None else None,
                 use_offset=call.start(),
@@ -961,12 +1083,13 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 continue
             # A VERIFIED structural handle used for an operation that is
             # neither a supported structural operation, a classified
-            # read-only cursor API, nor any known DAO operation is an
-            # unsupported database access shape: honest controlled
-            # diagnostic, never a guess.
+            # read-only cursor API, a transactional lifecycle operation, nor
+            # any known DAO operation is an unsupported database access
+            # shape: honest controlled diagnostic, never a guess.
             if (receiver_supported
                     and operation not in _STRUCTURAL
                     and operation not in _STRUCTURAL_READ_OPERATIONS
+                    and operation not in _STRUCTURAL_HANDLE_OPERATIONS
                     and not any(key[1] == operation for key in dao_methods)):
                 diagnostics.append(_line_diagnostic(
                     "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
@@ -1060,6 +1183,25 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                     if insensitive_item == insensitive_arguments:
                         matching.append(item)
             if len(matching) != 1:
+                # GR-07 convergence round: a READ-only candidate set ends at
+                # the mutator gate below WITHOUT any authorization decision,
+                # so a non-unique target cannot affect the report -- the same
+                # honesty rule the unresolved-argument path above already
+                # applies to reads.  Evidence: 6 of the 7 residual
+                # DB_CALL_TARGET_AMBIGUOUS emissions were single-candidate
+                # READ calls whose confidently-fabricated argument types
+                # (untyped-local factory inference such as
+                # ``TimePeriodUtils.startOfMonth(...)`` -> "TimePeriodUtils")
+                # could never match the declaration.  MUTATION candidate sets
+                # keep the exact pinned DB_CALL_TARGET_AMBIGUOUS contract:
+                # an unknown or mismatched argument list must never reach an
+                # authorization decision by arity alone.
+                if argument_types is not None and candidates and not any(
+                    f"{item.dao.canonical_path}::{dao}#{operation}"
+                    f"({', '.join(item.parameters)})" in mutator_methods
+                    for item in candidates
+                ):
+                    continue
                 diagnostics.append(GuardDiagnostic("DB_CALL_TARGET_AMBIGUOUS", path=declaration.path))
                 continue
             method = matching[0]
@@ -1174,8 +1316,8 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             # writableDatabase access after an unrelated mutation.
             receiver_types_at_access = _receiver_types(
                 source, start, end,
-                callable_start=callable_item.start_offset if callable_item is not None else start,
-                callable_end=callable_item.end_offset if callable_item is not None else end,
+                callable_start=env_callable_start,
+                callable_end=env_callable_end,
                 owner_start=owner.start_offset if owner is not None else None,
                 owner_end=owner.end_offset if owner is not None else None,
                 use_offset=match.start(),

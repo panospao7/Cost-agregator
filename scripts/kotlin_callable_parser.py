@@ -14,7 +14,7 @@ except ImportError:  # pragma: no cover - flat mode: standalone tools put ``scri
 __all__ = [
     "ParserError", "CallableDeclaration", "OwnerDeclaration", "mask_kotlin_source",
     "canonical_source_path", "parse_kotlin_file", "find_owner_declarations",
-    "find_callable_declarations", "resolve_callable",
+    "find_callable_declarations", "resolve_callable", "erase_star_projections",
     "ProjectTypeIndex", "project_type_declarations",
     "project_nested_type_declarations",
 ]
@@ -72,6 +72,147 @@ def _fail(code: str = "PARSER_ERROR") -> None:
 
 def _fail_signature(error: SignatureError) -> None:
     _fail(error.code if error.code in _SIGNATURE_ERROR_CODES else "PARSER_ERROR")
+
+
+# GR-07 convergence round: star projections.  ``Type<*>`` is Kotlin's erased
+# wildcard argument; the closed signature grammar below it has no ``*`` token,
+# so every spelling carrying one used to die as UNSUPPORTED_TOKEN and killed
+# the WHOLE file's callable discovery (evidence: AiServiceResult<*> x1 in
+# HybridDedupeJudgeService.kt made all three of its callables vanish, and 12
+# production files carry at least one star spelling).  The wildcard carries no
+# type information -- it is ERASED to ``Any?`` (Kotlin's own semantic
+# equivalent, ``List<*> == List<out Any?>``), which is already inside the
+# closed grammar on BOTH sides of every downstream exact signature comparison,
+# so no policy/loader/consumer change is needed.  Placement is validated by a
+# closed scanner: a ``*`` is rewritten ONLY directly inside a generic argument
+# list between ``<``/`,` and `,`/``>``.  Every other occurrence (bare, doubled,
+# mid-type) is left untouched so ``normalize_type_text`` keeps rejecting the
+# text with its existing sanitized UNSUPPORTED_TOKEN failure -- malformed uses
+# fail closed exactly as before.
+def erase_star_projections(text: str) -> str:
+    """Rewrite legal star-projection arguments to their erased ``Any?`` form."""
+    if not isinstance(text, str) or "*" not in text:
+        return text
+    out: list[str] = []
+    depth = 0
+    prev = ""  # last significant (non-space) character seen
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if text.startswith("->", i):
+            # A function-type arrow is not a generic closer: skip both chars
+            # without touching the angle depth or the boundary state.
+            out.append("->")
+            prev = ">"
+            i += 2
+            continue
+        if c == "<":
+            depth += 1
+        elif c == ">":
+            depth -= 1
+        elif c == "*" and depth > 0 and prev in ("<", ","):
+            j = i + 1
+            while j < n and text[j].isspace():
+                j += 1
+            nxt = text[j] if j < n else ""
+            if nxt in (",", ">"):
+                out.append("Any?")
+                prev = "?"
+                i += 1
+                continue
+        if not c.isspace():
+            prev = c
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
+# GR-07 convergence round, second residual sweep (evidence:
+# build/guard-debug/gr07/probe15_token.py reproduction over every retained
+# S2b failure family, 2026-08-27).  Three further ERASE-only normalizations
+# join the pipeline, each proven by production spellings and each invisible
+# to downstream identity because BOTH sides of every comparison pass through
+# the same normalizer:
+#
+# 1. Named parameters inside FUNCTION-TYPE argument groups
+#    (``onInsideTransaction: suspend (groupId: Long) -> Unit`` x28 in
+#    GroupTransactionCoordinator.kt alone): Kotlin ignores argument names for
+#    function-type identity, so ``name:`` prefixes are dropped.
+# 2. ``@JvmSuppressWildcards`` inside generic argument lists (DI multibinding
+#    modules): a compile-time-only annotation; erased to nothing.
+# 3. Use-site variance prefixes ``out``/``in`` inside generic argument lists
+#    (``Class<out ListenableWorker>`` x6, WorkerSpecScheduler.kt): erased at
+#    runtime by Kotlin itself.
+#
+# Anything outside these closed shapes keeps failing closed through
+# ``normalize_type_text`` exactly as before.
+_TYPE_JVM_SUPPRESS_WILDCARDS = re.compile(
+    r"@(?:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\.)?JvmSuppressWildcards\s+"
+)
+_TYPE_VARIANCE_PREFIX = re.compile(r"([<,])\s*(?:out|in)\s+(?=[A-Za-z_])")
+
+
+def _strip_function_type_param_names(inner: str) -> str:
+    parts = _split_top(inner)
+    rewritten: list[str] = []
+    for part in parts:
+        candidate = part.strip()
+        match = re.fullmatch(r"([A-Za-z_]\w*)\s*:\s*(.+)", candidate, re.S)
+        if match:
+            rewritten.append(_erase_function_type_parameter_names(match.group(2).strip()))
+        else:
+            rewritten.append(_erase_function_type_parameter_names(candidate))
+    return ",".join(rewritten)
+
+
+def _erase_function_type_parameter_names(text: str) -> str:
+    """Drop ``name:`` prefixes inside function-type argument groups.
+
+    Only a parenthesized group DIRECTLY followed by ``->`` counts; ordinary
+    parenthesized types and every other parenthesis use keep their text.
+    """
+    if "(" not in text or "->" not in text or ":" not in text:
+        return text
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "(":
+            out.append(text[i])
+            i += 1
+            continue
+        depth = 0
+        j = i
+        while j < n:
+            if text[j] == "(":
+                depth += 1
+            elif text[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if j >= n:
+            out.append(text[i:])
+            break
+        k = j + 1
+        while k < n and text[k].isspace():
+            k += 1
+        if text.startswith("->", k):
+            out.append("(")
+            out.append(_strip_function_type_param_names(text[i + 1:j]))
+            out.append(")")
+            i = j + 1
+            continue
+        out.append(text[i:j + 1])
+        i = j + 1
+    return "".join(out)
+
+
+def _normalize_closed_type_text(typ: str) -> str:
+    """Run the full closed erase pipeline over one raw type spelling."""
+    erased = _erase_function_type_parameter_names(typ)
+    erased = _TYPE_JVM_SUPPRESS_WILDCARDS.sub("", erased)
+    erased = _TYPE_VARIANCE_PREFIX.sub(r"\1", erased)
+    return erase_star_projections(erased)
 
 
 def mask_kotlin_source(text: str) -> str:
@@ -328,6 +469,13 @@ _BUILTINS = frozenset({
     # pollution fixed they are now dominant honest residual debt, and this
     # append repeats the documented evidence-first process.
     "MutableSet", "MutableMap", "Appendable", "Regex", "Date", "Calendar",
+    # GR-07 convergence round (third evidence probe, 2026-08-27,
+    # build/guard-debug/gr07/probe15_token.py): ``Class`` x2
+    # (WorkerSpecScheduler.kt ``Class<out ListenableWorker>``) is a
+    # java.lang default-imported type -- no import statement is required in
+    # Kotlin, so no import-based resolution can ever see it.  No project type
+    # is named ``Class``, so the addition cannot shadow anything.
+    "Class",
 })
 
 # Closed root packages of EXTERNAL (non-project) platform/SDK types.  A fully
@@ -568,7 +716,7 @@ def _resolve_type(typ: str, env: _TypeEnvironment, *, allow_vararg: bool = False
     if suspend_match:
         typ = typ[suspend_match.end():]
     try:
-        normalized = normalize_type_text(typ, allow_vararg=allow_vararg)
+        normalized = normalize_type_text(_normalize_closed_type_text(typ), allow_vararg=allow_vararg)
     except SignatureError as error:
         _fail_signature(error)
     vararg = normalized.startswith("vararg ")
@@ -1000,8 +1148,10 @@ def _normalize_retaining_suspend(typ: str, *, allow_vararg: bool = False) -> str
     """
     suspend_match = re.match(r"suspend\s+", typ)
     if suspend_match:
-        return normalize_type_text(typ[suspend_match.end():], allow_vararg=allow_vararg)
-    return normalize_type_text(typ, allow_vararg=allow_vararg)
+        return normalize_type_text(
+            _normalize_closed_type_text(typ[suspend_match.end():]), allow_vararg=allow_vararg
+        )
+    return normalize_type_text(_normalize_closed_type_text(typ), allow_vararg=allow_vararg)
 
 
 def find_callable_declarations(
