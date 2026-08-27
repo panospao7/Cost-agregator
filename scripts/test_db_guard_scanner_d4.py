@@ -21,6 +21,11 @@ from scripts.ci.guard_findings import (
     KIND_TOP_LEVEL_FUNCTION,
 )
 
+try:
+    from scripts.db_guard.policy_v2_loader import load_policy_v2
+except ImportError:  # pragma: no cover - flat mode
+    from db_guard.policy_v2_loader import load_policy_v2
+
 
 # Full-pipeline fixtures: scan_db_access wires Room-inventory AND signature
 # resolution, so every structural fixture carries (1) a minimal valid @Dao so
@@ -1308,24 +1313,28 @@ class Repo(private val dao: ScanProbeDao) {
     assert report.statistics["trusted"] is True
 
 
-def test_polluted_local_mutation_keeps_honest_signature_debt(tmp_path):
-    """Fail-closed preserved: the same unresolved argument on a MUTATION
-    keeps its controlled DB_SIGNATURE_UNRESOLVED -- it must never become a
-    guessed authorization or a silent pass."""
+def test_unique_candidate_mutation_surfaces_real_unauthorized_finding(tmp_path):
+    """GR-07 convergence round 6: with EXACTLY ONE declared candidate, the
+    argument types cannot change WHICH DAO method is invoked -- there is no
+    second overload to select -- so the unique-target mutator proceeds to the
+    authorization decision instead of hiding behind DB_SIGNATURE_UNRESOLVED
+    argument-environment debt.  With no policy entry owning it, the REAL
+    unauthorized mutation surfaces as a trusted-report finding (the round-6
+    goal: trusted exit 1 with real findings); a guessed authorization or a
+    silent pass remains impossible."""
     root = _source_root(tmp_path)
     source = """package example
 
 class Repo(private val dao: ScanProbeDao) {
     suspend fun store(id: String) {
-        val marker = dao.probe(id)
-        dao.store(marker)
+        dao.store(dao.probe(id))
     }
 }
 
 @androidx.room.Dao
 interface ScanProbeDao {
     @androidx.room.Query("SELECT 1")
-    suspend fun probe(value: String): String
+    suspend fun probe(value: String): Int
 
     @androidx.room.Insert
     suspend fun store(value: Int)
@@ -1335,9 +1344,47 @@ interface ScanProbeDao {
 
     report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
 
+    assert report.diagnostics == ()
+    assert [item.rule for item in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    assert report.statistics["trusted"] is True
+
+
+def test_multi_candidate_mutation_keeps_honest_signature_debt(tmp_path):
+    """Fail-closed preserved: an unresolvable argument list on a MUTATION
+    whose DAO operation has MULTIPLE declared candidates keeps its controlled
+    DB_SIGNATURE_UNRESOLVED -- without the argument types the overload, and
+    therefore the authorized identity, is genuinely undeterminate."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class Repo(private val dao: ScanProbeDao) {
+    suspend fun store(id: String) {
+        dao.store(dao.probe(id))
+    }
+}
+
+@androidx.room.Dao
+interface ScanProbeDao {
+    @androidx.room.Query("SELECT 1")
+    suspend fun probe(value: String): Int
+
+    @androidx.room.Insert
+    suspend fun store(value: Int)
+
+    @androidx.room.Insert
+    suspend fun store(values: List<Int>)
+}
+"""
+    (root / "Repo.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
     assert [item.code for item in report.diagnostics] == [
         "DB_SIGNATURE_UNRESOLVED",
     ]
+    assert report.findings == ()
     assert report.statistics["trusted"] is False
 
 
@@ -1957,4 +2004,1332 @@ interface GroupHandler {
     assert finding.symbol.parameters == ("example.GroupEntity",)
     assert finding.identity["dao"] == "example.GroupProbeDao"
     assert finding.identity["operation"] == "insertGroup"
+    assert report.statistics["trusted"] is True
+
+
+# ── GR-07 final convergence: per-rule regression pins ────────────────────────
+#
+# Each closed rule of the final convergence round gets ONE positive test
+# reproducing the REAL probed production shape and ONE fail-closed negative
+# proving the neighboring non-evidenced shape still reports honest debt.
+# Observability convention: every fixture declares a DAO whose operation NAME
+# collides with the platform method under test (probe/delete/update/count/
+# getAll/insert), so a correctly resolved non-DAO receiver stays SILENT (its
+# type is not a DAO FQCN) while an unresolved receiver emits the blocking
+# DB_DAO_SCOPE_UNRESOLVED diagnostic -- the same collision the production
+# tree exhibits (stagedDbFile.delete() x6, digest.update(...), ...).
+
+
+def _update_probe_dao() -> str:
+    return (
+        "@androidx.room.Dao\n"
+        "interface UpdateProbeDao {\n"
+        "    @androidx.room.Update\n"
+        "    fun update(value: Int)\n"
+        "}\n"
+    )
+
+
+def _count_probe_dao() -> str:
+    return (
+        "@androidx.room.Dao\n"
+        "interface CountProbeDao {\n"
+        "    @androidx.room.Query(\"SELECT COUNT(*) FROM probe\")\n"
+        "    suspend fun count(): Int\n"
+        "}\n"
+    )
+
+
+def _index_probe_dao() -> str:
+    return (
+        "@androidx.room.Dao\n"
+        "interface IndexProbeDao {\n"
+        "    @androidx.room.Insert\n"
+        "    fun insert(value: Int)\n"
+        "    @androidx.room.Query(\"SELECT * FROM probe\")\n"
+        "    suspend fun getAll(): Int\n"
+        "}\n"
+    )
+
+
+# ── Rule: safe-call receivers resolve through the lexical environment ────────
+
+
+def test_safe_call_on_cast_tailed_local_surfaces_the_real_mutation(tmp_path):
+    """BudgetAutopilotEngine.kt:239-243: ``val dao = daoField.get(repo)
+    as? ExpenseDao`` types the local through the cast tail and the safe call
+    ``dao?.probe(...)`` names the SAME declared identity as the bare form --
+    nullability changes WHEN the call happens, never WHICH identity it names.
+    The resolved mutation surfaces as a real unauthorized-mutation finding on
+    a trusted report instead of hiding behind DB_DAO_SCOPE_UNRESOLVED."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class ReflectionHolder(val probeDao: ScanProbeDao)
+
+class BridgeRepository(private val multiCurrencyRepository: ReflectionHolder) {
+    fun bridge() {
+        val daoField = multiCurrencyRepository.javaClass.getDeclaredField("probeDao")
+            .also { it.isAccessible = true }
+        val dao = daoField.get(multiCurrencyRepository) as? ScanProbeDao
+        dao?.probe(1)
+    }
+}
+""" + "\n" + _PROBE_DAO
+    (root / "BridgeRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.symbol.name == "bridge"
+    assert finding.identity["dao"] == "example.ScanProbeDao"
+    assert finding.identity["accessor"] == "dao"
+    assert report.statistics["trusted"] is True
+
+
+def test_safe_call_on_unresolved_receiver_stays_fail_closed(tmp_path):
+    """The safe-call ``?`` never fabricates a receiver: a name absent from
+    the lexical environment keeps the structured blocking diagnostic."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class GhostRepository {
+    fun bridge() {
+        ghost?.probe(1)
+    }
+}
+""" + "\n" + _PROBE_DAO
+    (root / "GhostRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── Rule: closed qualified static factories (MessageDigest / File) ───────────
+
+
+def test_message_digest_static_factory_types_the_digest_local(tmp_path):
+    """CostbackupBundle.kt:601 / ReceiptAssetStore.kt:127: ``val digest =
+    MessageDigest.getInstance("SHA-256")`` carries the platform return type
+    by API contract, so ``digest.update(...)`` -- colliding with the
+    UpdateProbeDao ``update`` operation name -- resolves to a non-DAO handle
+    and stays silent instead of emitting DB_DAO_SCOPE_UNRESOLVED."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class Hasher {
+    fun digestChunk(): Int {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(1)
+        return 0
+    }
+}
+""" + "\n" + _update_probe_dao()
+    (root / "Hasher.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_companion_factory_return_stays_unresolved(tmp_path):
+    """Negative (no declared return): a companion factory WITHOUT an explicit
+    return type carries no parseable return fact, so
+    ``MerchantKeyGenerator.generate(...)`` (TransactionLifecycleCoordinator
+    round-6 evidence) must never fabricate the receiver's type from the
+    receiver OBJECT's name and the local stays honestly unresolved.  GR-07
+    convergence close-out: a factory WITH a declared, project-wide unique
+    return type now resolves through the n-arg declared-return map (see
+    ``test_n_arg_declared_return_types_the_for_each_element``); this fixture
+    pins the still-fail-closed undeclared spelling."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class KeyMaterial
+
+class MerchantKeyGenerator {
+    companion object {
+        fun generate(id: Int) = KeyMaterial()
+    }
+}
+
+class SignService {
+    fun sign(id: Int) {
+        val material = MerchantKeyGenerator.generate(id)
+        material.update(1)
+    }
+}
+""" + "\n" + _update_probe_dao()
+    (root / "SignService.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+def test_file_create_temp_file_static_factory_types_the_temp_local(tmp_path):
+    """DebugViewModel.kt:438 / BackupRestoreViewModel.kt:158:
+    ``File.createTempFile(...)`` -> ``File`` by API contract, so
+    ``temp.delete()`` -- colliding with the SweepDao ``delete`` operation
+    name -- resolves to a non-DAO handle and stays silent."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+import java.io.File
+
+class Importer(private val context: Context) {
+    fun prepare(): Boolean {
+        val temp = File.createTempFile("import_", ".db", context.cacheDir)
+        return temp.delete()
+    }
+}
+
+class Context
+""" + "\n" + _sweep_dao()
+    (root / "Importer.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_non_platform_create_temp_file_factory_stays_unresolved(tmp_path):
+    """Negative (no declared return): only the closed ``Head.member`` map
+    carries static-factory facts, and a same-shaped project factory keeps
+    the local honestly unresolved unless it DECLARES a parseable return
+    type.  GR-07 convergence close-out: a declared, project-wide unique
+    return type now resolves through the n-arg declared-return map (see
+    ``test_n_arg_declared_return_types_the_for_each_element``); this fixture
+    pins the still-fail-closed undeclared spelling."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class CachedFile
+
+class TempManager {
+    companion object {
+        fun createTempFile(prefix: String, suffix: String) = CachedFile()
+    }
+}
+
+class ImportService {
+    fun prepare() {
+        val temp = TempManager.createTempFile("import_", ".db")
+        temp.delete()
+    }
+}
+""" + "\n" + _sweep_dao()
+    (root / "ImportService.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── Rule: multiline initializer + db.use { it.execSQL } (SqliteSnapshotCreator)
+
+
+def test_multiline_open_database_use_lambda_authorizes_vacuum_shape(tmp_path):
+    """SqliteSnapshotCreator.tryVacuumInto: the ``SQLiteDatabase.openDatabase(``
+    initializer spans three lines (multiline initializer extension), the
+    ``db.use { it.execSQL(...) }`` dispatch binds ``it`` to the receiver's
+    handle type, and the catch block's ``target.delete()`` stays silent on
+    the resolved File parameter.  Both structural operations stay authorized
+    by their exact policy tuples."""
+    root = _source_root(tmp_path)
+    rel = _write(root, "SnapshotCreator.kt", """package example
+
+import android.database.sqlite.SQLiteDatabase
+import java.io.File
+
+class SnapshotCreator {
+    fun tryVacuumInto(source: File, target: File): Boolean {
+        return try {
+            val db = SQLiteDatabase.openDatabase(
+                source.absolutePath, null, SQLiteDatabase.OPEN_READWRITE
+            )
+            db.use { it.execSQL("VACUUM INTO ?", arrayOf(target.absolutePath)) }
+            true
+        } catch (e: Exception) {
+            target.delete()
+            false
+        }
+    }
+}
+""" + "\n" + _sweep_dao())
+    structural = [
+        {"path": rel, "class": "SnapshotCreator",
+         "method_pattern": "tryVacuumInto", "operation": "openDatabase"},
+        {"path": rel, "class": "SnapshotCreator",
+         "method_pattern": "tryVacuumInto", "operation": "execSQL"},
+    ]
+
+    report = scan_db_access(root, structural_policy=structural,
+                            raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_use_lambda_over_unresolved_receiver_keeps_structural_debt(tmp_path):
+    """Negative: an unresolved ``db`` binding never binds ``it``, so the
+    structural ``execSQL`` on the unbound lambda parameter keeps its honest
+    blocking DB_STRUCTURAL_SCOPE_UNSUPPORTED."""
+    root = _source_root(tmp_path)
+    _write(root, "BrokenVacuum.kt", """package example
+
+import java.io.File
+
+class BrokenVacuum {
+    fun vacuum(target: File): Boolean {
+        val db = opener.open("x.db")
+        db.use { it.execSQL("VACUUM INTO ?") }
+        return true
+    }
+}
+""" + "\n" + _PROBE_DAO)
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── Rule: companion visibility + closed Regex.findAll chain (OcrLanguageProcessor)
+
+
+def test_companion_regex_find_all_chain_resolves_and_stays_silent(tmp_path):
+    """OcrLanguageProcessor.kt:20-39: the companion ``Regex`` val is visible
+    to the owner's methods (companion members are class-static surface) and
+    ``findAll`` carries the closed platform return type
+    ``Sequence<MatchResult>``, so the chained ``count()`` -- colliding with
+    the CountProbeDao read operation name -- resolves to a non-DAO receiver
+    and stays silent."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class OcrProcessor {
+    companion object {
+        private val GREEK_CHARS = Regex("[Α-Ωα-ωάέήίόύώ]")
+    }
+
+    fun detect(text: String): Int {
+        return GREEK_CHARS.findAll(text).count()
+    }
+}
+""" + "\n" + _count_probe_dao()
+    (root / "OcrProcessor.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_regex_member_outside_closed_map_fails_closed(tmp_path):
+    """Negative (non-platform member): ``matches`` is not in the closed
+    member-return map, so the chain stays unresolved and the DAO-named
+    ``count()`` on it keeps its blocking diagnostic."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class BrokenOcr {
+    companion object {
+        private val GREEK_CHARS = Regex("[a-z]")
+    }
+
+    fun detect(text: String): Int {
+        return GREEK_CHARS.matches(text).count()
+    }
+}
+""" + "\n" + _count_probe_dao()
+    (root / "BrokenOcr.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── Rule: ImageCache member chains (cacheDir / listFiles / entries / iterator)
+
+
+def test_image_cache_member_chains_resolve_end_to_end(tmp_path):
+    """ImageCache.kt:27-29/119/173-177 composite: the untyped ``cacheDir``
+    member infers through the closed Context.cacheDir/resolve chain, the
+    ``LinkedHashMap<String, CacheEntry>(...)`` generic constructor spells its
+    own K/V, ``listFiles()?.forEach { it.delete() }`` binds ``it`` to the
+    Array<File> element, and ``entries.iterator()`` / ``next().value`` walk
+    the spelled container to ``entry.file`` (same-file property map).  Every
+    DAO-named ``delete`` stays silent on the resolved non-DAO handles."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+import java.io.File
+
+class ImageCache(private val context: Context) {
+    private data class CacheEntry(val file: File, var sizeBytes: Long)
+
+    private val cacheDir = context.cacheDir.resolve("image_cache")
+    private val cacheEntries = LinkedHashMap<String, CacheEntry>(16, 0.75f, true)
+
+    fun clear() {
+        cacheDir.listFiles()?.forEach { it.delete() }
+    }
+
+    fun evict() {
+        val iterator = cacheEntries.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next().value
+            entry.file.delete()
+        }
+    }
+}
+
+class Context
+""" + "\n" + _sweep_dao()
+    (root / "ImageCache.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_unresolved_container_breaks_the_entry_chain_fail_closed(tmp_path):
+    """Negative: an unresolved map binding breaks the whole
+    entries/iterator/next/value chain, so the DAO-named ``delete`` on the
+    unresolved ``entry.file`` receiver keeps its blocking diagnostic."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class BrokenCache {
+    fun evict() {
+        val iterator = mystery.entries.iterator()
+        val entry = iterator.next().value
+        entry.file.delete()
+    }
+}
+""" + "\n" + _sweep_dao()
+    (root / "BrokenCache.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── Rule: multiline listFiles{...}?.sortedBy{...} chain (DatabaseBackupRepositoryImpl)
+
+
+def test_multiline_list_files_sorted_by_chain_types_the_backups_local(tmp_path):
+    """DatabaseBackupRepositoryImpl.cleanupOldSafetyBackups:2457-2463: the
+    ``listFiles { ... }`` initializer spans three lines (multiline
+    extension), the closed chain types it ``Array<File>``, and
+    ``sortedBy``/``take`` preserve the ``File`` element type so ``forEach``
+    binds ``it`` and the DAO-named ``delete`` stays silent."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+import java.io.File
+
+class BackupCleaner {
+    fun cleanupOldSafetyBackups(backupDir: File) {
+        val backups = backupDir.listFiles { file ->
+            file.name.startsWith("SAFETY_")
+        }?.sortedBy { it.lastModified() } ?: return
+        if (backups.size > 3) {
+            backups.take(backups.size - 3).forEach { it.delete() }
+        }
+    }
+}
+""" + "\n" + _sweep_dao()
+    (root / "BackupCleaner.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_unresolved_list_files_root_keeps_the_chain_fail_closed(tmp_path):
+    """Negative: an unresolved ``listFiles`` receiver leaves ``backups``
+    untyped, so the element-typed ``forEach`` never binds ``it`` and the
+    DAO-named ``delete`` keeps its blocking diagnostic."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class BrokenCleaner {
+    fun cleanup() {
+        val backups = mysteryDir.listFiles { file ->
+            file.name.startsWith("SAFETY_")
+        }?.sortedBy { it.lastModified() } ?: return
+        backups.take(1).forEach { it.delete() }
+    }
+}
+""" + "\n" + _sweep_dao()
+    (root / "BrokenCleaner.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── Rule: withContext last-expression (DebugViewModel) ───────────────────────
+
+
+def test_with_context_last_expression_types_the_temp_file_local(tmp_path):
+    """DebugViewModel.kt:436-448: ``withContext(Dispatchers.IO) { ... }``
+    returns its lambda's LAST expression; the two-pass inference sees the
+    lambda-local ``temp`` (typed by the File.createTempFile static factory)
+    even though the dispatch text precedes it, so ``tempFile.delete()`` --
+    colliding with the SweepDao ``delete`` operation name -- stays silent on
+    the resolved File binding."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+import java.io.File
+
+class DebugImporter(private val context: Context) {
+    fun importDatabase(): Boolean {
+        val tempFile = withContext(Dispatchers.IO) {
+            try {
+                val temp = File.createTempFile("import_", ".db", context.cacheDir)
+                temp
+            } catch (e: Exception) {
+                null
+            }
+        }
+        if (tempFile == null) {
+            return false
+        }
+        return tempFile.delete()
+    }
+}
+
+class Context
+""" + "\n" + _sweep_dao()
+    (root / "DebugImporter.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_with_context_unknown_last_expression_fails_closed(tmp_path):
+    """Negative: a last-expression identifier absent from the lexical
+    environment leaves the dispatch result unresolved."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class BrokenImporter {
+    fun load(): Boolean {
+        val tempFile = withContext(Dispatchers.IO) {
+            mystery
+        }
+        return tempFile.delete()
+    }
+}
+""" + "\n" + _sweep_dao()
+    (root / "BrokenImporter.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── Rule: project-wide unique zero-arg function return map ───────────────────
+
+
+def test_true_zero_arg_call_carries_the_declared_return_type(tmp_path):
+    """Initializer path, positive: a genuinely empty RAW argument list lets
+    ``registry.resolve()`` carry the declared ``ScanProbeDao`` return type,
+    so the later mutation is a real discovered identity (unauthorized
+    finding on a trusted report) instead of unresolved-scope debt."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class Registry(private val probeDao: ScanProbeDao) {
+    fun resolve(): ScanProbeDao = probeDao
+}
+
+class Consumer(private val registry: Registry) {
+    fun run() {
+        val dao = registry.resolve()
+        dao.probe(1)
+    }
+}
+""" + "\n" + _PROBE_DAO
+    (root / "Consumer.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.identity["dao"] == "example.ScanProbeDao"
+    assert finding.identity["accessor"] == "dao"
+    assert report.statistics["trusted"] is True
+
+
+def test_same_owner_zero_arg_returns_resolve_both_receiver_shapes(tmp_path):
+    """``StringBKTree.create()`` (companion factory, same owner) and
+    ``getCategoryRepository()`` (private same-class provider,
+    CategorizationEngine.kt:451/481) both resolve through the project-wide
+    unique zero-arg declaration map: ``tree.insert(...)`` and
+    ``getCategoryRepository().getAll()`` land on non-DAO receivers and stay
+    silent instead of emitting DB_DAO_SCOPE_UNRESOLVED for the colliding
+    IndexProbeDao operation names."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class StringBKTree private constructor() {
+    companion object {
+        fun create(): StringBKTree = StringBKTree()
+    }
+
+    suspend fun insert(item: String) {
+    }
+}
+
+class CategoryRepository {
+    fun getAll(): Int = 0
+}
+
+class Engine {
+    private fun getCategoryRepository(): CategoryRepository = CategoryRepository()
+
+    fun buildAndRefresh(): Int {
+        val tree = StringBKTree.create()
+        tree.insert("seed")
+        return getCategoryRepository().getAll()
+    }
+}
+""" + "\n" + _index_probe_dao()
+    (root / "Engine.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_masked_string_argument_never_passes_for_zero_arity(tmp_path):
+    """THE fail-closed arity pin: ``registry.resolve("image_cache")`` is
+    byte-identical to ``registry.resolve()`` in MASKED text (string-literal
+    content and quotes are blanked), so the zero-arg emptiness test must run
+    on the RAW initializer text.  The removed masked-only fallback bound
+    ``dao`` to the declared return type and let the mutation reach an
+    authorization decision fabricated from a masked spelling; the raw-text
+    guard keeps the local honestly unresolved (blocking
+    DB_DAO_SCOPE_UNRESOLVED, zero findings).  GR-07 convergence close-out:
+    the n-arg declared-return map cannot claim the call either -- the name
+    is declared at BOTH arities, an overload set the closed scanner refuses
+    to arbitrate, so the dual-arity refusal keeps it out even though the
+    one-arg declaration alone would be unanimous."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class Registry(private val probeDao: ScanProbeDao) {
+    fun resolve(): ScanProbeDao = probeDao
+    fun resolve(prefix: String): ScanProbeDao = probeDao
+}
+
+class Consumer(private val registry: Registry) {
+    fun run() {
+        val dao = registry.resolve("image_cache")
+        dao.probe(1)
+    }
+}
+""" + "\n" + _PROBE_DAO
+    (root / "Consumer.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+def test_ambiguous_zero_arg_declarations_stay_out_of_the_map(tmp_path):
+    """Negative (ambiguous same-owner functions): two same-name zero-arg
+    declarations disagreeing on the return type keep the name out of the
+    project-wide map, so the initializer stays unresolved and the DAO-named
+    call on it emits the blocking diagnostic instead of guessing either
+    type."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class AmbiguousRegistry(private val probeDao: ScanProbeDao) {
+    fun resolve(): ScanProbeDao = probeDao
+    fun resolve(): Int = 1
+}
+
+class AmbiguousConsumer(private val ambiguousRegistry: AmbiguousRegistry) {
+    fun run() {
+        val dao = ambiguousRegistry.resolve()
+        dao.probe(1)
+    }
+}
+""" + "\n" + _PROBE_DAO
+    (root / "AmbiguousConsumer.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── Rule: project-wide unique n-arg function declared-return map ─────────────
+#
+# GR-07 convergence close-out: the zero-arg map above generalizes to
+# n-ARGUMENT declarations whose return type is parseable at the declaration
+# site (``fun name(params): T`` -- T taken verbatim, bodies never read).
+# Resolution: ``name(args)`` -> T; the existing forEach element binding then
+# types the lambda parameter from a ``List<X>`` result.  Fail-closed:
+# declarations without an explicit return type, same-name declarations with
+# conflicting return types, and (by construction -- a one-step verbatim
+# signature extraction, capped at the top inference depth) recursive
+# self-reference.
+
+
+def test_n_arg_declared_return_types_the_for_each_element(tmp_path):
+    """Positive, the MerchantNormalizer.learnMerchantAlias shape: the
+    repository method DECLARES ``List<MerchantAlias>`` for a one-argument
+    call (``getAliasesForCanonical(canonicalId: Long)``), the declared type
+    types the ``val aliases`` local, the existing forEach element binding
+    types the lambda parameter, and the mutation on the bound element inside
+    resolves to its exact overload identity -- a real unauthorized-mutation
+    finding on a trusted report.  The two-overload DAO makes the assertion
+    DEPEND on the binding: without the declared return type the argument
+    stays unresolved and the ambiguous mutator set emits
+    DB_SIGNATURE_UNRESOLVED instead.  The production lambda spells a named
+    ``alias ->`` parameter; the closed machinery binds the implicit ``it``
+    (the bound param), so the fixture uses that spelling."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class MerchantAlias(val id: Long)
+
+class MerchantAliasRepository {
+    suspend fun getAliasesForCanonical(canonicalId: Long): List<MerchantAlias> =
+        emptyList()
+}
+
+@androidx.room.Dao
+interface AliasProbeDao {
+    @androidx.room.Insert
+    fun probe(value: Int)
+    @androidx.room.Insert
+    fun probe(value: MerchantAlias)
+}
+
+class AliasConsumer(
+    private val repository: MerchantAliasRepository,
+    private val probeDao: AliasProbeDao
+) {
+    suspend fun learn(oldCanonicalId: Long) {
+        val aliases = repository.getAliasesForCanonical(oldCanonicalId)
+        aliases.forEach { probeDao.probe(it) }
+    }
+}
+"""
+    (root / "AliasConsumer.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.identity["dao"] == "example.AliasProbeDao"
+    assert finding.identity["accessor"] == "probeDao"
+    assert finding.identity["operation"] == "probe"
+    assert report.statistics["trusted"] is True
+
+
+def test_accessor_shaped_zero_arg_call_reaches_the_project_map(tmp_path):
+    """The LAST blocking emission (MerchantNormalizer.getOrBuildTree:296):
+    ``val tree = StringBKTree.create()`` is accessor-SHAPED text over a
+    non-accessor name.  With a @Database declared in the tree -- always true
+    in production -- the round-5 accessor branch consumed the whole
+    resolution chain on its miss, the project declared-return maps stayed
+    unreachable, ``tree`` stayed unresolved, and the DAO-named
+    ``tree.insert(...)`` emitted DB_DAO_SCOPE_UNRESOLVED.  A missed accessor
+    lookup now falls through to the project maps, so the initializer carries
+    the declared ``StringBKTree`` and the scan is clean and trusted."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+import androidx.room.Database
+
+class StringBKTree private constructor() {
+    companion object {
+        fun create(): StringBKTree = StringBKTree()
+    }
+
+    suspend fun insert(item: Int) {
+    }
+}
+
+@Database(entities = [], version = 1)
+abstract class AppDatabase {
+    abstract fun probeDao(): IndexProbeDao
+}
+
+class TreeNormalizer {
+    suspend fun getOrBuildTree(probeDao: IndexProbeDao) {
+        val tree = StringBKTree.create()
+        tree.insert(1)
+    }
+}
+""" + "\n" + _index_probe_dao()
+    (root / "TreeNormalizer.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_ambiguous_n_arg_declarations_stay_out_of_the_map(tmp_path):
+    """Negative (ambiguous same-name functions): two same-name one-argument
+    declarations disagreeing on the return type keep the name out of the
+    project-wide map, so the initializer stays unresolved and the DAO-named
+    call on it emits the blocking diagnostic instead of guessing either
+    type."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class AmbiguousRepository(private val probeDao: ScanProbeDao) {
+    fun resolve(id: Long): ScanProbeDao = probeDao
+    fun resolve(key: String): Int = 1
+}
+
+class AmbiguousConsumer(private val ambiguousRepository: AmbiguousRepository) {
+    fun run() {
+        val dao = ambiguousRepository.resolve(7L)
+        dao.probe(1)
+    }
+}
+""" + "\n" + _PROBE_DAO
+    (root / "AmbiguousConsumer.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+def test_n_arg_call_without_declared_return_stays_unresolved(tmp_path):
+    """Negative (missing declared return): a one-argument declaration with an
+    expression body and NO explicit return type is never collected, so the
+    call stays unresolved and the DAO-named call on it keeps the blocking
+    diagnostic (fail closed)."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class OpaqueRepository(private val probeDao: ScanProbeDao) {
+    fun resolve(id: Long) = probeDao
+}
+
+class OpaqueConsumer(private val opaqueRepository: OpaqueRepository) {
+    fun run() {
+        val dao = opaqueRepository.resolve(7L)
+        dao.probe(1)
+    }
+}
+""" + "\n" + _PROBE_DAO
+    (root / "OpaqueConsumer.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_DAO_SCOPE_UNRESOLVED",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+# ── GR-07 activation: v2-policy characterization ─────────────────────────────
+#
+# scripts/test_db_guard_active_policy_blocked.py characterized the PRE-v2
+# activation state (exit 2, the single DB_POLICY_SOURCE_EVIDENCE_INVALID
+# umbrella diagnostic) and declared itself obsolete once the gate goes green.
+# With typed v2 authorization activated that state is gone: a schemaVersion-2
+# document loads through ``load_policy_v2`` and the loaded entries drive
+# ``scan_db_access`` with ZERO policy diagnostics.  This test is the
+# activated-truth replacement; ORCHESTRATOR NOTE: the blocked-state
+# characterization file is obsolete and should be removed.
+
+
+_V2_CHARACTERIZATION_YAML = """schemaVersion: 2
+entries:
+- path: app/src/main/java/example/TypedRepository.kt
+  ownerFqcn: example.Repository
+  kind: function
+  method: save
+  receiver: null
+  parameterTypes:
+  - example.Item
+  daoAccessor: expenseDao
+  daoFqcn: example.ExpenseDao
+  operation: insert
+  barrierMode: helper
+  reason: gr07-activation-characterization
+  owner: '@gr07'
+  linkedIssue: GR-07
+"""
+
+
+def test_v2_policy_loads_and_pipeline_runs_without_policy_diagnostic(tmp_path):
+    """Activated truth: ``load_policy_v2`` succeeds, the loaded PolicyEntry
+    tuple authorizes the discovered mutation end to end, and the report
+    carries NO DB_POLICY_SOURCE_EVIDENCE_INVALID (the pre-activation
+    umbrella) -- clean, trusted, zero findings."""
+    root = _typed_root(tmp_path)
+    policy_path = tmp_path / "policy_v2.yaml"
+    policy_path.write_text(_V2_CHARACTERIZATION_YAML, encoding="utf-8")
+
+    entries, errors = load_policy_v2(str(policy_path))
+
+    assert errors == []
+    assert entries is not None and len(entries) == 1
+
+    report = scan_db_access(
+        root, list(entries), raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    payload = report.to_dict()
+    assert [item["code"] for item in payload["diagnostics"]] == []
+    assert payload["findings"] == []
+    assert payload["statistics"]["trusted"] is True
+
+
+# ── GR-07 final close-out: the last five DB_CALL_TARGET_AMBIGUOUS paths ─────
+#
+# Two adjudicated artifacts, one per matching rule:
+#
+# (a) TYPING ARTIFACT (PlannedExpenseRepository.kt:94,
+#     WarrantyTrackerRepository.kt:121/150, InvestmentTracker.kt:184,
+#     TransactionLifecycleCoordinator.kt:1225): the project-wide n-arg
+#     declared-return map was NAME-global, and ``TransactionContext.copy(
+#     ...): TransactionContext`` -- the tree's only n-arg ``copy``
+#     declaration -- typed EVERY ``x.copy(...)`` initializer.  A
+#     ``val withTimestamps = expense.copy(...)`` local therefore carried
+#     ``TransactionContext`` into a ``PlannedExpense`` parameter, matched
+#     zero overloads, and the single-candidate MUTATOR set emitted the false
+#     blocking diagnostic.  The map is now (DECLARING TYPE, name)-keyed: a
+#     resolved receiver applies only its own type's entry.
+# (b) DEFAULT-PARAMETER ARTIFACT (NotificationIntakeWorker.kt:411 over
+#     NotificationIntakeDao.markPrivacyDeniedAndPurgeAllPayload): Kotlin
+#     binds omitted defaults at compile time, so the worker's
+#     ``id = intakeId, nowMs = now`` call matched zero FULL parameter tuples
+#     yet resolved to exactly one real overload.  Acceptance is now
+#     source-verified (names + types + declared defaults, exactly one
+#     accepting candidate); genuinely multi-match calls stay ambiguous.
+
+
+def test_member_copy_return_type_no_longer_poisons_other_receivers(tmp_path):
+    """Adjudication (a), the PlannedExpenseRepository.kt:94 shape (same root
+    cause as WarrantyTrackerRepository.kt:121/150, InvestmentTracker.kt:184,
+    and TransactionLifecycleCoordinator.kt:1225): a ``TransactionContext``
+    member declares ``copy(...): TransactionContext``, but the copied value
+    flows from a ``PlannedExpense`` receiver.  The declaring-type gate
+    refuses the cross-type entry, the local is honestly unresolved, and the
+    single-candidate mutator proceeds to its REAL authorization decision
+    (an unauthorized-mutation finding on a trusted report) instead of the
+    false DB_CALL_TARGET_AMBIGUOUS."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class TransactionContext(val correlationId: String) {
+    fun copy(id: Long): TransactionContext = TransactionContext(correlationId)
+}
+
+class PlannedExpense(val id: Long)
+
+@androidx.room.Dao
+interface PlannedExpenseProbeDao {
+    @androidx.room.Insert
+    suspend fun insertPlannedExpense(expense: PlannedExpense): Long
+}
+
+class PlannedExpenseRepository(
+    private val plannedExpenseDao: PlannedExpenseProbeDao
+) {
+    suspend fun addPlannedExpense(expense: PlannedExpense) {
+        val withTimestamps = expense.copy(1L)
+        plannedExpenseDao.insertPlannedExpense(withTimestamps)
+    }
+}
+"""
+    (root / "PlannedExpenseRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.identity["dao"] == "example.PlannedExpenseProbeDao"
+    assert finding.identity["operation"] == "insertPlannedExpense"
+    assert report.statistics["trusted"] is True
+
+
+def test_member_copy_return_type_still_resolves_for_declaring_type(tmp_path):
+    """Adjudication (a) negative control: the declaring-type gate must only
+    refuse CROSS-type receivers.  ``context.copy(...)`` on a
+    ``TransactionContext`` receiver keeps the declared
+    ``TransactionContext`` binding, the argument matches its overload
+    exactly, and the mutation still reaches the authorization decision."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class TransactionContext(val correlationId: String) {
+    fun copy(id: Long): TransactionContext = TransactionContext(correlationId)
+}
+
+@androidx.room.Dao
+interface ContextProbeDao {
+    @androidx.room.Insert
+    suspend fun store(value: TransactionContext)
+}
+
+class ContextRepository(private val contextDao: ContextProbeDao) {
+    suspend fun store(context: TransactionContext) {
+        val copy = context.copy(1L)
+        contextDao.store(copy)
+    }
+}
+"""
+    (root / "ContextRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    assert report.findings[0].identity["operation"] == "store"
+    assert report.statistics["trusted"] is True
+
+
+def test_unresolved_receiver_keeps_name_keyed_declared_return(tmp_path):
+    """Adjudication (a) regression pin: a receiver the scanner cannot
+    resolve keeps the historical name-keyed lookup, so currently resolving
+    sites cannot degrade into new DB_DAO_SCOPE_UNRESOLVED debt."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+@androidx.room.Dao
+interface FallbackProbeDao {
+    @androidx.room.Insert
+    fun probe(value: Int)
+}
+
+class Helper {
+    fun resolve(id: Long): FallbackProbeDao = FallbackProbeDaoImpl()
+}
+
+class FallbackCaller {
+    fun run() {
+        val helper = makeHelper(1)
+        val dao = helper.resolve(7L)
+        dao.probe(1)
+    }
+}
+"""
+    (root / "FallbackCaller.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    assert report.findings[0].identity["dao"] == "example.FallbackProbeDao"
+    assert report.statistics["trusted"] is True
+
+
+def test_default_parameter_call_resolves_to_its_unique_overload(tmp_path):
+    """Adjudication (b), the NotificationIntakeWorker.kt:411 shape: the call
+    binds only the non-defaulted subset (``id``/``nowMs``) of a
+    three-parameter overload whose middle parameter carries a declared
+    default.  Source-verified acceptance resolves EXACTLY ONE candidate and
+    the mutation reaches its real authorization decision (an
+    unauthorized-mutation finding on a trusted report) instead of the false
+    DB_CALL_TARGET_AMBIGUOUS."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+@androidx.room.Dao
+interface IntakeProbeDao {
+    @androidx.room.Query("UPDATE intake SET status = :status WHERE id = :id")
+    suspend fun markPrivacyDenied(
+        id: Long,
+        status: String = "PRIVACY_DENIED",
+        nowMs: Long
+    )
+}
+
+class IntakeWorker(private val intakeDao: IntakeProbeDao) {
+    suspend fun runPrivacyCleanup(intakeId: Long, now: Long) {
+        intakeDao.markPrivacyDenied(id = intakeId, nowMs = now)
+    }
+}
+"""
+    (root / "IntakeWorker.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.identity["dao"] == "example.IntakeProbeDao"
+    assert finding.identity["operation"] == "markPrivacyDenied"
+    assert report.statistics["trusted"] is True
+
+
+def test_default_parameter_multi_match_stays_ambiguous(tmp_path):
+    """Fail-closed pin for adjudication (b): TWO overloads accepting the
+    same defaulted call is a genuine multi-match -- the pinned
+    DB_CALL_TARGET_AMBIGUOUS contract holds (untrusted report, no
+    authorization decision)."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+@androidx.room.Dao
+interface AmbiguousDefaultsDao {
+    @androidx.room.Query("UPDATE alpha SET x = :x WHERE id = :id")
+    suspend fun mark(id: Long, x: String = "a", nowMs: Long)
+
+    @androidx.room.Query("UPDATE beta SET y = :y WHERE id = :id")
+    suspend fun mark(id: Long, y: Int = 1, nowMs: Long)
+}
+
+class AmbiguousCaller(private val dao: AmbiguousDefaultsDao) {
+    suspend fun run(rowId: Long, now: Long) {
+        dao.mark(id = rowId, nowMs = now)
+    }
+}
+"""
+    (root / "AmbiguousCaller.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_CALL_TARGET_AMBIGUOUS",
+    ]
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+
+
+def test_positional_call_omitting_trailing_defaults_resolves(tmp_path):
+    """Adjudication (b), positional form: Kotlin allows omitting only a
+    TRAILING defaulted run positionally; a source-verified trailing default
+    resolves the unique candidate exactly like the named form."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+@androidx.room.Dao
+interface FlagProbeDao {
+    @androidx.room.Insert
+    suspend fun store(value: Int, flag: Boolean = true)
+}
+
+class FlagCaller(private val dao: FlagProbeDao) {
+    suspend fun keep() {
+        dao.store(1)
+    }
+}
+"""
+    (root / "FlagCaller.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    assert report.findings[0].identity["operation"] == "store"
+    assert report.statistics["trusted"] is True
+
+
+def test_unindexed_transaction_default_method_delete_is_not_ambiguity(tmp_path):
+    """GR-07 final close-out adjudication, the CategoryRepository.kt:225
+    shape: ``categoryDao.delete(category)`` names the ``@Transaction``
+    DEFAULT method ``delete`` -- deliberately unindexed by the Room
+    inventory (only annotation-backed methods are discovered; the real
+    mutator is ``deleteInternal``).  The call still reached the ambiguity
+    emission because sixteen UNRELATED DAOs carry indexed ``delete``
+    mutators, so the operation gate let it through, and the RESOLVED
+    argument binding (``Category?``) fell past the read-only escape whose
+    guard required a non-empty candidate set.  Zero candidates is not
+    ambiguity: the pinned honest contract is 2+ EQUAL matches, and with no
+    inventory mutator the mutator gate could never reach an authorization
+    decision anyway.  The call now ends silently -- exactly the treatment
+    the unresolved-argument path and the absent-operation gate already
+    give the same shape."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class CategoryEntity(val id: Long, val name: String)
+
+class OtherEntity(val id: Long)
+
+@androidx.room.Dao
+interface OtherProbeDao {
+    @androidx.room.Delete
+    suspend fun delete(item: OtherEntity)
+}
+
+@androidx.room.Dao
+interface CategoryProbeDao {
+    @androidx.room.Query("SELECT * FROM categories WHERE id = :id")
+    suspend fun getById(id: Long): CategoryEntity?
+
+    @androidx.room.Delete
+    suspend fun deleteInternal(category: CategoryEntity)
+
+    @androidx.room.Transaction
+    suspend fun delete(category: CategoryEntity) {
+        deleteInternal(category)
+    }
+}
+
+class CategoryRepository(private val categoryDao: CategoryProbeDao) {
+    suspend fun deleteCategory(categoryId: Long) {
+        val category = categoryDao.getById(categoryId)
+            ?: return
+        categoryDao.delete(category)
+    }
+}
+"""
+    (root / "CategoryRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_synthesized_copy_name_keyed_fallback_stays_unresolved(tmp_path):
+    """GR-07 final close-out adjudication, the
+    WarrantyTrackerRepository.kt:413 shape: ``existing`` (from an
+    elvis-return initializer) stays unresolved, so ``existing.copy(...)``
+    fell to the NAME-keyed declared-return twin -- where the project's only
+    explicit ``copy`` declaration, ``TransactionContext.copy(...):
+    TransactionContext``, typed the local as ``TransactionContext``.  The
+    mismatched binding against the single ``updateReturnWindow(ReturnWindow)``
+    mutator emitted a false DB_CALL_TARGET_AMBIGUOUS.  ``copy`` is
+    synthesized on every data class with a receiver-specific return type,
+    so a name-global ``copy`` entry is unsound by construction; the twin
+    now excludes synthesized member names and the local stays honestly
+    unresolved, letting the single-candidate mutator proceed to its REAL
+    authorization decision (an unauthorized-mutation finding on a trusted
+    report).  The (declaring type, name) map is untouched: a RESOLVED
+    ``TransactionContext`` receiver keeps its declared binding (pinned by
+    ``test_member_copy_return_type_still_resolves_for_declaring_type``),
+    and non-synthesized name-keyed lookups are unchanged (pinned by
+    ``test_unresolved_receiver_keeps_name_keyed_declared_return``)."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class TransactionContext(val correlationId: String) {
+    fun copy(correlationId: String = this.correlationId): TransactionContext =
+        TransactionContext(correlationId)
+}
+
+class ReturnWindow(val id: Long, val updatedAt: Long)
+
+@androidx.room.Dao
+interface ReturnWindowProbeDao {
+    @androidx.room.Query("SELECT * FROM windows WHERE id = :id")
+    suspend fun getReturnWindowById(id: Long): ReturnWindow?
+
+    @androidx.room.Update
+    suspend fun updateReturnWindow(value: ReturnWindow)
+}
+
+class WarrantyRepository(private val returnWindowDao: ReturnWindowProbeDao) {
+    suspend fun markAsReturned(returnWindowId: Long, now: Long) {
+        val existing = returnWindowDao.getReturnWindowById(returnWindowId) ?: return
+        val updated = existing.copy("ctx")
+        returnWindowDao.updateReturnWindow(updated)
+    }
+}
+"""
+    (root / "WarrantyRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.identity["dao"] == "example.ReturnWindowProbeDao"
+    assert finding.identity["operation"] == "updateReturnWindow"
     assert report.statistics["trusted"] is True
