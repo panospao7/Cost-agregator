@@ -30,6 +30,30 @@ NotificationProcessingPipeline.kt callables:
 * NEAR-MISS protection over the GR-08b rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08c (MIT-DB-08C) extends the same contract to the
+RecurringLifecycleCoordinator.kt domain-lifecycle callables.  The 28 file
+findings collapse to 26 UNIQUE fingerprints (> the 25-fingerprint batch
+cap), so the batch was SPLIT by callable groups:
+
+* ``GR-08c1-seed.yml`` -- the occurrence/expense-link lifecycle group
+  (linkExpenseToOccurrence, reconcileExpenseLinkAfterUpdate,
+  unlinkExpenseFromOccurrenceDetailed, updateOccurrenceStatus;
+  10 findings / 10 unique fingerprints; ZERO closure rows -- the blind-spot
+  sweep found every mutating DAO call in the file is an abstract
+  Room-annotated method already covered by a finding);
+* ``GR-08c2-seed.yml`` -- the reminder-delivery lifecycle group
+  (regenerateReminderDeliveriesForOccurrence,
+  recoverStaleClaimedDeliveries, claimReminderDelivery,
+  cancelClaimedReminderDelivery, markReminderSent, markReminderFailed,
+  dismissReminderDelivery, snoozeReminderDelivery;
+  18 findings / 16 unique fingerprints);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the FOUR reviewed batch seed files (5 + 13 + 10 + 16 =
+  44 rows) -- a dropped earlier-batch row fails closed here instead of
+  silently re-unauthorizing that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08c1/c2 rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -784,27 +808,565 @@ def test_real_tracked_gr08b_seed_file_loads_with_exactly_thirteen_rows():
     ]
 
 
-def test_combined_seed_file_concatenates_both_batch_seed_files():
-    """Drift guard: the generation input == GR-08a rows + GR-08b rows.
+# ── (7) GR-08c1/c2 rows: tracked seed files + concatenation + NEAR-MISS ───────
+#
+# GR-08c authorizes the RecurringLifecycleCoordinator.kt domain-lifecycle
+# callables (28 findings / 26 unique fingerprints > the 25-fingerprint
+# batch cap, hence the GR-08c1/c2 split by callable groups).  The migration
+# CLI accepts a SINGLE --seed-rows value, so every generation run consumes
+# the COMBINED document GR-08-seeds.yml; these tests pin that the combined
+# document stays the exact concatenation of the FOUR reviewed batch seed
+# files, and that the GR-08c1/c2 rows authorize EXACTLY their callable
+# identity + DAO + operation (wrong overload, wrong owner, wrong DAO, and
+# wrong operation stay unauthorized).
 
-    The combined document is what --seed-rows actually consumes; if it ever
-    drifts from the two reviewed batch seed files (a dropped GR-08a row
-    would silently re-unauthorize batch-1 mutations at promotion time),
-    this fails closed.
+GR08C1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08c1-seed.yml"
+GR08C2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08c2-seed.yml"
+
+COORDINATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/recurring/"
+    "lifecycle/RecurringLifecycleCoordinator.kt"
+)
+COORDINATOR_FQCN = (
+    "com.yourname.expensetracker.domain.recurring.lifecycle."
+    "RecurringLifecycleCoordinator"
+)
+OCCURRENCE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao"
+)
+REMINDER_DELIVERY_DAO = (
+    "com.yourname.expensetracker.data.database.dao."
+    "RecurringReminderDeliveryDao"
+)
+PLANNED_EXPENSE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.PlannedExpenseDao"
+)
+LIFECYCLE_EVENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao"
+)
+OCCURRENCE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.RecurringOccurrence"
+)
+OCCURRENCE_STATUS = (
+    "com.yourname.expensetracker.domain.recurring.lifecycle."
+    "RecurringOccurrenceStatus"
+)
+TRANSITION_REASON = (
+    "com.yourname.expensetracker.domain.recurring.lifecycle."
+    "RecurringOccurrenceTransitionReason"
+)
+LINK_PARAMS = ("Long",)
+RECONCILE_PARAMS = ("Long", "String")
+REGENERATE_PARAMS = (OCCURRENCE_ENTITY, "Long", "List<String>")
+RECOVER_PARAMS = ("String", "String")
+CLAIM_PARAMS = ("Long",)
+MARK_SENT_PARAMS = ("Long", "Int")
+DISMISS_PARAMS = ("Long",)
+SNOOZE_PARAMS = ("Long", "Long")
+
+
+def _gr08c_seed_row(method, dao_accessor, dao_fqcn, operation, params):
+    """One exact GR-08c-shaped v2 seed row mapping."""
+    return {
+        "path": COORDINATOR_KT,
+        "ownerFqcn": COORDINATOR_FQCN,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(params),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08c EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08C",
+    }
+
+
+def _gr08c1_seed_rows():
+    """The ten exact GR-08c1 rows (mirroring the tracked seed file).
+
+    The occurrence/expense-link lifecycle group; ZERO closure rows (the
+    blind-spot sweep found every mutating DAO call in the file is an
+    abstract Room-annotated method already covered by a finding).
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("occurrenceDao", OCCURRENCE_DAO, "claimForExpense"),
+        ("plannedExpenseDao", PLANNED_EXPENSE_DAO, "linkToActualExpense"),
+        (
+            "reminderDeliveryDao",
+            REMINDER_DELIVERY_DAO,
+            "suppressOpenDeliveriesForOccurrence",
+        ),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "linkExpenseToOccurrence", accessor, dao, operation,
+                LINK_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        (
+            "occurrenceDao",
+            OCCURRENCE_DAO,
+            "updateLinkedPaymentSnapshot",
+        ),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "reconcileExpenseLinkAfterUpdate", accessor, dao, operation,
+                RECONCILE_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("occurrenceDao", OCCURRENCE_DAO, "update"),
+        ("plannedExpenseDao", PLANNED_EXPENSE_DAO, "unlinkActualExpense"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "unlinkExpenseFromOccurrenceDetailed", accessor, dao,
+                operation, RECONCILE_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("occurrenceDao", OCCURRENCE_DAO, "updateStatus"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "updateOccurrenceStatus", accessor, dao, operation,
+                ("Long", OCCURRENCE_STATUS, TRANSITION_REASON),
+            )
+        )
+    return rows
+
+
+def _gr08c2_seed_rows():
+    """The sixteen exact GR-08c2 rows (mirroring the tracked seed file).
+
+    The reminder-delivery lifecycle group; ZERO closure rows.
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+        (
+            "reminderDeliveryDao",
+            REMINDER_DELIVERY_DAO,
+            "reopenDeliveryForOccurrenceWindow",
+        ),
+        ("reminderDeliveryDao", REMINDER_DELIVERY_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "regenerateReminderDeliveriesForOccurrence", accessor, dao,
+                operation, REGENERATE_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        (
+            "reminderDeliveryDao",
+            REMINDER_DELIVERY_DAO,
+            "recoverStaleClaimedDeliveries",
+        ),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "recoverStaleClaimedDeliveries", accessor, dao, operation,
+                RECOVER_PARAMS,
+            )
+        )
+    rows.append(
+        _gr08c_seed_row(
+            "claimReminderDelivery", "reminderDeliveryDao",
+            REMINDER_DELIVERY_DAO, "claimDelivery", CLAIM_PARAMS,
+        )
+    )
+    for accessor, dao, operation in (
+        (
+            "reminderDeliveryDao",
+            REMINDER_DELIVERY_DAO,
+            "cancelClaimedDelivery",
+        ),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "cancelClaimedReminderDelivery", accessor, dao, operation,
+                RECONCILE_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        (
+            "reminderDeliveryDao",
+            REMINDER_DELIVERY_DAO,
+            "markSentFromClaimed",
+        ),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "markReminderSent", accessor, dao, operation,
+                MARK_SENT_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        (
+            "reminderDeliveryDao",
+            REMINDER_DELIVERY_DAO,
+            "markFailedFromClaimed",
+        ),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "markReminderFailed", accessor, dao, operation,
+                RECONCILE_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("reminderDeliveryDao", REMINDER_DELIVERY_DAO, "update"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "dismissReminderDelivery", accessor, dao, operation,
+                DISMISS_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("reminderDeliveryDao", REMINDER_DELIVERY_DAO, "update"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08c_seed_row(
+                "snoozeReminderDelivery", accessor, dao, operation,
+                SNOOZE_PARAMS,
+            )
+        )
+    return rows
+
+
+def test_real_tracked_gr08c1_seed_file_loads_with_exactly_ten_rows():
+    entries = _load_seed_entries(GR08C1_SEED_FILE)
+    assert len(entries) == 10
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["linkExpenseToOccurrence"] * 3
+        + ["reconcileExpenseLinkAfterUpdate"] * 2
+        + ["unlinkExpenseFromOccurrenceDetailed"] * 3
+        + ["updateOccurrenceStatus"] * 2
+    )
+    for entry in entries:
+        assert entry.path == COORDINATOR_KT
+        assert entry.owner_fqcn == COORDINATOR_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08C"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+
+
+def test_real_tracked_gr08c2_seed_file_loads_with_exactly_sixteen_rows():
+    entries = _load_seed_entries(GR08C2_SEED_FILE)
+    assert len(entries) == 16
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["regenerateReminderDeliveriesForOccurrence"] * 3
+        + ["recoverStaleClaimedDeliveries"] * 2
+        + ["claimReminderDelivery"]
+        + ["cancelClaimedReminderDelivery"] * 2
+        + ["markReminderSent"] * 2
+        + ["markReminderFailed"] * 2
+        + ["dismissReminderDelivery"] * 2
+        + ["snoozeReminderDelivery"] * 2
+    )
+    for entry in entries:
+        assert entry.path == COORDINATOR_KT
+        assert entry.owner_fqcn == COORDINATOR_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08C"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+
+
+def test_combined_seed_file_concatenates_all_four_batch_seed_files():
+    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2.
+
+    Supersedes the GR-08b-era two-file concatenation test (which pinned the
+    combined document at 18 rows): the GR-08c split extends the combined
+    generation input to 44 rows, and the drift guard must cover ALL FOUR
+    reviewed batch seed files.  The combined document is what --seed-rows
+    actually consumes; if it ever drifts from the four reviewed batch seed
+    files (a dropped earlier-batch row would silently re-unauthorize that
+    batch's mutations at promotion time), this fails closed.
     """
     combined = _load_seed_entries(COMBINED_SEED_FILE)
     gr08a = _load_seed_entries(SEED_FILE)
     gr08b = _load_seed_entries(GR08B_SEED_FILE)
+    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
+    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
-    assert len(combined) == 18
+    assert len(gr08c1) == 10
+    assert len(gr08c2) == 16
+    assert len(combined) == 44
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
-        _entry_fields(entry) for entry in list(gr08a) + list(gr08b)
+        _entry_fields(entry)
+        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
     assert len(set(keys)) == len(keys)
+
+
+def _gr08c_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08c fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08c_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, **overrides):
+    """The exact GR-08c row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)``; ``overrides`` perturb exactly one identity field of
+    the match query for the near-miss assertions.
+    """
+    entries = _gr08c_policy_entries(tmp_path, rows)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08c1_exact_identity_matches(tmp_path):
+    rows = _gr08c1_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
+            "claimForExpense",
+        )
+        is True
+    )
+
+
+def test_gr08c1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08c1_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
+            "claimForExpense", parameter_types=("Long", "Long"),
+        )
+        is False
+    )
+
+
+def test_gr08c1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08c1_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
+            "claimForExpense", owner_fqcn="com.example.OtherCoordinator",
+        )
+        is False
+    )
+
+
+def test_gr08c1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08c1_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
+            "claimForExpense",
+            dao_accessor="reminderDeliveryDao",
+            dao_fqcn=REMINDER_DELIVERY_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08c1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08c1_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "linkExpenseToOccurrence", "occurrenceDao",
+            "claimForExpense", operation="update",
+        )
+        is False
+    )
+
+
+def test_gr08c1_update_status_row_near_misses_stay_unauthorized(tmp_path):
+    """The typed-status rows are exact too: sibling shapes never match."""
+    rows = _gr08c1_seed_rows()
+    base_kwargs = dict(
+        select_method="updateOccurrenceStatus",
+        select_accessor="occurrenceDao",
+        select_operation="updateStatus",
+    )
+    assert _assert_gr08c_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong overload: the two-parameter legacy status shape.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, parameter_types=("Long", "String")),
+        )
+        is False
+    )
+    # Wrong operation: the plain Room update spelling.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="update")
+        )
+        is False
+    )
+    # Wrong DAO: the lifecycle-event accessor behind the same callable.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="lifecycleEventDao",
+                dao_fqcn=LIFECYCLE_EVENT_DAO,
+            ),
+        )
+        is False
+    )
+
+
+def test_gr08c2_exact_identity_matches(tmp_path):
+    rows = _gr08c2_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
+            "claimDelivery",
+        )
+        is True
+    )
+
+
+def test_gr08c2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08c2_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
+            "claimDelivery", parameter_types=("Long", "Long"),
+        )
+        is False
+    )
+
+
+def test_gr08c2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08c2_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
+            "claimDelivery", owner_fqcn="com.example.OtherCoordinator",
+        )
+        is False
+    )
+
+
+def test_gr08c2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08c2_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
+            "claimDelivery",
+            dao_accessor="lifecycleEventDao",
+            dao_fqcn=LIFECYCLE_EVENT_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08c2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08c2_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "claimReminderDelivery", "reminderDeliveryDao",
+            "claimDelivery", operation="update",
+        )
+        is False
+    )
+
+
+def test_gr08c2_regenerate_rows_near_misses_stay_unauthorized(tmp_path):
+    """The regenerate rows are exact too: sibling shapes never match.
+
+    The three lifecycleEventDao.insert call sites share ONE fingerprint, so
+    the seed carries exactly one row for them; a wrong parameter shape (the
+    reconcile callable's (Long, String)) or a wrong DAO behind the same
+    accessor spelling stays unauthorized.
+    """
+    rows = _gr08c2_seed_rows()
+    base_kwargs = dict(
+        select_method="regenerateReminderDeliveriesForOccurrence",
+        select_accessor="lifecycleEventDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08c_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong overload: the two-parameter reconcile shape.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, parameter_types=("Long", "String")),
+        )
+        is False
+    )
+    # Wrong DAO identity behind the accessor spelling.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="reminderDeliveryDao",
+                dao_fqcn=REMINDER_DELIVERY_DAO,
+            ),
+        )
+        is False
+    )
+    # Wrong callable: the sibling recover-stale insert never matches the
+    # regenerate identity.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="recoverStaleClaimedDeliveries")
+        )
+        is False
+    )
 
 
 def _gr08b_policy_entries(tmp_path):
