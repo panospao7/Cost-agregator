@@ -6,6 +6,17 @@ rules.  Uncertainty is represented by registered protocol diagnostics and
 therefore makes the returned report untrusted. Clean v2 reports exit 0,
 findings exit 1, and diagnostics exit 2.
 
+GR-07 Option-B trust amendment: SCANNER-STAGE per-callable diagnostics are
+classified BLOCKING vs ADVISORY by the DB relevance of the enclosing
+declaration range.  A diagnostic on a callable whose range shows DB-surface
+evidence (DAO accessor/operation calls, structural operations/handle usage)
+is blocking -> the scan is untrusted (exit 2 upstream).  A diagnostic on a
+callable with NO DB-relevant content (Compose/UI/service code that never
+touches a DAO or DB handle) carries the bounded
+``controlled_context["advisory"] = True`` marker, is still reported, and
+never breaks trust.  Pre-scan stage failures (source roots, inventory,
+loader, evidence) are never advisory and stay always blocking.
+
 Activation (PR-GR-07 Slice 2): D4 authorization is TYPED.  The ownership
 policy input is a sequence of immutable
 :class:`~scripts.db_guard.policy_model.PolicyEntry` objects loaded from a
@@ -280,18 +291,95 @@ def _diag_from_text(value: str) -> GuardDiagnostic | None:
 _MAX_DIAGNOSTIC_LINE = 2 ** 31 - 1
 
 
-def _line_diagnostic(code: str, path: str | None, line: int | None) -> GuardDiagnostic:
+def _line_diagnostic(
+    code: str, path: str | None, line: int | None, *, advisory: bool = False,
+) -> GuardDiagnostic:
     """Controlled diagnostic carrying its source line as bounded context.
 
     The current ``GuardDiagnostic`` contract has no ``location`` field; the
     one meaningful coordinate survives as a bounded positive int under the
     ``controlled_context["line"]`` key.  Sites without a meaningful line
-    omit the key entirely.
+    omit the key entirely.  ``advisory=True`` adds the bounded
+    ``controlled_context["advisory"]`` marker (GR-07 Option-B amendment):
+    the diagnostic keeps its code/path/line verbatim but never breaks
+    report trust.
     """
-    context: dict[str, int] = {}
+    context: dict[str, Any] = {}
+    if advisory:
+        context["advisory"] = True
     if line is not None:
         context["line"] = min(max(int(line), 1), _MAX_DIAGNOSTIC_LINE)
     return GuardDiagnostic(code, path=path, controlled_context=context)
+
+
+# GR-07 Option-B trust-contract amendment: scanner-stage per-callable
+# diagnostics are classified BLOCKING vs ADVISORY by the DB relevance of the
+# enclosing declaration range.  Relevance is a closed, name/shape-based
+# determination over the SAME masked text the scan already uses; it can only
+# ever move a diagnostic from blocking to advisory, and every pre-scan /
+# infrastructure emission stays unflagged (always blocking).
+def _db_surface_names(inventory) -> frozenset[str]:
+    """Closed DB-surface vocabulary for relevance classification.
+
+    Every declared DAO accessor identity (FQCN and simple name) plus every
+    declared DAO operation name from the Room inventory.  A declaration range
+    containing a ``_METHOD_CALL`` against one of these names — or any
+    structural operation/handle token — touches a database surface.
+    """
+    names: set[str] = set()
+    for dao in inventory.daos:
+        names.add(dao.fqcn)
+        names.add(dao.fqcn.rsplit(".", 1)[-1])
+    for method in inventory.methods:
+        names.add(method.name)
+    return frozenset(names)
+
+
+def _declaration_touches_db_surface(
+    masked: str, start: int, end: int, db_names: frozenset[str],
+) -> bool:
+    """True when the declaration range shows DB-surface evidence.
+
+    Evidence: any structural operation/handle token (the supported
+    ``_STRUCTURAL`` shapes, the unsupported-token forms, and the
+    ``writableDatabase`` property access), or any ``_METHOD_CALL`` whose
+    method name is a known DAO accessor/operation name.  Everything else —
+    Compose/UI/service code that never names a DAO operation or a DB handle
+    — has no DB relevance, so scanner diagnostics on it are advisory.
+    """
+    if _PROPERTY_STRUCTURAL_ACCESS.search(masked, start, end):
+        return True
+    for pattern in _STRUCTURAL.values():
+        if pattern.search(masked, start, end):
+            return True
+    for pattern in _UNSUPPORTED_STRUCTURAL.values():
+        if pattern.search(masked, start, end):
+            return True
+    return any(
+        call.group("method") in db_names
+        for call in _METHOD_CALL.finditer(masked, start, end)
+    )
+
+
+def _range_diagnostic(
+    code: str,
+    path: str | None,
+    *,
+    db_relevant: bool,
+    line: int | None = None,
+) -> GuardDiagnostic:
+    """Diagnostic classified by its declaration range's DB relevance.
+
+    DB-relevant ranges keep the plain blocking diagnostic.  Ranges with NO
+    DB-surface evidence carry the bounded ``controlled_context["advisory"]``
+    marker: the diagnostic is still reported verbatim (same code/path/line),
+    but it never breaks report trust and never withholds findings.  Emission
+    sites whose DB relevance was already positively computed by the scan
+    itself (verified structural-handle usage) pass ``db_relevant=True``
+    explicitly, so an unknown operation on a verified handle stays blocking
+    even when its name matches no DAO accessor.
+    """
+    return _line_diagnostic(code, path, line, advisory=not db_relevant)
 
 
 def _property_symbol_at(source: str, declaration, offset: int) -> CallableSymbol:
@@ -841,6 +929,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     # could reach an authorization decision (a mutator); read-only targets
     # end at the mutator gate either way.
     mutator_methods = {item.method for item in inventory.mutators}
+    # Option-B amendment: closed DB-surface vocabulary shared by every
+    # range-classified diagnostic below.
+    db_surface_names = _db_surface_names(inventory)
     findings: list[GuardFinding] = []
     # Read each file once; declaration ranges are the authoritative scan
     # units.  Paths map back through the SAME declared-root anchors the
@@ -911,6 +1002,13 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             diagnostics.append(GuardDiagnostic("DB_METHOD_BODY_UNSUPPORTED", path=declaration.path))
             continue
         masked = mask_kotlin_source(source)
+        # Option-B classification input: does THIS declaration's range touch
+        # a database surface?  Computed once per declaration from the same
+        # masked text the scan below uses; every range-classified emission
+        # site shares this single determination.
+        db_relevant = _declaration_touches_db_surface(
+            masked, start, end, db_surface_names,
+        )
         if declaration.kind == "property":
             # Duplicated accessor kinds make the property's callable identity
             # ambiguous (which ``set`` would a policy authorize?): fail
@@ -926,8 +1024,9 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 for item in _accessor_declaration_matches(accessor_span)
             ]
             if len(accessor_kinds) != len(set(accessor_kinds)):
-                diagnostics.append(GuardDiagnostic(
-                    "DB_SIGNATURE_UNRESOLVED", path=declaration.path,
+                diagnostics.append(_range_diagnostic(
+                    "DB_SIGNATURE_UNRESOLVED", declaration.path,
+                    db_relevant=db_relevant,
                 ))
                 continue
         try:
@@ -996,7 +1095,10 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                                             name=name_match.group(1), receiver=None,
                                             parameters=(), kind="unknown")
         except (ParserError, SignatureError):
-            diagnostics.append(GuardDiagnostic("DB_SIGNATURE_UNRESOLVED", path=declaration.path))
+            diagnostics.append(_range_diagnostic(
+                "DB_SIGNATURE_UNRESOLVED", declaration.path,
+                db_relevant=db_relevant,
+            ))
             continue
         # A property's accessor parameter lists live AFTER the first body
         # brace (the getter's), so the callable-header scan inside
@@ -1066,9 +1168,10 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 try:
                     call_symbol = _property_symbol_at(source, declaration, call.start())
                 except SignatureError:
-                    diagnostics.append(_line_diagnostic(
+                    diagnostics.append(_range_diagnostic(
                         "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
-                        _line(source, call.start()),
+                        db_relevant=db_relevant,
+                        line=_line(source, call.start()),
                     ))
                     continue
             is_structural = operation in _STRUCTURAL
@@ -1091,9 +1194,13 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                     and operation not in _STRUCTURAL_READ_OPERATIONS
                     and operation not in _STRUCTURAL_HANDLE_OPERATIONS
                     and not any(key[1] == operation for key in dao_methods)):
-                diagnostics.append(_line_diagnostic(
+                diagnostics.append(_range_diagnostic(
                     "DB_STRUCTURAL_SCOPE_UNSUPPORTED", declaration.path,
-                    _line(source, call.start()),
+                    # Verified handle usage was positively computed above, so
+                    # this diagnostic is DB-relevant even when the operation
+                    # name matches no DAO accessor and the range carries no
+                    # structural token: always blocking (fail closed).
+                    db_relevant=True, line=_line(source, call.start()),
                 ))
                 continue
             # The receiver parser is for DAO operations only.  Ordinary Kotlin
@@ -1394,12 +1501,22 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         key=lambda item: (item.code, item.path or "", item.symbol or "",
                           item.controlled_context.get("line", 0)),
     ))
+    # GR-07 Option-B trust computation: only BLOCKING diagnostics break
+    # trust.  Advisory diagnostics (the bounded controlled_context["advisory"]
+    # marker on declarations with no DB-surface evidence) are reported but
+    # never discard findings and never flip ``trusted``.  Pre-scan and
+    # infrastructure emissions are never flagged advisory, so they stay
+    # blocking here by construction.
+    blocking_diagnostics = tuple(
+        item for item in diagnostics
+        if item.controlled_context.get("advisory") is not True
+    )
     # Infrastructure diagnostics are never a partial authorization result.
     # Discard all provisional findings so callers cannot baseline an untrusted
     # source/inventory parse.
-    if diagnostics:
+    if blocking_diagnostics:
         findings = []
-    statistics = {"files_scanned": len(sources), "declarations_scanned": len(declarations.helper_ranges), "inventory_daos": len(inventory.daos), "inventory_mutators": len(inventory.mutators), "trusted": not bool(diagnostics)}
+    statistics = {"files_scanned": len(sources), "declarations_scanned": len(declarations.helper_ranges), "inventory_daos": len(inventory.daos), "inventory_mutators": len(inventory.mutators), "trusted": not bool(blocking_diagnostics), "advisoryDiagnosticCount": len(diagnostics) - len(blocking_diagnostics)}
     return GuardRunReport(guard="db_access", findings=tuple(findings), diagnostics=diagnostics, statistics=statistics)
 
 

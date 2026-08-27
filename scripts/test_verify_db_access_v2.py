@@ -347,6 +347,9 @@ def _clean_statistics(*, files_scanned: int = 1, declarations_scanned: int = 3,
         "inventory_daos": inventory_daos,
         "inventory_mutators": inventory_mutators,
         "trusted": True,
+        # GR-07 Option-B amendment: trusted scans report how many of their
+        # scanner diagnostics are advisory (non-DB-relevant callables).
+        "advisoryDiagnosticCount": 0,
     }
     statistics.update(_ACTIVATION_STATISTICS)
     statistics["sourceRootManifestSha256"] = manifest_sha256
@@ -1038,6 +1041,145 @@ class ExpressionRepository(private val expenseDao: ExpenseDao) {
     })
 
 
+# ── GR-07 Option-B trust contract (CLI level) ─────────────────────────────────
+#
+# Scanner-stage per-callable diagnostics split BLOCKING vs ADVISORY by the DB
+# relevance of the enclosing callable.  Advisory-only debt keeps the trusted
+# exit-0/exit-1 semantics; mixed debt blocks only on the DB-touching callable;
+# pre-scan failures stay always blocking.
+
+_ADVISORY_UI_STATE_MULTI = """\
+package com.example.multi
+
+data class UiState(val id: Int)
+"""
+
+_ADVISORY_UI_STATE_OTHER = """\
+package com.example.other
+
+data class UiState(val label: String)
+"""
+
+_ADVISORY_UI_REPOSITORY = """\
+package example
+
+import com.example.multi.UiState
+
+class UiRepository {
+    fun render(state: UiState): String {
+        val text = state.toString()
+        return text.trim()
+    }
+}
+"""
+
+_MIXED_DB_REPOSITORY = """\
+package example
+
+import com.example.multi.UiState
+
+@androidx.room.Dao
+interface DebtDao {
+    @androidx.room.Insert
+    fun store(value: Int)
+}
+
+class DebtRepository(private val debtDao: DebtDao) {
+    fun persist(state: UiState) {
+        debtDao.store(1)
+    }
+}
+"""
+
+
+def test_advisory_only_scanner_debt_keeps_run_trusted_exit_zero(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
+    """A callable with NO DB-relevant content (no DAO accessor usage, no
+    structural token) whose signature cannot resolve is ADVISORY: reported
+    with the bounded marker, trust holds, exit 0."""
+    root = _fixture(tmp_path)
+    _write(root, "app/src/main/java/com/example/multi/UiState.kt",
+           _ADVISORY_UI_STATE_MULTI)
+    _write(root, "app/src/main/java/com/example/other/UiState.kt",
+           _ADVISORY_UI_STATE_OTHER)
+    _write(root, "app/src/main/java/example/UiRepository.kt",
+           _ADVISORY_UI_REPOSITORY)
+    _policy(root)
+    _structural_policy(root)
+    report = root / "advisory.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 0
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [{
+            "code": "DB_SIGNATURE_UNRESOLVED",
+            "path": "app/src/main/java/example/UiRepository.kt",
+            "symbol": None,
+            "controlled_context": {"advisory": True},
+        }],
+        # files: Fixture + multi/UiState + other/UiState + UiRepository;
+        # declarations: Item + Repository + save + UiState x2 +
+        # UiRepository + render; diagnosticCount includes the advisory one.
+        "statistics": _clean_statistics(
+            files_scanned=4, declarations_scanned=7, diagnostic_count=1,
+        ),
+    })
+
+
+def test_mixed_scanner_debt_blocks_only_the_db_callable_cli(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
+    """One DB-touching callable unresolved + one UI callable unresolved ->
+    untrusted exit 2 with findings withheld; ONLY the DB-touching callable's
+    diagnostic is blocking (context-free), the UI one keeps its advisory
+    marker."""
+    root = _fixture(tmp_path)
+    _write(root, "app/src/main/java/com/example/multi/UiState.kt",
+           _ADVISORY_UI_STATE_MULTI)
+    _write(root, "app/src/main/java/com/example/other/UiState.kt",
+           _ADVISORY_UI_STATE_OTHER)
+    _write(root, "app/src/main/java/example/UiRepository.kt",
+           _ADVISORY_UI_REPOSITORY)
+    _write(root, "app/src/main/java/example/DebtRepository.kt",
+           _MIXED_DB_REPOSITORY)
+    _policy(root)
+    _structural_policy(root)
+    report = root / "mixed.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 2
+    _report(report, {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [
+            {
+                # Canonical report order sorts DebtRepository before
+                # UiRepository within the same code.
+                "code": "DB_SIGNATURE_UNRESOLVED",
+                "path": "app/src/main/java/example/DebtRepository.kt",
+                "symbol": None,
+                "controlled_context": {},
+            },
+            {
+                "code": "DB_SIGNATURE_UNRESOLVED",
+                "path": "app/src/main/java/example/UiRepository.kt",
+                "symbol": None,
+                "controlled_context": {"advisory": True},
+            },
+        ],
+        "statistics": {"trusted": False},
+    })
+
+
 def test_diag_text_keeps_path_canonical_and_parses_line() -> None:
     diagnostic = _diag_from_text("DB_SOURCE_UNREADABLE:app/src/main/java/Foo.kt:17")
     assert (diagnostic.path, diagnostic.code, diagnostic.symbol,
@@ -1159,7 +1301,11 @@ def _assert_strict_untrusted_scanner_family_report(report_path: Path) -> dict:
     for item in diagnostics:
         assert set(item) == DIAGNOSTIC_KEYS
         assert item["symbol"] is None
-        assert item["controlled_context"] == {}
+        # GR-07 Option-B amendment: a scanner diagnostic on a callable with
+        # NO DB-relevant content carries the bounded advisory marker; debt on
+        # DB-touching callables stays context-free.  No other context value
+        # may ever appear in this closed scanner-debt family.
+        assert item["controlled_context"] in ({}, {"advisory": True})
         path = item["path"]
         assert path is None or (
             isinstance(path, str)

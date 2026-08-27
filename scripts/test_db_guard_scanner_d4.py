@@ -76,7 +76,7 @@ fun mutate(db: SQLiteDatabase) {
         }],
         "statistics": {"files_scanned": 1, "declarations_scanned": 1,
                        "inventory_daos": 1, "inventory_mutators": 1,
-                       "trusted": False},
+                       "trusted": False, "advisoryDiagnosticCount": 0},
     }
     assert report.to_dict() == expected
 
@@ -166,7 +166,7 @@ class StructuralRepository {
         "diagnostics": [],
         "statistics": {"files_scanned": 1, "declarations_scanned": 3,
                        "inventory_daos": 1, "inventory_mutators": 1,
-                       "trusted": True},
+                       "trusted": True, "advisoryDiagnosticCount": 0},
     }
     assert report.to_dict() == expected
 
@@ -242,6 +242,7 @@ fun SQLiteDatabase.extension(value: Int) {
     assert report.to_dict()["statistics"] == {
         "files_scanned": 1, "declarations_scanned": 9,
         "inventory_daos": 1, "inventory_mutators": 1, "trusted": True,
+        "advisoryDiagnosticCount": 0,
     }
 
 
@@ -262,7 +263,7 @@ fun unsupported(value: String) { value.deleteRecursively() }
                          "controlled_context": {"line": 3}}],
         "statistics": {"files_scanned": 1, "declarations_scanned": 1,
                        "inventory_daos": 1, "inventory_mutators": 1,
-                       "trusted": False},
+                       "trusted": False, "advisoryDiagnosticCount": 0},
     }
 
 
@@ -335,7 +336,7 @@ class DeepClean {
         }],
         "statistics": {"files_scanned": 2, "declarations_scanned": 3,
                        "inventory_daos": 1, "inventory_mutators": 1,
-                       "trusted": False},
+                       "trusted": False, "advisoryDiagnosticCount": 0},
     }
     _assert_repo_relative_posix(report, tmp_path)
 
@@ -395,8 +396,12 @@ class MultiRepository(private val multiDao: MultiDao) {
     assert payload["statistics"] == {
         "files_scanned": 2, "declarations_scanned": 3,
         "inventory_daos": 1, "inventory_mutators": 1, "trusted": True,
+        "advisoryDiagnosticCount": 0,
     }
     _assert_repo_relative_posix(report, tmp_path)
+
+
+# ── PR-GR-07 Slice 2: typed v2 authorization matrix ──────────────────────────
 
 
 # â”€â”€ PR-GR-07 Slice 2: typed v2 authorization matrix â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -478,7 +483,7 @@ def test_typed_exact_entry_authorizes_the_mutation(tmp_path):
         # fixture's accounting).
         "statistics": {"files_scanned": 1, "declarations_scanned": 3,
                        "inventory_daos": 2, "inventory_mutators": 4,
-                       "trusted": True},
+                       "trusted": True, "advisoryDiagnosticCount": 0},
     }
 
 
@@ -622,7 +627,7 @@ def test_typed_direct_barrier_mode_requires_local_barrier_evidence(tmp_path):
         # both @Dao interfaces are excluded from the scanned-range count.
         "statistics": {"files_scanned": 1, "declarations_scanned": 3,
                        "inventory_daos": 2, "inventory_mutators": 4,
-                       "trusted": True},
+                       "trusted": True, "advisoryDiagnosticCount": 0},
     }
 
 
@@ -825,6 +830,196 @@ class Repo(private val dao: ScanProbeDao) {
     assert report.diagnostics == ()
     assert report.findings == ()
     assert report.statistics["trusted"] is True
+
+
+# ── GR-07 Option-B trust contract: BLOCKING vs ADVISORY diagnostics ──────────
+#
+# Scanner-stage per-callable diagnostics split by the DB relevance of the
+# enclosing declaration range: a callable whose range names a DAO
+# accessor/operation or a structural DB operation/handle stays BLOCKING
+# (untrusted, findings withheld); a callable with NO DB-relevant content
+# (Compose/UI/service code that never touches a DAO or DB handle) is reported
+# with the bounded controlled_context["advisory"] marker and never breaks
+# trust.  Pre-scan stage failures are never advisory.
+
+
+_UI_STATE_OTHER_PACKAGE = """package com.example.other
+
+data class UiState(val label: String)
+"""
+
+_ADVISORY_UI_REPOSITORY = """package example
+
+import com.example.multi.UiState
+
+class UiRepository {
+    fun render(state: UiState): String {
+        val text = state.toString()
+        return text.trim()
+    }
+}
+"""
+
+
+def _ambiguous_ui_state_root(tmp_path: Path) -> Path:
+    """A tree whose ONLY debt is a non-DB callable with an ambiguous param.
+
+    Two same-simple-name ``UiState`` declarations across packages make the
+    closed-world type resolver fail on ``render(state: UiState)`` -- the same
+    honest DB_SIGNATURE_UNRESOLVED mechanism the cross-package ambiguity test
+    pins -- while the callable body never touches a DAO or DB handle.
+    """
+    root = _source_root(tmp_path)
+    multi = root / "com" / "example" / "multi"
+    other = root / "com" / "example" / "other"
+    multi.mkdir(parents=True)
+    other.mkdir(parents=True)
+    multi.joinpath("UiState.kt").write_text(
+        "package com.example.multi\n\ndata class UiState(val id: Int)\n",
+        encoding="utf-8")
+    other.joinpath("UiState.kt").write_text(
+        _UI_STATE_OTHER_PACKAGE, encoding="utf-8")
+    (root / "UiRepository.kt").write_text(
+        _ADVISORY_UI_REPOSITORY + "\n" + _PROBE_DAO, encoding="utf-8")
+    return root
+
+
+def test_advisory_only_unresolved_callable_keeps_scan_trusted(tmp_path):
+    """A pure UI callable (no DAO accessor usage, no structural token) whose
+    signature cannot resolve is ADVISORY: reported verbatim with the bounded
+    marker, trusted stays True, zero blocking diagnostics."""
+    root = _ambiguous_ui_state_root(tmp_path)
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_SIGNATURE_UNRESOLVED",
+    ]
+    assert report.diagnostics[0].path == "app/src/main/java/UiRepository.kt"
+    assert report.diagnostics[0].controlled_context == {"advisory": True}
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+    assert report.statistics["advisoryDiagnosticCount"] == 1
+
+
+def test_mixed_debt_blocks_only_the_db_touching_callable(tmp_path):
+    """One DB-touching callable unresolved + one UI callable unresolved ->
+    untrusted with ONLY the DB one blocking; the UI one keeps its advisory
+    marker and the advisory counter stays exact."""
+    root = _ambiguous_ui_state_root(tmp_path)
+    (root / "DbRepository.kt").write_text(
+        "package com.example.db\n\n"
+        "import com.example.multi.UiState\n\n"
+        "@androidx.room.Dao\n"
+        "interface MixedProbeDao {\n"
+        "    @androidx.room.Insert\n"
+        "    fun store(value: Int)\n"
+        "}\n\n"
+        "class DbRepository(private val mixedDao: MixedProbeDao) {\n"
+        "    fun persist(state: UiState) {\n"
+        "        mixedDao.store(1)\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    by_path = {item.path: item for item in report.diagnostics}
+    assert set(by_path) == {
+        "app/src/main/java/UiRepository.kt",
+        "app/src/main/java/DbRepository.kt",
+    }
+    assert by_path["app/src/main/java/UiRepository.kt"].code == (
+        "DB_SIGNATURE_UNRESOLVED"
+    )
+    assert by_path["app/src/main/java/UiRepository.kt"].controlled_context == {
+        "advisory": True,
+    }
+    assert by_path["app/src/main/java/DbRepository.kt"].controlled_context == {}
+    assert report.findings == ()  # blocking DB debt withholds findings
+    assert report.statistics["trusted"] is False
+    assert report.statistics["advisoryDiagnosticCount"] == 1
+
+
+def test_pre_scan_failure_stays_blocking_regardless_of_advisory(tmp_path):
+    """Pre-scan stage failures (here: a non-PolicyEntry ownership item ->
+    DB_POLICY_SOURCE_EVIDENCE_INVALID) are NEVER advisory: they stay
+    blocking and make the run untrusted even alongside advisory debt."""
+    root = _ambiguous_ui_state_root(tmp_path)
+
+    report = scan_db_access(
+        root, [{"path": "not-a-policy-entry"}],
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    policy_diagnostic = next(
+        item for item in report.diagnostics
+        if item.code == "DB_POLICY_SOURCE_EVIDENCE_INVALID"
+    )
+    assert policy_diagnostic.controlled_context == {}
+    assert report.findings == ()
+    assert report.statistics["trusted"] is False
+    assert report.statistics["advisoryDiagnosticCount"] == 1
+
+
+def test_verified_handle_unknown_operation_stays_blocking_without_name_evidence(
+    tmp_path,
+):
+    """An unknown operation on a VERIFIED SQLiteDatabase handle is blocking
+    even though its range carries no DAO-named call and no structural token:
+    the scanner positively computed handle usage, so relevance is forced."""
+    root = _source_root(tmp_path)
+    (root / "Maintain.kt").write_text("""package example
+
+import android.database.sqlite.SQLiteDatabase
+
+class Maintain {
+    fun run(db: SQLiteDatabase) {
+        db.someUnknownHandleOp()
+    }
+}
+""" + "\n" + _PROBE_DAO, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert [item.code for item in report.diagnostics] == [
+        "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
+    ]
+    context = report.diagnostics[0].controlled_context
+    assert context.get("advisory") is not True
+    assert "line" in context
+    assert report.statistics["trusted"] is False
+    assert report.statistics["advisoryDiagnosticCount"] == 0
+
+
+def test_zero_blocking_diagnostics_preserve_findings(tmp_path):
+    """Option-B exit-1 semantics: with zero BLOCKING diagnostics the
+    discovered unauthorized mutation survives as a real GR-08 input finding
+    while the advisory debt stays reported and trust holds."""
+    root = _typed_root(tmp_path)
+    multi = root / "com" / "example" / "multi"
+    other = root / "com" / "example" / "other"
+    multi.mkdir(parents=True)
+    other.mkdir(parents=True)
+    multi.joinpath("UiState.kt").write_text(
+        "package com.example.multi\n\ndata class UiState(val id: Int)\n",
+        encoding="utf-8")
+    other.joinpath("UiState.kt").write_text(
+        _UI_STATE_OTHER_PACKAGE, encoding="utf-8")
+    (root / "UiRepository.kt").write_text(
+        _ADVISORY_UI_REPOSITORY, encoding="utf-8")
+
+    report = scan_db_access(
+        root, [_typed_entry()], raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    assert len(report.diagnostics) == 1
+    assert report.diagnostics[0].controlled_context == {"advisory": True}
+    assert report.statistics["trusted"] is True
+    assert report.statistics["advisoryDiagnosticCount"] == 1
 
 
 def test_argument_types_keep_generics_and_nullability(tmp_path):

@@ -50,7 +50,15 @@ Canonical policy paths (both policy files):
 Exit codes:
   0 — clean trusted scan (or inventory-only success)
   1 — one or more protocol-v2 findings
-  2 — one or more infrastructure/config diagnostics
+  2 — one or more BLOCKING infrastructure/config diagnostics
+
+GR-07 Option-B trust amendment: scanner-stage per-callable diagnostics are
+split into BLOCKING vs ADVISORY by the DB relevance of the enclosing
+callable.  Advisory diagnostics (bounded ``controlled_context["advisory"]``
+marker on callables with no DAO/DB-handle usage) are still reported in the
+diagnostics array but never break trust and never change the exit code;
+pre-scan stage failures (source roots, inventory, loader, evidence) are
+never advisory and always exit 2.
 
 Usage:
   python3 scripts/verify_db_access_boundaries.py
@@ -58,7 +66,8 @@ Usage:
   python3 scripts/verify_db_access_boundaries.py --legacy-shadow-report PATH
 
 The ``--fail-on-violation`` option is accepted for compatibility.  Protocol-v2
-findings always exit 1; clean trusted scans exit 0; diagnostics exit 2.
+findings always exit 1; clean trusted scans exit 0; blocking diagnostics
+exit 2.
 
 ``--legacy-shadow-report PATH`` runs the RETIRED legacy analysis in-process
 and writes a JSON report marked ``reportOnly: true``.  The shadow report is
@@ -3305,6 +3314,24 @@ def _v2_diagnostics(codes):
     return tuple(result)
 
 
+def _diagnostic_is_advisory(diagnostic):
+    """Option-B amendment predicate.
+
+    Scanner diagnostics flagged advisory in their bounded controlled context
+    (``controlled_context["advisory"] is True``) never break trust and never
+    change the exit code.  Every pre-scan/infrastructure diagnostic is
+    unflagged and therefore always blocking (fail closed).
+    """
+    return diagnostic.controlled_context.get("advisory") is True
+
+
+def _blocking_diagnostics(diagnostics):
+    """The blocking subset of a diagnostic sequence (advisory excluded)."""
+    return tuple(
+        item for item in diagnostics if not _diagnostic_is_advisory(item)
+    )
+
+
 def _safe_report(path, report):
     from scripts.db_guard.reporting import write_db_report_atomic
     try:
@@ -3508,6 +3535,11 @@ def main(argv=None):
       7. protocol-v2 findings report.
 
     Every stage failure is an untrusted exit 2 with NO partial findings.
+    GR-07 Option-B amendment: within stage 6/7, scanner diagnostics on
+    callables with no DB-relevant content are ADVISORY (reported with the
+    bounded ``controlled_context["advisory"]`` marker, trust holds, exit
+    stays 0/1); diagnostics on DB-touching callables and every pre-scan
+    stage failure remain blocking (exit 2, findings withheld).
     ``--legacy-shadow-report PATH`` additionally runs the retired legacy
     analysis in-process and writes a ``reportOnly: true`` JSON document that
     can never change the authoritative exit code and is not a ratchet input.
@@ -3701,6 +3733,10 @@ def main(argv=None):
     # successful earlier phase (especially when the output path already exists).
     from scripts.ci.guard_findings import GuardRunReport
     scan_diagnostics = scan_result.diagnostics if scan_result is not None else ()
+    # Option-B amendment: only BLOCKING scanner diagnostics make the run
+    # untrusted.  Advisory diagnostics stay visible in the reported
+    # diagnostics array but never force the untrusted report shape.
+    scan_blocking_diagnostics = _blocking_diagnostics(scan_diagnostics)
     untrusted_statistics = {"trusted": False}
     if active_policy_schema_version is not None:
         # Bounded classification context for a rejected active-policy
@@ -3709,7 +3745,7 @@ def main(argv=None):
         untrusted_statistics["activePolicySchemaVersion"] = (
             active_policy_schema_version
         )
-    if operation_failed or diagnostics or scan_diagnostics:
+    if operation_failed or diagnostics or scan_blocking_diagnostics:
         report = GuardRunReport(
             "db_access", schema_version=2, findings=(),
             diagnostics=scan_diagnostics + _v2_diagnostics(diagnostics),
@@ -3747,7 +3783,9 @@ def main(argv=None):
     exit_code = 0
     if report_requested and not _safe_report(findings_path, report):
         exit_code = 2
-    elif diagnostics or report.diagnostics:
+    elif diagnostics or _blocking_diagnostics(report.diagnostics):
+        # Option-B amendment: only BLOCKING diagnostics take the exit-2
+        # path; advisory-only reports keep the trusted 0/1 semantics.
         print("ERROR: DB access discovery infrastructure diagnostics present", file=sys.stderr)
         exit_code = 2
     elif args.inventory_only:
