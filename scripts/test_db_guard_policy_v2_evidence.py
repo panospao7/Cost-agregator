@@ -2308,3 +2308,372 @@ def test_gr08a_inventory_fqcn_cross_check_resolves_alias_accessor(tmp_path):
     context = _first_context(swapped)
     assert context.get("dao_accessor") == "dao"
     assert context.get("dao_fqcn") == "com.example.data.LegacyGroupDao"
+
+
+# ===========================================================================
+# 41. GR-08b closure: the three remaining pipeline callables
+#     (processInternal / insertRawNotificationIfNotDuplicate shape) verify
+#     end to end, and near-miss claims stay unauthorized.
+#
+# Mirrors the real GR-08b rows (MIT-DB-08B): the constructor-property DAO
+# alias ``dao`` plus ``sourceStatsDao``, a dense multi-branch
+# processInternal-style body, and a dedupe-guarded insertOrIgnore helper.
+# The GR-08a alias-bridge evidence closure adds the ``pendingReviewDao``
+# constructor-property accessor: a real body mutation
+# (``upsertByRawNotificationId``) with no findings-report row fails closed
+# as exactly one UNLISTED_MUTATION, and its closure row verifies trusted.
+# ===========================================================================
+
+
+def _gr08b_entry(**overrides):
+    """Return a PolicyEntry matching GR08B_PIPELINE_SOURCE, with overrides."""
+    fields = dict(
+        path=GR08A_PIPELINE_KT,
+        owner_fqcn="com.example.Pipeline",
+        kind=CallableKind.FUNCTION,
+        method="processInternal",
+        receiver=None,
+        parameter_types=(
+            "com.example.RawNotification",
+            "com.example.RawNotification",
+            "Boolean",
+            "String?",
+            "com.example.NotificationPersistenceContext?",
+        ),
+        dao_accessor="dao",
+        dao_fqcn="com.example.data.RawNotificationDao",
+        operation="markProcessed",
+        barrier_mode=BarrierMode.HELPER,
+        reason="GR-08b evidence unit test",
+        owner="db-guard-tests",
+        linked_issue="GR00-EVIDENCE-T",
+    )
+    fields.update(overrides)
+    return PolicyEntry(**fields)
+
+
+GR08B_PIPELINE_SOURCE = """\
+package com.example
+
+import com.example.data.RawNotificationDao
+import com.example.data.SourceStatsDao
+
+class Pipeline(
+    private val dao: RawNotificationDao,
+    private val sourceStatsDao: SourceStatsDao
+) {
+    fun processInternal(
+        notification: RawNotification,
+        storageNotification: RawNotification,
+        initializeClassifier: Boolean,
+        correlationId: String?,
+        persistenceContext: NotificationPersistenceContext?
+    ): String {
+        val rawId = insertRawNotificationIfNotDuplicate(notification, storageNotification)
+        if (isDuplicate) {
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, 0L)
+            dao.markRelevance(rawId, false)
+            dao.markProcessed(rawId)
+            return "Duplicate"
+        }
+        if (needsReview) {
+            sourceStatsDao.insertIfNotExists(SourceStats(notification.packageName))
+            sourceStatsDao.incrementTotalAndPending(notification.packageName, 0L)
+            dao.markRelevance(rawId, true)
+            dao.markProcessed(rawId)
+            return "NeedsReview"
+        }
+        sourceStatsDao.incrementTotalAndAutoRejected(notification.packageName, 0L)
+        dao.markRelevance(rawId, false)
+        dao.markProcessed(rawId)
+        return "Rejected"
+    }
+
+    private fun insertRawNotificationIfNotDuplicate(
+        notification: RawNotification,
+        storageNotification: RawNotification
+    ): Long {
+        val existingId = dao.findIdByDedupeFingerprint("fingerprint")
+        if (existingId != null) {
+            return existingId
+        }
+        return dao.insertOrIgnore(storageNotification)
+    }
+
+    private val isDuplicate = false
+    private val needsReview = false
+}
+
+data class RawNotification(val packageName: String)
+
+data class SourceStats(val packageName: String)
+
+data class NotificationPersistenceContext(val mode: String)
+"""
+
+
+def test_gr08b_pipeline_rows_verify_end_to_end(tmp_path):
+    """Every seeded GR-08b shape verifies against the dense pipeline body.
+
+    The ``dao`` alias resolves through the constructor header (GR-08a
+    closure), the multi-branch body carries every claimed mutation, and the
+    dedupe-guarded insertOrIgnore helper resolves its own row.  The read
+    ``findIdByDedupeFingerprint`` is not a mutation and never blocks.
+    """
+    _write_pipeline(tmp_path, GR08B_PIPELINE_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [
+            _gr08b_entry(),
+            _gr08b_entry(operation="markRelevance"),
+            _gr08b_entry(
+                dao_accessor="sourceStatsDao",
+                dao_fqcn="com.example.data.SourceStatsDao",
+                operation="incrementTotalAndDuplicate",
+            ),
+            _gr08b_entry(
+                dao_accessor="sourceStatsDao",
+                dao_fqcn="com.example.data.SourceStatsDao",
+                operation="incrementTotalAndPending",
+            ),
+            _gr08b_entry(
+                dao_accessor="sourceStatsDao",
+                dao_fqcn="com.example.data.SourceStatsDao",
+                operation="incrementTotalAndAutoRejected",
+            ),
+            _gr08b_entry(
+                dao_accessor="sourceStatsDao",
+                dao_fqcn="com.example.data.SourceStatsDao",
+                operation="insertIfNotExists",
+            ),
+            _gr08b_entry(
+                method="insertRawNotificationIfNotDuplicate",
+                parameter_types=(
+                    "com.example.RawNotification",
+                    "com.example.RawNotification",
+                ),
+                operation="insertOrIgnore",
+            ),
+        ],
+        str(tmp_path),
+    )
+    assert result.trusted is True
+    assert _codes(result) == []
+    assert len(result.groups) == 2
+    assert all(group.trusted for group in result.groups)
+    # Groups are sorted by canonical callable key: the insert helper's
+    # name sorts before processInternal.
+    insert_group = result.groups[0]
+    assert insert_group.mutation_keys == ("rawNotificationDao|insertOrIgnore",)
+    process_group = result.groups[1]
+    assert process_group.mutation_keys == (
+        "rawNotificationDao|markProcessed",
+        "rawNotificationDao|markRelevance",
+        "sourceStatsDao|incrementTotalAndAutoRejected",
+        "sourceStatsDao|incrementTotalAndDuplicate",
+        "sourceStatsDao|incrementTotalAndPending",
+        "sourceStatsDao|insertIfNotExists",
+    )
+
+
+def test_gr08b_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    """Claiming the helper's insertOrIgnore inside processInternal fails."""
+    _write_pipeline(tmp_path, GR08B_PIPELINE_SOURCE)
+    forged = verify_v2_policy_source_evidence(
+        [_gr08b_entry(operation="insertOrIgnore")], str(tmp_path)
+    )
+    assert forged.trusted is False
+    assert _codes(forged) == [DB_V2_POLICY_MUTATION_NOT_FOUND]
+    context = _first_context(forged)
+    assert context.get("dao_accessor") == "dao"
+    assert context.get("operation") == "insertOrIgnore"
+
+
+def test_gr08b_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    """Claiming markProcessed on the stats accessor fails closed."""
+    _write_pipeline(tmp_path, GR08B_PIPELINE_SOURCE)
+    forged = verify_v2_policy_source_evidence(
+        [
+            _gr08b_entry(
+                dao_accessor="sourceStatsDao",
+                dao_fqcn="com.example.data.SourceStatsDao",
+            )
+        ],
+        str(tmp_path),
+    )
+    assert forged.trusted is False
+    assert _codes(forged) == [DB_V2_POLICY_MUTATION_NOT_FOUND]
+    context = _first_context(forged)
+    assert context.get("dao_accessor") == "sourceStatsDao"
+    assert context.get("operation") == "markProcessed"
+
+
+def test_gr08b_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    """A wrong-overload claim never resolves to the real callable.
+
+    The tolerant discovery retains the same-name declaration, but the
+    mismatched parameter count never resolves to the real 5-parameter
+    callable: the group fails closed with the controlled parser-uncertain
+    code (status SIGNATURE_UNSUPPORTED), never a silent pass.
+    """
+    _write_pipeline(tmp_path, GR08B_PIPELINE_SOURCE)
+    forged = verify_v2_policy_source_evidence(
+        [
+            _gr08b_entry(
+                parameter_types=(
+                    "com.example.RawNotification",
+                    "com.example.RawNotification",
+                    "Boolean",
+                    "String?",
+                )
+            )
+        ],
+        str(tmp_path),
+    )
+    assert forged.trusted is False
+    assert _codes(forged) == [DB_V2_POLICY_PARSER_UNCERTAIN]
+    context = _first_context(forged)
+    assert context.get("method") == "processInternal"
+    assert context.get("status") == "SIGNATURE_UNSUPPORTED"
+
+
+def test_gr08b_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    """A foreign owner never borrows the pipeline's mutations."""
+    _write_pipeline(tmp_path, GR08B_PIPELINE_SOURCE)
+    forged = verify_v2_policy_source_evidence(
+        [_gr08b_entry(owner_fqcn="com.example.OtherPipeline")], str(tmp_path)
+    )
+    assert forged.trusted is False
+    assert _codes(forged) == [DB_V2_POLICY_OWNER_MISSING]
+
+
+# ── 41b. GR-08b evidence closure: the pendingReviewDao accessor ──────────────
+#
+# The real GR-08b evidence run reported exactly two DB_V2_POLICY_UNLISTED_
+# MUTATION diagnostics (processInternal, handleNeedsReviewInTransaction,
+# count 1 each): the GR-08a alias-bridge fix made the constructor-property
+# accessor ``pendingReviewDao`` fully evidenced, surfacing the real
+# ``upsertByRawNotificationId`` body mutation the findings scanner never
+# reported.  These tests pin both sides of that closure on a synthetic
+# fixture with the same shape.
+
+
+GR08B_CLOSURE_PIPELINE_SOURCE = """\
+package com.example
+
+import com.example.data.RawNotificationDao
+import com.example.data.PendingReviewDao
+
+class Pipeline(
+    private val dao: RawNotificationDao,
+    private val pendingReviewDao: PendingReviewDao
+) {
+    fun processInternal(
+        notification: RawNotification,
+        storageNotification: RawNotification,
+        initializeClassifier: Boolean,
+        correlationId: String?,
+        persistenceContext: NotificationPersistenceContext?
+    ): String {
+        val rawId = dao.findIdByDedupeFingerprint(notification.packageName) ?: 0L
+        if (needsReview) {
+            val review = Review(notification.packageName)
+            val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
+            dao.markRelevance(rawId, true)
+            dao.markProcessed(rawId)
+            return "NeedsReview"
+        }
+        dao.markRelevance(rawId, false)
+        dao.markProcessed(rawId)
+        return "Processed"
+    }
+
+    private val needsReview = false
+}
+
+data class RawNotification(val packageName: String)
+
+data class Review(val packageName: String)
+
+data class NotificationPersistenceContext(val mode: String)
+"""
+
+
+def test_gr08b_closure_unlisted_pending_review_upsert_fails_closed(tmp_path):
+    """The pre-closure blocker shape: a real body mutation with no row.
+
+    With only the findings-derived rows, the alias-bridge-evidenced
+    ``pendingReviewDao.upsertByRawNotificationId`` call is a real mutation
+    absent from the policy: exactly one UNLISTED_MUTATION diagnostic with
+    count 1 marks the group untrusted (the exact GR-08b evidence-run
+    signature).
+    """
+    _write_pipeline(tmp_path, GR08B_CLOSURE_PIPELINE_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [
+            _gr08b_entry(),
+            _gr08b_entry(operation="markRelevance"),
+        ],
+        str(tmp_path),
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_UNLISTED_MUTATION]
+    context = _first_context(result)
+    assert context.get("method") == "processInternal"
+    assert context.get("count") == 1
+    # The actual set carries the unlisted accessor-scoped key.
+    assert result.groups[0].mutation_keys == (
+        "pendingReviewDao|upsertByRawNotificationId",
+        "rawNotificationDao|markProcessed",
+        "rawNotificationDao|markRelevance",
+    )
+
+
+def test_gr08b_closure_row_verifies_pending_review_upsert(tmp_path):
+    """Adding the closure row closes the group: trusted, key evidenced.
+
+    The closure row spells the source property accessor ``pendingReviewDao``
+    exactly like the real GR-08b closure seed rows; the required pair
+    resolves through the same scoped map (constructor header included) and
+    the group verifies with zero diagnostics.
+    """
+    _write_pipeline(tmp_path, GR08B_CLOSURE_PIPELINE_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [
+            _gr08b_entry(),
+            _gr08b_entry(operation="markRelevance"),
+            _gr08b_entry(
+                dao_accessor="pendingReviewDao",
+                dao_fqcn="com.example.data.PendingReviewDao",
+                operation="upsertByRawNotificationId",
+            ),
+        ],
+        str(tmp_path),
+    )
+    assert result.trusted is True
+    assert _codes(result) == []
+    assert len(result.groups) == 1
+    group = result.groups[0]
+    assert group.trusted is True
+    assert group.mutation_keys == (
+        "pendingReviewDao|upsertByRawNotificationId",
+        "rawNotificationDao|markProcessed",
+        "rawNotificationDao|markRelevance",
+    )
+    assert group.policy_keys == (
+        "app/src/main/java/com/example/Pipeline.kt"
+        "|com.example.Pipeline|function|processInternal|null"
+        "|com.example.RawNotification,com.example.RawNotification,Boolean,"
+        "String?,com.example.NotificationPersistenceContext?"
+        "|dao|com.example.data.RawNotificationDao|markProcessed",
+        "app/src/main/java/com/example/Pipeline.kt"
+        "|com.example.Pipeline|function|processInternal|null"
+        "|com.example.RawNotification,com.example.RawNotification,Boolean,"
+        "String?,com.example.NotificationPersistenceContext?"
+        "|dao|com.example.data.RawNotificationDao|markRelevance",
+        "app/src/main/java/com/example/Pipeline.kt"
+        "|com.example.Pipeline|function|processInternal|null"
+        "|com.example.RawNotification,com.example.RawNotification,Boolean,"
+        "String?,com.example.NotificationPersistenceContext?"
+        "|pendingReviewDao|com.example.data.PendingReviewDao"
+        "|upsertByRawNotificationId",
+    )

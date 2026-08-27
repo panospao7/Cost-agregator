@@ -1,0 +1,316 @@
+# GR-08 batch 2 (GR-08b) tracked batch manifest -- DB_UNAUTHORIZED_MUTATION
+# exact-policy authorization for NotificationProcessingPipeline.kt.
+#
+# Batch scope (plan): the three remaining file callables processInternal,
+# handleNeedsReviewInTransaction, and insertRawNotificationIfNotDuplicate.
+# Scope verified against the trusted START report
+# (build/guard-debug/gr08b/before.json == trusted GR-08a after.json,
+# 476 findings): the three batch callables carry 30 findings collapsing
+# to 11 UNIQUE fingerprints (dedup key: callable identity + daoAccessor +
+# daoFqcn + operation; the triage fingerprint excludes line/column, so
+# per-call-site repeats share one fingerprint).  All 30 file findings are
+# DB_UNAUTHORIZED_MUTATION; after this batch the FILE carries zero
+# unauthorized mutations (GR-08a rows already authorized).
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value,
+# so the generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a rows + GR-08b rows
+# verbatim); passing only GR-08b-seed.yml would drop the GR-08a rows
+# from the rendered candidate.
+# Closure additions (GR-08b evidence run): the GR-08a alias-bridge fix made
+# the constructor-property accessor `pendingReviewDao` fully evidenced, so
+# the v2 evidence verifier sees one additional REAL mutation in
+# processInternal and handleNeedsReviewInTransaction each --
+# pendingReviewDao.upsertByRawNotificationId (a body-carrying @Transaction
+# PendingReviewDao convenience method the findings scanner never reported).
+# Both are legal writer mutations in this same repository-layer class, so
+# the seed closure (GR-08b-seed.yml / GR-08-seeds.yml) carries 13 rows: the
+# 11 findings-derived rows mirrored below PLUS these 2 closure rows.
+# Fingerprint accounting is unchanged (30 findings / 11 unique
+# fingerprints -- the closure mutations had no findings), so
+# selectedFingerprints and counts stay exactly as recorded.
+schemaVersion: 1
+batchId: GR-08b
+startSha: 9ffe3dad7194f31d14d22e7d2fc1b8de0e1d76be
+startReport:
+  path: build/guard-debug/gr08b/before.json
+  sha256: efebe8a397a07b5f21aa3f77d1408680da9fcd74ea230f4fac80824b0af8ca75
+  trusted: true
+  findingCount: 476
+activePolicySha256: 65b746b21f77d9f52efc710cf294e44a1e4fa4023a1d6c964342748b11a1305b
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08B
+counts:
+  fileFindings: 30
+  batchCallablesFindings: 30
+  uniqueFingerprints: 11
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markProcessed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markRelevance|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndAutoRejected|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndDuplicate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=insertIfNotExists|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleNeedsReviewInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markProcessed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleNeedsReviewInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markRelevance|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleNeedsReviewInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndDuplicate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleNeedsReviewInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=insertRawNotificationIfNotDuplicate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=insertOrIgnore|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+findings:
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markProcessed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: processInternal
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Boolean"
+    - "String?"
+    - "com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?"
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markProcessed
+  locations: [353, 407, 455, 508, 515, 583]
+  disposition: EXACT_POLICY
+  rationale: "Terminal raw-notification state write on every processed branch, atomically inside the pipeline DB transaction; non-lifecycle bookkeeping owned by the repository-layer pipeline writer (expense creation itself goes through TransactionLifecycleCoordinator.createExpenseDbOnlyV2 per docs/architecture/LEGAL_PATHS.md)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markRelevance|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: processInternal
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Boolean"
+    - "String?"
+    - "com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?"
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  locations: [340, 404, 442, 505, 512, 580]
+  disposition: EXACT_POLICY
+  rationale: "Raw-notification relevance bookkeeping on every processed branch inside the pipeline DB transaction; non-lifecycle bookkeeping DAO owned by the repository-layer pipeline writer."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndAutoRejected|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: processInternal
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Boolean"
+    - "String?"
+    - "com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?"
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndAutoRejected
+  locations: [511, 581]
+  disposition: EXACT_POLICY
+  rationale: "Per-source auto-rejected counter increment on the rejected processing branches; metrics-style bookkeeping owned by the pipeline writer."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndDuplicate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: processInternal
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Boolean"
+    - "String?"
+    - "com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?"
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndDuplicate
+  locations: [254, 339, 441]
+  disposition: EXACT_POLICY
+  rationale: "Per-source duplicate counter increment on every processing dedupe branch (canonical expense duplicate, pending-review duplicate, raw-duplicate)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: processInternal
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Boolean"
+    - "String?"
+    - "com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?"
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndPending
+  locations: [403, 504]
+  disposition: EXACT_POLICY
+  rationale: "Per-source pending counter increment after needs-review creation."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=processInternal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Boolean%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.notification.NotificationPersistenceContext%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=insertIfNotExists|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: processInternal
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Boolean"
+    - "String?"
+    - "com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?"
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: insertIfNotExists
+  locations: [307, 544]
+  disposition: EXACT_POLICY
+  rationale: "Idempotent per-source stats row bootstrap (insertIfNotExists) on first processing of a package; conflict-safe insert owned by the pipeline writer."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleNeedsReviewInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markProcessed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: handleNeedsReviewInTransaction
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Long"
+    - "com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext"
+    - "Long"
+    - "String?"
+    - "MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>"
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markProcessed
+  locations: [1414, 1446, 1502]
+  disposition: EXACT_POLICY
+  rationale: "Terminal raw-notification state write on every needs-review branch, atomically inside the pipeline DB transaction (P1-SLICE-D); review creation itself goes through the pending-review writer, not the expense lifecycle path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleNeedsReviewInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markRelevance|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: handleNeedsReviewInTransaction
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Long"
+    - "com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext"
+    - "Long"
+    - "String?"
+    - "MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>"
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  locations: [1401, 1433]
+  disposition: EXACT_POLICY
+  rationale: "Raw-notification relevance bookkeeping on the needs-review dedupe branches inside the pipeline DB transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleNeedsReviewInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndDuplicate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: handleNeedsReviewInTransaction
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Long"
+    - "com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext"
+    - "Long"
+    - "String?"
+    - "MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>"
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndDuplicate
+  locations: [1402, 1434]
+  disposition: EXACT_POLICY
+  rationale: "Per-source duplicate counter increment on the needs-review dedupe branches (canonical expense duplicate, pending-review duplicate)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleNeedsReviewInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: handleNeedsReviewInTransaction
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "Long"
+    - "com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext"
+    - "Long"
+    - "String?"
+    - "MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>"
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndPending
+  locations: [1500]
+  disposition: EXACT_POLICY
+  rationale: "Per-source pending counter increment after review creation inside the pipeline DB transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=insertRawNotificationIfNotDuplicate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=insertOrIgnore|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: insertRawNotificationIfNotDuplicate
+    receiver: null
+    parameterTypes:
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    - "com.yourname.expensetracker.data.database.entity.RawNotification"
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: insertOrIgnore
+  locations: [782]
+  disposition: EXACT_POLICY
+  rationale: "Dedupe-guarded raw-notification persistence writer: fingerprint precheck plus insertOrIgnore with conflict-basis classification; single idempotent insert owned by the repository-layer pipeline writer."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "None within NotificationProcessingPipeline.kt: this batch authorizes the file's remaining 30 findings; after the GR-08b rescan the file carries 0 DB_UNAUTHORIZED_MUTATION findings (batch 0 remaining).  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

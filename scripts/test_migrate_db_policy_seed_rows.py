@@ -14,6 +14,22 @@ Covers the reviewed-seed-rows contract added for GR-08a:
   identity + DAO + operation -- wrong overload, wrong owner, wrong DAO, and
   wrong operation stay unauthorized (exact-match, no wildcards).
 
+GR-08b (MIT-DB-08B) extends the same contract to the three remaining
+NotificationProcessingPipeline.kt callables:
+
+* the tracked ``GR-08b-seed.yml`` loads with exactly its thirteen rows
+  (the 11 findings-derived rows plus 2 closure rows for
+  ``pendingReviewDao.upsertByRawNotificationId`` in processInternal and
+  handleNeedsReviewInTransaction -- real writer mutations the findings
+  scanner never reported and that only the GR-08a alias-bridge-fixed
+  evidence verifier surfaces);
+* the combined generation input ``GR-08-seeds.yml`` (the CLI accepts a
+  SINGLE --seed-rows value) stays the exact concatenation of the two
+  reviewed batch seed files -- a dropped GR-08a row fails closed here
+  instead of silently re-unauthorizing batch-1 mutations at promotion;
+* NEAR-MISS protection over the GR-08b rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -572,3 +588,398 @@ def test_seed_record_from_entry_round_trips_key(tmp_path):
         assert record.path == entry.path
         assert record.barrier_mode == entry.barrier_mode.value
         assert record.linked_issue == entry.linked_issue
+
+
+# ── (6) GR-08b rows: tracked seed files + NEAR-MISS protection ────────────────
+#
+# GR-08b authorizes the three remaining NotificationProcessingPipeline.kt
+# callables (processInternal, handleNeedsReviewInTransaction,
+# insertRawNotificationIfNotDuplicate; 30 findings / 11 unique fingerprints).
+# The migration CLI accepts a SINGLE --seed-rows value, so the generation run
+# consumes the COMBINED document GR-08-seeds.yml; these tests pin that the
+# combined document stays the exact concatenation of the two reviewed batch
+# seed files, and that the GR-08b rows authorize EXACTLY their callable
+# identity + DAO + operation (wrong overload, wrong owner, wrong DAO, and
+# wrong operation stay unauthorized).
+
+GR08B_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08b-seed.yml"
+COMBINED_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08-seeds.yml"
+
+RAW_NOTIFICATION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.RawNotificationDao"
+)
+SOURCE_STATS_DAO = (
+    "com.yourname.expensetracker.data.database.dao.SourceStatsDao"
+)
+PENDING_REVIEW_DAO = (
+    "com.yourname.expensetracker.data.database.dao.PendingReviewDao"
+)
+PERSISTENCE_CONTEXT = (
+    "com.yourname.expensetracker.domain.notification."
+    "NotificationPersistenceContext?"
+)
+PROCESS_INTERNAL_PARAMS = (
+    RAW_NOTIFICATION,
+    RAW_NOTIFICATION,
+    "Boolean",
+    "String?",
+    PERSISTENCE_CONTEXT,
+)
+NEEDS_REVIEW_PARAMS = AUTO_ACCEPT_PARAMS
+INSERT_RAW_PARAMS = (RAW_NOTIFICATION, RAW_NOTIFICATION)
+
+
+def _gr08b_seed_row(method, dao_accessor, dao_fqcn, operation, params):
+    """One exact GR-08b-shaped v2 seed row mapping."""
+    return {
+        "path": PIPELINE_KT,
+        "ownerFqcn": PIPELINE_FQCN,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(params),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08b EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08B",
+    }
+
+
+def _gr08b_seed_rows():
+    """The thirteen exact GR-08b rows (mirroring the tracked seed file).
+
+    Eleven findings-derived rows plus the two GR-08a-alias-bridge closure
+    rows (``pendingReviewDao.upsertByRawNotificationId`` in processInternal
+    and handleNeedsReviewInTransaction).
+    """
+    rows = []
+    for operation in ("markProcessed", "markRelevance"):
+        rows.append(
+            _gr08b_seed_row(
+                "processInternal",
+                "dao",
+                RAW_NOTIFICATION_DAO,
+                operation,
+                PROCESS_INTERNAL_PARAMS,
+            )
+        )
+    for operation in (
+        "incrementTotalAndAutoRejected",
+        "incrementTotalAndDuplicate",
+        "incrementTotalAndPending",
+        "insertIfNotExists",
+    ):
+        rows.append(
+            _gr08b_seed_row(
+                "processInternal",
+                "sourceStatsDao",
+                SOURCE_STATS_DAO,
+                operation,
+                PROCESS_INTERNAL_PARAMS,
+            )
+        )
+    rows.append(
+        _gr08b_seed_row(
+            "processInternal",
+            "pendingReviewDao",
+            PENDING_REVIEW_DAO,
+            "upsertByRawNotificationId",
+            PROCESS_INTERNAL_PARAMS,
+        )
+    )
+    for operation in ("markProcessed", "markRelevance"):
+        rows.append(
+            _gr08b_seed_row(
+                "handleNeedsReviewInTransaction",
+                "dao",
+                RAW_NOTIFICATION_DAO,
+                operation,
+                NEEDS_REVIEW_PARAMS,
+            )
+        )
+    for operation in ("incrementTotalAndDuplicate", "incrementTotalAndPending"):
+        rows.append(
+            _gr08b_seed_row(
+                "handleNeedsReviewInTransaction",
+                "sourceStatsDao",
+                SOURCE_STATS_DAO,
+                operation,
+                NEEDS_REVIEW_PARAMS,
+            )
+        )
+    rows.append(
+        _gr08b_seed_row(
+            "handleNeedsReviewInTransaction",
+            "pendingReviewDao",
+            PENDING_REVIEW_DAO,
+            "upsertByRawNotificationId",
+            NEEDS_REVIEW_PARAMS,
+        )
+    )
+    rows.append(
+        _gr08b_seed_row(
+            "insertRawNotificationIfNotDuplicate",
+            "dao",
+            RAW_NOTIFICATION_DAO,
+            "insertOrIgnore",
+            INSERT_RAW_PARAMS,
+        )
+    )
+    return rows
+
+
+def _entry_fields(entry):
+    """Field-exact identity of a loaded seed entry (verbatim comparison)."""
+    return (
+        entry.path,
+        entry.owner_fqcn,
+        entry.kind,
+        entry.method,
+        entry.receiver,
+        tuple(entry.parameter_types),
+        entry.dao_accessor,
+        entry.dao_fqcn,
+        entry.operation,
+        entry.barrier_mode,
+        entry.reason,
+        entry.owner,
+        entry.linked_issue,
+    )
+
+
+def test_real_tracked_gr08b_seed_file_loads_with_exactly_thirteen_rows():
+    entries = _load_seed_entries(GR08B_SEED_FILE)
+    assert len(entries) == 13
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["processInternal"] * 7
+        + ["handleNeedsReviewInTransaction"] * 5
+        + ["insertRawNotificationIfNotDuplicate"]
+    )
+    for entry in entries:
+        assert entry.path == PIPELINE_KT
+        assert entry.owner_fqcn == PIPELINE_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08B"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # The closure rows: pendingReviewDao.upsertByRawNotificationId in both
+    # multi-mutation callables (GR-08a alias-bridge evidence closure).
+    closure = sorted(
+        (entry.method, entry.dao_accessor, entry.operation)
+        for entry in entries
+        if entry.dao_accessor == "pendingReviewDao"
+    )
+    assert closure == [
+        ("handleNeedsReviewInTransaction", "pendingReviewDao",
+         "upsertByRawNotificationId"),
+        ("processInternal", "pendingReviewDao",
+         "upsertByRawNotificationId"),
+    ]
+
+
+def test_combined_seed_file_concatenates_both_batch_seed_files():
+    """Drift guard: the generation input == GR-08a rows + GR-08b rows.
+
+    The combined document is what --seed-rows actually consumes; if it ever
+    drifts from the two reviewed batch seed files (a dropped GR-08a row
+    would silently re-unauthorize batch-1 mutations at promotion time),
+    this fails closed.
+    """
+    combined = _load_seed_entries(COMBINED_SEED_FILE)
+    gr08a = _load_seed_entries(SEED_FILE)
+    gr08b = _load_seed_entries(GR08B_SEED_FILE)
+    assert len(gr08a) == 5
+    assert len(gr08b) == 13
+    assert len(combined) == 18
+    combined_fields = sorted(_entry_fields(entry) for entry in combined)
+    batch_fields = sorted(
+        _entry_fields(entry) for entry in list(gr08a) + list(gr08b)
+    )
+    assert combined_fields == batch_fields
+    keys = [entry.mutation_key().canonical_key() for entry in combined]
+    assert len(set(keys)) == len(keys)
+
+
+def _gr08b_policy_entries(tmp_path):
+    rows = _gr08b_seed_rows()
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08b fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08b_exact_match(tmp_path, **overrides):
+    """The exact GR-08b processInternal identity matches; mutants never do."""
+    entries = _gr08b_policy_entries(tmp_path)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == "processInternal"
+        and entry.dao_accessor == "dao"
+        and entry.operation == "markProcessed"
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08b_exact_identity_matches(tmp_path):
+    assert _assert_gr08b_exact_match(tmp_path) is True
+
+
+def test_gr08b_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    entries = _gr08b_policy_entries(tmp_path)
+    target = entries[0]  # processInternal / dao / markProcessed
+    wrong_overload = target.parameter_types[:-1] + ("String?",)
+    assert (
+        match_mutation(
+            target,
+            path=target.path,
+            owner_fqcn=target.owner_fqcn,
+            kind=target.kind,
+            method=target.method,
+            receiver=target.receiver,
+            parameter_types=wrong_overload,
+            dao_accessor=target.dao_accessor,
+            dao_fqcn=target.dao_fqcn,
+            operation=target.operation,
+        )
+        is False
+    )
+
+
+def test_gr08b_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    assert (
+        _assert_gr08b_exact_match(
+            tmp_path, owner_fqcn="com.example.OtherPipeline"
+        )
+        is False
+    )
+
+
+def test_gr08b_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    assert (
+        _assert_gr08b_exact_match(
+            tmp_path,
+            dao_accessor="sourceStatsDao",
+            dao_fqcn=SOURCE_STATS_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08b_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    assert (
+        _assert_gr08b_exact_match(tmp_path, operation="markRelevance")
+        is False
+    )
+
+
+def test_gr08b_insert_row_near_misses_stay_unauthorized(tmp_path):
+    """The insertOrIgnore row is exact too: sibling shapes never match."""
+    entries = _gr08b_policy_entries(tmp_path)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == "insertRawNotificationIfNotDuplicate"
+    ][0]
+    base = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    assert match_mutation(target, **base) is True
+    # Wrong overload: the single-parameter legacy insert shape.
+    assert (
+        match_mutation(
+            target, **dict(base, parameter_types=(RAW_NOTIFICATION,))
+        )
+        is False
+    )
+    # Wrong operation: the plain Room insert spelling.
+    assert match_mutation(target, **dict(base, operation="insert")) is False
+    # Wrong DAO: the stats accessor.
+    assert (
+        match_mutation(
+            target,
+            **dict(
+                base,
+                dao_accessor="sourceStatsDao",
+                dao_fqcn=SOURCE_STATS_DAO,
+            ),
+        )
+        is False
+    )
+
+
+def test_gr08b_closure_row_near_misses_stay_unauthorized(tmp_path):
+    """The pendingReviewDao closure rows are exact too: mutants never match.
+
+    The closure rows authorize EXACTLY
+    ``pendingReviewDao.upsertByRawNotificationId`` on their own callable
+    identity; a wrong operation, a wrong DAO identity behind the same
+    accessor spelling, or the sibling callable's shape stays unauthorized.
+    """
+    entries = _gr08b_policy_entries(tmp_path)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == "processInternal"
+        and entry.dao_accessor == "pendingReviewDao"
+    ][0]
+    base = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    assert match_mutation(target, **base) is True
+    # Wrong operation: the plain Room insert spelling.
+    assert match_mutation(target, **dict(base, operation="insert")) is False
+    # Wrong DAO identity behind the accessor spelling.
+    assert (
+        match_mutation(
+            target, **dict(base, dao_fqcn=RAW_NOTIFICATION_DAO)
+        )
+        is False
+    )
+    # Wrong callable: the sibling needs-review closure row never matches
+    # the processInternal identity.
+    assert (
+        match_mutation(
+            target, **dict(base, method="handleNeedsReviewInTransaction")
+        )
+        is False
+    )
