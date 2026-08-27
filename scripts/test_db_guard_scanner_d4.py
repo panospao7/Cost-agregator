@@ -705,6 +705,7 @@ def test_cross_file_project_type_resolves_end_to_end(tmp_path):
         # DAO-only file contributes no helper range and is absent.
         "files_scanned": 2, "declarations_scanned": 3,
         "inventory_daos": 1, "inventory_mutators": 1, "trusted": True,
+        "advisoryDiagnosticCount": 0,
     }
     _assert_repo_relative_posix(report, tmp_path)
 
@@ -832,6 +833,7 @@ class Repo(private val dao: ScanProbeDao) {
     assert report.statistics["trusted"] is True
 
 
+
 # ── GR-07 Option-B trust contract: BLOCKING vs ADVISORY diagnostics ──────────
 #
 # Scanner-stage per-callable diagnostics split by the DB relevance of the
@@ -848,9 +850,18 @@ _UI_STATE_OTHER_PACKAGE = """package com.example.other
 data class UiState(val label: String)
 """
 
+# Wave-2 import-precedence adjudication (GR-07 round 6): this fixture
+# deliberately carries NO import for ``UiState``.  An explicit
+# ``import com.example.multi.UiState`` would legitimately disambiguate the
+# two same-simple-name declarations -- the documented resolver precedence is
+# explicit imports > wildcard-confirmed > same-package > other, and only a
+# collision between TWO wildcard packages still fails closed -- so with the
+# import the parameter RESOLVES and the advisory-debt premise of every test
+# below silently vanishes.  A bare ``UiState`` against two package
+# declarations keeps the honest ambiguity these tests pin.  The no-import
+# fail-closed mechanism is independently pinned by
+# ``test_ambiguous_cross_package_simple_name_still_fails_closed_in_d4``.
 _ADVISORY_UI_REPOSITORY = """package example
-
-import com.example.multi.UiState
 
 class UiRepository {
     fun render(state: UiState): String {
@@ -907,9 +918,11 @@ def test_mixed_debt_blocks_only_the_db_touching_callable(tmp_path):
     untrusted with ONLY the DB one blocking; the UI one keeps its advisory
     marker and the advisory counter stays exact."""
     root = _ambiguous_ui_state_root(tmp_path)
+    # No UiState import here either: an explicit import would resolve
+    # ``persist``'s parameter (wave-2 precedence) and turn the pinned
+    # blocking-debt premise into a discovered unauthorized mutation instead.
     (root / "DbRepository.kt").write_text(
         "package com.example.db\n\n"
-        "import com.example.multi.UiState\n\n"
         "@androidx.room.Dao\n"
         "interface MixedProbeDao {\n"
         "    @androidx.room.Insert\n"
@@ -995,7 +1008,15 @@ class Maintain {
 def test_zero_blocking_diagnostics_preserve_findings(tmp_path):
     """Option-B exit-1 semantics: with zero BLOCKING diagnostics the
     discovered unauthorized mutation survives as a real GR-08 input finding
-    while the advisory debt stays reported and trust holds."""
+    while the advisory debt stays reported and trust holds.
+
+    Round-6 adjudication: the entry deliberately MISMATCHES one identity
+    dimension so the mutation stays unauthorized while a policy is present.
+    (The previous fixture passed the exactly-matching ``_typed_entry()``, so
+    the mutation was authorized and no finding could ever exist -- verified
+    identical on the pristine HEAD scanner.)  The UiRepository advisory debt
+    stays honest because its fixture carries no disambiguating import.
+    """
     root = _typed_root(tmp_path)
     multi = root / "com" / "example" / "multi"
     other = root / "com" / "example" / "other"
@@ -1010,7 +1031,8 @@ def test_zero_blocking_diagnostics_preserve_findings(tmp_path):
         _ADVISORY_UI_REPOSITORY, encoding="utf-8")
 
     report = scan_db_access(
-        root, [_typed_entry()], raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+        root, [_typed_entry(parameter_types=("example.OtherItem",))],
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
     )
 
     assert [finding.rule for finding in report.findings] == [
@@ -1602,4 +1624,337 @@ class Repo(private val dao: ScanProbeDao) {
 
     assert report.diagnostics == ()
     assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+# ── GR-07 convergence round 5: probed-shape regression pins ──────────────────
+#
+# Each test reproduces a REAL production construct recorded by the round-5
+# instrumented full-scan probes (build/guard-debug/gr07/probe_r5_sites.json,
+# probe_r5_classified.json, probe_r5_boundary.py) that failed closed before
+# the round-5 scanner fixes and must stay resolved after them:
+#   RC1: contiguous callable ranges made a declaration bind to the PRECEDING
+#        callable (inclusive end-offset match), hiding its own locals/params.
+#   RC2: ``_UNTYPED_VAL``'s separator could cross a newline after a blanked
+#        string-template initializer, swallowing the NEXT declaration.
+#   D1:  ``database.expenseDao()`` accessor-call receivers and their
+#        ``val dao = database.expenseDao()`` local-inference shape had no
+#        closed type source; both now resolve through the declared
+#        @Database accessor map (and fail closed on absence).
+#   +:   named call arguments contribute their VALUE's type; self-type
+#        lambda dispatches (takeIf/let/also/use) bind ``it`` to the
+#        receiver; control-prefix condition groups no longer hide a
+#        statement receiver.
+
+
+def _sweep_dao() -> str:
+    """DAO carrying the ``delete`` operation name the File-shaped fixtures
+    collide with (probe evidence: stagedDbFile.delete() x6 in
+    DatabaseBackupRepositoryImpl.kt)."""
+    return (
+        "@androidx.room.Dao\n"
+        "interface SweepDao {\n"
+        "    @androidx.room.Delete\n"
+        "    fun delete(value: Int)\n"
+        "}\n"
+    )
+
+
+def test_named_argument_insert_contributes_the_constructed_value_type(tmp_path):
+    """Probed shape (OperationRunDao call sites): ``insert(OperationRun(id = 1))``
+    is ONE constructed value.  The named-argument prefix inside the
+    constructor must never leak into argument classification: the whole part
+    is a constructor call, so its head type IS the argument type and the
+    exact overload matches instead of failing closed as unresolved debt."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+data class OperationRun(val id: Int)
+
+@androidx.room.Dao
+interface OperationRunDao {
+    @androidx.room.Insert
+    fun insert(run: OperationRun)
+}
+
+class SyncRepository(private val operationRunDao: OperationRunDao) {
+    fun recordRun() {
+        operationRunDao.insert(OperationRun(id = 1))
+    }
+}
+"""
+    (root / "SyncRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    # The discovered callable is the ZERO-parameter ``recordRun``: the
+    # constructed-value classification happened at the CALL-SITE argument,
+    # whose exact overload match is what allowed this finding to exist at
+    # all (pre-fix this same call emitted DB_SIGNATURE_UNRESOLVED).
+    assert finding.symbol.name == "recordRun"
+    assert finding.symbol.parameters == ()
+    assert finding.identity["dao"] == "example.OperationRunDao"
+    assert finding.identity["operation"] == "insert"
+    assert report.statistics["trusted"] is True
+
+
+def test_named_argument_strips_parameter_name_for_variable_values(tmp_path):
+    """``expenseDao.insert(item = entity)`` carries the VALUE's type: the
+    ``item =`` prefix is stripped (comparison operators kept) and ``entity``
+    resolves through the lexical environment to the declared parameter type,
+    matching the single ``insert(Item)`` overload exactly."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+data class Item(val id: Int)
+
+@androidx.room.Dao
+interface ExpenseDao {
+    @androidx.room.Insert
+    fun insert(item: Item)
+}
+
+class Repository(private val expenseDao: ExpenseDao) {
+    fun save(entity: Item) {
+        expenseDao.insert(item = entity)
+    }
+}
+"""
+    (root / "Repository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    assert report.findings[0].symbol.parameters == ("example.Item",)
+    assert report.statistics["trusted"] is True
+
+
+def test_database_accessor_call_receiver_resolves_to_declared_dao_type(tmp_path):
+    """Probed shape (backup/restore repositories): ``database.expenseDao()``
+    is a NON-bare receiver whose exact closed type comes from the DECLARED
+    @Database abstract accessor, resolving to exactly one inventory DAO
+    FQCN.  The zero-argument terminal call keeps the chain resolvable; any
+    other non-bare shape still fails closed."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+@androidx.room.Dao
+interface AppExpenseDao {
+    @androidx.room.Insert
+    fun insert(value: Int)
+}
+
+@Database(entities = [], version = 1)
+abstract class AppDatabase {
+    abstract fun expenseDao(): AppExpenseDao
+}
+
+class BackupRepository(private val database: AppDatabase) {
+    fun persist() {
+        database.expenseDao().insert(1)
+    }
+}
+"""
+    (root / "BackupRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.identity["dao"] == "example.AppExpenseDao"
+    assert finding.identity["accessor"] == "database.expenseDao()"
+    assert report.statistics["trusted"] is True
+
+
+def test_database_accessor_local_inference_types_the_dao(tmp_path):
+    """The companion probed shape: ``val dao = database.expenseDao()``
+    infers the local's type from the same declared @Database accessor map,
+    so the later bare ``dao.insert(...)`` resolves instead of emitting
+    DB_DAO_SCOPE_UNRESOLVED."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+@androidx.room.Dao
+interface AppExpenseDao {
+    @androidx.room.Insert
+    fun insert(value: Int)
+}
+
+@Database(entities = [], version = 1)
+abstract class AppDatabase {
+    abstract fun expenseDao(): AppExpenseDao
+}
+
+class BackupRepository(private val database: AppDatabase) {
+    fun persist() {
+        val dao = database.expenseDao()
+        dao.insert(2)
+    }
+}
+"""
+    (root / "BackupRepository.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.identity["dao"] == "example.AppExpenseDao"
+    assert finding.identity["accessor"] == "dao"
+    assert report.statistics["trusted"] is True
+
+
+def test_get_database_path_local_inference_keeps_platform_handle_silent(tmp_path):
+    """Probed shape (DatabaseBackupRepositoryImpl.kt staging family): a
+    blanked string-template initializer line must not swallow the NEXT
+    declaration (RC2 same-line separator), so ``stagedDbFile`` IS collected;
+    ``context.getDatabasePath(...)`` carries the platform return type
+    ``File``, and ``stagedDbFile.delete()`` -- colliding with the SweepDao
+    ``delete`` operation name -- resolves to a non-DAO handle and stays
+    silent instead of emitting DB_DAO_SCOPE_UNRESOLVED."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+import android.content.Context
+
+class BackupWriter(private val context: Context) {
+    fun stage() {
+        val stagedDbName = "gr07-staged.db"
+        val stagedDbFile = context.getDatabasePath(stagedDbName)
+        stagedDbFile.delete()
+    }
+}
+""" + "\n" + _sweep_dao()
+    (root / "BackupWriter.kt").write_text(source, encoding="utf-8")
+    # ``context.getDatabasePath(...)`` is a SUPPORTED structural shape whose
+    # authorization stays with the structural policy's exact tuple (same
+    # contract as test_context_get_database_path_is_supported_and_policy_gated);
+    # the entry keeps the structural leg silent so this fixture isolates the
+    # untyped-local inference behavior under test.
+    rel = "app/src/main/java/BackupWriter.kt"
+    structural = [{
+        "path": rel, "class": "BackupWriter", "method_pattern": "stage",
+        "operation": "getDatabasePath",
+    }]
+
+    report = scan_db_access(root, structural_policy=structural,
+                            raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_take_if_self_type_lambda_binds_it_to_receiver_type(tmp_path):
+    """Probed shape (backup verification): ``file.takeIf { ... }`` binds the
+    lambda's implicit single parameter to the RECEIVER ITSELF by Kotlin
+    contract.  With ``it`` bound to ``File``, an operation named like a DAO
+    mutator on the handle stays classified as a non-DAO platform call; an
+    unbound ``it`` would fail closed with DB_DAO_SCOPE_UNRESOLVED."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+import java.io.File
+
+class CacheCleaner {
+    fun sweep(stagedDbFile: File): Boolean {
+        return stagedDbFile.takeIf { it.delete() } != null
+    }
+}
+""" + "\n" + _sweep_dao()
+    (root / "CacheCleaner.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_control_prefix_condition_group_does_not_hide_the_receiver(tmp_path):
+    """Probed shape (staged-file cleanup): ``if (dst.exists()) dst.delete()``
+    parses the second statement's receiver with a leading control-group
+    prefix.  The prefix is stripped (a real parenthesized receiver whose
+    continuation starts with ``.`` is kept whole), so ``dst`` resolves to
+    its declared ``File`` type and the DAO-named operation stays silent."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+import java.io.File
+
+class StagingCleaner {
+    fun clean(stagedDbFile: File) {
+        if (stagedDbFile.exists()) stagedDbFile.delete()
+    }
+}
+""" + "\n" + _sweep_dao()
+    (root / "StagingCleaner.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert report.findings == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_contiguous_callable_declarations_bind_to_their_own_callable(tmp_path):
+    """RC1 boundary regression (probed: ExpenseGroupDao
+    insertGroupWithMembers bound to setActiveStatus; OperationRunRecorder /
+    WorkerRunLogger event-writer chains).  Callable ranges are CONTIGUOUS --
+    a bodyless sibling's end offset EQUALS the next callable's start -- so
+    matching must be HALF-OPEN.  The default-body method's declaration binds
+    to ITS OWN callable, so its ``member`` parameter fills the lexical
+    environment and the mutation resolves against the exact
+    ``insertGroup(GroupEntity)`` overload instead of failing closed with the
+    PRECEDING callable's (wrong) environment."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+data class GroupEntity(val id: Int)
+
+@androidx.room.Dao
+interface GroupProbeDao {
+    @androidx.room.Insert
+    fun insert(value: Int)
+
+    @androidx.room.Insert
+    fun insertGroup(group: GroupEntity)
+}
+
+interface GroupHandler {
+    val groupProbeDao: GroupProbeDao
+
+    fun setActiveStatus(active: Boolean): Int
+
+    fun insertGroupWithMembers(member: GroupEntity): Int {
+        return groupProbeDao.insertGroup(member)
+    }
+}
+"""
+    (root / "GroupHandler.kt").write_text(source, encoding="utf-8")
+
+    report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert [finding.rule for finding in report.findings] == [
+        "DB_UNAUTHORIZED_MUTATION",
+    ]
+    finding = report.findings[0]
+    assert finding.symbol.name == "insertGroupWithMembers"
+    assert finding.symbol.parameters == ("example.GroupEntity",)
+    assert finding.identity["dao"] == "example.GroupProbeDao"
+    assert finding.identity["operation"] == "insertGroup"
     assert report.statistics["trusted"] is True

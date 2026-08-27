@@ -172,12 +172,38 @@ _PROPERTY_STRUCTURAL_ACCESS = re.compile(r"\.(?P<property>writableDatabase)\b")
 # inferred only through the closed shapes below (direct constructor/factory
 # call, or a resolvable androidx member chain); anything else stays
 # unresolved and keeps failing closed exactly as before.
-_UNTYPED_VAL = re.compile(r"\bval\s+(?P<name>[A-Za-z_]\w*)\s*=\s*(?P<init>[^\n]+)")
-_FACTORY_INIT = re.compile(r"(?P<type>[A-Z][A-Za-z0-9_]*)\s*(?:\(|\.\s*[A-Za-z_]\w*\s*\()")
+# GR-07 convergence round 5: the ``=`` separator is deliberately restricted
+# to SAME-LINE whitespace (``[ \t]``).  The previous ``\s*=\s*`` let the
+# separator cross a newline, so a declaration whose initializer line ended in
+# a blanked string template swallowed the NEXT declaration whole:
+# ``val stagedDbName = "<template>"`` consumed the following
+# ``val stagedDbFile = context.getDatabasePath(...)`` line as its own
+# initializer text, ``stagedDbFile`` was never collected, and every later
+# ``stagedDbFile.delete()`` failed closed with DB_DAO_SCOPE_UNRESOLVED
+# (DatabaseBackupRepositoryImpl.kt x6, probe_r5_sites.json).
+_UNTYPED_VAL = re.compile(r"\bval\s+(?P<name>[A-Za-z_]\w*)[ \t]*=[ \t]*(?P<init>[^\n]+)")
+# GR-07 convergence round 5: the constructed head may carry a qualified
+# package prefix (``java.io.File(...)`` -> ``File``).  Only the capitalized
+# head names the constructed type; lowercase segments are package/object
+# spellings and never contribute.
+_FACTORY_INIT = re.compile(
+    r"(?:(?:[a-z_]\w*)(?:\.[a-z_]\w*)*\.)?"
+    r"(?P<type>[A-Z][A-Za-z0-9_]*)\s*(?:\(|\.\s*[A-Za-z_]\w*\s*\()"
+)
 _DOTTED_INIT = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+")
 # The closed kotlin.use dispatch: ``handle.use { it.<op>(...) }`` binds the
 # lambda's implicit single parameter to the receiver's type.
-_USE_LAMBDA = re.compile(r"\.\s*(?P<dispatch>use)\s*\{")
+# GR-07 convergence round 5: closed SELF-type standard-library dispatches.
+# ``file.also { it.exists() }`` / ``File(...).takeIf { it.exists() }`` bind
+# the lambda's implicit single parameter to the RECEIVER ITSELF (Kotlin
+# contract of let/also/takeIf/takeUnless), so once the receiver resolves the
+# binding is exact.  Element-typed dispatches (forEach/map/filter/...) are
+# deliberately NOT included: their parameter is a collection ELEMENT whose
+# type no closed scanner knows, and guessing it would fabricate bindings.
+_SELF_TYPE_LAMBDA_DISPATCH = ("use", "let", "also", "takeIf", "takeUnless")
+_LAMBDA_DISPATCH = re.compile(
+    r"\.\s*(?P<dispatch>%s)\s*\{" % "|".join(_SELF_TYPE_LAMBDA_DISPATCH)
+)
 # GR-07 convergence round: closed PLATFORM return-type facts for untyped-local
 # inference.  Evidence (probe14_classify.json D2 family): ``val dbFile =
 # context.getDatabasePath(...)`` leaves ``dbFile`` unresolved because the
@@ -192,6 +218,146 @@ _PLATFORM_FACTORY_RETURNS = {
 _PLATFORM_CALL_INIT = re.compile(
     r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*\.\s*(?P<method>[A-Za-z_]\w*)\s*\("
 )
+# GR-07 convergence round 5: named call arguments.  ``foo(x = 1)`` carries
+# the VALUE's type, not the parameter name's; the prefix is stripped before
+# value resolution.  The negative lookahead keeps comparison operators
+# (``a == b``) unstripped.
+_NAMED_ARGUMENT = re.compile(r"^(?P<name>[A-Za-z_]\w*)[ \t]*=(?!=)[ \t]*(?P<value>.+)$", re.S)
+# Head of a constructed value: an optional lowercase qualified prefix, a
+# capitalized type head, and the opening parenthesis of its argument list.
+_QUALIFIED_CTOR_HEAD = re.compile(
+    r"^(?:(?:[a-z_]\w*)(?:\.[a-z_]\w*)*\.)?"
+    r"(?P<type>[A-Z][A-Za-z0-9_]*)\s*\("
+)
+# GR-07 convergence round 5: zero-argument DAO accessor calls.
+# ``database.expenseDao().insert(...)`` and the local inference shape
+# ``val dao = database.expenseDao()`` both end in ``.accessor()`` with no
+# other call in the chain; ``accessor`` must be a declared @Database accessor
+# (see ``_database_accessor_types``) resolving to exactly one DAO FQCN.
+_ACCESSOR_CALL = re.compile(
+    r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\.(?P<accessor>[A-Za-z_]\w*)\(\)$"
+)
+# @Database-annotated classes: their abstract DAO accessors are the evidence
+# for the accessor-name -> DAO-type map below.
+_DATABASE_ANNOTATION = re.compile(r"@\s*Database\s*\(")
+_DATABASE_ACCESSOR_DECL = re.compile(
+    r"\babstract\s+(?:suspend\s+)?(?:fun|val|var)\s+(?P<name>[A-Za-z_]\w*)"
+    r"(?:\(\))?\s*:\s*(?P<type>" + _TYPE_TEXT + r")"
+)
+# Control-flow keywords whose ``(condition)`` group prefixes a statement's
+# receiver expression (``if (dst.exists()) dst.delete()``).
+_CONTROL_GROUP_PREFIX = re.compile(r"^(?:if|for|while|when)\s*\(")
+
+
+def _balanced_group_end(text: str, opening: int) -> int | None:
+    """Exclusive end of the balanced bracket group opening at ``opening``."""
+    depth = 0
+    for index in range(opening, len(text)):
+        char = text[index]
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return None
+
+
+def _constructor_call_type(value: str) -> str | None:
+    """Constructed type of a ``Name(...)`` / ``pkg.Name(...)`` expression.
+
+    The whole (stripped) value must BE the constructor call: the argument
+    list closes exactly at the end.  Anything else -- trailing members,
+    unbalanced groups, lowercase heads -- returns None (fail closed).
+    """
+    candidate = value.strip()
+    head = _QUALIFIED_CTOR_HEAD.match(candidate)
+    if head is None:
+        return None
+    end = _balanced_group_end(candidate, head.end() - 1)
+    if end is None or candidate[end:].strip():
+        return None
+    return head.group("type")
+
+
+def _accessor_call_name(expression: str) -> str | None:
+    """Accessor member name of a ``root.chain.accessor()`` expression.
+
+    The whole expression must be a dotted identifier chain whose terminal
+    member is called with an EMPTY argument list; any nested call, index, or
+    lambda returns None (fail closed).
+    """
+    match = _ACCESSOR_CALL.match(expression.strip())
+    return match.group("accessor") if match else None
+
+
+def _strip_leading_paren_group_prefix(expression: str) -> str:
+    """Drop leading control-group prefixes from a receiver text.
+
+    ``if (cond) target.delete()`` parses its receiver as either
+    ``if (cond) target`` (the walk stopped at a statement boundary left of
+    the keyword) or ``(cond) target`` (it stopped at the unmatched group
+    opener).  A leading ``if``/``for``/``while``/``when`` keyword followed by
+    one balanced group, or a bare leading balanced group, followed by a
+    non-dot continuation is such a control prefix; the true receiver is what
+    follows it.  A leading group whose continuation starts with ``.`` is a
+    real parenthesized receiver (``(a ?: b).length``) and is kept whole.
+    """
+    stripped = expression.strip()
+    while True:
+        keyword = _CONTROL_GROUP_PREFIX.match(stripped)
+        if keyword is not None:
+            opening = stripped.index("(", keyword.end() - 1)
+        elif stripped.startswith("("):
+            opening = 0
+        else:
+            break
+        end = _balanced_group_end(stripped, opening)
+        if end is None:
+            break
+        remainder = stripped[end:].lstrip()
+        if not remainder or remainder.startswith("."):
+            break
+        stripped = remainder
+    return stripped
+
+
+def _database_accessor_types(
+    sources: dict[str, str], dao_simple: dict[str, set[str]]
+) -> dict[str, str]:
+    """Map @Database abstract accessor names to unique DAO FQCNs.
+
+    Evidence-based: only accessors DECLARED inside a ``@Database``-annotated
+    class body are collected, and only when the declared DAO type resolves to
+    exactly one inventory FQCN.  Ambiguous or undeclared names stay absent --
+    callers fail closed on absence.
+    """
+    accessors: dict[str, set[str]] = {}
+    for path in sorted(sources):
+        masked = mask_kotlin_source(sources[path])
+        for annotation in _DATABASE_ANNOTATION.finditer(masked):
+            body_open = masked.find("{", annotation.end())
+            if body_open < 0:
+                continue
+            body_close = _balanced_group_end(masked, body_open)
+            if body_close is None:
+                continue
+            for declaration in _DATABASE_ACCESSOR_DECL.finditer(
+                masked, annotation.end(), body_close
+            ):
+                simple = declaration.group("type").rsplit(".", 1)[-1]
+                fqcns = set(dao_simple.get(declaration.group("type"), ()))
+                fqcns.update(dao_simple.get(simple, ()))
+                if len(fqcns) != 1:
+                    continue
+                accessors.setdefault(declaration.group("name"), set()).add(
+                    next(iter(fqcns))
+                )
+    return {
+        name: next(iter(fqcns))
+        for name, fqcns in sorted(accessors.items())
+        if len(fqcns) == 1
+    }
 
 
 def _accessor_declaration_matches(span_masked: str) -> list[re.Match]:
@@ -457,6 +623,22 @@ def _receiver_expression(masked: str, dot_start: int) -> tuple[str, bool]:
                 break
         elif not any(depth.values()) and char in ';=\n':
             break
+        elif not any(depth.values()) and char in "&|":
+            # GR-07 convergence round 5: ``&&``/``||`` at bracket depth zero
+            # separate boolean operands; the receiver of the RIGHT operand's
+            # call must not swallow the left one.  Walking left, the pair's
+            # rightmost character is met first, so breaking here leaves the
+            # whole operator -- and everything left of it -- out of the
+            # expression.
+            break
+        elif (not any(depth.values()) and char == "?"
+                and masked[i + 1:i + 2] == ":"):
+            # GR-07 convergence round 5: an elvis operator at bracket depth
+            # zero separates the fallback expression from its left side.
+            # ``x ?: dao.probe(...)`` used to parse its receiver as
+            # ``x ?: dao``.  Step over the ':' so it is excluded too.
+            i -= 1
+            break
         elif (not any(depth.values()) and char == ">"
                 and i > 0 and masked[i - 1] == "-"):
             # GR-07 convergence round: a ``->`` arrow at bracket depth zero is
@@ -477,10 +659,15 @@ def _receiver_expression(masked: str, dot_start: int) -> tuple[str, bool]:
     # the statement keywords ``return``/``else`` (``return dao.probe(x)``).
     # Strip the closed set repeatedly, then classify bareness on what
     # remains; every other expression shape stays non-bare (fail closed).
+    # GR-07 convergence round 5: a leading balanced ``(condition)`` group
+    # followed by a non-dot continuation is an ``if``/``for``/``while``
+    # control prefix (``if (dst.exists()) dst.delete()`` parses its receiver
+    # as ``(dst.exists()) dst``); the true receiver is what follows it.
     stripped = expression
     prefix = re.compile(r"^(?:[!+\-]|\?:|return\b|else\b)\s*")
     while True:
         candidate = prefix.sub("", stripped)
+        candidate = _strip_leading_paren_group_prefix(candidate)
         if candidate == stripped:
             break
         stripped = candidate
@@ -635,18 +822,40 @@ def _argument_types(masked: str, opening: int, receiver_types: dict[str, str]) -
         return ()
     result = []
     for value in parts:
+        # GR-07 convergence round 5: a NAMED argument contributes its VALUE's
+        # type, never the parameter name's spelling.
+        # ``insert(OperationRun(correlationId = correlationId, ...))`` used to
+        # fail closed because the raw part text ``name = value`` matched no
+        # closed form.  Strip the ``name =`` prefix (comparison operators are
+        # kept -- see ``_NAMED_ARGUMENT``), then resolve the value.
+        named = _NAMED_ARGUMENT.match(value)
+        if named is not None:
+            value = named.group("value").strip()
         if value in receiver_types:
             result.append(receiver_types[value])
-        elif re.fullmatch(r"[0-9]+", value):
+            continue
+        if re.fullmatch(r"[0-9]+", value):
             result.append("Int")
-        elif re.fullmatch(r"[0-9]+[lL]", value):
+            continue
+        if re.fullmatch(r"[0-9]+[lL]", value):
             result.append("Long")
-        elif value in {"true", "false"}:
+            continue
+        if value in {"true", "false"}:
             result.append("Boolean")
-        elif re.fullmatch(r'"(?:[^"\\]|\\.)*"', value, re.S):
+            continue
+        if re.fullmatch(r'"(?:[^"\\]|\\.)*"', value, re.S):
             result.append("String")
-        else:
-            return None
+            continue
+        # GR-07 convergence round 5: a constructed value IS an instance of
+        # its head type.  ``insert(OperationRun(...))`` carries
+        # ``OperationRun`` exactly like the untyped-local factory inference
+        # above; any trailing member access or unbalanced group stays
+        # unresolved (fail closed).
+        constructed = _constructor_call_type(value)
+        if constructed is not None:
+            result.append(constructed)
+            continue
+        return None
     return tuple(result)
 
 
@@ -686,6 +895,7 @@ def _receiver_types(
     owner_start: int | None = None,
     owner_end: int | None = None,
     use_offset: int | None = None,
+    dao_accessor_types: dict[str, str] | None = None,
 ) -> dict[str, str | None]:
     """Resolve names in the lexical environment of one callable.
 
@@ -807,6 +1017,23 @@ def _receiver_types(
             platform_call = _PLATFORM_CALL_INIT.match(init)
             if platform_call and platform_call.group("method") in _PLATFORM_FACTORY_RETURNS:
                 inferred_type = _PLATFORM_FACTORY_RETURNS[platform_call.group("method")]
+            elif (
+                dao_accessor_types
+                and _ACCESSOR_CALL.match(init)
+                and init.count("(") == 1
+            ):
+                # GR-07 convergence round 5: ``val dao = database.expenseDao()``
+                # carries the accessor's declared DAO type.  The accessor name
+                # must be a declared @Database abstract accessor resolving to
+                # exactly one inventory FQCN (``_database_accessor_types``);
+                # anything else stays unresolved (fail closed).  The single
+                # ``(`` guard rejects nested-call chains the regex alone
+                # cannot see.
+                accessor_type = dao_accessor_types.get(
+                    _accessor_call_name(init) or ""
+                )
+                if isinstance(accessor_type, str):
+                    inferred_type = accessor_type
             elif _DOTTED_INIT.fullmatch(init):
                 root_type = resolved.get(init.split(".", 1)[0])
                 if isinstance(root_type, str):
@@ -822,11 +1049,17 @@ def _receiver_types(
         resolved = finalize(candidates + inferred)
 
     # ``handle.use { it.op(...) }`` binds the lambda's implicit single
-    # parameter to the receiver's type.  Only the closed ``use`` dispatch is
-    # modelled; the receiver must resolve through the environment above.
+    # parameter to the receiver's type.  GR-07 convergence round 5: the
+    # closed SELF-type standard-library dispatches (let/also/takeIf/
+    # takeUnless) bind ``it`` to the receiver ITSELF by Kotlin contract, so a
+    # resolved receiver yields an exact binding there too.  Element-typed
+    # dispatches (forEach/map/...) are deliberately excluded -- their
+    # parameter type is unknown to a closed scanner.  The receiver must
+    # resolve through the environment above or a constructed ``File(...)``
+    # head; nothing is guessed.
     if body_start >= 0:
         bindings: list[tuple[str, str, int, tuple[int, int]]] = []
-        for match in _USE_LAMBDA.finditer(masked, body_start, cend):
+        for match in _LAMBDA_DISPATCH.finditer(masked, body_start, cend):
             open_brace = match.end() - 1
             lambda_scope = scope_for(open_brace + 1, (open_brace, cend))
             if lambda_scope[0] < open_brace:
@@ -845,6 +1078,8 @@ def _receiver_types(
                         receiver_kind = _STRUCTURAL_MEMBER_TYPES.get(segment)
                         if receiver_kind is None:
                             break
+            else:
+                receiver_kind = _constructor_call_type(receiver_text)
             if receiver_kind is not None:
                 bindings.append(("it", receiver_kind, open_brace + 1, lambda_scope))
         if bindings:
@@ -960,6 +1195,13 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         except (OSError, UnicodeError):
             diagnostics.append(GuardDiagnostic("DB_SOURCE_UNREADABLE", path=path))
 
+    # GR-07 convergence round 5: declared @Database abstract accessors are
+    # the closed evidence for ``database.expenseDao()`` receiver resolution
+    # and for ``val dao = database.expenseDao()`` local inference.  Built
+    # once per scan from the SAME sources; only names resolving to exactly
+    # one inventory DAO FQCN are present, so absence fails closed.
+    dao_accessor_types = _database_accessor_types(sources, dao_simple)
+
     # Typed authorization index: bucket entries by (canonical path, exact
     # operation) so each discovered mutation is compared only against the
     # entries that could possibly authorize it, then by FULL identity
@@ -1060,7 +1302,25 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 callable_cache[discovery_key] = callables
             if isinstance(callables, BaseException):
                 raise callables
-            callable_item = next((item for item in callables if item.start_offset <= start <= item.end_offset), None)
+            # GR-07 convergence round 5: the containing callable is matched
+            # HALF-OPEN (``start < end_offset``).  Callable ranges are
+            # contiguous -- one callable's ``end_offset`` equals the next
+            # callable's ``start_offset`` -- so the previous inclusive upper
+            # bound bound every declaration whose range starts exactly on
+            # that boundary to the PRECEDING callable.  Its header params and
+            # body locals then filled the lexical environment, the real
+            # callable's names were invisible, and every local/param-based
+            # resolution failed closed (ExpenseGroupDao.insertGroupWithMembers
+            # bound to setActiveStatus; probe_r5_boundary.py).  An empty span
+            # still matches itself for safety.
+            callable_item = next(
+                (
+                    item for item in callables
+                    if item.start_offset <= start
+                    and (start < item.end_offset or item.start_offset == item.end_offset == start)
+                ),
+                None,
+            )
             if declaration.kind == "function" and callable_item is None:
                 raise ParserError()
             if declaration.callable_name is not None:
@@ -1155,6 +1415,7 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 owner_start=owner.start_offset if owner is not None else None,
                 owner_end=owner.end_offset if owner is not None else None,
                 use_offset=call.start(),
+                dao_accessor_types=dao_accessor_types,
             )
             if accessor_parameters:
                 merged = dict(accessor_parameters)
@@ -1162,7 +1423,19 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 receiver_types = merged
             receiver, receiver_is_bare = _receiver_expression(masked, call.start())
             operation = call.group("method")
+            # GR-07 convergence round 5: a NON-bare receiver can still carry
+            # an exact closed type.  ``database.expenseDao()`` is a declared
+            # @Database accessor resolving to exactly one DAO FQCN, and
+            # ``File(...)`` constructs its head type; every other non-bare
+            # shape stays unresolved (fail closed).  Safe calls keep their
+            # intentional fail-closed contract below.
             receiver_type = receiver_types.get(receiver) if receiver_is_bare else None
+            if (not receiver_is_bare and not call.groupdict().get("safe")):
+                accessor_name = _accessor_call_name(receiver)
+                if accessor_name is not None:
+                    receiver_type = dao_accessor_types.get(accessor_name)
+                if receiver_type is None:
+                    receiver_type = _constructor_call_type(receiver)
             call_symbol = symbol
             if declaration.kind == "property":
                 try:
@@ -1212,13 +1485,18 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             # Safe calls are intentionally not authorized as bare DAO access.
             # The old matcher skipped ``dao?.insert`` entirely; recognizing the
             # token and failing closed preserves a structured diagnostic for
-            # direct, qualified, and nested safe-call forms.
-            if call.groupdict().get("safe") or not receiver_is_bare:
+            # direct, qualified, and nested safe-call forms.  GR-07 round 5:
+            # a non-bare receiver with an EXACT closed type (declared
+            # @Database accessor call or constructed head) proceeds; every
+            # other non-bare shape keeps the structured diagnostic.
+            if call.groupdict().get("safe") or (
+                not receiver_is_bare and receiver_type is None
+            ):
                 diagnostics.append(GuardDiagnostic(
                     "DB_DAO_SCOPE_UNRESOLVED", path=declaration.path,
                 ))
                 continue
-            typ = receiver_types.get(receiver)
+            typ = receiver_type
             fqcn_candidates = set(dao_simple.get(typ or "", ()))
             if not fqcn_candidates:
                 if typ is None:
