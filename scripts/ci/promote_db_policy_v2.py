@@ -365,7 +365,9 @@ def _collect_accounting_mutation_keys(document):
     any type/shape violation, or ``CODE_ACCOUNTING_INDEX_INCOMPLETE`` when
     record indices are not exactly the complete set ``0 .. inputCount-1``
     (missing, duplicate, or out-of-range indices).  ``keys`` is the union
-    of every record's ``mutationKeys`` strings.
+    of every record's ``mutationKeys`` strings plus, since GR-08a, every
+    reviewed seed row's ``key`` from the optional ``seedRecords`` section
+    (absent section -> no change; present-but-malformed -> malformed).
     """
     records = document.get("records")
     if not isinstance(records, list):
@@ -393,6 +395,17 @@ def _collect_accounting_mutation_keys(document):
             union.add(key)
     if seen_indices != set(range(input_count)):
         return None, None, CODE_ACCOUNTING_INDEX_INCOMPLETE
+    seed_records = document.get("seedRecords")
+    if seed_records is not None:
+        if not isinstance(seed_records, list):
+            return None, None, CODE_ACCOUNTING_MALFORMED
+        for seed_record in seed_records:
+            if not isinstance(seed_record, dict):
+                return None, None, CODE_ACCOUNTING_MALFORMED
+            seed_key = seed_record.get("key")
+            if not isinstance(seed_key, str) or not seed_key:
+                return None, None, CODE_ACCOUNTING_MALFORMED
+            union.add(seed_key)
     return union, input_count, None
 
 

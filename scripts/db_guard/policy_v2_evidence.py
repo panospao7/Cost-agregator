@@ -24,7 +24,13 @@ mutations exist in the verified callables:
   slice — including every callable declared inside a named class/object
   nested within the owner body — so method-local aliases of sibling
   methods or of nested-owner members can never authorize another
-  method's receiver;
+  method's receiver; the slice spans the FULL owner declaration (header
+  included), so constructor-parameter properties
+  (``class Repo(private val dao: RawNotificationDao, ...)``) resolve
+  exactly like body-level property declarations (GR-08a: a header-only
+  property such as ``dao`` never matches the ``\\w+Dao`` naming convention,
+  so missing it silently dropped every real ``dao.*`` mutation from the
+  evidence);
 * ``barrierMode`` metadata is locally consistency-checked (PR-GR-06
   Slice 1): a ``direct`` entry must show exact local direct-barrier syntax
   before EVERY mutation in its own callable body; ``helper`` and
@@ -749,12 +755,13 @@ def _callable_body_slice_line_indices(masked, owner, callables, line_count,
     """Map member callable spans to line indices within the owner slice.
 
     Returns the set of 0-based line indices (relative to
-    ``masked[owner.body_start:owner.body_end].splitlines()``) covered by any
-    member callable declaration's char span in ``masked``, so a class-scope
-    scan can skip entire method declarations and see only property/field-
-    level declarations.  Indices outside the slice are clamped away; the
-    source is read with universal newlines, so counting ``"\\n"`` matches
-    ``splitlines()`` indexing.
+    ``masked[owner.start_offset:owner.body_end].splitlines()`` — the full
+    owner declaration, header included, matching the class-scope DAO map's
+    slice) covered by any member callable declaration's char span in
+    ``masked``, so a class-scope scan can skip entire method declarations
+    and see only property/field-level declarations.  Indices outside the
+    slice are clamped away; the source is read with universal newlines, so
+    counting ``"\\n"`` matches ``splitlines()`` indexing.
 
     ``callables`` holds only the owner's DIRECT members:
     ``find_callable_declarations`` skips ``fun`` declarations inside nested
@@ -772,7 +779,7 @@ def _callable_body_slice_line_indices(masked, owner, callables, line_count,
     every other parser failure family still propagates and fails closed
     upstream as one controlled ``DB_V2_POLICY_PARSER_UNCERTAIN`` finding.
     """
-    base_line = masked.count("\n", 0, owner.body_start)
+    base_line = masked.count("\n", 0, owner.start_offset)
     spans = [(c.start_offset, c.end_offset) for c in callables]
     for inner in find_owner_declarations(masked):
         if inner == owner:
@@ -865,11 +872,17 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
     merged class/method DAO map and the ``_resolve_dao_identity``
     fallback), otherwise ``DB_V2_POLICY_MUTATION_NOT_FOUND`` is emitted with
     that member's operation/accessor.  The class-scope DAO map is built from
-    the owner slice with every member callable's declaration span excluded —
-    including callables declared inside nested named classes/objects within
-    the owner body — so only property/field-level DAO declarations remain
-    and sibling methods' or nested-owner members' local aliases can never
-    leak into scope.
+    the FULL owner declaration slice (header included, so constructor-
+    parameter properties resolve — GR-08a) with every member callable's
+    declaration span excluded — including callables declared inside nested
+    named classes/objects within the owner body — so only property/field-
+    level DAO declarations remain and sibling methods' or nested-owner
+    members' local aliases can never leak into scope.  A member's
+    ``dao_accessor`` may spell the source property alias (``dao``) rather
+    than the derived Room accessor identity (``rawNotificationDao``): the
+    accessor spelling is resolved through the SAME merged map before the
+    required-pair, ambiguity, and unlisted comparisons, so the alias bridge
+    closes the spelling gap without widening coverage to any other DAO.
 
     When ``dao_fqcn_index`` is not ``None`` (a Room inventory was provided),
     every member's declared ``daoFqcn`` is cross-checked against the
@@ -891,7 +904,18 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
     is preserved.
     """
     body_lines = decl.body.splitlines()
-    owner_slice = masked[owner.body_start:owner.body_end]
+    # GR-08a: the class-scope slice spans the FULL owner declaration —
+    # header included — so constructor-parameter properties
+    # (``class Repo(private val dao: RawNotificationDao, ...)``) enter the
+    # class-scope DAO map exactly like body-level property declarations
+    # (the legacy scanner's class map has always spanned the declaration
+    # line).  Sliced from ``body_start`` alone, a header-only property such
+    # as ``dao`` was invisible; because ``dao`` never matches the
+    # ``\w+Dao`` naming convention either, every real ``dao.*`` mutation in
+    # the body silently vanished from the evidence.  The header can contain
+    # no method body and no nested owner, so method-local aliases of
+    # siblings or nested owners still cannot leak into the class map.
+    owner_slice = masked[owner.start_offset:owner.body_end]
     slice_lines = owner_slice.splitlines()
     class_map = build_class_scope_dao_var_map(
         slice_lines,
@@ -920,12 +944,35 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
             return accessor
         return _resolve_dao_identity(identity, merged)
 
+    def _accessor_identity(accessor):
+        # GR-08a: a policy row may spell the SOURCE property/local alias
+        # (``dao``) instead of the derived Room accessor identity
+        # (``rawNotificationDao``).  Resolving the accessor spelling through
+        # the SAME scoped map the extraction used keeps both sides
+        # comparable without guessing; a spelling with no mapping and no
+        # ``\w+Dao`` shape stays itself, so unknown accessors keep failing
+        # closed exactly as before.
+        resolved = _resolve_dao_identity(accessor, merged)
+        return accessor if resolved is None else resolved
+
     listed = {(g.dao_accessor, g.operation) for g in group}
+    listed_identities = {
+        (_accessor_identity(g.dao_accessor), g.operation) for g in group
+    }
     actual = set()
     ambiguous = False
     accessor_fqcns = {}
     for g in group:
         accessor_fqcns.setdefault(g.dao_accessor, set()).add(g.dao_fqcn)
+    # Ambiguity is a property of the resolved DAO identity, not of one
+    # spelling: two daoFqcn values behind the alias ``dao`` and two behind
+    # ``rawNotificationDao`` describe the same unresolvable accessor and
+    # must take the same DB_V2_POLICY_DAO_AMBIGUOUS path.
+    identity_fqcns = {}
+    for accessor, fqcns in accessor_fqcns.items():
+        identity_fqcns.setdefault(
+            _accessor_identity(accessor), set()
+        ).update(fqcns)
     for (identity, op) in pairs:
         # Resolve every body pair's identity canonically (scoped map first,
         # then the ``\w+Dao`` naming convention).  ``ck`` is a CallableKey
@@ -934,15 +981,19 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
         resolved = _resolve_dao_identity(identity, merged)
         if resolved is None:
             continue
-        if len(accessor_fqcns.get(resolved, ())) > 1:
+        if len(identity_fqcns.get(resolved, ())) > 1:
             ambiguous = True
         actual.add((resolved, op))
     actual_keys = tuple(sorted(f"{acc}|{op}" for (acc, op) in actual))
 
     for m in group:
+        accessor_identity = _accessor_identity(m.dao_accessor)
         required_found = any(
             op == m.operation
-            and _resolved(identity, m.dao_accessor) == m.dao_accessor
+            and (
+                _resolved(identity, m.dao_accessor) == m.dao_accessor
+                or _resolved(identity, accessor_identity) == accessor_identity
+            )
             for (identity, op) in pairs
         )
         if not required_found:
@@ -987,7 +1038,18 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
                 ))
                 return actual_keys
 
-    unlisted = sorted({op for (acc, op) in actual if acc is not None and (acc, op) not in listed})
+    # A body pair counts as listed when SOME group row declares its
+    # operation behind an accessor spelling that resolves — through the same
+    # scoped map — to the pair's resolved DAO identity (GR-08a alias
+    # bridge).  A pair on any OTHER DAO identity stays unlisted: the bridge
+    # only closes the spelling gap, it never widens coverage.
+    unlisted = sorted({
+        op
+        for (acc, op) in actual
+        if acc is not None
+        and (acc, op) not in listed
+        and (acc, op) not in listed_identities
+    })
     if unlisted:
         errors.append(PolicyError(
             DB_V2_POLICY_UNLISTED_MUTATION,

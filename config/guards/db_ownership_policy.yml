@@ -45,6 +45,20 @@ entries:
     \ exchangeRateDao.insertOrUpdateAll"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: addExpenseToGroupAtomic
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.GroupExpense
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: insert
+  barrierMode: direct
+  reason: Atomic group expense insert with single-currency validation
+  owner: '@panospao7'
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
   ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
   kind: function
@@ -191,6 +205,102 @@ entries:
     \ checks"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: detectAndSaveSubscriptionCandidate
+  receiver: null
+  parameterTypes:
+  - String
+  - Long?
+  daoAccessor: subscriptionCandidateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08a EXACT_POLICY: post-commit subscription-candidate persistence writer;
+    single insert guarded by pending-merchant dedupe'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleAutoAcceptInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markProcessed
+  barrierMode: helper
+  reason: 'GR-08a EXACT_POLICY: auto-accept terminal raw-notification state write
+    inside the pipeline DB transaction'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleAutoAcceptInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  barrierMode: helper
+  reason: 'GR-08a EXACT_POLICY: auto-accept relevance bookkeeping inside the pipeline
+    DB transaction'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleAutoAcceptInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndAccepted
+  barrierMode: helper
+  reason: 'GR-08a EXACT_POLICY: per-source accepted counter increment after coordinator-created
+    expense'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleAutoAcceptInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndDuplicate
+  barrierMode: helper
+  reason: 'GR-08a EXACT_POLICY: per-source duplicate counter increment on every auto-accept
+    dedupe branch'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.PlannedExpenseRepository
   kind: function
@@ -956,6 +1066,22 @@ entries:
   barrierMode: helper
   reason: Best-effort UPDATE_VALIDATION_FAILED lifecycle event insert; barrier via
     checkWritesAllowed helper
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt
+  ownerFqcn: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+  kind: function
+  method: recoverStaleRunningJobs
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: backgroundJobRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
+  operation: staleAbortIfStillRunning
+  barrierMode: direct
+  reason: "Stale-run recovery invoked directly at startup outside runGuarded \u2014\
+    \ direct writeBarrier.checkWritesAllowed before CAS staleAbortIfStillRunning mutation;\
+    \ fail closed when writes blocked."
   owner: '@panospao7'
   linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt

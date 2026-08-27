@@ -82,6 +82,8 @@ __all__ = [
     "AccountingRecord",
     "SourceMutationCoverage",
     "AccountingArtifact",
+    "SeedRecord",
+    "seed_record_from_entry",
     "build_accounting_artifact",
     "production_source_manifest_digest",
     "ObservedMutation",
@@ -1671,6 +1673,7 @@ class AccountingArtifact:
     input_count: int = 0
     records: tuple[AccountingRecord, ...] = ()
     source_mutations: tuple[SourceMutationCoverage, ...] = ()
+    seed_records: tuple[SeedRecord, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -1726,14 +1729,28 @@ class AccountingArtifact:
                 "artifact source mutations must be sorted by"
                 " (path, symbol, operation)"
             )
+        if not isinstance(self.seed_records, tuple) or any(
+            not isinstance(record, SeedRecord)
+            for record in self.seed_records
+        ):
+            raise ValueError(
+                "artifact seed records must be a tuple of SeedRecord"
+            )
+        seed_keys = [record.key for record in self.seed_records]
+        if seed_keys != sorted(set(seed_keys)):
+            raise ValueError(
+                "artifact seed records must be sorted and unique by key"
+            )
 
     def to_dict(self):
         """Deterministic JSON mapping with ``schema``/``version`` headers.
 
         Keys are inserted in sorted order so serialization is byte-stable
-        whether or not the JSON encoder also sorts keys.
+        whether or not the JSON encoder also sorts keys.  ``seedRecords``
+        is emitted ONLY when the batch carried reviewed seed rows, so
+        seedless runs stay byte-identical to pre-seed artifacts.
         """
-        return {
+        payload = {
             "candidateSha256": self.candidate_sha256,
             "inputCount": self.input_count,
             "records": [record.to_dict() for record in self.records],
@@ -1746,6 +1763,90 @@ class AccountingArtifact:
             "sourceTreeSha": self.source_tree_sha,
             "version": self.schema_version,
         }
+        if self.seed_records:
+            payload["seedRecords"] = [
+                record.to_dict() for record in self.seed_records
+            ]
+        return payload
+
+
+# ── Reviewed seed rows (GR-08a) ───────────────────────────────────────────────
+#
+# Append-only extension (GR-08a): a migration batch may carry REVIEWED exact
+# v2 policy rows ("seeds") for callables that have no legacy v1 row (the
+# legacy policy never named them, so machine migration can never emit them).
+# Seeds are human-reviewed data consumed by the CLI adapter; this module only
+# provides the accounting evidence shape so every seeded candidate key stays
+# crosswalk-verifiable at promotion time.  Seeds never bypass validation: the
+# CLI loads them through the ordinary v2 loader before they reach here.
+
+MAX_SEED_TEXT_LENGTH = 200
+
+
+@dataclass(frozen=True)
+class SeedRecord:
+    """Accounting evidence for one reviewed seed row's canonical key.
+
+    Identity fields mirror the seeded :class:`PolicyEntry` exactly; ``key``
+    is the entry's canonical mutation key.  Validation is bounded and
+    fail-closed: repository-relative POSIX ``path``, non-empty controlled
+    text fields, lowercase sha256-free identity strings only — never raw
+    source, reasons, or payloads.
+    """
+
+    key: str
+    path: str
+    owner_fqcn: str
+    method: str
+    dao_accessor: str
+    dao_fqcn: str
+    operation: str
+    barrier_mode: str
+    linked_issue: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.key, str) or not self.key:
+            raise ValueError("seed record key must be a non-empty string")
+        _validate_repo_relative_posix_path(self.path, "seed record path")
+        for name, value in (
+            ("owner_fqcn", self.owner_fqcn),
+            ("method", self.method),
+            ("dao_accessor", self.dao_accessor),
+            ("dao_fqcn", self.dao_fqcn),
+            ("operation", self.operation),
+            ("barrier_mode", self.barrier_mode),
+            ("linked_issue", self.linked_issue),
+        ):
+            _validate_bounded_text(value, "seed record %s" % name, MAX_SEED_TEXT_LENGTH)
+
+    def to_dict(self):
+        """Deterministic JSON mapping; insertion order is fixed."""
+        return {
+            "barrierMode": self.barrier_mode,
+            "daoAccessor": self.dao_accessor,
+            "daoFqcn": self.dao_fqcn,
+            "key": self.key,
+            "linkedIssue": self.linked_issue,
+            "method": self.method,
+            "operation": self.operation,
+            "ownerFqcn": self.owner_fqcn,
+            "path": self.path,
+        }
+
+
+def seed_record_from_entry(entry) -> SeedRecord:
+    """Build the :class:`SeedRecord` accounting evidence for one entry."""
+    return SeedRecord(
+        key=entry.mutation_key().canonical_key(),
+        path=entry.path,
+        owner_fqcn=entry.owner_fqcn,
+        method=entry.method,
+        dao_accessor=entry.dao_accessor,
+        dao_fqcn=entry.dao_fqcn,
+        operation=entry.operation,
+        barrier_mode=entry.barrier_mode.value,
+        linked_issue=entry.linked_issue,
+    )
 
 
 def build_accounting_artifact(
@@ -1757,6 +1858,7 @@ def build_accounting_artifact(
     source_tree_sha,
     candidate_sha256=None,
     source_mutations=(),
+    seed_entries=(),
 ) -> AccountingArtifact:
     """Assemble the accounting artifact for one migration batch.
 
@@ -1781,7 +1883,20 @@ def build_accounting_artifact(
     whose identical emission was folded into an earlier row and therefore
     has no resolved row of its own.  A crosswalk index that also carries
     an unresolved row trips the resolved-AND-unresolved rejection above.
+
+    ``seed_entries`` (GR-08a) carries REVIEWED exact v2 rows with no legacy
+    row.  Each becomes one :class:`SeedRecord`; seed keys must be unique,
+    must not collide with any legacy record key, and are carried in the
+    artifact's ``seedRecords`` section so the rendered candidate's full
+    key set stays crosswalk-verifiable at promotion time.  Seeds never
+    relax the legacy crosswalk above.
     """
+    seed_record_tuple = tuple(
+        sorted(
+            (seed_record_from_entry(entry) for entry in seed_entries),
+            key=lambda record: record.key,
+        )
+    )
     resolved_keys_by_index: dict = {}
     for row in result.resolved:
         resolved_keys_by_index.setdefault(row.index, set()).add(
@@ -1857,6 +1972,13 @@ def build_accounting_artifact(
             raise ValueError(
                 "mutation key maps to no legacy index"
             )
+    seed_keys = {record.key for record in seed_record_tuple}
+    if len(seed_keys) != len(seed_record_tuple):
+        raise ValueError("seed entries carry duplicate mutation keys")
+    if seed_keys & set(indices_by_key):
+        raise ValueError(
+            "seed mutation key duplicates a legacy record key"
+        )
     ordered_mutations = tuple(
         sorted(
             source_mutations,
@@ -1882,6 +2004,7 @@ def build_accounting_artifact(
         input_count=result.input_count,
         records=tuple(records),
         source_mutations=ordered_mutations,
+        seed_records=seed_record_tuple,
     )
 
 

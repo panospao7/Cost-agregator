@@ -32,6 +32,15 @@ section is evidence-only (it never adds candidate entries); a generation
 run whose coverage cannot be assembled fails closed instead of shipping an
 artifact that silently lacks it.
 
+Since GR-08a the adapter also consumes REVIEWED EXACT SEED ROWS via
+``--seed-rows PATH``: a v2-shaped YAML document loaded through the ordinary
+v2 loader (full validation, within-document duplicate rejection), merged
+into the generated candidate only after seed/legacy duplicate-key
+rejection, and crosswalked into the accounting artifact's ``seedRecords``
+section so promotion-time candidate/accounting verification stays bijective
+over the full rendered candidate.  Seeds never bypass the loader, the
+evidence verifier, or the promotion gates.
+
 Privacy posture: reports and candidates carry identity fields, controlled
 status constants, and counts only — never raw source text, absolute paths,
 exception text, SQL, or user data.  Stderr diagnostics are fixed bounded
@@ -69,7 +78,10 @@ from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
     migrate_policy,
     production_source_manifest_digest,
 )
-from scripts.db_guard.policy_v2_loader import build_policy_entry  # noqa: E402
+from scripts.db_guard.policy_v2_loader import (  # noqa: E402
+    build_policy_entry,
+    load_policy_v2,
+)
 
 # Post-activation alignment (GR-07 wave 2): the default --policy input is the
 # ARCHIVED legacy v1 document, not the activated v2 policy.  Migration is
@@ -114,6 +126,12 @@ _MSG_V2_INPUT = (
     "refusing v2-shaped policy input: migration reads the archived legacy v1"
     " policy only (config/guards/db_ownership_policy.legacy.yml)"
 )
+#: GR-08a seed rows: reviewed exact v2 rows merged into the generated
+#: candidate.  Fixed bounded diagnostics — never seed payloads or paths.
+_MSG_SEED_INVALID = "seed rows file is not a valid v2 policy document"
+_MSG_SEED_DUPLICATE = (
+    "seed rows duplicate a legacy-resolved candidate mutation key"
+)
 
 
 class CliFailure(Exception):
@@ -151,6 +169,57 @@ def _load_legacy_entries(policy_path: Path) -> list[Any]:
     if data.get("schemaVersion") == _V2_SCHEMA_VERSION:
         raise CliFailure(_MSG_V2_INPUT)
     return data["entries"]
+
+
+# ── Reviewed seed rows (GR-08a) ───────────────────────────────────────────────
+
+
+def _load_seed_entries(seed_path: Path) -> list[Any]:
+    """Load REVIEWED exact v2 seed rows through the ordinary v2 loader.
+
+    The seed file must be a full v2-shaped document
+    (``{schemaVersion: 2, entries: [...]}``) so it gets EVERY ordinary
+    loader guarantee: exact field set, type/enum/signature validation,
+    canonical path syntax, and within-document duplicate mutation-key
+    rejection.  Any loader error fails closed with the bounded
+    ``_MSG_SEED_INVALID`` diagnostic plus the loader's controlled codes
+    (never payloads, never paths).
+
+    Seeds are merged into the generated candidate verbatim AFTER the
+    legacy migration; a seed key colliding with a legacy-resolved key is
+    rejected by :func:`_reject_seed_duplicates` before any write.
+    """
+    entries, errors = load_policy_v2(seed_path)
+    if errors or entries is None:
+        for error in errors:
+            print(
+                "%s %s" % (error.code, error.context), file=sys.stderr
+            )
+        raise CliFailure(_MSG_SEED_INVALID)
+    return list(entries)
+
+
+def _reject_seed_duplicates(result: Any, seed_entries: list[Any]) -> None:
+    """Fail closed when a seed key collides with a legacy-resolved key.
+
+    The legacy migration is authoritative for its own keys; a seed row may
+    never re-authorize (or silently shadow) a machine-migrated entry.
+    Duplicate keys WITHIN the seed document are already rejected by the
+    v2 loader.  Diagnostics carry counts only.
+    """
+    legacy_keys = {
+        row.entry.mutation_key().canonical_key() for row in result.resolved
+    }
+    collisions = sum(
+        1
+        for entry in seed_entries
+        if entry.mutation_key().canonical_key() in legacy_keys
+    )
+    if collisions:
+        print(
+            "%s count=%d" % (_MSG_SEED_DUPLICATE, collisions), file=sys.stderr
+        )
+        raise CliFailure(_MSG_SEED_DUPLICATE)
 
 
 # ── Report/candidate serialization ────────────────────────────────────────────
@@ -198,6 +267,7 @@ def _build_report_payload(
     duplicates: tuple[str, ...],
     policy_identifier: str,
     accounting: dict[str, Any] | None = None,
+    seed_count: int = 0,
 ) -> dict[str, Any]:
     """Deterministic v2 report payload; identity fields and counts only.
 
@@ -205,7 +275,9 @@ def _build_report_payload(
     serialized :class:`AccountingArtifact` tying every legacy row to its
     candidate keys or closed debt status.  When its inputs cannot be
     produced deterministically the section is omitted entirely rather than
-    approximated.
+    approximated.  ``seed_count`` (GR-08a) reports how many reviewed seed
+    rows were merged into the candidate; seeds are not legacy rows and
+    never enter the per-index records.
     """
     resolved = [_resolved_view(row) for row in result.resolved]
     resolved.sort(
@@ -226,6 +298,7 @@ def _build_report_payload(
             "input": result.input_count,
             "resolved": len(resolved),
             "unresolved": len(unresolved),
+            "seeds": seed_count,
         },
         "resolved": resolved,
         "unresolved": unresolved,
@@ -250,6 +323,7 @@ def _build_accounting_section(
     repo_root: Path,
     candidate_text: str | None,
     source_mutations: Any = (),
+    seed_entries: list[Any] | None = None,
 ) -> dict[str, Any] | None:
     """Best-effort accounting artifact payload; ``None`` when unavailable.
 
@@ -259,7 +333,9 @@ def _build_accounting_section(
     candidate text.  ``source_mutations`` carries the observed-mutation
     coverage evidence (PR-GR-05); it is embedded verbatim, so callers that
     could not build it pass ``()`` and the section ships with an empty
-    coverage list rather than an approximated one.  Any failure to assemble
+    coverage list rather than an approximated one.  ``seed_entries``
+    (GR-08a) carries the reviewed seed rows whose keys join the artifact's
+    ``seedRecords`` crosswalk section.  Any failure to assemble
     a fully valid artifact is swallowed into omission (never approximation),
     so conversion semantics and exit codes are untouched.  Generation runs
     that REQUEST a standalone accounting artifact use
@@ -283,6 +359,7 @@ def _build_accounting_section(
             source_tree_sha=source_tree_sha,
             candidate_sha256=candidate_sha256,
             source_mutations=tuple(source_mutations),
+            seed_entries=tuple(seed_entries or ()),
         )
         return artifact.to_dict()
     except Exception:
@@ -301,6 +378,7 @@ def _require_accounting_section(
     repo_root: Path,
     candidate_text: str,
     source_mutations: Any = (),
+    seed_entries: list[Any] | None = None,
 ) -> dict[str, Any]:
     """Mandatory accounting assembly for generation runs; fails closed.
 
@@ -315,7 +393,12 @@ def _require_accounting_section(
     if source_mutations is None:
         raise CliFailure(_MSG_ACCOUNTING_UNAVAILABLE)
     payload = _build_accounting_section(
-        result, policy_path, repo_root, candidate_text, source_mutations
+        result,
+        policy_path,
+        repo_root,
+        candidate_text,
+        source_mutations,
+        seed_entries,
     )
     if payload is None:
         raise CliFailure(_MSG_ACCOUNTING_UNAVAILABLE)
@@ -364,6 +447,18 @@ def _verify_candidate_accounting_pair(
         for record in accounting_payload.get("records", [])
         for key in record.get("mutationKeys", [])
     }
+    # GR-08a: reviewed seed rows join the crosswalk so the rendered
+    # candidate's FULL key set stays verifiable against the artifact.
+    seed_records = accounting_payload.get("seedRecords", [])
+    if not isinstance(seed_records, list):
+        raise CliFailure(_MSG_MALFORMED_OUTPUT)
+    for seed_record in seed_records:
+        if not isinstance(seed_record, dict):
+            raise CliFailure(_MSG_MALFORMED_OUTPUT)
+        seed_key = seed_record.get("key")
+        if not isinstance(seed_key, str) or not seed_key:
+            raise CliFailure(_MSG_MALFORMED_OUTPUT)
+        record_keys.add(seed_key)
     if set(keys) != record_keys:
         raise CliFailure(_MSG_PAIR_MISMATCH)
 
@@ -387,9 +482,17 @@ def _entry_document(entry: Any) -> dict[str, Any]:
     }
 
 
-def _candidate_document(result: Any) -> dict[str, Any]:
-    """Inert v2 candidate document with deterministically sorted entries."""
+def _candidate_document(result: Any, seed_entries: list[Any]) -> dict[str, Any]:
+    """Inert v2 candidate document with deterministically sorted entries.
+
+    GR-08a: reviewed seed entries are merged with the legacy-resolved rows
+    and the whole document is sorted by the same deterministic key, so a
+    seeded candidate is byte-stable across re-runs.  Callers must reject
+    seed/legacy key collisions (``_reject_seed_duplicates``) BEFORE this
+    merge so a seed can never shadow a machine-migrated entry.
+    """
     entries = [_entry_document(row.entry) for row in result.resolved]
+    entries.extend(_entry_document(entry) for entry in seed_entries)
     entries.sort(
         key=lambda item: (
             item["path"],
@@ -468,6 +571,7 @@ def _validate_output_paths(
     policy_path: Path,
     accounting: str | Path | None = None,
     repo_root: Path | None = None,
+    seed: str | Path | None = None,
 ) -> None:
     """Reject artifact collisions before analysis or any write begins.
 
@@ -476,7 +580,9 @@ def _validate_output_paths(
     other.  Post-activation (GR-07 wave 2) every requested artifact path
     must ALSO differ from the ACTIVATED v2 policy document under
     ``repo_root``: a migration run reads the archived legacy input and can
-    never overwrite the activated authorization truth.
+    never overwrite the activated authorization truth.  The GR-08a seed
+    file is read-only input and must likewise differ from every requested
+    artifact path so no run can overwrite its own reviewed input.
     """
     try:
         resolved_policy = policy_path.resolve()
@@ -485,6 +591,7 @@ def _validate_output_paths(
         resolved_accounting = (
             Path(accounting).resolve() if accounting else None
         )
+        resolved_seed = Path(seed).resolve() if seed else None
         resolved_active_v2 = (
             (Path(repo_root) / Path(*_ACTIVE_V2_POLICY_RELPATH.split("/"))).resolve()
             if repo_root is not None
@@ -506,6 +613,12 @@ def _validate_output_paths(
             and resolved == resolved_active_v2
         ):
             raise CliFailure(_MSG_PATH_COLLISION)
+    if (
+        resolved_seed is not None
+        and resolved_seed
+        in (resolved_policy, resolved_report, resolved_output, resolved_accounting)
+    ):
+        raise CliFailure(_MSG_PATH_COLLISION)
     for position, (first_name, first) in enumerate(named):
         for second_name, second in named[position + 1 :]:
             if (
@@ -569,19 +682,22 @@ def _decide_exit(result: Any, duplicates: tuple[str, ...]) -> tuple[int, bool]:
     return (0 if not result.unresolved else 1), True
 
 
-def _print_summary(result: Any, duplicates: tuple[str, ...]) -> None:
+def _print_summary(
+    result: Any, duplicates: tuple[str, ...], seed_count: int = 0
+) -> None:
     """Bounded stdout summary: counts plus controlled status constants."""
     status_counts: dict[str, int] = {}
     for row in result.unresolved:
         status_counts[row.status] = status_counts.get(row.status, 0) + 1
     print(
         "db-policy migration: input=%d resolved=%d unresolved=%d"
-        " duplicateMutationKeys=%d"
+        " duplicateMutationKeys=%d seeds=%d"
         % (
             result.input_count,
             len(result.resolved),
             len(result.unresolved),
             len(duplicates),
+            seed_count,
         )
     )
     for status in sorted(status_counts):
@@ -607,6 +723,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--policy", default=DEFAULT_POLICY)
     parser.add_argument("--report")
     parser.add_argument(
+        "--seed-rows",
+        dest="seed_rows",
+        help=(
+            "GR-08a reviewed exact v2 seed rows YAML (v2-shaped document);"
+            " merged into the generated candidate after full loader"
+            " validation and duplicate rejection"
+        ),
+    )
+    parser.add_argument(
         "--accounting-out",
         "--write-accounting",
         dest="accounting_out",
@@ -624,6 +749,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         if args.write_candidate and not args.output:
             raise CliFailure(_MSG_OUTPUT_REQUIRED)
+        # GR-08a: reviewed seed rows load FIRST (full v2 loader validation,
+        # fail closed) so an invalid seed file never reaches analysis.
+        seed_entries: list[Any] = []
+        if args.seed_rows:
+            seed_entries = _load_seed_entries(Path(args.seed_rows))
         candidate_target, accounting_target = _resolve_write_targets(
             args, repo_root
         )
@@ -634,9 +764,12 @@ def main(argv: list[str] | None = None) -> int:
             policy_path,
             accounting_target,
             repo_root=repo_root,
+            seed=args.seed_rows,
         )
         entries = _load_legacy_entries(policy_path)
         result = migrate_policy(entries, repo_root, dao_index=None)
+        # Seed/legacy key collisions fail closed before anything renders.
+        _reject_seed_duplicates(result, seed_entries)
         duplicates = find_duplicate_mutation_keys(result)
         exit_code, may_write_candidate = _decide_exit(result, duplicates)
         # The candidate text is rendered first so the accounting artifact
@@ -661,7 +794,9 @@ def main(argv: list[str] | None = None) -> int:
                 coverage_mutations = None
         if candidate_target is not None and may_write_candidate:
             candidate_text = yaml.safe_dump(
-                _candidate_document(result), sort_keys=False, allow_unicode=False
+                _candidate_document(result, seed_entries),
+                sort_keys=False,
+                allow_unicode=False,
             ).replace("\r\n", "\n")
             if accounting_target is not None:
                 accounting_payload = _require_accounting_section(
@@ -670,6 +805,7 @@ def main(argv: list[str] | None = None) -> int:
                     repo_root,
                     candidate_text,
                     coverage_mutations,
+                    seed_entries,
                 )
                 _verify_candidate_accounting_pair(
                     candidate_text, accounting_payload
@@ -700,19 +836,21 @@ def main(argv: list[str] | None = None) -> int:
                     repo_root,
                     candidate_text,
                     coverage_mutations if coverage_mutations is not None else (),
+                    seed_entries,
                 )
             payload = _build_report_payload(
                 result,
                 duplicates,
                 _policy_identifier(policy_path, repo_root),
                 accounting=report_accounting,
+                seed_count=len(seed_entries),
             )
             _atomic_write_text(
                 Path(args.report),
                 json.dumps(payload, sort_keys=False, separators=(",", ":")) + "\n",
                 ".db-policy-report-",
             )
-        _print_summary(result, duplicates)
+        _print_summary(result, duplicates, len(seed_entries))
         return exit_code
     except CliFailure as failure:
         print(failure.message, file=sys.stderr)

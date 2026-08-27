@@ -76,6 +76,16 @@ Covered contracts (one test each):
     declaration is retained under TYPE_UNRESOLVED status fails with the
     distinct DB_V2_POLICY_SIGNATURE_UNRESOLVED code; the strict-mode
     SIGNATURE_UNSUPPORTED pins above are unchanged.
+40. GR-08a closure: the class-scope DAO map spans the FULL owner
+    declaration (constructor-parameter properties included), and a policy
+    accessor may spell the source property alias (``dao``) -- resolved
+    through the same scoped map to the derived Room accessor identity
+    (``rawNotificationDao``) for the required-pair, ambiguity, unlisted,
+    and inventory daoFqcn comparisons.  A large real-shape function
+    (when-blocks, lambdas, try/catch, early-return duplicate branches)
+    evidences ``dao.markProcessed`` end to end; sibling-owner headers stay
+    isolated; the bridge never widens unlisted coverage; unknown
+    accessors still fail closed.
 
 Implementation-aligned notes (verified against current source):
 
@@ -1887,3 +1897,414 @@ def test_signature_unresolved_code_registered_in_closed_set_and_catalog():
     )
     assert diagnostic.code == DB_V2_POLICY_SIGNATURE_UNRESOLVED
     assert diagnostic.context_dict == {"method": "m"}
+
+
+# ===========================================================================
+# 40. GR-08a closure: constructor-property DAO alias in a large real-shape
+#     callable body.
+#
+# Probe evidence (build/guard-debug/gr08a/evidence-gr08a.json): the seeded
+# handleAutoAcceptInTransaction row (accessor 'dao', operation
+# 'markProcessed') failed DB_V2_POLICY_MUTATION_NOT_FOUND even though
+# dao.markProcessed(rawId) sits at six sites inside the callable.  The body
+# was NOT truncated: sourceStatsDao mutations from lines 1186 AND 1276 were
+# evidenced while dao.markRelevance at line 1185 -- one line before an
+# evidenced sourceStatsDao call -- was missing.  Root cause: the class-scope
+# DAO map was sliced from owner.body_start, so the constructor-parameter
+# property `private val dao: RawNotificationDao` (declared in the owner
+# HEADER, before the body brace) never entered the map; and because `dao`
+# never matches the `\w+Dao` naming convention, every dao.* mutation was
+# silently dropped from extraction.  The fix spans the class-scope slice
+# from the owner declaration and resolves a policy accessor spelling
+# through the same scoped map before the required-pair/unlisted/fqcn
+# comparisons.
+# ===========================================================================
+
+
+GR08A_PIPELINE_KT = "app/src/main/java/com/example/Pipeline.kt"
+
+
+def _write_pipeline(tmp_path, text):
+    """Write *text* to tmp_path/app/src/main/java/com/example/Pipeline.kt."""
+    path = (
+        tmp_path / "app" / "src" / "main" / "java"
+        / "com" / "example" / "Pipeline.kt"
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return str(tmp_path)
+
+
+def _gr08a_entry(**overrides):
+    """Return a PolicyEntry matching GR08A_PIPELINE_SOURCE, with overrides."""
+    fields = dict(
+        path=GR08A_PIPELINE_KT,
+        owner_fqcn="com.example.Pipeline",
+        kind=CallableKind.FUNCTION,
+        method="handleAutoAccept",
+        receiver=None,
+        parameter_types=(
+            "com.example.RawNotification",
+            "Long",
+            "com.example.PreDbContext",
+            "String?",
+        ),
+        dao_accessor="dao",
+        dao_fqcn="com.example.data.RawNotificationDao",
+        operation="markProcessed",
+        barrier_mode=BarrierMode.HELPER,
+        reason="GR-08a evidence unit test",
+        owner="db-guard-tests",
+        linked_issue="GR00-EVIDENCE-T",
+    )
+    fields.update(overrides)
+    return PolicyEntry(**fields)
+
+
+GR08A_PIPELINE_SOURCE = """\
+package com.example
+
+import com.example.data.RawNotificationDao
+import com.example.data.SourceStatsDao
+
+class Pipeline(
+    private val database: AppDatabase,
+    private val dao: RawNotificationDao,
+    private val expenseDao: ExpenseDao,
+    private val pendingReviewDao: PendingReviewDao,
+    private val sourceStatsDao: SourceStatsDao,
+    private val writeBarrier: DatabaseWriteBarrier
+) {
+    fun handleAutoAccept(
+        notification: RawNotification,
+        rawId: Long,
+        context: PreDbContext,
+        correlationId: String? = null
+    ): String {
+        val isDuplicate = hasCanonicalDuplicate(context)
+        if (isDuplicate) {
+            dao.markRelevance(rawId, false)
+            sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, 0L)
+            try {
+                auditRunner.run { audit ->
+                    eventWriter.write(
+                        audit,
+                        auditEvent(
+                            rawId = rawId,
+                            matchType = "canonical_expense_duplicate"
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                logWarning(e)
+            }
+            dao.markProcessed(rawId)
+            return "Duplicate"
+        }
+        val mutation = coordinator.create(
+            merchant = context.merchant,
+            amount = context.amount
+        )
+        return when (val result = mutation.value) {
+            is CreateResult.Created -> {
+                val expenseId = result.expenseId
+                dao.markRelevance(rawId, true)
+                sourceStatsDao.incrementTotalAndAccepted(notification.packageName, 0L)
+                try {
+                    transactionRunner.run { ctx ->
+                        eventWriter.write(
+                            ctx,
+                            auditEvent(
+                                rawId = rawId,
+                                matchType = result.expenseId
+                            )
+                        )
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    logWarning(e)
+                }
+                dao.markProcessed(rawId)
+                "AutoAccepted"
+            }
+            is CreateResult.DuplicateSkipped -> {
+                dao.markRelevance(rawId, false)
+                sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, 0L)
+                dao.markProcessed(rawId)
+                "Duplicate"
+            }
+            is CreateResult.ValidationFailed -> {
+                logWarning(result.errors)
+                dao.markRelevance(rawId, false)
+                sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, 0L)
+                dao.markProcessed(rawId)
+                "Duplicate"
+            }
+            is CreateResult.Error -> {
+                throw result.exception
+            }
+        }
+    }
+
+    private fun hasCanonicalDuplicate(context: PreDbContext): Boolean = false
+
+    private fun logWarning(payload: Any) {}
+}
+
+data class RawNotification(val packageName: String)
+
+data class PreDbContext(val merchant: String, val amount: Long)
+"""
+
+
+def test_gr08a_constructor_dao_alias_resolves_in_large_function_body(tmp_path):
+    """The seeded GR-08a shape verifies end to end (fails before the fix).
+
+    The constructor declares the DAO behind the alias name ``dao`` -- a
+    receiver that can never fall back to the ``\\w+Dao`` naming convention.
+    The callable body is large and structurally dense (early-return
+    duplicate branch, when-block over result types, lambdas, try/catch,
+    builder-style calls) with ``dao.markProcessed`` sites in the FIRST and
+    LAST branches, so a body-end truncation or a header-excluded class map
+    both surface as MUTATION_NOT_FOUND.  Before the fix the dao.* rows
+    failed exactly that way; now every group member's own pair is
+    evidenced and the group verifies trusted.
+    """
+    _write_pipeline(tmp_path, GR08A_PIPELINE_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [
+            _gr08a_entry(),
+            _gr08a_entry(operation="markRelevance"),
+            _gr08a_entry(
+                dao_accessor="sourceStatsDao",
+                dao_fqcn="com.example.data.SourceStatsDao",
+                operation="incrementTotalAndAccepted",
+            ),
+            _gr08a_entry(
+                dao_accessor="sourceStatsDao",
+                dao_fqcn="com.example.data.SourceStatsDao",
+                operation="incrementTotalAndDuplicate",
+            ),
+        ],
+        str(tmp_path),
+    )
+    assert result.trusted is True
+    assert _codes(result) == []
+    assert len(result.groups) == 1
+    group = result.groups[0]
+    assert group.trusted is True
+    assert group.diagnostics == ()
+    # Actual keys carry the RESOLVED Room accessor identity of the ``dao``
+    # alias; every distinct body mutation is covered by the four rows.
+    assert group.mutation_keys == (
+        "rawNotificationDao|markProcessed",
+        "rawNotificationDao|markRelevance",
+        "sourceStatsDao|incrementTotalAndAccepted",
+        "sourceStatsDao|incrementTotalAndDuplicate",
+    )
+    assert len(group.policy_keys) == 4
+
+    # Fail-closed preserved: an accessor with no declaration and no
+    # ``\\w+Dao`` shape still reports MUTATION_NOT_FOUND with its own
+    # claimed pair -- the alias bridge never turns into a blanket pass.
+    forged = verify_v2_policy_source_evidence(
+        [_gr08a_entry(dao_accessor="missingDao")], str(tmp_path)
+    )
+    assert _codes(forged) == [DB_V2_POLICY_MUTATION_NOT_FOUND]
+    context = _first_context(forged)
+    assert context.get("dao_accessor") == "missingDao"
+    assert context.get("operation") == "markProcessed"
+
+
+GR08A_SIBLING_OWNERS_SOURCE = """\
+package com.example
+
+import com.example.data.AuditDao
+import com.example.data.GroupDao
+
+class FirstRepo(private val dao: AuditDao) {
+    fun clearAudit(item: Item) {
+        dao.clear(item)
+    }
+}
+
+class SecondRepo(
+    private val dao: GroupDao
+) {
+    fun insertGroup(group: Group) {
+        dao.insert(group)
+    }
+}
+
+data class Item(val id: Int)
+
+data class Group(val id: Int)
+"""
+
+
+def test_gr08a_header_alias_is_isolated_per_owner(tmp_path):
+    """A sibling owner's header alias never leaks across the slice boundary.
+
+    Both classes declare a constructor property named ``dao`` backed by
+    DIFFERENT DAO types.  SecondRepo's evidence must resolve ``dao``
+    through SecondRepo's OWN header (groupDao); if the class-scope slice
+    ever started before the owner declaration, FirstRepo's auditDao
+    mapping would win on line order and the honest insert row would fail
+    closed -- and the forged clear row would wrongly resolve.
+    """
+    _write_repo(tmp_path, GR08A_SIBLING_OWNERS_SOURCE)
+    honest = verify_v2_policy_source_evidence(
+        [
+            _entry(
+                owner_fqcn="com.example.SecondRepo",
+                method="insertGroup",
+                parameter_types=("com.example.Group",),
+                dao_accessor="dao",
+                dao_fqcn="com.example.data.GroupDao",
+                operation="insert",
+            )
+        ],
+        str(tmp_path),
+    )
+    assert honest.trusted is True
+    assert _codes(honest) == []
+    assert honest.groups[0].mutation_keys == ("groupDao|insert",)
+
+    # Claiming FirstRepo's dao.clear mutation against SecondRepo fails
+    # closed: the sibling header alias is out of scope here.
+    forged = verify_v2_policy_source_evidence(
+        [
+            _entry(
+                owner_fqcn="com.example.SecondRepo",
+                method="insertGroup",
+                parameter_types=("com.example.Group",),
+                dao_accessor="dao",
+                dao_fqcn="com.example.data.GroupDao",
+                operation="clear",
+            )
+        ],
+        str(tmp_path),
+    )
+    assert _codes(forged) == [DB_V2_POLICY_MUTATION_NOT_FOUND]
+    context = _first_context(forged)
+    assert context.get("dao_accessor") == "dao"
+    assert context.get("operation") == "clear"
+
+
+GR08A_ALIAS_UNLISTED_SOURCE = """\
+package com.example
+
+import com.example.data.GroupDao
+
+class AliasRepo(private val dao: GroupDao) {
+    fun insertGroup(group: Group) {
+        dao.insert(group)
+        dao.delete(group.id)
+    }
+}
+
+data class Group(val id: Int)
+"""
+
+
+def test_gr08a_alias_bridge_does_not_widen_unlisted_coverage(tmp_path):
+    """The alias bridge closes the spelling gap only -- never coverage.
+
+    The body's dao.delete mutation resolves to the SAME DAO identity as the
+    listed dao.insert row, but no row declares ``delete``: the unlisted
+    gate must still fire on the resolved identity even though the accessor
+    spelling itself is listed for another operation.
+    """
+    _write_repo(tmp_path, GR08A_ALIAS_UNLISTED_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [
+            _entry(
+                owner_fqcn="com.example.AliasRepo",
+                method="insertGroup",
+                parameter_types=("com.example.Group",),
+                dao_accessor="dao",
+                dao_fqcn="com.example.data.GroupDao",
+                operation="insert",
+            )
+        ],
+        str(tmp_path),
+    )
+    assert result.trusted is False
+    assert len(result.groups) == 1
+    assert result.groups[0].trusted is False
+    assert _codes(result) == [DB_V2_POLICY_UNLISTED_MUTATION]
+    context = _first_context(result)
+    assert context.get("method") == "insertGroup"
+    assert context.get("count") == 1
+    # Both resolved mutations are reported for triage.
+    assert result.groups[0].mutation_keys == (
+        "groupDao|delete",
+        "groupDao|insert",
+    )
+
+
+GR08A_INVENTORY_SOURCE = """\
+package com.example
+
+import com.example.data.GroupDao
+
+class InventoryRepo(private val dao: GroupDao) {
+    fun insertGroup(group: Group) {
+        dao.insert(group)
+    }
+}
+
+data class Group(val id: Int)
+"""
+
+
+def test_gr08a_inventory_fqcn_cross_check_resolves_alias_accessor(tmp_path):
+    """The inventory daoFqcn cross-check resolves the alias spelling too.
+
+    With a Room inventory, the accessor resolved at the mutation site is
+    the derived Room accessor (groupDao) of the declared alias (dao), so a
+    matching daoFqcn verifies trusted and a swapped daoFqcn fails closed
+    with DAO_FQCN_MISMATCH naming the alias spelling.
+    """
+    _write_repo(tmp_path, GR08A_INVENTORY_SOURCE)
+    entry = dict(
+        owner_fqcn="com.example.InventoryRepo",
+        method="insertGroup",
+        parameter_types=("com.example.Group",),
+        dao_accessor="dao",
+    )
+    matching = verify_v2_policy_source_evidence(
+        [
+            _entry(
+                **entry,
+                dao_fqcn="com.example.data.GroupDao",
+                operation="insert",
+            )
+        ],
+        str(tmp_path),
+        room_inventory=_inventory("com.example.data.GroupDao"),
+    )
+    assert matching.trusted is True
+    assert _codes(matching) == []
+    assert matching.groups[0].mutation_keys == ("groupDao|insert",)
+
+    swapped = verify_v2_policy_source_evidence(
+        [
+            _entry(
+                **entry,
+                dao_fqcn="com.example.data.LegacyGroupDao",
+                operation="insert",
+            )
+        ],
+        str(tmp_path),
+        room_inventory=_inventory(
+            "com.example.data.GroupDao",
+            "com.example.data.LegacyGroupDao",
+        ),
+    )
+    assert swapped.trusted is False
+    assert _codes(swapped) == [DB_V2_POLICY_DAO_FQCN_MISMATCH]
+    context = _first_context(swapped)
+    assert context.get("dao_accessor") == "dao"
+    assert context.get("dao_fqcn") == "com.example.data.LegacyGroupDao"
