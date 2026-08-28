@@ -256,6 +256,49 @@ SPLIT per the GR-08c/GR-08e/GR-08i precedent into two file groups:
 * NEAR-MISS protection over the GR-08j1/j2 rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08k (MIT-DB-08K) extends the same contract to FOUR files -- the
+di/RetentionModule.kt privacy retention-cleanup path, the data/repository
+RecommendationRepository.kt, the domain/groups GroupLifecycleCoordinator.kt
+authoritative coordinator, and the domain/split EnhancedSplitManager.kt
+authoritative split/template manager.  The combined batch carries 37 findings
+/ 37 unique fingerprints > the 25-fingerprint batch cap, so the batch was
+SPLIT per the GR-08c/GR-08e/GR-08i/GR-08j precedent into two file groups:
+
+* ``GR-08k1-seed.yml`` -- RetentionModule.kt (10 rows / 10 findings / 10
+  unique fingerprints) + RecommendationRepository.kt (9 rows / 9 findings /
+  9 unique fingerprints); ZERO closure rows -- every mutating DAO call is an
+  abstract Room-annotated method already covered by a finding (all ten
+  RetentionModule DAOs and RecommendationDao carry ZERO body-carrying
+  @Transaction convenience methods reachable from these files;
+  PendingReviewDao's mutating conveniences are NOT called from
+  RetentionModule).  RetentionModule is the canonical privacy
+  retention-cleanup path (DataRetentionWorker -> RetentionRegistry ->
+  RetentionTarget.purge); RecommendationRepository is a repository-layer
+  legal writer and the SOLE writer of RecommendationDao.  The GR-08k1
+  source change normalizes RetentionModule's accessors per the GR-08e
+  precedent: the START findings spelled 7 chain-form
+  ``appDatabase.xxxDao()`` receivers and 3 method-local aliases all named
+  ``dao`` behind THREE different DAOs -- no chain-form spelling can pass
+  both the scanner gate and the v2 evidence verifier, and the colliding
+  aliases resolve last-write-wins to one identity with three FQCNs
+  (DB_V2_POLICY_DAO_AMBIGUOUS); each target now uses a distinct DAO-named
+  local and the seed rows spell those normalized accessors;
+* ``GR-08k2-seed.yml`` -- GroupLifecycleCoordinator.kt (9 rows / 9 findings /
+  9 unique fingerprints) + EnhancedSplitManager.kt (9 rows / 9 findings /
+  9 unique fingerprints); ZERO closure rows -- GroupMemberDao's mutating
+  setCurrentUser convenience is NOT called from the coordinator, and the
+  split DAOs are fully abstract.  LEGAL_PATHS.md names the coordinator the
+  authoritative group writer (GroupSettlementDao.insert outside it is
+  FORBIDDEN) and EnhancedSplitManager the authoritative split/template
+  writer (SplitTemplateDao.insertTemplate outside it is FORBIDDEN);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the SEVENTEEN reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 + 14 + 6 + 7 + 11 + 21
+  + 19 + 18 = 249 rows) -- a dropped earlier-batch row fails closed here
+  instead of silently re-unauthorizing that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08k1/k2 rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -5231,64 +5274,6 @@ def test_real_tracked_gr08j2_seed_file_loads_with_exactly_twenty_one_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_fifteen_batch_seed_files():
-    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
-    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
-    + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2.
-
-    Supersedes the GR-08i-era thirteen-file concatenation test (which pinned
-    the combined document at 180 rows): the GR-08j batch extends the combined
-    generation input to 212 rows, and the drift guard must cover ALL FIFTEEN
-    reviewed batch seed files.  The combined document is what --seed-rows
-    actually consumes; if it ever drifts from the fifteen reviewed batch
-    seed files (a dropped earlier-batch row would silently re-unauthorize
-    that batch's mutations at promotion time), this fails closed.
-    """
-    combined = _load_seed_entries(COMBINED_SEED_FILE)
-    gr08a = _load_seed_entries(SEED_FILE)
-    gr08b = _load_seed_entries(GR08B_SEED_FILE)
-    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
-    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
-    gr08d = _load_seed_entries(GR08D_SEED_FILE)
-    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
-    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
-    gr08f = _load_seed_entries(GR08F_SEED_FILE)
-    gr08g = _load_seed_entries(GR08G_SEED_FILE)
-    gr08h = _load_seed_entries(GR08H_SEED_FILE)
-    gr08i1 = _load_seed_entries(GR08I1_SEED_FILE)
-    gr08i2 = _load_seed_entries(GR08I2_SEED_FILE)
-    gr08i3 = _load_seed_entries(GR08I3_SEED_FILE)
-    gr08j1 = _load_seed_entries(GR08J1_SEED_FILE)
-    gr08j2 = _load_seed_entries(GR08J2_SEED_FILE)
-    assert len(gr08a) == 5
-    assert len(gr08b) == 13
-    assert len(gr08c1) == 10
-    assert len(gr08c2) == 16
-    assert len(gr08d) == 22
-    assert len(gr08e1) == 23
-    assert len(gr08e2) == 23
-    assert len(gr08f) == 21
-    assert len(gr08g) == 7
-    assert len(gr08h) == 13
-    assert len(gr08i1) == 14
-    assert len(gr08i2) == 6
-    assert len(gr08i3) == 7
-    assert len(gr08j1) == 11
-    assert len(gr08j2) == 21
-    assert len(combined) == 212
-    combined_fields = sorted(_entry_fields(entry) for entry in combined)
-    batch_fields = sorted(
-        _entry_fields(entry)
-        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
-        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
-        + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
-        + list(gr08i3) + list(gr08j1) + list(gr08j2)
-    )
-    assert combined_fields == batch_fields
-    keys = [entry.mutation_key().canonical_key() for entry in combined]
-    assert len(set(keys)) == len(keys)
-
-
 def _gr08j_policy_entries(tmp_path, rows):
     entries = []
     for position, row in enumerate(rows):
@@ -5631,6 +5616,700 @@ def test_gr08j2_stats_counter_rows_near_misses_stay_unauthorized(tmp_path):
             tmp_path,
             rows,
             **dict(base_kwargs, owner_fqcn="com.example.CopyRepository"),
+        )
+        is False
+    )
+
+
+# ── GR-08k (MIT-DB-08K): RetentionModule.kt + RecommendationRepository.kt ────
+# (GR-08k1) and GroupLifecycleCoordinator.kt + EnhancedSplitManager.kt
+# (GR-08k2).  The combined batch carries 37 findings / 37 unique fingerprints
+# > the 25-fingerprint batch cap, so it was SPLIT into two file groups; the
+# generation run consumes the COMBINED document GR-08-seeds.yml; these tests
+# pin that the combined document stays the exact concatenation of the
+# SEVENTEEN reviewed batch seed files, and that the GR-08k rows authorize
+# EXACTLY their callable identity + DAO + operation (wrong overload, wrong
+# owner, wrong DAO, and wrong operation stay unauthorized).
+
+GR08K1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08k1-seed.yml"
+GR08K2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08k2-seed.yml"
+
+RETENTION_MODULE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt"
+)
+RETENTION_MODULE_FQCN = "com.yourname.expensetracker.di.RetentionModule"
+APP_DATABASE_TYPE = (
+    "com.yourname.expensetracker.data.database.AppDatabase"
+)
+TIME_PROVIDER_TYPE = "com.yourname.expensetracker.domain.util.TimeProvider"
+PROVIDE_RETENTION_PARAMS = (APP_DATABASE_TYPE, TIME_PROVIDER_TYPE)
+RAW_NOTIFICATION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.RawNotificationDao"
+)
+AI_ARTIFACT_DAO = "com.yourname.expensetracker.data.database.dao.AiArtifactDao"
+AI_CHAT_MESSAGE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.AiChatMessageDao"
+)
+EMAIL_RECEIPT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.EmailReceiptDao"
+)
+NOTIFICATION_INTAKE_DAO_GR08K = (
+    "com.yourname.expensetracker.data.database.dao.NotificationIntakeDao"
+)
+PIPELINE_DIAGNOSTIC_EVENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao"
+)
+PENDING_REVIEW_DAO_GR08K = (
+    "com.yourname.expensetracker.data.database.dao.PendingReviewDao"
+)
+BACKGROUND_JOB_RUN_DAO = (
+    "com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao"
+)
+BANK_STATEMENT_IMPORT_ITEM_DAO = (
+    "com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao"
+)
+
+RECOMMENDATION_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "RecommendationRepository.kt"
+)
+RECOMMENDATION_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.RecommendationRepository"
+)
+RECOMMENDATION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.RecommendationDao"
+)
+DASHBOARD_RECOMMENDATION = (
+    "com.yourname.expensetracker.domain.model.recommendation."
+    "DashboardFollowThroughRecommendation"
+)
+DASHBOARD_RECOMMENDATION_LIST = "List<" + DASHBOARD_RECOMMENDATION + ">"
+
+GROUP_LIFECYCLE_COORDINATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/groups/"
+    "GroupLifecycleCoordinator.kt"
+)
+GROUP_LIFECYCLE_COORDINATOR_FQCN = (
+    "com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator"
+)
+GROUP_LIFECYCLE_EVENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao"
+)
+GROUP_SETTLEMENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.GroupSettlementDao"
+)
+GROUP_MEMBER_DAO_GR08K = (
+    "com.yourname.expensetracker.data.database.dao.GroupMemberDao"
+)
+GROUP_MEMBER_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.GroupMember"
+)
+GROUP_MEMBER_ENTITY_LIST = "List<" + GROUP_MEMBER_ENTITY + ">"
+SPLIT_TYPE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.SplitType"
+)
+
+ENHANCED_SPLIT_MANAGER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/split/"
+    "EnhancedSplitManager.kt"
+)
+ENHANCED_SPLIT_MANAGER_FQCN = (
+    "com.yourname.expensetracker.domain.split.EnhancedSplitManager"
+)
+SPLIT_TEMPLATE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.SplitTemplateDao"
+)
+SPLIT_ITEM_ASSIGNMENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao"
+)
+SPLIT_TEMPLATE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.SplitTemplate"
+)
+SPLIT_TEMPLATE_SPLIT_TYPE = SPLIT_TEMPLATE_ENTITY + ".SplitType"
+SPLIT_SHARE_LIST = (
+    "List<com.yourname.expensetracker.data.database.entity.SplitShare>"
+)
+ITEM_ASSIGNMENT_LIST = (
+    "List<com.yourname.expensetracker.domain.split."
+    "EnhancedSplitManager.ItemAssignment>"
+)
+
+
+def _gr08k_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                    dao_fqcn, operation):
+    """One exact GR-08k-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08k EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08K",
+    }
+
+
+def _gr08k1_seed_rows():
+    """The nineteen exact GR-08k1 rows (mirroring the tracked seed file).
+
+    RetentionModule.kt (10 rows) + RecommendationRepository.kt (9 rows);
+    ZERO closure rows: every mutating DAO call is an abstract Room-annotated
+    method already covered by a finding.  The RetentionModule rows spell the
+    GR-08k1-normalized DAO-named accessors (the START findings carried 7
+    chain-form appDatabase.xxxDao() receivers and 3 colliding `dao` aliases).
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("rawNotificationDao", RAW_NOTIFICATION_DAO, "updateRawContentPurged"),
+        ("scannedReceiptDao", SCANNED_RECEIPT_DAO, "updateRawOcrTextPurged"),
+        ("aiArtifactDao", AI_ARTIFACT_DAO, "deleteExpired"),
+        ("aiChatMessageDao", AI_CHAT_MESSAGE_DAO, "deleteOlderThan"),
+        (
+            "emailReceiptDao",
+            EMAIL_RECEIPT_DAO,
+            "redactSensitiveFieldsOlderThan",
+        ),
+        (
+            "notificationIntakeDao",
+            NOTIFICATION_INTAKE_DAO_GR08K,
+            "purgeRawPayload",
+        ),
+        (
+            "pipelineDiagnosticEventDao",
+            PIPELINE_DIAGNOSTIC_EVENT_DAO,
+            "deleteOlderThan",
+        ),
+        (
+            "pendingReviewDao",
+            PENDING_REVIEW_DAO_GR08K,
+            "redactNotificationTextOlderThan",
+        ),
+        (
+            "backgroundJobRunDao",
+            BACKGROUND_JOB_RUN_DAO,
+            "redactErrorMessagesOlderThan",
+        ),
+        (
+            "bankStatementImportItemDao",
+            BANK_STATEMENT_IMPORT_ITEM_DAO,
+            "redactMerchantOlderThan",
+        ),
+    ):
+        rows.append(
+            _gr08k_seed_row(
+                RETENTION_MODULE_KT, RETENTION_MODULE_FQCN,
+                "provideRetentionTargets", PROVIDE_RETENTION_PARAMS,
+                accessor, dao, operation,
+            )
+        )
+    for method, params, operation in (
+        ("save", (DASHBOARD_RECOMMENDATION,), "insert"),
+        ("saveAll", (DASHBOARD_RECOMMENDATION_LIST,), "insertAll"),
+        (
+            "saveAll",
+            (DASHBOARD_RECOMMENDATION_LIST,),
+            "archiveActiveOverflow",
+        ),
+        ("dismiss", ("String",), "archive"),
+        ("expireOld", ("String", "Long"), "expireOld"),
+        ("expireAll", ("String", "Long"), "expireOld"),
+        ("expireAll", ("String", "Long"), "expireAllActiveByUser"),
+        ("clearForUser", ("String",), "clearByUser"),
+        ("cleanupExpired", NO_PARAMS_GR08J, "deleteExpired"),
+    ):
+        rows.append(
+            _gr08k_seed_row(
+                RECOMMENDATION_REPOSITORY_KT, RECOMMENDATION_REPOSITORY_FQCN,
+                method, params, "dao", RECOMMENDATION_DAO, operation,
+            )
+        )
+    return rows
+
+
+def _gr08k2_seed_rows():
+    """The eighteen exact GR-08k2 rows (mirroring the tracked seed file).
+
+    GroupLifecycleCoordinator.kt (9 rows) + EnhancedSplitManager.kt (9 rows);
+    ZERO closure rows: GroupMemberDao's mutating setCurrentUser convenience
+    is NOT called from the coordinator and the split DAOs are fully
+    abstract.
+    """
+    rows = []
+    for method, params, accessor, dao, operation in (
+        (
+            "createGroup",
+            ("String", "String?", "String", GROUP_MEMBER_ENTITY_LIST),
+            "lifecycleEventDao", GROUP_LIFECYCLE_EVENT_DAO, "insert",
+        ),
+        (
+            "addMember",
+            ("Long", "String", "String?", "Boolean"),
+            "lifecycleEventDao", GROUP_LIFECYCLE_EVENT_DAO, "insert",
+        ),
+        (
+            "removeMember", ("Long", "Long"),
+            "memberDao", GROUP_MEMBER_DAO_GR08K, "update",
+        ),
+        (
+            "removeMember", ("Long", "Long"),
+            "lifecycleEventDao", GROUP_LIFECYCLE_EVENT_DAO, "insert",
+        ),
+        (
+            "addExpense",
+            (
+                "Long", "String", "Double", "Long", "String?",
+                SPLIT_TYPE_ENTITY, "String?", "Long",
+            ),
+            "lifecycleEventDao", GROUP_LIFECYCLE_EVENT_DAO, "insert",
+        ),
+        (
+            "archiveGroup", ("Long",),
+            "lifecycleEventDao", GROUP_LIFECYCLE_EVENT_DAO, "insert",
+        ),
+        (
+            "deleteGroupPermanently", ("Long", "Boolean"),
+            "lifecycleEventDao", GROUP_LIFECYCLE_EVENT_DAO, "insert",
+        ),
+        (
+            "recordSettlement",
+            ("Long", "Long", "Long", "Double", "String", "String?", "Long?"),
+            "settlementDao", GROUP_SETTLEMENT_DAO, "insert",
+        ),
+        (
+            "emitLifecycleEvent",
+            ("Long", "String", "Long", "Long"),
+            "lifecycleEventDao", GROUP_LIFECYCLE_EVENT_DAO, "insert",
+        ),
+    ):
+        rows.append(
+            _gr08k_seed_row(
+                GROUP_LIFECYCLE_COORDINATOR_KT,
+                GROUP_LIFECYCLE_COORDINATOR_FQCN,
+                method, params, accessor, dao, operation,
+            )
+        )
+    for method, params, operation in (
+        ("createTemplate",
+         ("String", "Int", SPLIT_TEMPLATE_SPLIT_TYPE, SPLIT_SHARE_LIST),
+         "insertTemplate"),
+        ("updateTemplate", (SPLIT_TEMPLATE_ENTITY,), "updateTemplate"),
+        ("deleteTemplate", (SPLIT_TEMPLATE_ENTITY,), "deleteTemplate"),
+        ("setDefaultTemplate", ("Long",), "clearDefaultTemplate"),
+        ("setDefaultTemplate", ("Long",), "setDefaultTemplate"),
+        ("useTemplate", ("Long",), "incrementUseCount"),
+    ):
+        rows.append(
+            _gr08k_seed_row(
+                ENHANCED_SPLIT_MANAGER_KT, ENHANCED_SPLIT_MANAGER_FQCN,
+                method, params, "splitTemplateDao", SPLIT_TEMPLATE_DAO,
+                operation,
+            )
+        )
+    for method, params, operation in (
+        ("assignItemsToParticipants",
+         ("Long", ITEM_ASSIGNMENT_LIST), "deleteAllForExpense"),
+        ("assignItemsToParticipants",
+         ("Long", ITEM_ASSIGNMENT_LIST), "insertAssignments"),
+        ("markAssignmentAsPaid", ("Long",), "markAsPaid"),
+    ):
+        rows.append(
+            _gr08k_seed_row(
+                ENHANCED_SPLIT_MANAGER_KT, ENHANCED_SPLIT_MANAGER_FQCN,
+                method, params, "splitItemAssignmentDao",
+                SPLIT_ITEM_ASSIGNMENT_DAO, operation,
+            )
+        )
+    return rows
+
+
+def test_real_tracked_gr08k1_seed_file_loads_with_exactly_nineteen_rows():
+    entries = _load_seed_entries(GR08K1_SEED_FILE)
+    assert len(entries) == 19
+    retention = [e for e in entries if e.path == RETENTION_MODULE_KT]
+    repository = [e for e in entries if e.path == RECOMMENDATION_REPOSITORY_KT]
+    assert len(retention) == 10
+    assert len(repository) == 9
+    for entry in retention:
+        assert entry.owner_fqcn == RETENTION_MODULE_FQCN
+        assert entry.method == "provideRetentionTargets"
+        assert tuple(entry.parameter_types) == PROVIDE_RETENTION_PARAMS
+        # The normalized accessor spellings: the historical chain text
+        # (appDatabase.aiArtifactDao()) and the colliding `dao` alias stay
+        # unauthorized.
+        assert entry.dao_accessor != "dao"
+        assert "(" not in entry.dao_accessor
+    for entry in repository:
+        assert entry.owner_fqcn == RECOMMENDATION_REPOSITORY_FQCN
+        assert entry.dao_accessor == "dao"
+        assert entry.dao_fqcn == RECOMMENDATION_DAO
+    for entry in entries:
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08K"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+
+
+def test_real_tracked_gr08k2_seed_file_loads_with_exactly_eighteen_rows():
+    entries = _load_seed_entries(GR08K2_SEED_FILE)
+    assert len(entries) == 18
+    coordinator = [e for e in entries if e.path == GROUP_LIFECYCLE_COORDINATOR_KT]
+    manager = [e for e in entries if e.path == ENHANCED_SPLIT_MANAGER_KT]
+    assert len(coordinator) == 9
+    assert len(manager) == 9
+    for entry in coordinator:
+        assert entry.owner_fqcn == GROUP_LIFECYCLE_COORDINATOR_FQCN
+        assert entry.dao_accessor in {
+            "lifecycleEventDao", "settlementDao", "memberDao",
+        }
+    for entry in manager:
+        assert entry.owner_fqcn == ENHANCED_SPLIT_MANAGER_FQCN
+        assert entry.dao_accessor in {"splitTemplateDao",
+                                      "splitItemAssignmentDao"}
+    for entry in entries:
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08K"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+
+
+def test_combined_seed_file_concatenates_all_seventeen_batch_seed_files():
+    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
+    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
+    + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2.
+
+    Supersedes the GR-08j-era fifteen-file concatenation test (which pinned
+    the combined document at 212 rows): the GR-08k batch extends the combined
+    generation input to 249 rows, and the drift guard must cover ALL
+    SEVENTEEN reviewed batch seed files.  The combined document is what
+    --seed-rows actually consumes; if it ever drifts from the seventeen
+    reviewed batch seed files (a dropped earlier-batch row would silently
+    re-unauthorize that batch's mutations at promotion time), this fails
+    closed.
+    """
+    combined = _load_seed_entries(COMBINED_SEED_FILE)
+    gr08a = _load_seed_entries(SEED_FILE)
+    gr08b = _load_seed_entries(GR08B_SEED_FILE)
+    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
+    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
+    gr08d = _load_seed_entries(GR08D_SEED_FILE)
+    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
+    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
+    gr08f = _load_seed_entries(GR08F_SEED_FILE)
+    gr08g = _load_seed_entries(GR08G_SEED_FILE)
+    gr08h = _load_seed_entries(GR08H_SEED_FILE)
+    gr08i1 = _load_seed_entries(GR08I1_SEED_FILE)
+    gr08i2 = _load_seed_entries(GR08I2_SEED_FILE)
+    gr08i3 = _load_seed_entries(GR08I3_SEED_FILE)
+    gr08j1 = _load_seed_entries(GR08J1_SEED_FILE)
+    gr08j2 = _load_seed_entries(GR08J2_SEED_FILE)
+    gr08k1 = _load_seed_entries(GR08K1_SEED_FILE)
+    gr08k2 = _load_seed_entries(GR08K2_SEED_FILE)
+    assert len(gr08a) == 5
+    assert len(gr08b) == 13
+    assert len(gr08c1) == 10
+    assert len(gr08c2) == 16
+    assert len(gr08d) == 22
+    assert len(gr08e1) == 23
+    assert len(gr08e2) == 23
+    assert len(gr08f) == 21
+    assert len(gr08g) == 7
+    assert len(gr08h) == 13
+    assert len(gr08i1) == 14
+    assert len(gr08i2) == 6
+    assert len(gr08i3) == 7
+    assert len(gr08j1) == 11
+    assert len(gr08j2) == 21
+    assert len(gr08k1) == 19
+    assert len(gr08k2) == 18
+    assert len(combined) == 249
+    combined_fields = sorted(_entry_fields(entry) for entry in combined)
+    batch_fields = sorted(
+        _entry_fields(entry)
+        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
+        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
+        + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
+        + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
+        + list(gr08k2)
+    )
+    assert combined_fields == batch_fields
+    keys = [entry.mutation_key().canonical_key() for entry in combined]
+    assert len(set(keys)) == len(keys)
+
+
+def _gr08k_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08k fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08k_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, **overrides):
+    """The exact GR-08k row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)``; ``overrides`` perturb exactly one identity field of
+    the match query for the near-miss assertions.
+    """
+    entries = _gr08k_policy_entries(tmp_path, rows)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08k1_exact_identity_matches(tmp_path):
+    rows = _gr08k1_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "provideRetentionTargets", "rawNotificationDao",
+            "updateRawContentPurged",
+        )
+        is True
+    )
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "saveAll", "dao", "archiveActiveOverflow"
+        )
+        is True
+    )
+
+
+def test_gr08k1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08k1_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "save", "dao", "insert",
+            parameter_types=(DASHBOARD_RECOMMENDATION_LIST,),
+        )
+        is False
+    )
+
+
+def test_gr08k1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08k1_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "provideRetentionTargets", "rawNotificationDao",
+            "updateRawContentPurged",
+            owner_fqcn="com.example.OtherRetentionModule",
+        )
+        is False
+    )
+
+
+def test_gr08k1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08k1_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "provideRetentionTargets", "aiArtifactDao",
+            "deleteExpired",
+            dao_accessor="aiChatMessageDao",
+            dao_fqcn=AI_CHAT_MESSAGE_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08k1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08k1_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "expireAll", "dao", "expireOld",
+            operation="expireAllActiveByUser",
+        )
+        is False
+    )
+
+
+def test_gr08k1_normalized_accessors_reject_historical_spellings(tmp_path):
+    """The GR-08k1 normalization is load-bearing: old spellings never match.
+
+    The seed rows spell the normalized DAO-named accessors; the historical
+    chain-form receiver text (``appDatabase.aiArtifactDao()``) and the
+    colliding ``dao`` alias stay unauthorized for the same callable +
+    operation, and the expireOld row behind the expireAll alias never
+    matches the expireOld callable's identity (and vice versa).
+    """
+    rows = _gr08k1_seed_rows()
+    base_kwargs = dict(
+        select_method="provideRetentionTargets",
+        select_accessor="aiArtifactDao",
+        select_operation="deleteExpired",
+    )
+    assert _assert_gr08k_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Historical chain-form accessor spelling.
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, dao_accessor="appDatabase.aiArtifactDao()"),
+        )
+        is False
+    )
+    # Colliding alias spelling.
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, **dict(base_kwargs, dao_accessor="dao")
+        )
+        is False
+    )
+    # The alias row (expireAll/expireOld) never matches the expireOld
+    # callable's identity.
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "expireOld", "dao", "expireOld",
+            method="expireAll",
+        )
+        is False
+    )
+
+
+def test_gr08k2_exact_identity_matches(tmp_path):
+    rows = _gr08k2_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "recordSettlement", "settlementDao", "insert"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "assignItemsToParticipants",
+            "splitItemAssignmentDao", "insertAssignments",
+        )
+        is True
+    )
+
+
+def test_gr08k2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08k2_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "removeMember", "memberDao", "update",
+            parameter_types=("Long",),
+        )
+        is False
+    )
+
+
+def test_gr08k2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08k2_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "recordSettlement", "settlementDao", "insert",
+            owner_fqcn="com.example.OtherGroupCoordinator",
+        )
+        is False
+    )
+
+
+def test_gr08k2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08k2_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "createTemplate", "splitTemplateDao",
+            "insertTemplate",
+            dao_accessor="splitItemAssignmentDao",
+            dao_fqcn=SPLIT_ITEM_ASSIGNMENT_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08k2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08k2_seed_rows()
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows, "setDefaultTemplate", "splitTemplateDao",
+            "clearDefaultTemplate",
+            operation="setDefaultTemplate",
+        )
+        is False
+    )
+
+
+def test_gr08k2_event_rows_near_misses_stay_unauthorized(tmp_path):
+    """The lifecycle-event insert rows are exact per callable identity.
+
+    Seven callables write lifecycleEventDao.insert; each row authorizes
+    EXACTLY its own callable identity, so a swapped callable (the private
+    emitLifecycleEvent helper vs the public createGroup entrypoint) or the
+    removeMember memberDao.update sibling behind the same (Long, Long) shape
+    stays unauthorized.
+    """
+    rows = _gr08k2_seed_rows()
+    base_kwargs = dict(
+        select_method="removeMember",
+        select_accessor="lifecycleEventDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08k_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong callable: the private helper's identity never matches the public
+    # removeMember entrypoint.
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, method="emitLifecycleEvent")
+        )
+        is False
+    )
+    # Wrong accessor/DAO: the memberDao.update sibling behind the same
+    # (Long, Long) parameter shape.
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="memberDao",
+                dao_fqcn=GROUP_MEMBER_DAO_GR08K,
+                operation="update",
+            ),
+        )
+        is False
+    )
+    # Wrong operation: the insert spelling behind the memberDao identity.
+    assert (
+        _assert_gr08k_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="memberDao",
+                dao_fqcn=GROUP_MEMBER_DAO_GR08K,
+            ),
         )
         is False
     )

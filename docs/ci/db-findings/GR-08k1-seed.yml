@@ -1,0 +1,349 @@
+# GR-08 batch 11, part 1 (GR-08k1) reviewed exact v2 policy seed rows --
+# DB_UNAUTHORIZED_MUTATION EXACT_POLICY authorization for
+# di/RetentionModule.kt and data/repository/RecommendationRepository.kt.
+#
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08k/before.json == trusted GR-08j after.json,
+# 200 findings / 20 advisory diagnostics): RetentionModule.kt carries
+# exactly 10 DB_UNAUTHORIZED_MUTATION findings / 10 UNIQUE fingerprints and
+# RecommendationRepository.kt carries exactly 9 findings / 9 UNIQUE
+# fingerprints (dedup key: callable identity + daoAccessor + daoFqcn +
+# operation; expireOld appears behind BOTH the expireOld and the expireAll
+# callables, and saveAll carries two distinct RecommendationDao operations,
+# so no two findings share a fingerprint).  ZERO closure rows for BOTH
+# files: the blind-spot sweep found every mutating DAO call is an abstract
+# Room-annotated method already covered by a finding (all ten RetentionModule
+# DAOs and RecommendationDao carry ZERO body-carrying @Transaction convenience
+# methods reachable from these files -- PendingReviewDao's mutating
+# upsertByRawNotificationId/bulkUpdateCategoryByMerchant/bulkRenameMerchant
+# are NOT called from RetentionModule, whose only PendingReviewDao call is
+# the abstract redactNotificationTextOlderThan; the remaining
+# RetentionModule DAO calls getUnpurgedRawNotificationsOlderThan /
+# getUnpurgedScannedReceiptsOlderThan / getUnpurgedIntakeOlderThan and all
+# other RecommendationRepository calls are read-only).
+#
+# Layer legality:
+# * RetentionModule is the CANONICAL PRIVACY RETENTION-CLEANUP path --
+#   the Hilt registration point of the RetentionTarget set that
+#   DataRetentionWorker drives through RetentionRegistry.allTargets
+#   (PRIV-441-12).  Every row nulls/redacts/deletes expired RAW PII
+#   (raw notification text, OCR text, notification intake payloads,
+#   email sensitive fields, pending-review notification text, background
+#   job error messages, bank-statement merchant names, AI artifacts and
+#   chat messages, pipeline diagnostic events) exactly as AGENTS.md
+#   requires: privacy cleanup workers must be able to run so they can
+#   delete raw data.  These purges ARE the legal retention mechanism;
+#   there is no other writer for them.  Failure handling stays sanitized
+#   (errorMessage carries only the RETENTION_PURGE_FAILED:<class-simpleName>
+#   constant) and CancellationSafe.runCatchingCancellable rethrows
+#   CancellationException.
+# * RecommendationRepository is a repository-layer writer (legal writer
+#   layer) for dashboard follow-through recommendations; every mutating
+#   method runs writeBarrier.checkWritesAllowed directly before the
+#   delegated DAO mutation.  It is the SOLE writer of RecommendationDao
+#   (only AppDatabase/DaoModule/the DAO file itself also reference it).
+#
+# ACCESSOR NORMALIZATION (GR-08k1 source change, GR-08e precedent): the
+# START findings spell 7 chain-form accessors (appDatabase.aiArtifactDao()
+# etc.) and 3 method-local aliases all named `dao` behind THREE different
+# DAOs.  No chain-form spelling can pass both the scanner gate (exact
+# receiver-text match) and the v2 evidence verifier (canonical accessor
+# identity), and the colliding `dao` aliases resolve last-write-wins to one
+# identity with three FQCNs (DB_V2_POLICY_DAO_AMBIGUOUS).  The source
+# change renames each target's local to its DAO-named accessor
+# (rawNotificationDao / scannedReceiptDao / notificationIntakeDao) and
+# introduces the same DAO-named locals for the 7 chain-form sites; the
+# seed rows spell those normalized accessors.  A wrong accessor spelling --
+# including the historical chain text -- stays unauthorized.
+#
+# barrierMode is `helper` for every row (the GR-08a..k batch convention; no
+# direct-barrier proof is claimed -- RetentionModule's barrier is mediated
+# by DataRetentionWorker's WorkerExecutionGuard, and every
+# RecommendationRepository mutation is preceded by its own
+# writeBarrier.checkWritesAllowed call).
+#
+# Consumed ONLY via the combined generation input
+# docs/ci/db-findings/GR-08-seeds.yml (the migration CLI accepts a SINGLE
+# --seed-rows value).
+schemaVersion: 2
+entries:
+# ── RetentionModule.kt (10 rows) ─────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: rawNotificationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: updateRawContentPurged
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: raw_notifications retention target nulls title/text/bigText/subText/extrasJson/parseResult on unpurged raw notifications past the cutoff (batched loop) -- the canonical privacy purge that keeps captured notification text from persisting"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: updateRawOcrTextPurged
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: scanned_receipts.rawOcrText retention target nulls rawOcrText (stamps rawOcrTextPurgedAt) on unpurged scanned receipts past the cutoff -- the canonical OCR-text privacy purge"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: aiArtifactDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: deleteExpired
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: ai_artifacts retention target hard-deletes expired AI artifact rows past the cutoff"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: aiChatMessageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: ai_chat_messages retention target hard-deletes AI chat message rows past the cutoff"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: emailReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.EmailReceiptDao
+  operation: redactSensitiveFieldsOlderThan
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: email_receipt_sources retention target redacts sensitive fields past the email cutoff while preserving rows (PRIV-43B-12: dedup hashes/links survive)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: notificationIntakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: purgeRawPayload
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: notification_intake retention target nulls the captured raw payload (title/text/bigText/subText/extrasJson) on unpurged intake rows past the notification cutoff (P8F-01, batched loop)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: pipelineDiagnosticEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: pipeline_diagnostic_events retention target hard-deletes old diagnostic rows whose free-text message/exceptionMessage/metadataJson can carry PII (P8F-06)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: redactNotificationTextOlderThan
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: pending_reviews.notificationText retention target redacts notification text/title past the notification retention window while preserving structural review-queue fields (PR5)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: backgroundJobRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
+  operation: redactErrorMessagesOlderThan
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: background_job_runs.errorMessage retention target redacts error messages older than 30 days (PR5 -- error text may carry PII from exception traces)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: redactMerchantOlderThan
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: bank_statement_import_items.merchant retention target redacts raw merchant names past the retention window (U-PRIVACY-01)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+# ── RecommendationRepository.kt (9 rows) ─────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: save
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: barrier-checked single-recommendation insert behind the repository's write-barrier check"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: saveAll
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: insertAll
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: inserts only the deduplicated, globally top-5-ranked NEW recommendations (retainedNew) after the existing-active merge -- the 5-card cap enforcement path"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: saveAll
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: archiveActiveOverflow
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: archives the active rows that fell out of the global top 5 after the merge (overflow pruning), keeping the active set within MAX_ACTIVE_RECOMMENDATIONS"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: dismiss
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: archive
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: barrier-checked user dismiss -- archives a single recommendation by ID"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: expireOld
+  receiver: null
+  parameterTypes:
+  - String
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireOld
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: barrier-checked expiry of the user's recommendations older than the cutoff timestamp"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: expireAll
+  receiver: null
+  parameterTypes:
+  - String
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireOld
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: the follow-through infrastructure alias runs the same cutoff expiry as expireOld before expiring the remaining active set; authorized separately because the callable identity differs"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: expireAll
+  receiver: null
+  parameterTypes:
+  - String
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireAllActiveByUser
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: second half of the alias contract -- expires ALL remaining active recommendations for the user after the cutoff expiry"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: clearForUser
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: clearByUser
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: account-switch cleanup -- clears all recommendations for one user behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: cleanupExpired
+  receiver: null
+  parameterTypes: []
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: deleteExpired
+  barrierMode: helper
+  reason: "GR-08k1 EXACT_POLICY: background-worker cleanup -- deletes expired recommendation rows and returns the affected count"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K

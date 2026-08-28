@@ -1256,6 +1256,145 @@ entries:
     \ before promptStateDao.insertPromptState"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: cleanupExpired
+  receiver: null
+  parameterTypes: []
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: deleteExpired
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: background-worker cleanup -- deletes expired recommendation
+    rows and returns the affected count'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: clearForUser
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: clearByUser
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: account-switch cleanup -- clears all recommendations
+    for one user behind the write barrier'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: dismiss
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: archive
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: barrier-checked user dismiss -- archives a single
+    recommendation by ID'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: expireAll
+  receiver: null
+  parameterTypes:
+  - String
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireAllActiveByUser
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: second half of the alias contract -- expires ALL
+    remaining active recommendations for the user after the cutoff expiry'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: expireAll
+  receiver: null
+  parameterTypes:
+  - String
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireOld
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: the follow-through infrastructure alias runs the
+    same cutoff expiry as expireOld before expiring the remaining active set; authorized
+    separately because the callable identity differs'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: expireOld
+  receiver: null
+  parameterTypes:
+  - String
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireOld
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: barrier-checked expiry of the user''s recommendations
+    older than the cutoff timestamp'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: save
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: barrier-checked single-recommendation insert behind
+    the repository''s write-barrier check'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: saveAll
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: archiveActiveOverflow
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: archives the active rows that fell out of the global
+    top 5 after the merge (overflow pruning), keeping the active set within MAX_ACTIVE_RECOMMENDATIONS'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+  kind: function
+  method: saveAll
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: insertAll
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: inserts only the deduplicated, globally top-5-ranked
+    NEW recommendations (retainedNew) after the existing-active merge -- the 5-card
+    cap enforcement path'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
   kind: function
@@ -2397,6 +2536,340 @@ entries:
     normalization path)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08J
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: aiArtifactDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: deleteExpired
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: ai_artifacts retention target hard-deletes expired
+    AI artifact rows past the cutoff'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: aiChatMessageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: ai_chat_messages retention target hard-deletes AI
+    chat message rows past the cutoff'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: backgroundJobRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
+  operation: redactErrorMessagesOlderThan
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: background_job_runs.errorMessage retention target
+    redacts error messages older than 30 days (PR5 -- error text may carry PII from
+    exception traces)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: redactMerchantOlderThan
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: bank_statement_import_items.merchant retention target
+    redacts raw merchant names past the retention window (U-PRIVACY-01)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: emailReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.EmailReceiptDao
+  operation: redactSensitiveFieldsOlderThan
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: email_receipt_sources retention target redacts sensitive
+    fields past the email cutoff while preserving rows (PRIV-43B-12: dedup hashes/links
+    survive)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: notificationIntakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: purgeRawPayload
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: notification_intake retention target nulls the captured
+    raw payload (title/text/bigText/subText/extrasJson) on unpurged intake rows past
+    the notification cutoff (P8F-01, batched loop)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: redactNotificationTextOlderThan
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: pending_reviews.notificationText retention target
+    redacts notification text/title past the notification retention window while preserving
+    structural review-queue fields (PR5)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: pipelineDiagnosticEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: pipeline_diagnostic_events retention target hard-deletes
+    old diagnostic rows whose free-text message/exceptionMessage/metadataJson can
+    carry PII (P8F-06)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: rawNotificationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: updateRawContentPurged
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: raw_notifications retention target nulls title/text/bigText/subText/extrasJson/parseResult
+    on unpurged raw notifications past the cutoff (batched loop) -- the canonical
+    privacy purge that keeps captured notification text from persisting'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+  kind: function
+  method: provideRetentionTargets
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.AppDatabase
+  - com.yourname.expensetracker.domain.util.TimeProvider
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: updateRawOcrTextPurged
+  barrierMode: helper
+  reason: 'GR-08k1 EXACT_POLICY: scanned_receipts.rawOcrText retention target nulls
+    rawOcrText (stamps rawOcrTextPurgedAt) on unpurged scanned receipts past the cutoff
+    -- the canonical OCR-text privacy purge'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: addExpense
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Double
+  - Long
+  - String?
+  - com.yourname.expensetracker.data.database.entity.SplitType
+  - String?
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: GROUP_EXPENSE_ADDED audit event written by the coordinator''s
+    callback into the port''s add-expense transaction after the G03 single-currency
+    gate'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: addMember
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - Boolean
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: GROUP_MEMBER_ADDED audit event written by the coordinator''s
+    callback into the port''s add-member transaction after the duplicate/single-currentUser
+    gates'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: archiveGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: GROUP_ARCHIVED audit event written by the coordinator''s
+    callback into the port''s soft-delete transaction (G07)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: createGroup
+  receiver: null
+  parameterTypes:
+  - String
+  - String?
+  - String
+  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: GROUP_CREATED audit event written by the coordinator''s
+    callback into the GroupTransactionCoordinator creation transaction (G01-validated
+    members)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: deleteGroupPermanently
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: GROUP_PERMANENTLY_DELETED audit event written by
+    the coordinator''s callback into the port''s hard-delete transaction (G08 explicit-confirmation
+    + G04 archive-first gates)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: emitLifecycleEvent
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Long
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: private audit-trail helper recordSettlement invokes
+    inside its transaction (SETTLEMENT_RECORDED with the settlement id); the coordinator
+    is the legal GroupLifecycleEventDao writer'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: recordSettlement
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - Long
+  - Double
+  - String
+  - String?
+  - Long?
+  daoAccessor: settlementDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: persists the G04-validated settlement record inside
+    database.withTransaction (LEGAL_PATHS.md: GroupSettlementDao.insert outside GroupLifecycleCoordinator
+    is FORBIDDEN -- this IS the legal writer)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: removeMember
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: GROUP_MEMBER_REMOVED audit event written atomically
+    with the leftAt soft-remove inside the same transaction'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: removeMember
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: G05/G06-gated soft remove -- stamps leftAt inside
+    the E4-006 balance-check transaction (LEGAL_PATHS.md: ''GroupMemberDao.delete
+    or leftAt update'')'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
 - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
   ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
   kind: function
@@ -3879,6 +4352,149 @@ entries:
     transaction'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: assignItemsToParticipants
+  receiver: null
+  parameterTypes:
+  - Long
+  - List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: deleteAllForExpense
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: SHR-13 atomic reassignment -- clears the expense''s
+    old assignments inside database.withTransaction so a failed insert rolls back
+    without orphaned items (LEGAL_PATHS.md documents this exact pair)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: assignItemsToParticipants
+  receiver: null
+  parameterTypes:
+  - Long
+  - List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: insertAssignments
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: inserts the new participant assignments in the same
+    SHR-13 transaction immediately after the clear (atomic replace; LEGAL_PATHS.md
+    forbids this pair without transaction wrapping)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: createTemplate
+  receiver: null
+  parameterTypes:
+  - String
+  - Int
+  - com.yourname.expensetracker.data.database.entity.SplitTemplate.SplitType
+  - List<com.yourname.expensetracker.data.database.entity.SplitShare>
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: insertTemplate
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: SHR-14-validated template insert behind the write
+    barrier (LEGAL_PATHS.md: SplitTemplateDao.insertTemplate outside EnhancedSplitManager.createTemplate
+    is FORBIDDEN)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: deleteTemplate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.SplitTemplate
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: deleteTemplate
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: barrier-checked template delete behind the manager''s
+    owned template lifecycle'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: markAssignmentAsPaid
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: markAsPaid
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: barrier-paid flag on a single split item assignment
+    stamped with the payment time'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: setDefaultTemplate
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: clearDefaultTemplate
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: first half of the single-default invariant -- clears
+    the current default before marking the new one'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: setDefaultTemplate
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: setDefaultTemplate
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: second half of the single-default invariant -- marks
+    the requested template as the only default'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: updateTemplate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.SplitTemplate
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: updateTemplate
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: barrier-checked template update stamping updatedAt
+    from TimeProvider'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: useTemplate
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: incrementUseCount
+  barrierMode: helper
+  reason: 'GR-08k2 EXACT_POLICY: barrier-checked usage counter increment when a template
+    is applied'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function

@@ -1,0 +1,356 @@
+# GR-08 batch 11, part 2 (GR-08k2) reviewed exact v2 policy seed rows --
+# DB_UNAUTHORIZED_MUTATION EXACT_POLICY authorization for
+# domain/groups/GroupLifecycleCoordinator.kt and
+# domain/split/EnhancedSplitManager.kt.
+#
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08k/before.json == trusted GR-08j after.json,
+# 200 findings / 20 advisory diagnostics): GroupLifecycleCoordinator.kt
+# carries exactly 9 DB_UNAUTHORIZED_MUTATION findings / 9 UNIQUE fingerprints
+# and EnhancedSplitManager.kt carries exactly 9 findings / 9 UNIQUE
+# fingerprints (dedup key: callable identity + daoAccessor + daoFqcn +
+# operation; the seven lifecycle-event inserts differ by callable, and
+# setDefaultTemplate carries two distinct SplitTemplateDao operations, so no
+# two findings share a fingerprint).  ZERO closure rows for BOTH files: the
+# blind-spot sweep found every mutating DAO call is an abstract
+# Room-annotated method already covered by a finding (GroupLifecycleEventDao,
+# GroupSettlementDao, GroupMemberDao, SplitTemplateDao and
+# SplitItemAssignmentDao carry no body-carrying @Transaction convenience
+# method reachable from these files -- GroupMemberDao's mutating
+# setCurrentUser convenience is NOT called from GroupLifecycleCoordinator,
+# whose memberDao calls are the reads getActiveMembersForGroup/getMemberById
+# plus the abstract update; PendingReviewDao's mutating conveniences are not
+# reached from this batch at all).
+#
+# Layer legality:
+# * GroupLifecycleCoordinator is the AUTHORITATIVE group lifecycle
+#   coordinator named by docs/architecture/LEGAL_PATHS.md ("Group
+#   Mutations"): GroupSettlementDao.insert outside it is FORBIDDEN (so the
+#   recordSettlement row IS the legal path), GroupLifecycleEventDao.insert
+#   directly is forbidden (must go through the coordinator -- these rows ARE
+#   the coordinator writing its own audit trail), and removeMember's
+#   memberDao.update is the documented leftAt soft-remove path
+#   ("GroupMemberDao.delete or leftAt update").  Every public entrypoint
+#   runs writeBarrier.checkWritesAllowed first; the removeMember
+#   balance-check + soft-remove + event and the recordSettlement
+#   settlement + event pairs run inside database.withTransaction.  The five
+#   coordinator-method event inserts are the lambda callbacks handed to the
+#   GroupTransactionCoordinator port (already authorized in GR-08i1); the
+#   emitLifecycleEvent row is the private helper recordSettlement calls
+#   inside its transaction (chain-form site: recordSettlement ->
+#   emitLifecycleEvent -> lifecycleEventDao.insert; the guard attributes
+#   the insert to the immediate enclosing callable).
+# * EnhancedSplitManager is the AUTHORITATIVE split/template manager named
+#   by docs/architecture/LEGAL_PATHS.md ("Split / Template Mutations"):
+#   createTemplate -> SplitTemplateDao.insertTemplate and
+#   assignItemsToParticipants -> deleteAllForExpense + insertAssignments
+#   inside database.withTransaction are the documented legal paths, and
+#   "SplitTemplateDao.insertTemplate outside EnhancedSplitManager" is
+#   FORBIDDEN -- the manager is the SOLE writer of SplitTemplateDao and
+#   SplitItemAssignmentDao (only AppDatabase/DaoModule/the DAO files
+#   themselves also reference them).  updateTemplate/deleteTemplate/
+#   setDefaultTemplate/useTemplate/markAssignmentAsPaid are the same
+#   manager's owned template/assignment lifecycle with the write barrier
+#   checked at each entrypoint.  Split math stays on Money/BigDecimal
+#   (calculateEqualSplit/calculatePercentageSplit); no money semantics
+#   changed.
+#
+# barrierMode is `helper` for every row (the GR-08a..k batch convention; no
+# direct-barrier proof is claimed even though every covered callable places
+# writeBarrier.checkWritesAllowed at its entrypoint).
+#
+# Chain-form census: ZERO database-chained `database.xxxDao()` mutation
+# receivers in EITHER file (every DAO call goes through the injected
+# constructor properties; the database.withTransaction calls are the
+# androidx.room.withTransaction extension, not DAO accessors).  NO
+# accessor-normalization source change is needed for this part.
+#
+# Consumed ONLY via the combined generation input
+# docs/ci/db-findings/GR-08-seeds.yml (the migration CLI accepts a SINGLE
+# --seed-rows value).
+schemaVersion: 2
+entries:
+# ── GroupLifecycleCoordinator.kt (9 rows) ────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: createGroup
+  receiver: null
+  parameterTypes:
+  - String
+  - String?
+  - String
+  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: GROUP_CREATED audit event written by the coordinator's callback into the GroupTransactionCoordinator creation transaction (G01-validated members)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: addMember
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - Boolean
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: GROUP_MEMBER_ADDED audit event written by the coordinator's callback into the port's add-member transaction after the duplicate/single-currentUser gates"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: removeMember
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: G05/G06-gated soft remove -- stamps leftAt inside the E4-006 balance-check transaction (LEGAL_PATHS.md: 'GroupMemberDao.delete or leftAt update')"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: removeMember
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: GROUP_MEMBER_REMOVED audit event written atomically with the leftAt soft-remove inside the same transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: addExpense
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Double
+  - Long
+  - String?
+  - com.yourname.expensetracker.data.database.entity.SplitType
+  - String?
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: GROUP_EXPENSE_ADDED audit event written by the coordinator's callback into the port's add-expense transaction after the G03 single-currency gate"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: archiveGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: GROUP_ARCHIVED audit event written by the coordinator's callback into the port's soft-delete transaction (G07)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: deleteGroupPermanently
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: GROUP_PERMANENTLY_DELETED audit event written by the coordinator's callback into the port's hard-delete transaction (G08 explicit-confirmation + G04 archive-first gates)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: recordSettlement
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - Long
+  - Double
+  - String
+  - String?
+  - Long?
+  daoAccessor: settlementDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: persists the G04-validated settlement record inside database.withTransaction (LEGAL_PATHS.md: GroupSettlementDao.insert outside GroupLifecycleCoordinator is FORBIDDEN -- this IS the legal writer)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+  kind: function
+  method: emitLifecycleEvent
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Long
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: private audit-trail helper recordSettlement invokes inside its transaction (SETTLEMENT_RECORDED with the settlement id); the coordinator is the legal GroupLifecycleEventDao writer"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+# ── EnhancedSplitManager.kt (9 rows) ─────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: createTemplate
+  receiver: null
+  parameterTypes:
+  - String
+  - Int
+  - com.yourname.expensetracker.data.database.entity.SplitTemplate.SplitType
+  - List<com.yourname.expensetracker.data.database.entity.SplitShare>
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: insertTemplate
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: SHR-14-validated template insert behind the write barrier (LEGAL_PATHS.md: SplitTemplateDao.insertTemplate outside EnhancedSplitManager.createTemplate is FORBIDDEN)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: updateTemplate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.SplitTemplate
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: updateTemplate
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: barrier-checked template update stamping updatedAt from TimeProvider"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: deleteTemplate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.SplitTemplate
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: deleteTemplate
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: barrier-checked template delete behind the manager's owned template lifecycle"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: setDefaultTemplate
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: clearDefaultTemplate
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: first half of the single-default invariant -- clears the current default before marking the new one"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: setDefaultTemplate
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: setDefaultTemplate
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: second half of the single-default invariant -- marks the requested template as the only default"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: useTemplate
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: incrementUseCount
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: barrier-checked usage counter increment when a template is applied"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: assignItemsToParticipants
+  receiver: null
+  parameterTypes:
+  - Long
+  - List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: deleteAllForExpense
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: SHR-13 atomic reassignment -- clears the expense's old assignments inside database.withTransaction so a failed insert rolls back without orphaned items (LEGAL_PATHS.md documents this exact pair)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: assignItemsToParticipants
+  receiver: null
+  parameterTypes:
+  - Long
+  - List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: insertAssignments
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: inserts the new participant assignments in the same SHR-13 transaction immediately after the clear (atomic replace; LEGAL_PATHS.md forbids this pair without transaction wrapping)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+  kind: function
+  method: markAssignmentAsPaid
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: markAsPaid
+  barrierMode: helper
+  reason: "GR-08k2 EXACT_POLICY: barrier-paid flag on a single split item assignment stamped with the payment time"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
