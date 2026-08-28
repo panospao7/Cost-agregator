@@ -1,0 +1,475 @@
+# GR-08 batch 12, part 1 (GR-08l1) reviewed exact v2 policy seed rows --
+# DB_UNAUTHORIZED_MUTATION EXACT_POLICY authorization for
+# data/repository/ExpenseRepository.kt and
+# data/repository/MerchantNormalizationRepository.kt.
+#
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08l/before.json == trusted GR-08k after.json,
+# 163 findings / 20 advisory diagnostics): ExpenseRepository.kt carries
+# exactly 8 DB_UNAUTHORIZED_MUTATION findings / 8 UNIQUE fingerprints and
+# MerchantNormalizationRepository.kt carries exactly 8 findings / 8 UNIQUE
+# fingerprints (dedup key: callable identity + daoAccessor + daoFqcn +
+# operation; restoreDebugSnapshot carries TWO distinct ExpenseDao operations
+# (deleteAll + insertAll) and insertAlias carries TWO distinct
+# MerchantNormalizationDao operations (insertAlias + updateAlias), so no two
+# findings share a fingerprint).
+#
+# Layer legality:
+# * ExpenseRepository is the repository-layer read/maintenance facade for
+#   expenses.  Its 8 mutating sites are the documented
+#   EXPENSE_DAO_MUTATION_ALLOWLIST maintenance/debug paths, each carrying
+#   @OptIn(RestrictedExpenseDaoMutation::class) +
+#   writeBarrier.checkWritesAllowed at the entrypoint:
+#   - deleteAllExpenses / restoreDebugSnapshot: BuildConfig.DEBUG-gated
+#     (requireDebugExpenseOperation) aggregate destructive operations --
+#     the "ExpenseDao.insertAll() outside debug/migration" and
+#     "ExpenseDao.delete() from repositories directly" FORBIDDEN rows of
+#     docs/architecture/LEGAL_PATHS.md carve out exactly this debug path,
+#     and both write an aggregate audit TransactionEvent inside the same
+#     database.withTransaction via DebugExpenseAuditWriter;
+#   - incrementBackfillAttempts / conditionallySetLocation /
+#     clearExpenseLocation / updateMerchantKey: maintenance/backfill
+#     low-risk single-column updates (LocationBackfillWorker /
+#     MerchantKeyBackfillWorker) with no lifecycle event by design,
+#     documented in the allowlist comments; conditionallySetLocation
+#     additionally validates coordinate ranges before writing;
+#   - updateExpenseCategoryBulk -> userCorrectionDao.insert: the deprecated
+#     bulk path already routes the expense mutation through
+#     TransactionLifecycleCoordinator.bulkUpdateCategory (the legal
+#     lifecycle authority) and only records the bulk-correction learning
+#     row on UserCorrectionDao (a table ExpenseRepository legally owns per
+#     docs/architecture/dao-map.md).
+# * MerchantNormalizationRepository is the SOLE writer of
+#   MerchantNormalizationDao (docs/architecture/dao-map.md); every mutating
+#   method runs writeBarrier.checkWritesAllowed directly before the
+#   delegated DAO mutation.  Mirrors the GR-08k1 RecommendationRepository
+#   adjudication.
+#
+# Closure additions (GR-08l blind-spot sweep): THREE closure rows.
+# Every dao-accessor call in ALL batch callable bodies was enumerated, not
+# just the findings.  Body-carrying @Transaction DAO convenience methods
+# produce NO findings but DO produce evidence closure requirements (the
+# GR-08b/GR-08d pattern):
+#   - ExpenseRepository.updateExpenseMerchant ->
+#     pendingReviewDao.bulkRenameMerchant (line 523; the cross-table
+#     pending-review bulk rename the coordinator does not handle --
+#     body-carrying @Transaction PendingReviewDao convenience method
+#     wrapping bulkRenameMerchantByKey + bulkRenameMerchantByName);
+#   - MerchantNormalizationRepository.insertAlias ->
+#     dao.incrementAliasOccurrence (line 76; the E3-001 normalizedKey
+#     fallback -- body-carrying @Transaction MerchantNormalizationDao
+#     convenience method wrapping getAliasByNormalizedKey + updateAlias);
+#   - MerchantNormalizationRepository.linkAliasToCanonical ->
+#     dao.linkAliasToCanonical (line 140; the fully atomic
+#     link-or-conflict composite -- body-carrying @Transaction
+#     MerchantNormalizationDao convenience method wrapping
+#     getAliasByNormalizedKey/getAliasByRawName/getCanonicalById +
+#     updateAlias/insertAlias).
+# The remaining body-carrying @Transaction methods reachable from these
+# files are strictly read-only composites (ExpenseDao.findDuplicateIdCurrencyAware
+# / isDuplicateCurrencyAware / getDuplicateCandidatesInRange-family,
+# MerchantNormalizationDao.searchAliasesByPrefix) and carry no closure
+# obligation; SavingsGoalDao, UserCorrectionDao, TransactionEventDao,
+# ManualRecurringExpenseDao, SubscriptionPriceHistoryDao,
+# SubscriptionUsageDao and SubscriptionCandidateDao are fully abstract.
+#
+# Chain-form census: ZERO database-chained `appDatabase.xxxDao()` mutation
+# receivers and ZERO method-local DAO aliases in EITHER file (every DAO call
+# goes through the injected constructor properties expenseDao /
+# userCorrectionDao / pendingReviewDao / dao; the database.withTransaction
+# calls are the androidx.room.withTransaction extension, not DAO accessors).
+# NO accessor-normalization source change is needed for this part.
+#
+# barrierMode is `helper` for every row (the GR-08a..k batch convention; no
+# direct-barrier proof is claimed -- every covered callable places
+# writeBarrier.checkWritesAllowed at its entrypoint, and the debug
+# operations additionally gate on BuildConfig.DEBUG).
+#
+# Residual closure (GR-08l post-promotion rescan, MIT-DB-08L): THREE more
+# closure rows.  The gr08l promotion+rescan (build/guard-debug/gr08l/after.json,
+# 124 findings / 20 advisory diagnostics) left 3 DB_UNAUTHORIZED_MUTATION
+# findings popularly labeled "ExpenseRepository".  VERIFICATION AGAINST THE
+# REPORTS AND THE KOTLIN SOURCE shows they are NOT ExpenseRepository.kt
+# findings: ExpenseRepository.kt carries 0 findings in after.json and its
+# class body (read in full, 1089 lines) contains NONE of the three callables
+# (no addMileage, no writeLifecycleEvent, no mileageDao, no lifecycleEventDao
+# accessor).  The three findings were already present under their OWN files
+# in the trusted before report (before.json, 163 findings) and remained
+# because those files are deferred to future batches; the "ExpenseRepository"
+# label was a suffix-substring grouping artifact (BusinessExpenseRepository.kt
+# / ManualRecurringExpenseRepository.kt / RecurringExpenseRepository.kt all
+# end in "ExpenseRepository.kt").  The rows therefore spell the TRUE paths --
+# an ExpenseRepository.kt row could never match the v2 fingerprints and the
+# rescan would stay at 124:
+#   - BusinessExpenseRepository.addMileage -> mileageDao.insert (line 87;
+#     BusinessExpenseRepository is the SOLE writer of MileageTrackingDao per
+#     docs/architecture/dao-map.md, the mileage feature's repository-layer
+#     writer; writeBarrier.checkWritesAllowed at the entrypoint plus
+#     validateMileageForInsert range validation; auxiliary mileage log
+#     insert, no lifecycle event by design);
+#   - ManualRecurringExpenseRepository.writeLifecycleEvent ->
+#     lifecycleEventDao.insert (line 55; private best-effort diagnostic
+#     helper -- exception-swallowing non-critical channel -- with NO
+#     in-class callers; every live rule mutation in the file routes through
+#     RecurringRuleLifecycleCoordinator, the legal lifecycle authority per
+#     docs/architecture/dao-map.md and LEGAL_PATHS.md "Recurring Rule
+#     Mutations");
+#   - RecurringExpenseRepository.writeLifecycleEvent ->
+#     lifecycleEventDao.insert (line 143; same private best-effort
+#     diagnostic pattern, additionally writeBarrier.checkWritesAllowed at
+#     the helper entrypoint, NO in-class callers).
+# LEGAL_PATHS.md "Lifecycle Events" forbids writing lifecycle events
+# directly through DAO insert; the two writeLifecycleEvent helpers are
+# residual scanner-visible currently-uncalled private code authorized as
+# the exact static sites AS WRITTEN -- any future revival must route
+# through RecurringLifecycleEventWriter (or the coordinators) per that
+# section, and a follow-up CODE_FIX deleting the unused helpers remains
+# the cleaner long-term resolution.  Each of the three files carried
+# exactly ONE finding in after.json, so these rows also drop
+# BusinessExpenseRepository.kt, ManualRecurringExpenseRepository.kt and
+# RecurringExpenseRepository.kt to 0; the rescan delta expectation for the
+# follow-up promotion is 124 -> 121 (ExpenseRepository.kt stays at 0).
+#
+# Consumed ONLY via the combined generation input
+# docs/ci/db-findings/GR-08-seeds.yml (the migration CLI accepts a SINGLE
+# --seed-rows value).
+schemaVersion: 2
+entries:
+# ── ExpenseRepository.kt (8 findings-derived rows + 1 closure row) ──────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: updateExpenseCategoryBulk
+  receiver: null
+  parameterTypes:
+  - String
+  - Long
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: deprecated bulk category path already routes the expense mutation through TransactionLifecycleCoordinator.bulkUpdateCategory (the legal lifecycle authority) and records the bulk-correction learning row on UserCorrectionDao behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: deleteAllExpenses
+  receiver: null
+  parameterTypes: []
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: debug-only aggregate destructive operation (requireDebugExpenseOperation BuildConfig.DEBUG gate + write barrier + @OptIn(RestrictedExpenseDaoMutation)) writing the aggregate delete-all audit TransactionEvent in the same database.withTransaction via DebugExpenseAuditWriter -- the LEGAL_PATHS debug carve-out"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.ExpenseRepository.DebugExpenseSnapshot
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: debug-only snapshot restore, first half -- clears the expenses table inside database.withTransaction (BuildConfig.DEBUG gate + write barrier + aggregate RESTORED_FROM_DEBUG_SNAPSHOT audit event in the same transaction)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.ExpenseRepository.DebugExpenseSnapshot
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: insertAll
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: debug-only snapshot restore, second half -- reinserts the captured snapshot rows in the same transaction (BuildConfig.DEBUG gate + write barrier + audit event); the LEGAL_PATHS 'insertAll outside debug/migration' carve-out"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: incrementBackfillAttempts
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: incrementBackfillAttempts
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: maintenance/backfill low-risk counter column update (location backfill retry accounting) behind the write barrier; no lifecycle event by design per the EXPENSE_DAO_MUTATION_ALLOWLIST comment"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: conditionallySetLocation
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  - Double
+  - String
+  - String?
+  - String?
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: conditionallySetLocation
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: LOC-16 race-guarded location backfill -- updates location columns only when still NULL (prevents overwriting user-set locations), validates coordinate ranges first, write barrier checked; no lifecycle event by design (backfill worker path)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: clearExpenseLocation
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: clearLocation
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: maintenance location-column clear behind the write barrier; no lifecycle event by design per the EXPENSE_DAO_MUTATION_ALLOWLIST comment"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: updateMerchantKey
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateMerchantKey
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: MerchantKeyBackfillWorker merchantKey column backfill behind the write barrier; no lifecycle event by design per the EXPENSE_DAO_MUTATION_ALLOWLIST comment"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
+  kind: function
+  method: updateExpenseMerchant
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Expense
+  - String
+  - Boolean
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: bulkRenameMerchant
+  barrierMode: helper
+  reason: "GR-08l1 CLOSURE: applyToAll branch bulk-renames the merchant across the merchant's pending reviews (the cross-table pending-review update the coordinator does not handle), evidenced in this repository-layer class with no findings-report row (body-carrying @Transaction PendingReviewDao convenience method wrapping bulkRenameMerchantByKey + bulkRenameMerchantByName; GR-08b/GR-08d scanner blind spot)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+# ── MerchantNormalizationRepository.kt (8 findings-derived rows + 2 closure rows) ──
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: insertCanonical
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantCanonical
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: insertCanonical
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: barrier-checked insert of a canonical merchant row (OnConflictStrategy.IGNORE) behind the repository's write-barrier check"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: updateCanonical
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantCanonical
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: updateCanonical
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: barrier-checked full canonical merchant row update"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: updateCanonicalCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long?
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: updateCanonicalCategory
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: barrier-checked single-column category reassignment on a canonical merchant (user category-correction learning path)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: incrementMerchantStats
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: incrementMerchantStats
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: C08/E3-NOW-005 occurrence+spent stat increment wired from TransactionSideEffectPlanner.planCreated via makeMerchantCanonicalStatsAction; called exactly once per expense creation behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: insertAlias
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantAlias
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: insertAlias
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: barrier-checked alias insert with createdAt/lastUsedAt normalization (OnConflictStrategy.IGNORE primary path)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: insertAlias
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantAlias
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: updateAlias
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: insertAlias rawName-conflict fallback -- bumps occurrenceCount/lastUsedAt on the existing alias row when the IGNORE insert collides; authorized separately because the DAO operation differs from the primary insert"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: updateAlias
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantAlias
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: updateAlias
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: barrier-checked full alias row update"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: deleteUnusedAliasesOlderThan
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: deleteUnusedAliasesOlderThan
+  barrierMode: helper
+  reason: "GR-08l1 EXACT_POLICY: barrier-checked retention cleanup -- hard-deletes merchant aliases unused past the cutoff (SQL delete, no raw payloads materialized)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: insertAlias
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantAlias
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: incrementAliasOccurrence
+  barrierMode: helper
+  reason: "GR-08l1 CLOSURE: E3-001 normalizedKey fallback on the IGNORE-insert collision path, evidenced in this repository-layer class with no findings-report row (body-carrying @Transaction MerchantNormalizationDao convenience method wrapping getAliasByNormalizedKey + updateAlias; GR-08b/GR-08d scanner blind spot)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
+  kind: function
+  method: linkAliasToCanonical
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  - Long
+  - Boolean
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
+  operation: linkAliasToCanonical
+  barrierMode: helper
+  reason: "GR-08l1 CLOSURE: the fully atomic link-or-conflict composite (the primary alias-linking path per the repository's own TOCTOU note), evidenced in this repository-layer class with no findings-report row (body-carrying @Transaction MerchantNormalizationDao convenience method wrapping the alias/canonical reads plus updateAlias/insertAlias; GR-08b/GR-08d scanner blind spot)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+# ── Residual closure rows (GR-08l post-promotion rescan; TRUE paths) ─────────
+# The three residual findings labeled "ExpenseRepository" actually live in
+# BusinessExpenseRepository.kt / ManualRecurringExpenseRepository.kt /
+# RecurringExpenseRepository.kt (see the header block above for the full
+# attribution verification); ExpenseRepository.kt stays at 0.
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BusinessExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BusinessExpenseRepository
+  kind: function
+  method: addMileage
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MileageTracking
+  daoAccessor: mileageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MileageTrackingDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt finding -- suffix-substring grouping artifact) -- the mileage feature's repository write path; BusinessExpenseRepository is the SOLE writer of MileageTrackingDao per docs/architecture/dao-map.md, writeBarrier.checkWritesAllowed at the entrypoint plus validateMileageForInsert range validation; auxiliary mileage log insert, no lifecycle event by design"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ManualRecurringExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
+  kind: function
+  method: writeLifecycleEvent
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Long
+  - String?
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt finding) -- private best-effort diagnostic lifecycle-event helper (exception-swallowing non-critical channel) with NO in-class callers; every live rule mutation routes through RecurringRuleLifecycleCoordinator, the legal lifecycle authority per docs/architecture/dao-map.md and LEGAL_PATHS.md Recurring Rule Mutations; authorized as the exact static site AS WRITTEN -- any future revival must route through RecurringLifecycleEventWriter per LEGAL_PATHS.md Lifecycle Events"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecurringExpenseRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.RecurringExpenseRepository
+  kind: function
+  method: writeLifecycleEvent
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Long
+  - String?
+  - String?
+  - String?
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt finding) -- private best-effort diagnostic lifecycle-event helper (exception-swallowing non-critical channel) with writeBarrier.checkWritesAllowed at the helper entrypoint and NO in-class callers; every live rule mutation routes through RecurringRuleLifecycleCoordinator, the legal lifecycle authority per docs/architecture/dao-map.md and LEGAL_PATHS.md Recurring Rule Mutations; authorized as the exact static site AS WRITTEN -- any future revival must route through RecurringLifecycleEventWriter per LEGAL_PATHS.md Lifecycle Events"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L

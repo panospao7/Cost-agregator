@@ -299,6 +299,61 @@ SPLIT per the GR-08c/GR-08e/GR-08i/GR-08j precedent into two file groups:
 * NEAR-MISS protection over the GR-08k1/k2 rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08l (MIT-DB-08L) extends the same contract to FIVE top-density files --
+the data/repository ExpenseRepository.kt (repository maintenance/debug
+facade, EXPENSE_DAO_MUTATION_ALLOWLIST) and
+MerchantNormalizationRepository.kt (sole MerchantNormalizationDao writer),
+the data/repository SavingsGoalRepository.kt (sole SavingsGoalDao writer),
+the domain/transaction/lifecycle TransactionLifecycleCoordinator.kt (THE
+expense lifecycle authority per docs/architecture/LEGAL_PATHS.md), and the
+data/repository SubscriptionManagementRepository.kt (repository legal
+writer for the subscription management surface).  The combined batch
+carries 39 findings / 39 unique fingerprints > the 25-fingerprint batch
+cap, so the batch was SPLIT per the GR-08c/GR-08e/GR-08i/GR-08j/GR-08k
+precedent into two file groups:
+
+* ``GR-08l1-seed.yml`` -- ExpenseRepository.kt (8 rows / 8 findings / 8
+  unique fingerprints; restoreDebugSnapshot carries TWO distinct ExpenseDao
+  operations) + MerchantNormalizationRepository.kt (8 rows / 8 findings /
+  8 unique fingerprints; insertAlias carries TWO distinct
+  MerchantNormalizationDao operations) + THREE closure rows (the GR-08b/
+  GR-08d blind-spot pattern: ExpenseRepository.updateExpenseMerchant ->
+  pendingReviewDao.bulkRenameMerchant,
+  MerchantNormalizationRepository.insertAlias ->
+  dao.incrementAliasOccurrence, and
+  MerchantNormalizationRepository.linkAliasToCanonical ->
+  dao.linkAliasToCanonical -- body-carrying @Transaction DAO convenience
+  methods the findings scanner never reported) + THREE residual closure
+  rows (the GR-08l post-promotion rescan: the three findings popularly
+  labeled "ExpenseRepository" actually live in BusinessExpenseRepository.kt
+  -- addMileage -> mileageDao.insert, ManualRecurringExpenseRepository.kt
+  -- writeLifecycleEvent -> lifecycleEventDao.insert (4-param overload),
+  and RecurringExpenseRepository.kt -- writeLifecycleEvent ->
+  lifecycleEventDao.insert (6-param overload); ExpenseRepository.kt itself
+  carries none of these callables and stays at 0, and the rows spell the
+  TRUE paths because an ExpenseRepository.kt row could never match the v2
+  fingerprints) = 22 rows.  ZERO chain-form receivers and ZERO accessor
+  normalization needed;
+* ``GR-08l2-seed.yml`` -- SavingsGoalRepository.kt (8 rows / 8 findings /
+  8 unique fingerprints; the deprecated entity-typed aliases are distinct
+  callables) + TransactionLifecycleCoordinator.kt (8 rows / 8 findings /
+  8 unique fingerprints; the two bulkUpdateCategory overloads and two
+  deleteExpense overloads are distinct callables, each with two DAO
+  operations) + SubscriptionManagementRepository.kt (7 rows / 7 findings /
+  7 unique fingerprints) = 23 rows; ZERO closure rows -- SavingsGoalDao,
+  UserCorrectionDao, TransactionEventDao, ManualRecurringExpenseDao,
+  SubscriptionPriceHistoryDao, SubscriptionUsageDao and
+  SubscriptionCandidateDao are fully abstract, and the coordinator's
+  body-carrying @Transaction ExpenseDao composites are strictly read-only;
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the NINETEEN reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 + 14 + 6 + 7 + 11 + 21
+  + 19 + 18 + 22 + 23 = 294 rows) -- a dropped earlier-batch row fails
+  closed here instead of silently re-unauthorizing that batch's mutations
+  at promotion;
+* NEAR-MISS protection over the GR-08l1/l2 rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -5984,70 +6039,6 @@ def test_real_tracked_gr08k2_seed_file_loads_with_exactly_eighteen_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_seventeen_batch_seed_files():
-    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
-    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
-    + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2.
-
-    Supersedes the GR-08j-era fifteen-file concatenation test (which pinned
-    the combined document at 212 rows): the GR-08k batch extends the combined
-    generation input to 249 rows, and the drift guard must cover ALL
-    SEVENTEEN reviewed batch seed files.  The combined document is what
-    --seed-rows actually consumes; if it ever drifts from the seventeen
-    reviewed batch seed files (a dropped earlier-batch row would silently
-    re-unauthorize that batch's mutations at promotion time), this fails
-    closed.
-    """
-    combined = _load_seed_entries(COMBINED_SEED_FILE)
-    gr08a = _load_seed_entries(SEED_FILE)
-    gr08b = _load_seed_entries(GR08B_SEED_FILE)
-    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
-    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
-    gr08d = _load_seed_entries(GR08D_SEED_FILE)
-    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
-    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
-    gr08f = _load_seed_entries(GR08F_SEED_FILE)
-    gr08g = _load_seed_entries(GR08G_SEED_FILE)
-    gr08h = _load_seed_entries(GR08H_SEED_FILE)
-    gr08i1 = _load_seed_entries(GR08I1_SEED_FILE)
-    gr08i2 = _load_seed_entries(GR08I2_SEED_FILE)
-    gr08i3 = _load_seed_entries(GR08I3_SEED_FILE)
-    gr08j1 = _load_seed_entries(GR08J1_SEED_FILE)
-    gr08j2 = _load_seed_entries(GR08J2_SEED_FILE)
-    gr08k1 = _load_seed_entries(GR08K1_SEED_FILE)
-    gr08k2 = _load_seed_entries(GR08K2_SEED_FILE)
-    assert len(gr08a) == 5
-    assert len(gr08b) == 13
-    assert len(gr08c1) == 10
-    assert len(gr08c2) == 16
-    assert len(gr08d) == 22
-    assert len(gr08e1) == 23
-    assert len(gr08e2) == 23
-    assert len(gr08f) == 21
-    assert len(gr08g) == 7
-    assert len(gr08h) == 13
-    assert len(gr08i1) == 14
-    assert len(gr08i2) == 6
-    assert len(gr08i3) == 7
-    assert len(gr08j1) == 11
-    assert len(gr08j2) == 21
-    assert len(gr08k1) == 19
-    assert len(gr08k2) == 18
-    assert len(combined) == 249
-    combined_fields = sorted(_entry_fields(entry) for entry in combined)
-    batch_fields = sorted(
-        _entry_fields(entry)
-        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
-        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
-        + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
-        + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
-        + list(gr08k2)
-    )
-    assert combined_fields == batch_fields
-    keys = [entry.mutation_key().canonical_key() for entry in combined]
-    assert len(set(keys)) == len(keys)
-
-
 def _gr08k_policy_entries(tmp_path, rows):
     entries = []
     for position, row in enumerate(rows):
@@ -6310,6 +6301,1198 @@ def test_gr08k2_event_rows_near_misses_stay_unauthorized(tmp_path):
                 dao_accessor="memberDao",
                 dao_fqcn=GROUP_MEMBER_DAO_GR08K,
             ),
+        )
+        is False
+    )
+
+
+# ── GR-08l (MIT-DB-08L): ExpenseRepository.kt + MerchantNormalizationRepo ────
+# (GR-08l1) and SavingsGoalRepository.kt + TransactionLifecycleCoordinator.kt
+# + SubscriptionManagementRepository.kt (GR-08l2).  The combined batch
+# carries 39 findings / 39 unique fingerprints > the 25-fingerprint batch
+# cap, so it was SPLIT into two file groups; the generation run consumes the
+# COMBINED document GR-08-seeds.yml; these tests pin that the combined
+# document stays the exact concatenation of the NINETEEN reviewed batch seed
+# files, and that the GR-08l rows authorize EXACTLY their callable identity
+# + DAO + operation (wrong overload, wrong owner, wrong DAO, and wrong
+# operation stay unauthorized).
+
+GR08L1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08l1-seed.yml"
+GR08L2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08l2-seed.yml"
+
+EXPENSE_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "ExpenseRepository.kt"
+)
+EXPENSE_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.ExpenseRepository"
+)
+EXPENSE_DAO = "com.yourname.expensetracker.data.database.dao.ExpenseDao"
+USER_CORRECTION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.UserCorrectionDao"
+)
+PENDING_REVIEW_DAO_GR08L = (
+    "com.yourname.expensetracker.data.database.dao.PendingReviewDao"
+)
+DEBUG_SNAPSHOT_TYPE = (
+    "com.yourname.expensetracker.data.repository."
+    "ExpenseRepository.DebugExpenseSnapshot"
+)
+EXPENSE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.Expense"
+)
+
+MERCHANT_NORMALIZATION_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "MerchantNormalizationRepository.kt"
+)
+MERCHANT_NORMALIZATION_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository."
+    "MerchantNormalizationRepository"
+)
+MERCHANT_NORMALIZATION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao"
+)
+MERCHANT_CANONICAL = (
+    "com.yourname.expensetracker.data.database.entity.MerchantCanonical"
+)
+MERCHANT_ALIAS = (
+    "com.yourname.expensetracker.data.database.entity.MerchantAlias"
+)
+
+# GR-08l1 residual closure files (GR-08l post-promotion rescan): the three
+# findings popularly labeled "ExpenseRepository" live in THESE files --
+# ExpenseRepository.kt itself carries none of the callables and stays at 0.
+BUSINESS_EXPENSE_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "BusinessExpenseRepository.kt"
+)
+BUSINESS_EXPENSE_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.BusinessExpenseRepository"
+)
+MILEAGE_TRACKING_DAO = (
+    "com.yourname.expensetracker.data.database.dao.MileageTrackingDao"
+)
+MILEAGE_TRACKING = (
+    "com.yourname.expensetracker.data.database.entity.MileageTracking"
+)
+MANUAL_RECURRING_EXPENSE_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "ManualRecurringExpenseRepository.kt"
+)
+MANUAL_RECURRING_EXPENSE_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository."
+    "ManualRecurringExpenseRepository"
+)
+RECURRING_EXPENSE_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "RecurringExpenseRepository.kt"
+)
+RECURRING_EXPENSE_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.RecurringExpenseRepository"
+)
+RECURRING_LIFECYCLE_EVENT_DAO_GR08L = (
+    "com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao"
+)
+
+SAVINGS_GOAL_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "SavingsGoalRepository.kt"
+)
+SAVINGS_GOAL_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.SavingsGoalRepository"
+)
+SAVINGS_GOAL_DAO = (
+    "com.yourname.expensetracker.data.database.dao.SavingsGoalDao"
+)
+DOMAIN_SAVINGS_GOAL = (
+    "com.yourname.expensetracker.domain.model.SavingsGoal"
+)
+ENTITY_SAVINGS_GOAL = (
+    "com.yourname.expensetracker.data.database.entity.SavingsGoal"
+)
+
+TRANSACTION_LIFECYCLE_COORDINATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/transaction/"
+    "lifecycle/TransactionLifecycleCoordinator.kt"
+)
+TRANSACTION_LIFECYCLE_COORDINATOR_FQCN = (
+    "com.yourname.expensetracker.domain.transaction.lifecycle."
+    "TransactionLifecycleCoordinator"
+)
+TRANSACTION_EVENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.TransactionEventDao"
+)
+
+SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "SubscriptionManagementRepository.kt"
+)
+SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository."
+    "SubscriptionManagementRepository"
+)
+MANUAL_RECURRING_EXPENSE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao"
+)
+SUBSCRIPTION_PRICE_HISTORY_DAO = (
+    "com.yourname.expensetracker.data.database.dao."
+    "SubscriptionPriceHistoryDao"
+)
+SUBSCRIPTION_USAGE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao"
+)
+SUBSCRIPTION_CANDIDATE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao"
+)
+MANUAL_RECURRING_EXPENSE = (
+    "com.yourname.expensetracker.data.database.entity.ManualRecurringExpense"
+)
+SUBSCRIPTION_PRICE_HISTORY = (
+    "com.yourname.expensetracker.data.database.entity."
+    "SubscriptionPriceHistory"
+)
+SUBSCRIPTION_USAGE = (
+    "com.yourname.expensetracker.data.database.entity.SubscriptionUsage"
+)
+
+
+def _gr08l_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                    dao_fqcn, operation):
+    """One exact GR-08l-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08l EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08L",
+    }
+
+
+def _gr08l1_seed_rows():
+    """The twenty-two exact GR-08l1 rows (mirroring the tracked seed file).
+
+    ExpenseRepository.kt (8 findings-derived rows) +
+    MerchantNormalizationRepository.kt (8 findings-derived rows) + THREE
+    closure rows (updateExpenseMerchant -> pendingReviewDao.bulkRenameMerchant,
+    insertAlias -> dao.incrementAliasOccurrence, linkAliasToCanonical ->
+    dao.linkAliasToCanonical -- body-carrying @Transaction DAO convenience
+    methods the findings scanner never reported) + THREE residual closure
+    rows (the GR-08l post-promotion rescan: addMileage -> mileageDao.insert,
+    and the two writeLifecycleEvent -> lifecycleEventDao.insert overloads --
+    true paths in BusinessExpenseRepository.kt /
+    ManualRecurringExpenseRepository.kt / RecurringExpenseRepository.kt,
+    NOT ExpenseRepository.kt).
+    """
+    rows = []
+    rows.append(
+        _gr08l_seed_row(
+            EXPENSE_REPOSITORY_KT, EXPENSE_REPOSITORY_FQCN,
+            "updateExpenseCategoryBulk", ("String", "Long"),
+            "userCorrectionDao", USER_CORRECTION_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            EXPENSE_REPOSITORY_KT, EXPENSE_REPOSITORY_FQCN,
+            "deleteAllExpenses", (), "expenseDao", EXPENSE_DAO, "deleteAll",
+        )
+    )
+    for operation in ("deleteAll", "insertAll"):
+        rows.append(
+            _gr08l_seed_row(
+                EXPENSE_REPOSITORY_KT, EXPENSE_REPOSITORY_FQCN,
+                "restoreDebugSnapshot", (DEBUG_SNAPSHOT_TYPE,),
+                "expenseDao", EXPENSE_DAO, operation,
+            )
+        )
+    rows.append(
+        _gr08l_seed_row(
+            EXPENSE_REPOSITORY_KT, EXPENSE_REPOSITORY_FQCN,
+            "incrementBackfillAttempts", ("Long",),
+            "expenseDao", EXPENSE_DAO, "incrementBackfillAttempts",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            EXPENSE_REPOSITORY_KT, EXPENSE_REPOSITORY_FQCN,
+            "conditionallySetLocation",
+            ("Long", "Double", "Double", "String", "String?", "String?"),
+            "expenseDao", EXPENSE_DAO, "conditionallySetLocation",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            EXPENSE_REPOSITORY_KT, EXPENSE_REPOSITORY_FQCN,
+            "clearExpenseLocation", ("Long",),
+            "expenseDao", EXPENSE_DAO, "clearLocation",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            EXPENSE_REPOSITORY_KT, EXPENSE_REPOSITORY_FQCN,
+            "updateMerchantKey", ("Long", "String"),
+            "expenseDao", EXPENSE_DAO, "updateMerchantKey",
+        )
+    )
+    # Closure row: the cross-table pending-review bulk rename.
+    rows.append(
+        _gr08l_seed_row(
+            EXPENSE_REPOSITORY_KT, EXPENSE_REPOSITORY_FQCN,
+            "updateExpenseMerchant", (EXPENSE_ENTITY, "String", "Boolean"),
+            "pendingReviewDao", PENDING_REVIEW_DAO_GR08L,
+            "bulkRenameMerchant",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "insertCanonical", (MERCHANT_CANONICAL,),
+            "dao", MERCHANT_NORMALIZATION_DAO, "insertCanonical",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "updateCanonical", (MERCHANT_CANONICAL,),
+            "dao", MERCHANT_NORMALIZATION_DAO, "updateCanonical",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "updateCanonicalCategory", ("Long", "Long?"),
+            "dao", MERCHANT_NORMALIZATION_DAO, "updateCanonicalCategory",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "incrementMerchantStats", ("Long", "Double", "Long"),
+            "dao", MERCHANT_NORMALIZATION_DAO, "incrementMerchantStats",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "insertAlias", (MERCHANT_ALIAS,),
+            "dao", MERCHANT_NORMALIZATION_DAO, "insertAlias",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "insertAlias", (MERCHANT_ALIAS,),
+            "dao", MERCHANT_NORMALIZATION_DAO, "updateAlias",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "updateAlias", (MERCHANT_ALIAS,),
+            "dao", MERCHANT_NORMALIZATION_DAO, "updateAlias",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "deleteUnusedAliasesOlderThan", ("Long",),
+            "dao", MERCHANT_NORMALIZATION_DAO,
+            "deleteUnusedAliasesOlderThan",
+        )
+    )
+    # Closure rows: the E3-001 normalizedKey fallback and the atomic
+    # link-or-conflict composite.
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "insertAlias", (MERCHANT_ALIAS,),
+            "dao", MERCHANT_NORMALIZATION_DAO, "incrementAliasOccurrence",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MERCHANT_NORMALIZATION_REPOSITORY_KT,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            "linkAliasToCanonical",
+            ("String", "String", "Long", "Boolean", "Long"),
+            "dao", MERCHANT_NORMALIZATION_DAO, "linkAliasToCanonical",
+        )
+    )
+    # Residual closure rows (GR-08l post-promotion rescan): the three
+    # findings popularly labeled "ExpenseRepository" live in these three
+    # files; ExpenseRepository.kt stays at 0.
+    rows.append(
+        _gr08l_seed_row(
+            BUSINESS_EXPENSE_REPOSITORY_KT, BUSINESS_EXPENSE_REPOSITORY_FQCN,
+            "addMileage", (MILEAGE_TRACKING,),
+            "mileageDao", MILEAGE_TRACKING_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            MANUAL_RECURRING_EXPENSE_REPOSITORY_KT,
+            MANUAL_RECURRING_EXPENSE_REPOSITORY_FQCN,
+            "writeLifecycleEvent", ("Long", "String", "Long", "String?"),
+            "lifecycleEventDao", RECURRING_LIFECYCLE_EVENT_DAO_GR08L,
+            "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            RECURRING_EXPENSE_REPOSITORY_KT, RECURRING_EXPENSE_REPOSITORY_FQCN,
+            "writeLifecycleEvent",
+            ("Long", "String", "Long", "String?", "String?", "String?"),
+            "lifecycleEventDao", RECURRING_LIFECYCLE_EVENT_DAO_GR08L,
+            "insert",
+        )
+    )
+    return rows
+
+
+def _gr08l2_seed_rows():
+    """The twenty-three exact GR-08l2 rows (mirroring the tracked seed file).
+
+    SavingsGoalRepository.kt (8 rows) + TransactionLifecycleCoordinator.kt
+    (8 rows) + SubscriptionManagementRepository.kt (7 rows); ZERO closure
+    rows -- all seven touched DAOs are fully abstract interfaces.
+    """
+    rows = []
+    rows.append(
+        _gr08l_seed_row(
+            SAVINGS_GOAL_REPOSITORY_KT, SAVINGS_GOAL_REPOSITORY_FQCN,
+            "createSavingsGoal", (DOMAIN_SAVINGS_GOAL,),
+            "savingsGoalDao", SAVINGS_GOAL_DAO, "insertGoal",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SAVINGS_GOAL_REPOSITORY_KT, SAVINGS_GOAL_REPOSITORY_FQCN,
+            "deleteSavingsGoal", (DOMAIN_SAVINGS_GOAL,),
+            "savingsGoalDao", SAVINGS_GOAL_DAO, "deleteGoal",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SAVINGS_GOAL_REPOSITORY_KT, SAVINGS_GOAL_REPOSITORY_FQCN,
+            "updateSavingsGoalAmount", ("Long", "Double"),
+            "savingsGoalDao", SAVINGS_GOAL_DAO, "updateGoalAmount",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SAVINGS_GOAL_REPOSITORY_KT, SAVINGS_GOAL_REPOSITORY_FQCN,
+            "incrementSavingsGoalAmount", ("Long", "Double"),
+            "savingsGoalDao", SAVINGS_GOAL_DAO, "addToGoalAmount",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SAVINGS_GOAL_REPOSITORY_KT, SAVINGS_GOAL_REPOSITORY_FQCN,
+            "addGoal", (ENTITY_SAVINGS_GOAL,),
+            "savingsGoalDao", SAVINGS_GOAL_DAO, "insertGoal",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SAVINGS_GOAL_REPOSITORY_KT, SAVINGS_GOAL_REPOSITORY_FQCN,
+            "deleteGoal", (ENTITY_SAVINGS_GOAL,),
+            "savingsGoalDao", SAVINGS_GOAL_DAO, "deleteGoal",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SAVINGS_GOAL_REPOSITORY_KT, SAVINGS_GOAL_REPOSITORY_FQCN,
+            "updateGoalAmount", ("Long", "Double"),
+            "savingsGoalDao", SAVINGS_GOAL_DAO, "updateGoalAmount",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SAVINGS_GOAL_REPOSITORY_KT, SAVINGS_GOAL_REPOSITORY_FQCN,
+            "addToGoalAmount", ("Long", "Double"),
+            "savingsGoalDao", SAVINGS_GOAL_DAO, "addToGoalAmount",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            "bulkUpdateCategory",
+            ("String", "Long", "String", "String?", "String?"),
+            "expenseDao", EXPENSE_DAO, "updateCategoryForMerchant",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            "bulkUpdateCategory",
+            ("String", "Long", "String", "String?", "String?"),
+            "transactionEventDao", TRANSACTION_EVENT_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            "bulkUpdateCategory", ("Long", "Long", "String"),
+            "expenseDao", EXPENSE_DAO, "updateCategoryForCategory",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            "bulkUpdateCategory", ("Long", "Long", "String"),
+            "transactionEventDao", TRANSACTION_EVENT_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            "deleteExpense",
+            ("Long", "String", "String?", "String?", "String?"),
+            "transactionEventDao", TRANSACTION_EVENT_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            "deleteExpense",
+            ("Long", "String", "String?", "String?", "String?"),
+            "expenseDao", EXPENSE_DAO, "delete",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            "deleteExpense",
+            (EXPENSE_ENTITY, "String", "String?", "String?", "String?"),
+            "transactionEventDao", TRANSACTION_EVENT_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            "deleteExpense",
+            (EXPENSE_ENTITY, "String", "String?", "String?", "String?"),
+            "expenseDao", EXPENSE_DAO, "delete",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN,
+            "insertUsage", (SUBSCRIPTION_USAGE,),
+            "usageDao", SUBSCRIPTION_USAGE_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN,
+            "updateSubscription", (MANUAL_RECURRING_EXPENSE,),
+            "subscriptionDao", MANUAL_RECURRING_EXPENSE_DAO, "update",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN,
+            "deleteSubscriptionById", ("Long",),
+            "subscriptionDao", MANUAL_RECURRING_EXPENSE_DAO, "deleteById",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN,
+            "insertSubscription", (MANUAL_RECURRING_EXPENSE,),
+            "subscriptionDao", MANUAL_RECURRING_EXPENSE_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN,
+            "insertPriceHistory", (SUBSCRIPTION_PRICE_HISTORY,),
+            "priceHistoryDao", SUBSCRIPTION_PRICE_HISTORY_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN,
+            "markCandidateAsConverted", ("Long", "Long", "Long"),
+            "candidateDao", SUBSCRIPTION_CANDIDATE_DAO, "markAsConverted",
+        )
+    )
+    rows.append(
+        _gr08l_seed_row(
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN,
+            "markCandidateAsRejected", ("Long", "Long"),
+            "candidateDao", SUBSCRIPTION_CANDIDATE_DAO, "markAsRejected",
+        )
+    )
+    return rows
+
+
+def test_real_tracked_gr08l1_seed_file_loads_with_exactly_twenty_two_rows():
+    entries = _load_seed_entries(GR08L1_SEED_FILE)
+    assert len(entries) == 22
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["updateExpenseCategoryBulk", "deleteAllExpenses"]
+        + ["restoreDebugSnapshot"] * 2
+        + ["incrementBackfillAttempts", "conditionallySetLocation",
+           "clearExpenseLocation", "updateMerchantKey",
+           "updateExpenseMerchant"]
+        + ["insertCanonical", "updateCanonical", "updateCanonicalCategory",
+           "incrementMerchantStats"]
+        + ["insertAlias"] * 3
+        + ["updateAlias", "deleteUnusedAliasesOlderThan",
+           "linkAliasToCanonical"]
+        + ["addMileage"]
+        + ["writeLifecycleEvent"] * 2
+    )
+    for entry in entries:
+        assert entry.path in (EXPENSE_REPOSITORY_KT,
+                              MERCHANT_NORMALIZATION_REPOSITORY_KT,
+                              BUSINESS_EXPENSE_REPOSITORY_KT,
+                              MANUAL_RECURRING_EXPENSE_REPOSITORY_KT,
+                              RECURRING_EXPENSE_REPOSITORY_KT)
+        assert entry.owner_fqcn in (
+            EXPENSE_REPOSITORY_FQCN,
+            MERCHANT_NORMALIZATION_REPOSITORY_FQCN,
+            BUSINESS_EXPENSE_REPOSITORY_FQCN,
+            MANUAL_RECURRING_EXPENSE_REPOSITORY_FQCN,
+            RECURRING_EXPENSE_REPOSITORY_FQCN,
+        )
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08L"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # The six closure rows: the three GR-08b/GR-08d blind-spot rows plus the
+    # three GR-08l post-promotion residual rows (the two writeLifecycleEvent
+    # overloads share the (method, accessor, operation) triple but are
+    # distinct callables on distinct paths with distinct parameter lists).
+    closure = sorted(
+        (entry.method, entry.dao_accessor, entry.operation)
+        for entry in entries
+        if "CLOSURE" in entry.reason
+    )
+    assert closure == [
+        ("addMileage", "mileageDao", "insert"),
+        ("insertAlias", "dao", "incrementAliasOccurrence"),
+        ("linkAliasToCanonical", "dao", "linkAliasToCanonical"),
+        ("updateExpenseMerchant", "pendingReviewDao", "bulkRenameMerchant"),
+        ("writeLifecycleEvent", "lifecycleEventDao", "insert"),
+        ("writeLifecycleEvent", "lifecycleEventDao", "insert"),
+    ]
+    # The residual rows spell the TRUE paths: no closure row may claim the
+    # ExpenseRepository.kt path for the residual callables (an
+    # ExpenseRepository.kt row could never match the v2 fingerprints).
+    residual_paths = sorted(
+        entry.path
+        for entry in entries
+        if entry.method in ("addMileage", "writeLifecycleEvent")
+    )
+    assert residual_paths == [
+        BUSINESS_EXPENSE_REPOSITORY_KT,
+        MANUAL_RECURRING_EXPENSE_REPOSITORY_KT,
+        RECURRING_EXPENSE_REPOSITORY_KT,
+    ]
+
+
+def test_real_tracked_gr08l2_seed_file_loads_with_exactly_twenty_three_rows():
+    entries = _load_seed_entries(GR08L2_SEED_FILE)
+    assert len(entries) == 23
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["createSavingsGoal", "deleteSavingsGoal", "updateSavingsGoalAmount",
+         "incrementSavingsGoalAmount", "addGoal", "deleteGoal",
+         "updateGoalAmount", "addToGoalAmount"]
+        + ["bulkUpdateCategory"] * 4
+        + ["deleteExpense"] * 4
+        + ["insertUsage", "updateSubscription", "deleteSubscriptionById",
+           "insertSubscription", "insertPriceHistory",
+           "markCandidateAsConverted", "markCandidateAsRejected"]
+    )
+    for entry in entries:
+        assert entry.path in (
+            SAVINGS_GOAL_REPOSITORY_KT,
+            TRANSACTION_LIFECYCLE_COORDINATOR_KT,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_KT,
+        )
+        assert entry.owner_fqcn in (
+            SAVINGS_GOAL_REPOSITORY_FQCN,
+            TRANSACTION_LIFECYCLE_COORDINATOR_FQCN,
+            SUBSCRIPTION_MANAGEMENT_REPOSITORY_FQCN,
+        )
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08L"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+
+
+def test_combined_seed_file_concatenates_all_nineteen_batch_seed_files():
+    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
+    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
+    + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1
+    + GR-08l2.
+
+    Supersedes the GR-08k-era seventeen-file concatenation test (which pinned
+    the combined document at 249 rows): the GR-08l batch extends the combined
+    generation input to 291 rows and the GR-08l1 residual closure extends it
+    to 294 rows, and the drift guard must cover ALL NINETEEN reviewed batch
+    seed files.  The combined document is what --seed-rows actually consumes;
+    if it ever drifts from the nineteen reviewed batch seed files (a dropped
+    earlier-batch row would silently re-unauthorize that batch's mutations
+    at promotion time), this fails closed.
+    """
+    combined = _load_seed_entries(COMBINED_SEED_FILE)
+    gr08a = _load_seed_entries(SEED_FILE)
+    gr08b = _load_seed_entries(GR08B_SEED_FILE)
+    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
+    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
+    gr08d = _load_seed_entries(GR08D_SEED_FILE)
+    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
+    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
+    gr08f = _load_seed_entries(GR08F_SEED_FILE)
+    gr08g = _load_seed_entries(GR08G_SEED_FILE)
+    gr08h = _load_seed_entries(GR08H_SEED_FILE)
+    gr08i1 = _load_seed_entries(GR08I1_SEED_FILE)
+    gr08i2 = _load_seed_entries(GR08I2_SEED_FILE)
+    gr08i3 = _load_seed_entries(GR08I3_SEED_FILE)
+    gr08j1 = _load_seed_entries(GR08J1_SEED_FILE)
+    gr08j2 = _load_seed_entries(GR08J2_SEED_FILE)
+    gr08k1 = _load_seed_entries(GR08K1_SEED_FILE)
+    gr08k2 = _load_seed_entries(GR08K2_SEED_FILE)
+    gr08l1 = _load_seed_entries(GR08L1_SEED_FILE)
+    gr08l2 = _load_seed_entries(GR08L2_SEED_FILE)
+    assert len(gr08a) == 5
+    assert len(gr08b) == 13
+    assert len(gr08c1) == 10
+    assert len(gr08c2) == 16
+    assert len(gr08d) == 22
+    assert len(gr08e1) == 23
+    assert len(gr08e2) == 23
+    assert len(gr08f) == 21
+    assert len(gr08g) == 7
+    assert len(gr08h) == 13
+    assert len(gr08i1) == 14
+    assert len(gr08i2) == 6
+    assert len(gr08i3) == 7
+    assert len(gr08j1) == 11
+    assert len(gr08j2) == 21
+    assert len(gr08k1) == 19
+    assert len(gr08k2) == 18
+    assert len(gr08l1) == 22
+    assert len(gr08l2) == 23
+    assert len(combined) == 294
+    combined_fields = sorted(_entry_fields(entry) for entry in combined)
+    batch_fields = sorted(
+        _entry_fields(entry)
+        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
+        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
+        + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
+        + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
+        + list(gr08k2) + list(gr08l1) + list(gr08l2)
+    )
+    assert combined_fields == batch_fields
+    keys = [entry.mutation_key().canonical_key() for entry in combined]
+    assert len(set(keys)) == len(keys)
+
+
+def _gr08l_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08l fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08l_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, select_parameters=None,
+                              **overrides):
+    """The exact GR-08l row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)`` -- optionally narrowed by ``select_parameters`` when
+    several rows share the same (method, accessor, operation) triple (the
+    GR-08l overload/alias rows); ``overrides`` perturb exactly one identity
+    field of the match query for the near-miss assertions.
+    """
+    entries = _gr08l_policy_entries(tmp_path, rows)
+    candidates = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ]
+    if select_parameters is not None:
+        candidates = [
+            entry
+            for entry in candidates
+            if tuple(entry.parameter_types) == tuple(select_parameters)
+        ]
+    target = candidates[0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08l1_exact_identity_matches(tmp_path):
+    rows = _gr08l1_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "deleteAllExpenses", "expenseDao", "deleteAll"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "insertAlias", "dao", "updateAlias"
+        )
+        is True
+    )
+
+
+def test_gr08l1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08l1_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "updateExpenseCategoryBulk", "userCorrectionDao",
+            "insert",
+            parameter_types=("String",),
+        )
+        is False
+    )
+
+
+def test_gr08l1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08l1_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "deleteAllExpenses", "expenseDao", "deleteAll",
+            owner_fqcn="com.example.OtherExpenseRepository",
+        )
+        is False
+    )
+
+
+def test_gr08l1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08l1_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "insertCanonical", "dao", "insertCanonical",
+            dao_accessor="expenseDao",
+            dao_fqcn=EXPENSE_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08l1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08l1_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "clearExpenseLocation", "expenseDao",
+            "clearLocation",
+            operation="conditionallySetLocation",
+        )
+        is False
+    )
+
+
+def test_gr08l1_multi_operation_rows_near_misses_stay_unauthorized(tmp_path):
+    """The two-operations-per-callable rows are exact per operation.
+
+    restoreDebugSnapshot carries BOTH deleteAll and insertAll on ExpenseDao
+    and insertAlias carries BOTH insertAlias and updateAlias on
+    MerchantNormalizationDao; each row authorizes EXACTLY its own
+    (callable, operation) pair, so a swapped operation or the closure-row
+    convenience spellings behind the same callable stay unauthorized.
+    """
+    rows = _gr08l1_seed_rows()
+    # restoreDebugSnapshot: the insertAll row never matches the deleteAll
+    # identity (and vice versa).
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "restoreDebugSnapshot", "expenseDao",
+            "deleteAll",
+            operation="insertAll",
+        )
+        is False
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "restoreDebugSnapshot", "expenseDao",
+            "insertAll",
+            operation="deleteAll",
+        )
+        is False
+    )
+    # insertAlias: the updateAlias row never matches the insertAlias
+    # operation identity.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "insertAlias", "dao", "insertAlias",
+            operation="updateAlias",
+        )
+        is False
+    )
+    # insertAlias: the closure-row convenience spellings behind the same
+    # callable stay unauthorized for the findings-derived identities.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "insertAlias", "dao", "insertAlias",
+            operation="incrementAliasOccurrence",
+        )
+        is False
+    )
+    # The closure row itself matches its own convenience identity.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "insertAlias", "dao",
+            "incrementAliasOccurrence",
+        )
+        is True
+    )
+    # The pendingReviewDao closure row never matches the findings-derived
+    # updateExpenseMerchant identity (no such l1 row exists for the
+    # PendingReviewDao accessor under a different operation).
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "updateExpenseMerchant", "pendingReviewDao",
+            "bulkRenameMerchant",
+            operation="bulkRenameMerchantByKey",
+        )
+        is False
+    )
+
+
+def test_gr08l1_residual_closure_rows_exact_and_near_misses(tmp_path):
+    """The three residual closure rows are exact per callable identity.
+
+    The GR-08l post-promotion rescan left THREE residual findings popularly
+    labeled "ExpenseRepository" -- in fact BusinessExpenseRepository.kt
+    (addMileage/mileageDao/insert), ManualRecurringExpenseRepository.kt
+    (writeLifecycleEvent/lifecycleEventDao/insert, 4-param overload) and
+    RecurringExpenseRepository.kt (writeLifecycleEvent/lifecycleEventDao/
+    insert, 6-param overload); ExpenseRepository.kt carries none of these
+    callables and stays at 0.  Each row authorizes EXACTLY its own (path,
+    callable, DAO, operation) identity: the misattributed
+    ExpenseRepository.kt path, a wrong overload, wrong owner, wrong DAO,
+    and wrong operation all stay unauthorized.
+    """
+    rows = _gr08l1_seed_rows()
+    manual_params = ("Long", "String", "Long", "String?")
+    recurring_params = (
+        "Long", "String", "Long", "String?", "String?", "String?",
+    )
+    # addMileage: exact match...
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "addMileage", "mileageDao", "insert"
+        )
+        is True
+    )
+    # ...and the misattributed ExpenseRepository.kt path stays unauthorized.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "addMileage", "mileageDao", "insert",
+            path=EXPENSE_REPOSITORY_KT,
+        )
+        is False
+    )
+    # addMileage: wrong DAO and wrong operation stay unauthorized.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "addMileage", "mileageDao", "insert",
+            dao_accessor="expenseDao",
+            dao_fqcn=EXPENSE_DAO,
+        )
+        is False
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "addMileage", "mileageDao", "insert",
+            operation="update",
+        )
+        is False
+    )
+    # writeLifecycleEvent (Manual 4-param overload): exact match...
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "writeLifecycleEvent", "lifecycleEventDao",
+            "insert",
+            select_parameters=manual_params,
+        )
+        is True
+    )
+    # ...the Recurring 6-param overload identity never matches it...
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "writeLifecycleEvent", "lifecycleEventDao",
+            "insert",
+            select_parameters=manual_params,
+            parameter_types=recurring_params,
+        )
+        is False
+    )
+    # ...and the misattributed ExpenseRepository.kt path stays unauthorized.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "writeLifecycleEvent", "lifecycleEventDao",
+            "insert",
+            select_parameters=manual_params,
+            path=EXPENSE_REPOSITORY_KT,
+        )
+        is False
+    )
+    # writeLifecycleEvent (Recurring 6-param overload): exact match, and the
+    # Manual 4-param identity never matches it.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "writeLifecycleEvent", "lifecycleEventDao",
+            "insert",
+            select_parameters=recurring_params,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "writeLifecycleEvent", "lifecycleEventDao",
+            "insert",
+            select_parameters=recurring_params,
+            parameter_types=manual_params,
+        )
+        is False
+    )
+    # writeLifecycleEvent: wrong owner stays unauthorized.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "writeLifecycleEvent", "lifecycleEventDao",
+            "insert",
+            select_parameters=recurring_params,
+            owner_fqcn="com.example.OtherRecurringRepository",
+        )
+        is False
+    )
+
+
+def test_gr08l2_exact_identity_matches(tmp_path):
+    rows = _gr08l2_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "deleteExpense", "expenseDao", "delete"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "markCandidateAsRejected", "candidateDao",
+            "markAsRejected"
+        )
+        is True
+    )
+
+
+def test_gr08l2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08l2_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "deleteExpense", "expenseDao", "delete",
+            parameter_types=("Long",),
+        )
+        is False
+    )
+
+
+def test_gr08l2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08l2_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "bulkUpdateCategory", "expenseDao",
+            "updateCategoryForMerchant",
+            owner_fqcn="com.example.OtherTransactionCoordinator",
+        )
+        is False
+    )
+
+
+def test_gr08l2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08l2_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "insertSubscription", "subscriptionDao",
+            "insert",
+            dao_accessor="usageDao",
+            dao_fqcn=SUBSCRIPTION_USAGE_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08l2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08l2_seed_rows()
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "markCandidateAsConverted", "candidateDao",
+            "markAsConverted",
+            operation="markAsRejected",
+        )
+        is False
+    )
+
+
+def test_gr08l2_overload_and_alias_rows_near_misses_stay_unauthorized(tmp_path):
+    """The overload/alias rows are exact per callable identity.
+
+    The two bulkUpdateCategory overloads and two deleteExpense overloads
+    carry the same DAO operations across different callable identities, and
+    the four deprecated SavingsGoal aliases duplicate the domain-typed
+    operations behind different callables; each row authorizes EXACTLY its
+    own callable identity, so a swapped overload or alias stays
+    unauthorized.
+    """
+    rows = _gr08l2_seed_rows()
+    by_id_params = ("Long", "String", "String?", "String?", "String?")
+    by_entity_params = (
+        EXPENSE_ENTITY, "String", "String?", "String?", "String?",
+    )
+    # deleteExpense by-id row: exact match, and the by-entity observed
+    # identity never matches it.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "deleteExpense", "expenseDao", "delete",
+            select_parameters=by_id_params,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "deleteExpense", "expenseDao", "delete",
+            select_parameters=by_id_params,
+            parameter_types=by_entity_params,
+        )
+        is False
+    )
+    # deleteExpense by-entity row: exact match, and the by-id observed
+    # identity never matches it.
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "deleteExpense", "expenseDao", "delete",
+            select_parameters=by_entity_params,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "deleteExpense", "expenseDao", "delete",
+            select_parameters=by_entity_params,
+            parameter_types=by_id_params,
+        )
+        is False
+    )
+    # bulkUpdateCategory: the merchant overload's event-insert row and the
+    # category overload's event-insert row are distinct callable
+    # identities; neither matches the other's observed identity.
+    merchant_params = ("String", "Long", "String", "String?", "String?")
+    category_params = ("Long", "Long", "String")
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "bulkUpdateCategory", "transactionEventDao",
+            "insert",
+            select_parameters=merchant_params,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "bulkUpdateCategory", "transactionEventDao",
+            "insert",
+            select_parameters=merchant_params,
+            parameter_types=category_params,
+        )
+        is False
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "bulkUpdateCategory", "transactionEventDao",
+            "insert",
+            select_parameters=category_params,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "bulkUpdateCategory", "transactionEventDao",
+            "insert",
+            select_parameters=category_params,
+            parameter_types=merchant_params,
+        )
+        is False
+    )
+    # SavingsGoal aliases: the deprecated addGoal row never matches the
+    # domain-typed createSavingsGoal identity (same DAO operation, different
+    # callable + parameter type).
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "createSavingsGoal", "savingsGoalDao",
+            "insertGoal",
+            parameter_types=(ENTITY_SAVINGS_GOAL,),
+        )
+        is False
+    )
+    assert (
+        _assert_gr08l_exact_match(
+            tmp_path, rows, "addGoal", "savingsGoalDao", "insertGoal",
+            parameter_types=(DOMAIN_SAVINGS_GOAL,),
         )
         is False
     )

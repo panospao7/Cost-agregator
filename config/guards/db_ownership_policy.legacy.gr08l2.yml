@@ -446,25 +446,6 @@ entries:
     \ scope"
   owner: '@panospao7'
   linkedIssue: MIT-003
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/BusinessExpenseRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.BusinessExpenseRepository
-  kind: function
-  method: addMileage
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.MileageTracking
-  daoAccessor: mileageDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.MileageTrackingDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt
-    finding -- suffix-substring grouping artifact) -- the mileage feature''s repository
-    write path; BusinessExpenseRepository is the SOLE writer of MileageTrackingDao
-    per docs/architecture/dao-map.md, writeBarrier.checkWritesAllowed at the entrypoint
-    plus validateMileageForInsert range validation; auxiliary mileage log insert,
-    no lifecycle event by design'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
   kind: function
@@ -652,29 +633,6 @@ entries:
   reason: 'GR-08l1 EXACT_POLICY: MerchantKeyBackfillWorker merchantKey column backfill
     behind the write barrier; no lifecycle event by design per the EXPENSE_DAO_MUTATION_ALLOWLIST
     comment'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/ManualRecurringExpenseRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
-  kind: function
-  method: writeLifecycleEvent
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - Long
-  - String?
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt
-    finding) -- private best-effort diagnostic lifecycle-event helper (exception-swallowing
-    non-critical channel) with NO in-class callers; every live rule mutation routes
-    through RecurringRuleLifecycleCoordinator, the legal lifecycle authority per docs/architecture/dao-map.md
-    and LEGAL_PATHS.md Recurring Rule Mutations; authorized as the exact static site
-    AS WRITTEN -- any future revival must route through RecurringLifecycleEventWriter
-    per LEGAL_PATHS.md Lifecycle Events'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
@@ -1756,32 +1714,6 @@ entries:
     cap enforcement path'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecurringExpenseRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.RecurringExpenseRepository
-  kind: function
-  method: writeLifecycleEvent
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - Long
-  - String?
-  - String?
-  - String?
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt
-    finding) -- private best-effort diagnostic lifecycle-event helper (exception-swallowing
-    non-critical channel) with writeBarrier.checkWritesAllowed at the helper entrypoint
-    and NO in-class callers; every live rule mutation routes through RecurringRuleLifecycleCoordinator,
-    the legal lifecycle authority per docs/architecture/dao-map.md and LEGAL_PATHS.md
-    Recurring Rule Mutations; authorized as the exact static site AS WRITTEN -- any
-    future revival must route through RecurringLifecycleEventWriter per LEGAL_PATHS.md
-    Lifecycle Events'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
   kind: function
