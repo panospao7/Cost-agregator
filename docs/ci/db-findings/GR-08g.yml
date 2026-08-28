@@ -1,0 +1,494 @@
+# GR-08 batch 7 (GR-08g) tracked batch manifest -- DB_UNAUTHORIZED_MUTATION
+# exact-policy authorization for BankStatementLifecycleProcessor.kt.
+#
+# Batch scope (plan): BankStatementLifecycleProcessor.kt, 20 findings.
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08g/before.json == trusted GR-08f after.json,
+# 324 findings / 20 advisory diagnostics; reference copy SHA-256 recorded
+# below): this file carries exactly 20 DB_UNAUTHORIZED_MUTATION findings
+# collapsing to 7 UNIQUE fingerprints (dedup key: callable identity +
+# daoAccessor + daoFqcn + operation; all 20 sites live in the single
+# mutating callable processBankStatement(android.net.Uri) -- the per-site
+# findings repeat 7 distinct tuples: bankStatementImportItemDao.insert x8,
+# bankStatementImportRunDao.finalize x6, bankStatementImportRunDao.attachReceipt
+# x2, and one site each for bankStatementImportRunDao.insert,
+# bankStatementImportRunDao.updatePdfPartial, pendingReviewDao.insert,
+# scannedReceiptDao.update).  Unique count 7 <= the 25-fingerprint batch
+# cap, so NO split was required.
+# All 20 file findings are DB_UNAUTHORIZED_MUTATION with disposition
+# EXACT_POLICY: this is the receipt lifecycle layer -- the AUTHORITATIVE
+# writer for bank statement imports per docs/architecture/LEGAL_PATHS.md
+# ("Bank Statement Mutations": PROCESS bank statement routes through
+# BankStatementLifecycleProcessor.processBankStatement(uri); "Full lifecycle:
+# import is NOT a separate step -- everything happens in
+# processBankStatement()"; FORBIDDEN: BankStatementImportItemDao.insert /
+# BankStatementImportRunDao.insertRun outside the processor) and the receipt
+# lifecycle services own receipt mutations per LEGAL_PATHS.md ("Receipt
+# Mutations": no receipt mutation without a ReceiptEvent -- every mutation
+# here is paired with a ReceiptLifecycleEventWriter.write inside the same
+# transactionRunner.runInTransaction block).  The processor's own KDoc
+# documents the full lifecycle (pre-OCR hash dedup -> OCR -> parse -> run
+# ledger -> receipt + events -> per-transaction PendingReview -> finalize).
+#
+# Chain-form census: ZERO database-chained `database.xxxDao()` call sites
+# in this file (probe: build/guard-debug/gr08g/probe-gr08g-tuples.json,
+# chainFormSites=[]; every finding reports identity.call_form=receiver with
+# a plain constructor-property accessor; the injected
+# `database: AppDatabase` constructor property is never dereferenced in the
+# file body).  NO GR-08e accessor-normalization source change is needed for
+# this batch; every seed row spells the constructor-property accessor
+# exactly as the scanner reports it.
+#
+# Closure additions (GR-08g blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in the ONLY mutating-callable body (processBankStatement;
+# the private sanitizeMerchant helper performs no DAO calls) was enumerated,
+# not just the findings: 20 findings == 20 abstract-method mutating call
+# sites.  BankStatementImportRunDao, BankStatementImportItemDao and
+# ScannedReceiptDao are fully abstract interfaces with NO body-carrying
+# @Transaction convenience methods at all.  The two body-carrying
+# @Transaction convenience methods REACHED from this file --
+# ExpenseDao.findDuplicateIdCurrencyAware and
+# PendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware -- are
+# strictly read-only composites (each only chains @Query SELECT candidate
+# lookups and returns a result; neither performs any mutation), so they
+# carry no closure obligation.  PendingReviewDao's MUTATING convenience
+# methods (upsertByRawNotificationId, bulkUpdateCategoryByMerchant,
+# bulkRenameMerchant -- the GR-08b/GR-08d closure rows) are NOT called from
+# this file (only abstract PendingReviewDao.insert is).  The remaining
+# read-only DAO calls (scannedReceiptDao.getById,
+# expenseDao.existsByMerchantKeyInRangeCurrencyAware,
+# expenseDao.existsByMerchantInRangeCurrencyAware,
+# bankStatementImportItemDao.countByRunAndStatus) perform no mutations.
+# The receiptRecordWriter.insertOrResolve (typed ReceiptRecordWriter,
+# P3-D4B-03) / receiptLifecycleEventWriter.write / transactionRunner
+# .runInTransaction calls are typed-writer / event-writer /
+# transaction-runner delegation whose own writes live in their own
+# already-scoped files, not DAO accessors, and carry no closure obligation
+# here.  Constructor-property DAO aliases (GR-08a pattern): all five DAO
+# accessors (scannedReceiptDao, pendingReviewDao, expenseDao,
+# bankStatementImportRunDao, bankStatementImportItemDao) are direct @Inject
+# constructor properties resolved natively by the evidence verifier; there
+# are NO alias indirections.
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g rows verbatim); passing
+# only GR-08g-seed.yml would drop the earlier batches' rows from the
+# rendered candidate.
+schemaVersion: 1
+batchId: GR-08g
+startSha: 67788fe8
+startReport:
+  path: build/guard-debug/gr08g/before.json
+  # SHA-256 of the reference copy (trusted GR-08f after report;
+  # 324 findings / 20 advisory).
+  sha256: 3767bf10d3be1aec6855c96fd564a81f22de62cb2292ef5b6df6ef4191f45fba
+  trusted: true
+  findingCount: 324
+activePolicySha256: c9b83209bda5ccc664469e71610ba004e022ca6f7468daf319190fddfb4dc595
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08G
+counts:
+  fileFindings: 20
+  batchCallablesFindings: 20
+  uniqueFingerprints: 7
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=attachReceipt|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=finalize|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=updatePdfPartial|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+findings:
+# ── bankStatementImportItemDao.insert (8 sites) ──────────────────────────────
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  locations: [398]
+  disposition: EXACT_POLICY
+  rationale: "Per-item ledger row for a pre-mutation validation skip (INVALID_AMOUNT): the parsed transaction is rejected before any review creation and the skip is durably audited."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  locations: [421]
+  disposition: EXACT_POLICY
+  rationale: "Per-item ledger row for a pre-mutation validation skip (NON_POSITIVE_AMOUNT)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  locations: [444]
+  disposition: EXACT_POLICY
+  rationale: "Per-item ledger row for a pre-mutation validation skip (MISSING_CURRENCY; currency stored as NULL)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  locations: [469]
+  disposition: EXACT_POLICY
+  rationale: "Per-item ledger row for a pre-mutation validation skip (UNREASONABLE_DATE: > 1 day in the future or < year 2000)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  locations: [566]
+  disposition: EXACT_POLICY
+  rationale: "Duplicate-expense ledger row (STATUS_DUPLICATE_EXPENSE with the existing expense id) inside the bank_statement.skip_duplicate transaction (P3-BLOCKER-H2), for PR15 ledger auditing."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  locations: [602]
+  disposition: EXACT_POLICY
+  rationale: "Duplicate-pending-review ledger row (STATUS_DUPLICATE_PENDING_REVIEW with the existing review id) inside the bank_statement.skip_duplicate_review transaction (P3-BLOCKER-H2)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  locations: [649]
+  disposition: EXACT_POLICY
+  rationale: "Created-review ledger row (STATUS_CREATED_REVIEW) inside the bank_statement.create_review transaction, atomic with the PendingReview insert and the REVIEW_CREATED lifecycle event (P3-REG-005) so neither can exist without the other."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=bankStatementImportItemDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  locations: [698]
+  disposition: EXACT_POLICY
+  rationale: "Failure ledger row (STATUS_FAILED) on the per-item error-recovery path: carries a controlled failure code + exception class name only (PR15 structured failure codes -- no raw exception messages persisted); CancellationException is rethrown, never recorded here."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# ── bankStatementImportRunDao.attachReceipt (2 sites) ────────────────────────
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=attachReceipt|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: attachReceipt
+  locations: [325]
+  disposition: EXACT_POLICY
+  rationale: "Attaches the newly inserted statement receipt id to the run ledger inside the MIT-041 save-receipt transaction (ReceiptRecordWriteResult.Inserted branch)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=attachReceipt|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: attachReceipt
+  locations: [328]
+  disposition: EXACT_POLICY
+  rationale: "Attaches the EXISTING duplicate receipt id to the run ledger inside the MIT-041 transaction (ReceiptRecordWriteResult.Duplicate branch) so a duplicate statement still resolves its run before the early return."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# ── bankStatementImportRunDao.finalize (6 sites) ─────────────────────────────
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=finalize|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: finalize
+  locations: [329]
+  disposition: EXACT_POLICY
+  rationale: "Finalizes the run as STATUS_COMPLETED_WITH_SKIPS on the duplicate-receipt early-return path, inside the MIT-041 transaction before the early return."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=finalize|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: finalize
+  locations: [749]
+  disposition: EXACT_POLICY
+  rationale: "Success finalize (STATUS_COMPLETED / STATUS_COMPLETED_WITH_SKIPS from actual DAO counts, P3-P1-10 / P3-REG-008) inside the bank_statement.finalize_success transaction, atomic with the receipt status update and the PROCESSING_COMPLETE event."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=finalize|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: finalize
+  locations: [792]
+  disposition: EXACT_POLICY
+  rationale: "Failure finalize (STATUS_FAILED) inside the bank_statement.finalize_failure transaction, atomic with the PROCESSING_FAILED lifecycle event."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=finalize|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: finalize
+  locations: [846]
+  disposition: EXACT_POLICY
+  rationale: "Cancellation cleanup: finalizes the run as STATUS_CANCELLED (errorSummary WORKER_CANCELLED) under NonCancellable + withTimeout(2000) so cancellation is never swallowed -- cleanup errors are added as suppressed exceptions, then the cancellation is rethrown."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=finalize|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: finalize
+  locations: [881]
+  disposition: EXACT_POLICY
+  rationale: "Unexpected-failure finalize (STATUS_FAILED, errorSummary WORKER_UNHANDLED_EXCEPTION) inside the bank_statement.finalize_unexpected_failure transaction when a receipt was already created, atomic with the PROCESSING_FAILED event."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=finalize|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: finalize
+  locations: [917]
+  disposition: EXACT_POLICY
+  rationale: "Unexpected-failure ledger-only finalize (STATUS_FAILED, errorSummary WORKER_UNHANDLED_EXCEPTION) when no receipt was created, so the run row never stays RUNNING."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# ── bankStatementImportRunDao.insert (1 site) ────────────────────────────────
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: insert
+  locations: [201]
+  disposition: EXACT_POLICY
+  rationale: "Creates the durable import run ledger row (STATUS_RUNNING, correlationId, sourceFingerprint) after the post-OCR/parse write-barrier re-check (P3-REG-010); the run id anchors every per-item ledger row and finalize path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# ── bankStatementImportRunDao.updatePdfPartial (1 site) ──────────────────────
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao|identity.accessor=bankStatementImportRunDao|identity.operation=updatePdfPartial|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: updatePdfPartial
+  locations: [378]
+  disposition: EXACT_POLICY
+  rationale: "Records PDF_PARTIAL truncation facts (pagesProcessed/totalPages) on the run row for a self-contained ledger (P3-03EA-05), inside the MIT-041 transaction next to the PDF_PARTIAL lifecycle event."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# ── pendingReviewDao.insert (1 site) ─────────────────────────────────────────
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: insert
+  locations: [647]
+  disposition: EXACT_POLICY
+  rationale: "Creates the PendingReview for a non-duplicate parsed transaction inside the bank_statement.create_review transaction, atomic with its per-item ledger row and REVIEW_CREATED lifecycle event (P3-REG-005); LEGAL_PATHS.md Bank Statement Mutations names PendingReviewDao.insert for human review on this exact path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# ── scannedReceiptDao.update (1 site) ────────────────────────────────────────
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FBankStatementLifecycleProcessor.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|symbol.name=processBankStatement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+    method: processBankStatement
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    kind: function
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  locations: [764]
+  disposition: EXACT_POLICY
+  rationale: "Transitions the statement receipt processingStatus to REVIEW_CREATED inside the bank_statement.finalize_success transaction, atomic with the run finalize and the PROCESSING_COMPLETE lifecycle event so the ledger never disagrees with the receipt state (P3-P1-10 / P3-REG-008); receipt mutations stay inside the receipt lifecycle services per LEGAL_PATHS.md."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for this file: after the GR-08g promotion BankStatementLifecycleProcessor.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (20/20 authorized).  Out-of-batch stability: the rescan delta expectation is 324 -> 304 (20 = this batch); the remaining 304 include the still-unauthorized files deferred to future batches, which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

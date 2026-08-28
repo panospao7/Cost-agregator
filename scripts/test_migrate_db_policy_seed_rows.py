@@ -117,6 +117,39 @@ docs/architecture/LEGAL_PATHS.md):
 * NEAR-MISS protection over the GR-08f rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08g (MIT-DB-08G) extends the same contract to the
+BankStatementLifecycleProcessor.kt receipt-lifecycle callables -- the
+AUTHORITATIVE writer layer for bank statement imports (receipt mutations go
+through the receipt lifecycle services per docs/architecture/LEGAL_PATHS.md,
+"Bank Statement Mutations": everything happens in
+processBankStatement(); BankStatementImportItemDao.insert /
+BankStatementImportRunDao.insertRun outside the processor are FORBIDDEN):
+
+* ``GR-08g-seed.yml`` -- 7 rows: the 20 findings collapse to 7 UNIQUE
+  fingerprints (all sites live in the single mutating callable
+  processBankStatement(android.net.Uri): bankStatementImportItemDao.insert
+  x8, bankStatementImportRunDao.finalize x6,
+  bankStatementImportRunDao.attachReceipt x2, and one site each for
+  bankStatementImportRunDao.insert, bankStatementImportRunDao.updatePdfPartial,
+  pendingReviewDao.insert, scannedReceiptDao.update), within the
+  25-fingerprint batch cap so NO split was required; ZERO closure rows --
+  the blind-spot sweep found every mutating DAO call in the file is an
+  abstract Room-annotated method already covered by a finding
+  (BankStatementImportRunDao, BankStatementImportItemDao and
+  ScannedReceiptDao are fully abstract interfaces; the two body-carrying
+  @Transaction convenience methods REACHED from the file --
+  ExpenseDao.findDuplicateIdCurrencyAware and
+  PendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware -- are
+  strictly read-only composites, and PendingReviewDao's MUTATING
+  convenience methods are not called from this file);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the NINE reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 = 140 rows) -- a dropped
+  earlier-batch row fails closed here instead of silently re-unauthorizing
+  that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08g rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -1413,15 +1446,15 @@ def test_combined_seed_file_concatenates_all_five_batch_seed_files():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_eight_batch_seed_files():
+def test_combined_seed_file_concatenates_all_nine_batch_seed_files():
     """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
-    + GR-08d + GR-08e1 + GR-08e2 + GR-08f.
+    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g.
 
-    Supersedes the GR-08e-era seven-file concatenation test (which pinned
-    the combined document at 112 rows): the GR-08f batch extends the
-    combined generation input to 133 rows, and the drift guard must cover
-    ALL EIGHT reviewed batch seed files.  The combined document is what
-    --seed-rows actually consumes; if it ever drifts from the eight
+    Supersedes the GR-08f-era eight-file concatenation test (which pinned
+    the combined document at 133 rows): the GR-08g batch extends the
+    combined generation input to 140 rows, and the drift guard must cover
+    ALL NINE reviewed batch seed files.  The combined document is what
+    --seed-rows actually consumes; if it ever drifts from the nine
     reviewed batch seed files (a dropped earlier-batch row would silently
     re-unauthorize that batch's mutations at promotion time), this fails
     closed.
@@ -1435,6 +1468,7 @@ def test_combined_seed_file_concatenates_all_eight_batch_seed_files():
     gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
     gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
     gr08f = _load_seed_entries(GR08F_SEED_FILE)
+    gr08g = _load_seed_entries(GR08G_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
@@ -1443,12 +1477,14 @@ def test_combined_seed_file_concatenates_all_eight_batch_seed_files():
     assert len(gr08e1) == 23
     assert len(gr08e2) == 23
     assert len(gr08f) == 21
-    assert len(combined) == 133
+    assert len(gr08g) == 7
+    assert len(combined) == 140
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
         for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
         + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
+        + list(gr08g)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -3226,6 +3262,334 @@ def test_gr08f_provenance_rows_near_misses_stay_unauthorized(tmp_path):
         _assert_gr08f_exact_match(
             tmp_path, rows,
             **dict(base_kwargs, parameter_types=("Long", "Long"))
+        )
+        is False
+    )
+
+
+# ── (12) GR-08g rows: tracked seed file + concatenation + NEAR-MISS ───────────
+#
+# GR-08g authorizes the BankStatementLifecycleProcessor.kt receipt-lifecycle
+# callable (20 findings / 7 unique fingerprints, within the 25-fingerprint
+# batch cap so NO split was required).  The migration CLI accepts a SINGLE
+# --seed-rows value, so every generation run consumes the COMBINED document
+# GR-08-seeds.yml; these tests pin that the combined document stays the
+# exact concatenation of the NINE reviewed batch seed files, and that the
+# GR-08g rows authorize EXACTLY their callable identity + DAO + operation
+# (wrong overload, wrong owner, wrong DAO, and wrong operation stay
+# unauthorized).
+
+GR08G_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08g-seed.yml"
+
+BANK_STATEMENT_PROCESSOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/receipt/"
+    "lifecycle/BankStatementLifecycleProcessor.kt"
+)
+BANK_STATEMENT_PROCESSOR_FQCN = (
+    "com.yourname.expensetracker.domain.receipt.lifecycle."
+    "BankStatementLifecycleProcessor"
+)
+BANK_STATEMENT_IMPORT_RUN_DAO = (
+    "com.yourname.expensetracker.data.database.dao."
+    "BankStatementImportRunDao"
+)
+BANK_STATEMENT_IMPORT_ITEM_DAO = (
+    "com.yourname.expensetracker.data.database.dao."
+    "BankStatementImportItemDao"
+)
+SCANNED_RECEIPT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.ScannedReceiptDao"
+)
+STATEMENT_URI_PARAMS = ("android.net.Uri",)
+
+
+def _gr08g_seed_row(dao_accessor, dao_fqcn, operation):
+    """One exact GR-08g-shaped v2 seed row mapping."""
+    return {
+        "path": BANK_STATEMENT_PROCESSOR_KT,
+        "ownerFqcn": BANK_STATEMENT_PROCESSOR_FQCN,
+        "kind": "function",
+        "method": "processBankStatement",
+        "receiver": None,
+        "parameterTypes": list(STATEMENT_URI_PARAMS),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08g EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08G",
+    }
+
+
+def _gr08g_seed_rows():
+    """The seven exact GR-08g rows (mirroring the tracked seed file).
+
+    ZERO closure rows: the blind-spot sweep found every mutating DAO call
+    in the file is an abstract Room-annotated method already covered by a
+    finding (BankStatementImportRunDao, BankStatementImportItemDao and
+    ScannedReceiptDao are fully abstract interfaces; the two body-carrying
+    @Transaction convenience methods REACHED from the file --
+    ExpenseDao.findDuplicateIdCurrencyAware and
+    PendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware -- are
+    strictly read-only composites, and PendingReviewDao's MUTATING
+    convenience methods are not called from this file).
+    """
+    return [
+        _gr08g_seed_row(
+            "bankStatementImportRunDao", BANK_STATEMENT_IMPORT_RUN_DAO,
+            "insert",
+        ),
+        _gr08g_seed_row(
+            "bankStatementImportRunDao", BANK_STATEMENT_IMPORT_RUN_DAO,
+            "attachReceipt",
+        ),
+        _gr08g_seed_row(
+            "bankStatementImportRunDao", BANK_STATEMENT_IMPORT_RUN_DAO,
+            "finalize",
+        ),
+        _gr08g_seed_row(
+            "bankStatementImportRunDao", BANK_STATEMENT_IMPORT_RUN_DAO,
+            "updatePdfPartial",
+        ),
+        _gr08g_seed_row(
+            "bankStatementImportItemDao", BANK_STATEMENT_IMPORT_ITEM_DAO,
+            "insert",
+        ),
+        _gr08g_seed_row(
+            "pendingReviewDao", PENDING_REVIEW_DAO_GR08D, "insert",
+        ),
+        _gr08g_seed_row(
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO, "update",
+        ),
+    ]
+
+
+def test_real_tracked_gr08g_seed_file_loads_with_exactly_seven_rows():
+    entries = _load_seed_entries(GR08G_SEED_FILE)
+    assert len(entries) == 7
+    methods = sorted(entry.method for entry in entries)
+    assert methods == ["processBankStatement"] * 7
+    for entry in entries:
+        assert entry.path == BANK_STATEMENT_PROCESSOR_KT
+        assert entry.owner_fqcn == BANK_STATEMENT_PROCESSOR_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.parameter_types == STATEMENT_URI_PARAMS
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08G"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: every accessor is a plain constructor property and
+    # every operation is the exact abstract Room method the scanner
+    # reported -- no convenience-method rows exist in this batch.
+    assert all(
+        entry.dao_accessor
+        in {
+            "bankStatementImportRunDao",
+            "bankStatementImportItemDao",
+            "pendingReviewDao",
+            "scannedReceiptDao",
+        }
+        for entry in entries
+    )
+    # The run-ledger rows: exactly four distinct operations behind
+    # bankStatementImportRunDao.
+    run_operations = sorted(
+        entry.operation
+        for entry in entries
+        if entry.dao_accessor == "bankStatementImportRunDao"
+    )
+    assert run_operations == [
+        "attachReceipt",
+        "finalize",
+        "insert",
+        "updatePdfPartial",
+    ]
+
+
+def _gr08g_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08g fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08g_exact_match(tmp_path, rows, select_accessor,
+                              select_operation, **overrides):
+    """The exact GR-08g row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_accessor, select_operation)``
+    (every row shares the processBankStatement callable identity);
+    ``overrides`` perturb exactly one identity field of the match query for
+    the near-miss assertions.
+    """
+    entries = _gr08g_policy_entries(tmp_path, rows)
+    target = [
+        entry
+        for entry in entries
+        if entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08g_exact_identity_matches(tmp_path):
+    rows = _gr08g_seed_rows()
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path, rows, "bankStatementImportRunDao", "finalize",
+        )
+        is True
+    )
+
+
+def test_gr08g_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08g_seed_rows()
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path, rows, "bankStatementImportRunDao", "finalize",
+            parameter_types=("android.net.Uri", "Long"),
+        )
+        is False
+    )
+
+
+def test_gr08g_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08g_seed_rows()
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path, rows, "bankStatementImportRunDao", "finalize",
+            owner_fqcn="com.example.OtherProcessor",
+        )
+        is False
+    )
+
+
+def test_gr08g_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08g_seed_rows()
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path, rows, "bankStatementImportRunDao", "finalize",
+            dao_accessor="bankStatementImportItemDao",
+            dao_fqcn=BANK_STATEMENT_IMPORT_ITEM_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08g_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08g_seed_rows()
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path, rows, "bankStatementImportRunDao", "finalize",
+            operation="markStaleFailed",
+        )
+        is False
+    )
+
+
+def test_gr08g_run_ledger_rows_near_misses_stay_unauthorized(tmp_path):
+    """The four bankStatementImportRunDao rows are exact per operation.
+
+    All four rows share the processBankStatement callable identity and the
+    run-ledger DAO; a swapped operation, a swapped accessor, or a wrong
+    callable name stays unauthorized.
+    """
+    rows = _gr08g_seed_rows()
+    base_kwargs = dict(
+        select_accessor="bankStatementImportRunDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08g_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the sibling attachReceipt spelling behind the same
+    # DAO.
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="attachReceipt")
+        )
+        is False
+    )
+    # Wrong accessor: the per-item ledger DAO never matches the run-ledger
+    # identity.
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="bankStatementImportItemDao",
+                dao_fqcn=BANK_STATEMENT_IMPORT_ITEM_DAO,
+            ),
+        )
+        is False
+    )
+    # Wrong callable: a copied processor class never matches.
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, method="processStatementCopy"),
+        )
+        is False
+    )
+
+
+def test_gr08g_receipt_status_row_near_misses_stay_unauthorized(tmp_path):
+    """The scannedReceiptDao.update row is exact too.
+
+    The receipt status transition shares the processBankStatement callable
+    identity with the six ledger/review rows; a swapped DAO, a swapped
+    operation (e.g. the abstract insert the processor never calls), or a
+    wrong overload stays unauthorized.
+    """
+    rows = _gr08g_seed_rows()
+    base_kwargs = dict(
+        select_accessor="scannedReceiptDao",
+        select_operation="update",
+    )
+    assert _assert_gr08g_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the ScannedReceiptDao.insert spelling (the processor
+    # delegates receipt creation to ReceiptRecordWriter, it never calls
+    # scannedReceiptDao.insert directly).
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="insert")
+        )
+        is False
+    )
+    # Wrong DAO identity behind the accessor spelling.
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, dao_fqcn=BANK_STATEMENT_IMPORT_RUN_DAO),
+        )
+        is False
+    )
+    # Wrong overload: a two-parameter shape.
+    assert (
+        _assert_gr08g_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, parameter_types=("android.net.Uri", "Long")),
         )
         is False
     )

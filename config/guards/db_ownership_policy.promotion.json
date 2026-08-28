@@ -1,10 +1,10 @@
 {
   "recordedShas": {
-    "accounting_sha256": "4c28b0ad3e646fec8feee6064c8a296723c31fa3259306c18b384f6f361da9ec",
-    "active_sha256": "c9b83209bda5ccc664469e71610ba004e022ca6f7468daf319190fddfb4dc595",
-    "candidate_sha256": "c9b83209bda5ccc664469e71610ba004e022ca6f7468daf319190fddfb4dc595",
-    "evidence_report_sha256": "8f4f95096a704e32ada7c306822ab4afadbd223e8e15e867cb2f5f86878de09e",
-    "previous_v1_sha256": "490116101b4baa967a6d2dd7f6b5d04071b9c94014d600a1a42026b6c442264b",
+    "accounting_sha256": "fbd2abeea3b69ec050cde84403a36c69fd75a9dc52bb75d4a292e3963d6f2e42",
+    "active_sha256": "4e63531adbc4b7ca4427421b8b9c6a65ae39559eec4a973fe30c8c1fa5c3a80b",
+    "candidate_sha256": "4e63531adbc4b7ca4427421b8b9c6a65ae39559eec4a973fe30c8c1fa5c3a80b",
+    "evidence_report_sha256": "507d7fe75431d4c6bd17ff87eb707e11a5bf64ccc42bf7c49d79b1365bd4d176",
+    "previous_v1_sha256": "c9b83209bda5ccc664469e71610ba004e022ca6f7468daf319190fddfb4dc595",
     "tree_sha256": "a7700ced5ec8a62e2f60de39f687bd6edb46140b7a73ba59865e62a51f1d19e0"
   },
   "schema": "db-policy-v2-promotion-record",

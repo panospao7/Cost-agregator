@@ -1,0 +1,181 @@
+# GR-08 batch 7 (GR-08g) reviewed exact v2 policy seed rows (MIT-DB-08G).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: BankStatementLifecycleProcessor.kt -- 20 DB_UNAUTHORIZED_MUTATION
+# findings collapsing to 7 UNIQUE fingerprints (dedup key: callable identity
+# + daoAccessor + daoFqcn + operation; the 20 per-call-site findings repeat
+# 7 distinct tuples -- bankStatementImportItemDao.insert x8,
+# bankStatementImportRunDao.finalize x6, bankStatementImportRunDao.attachReceipt
+# x2, and one site each for bankStatementImportRunDao.insert,
+# bankStatementImportRunDao.updatePdfPartial, pendingReviewDao.insert,
+# scannedReceiptDao.update).  Unique count 7 <= the 25-fingerprint batch cap,
+# so NO split was required.  This is the receipt lifecycle layer -- the
+# AUTHORITATIVE writer for bank statement imports per
+# docs/architecture/LEGAL_PATHS.md ("Bank Statement Mutations":
+# PROCESS bank statement routes through
+# BankStatementLifecycleProcessor.processBankStatement(uri); "Full lifecycle:
+# import is NOT a separate step -- everything happens in
+# processBankStatement()"; FORBIDDEN: BankStatementImportItemDao.insert /
+# BankStatementImportRunDao.insertRun outside the processor) and the receipt
+# lifecycle services own receipt mutations ("Receipt Mutations": no receipt
+# mutation without a ReceiptEvent -- every mutation here is paired with a
+# ReceiptLifecycleEventWriter.write inside the same transaction) -- so every
+# row is a legal-writer EXACT_POLICY authorization.
+#
+# barrierMode is `helper` for every row: the write barrier runs at the
+# processor entrypoint (processBankStatement opens with
+# writeBarrier.checkWritesAllowed) and is re-checked before the run-ledger
+# write after long OCR/parse (P3-REG-010) and inside every
+# transactionRunner.runInTransaction block before its mutations
+# (bank_statement.save_receipt / skip_duplicate / skip_duplicate_review /
+# create_review / finalize_success / finalize_failure /
+# finalize_unexpected_failure), not directly before each individual
+# mutation, and no direct-barrier proof is claimed.
+#
+# Closure additions (GR-08g blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in the ONLY mutating callable body (processBankStatement;
+# sanitizeMerchant performs no DAO calls) was enumerated, not just the
+# findings: the 20 findings == the 20 mutating DAO call sites, and every
+# called mutating DAO method (BankStatementImportRunDao.insert/attachReceipt/
+# finalize/updatePdfPartial, BankStatementImportItemDao.insert,
+# PendingReviewDao.insert, ScannedReceiptDao.update) is an abstract
+# Room-annotated method.  BankStatementImportRunDao and
+# BankStatementImportItemDao are fully abstract interfaces with NO
+# body-carrying @Transaction convenience methods at all; ScannedReceiptDao is
+# likewise fully abstract.  The two body-carrying @Transaction convenience
+# methods REACHED from this file -- ExpenseDao.findDuplicateIdCurrencyAware
+# and PendingReviewDao.getPendingDuplicateCandidateInRangeTypeAware -- are
+# strictly read-only composites (each only chains @Query SELECT candidate
+# lookups and returns a result; neither performs any mutation), so they carry
+# no closure obligation.  The remaining read-only DAO calls
+# (scannedReceiptDao.getById, expenseDao.existsByMerchantKeyInRangeCurrencyAware,
+# expenseDao.existsByMerchantInRangeCurrencyAware,
+# bankStatementImportItemDao.countByRunAndStatus) perform no mutations.
+# The receiptRecordWriter.insertOrResolve / receiptLifecycleEventWriter.write
+# / transactionRunner.runInTransaction calls are typed writer / event-writer /
+# transaction-runner delegation whose own writes live in their own
+# already-scoped files, not DAO accessors, and carry no closure obligation
+# here.  Constructor-property DAO aliases (GR-08a pattern): all five DAO
+# accessors are direct @Inject constructor properties resolved natively by
+# the evidence verifier; there are NO alias indirections and NO
+# database-chained `database.xxxDao()` call sites (chain-form census: 0 --
+# the injected `database: AppDatabase` constructor property is never
+# dereferenced in this file, so NO GR-08e accessor-normalization source
+# change is needed for this batch).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g rows verbatim); passing only
+# this file would drop the earlier batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── run-ledger rows (bankStatementImportRunDao, 4 distinct tuples) ───────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+  kind: function
+  method: processBankStatement
+  receiver: null
+  parameterTypes:
+  - android.net.Uri
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08g EXACT_POLICY: creates the durable import run ledger row (STATUS_RUNNING) after the post-OCR/parse write-barrier re-check (P3-REG-010); the run id anchors every per-item ledger row and the finalize paths"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+  kind: function
+  method: processBankStatement
+  receiver: null
+  parameterTypes:
+  - android.net.Uri
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: attachReceipt
+  barrierMode: helper
+  reason: "GR-08g EXACT_POLICY: attaches the statement receipt id to the run ledger inside the MIT-041 save-receipt transaction (both the Inserted branch and the Duplicate branch so a duplicate statement still resolves its run)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+  kind: function
+  method: processBankStatement
+  receiver: null
+  parameterTypes:
+  - android.net.Uri
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: finalize
+  barrierMode: helper
+  reason: "GR-08g EXACT_POLICY: terminal run-ledger transition on every exit path -- duplicate early-return (COMPLETED_WITH_SKIPS), success finalize atomically with the receipt status update + PROCESSING_COMPLETE event, failure finalize atomically with the PROCESSING_FAILED event, cancellation cleanup under NonCancellable+withTimeout (STATUS_CANCELLED, errorSummary WORKER_CANCELLED), and the two unexpected-failure paths (with/without a created receipt) -- so the ledger never disagrees with the receipt state"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+  kind: function
+  method: processBankStatement
+  receiver: null
+  parameterTypes:
+  - android.net.Uri
+  daoAccessor: bankStatementImportRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
+  operation: updatePdfPartial
+  barrierMode: helper
+  reason: "GR-08g EXACT_POLICY: records PDF_PARTIAL truncation facts (pagesProcessed/totalPages) on the run row for a self-contained ledger (P3-03EA-05), inside the MIT-041 save-receipt transaction next to the PDF_PARTIAL lifecycle event"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+# ── per-item ledger rows (bankStatementImportItemDao, 1 tuple x8 sites) ──────
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+  kind: function
+  method: processBankStatement
+  receiver: null
+  parameterTypes:
+  - android.net.Uri
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08g EXACT_POLICY: per-item ledger row for every parsed transaction outcome -- pre-mutation validation skips (INVALID_AMOUNT / NON_POSITIVE_AMOUNT / MISSING_CURRENCY / UNREASONABLE_DATE), duplicate-expense and duplicate-pending-review rows inside their own transactions, the created-review row atomic with the PendingReview insert, and the failure row carrying a sanitized failure code + exception class only (no raw messages) -- the processor is the ONLY legal writer per LEGAL_PATHS.md Bank Statement Mutations"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+# ── review creation (pendingReviewDao, 1 tuple) ──────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+  kind: function
+  method: processBankStatement
+  receiver: null
+  parameterTypes:
+  - android.net.Uri
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08g EXACT_POLICY: creates the PendingReview for a non-duplicate parsed transaction inside the bank_statement.create_review transaction, atomic with its per-item ledger row and REVIEW_CREATED lifecycle event (P3-REG-005); LEGAL_PATHS.md names PendingReviewDao.insert for human review on this exact path"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
+# ── receipt status transition (scannedReceiptDao, 1 tuple) ───────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
+  kind: function
+  method: processBankStatement
+  receiver: null
+  parameterTypes:
+  - android.net.Uri
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08g EXACT_POLICY: transitions the statement receipt processingStatus to REVIEW_CREATED inside the bank_statement.finalize_success transaction, atomic with the run finalize and the PROCESSING_COMPLETE lifecycle event so the ledger never disagrees with the receipt state (P3-P1-10 / P3-REG-008); receipt mutations stay inside the receipt lifecycle services per LEGAL_PATHS.md"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08G
