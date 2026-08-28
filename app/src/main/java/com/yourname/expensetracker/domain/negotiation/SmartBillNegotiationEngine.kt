@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.negotiation
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.NegotiationOutcomeDao
 import com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.database.entity.NegotiationOutcomeEntity
@@ -26,6 +27,7 @@ import timber.log.Timber
 class SmartBillNegotiationEngine @Inject constructor(
     private val recurringExpenseRepository: RecurringExpenseRepository,
     private val priceHistoryDao: SubscriptionPriceHistoryDao,
+    private val negotiationOutcomeDao: NegotiationOutcomeDao,
     private val marketRateProvider: MarketRateProvider,
     private val database: AppDatabase,
     private val writeBarrier: DatabaseWriteBarrier,
@@ -611,7 +613,7 @@ class SmartBillNegotiationEngine @Inject constructor(
                     marketRateSource = "StaticMarketRateProvider",
                     createdAt = now
                 )
-                database.negotiationOutcomeDao().insert(outcomeEntity)
+                negotiationOutcomeDao.insert(outcomeEntity)
 
                 // 2. If success/partial and newPrice is valid, update subscription + price history
                 if ((outcome == NegotiationOutcome.SUCCESS || outcome == NegotiationOutcome.PARTIAL)

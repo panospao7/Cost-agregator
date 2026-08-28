@@ -426,6 +426,54 @@ batch cap, so NO split was required:
 * NEAR-MISS protection over the GR-08o rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08p1 (MIT-DB-08P1) extends the same contract to TWELVE files -- the
+data/privacy DataRetentionWorker.kt (privacy retention CoroutineWorker),
+data/repository SpendingChallengeRepository.kt and
+UserCorrectionRepository.kt (repository-layer writers),
+domain/negotiation/SmartBillNegotiationEngine.kt (negotiation engine; sole
+NegotiationOutcomeDao/SubscriptionPriceHistoryDao writer),
+domain/notification/capture NotificationIntakeCoordinator.kt and
+NotificationIntakePayloadRepairer.kt (capture-side intake + privacy
+repair writers), domain/recurring/RecurringPlanProjectionService.kt
+(recurring projection bridge), domain/recurring/lifecycle/
+RecurringLifecycleEventWriter.kt (THE sanctioned recurring lifecycle event
+writer -- its own writes ARE the audit trail),
+domain/transaction/DefaultExpenseCategoryAssignmentService.kt
+(ExpenseCategoryAssignmentPort implementation),
+domain/transaction/lifecycle/DebugExpenseAuditWriter.kt (debug-only
+aggregate audit writer), domain/workers/WorkerRunLogger.kt (worker
+run-diagnostics ledger) and util/JsonExpenseImporter.kt (JSON import
+path).  Each of the TWELVE files carries exactly 2 findings; the two
+DataRetentionWorker auditDao.insert sites share ONE fingerprint, so the
+combined batch carries 24 findings / 23 unique fingerprints <= the
+25-fingerprint batch cap and NO split was required:
+
+* ``GR-08p1-seed.yml`` -- 23 rows: the 23 findings-derived rows (24
+  findings / 23 unique fingerprints).  ZERO closure rows -- no
+  body-carrying @Transaction DAO convenience method is invoked from any
+  batch callable.  The batch's blind-spot story is the
+  CONSTRUCTOR/LOCAL-ALIAS spelling gap: the legacy MIT-003 rows for
+  DataRetentionWorker.doWork (accessor ``privacyAuditDao``) and
+  WorkerRunLoggerImpl.start (accessor ``backgroundJobRunDao``) spell the
+  DERIVED Room accessor identities while the scanner reports the SOURCE
+  property/local alias spellings (``auditDao``, ``dao``), so those rows
+  spell the source aliases; Handle.terminal is a NEW row.  The
+  SmartBillNegotiationEngine chain-form site
+  (``database.negotiationOutcomeDao().insert``) was NORMALIZED to the
+  injected ``negotiationOutcomeDao`` constructor property (the GR-08e
+  accessor-normalization rule) and its row spells the normalized
+  accessor.  The DataRetentionWorker.doWork and WorkerRunLogger
+  (start + Handle.terminal) rows use ``workerMediated``; the rest use
+  ``helper``;
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the TWENTY-FIVE reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 + 14 + 6 + 7 + 11 + 21
+  + 19 + 18 + 22 + 23 + 16 + 12 + 16 + 15 + 24 + 23 = 400 rows) -- a
+  dropped earlier-batch row fails closed here instead of silently
+  re-unauthorizing that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08p1 rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -7036,19 +7084,20 @@ def test_real_tracked_gr08l2_seed_file_loads_with_exactly_twenty_three_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_twenty_four_batch_seed_files():
+def test_combined_seed_file_concatenates_all_twenty_five_batch_seed_files():
     """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
     + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
     + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1
-    + GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 + GR-08o.
+    + GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 + GR-08o + GR-08p1.
 
-    Supersedes the GR-08n-era twenty-three-file concatenation test (which
-    pinned the combined document at 353 rows): the GR-08o batch extends the
-    combined generation input to 377 rows (24 GR-08o rows = 21
-    findings-derived + 1 closure + 2 residual closure), and the drift guard
-    must cover ALL TWENTY-FOUR reviewed batch seed files.  The combined
-    document is what
-    --seed-rows actually consumes; if it ever drifts from the twenty-four
+    Supersedes the GR-08o-era twenty-four-file concatenation test (which
+    pinned the combined document at 377 rows): the GR-08p1 batch extends the
+    combined generation input to 400 rows (23 GR-08p1 rows = 23
+    findings-derived; the two DataRetentionWorker auditDao.insert sites
+    share one fingerprint so 24 findings collapse to 23 rows), and the
+    drift guard must cover ALL TWENTY-FIVE reviewed batch seed files.  The
+    combined document is what
+    --seed-rows actually consumes; if it ever drifts from the twenty-five
     reviewed batch seed files (a dropped earlier-batch row would silently
     re-unauthorize that batch's mutations at promotion time), this fails
     closed.
@@ -7078,6 +7127,7 @@ def test_combined_seed_file_concatenates_all_twenty_four_batch_seed_files():
     gr08n1 = _load_seed_entries(GR08N1_SEED_FILE)
     gr08n2 = _load_seed_entries(GR08N2_SEED_FILE)
     gr08o = _load_seed_entries(GR08O_SEED_FILE)
+    gr08p1 = _load_seed_entries(GR08P1_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
@@ -7102,7 +7152,8 @@ def test_combined_seed_file_concatenates_all_twenty_four_batch_seed_files():
     assert len(gr08n1) == 16
     assert len(gr08n2) == 15
     assert len(gr08o) == 24
-    assert len(combined) == 377
+    assert len(gr08p1) == 23
+    assert len(combined) == 400
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
@@ -7112,6 +7163,7 @@ def test_combined_seed_file_concatenates_all_twenty_four_batch_seed_files():
         + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
         + list(gr08k2) + list(gr08l1) + list(gr08l2) + list(gr08m1)
         + list(gr08m2) + list(gr08n1) + list(gr08n2) + list(gr08o)
+        + list(gr08p1)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -9794,6 +9846,750 @@ def test_gr08o_residual_closure_rows_exact_and_near_misses(tmp_path):
             tmp_path, rows, "insert", "dao", "insert",
             select_parameters=(MERCHANT_CATEGORY_ENTITY_GR08O,),
             owner_fqcn="com.example.OtherMerchantRepository",
+        )
+        is False
+    )
+
+
+# ── GR-08p1 (MIT-DB-08P1): DataRetentionWorker.kt + SpendingChallengeRepository.kt ─
+# + UserCorrectionRepository.kt + SmartBillNegotiationEngine.kt +
+# NotificationIntakeCoordinator.kt + NotificationIntakePayloadRepairer.kt +
+# RecurringPlanProjectionService.kt + RecurringLifecycleEventWriter.kt +
+# DefaultExpenseCategoryAssignmentService.kt + DebugExpenseAuditWriter.kt +
+# WorkerRunLogger.kt + JsonExpenseImporter.kt.  Each of the TWELVE files
+# carries exactly 2 findings; the two DataRetentionWorker auditDao.insert
+# sites share one fingerprint, so the combined batch carries 24 findings /
+# 23 unique fingerprints <= the 25-fingerprint batch cap, so NO split was
+# required; the generation run consumes the COMBINED document
+# GR-08-seeds.yml; these tests pin that the combined document stays the
+# exact concatenation of the TWENTY-FIVE reviewed batch seed files, and
+# that the GR-08p1 rows authorize EXACTLY their callable identity + DAO +
+# operation (wrong overload, wrong owner, wrong DAO, and wrong operation
+# stay unauthorized).  The batch's blind-spot story is the
+# CONSTRUCTOR/LOCAL-ALIAS spelling gap (the legacy MIT-003 rows spelled the
+# derived accessor identities privacyAuditDao/backgroundJobRunDao while the
+# scanner reports the source aliases auditDao/dao); the
+# SmartBillNegotiationEngine chain-form site was normalized to the injected
+# negotiationOutcomeDao constructor property (the GR-08e rule).
+
+GR08P1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08p1-seed.yml"
+
+DATA_RETENTION_WORKER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/privacy/"
+    "DataRetentionWorker.kt"
+)
+DATA_RETENTION_WORKER_FQCN = (
+    "com.yourname.expensetracker.data.privacy.DataRetentionWorker"
+)
+PRIVACY_AUDIT_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.PrivacyAuditDao"
+)
+
+SPENDING_CHALLENGE_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "SpendingChallengeRepository.kt"
+)
+SPENDING_CHALLENGE_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.SpendingChallengeRepository"
+)
+SPENDING_CHALLENGE_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.SpendingChallengeDao"
+)
+SPENDING_CHALLENGE_DOMAIN = (
+    "com.yourname.expensetracker.domain.challenge.SpendingChallenge"
+)
+
+USER_CORRECTION_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "UserCorrectionRepository.kt"
+)
+USER_CORRECTION_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.UserCorrectionRepository"
+)
+USER_CORRECTION_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.UserCorrectionDao"
+)
+USER_CORRECTION_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.UserCorrection"
+)
+
+SMART_BILL_NEGOTIATION_ENGINE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/negotiation/"
+    "SmartBillNegotiationEngine.kt"
+)
+SMART_BILL_NEGOTIATION_ENGINE_FQCN = (
+    "com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine"
+)
+NEGOTIATION_OUTCOME_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.NegotiationOutcomeDao"
+)
+SUBSCRIPTION_PRICE_HISTORY_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao."
+    "SubscriptionPriceHistoryDao"
+)
+NEGOTIATION_OUTCOME_ENUM = (
+    "com.yourname.expensetracker.domain.negotiation."
+    "SmartBillNegotiationEngine.NegotiationOutcome"
+)
+RECORD_OUTCOME_PARAMS = (
+    "Long", NEGOTIATION_OUTCOME_ENUM, "Double?", "Double?", "String?",
+)
+
+NOTIFICATION_INTAKE_COORDINATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/notification/"
+    "capture/NotificationIntakeCoordinator.kt"
+)
+NOTIFICATION_INTAKE_COORDINATOR_FQCN = (
+    "com.yourname.expensetracker.domain.notification.capture."
+    "NotificationIntakeCoordinator"
+)
+NOTIFICATION_INTAKE_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.NotificationIntakeDao"
+)
+RAW_STORAGE_MODE = (
+    "com.yourname.expensetracker.domain.privacy.RawStorageMode"
+)
+CAPTURE_PARAMS = (
+    "String", "String?", "String", "String", "Long", "String?", "String?",
+    "String?", "String?", "String?", RAW_STORAGE_MODE, "String", "String",
+)
+CAPTURE_FOR_RETRY_PARAMS = (
+    "String", "String", "Long", "String", "String?", "String?", "String?",
+    "String?",
+)
+
+NOTIFICATION_INTAKE_PAYLOAD_REPAIRER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/notification/"
+    "capture/NotificationIntakePayloadRepairer.kt"
+)
+NOTIFICATION_INTAKE_PAYLOAD_REPAIRER_FQCN = (
+    "com.yourname.expensetracker.domain.notification.capture."
+    "NotificationIntakePayloadRepairer"
+)
+
+RECURRING_PLAN_PROJECTION_SERVICE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/recurring/"
+    "RecurringPlanProjectionService.kt"
+)
+RECURRING_PLAN_PROJECTION_SERVICE_FQCN = (
+    "com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService"
+)
+PLANNED_EXPENSE_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.PlannedExpenseDao"
+)
+
+RECURRING_LIFECYCLE_EVENT_WRITER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/recurring/"
+    "lifecycle/RecurringLifecycleEventWriter.kt"
+)
+ROOM_RECURRING_LIFECYCLE_EVENT_WRITER_FQCN = (
+    "com.yourname.expensetracker.domain.recurring.lifecycle."
+    "RoomRecurringLifecycleEventWriter"
+)
+RECURRING_LIFECYCLE_EVENT_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao"
+)
+LIFECYCLE_EVENT_PARAMS = (
+    "Long?", "String", "String?", "String?", "String?", "Long",
+)
+
+DEFAULT_EXPENSE_CATEGORY_ASSIGNMENT_SERVICE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/transaction/"
+    "DefaultExpenseCategoryAssignmentService.kt"
+)
+DEFAULT_EXPENSE_CATEGORY_ASSIGNMENT_SERVICE_FQCN = (
+    "com.yourname.expensetracker.domain.transaction."
+    "DefaultExpenseCategoryAssignmentService"
+)
+EXPENSE_DAO_GR08P1 = "com.yourname.expensetracker.data.database.dao.ExpenseDao"
+TRANSACTION_EVENT_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.TransactionEventDao"
+)
+ASSIGN_CATEGORY_PARAMS = ("Long", "Long", "String", "String?")
+
+DEBUG_EXPENSE_AUDIT_WRITER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/transaction/"
+    "lifecycle/DebugExpenseAuditWriter.kt"
+)
+DEBUG_EXPENSE_AUDIT_WRITER_FQCN = (
+    "com.yourname.expensetracker.domain.transaction.lifecycle."
+    "DebugExpenseAuditWriter"
+)
+
+WORKER_RUN_LOGGER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/workers/"
+    "WorkerRunLogger.kt"
+)
+WORKER_RUN_LOGGER_IMPL_FQCN = (
+    "com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl"
+)
+WORKER_RUN_LOGGER_HANDLE_FQCN = (
+    "com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle"
+)
+BACKGROUND_JOB_RUN_DAO_GR08P1 = (
+    "com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao"
+)
+WORKER_RUN_START_PARAMS = (
+    "String", "String?", "String?", "Int?", "Int?", "String?",
+)
+TERMINAL_ARGS = (
+    "com.yourname.expensetracker.domain.workers."
+    "WorkerRunLoggerImpl.Handle.TerminalArgs"
+)
+TERMINAL_PARAMS = ("String", TERMINAL_ARGS)
+
+JSON_EXPENSE_IMPORTER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/util/"
+    "JsonExpenseImporter.kt"
+)
+JSON_EXPENSE_IMPORTER_FQCN = (
+    "com.yourname.expensetracker.util.JsonExpenseImporter"
+)
+CATEGORY_DAO_GR08P1 = "com.yourname.expensetracker.data.database.dao.CategoryDao"
+JSON_OBJECT = "org.json.JSONObject"
+PARSE_ROW_PARAMS = (JSON_OBJECT, "Int", "Long?")
+
+
+def _gr08p1_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                     dao_fqcn, operation, barrier_mode="helper"):
+    """One exact GR-08p1-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": barrier_mode,
+        "reason": "GR-08p1 EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08P1",
+    }
+
+
+def _gr08p1_seed_rows():
+    """The twenty-three exact GR-08p1 rows (mirroring the tracked seed file).
+
+    DataRetentionWorker.kt (1 row -- the two auditDao.insert sites share one
+    fingerprint) + SpendingChallengeRepository.kt (2 rows) +
+    UserCorrectionRepository.kt (2 rows) + SmartBillNegotiationEngine.kt
+    (2 rows -- the negotiationOutcomeDao row spells the NORMALIZED accessor)
+    + NotificationIntakeCoordinator.kt (2 rows) +
+    NotificationIntakePayloadRepairer.kt (2 rows) +
+    RecurringPlanProjectionService.kt (2 rows) +
+    RecurringLifecycleEventWriter.kt (2 rows) +
+    DefaultExpenseCategoryAssignmentService.kt (2 rows) +
+    DebugExpenseAuditWriter.kt (2 rows) + WorkerRunLogger.kt (2 rows --
+    start and the nested Handle.terminal) + JsonExpenseImporter.kt (2 rows).
+    """
+    rows = []
+    rows.append(
+        _gr08p1_seed_row(
+            DATA_RETENTION_WORKER_KT, DATA_RETENTION_WORKER_FQCN,
+            "doWork", (), "auditDao", PRIVACY_AUDIT_DAO_GR08P1, "insert",
+            barrier_mode="workerMediated",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            SPENDING_CHALLENGE_REPOSITORY_KT,
+            SPENDING_CHALLENGE_REPOSITORY_FQCN,
+            "saveChallenge", (SPENDING_CHALLENGE_DOMAIN,),
+            "spendingChallengeDao", SPENDING_CHALLENGE_DAO_GR08P1, "insert",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            SPENDING_CHALLENGE_REPOSITORY_KT,
+            SPENDING_CHALLENGE_REPOSITORY_FQCN,
+            "deactivateChallenges", ("List<Long>", "Long"),
+            "spendingChallengeDao", SPENDING_CHALLENGE_DAO_GR08P1,
+            "deactivateChallenges",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            USER_CORRECTION_REPOSITORY_KT, USER_CORRECTION_REPOSITORY_FQCN,
+            "insert", (USER_CORRECTION_ENTITY,),
+            "dao", USER_CORRECTION_DAO_GR08P1, "insert",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            USER_CORRECTION_REPOSITORY_KT, USER_CORRECTION_REPOSITORY_FQCN,
+            "deleteAll", (), "dao", USER_CORRECTION_DAO_GR08P1, "deleteAll",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            SMART_BILL_NEGOTIATION_ENGINE_KT,
+            SMART_BILL_NEGOTIATION_ENGINE_FQCN,
+            "recordNegotiationOutcome", RECORD_OUTCOME_PARAMS,
+            "negotiationOutcomeDao", NEGOTIATION_OUTCOME_DAO_GR08P1, "insert",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            SMART_BILL_NEGOTIATION_ENGINE_KT,
+            SMART_BILL_NEGOTIATION_ENGINE_FQCN,
+            "recordNegotiationOutcome", RECORD_OUTCOME_PARAMS,
+            "priceHistoryDao", SUBSCRIPTION_PRICE_HISTORY_DAO_GR08P1, "insert",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            NOTIFICATION_INTAKE_COORDINATOR_KT,
+            NOTIFICATION_INTAKE_COORDINATOR_FQCN,
+            "capture", CAPTURE_PARAMS,
+            "intakeDao", NOTIFICATION_INTAKE_DAO_GR08P1, "insertOrIgnore",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            NOTIFICATION_INTAKE_COORDINATOR_KT,
+            NOTIFICATION_INTAKE_COORDINATOR_FQCN,
+            "captureForRetry", CAPTURE_FOR_RETRY_PARAMS,
+            "intakeDao", NOTIFICATION_INTAKE_DAO_GR08P1, "insertOrIgnore",
+        )
+    )
+    for operation in ("purgeVisiblePayload", "encryptAndClearVisiblePayload"):
+        rows.append(
+            _gr08p1_seed_row(
+                NOTIFICATION_INTAKE_PAYLOAD_REPAIRER_KT,
+                NOTIFICATION_INTAKE_PAYLOAD_REPAIRER_FQCN,
+                "repairLegacyPlaintextTransientRows", (),
+                "intakeDao", NOTIFICATION_INTAKE_DAO_GR08P1, operation,
+            )
+        )
+    rows.append(
+        _gr08p1_seed_row(
+            RECURRING_PLAN_PROJECTION_SERVICE_KT,
+            RECURRING_PLAN_PROJECTION_SERVICE_FQCN,
+            "projectFromRule", ("Long", "Int"),
+            "plannedExpenseDao", PLANNED_EXPENSE_DAO_GR08P1,
+            "insertPlannedExpense",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            RECURRING_PLAN_PROJECTION_SERVICE_KT,
+            RECURRING_PLAN_PROJECTION_SERVICE_FQCN,
+            "projectFromOccurrencesInCurrentTransaction",
+            ("Long", "Long", "Long", "Long"),
+            "plannedExpenseDao", PLANNED_EXPENSE_DAO_GR08P1,
+            "insertPlannedExpense",
+        )
+    )
+    for method in ("writeCritical", "writeDiagnostic"):
+        rows.append(
+            _gr08p1_seed_row(
+                RECURRING_LIFECYCLE_EVENT_WRITER_KT,
+                ROOM_RECURRING_LIFECYCLE_EVENT_WRITER_FQCN,
+                method, LIFECYCLE_EVENT_PARAMS,
+                "dao", RECURRING_LIFECYCLE_EVENT_DAO_GR08P1, "insert",
+            )
+        )
+    for accessor, dao, operation in (
+        ("expenseDao", EXPENSE_DAO_GR08P1, "updateCategory"),
+        ("transactionEventDao", TRANSACTION_EVENT_DAO_GR08P1, "insert"),
+    ):
+        rows.append(
+            _gr08p1_seed_row(
+                DEFAULT_EXPENSE_CATEGORY_ASSIGNMENT_SERVICE_KT,
+                DEFAULT_EXPENSE_CATEGORY_ASSIGNMENT_SERVICE_FQCN,
+                "assignCategoryIfUnset", ASSIGN_CATEGORY_PARAMS,
+                accessor, dao, operation,
+            )
+        )
+    rows.append(
+        _gr08p1_seed_row(
+            DEBUG_EXPENSE_AUDIT_WRITER_KT, DEBUG_EXPENSE_AUDIT_WRITER_FQCN,
+            "writeDeleteAllEvent", ("Int", "String?"),
+            "transactionEventDao", TRANSACTION_EVENT_DAO_GR08P1, "insert",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            DEBUG_EXPENSE_AUDIT_WRITER_KT, DEBUG_EXPENSE_AUDIT_WRITER_FQCN,
+            "writeRestoreSnapshotEvent", ("Int", "Int", "String?"),
+            "transactionEventDao", TRANSACTION_EVENT_DAO_GR08P1, "insert",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            WORKER_RUN_LOGGER_KT, WORKER_RUN_LOGGER_IMPL_FQCN,
+            "start", WORKER_RUN_START_PARAMS,
+            "dao", BACKGROUND_JOB_RUN_DAO_GR08P1, "insert",
+            barrier_mode="workerMediated",
+        )
+    )
+    rows.append(
+        _gr08p1_seed_row(
+            WORKER_RUN_LOGGER_KT, WORKER_RUN_LOGGER_HANDLE_FQCN,
+            "terminal", TERMINAL_PARAMS,
+            "dao", BACKGROUND_JOB_RUN_DAO_GR08P1, "completeTerminal",
+            barrier_mode="workerMediated",
+        )
+    )
+    for method in ("parseV2Row", "parseV1Row"):
+        rows.append(
+            _gr08p1_seed_row(
+                JSON_EXPENSE_IMPORTER_KT, JSON_EXPENSE_IMPORTER_FQCN,
+                method, PARSE_ROW_PARAMS,
+                "categoryDao", CATEGORY_DAO_GR08P1, "insert",
+            )
+        )
+    return rows
+
+
+def test_real_tracked_gr08p1_seed_file_loads_with_exactly_twenty_three_rows():
+    entries = _load_seed_entries(GR08P1_SEED_FILE)
+    assert len(entries) == 23
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["doWork"]
+        + ["saveChallenge", "deactivateChallenges"]
+        + ["insert", "deleteAll"]
+        + ["recordNegotiationOutcome"] * 2
+        + ["capture", "captureForRetry"]
+        + ["repairLegacyPlaintextTransientRows"] * 2
+        + ["projectFromRule", "projectFromOccurrencesInCurrentTransaction"]
+        + ["writeCritical", "writeDiagnostic"]
+        + ["assignCategoryIfUnset"] * 2
+        + ["writeDeleteAllEvent", "writeRestoreSnapshotEvent"]
+        + ["start", "terminal"]
+        + ["parseV2Row", "parseV1Row"]
+    )
+    for entry in entries:
+        assert entry.path in (
+            DATA_RETENTION_WORKER_KT,
+            SPENDING_CHALLENGE_REPOSITORY_KT,
+            USER_CORRECTION_REPOSITORY_KT,
+            SMART_BILL_NEGOTIATION_ENGINE_KT,
+            NOTIFICATION_INTAKE_COORDINATOR_KT,
+            NOTIFICATION_INTAKE_PAYLOAD_REPAIRER_KT,
+            RECURRING_PLAN_PROJECTION_SERVICE_KT,
+            RECURRING_LIFECYCLE_EVENT_WRITER_KT,
+            DEFAULT_EXPENSE_CATEGORY_ASSIGNMENT_SERVICE_KT,
+            DEBUG_EXPENSE_AUDIT_WRITER_KT,
+            WORKER_RUN_LOGGER_KT,
+            JSON_EXPENSE_IMPORTER_KT,
+        )
+        assert entry.owner_fqcn in (
+            DATA_RETENTION_WORKER_FQCN,
+            SPENDING_CHALLENGE_REPOSITORY_FQCN,
+            USER_CORRECTION_REPOSITORY_FQCN,
+            SMART_BILL_NEGOTIATION_ENGINE_FQCN,
+            NOTIFICATION_INTAKE_COORDINATOR_FQCN,
+            NOTIFICATION_INTAKE_PAYLOAD_REPAIRER_FQCN,
+            RECURRING_PLAN_PROJECTION_SERVICE_FQCN,
+            ROOM_RECURRING_LIFECYCLE_EVENT_WRITER_FQCN,
+            DEFAULT_EXPENSE_CATEGORY_ASSIGNMENT_SERVICE_FQCN,
+            DEBUG_EXPENSE_AUDIT_WRITER_FQCN,
+            WORKER_RUN_LOGGER_IMPL_FQCN,
+            WORKER_RUN_LOGGER_HANDLE_FQCN,
+            JSON_EXPENSE_IMPORTER_FQCN,
+        )
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08P1"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # The workerMediated rows are EXACTLY the worker-layer rows:
+    # DataRetentionWorker.doWork (a real CoroutineWorker whose body runs
+    # inside WorkerExecutionGuard.runGuardedWithContext) and the
+    # WorkerRunLogger start/Handle.terminal pair (the worker run-diagnostics
+    # ledger written from inside guard contexts -- the GR-08i3 precedent).
+    worker_mediated = sorted(
+        (entry.method, entry.dao_accessor, entry.operation)
+        for entry in entries
+        if entry.barrier_mode is BarrierMode.WORKER_MEDIATED
+    )
+    assert worker_mediated == sorted([
+        ("doWork", "auditDao", "insert"),
+        ("start", "dao", "insert"),
+        ("terminal", "dao", "completeTerminal"),
+    ])
+    # Every other row is helper (the GR-08a..o batch convention).
+    assert all(
+        entry.barrier_mode is BarrierMode.HELPER
+        for entry in entries
+        if entry.barrier_mode is not BarrierMode.WORKER_MEDIATED
+    )
+    # The two DataRetentionWorker auditDao.insert sites share ONE
+    # fingerprint (24 findings collapse to 23 rows), the two
+    # recordNegotiationOutcome rows hit TWO different DAOs, and the two
+    # repairLegacyPlaintextTransientRows rows carry TWO distinct operations
+    # behind the same callable.
+    do_work = [
+        entry for entry in entries if entry.method == "doWork"
+    ]
+    assert len(do_work) == 1
+    assert do_work[0].dao_accessor == "auditDao"
+    record_outcome = sorted(
+        entry.dao_fqcn for entry in entries
+        if entry.method == "recordNegotiationOutcome"
+    )
+    assert record_outcome == [
+        NEGOTIATION_OUTCOME_DAO_GR08P1, SUBSCRIPTION_PRICE_HISTORY_DAO_GR08P1,
+    ]
+    repair_ops = sorted(
+        entry.operation for entry in entries
+        if entry.method == "repairLegacyPlaintextTransientRows"
+    )
+    assert repair_ops == [
+        "encryptAndClearVisiblePayload", "purgeVisiblePayload",
+    ]
+    # The source-alias spellings: the DataRetentionWorker row spells the
+    # method-local alias auditDao and the WorkerRunLogger rows spell the
+    # constructor-property alias dao (the legacy MIT-003 rows spelled the
+    # derived identities, which never matched the scanner's receiver text).
+    assert do_work[0].dao_accessor == "auditDao"
+    worker_run = sorted(
+        (entry.owner_fqcn, entry.method, entry.dao_accessor)
+        for entry in entries if entry.path == WORKER_RUN_LOGGER_KT
+    )
+    assert worker_run == sorted([
+        (WORKER_RUN_LOGGER_IMPL_FQCN, "start", "dao"),
+        (WORKER_RUN_LOGGER_HANDLE_FQCN, "terminal", "dao"),
+    ])
+    # The normalized chain-form row spells the NORMALIZED accessor, never
+    # the database-chained text.
+    assert all(
+        entry.dao_accessor == "negotiationOutcomeDao"
+        for entry in entries
+        if entry.dao_fqcn == NEGOTIATION_OUTCOME_DAO_GR08P1
+    )
+
+
+def _gr08p1_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08p1 fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08p1_exact_match(tmp_path, rows, select_method,
+                               select_accessor, select_operation,
+                               select_parameters=None, **overrides):
+    """The exact GR-08p1 row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)`` -- optionally narrowed by ``select_parameters`` when
+    several rows share the same (method, accessor, operation) triple (the
+    GR-08p1 repair/parse rows); ``overrides`` perturb exactly one identity
+    field of the match query for the near-miss assertions.
+    """
+    entries = _gr08p1_policy_entries(tmp_path, rows)
+    candidates = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ]
+    if select_parameters is not None:
+        candidates = [
+            entry
+            for entry in candidates
+            if tuple(entry.parameter_types) == tuple(select_parameters)
+        ]
+    target = candidates[0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08p1_exact_identity_matches(tmp_path):
+    rows = _gr08p1_seed_rows()
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "doWork", "auditDao", "insert",
+            select_parameters=(),
+        )
+        is True
+    )
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "recordNegotiationOutcome",
+            "negotiationOutcomeDao", "insert",
+            select_parameters=RECORD_OUTCOME_PARAMS,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "terminal", "dao", "completeTerminal",
+            select_parameters=TERMINAL_PARAMS,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "parseV2Row", "categoryDao", "insert",
+            select_parameters=PARSE_ROW_PARAMS,
+        )
+        is True
+    )
+
+
+def test_gr08p1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08p1_seed_rows()
+    # captureForRetry's 8-parameter overload never matches capture's
+    # 13-parameter identity behind the same accessor + operation.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "capture", "intakeDao", "insertOrIgnore",
+            select_parameters=CAPTURE_PARAMS,
+            parameter_types=CAPTURE_FOR_RETRY_PARAMS,
+        )
+        is False
+    )
+    # A wrong TerminalArgs parameter type never matches the terminal row.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "terminal", "dao", "completeTerminal",
+            select_parameters=TERMINAL_PARAMS,
+            parameter_types=("String", "TerminalArgs"),
+        )
+        is False
+    )
+
+
+def test_gr08p1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08p1_seed_rows()
+    # The nested Handle.terminal row never matches the outer-impl owner.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "terminal", "dao", "completeTerminal",
+            select_parameters=TERMINAL_PARAMS,
+            owner_fqcn=WORKER_RUN_LOGGER_IMPL_FQCN,
+        )
+        is False
+    )
+    # A foreign engine owner never matches the negotiation-outcome row.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "recordNegotiationOutcome",
+            "negotiationOutcomeDao", "insert",
+            select_parameters=RECORD_OUTCOME_PARAMS,
+            owner_fqcn="com.example.OtherNegotiationEngine",
+        )
+        is False
+    )
+
+
+def test_gr08p1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08p1_seed_rows()
+    # The doWork row never matches the derived-identity accessor spelling
+    # the legacy MIT-003 row used (the alias bridge resolves auditDao to
+    # the same DAO identity, but the exact policy match is per spelling).
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "doWork", "auditDao", "insert",
+            select_parameters=(),
+            dao_accessor="privacyAuditDao",
+        )
+        is False
+    )
+    # The assignCategoryIfUnset expenseDao row never matches the
+    # transactionEventDao identity behind the same callable.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "assignCategoryIfUnset", "expenseDao",
+            "updateCategory", select_parameters=ASSIGN_CATEGORY_PARAMS,
+            dao_accessor="transactionEventDao",
+            dao_fqcn=TRANSACTION_EVENT_DAO_GR08P1,
+        )
+        is False
+    )
+
+
+def test_gr08p1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08p1_seed_rows()
+    # The purgeVisiblePayload row never matches the encryptAndClear
+    # operation behind the same callable + accessor.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "repairLegacyPlaintextTransientRows",
+            "intakeDao", "purgeVisiblePayload", select_parameters=(),
+            operation="encryptAndClearVisiblePayload",
+        )
+        is False
+    )
+    # The start row never matches the completeTerminal operation behind the
+    # same accessor + DAO.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "start", "dao", "insert",
+            select_parameters=WORKER_RUN_START_PARAMS,
+            operation="completeTerminal",
+        )
+        is False
+    )
+
+
+def test_gr08p1_shared_operation_distinct_callables_near_misses(tmp_path):
+    """The multi-row callables are exact per (accessor, operation) identity.
+
+    recordNegotiationOutcome carries TWO rows behind one callable
+    (negotiationOutcomeDao insert + priceHistoryDao insert), the two parse
+    rows share the categoryDao insert identity across parseV1Row/parseV2Row,
+    and the two projection rows share the plannedExpenseDao
+    insertPlannedExpense identity across projectFromRule/
+    projectFromOccurrencesInCurrentTransaction; each row authorizes EXACTLY
+    its own callable identity, so a swapped method or accessor stays
+    unauthorized.
+    """
+    rows = _gr08p1_seed_rows()
+    # The negotiationOutcomeDao row never matches the priceHistoryDao
+    # identity behind the same callable.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "recordNegotiationOutcome",
+            "negotiationOutcomeDao", "insert",
+            select_parameters=RECORD_OUTCOME_PARAMS,
+            dao_accessor="priceHistoryDao",
+            dao_fqcn=SUBSCRIPTION_PRICE_HISTORY_DAO_GR08P1,
+        )
+        is False
+    )
+    # The parseV1Row row never matches the parseV2Row identity behind the
+    # same accessor + operation.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "parseV1Row", "categoryDao", "insert",
+            select_parameters=PARSE_ROW_PARAMS,
+            method="parseV2Row",
+        )
+        is False
+    )
+    # The projectFromRule row never matches the
+    # projectFromOccurrencesInCurrentTransaction identity behind the same
+    # accessor + operation.
+    assert (
+        _assert_gr08p1_exact_match(
+            tmp_path, rows, "projectFromRule", "plannedExpenseDao",
+            "insertPlannedExpense", select_parameters=("Long", "Int"),
+            method="projectFromOccurrencesInCurrentTransaction",
         )
         is False
     )

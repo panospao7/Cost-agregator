@@ -49,6 +49,7 @@ class NegotiationEngineTest {
     ) = SmartBillNegotiationEngine(
         recurringExpenseRepository = recurringExpenseRepository,
         priceHistoryDao = priceHistoryDao,
+        negotiationOutcomeDao = negotiationOutcomeDao,
         marketRateProvider = marketRateProvider,
         database = database,
         writeBarrier = writeBarrier,

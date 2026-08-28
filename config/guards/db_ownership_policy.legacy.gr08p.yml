@@ -405,26 +405,6 @@ entries:
   method: doWork
   receiver: null
   parameterTypes: []
-  daoAccessor: auditDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
-  operation: insert
-  barrierMode: workerMediated
-  reason: 'GR-08p1 EXACT_POLICY: P8 privacy-retention audit trail -- one PrivacyAuditEvent
-    per successful raw-notification (RAW_NOTIFICATION_RETENTION) / raw-OCR (RAW_OCR_RETENTION)
-    purge after the checkpointed purge loop, inside the WorkerExecutionGuard.runGuardedWithContext
-    lambda (requiredCapabilities empty so the privacy-cleanup path stays runnable);
-    context JSON carries counts/retention-days only -- never purged payloads; accessor
-    spelled as the source local alias auditDao (val auditDao = appDatabase.privacyAuditDao();
-    alias bridge resolves the privacyAuditDao identity the legacy MIT-003 row already
-    spelled)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
-  ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
-  kind: function
-  method: doWork
-  receiver: null
-  parameterTypes: []
   daoAccessor: privacyAuditDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
   operation: insert
@@ -3250,39 +3230,6 @@ entries:
     barrier (mirrors the GR-08e1 reset rows)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SpendingChallengeRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SpendingChallengeRepository
-  kind: function
-  method: deactivateChallenges
-  receiver: null
-  parameterTypes:
-  - List<Long>
-  - Long
-  daoAccessor: spendingChallengeDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SpendingChallengeDao
-  operation: deactivateChallenges
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: barrier-checked bulk soft-deactivation -- targeted
-    SQL update flipping isActive with the caller-supplied updatedAt; empty id-list
-    short-circuits before any write'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SpendingChallengeRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SpendingChallengeRepository
-  kind: function
-  method: saveChallenge
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.domain.challenge.SpendingChallenge
-  daoAccessor: spendingChallengeDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SpendingChallengeDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: barrier-checked challenge persistence -- insert with
-    rowId <= 0 falling back to the entity id (update-by-id semantics for pre-existing
-    rows); timestamps from TimeProvider'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
   kind: function
@@ -3393,35 +3340,6 @@ entries:
     update path with no engine-owned alternative)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/UserCorrectionRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.UserCorrectionRepository
-  kind: function
-  method: deleteAll
-  receiver: null
-  parameterTypes: []
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
-  operation: deleteAll
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: barrier-checked full correction reset -- SQL DELETE,
-    no payloads materialized'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/UserCorrectionRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.UserCorrectionRepository
-  kind: function
-  method: insert
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.UserCorrection
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: barrier-checked user-correction record insert (the
-    notification accept/reject learning surface; sole UserCorrectionDao writer)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
   kind: function
@@ -4628,136 +4546,6 @@ entries:
     is FORBIDDEN'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08N
-- path: app/src/main/java/com/yourname/expensetracker/domain/negotiation/SmartBillNegotiationEngine.kt
-  ownerFqcn: com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine
-  kind: function
-  method: recordNegotiationOutcome
-  receiver: null
-  parameterTypes:
-  - Long
-  - com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine.NegotiationOutcome
-  - Double?
-  - Double?
-  - String?
-  daoAccessor: negotiationOutcomeDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.NegotiationOutcomeDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: barrier-checked negotiation-outcome persistence inside
-    database.withTransaction (atomic with the price-history insert and the delegated
-    subscription update); accessor normalized to the injected negotiationOutcomeDao
-    constructor property by the GR-08p1 source change (was the database-chained form
-    database.negotiationOutcomeDao() -- the GR-08e rule); CancellationException rethrown,
-    failures roll back the transaction'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/negotiation/SmartBillNegotiationEngine.kt
-  ownerFqcn: com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine
-  kind: function
-  method: recordNegotiationOutcome
-  receiver: null
-  parameterTypes:
-  - Long
-  - com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine.NegotiationOutcome
-  - Double?
-  - Double?
-  - String?
-  daoAccessor: priceHistoryDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: barrier-checked price-history row for SUCCESS/PARTIAL
-    outcomes with a valid newPrice -- PR8 monthly-equivalent back-conversion before
-    storing so non-monthly billing cycles are not corrupted; same withTransaction
-    as the outcome insert'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakeCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCoordinator
-  kind: function
-  method: capture
-  receiver: null
-  parameterTypes:
-  - String
-  - String?
-  - String
-  - String
-  - Long
-  - String?
-  - String?
-  - String?
-  - String?
-  - String?
-  - com.yourname.expensetracker.domain.privacy.RawStorageMode
-  - String
-  - String
-  daoAccessor: intakeDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
-  operation: insertOrIgnore
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: capture-side durable intake -- fingerprint-deduplicated
-    NotificationIntake row (existsByFingerprint checked first; insertOrIgnore -1 return
-    is the Dropped path); DO_NOT_STORE never reaches durable intake; TRANSIENT modes
-    store only the encrypted transient-payload columns with visible fields nulled;
-    the worker is enqueued only after a successful insert'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakeCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCoordinator
-  kind: function
-  method: captureForRetry
-  receiver: null
-  parameterTypes:
-  - String
-  - String
-  - Long
-  - String
-  - String?
-  - String?
-  - String?
-  - String?
-  daoAccessor: intakeDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
-  operation: insertOrIgnore
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: deferred-capture intake for the not-yet-ready gate
-    -- DEFERRED_-prefixed fingerprint row with the extracted text encrypted as a transient
-    payload (or metadata-only when no content); insertOrIgnore dedup; worker enqueued
-    with a short delay only after a successful insert'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakePayloadRepairer.kt
-  ownerFqcn: com.yourname.expensetracker.domain.notification.capture.NotificationIntakePayloadRepairer
-  kind: function
-  method: repairLegacyPlaintextTransientRows
-  receiver: null
-  parameterTypes: []
-  daoAccessor: intakeDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
-  operation: encryptAndClearVisiblePayload
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: privacy repair of legacy plaintext transient rows
-    -- non-terminal rows get the plaintext encrypted into the transient-payload columns
-    and the visible fields cleared in one targeted SQL update; same batched loop as
-    the purge branch'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakePayloadRepairer.kt
-  ownerFqcn: com.yourname.expensetracker.domain.notification.capture.NotificationIntakePayloadRepairer
-  kind: function
-  method: repairLegacyPlaintextTransientRows
-  receiver: null
-  parameterTypes: []
-  daoAccessor: intakeDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
-  operation: purgeVisiblePayload
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: privacy repair of legacy plaintext transient rows
-    -- terminal rows get their visible payload columns purged (targeted SQL update,
-    no payloads materialized); batched 100-row loop with a 100-batch cap; per-row
-    failures logged and the batch continues'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkBackfillWorker.kt
   ownerFqcn: com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker
   kind: function
@@ -5613,45 +5401,6 @@ entries:
     errorDetails constants only; CancellationException rethrown'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08O
-- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/RecurringPlanProjectionService.kt
-  ownerFqcn: com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService
-  kind: function
-  method: projectFromOccurrencesInCurrentTransaction
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  - Long
-  - Long
-  daoAccessor: plannedExpenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
-  operation: insertPlannedExpense
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: transaction-safe projection variant -- deliberately
-    NO barrier/transaction of its own; invoked ONLY from RecurringRuleLifecycleCoordinator
-    createRule/activateRule/updateRule bodies inside their barrier-checked database.withTransaction
-    blocks; same sourceOccurrenceKey idempotency guard as projectFromRule'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/RecurringPlanProjectionService.kt
-  ownerFqcn: com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService
-  kind: function
-  method: projectFromRule
-  receiver: null
-  parameterTypes:
-  - Long
-  - Int
-  daoAccessor: plannedExpenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
-  operation: insertPlannedExpense
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: barrier-checked rule projection -- materializes occurrences
-    via RecurringLifecycleCoordinator.generateOccurrences (the recurrence-expansion
-    authority) then inserts a PlannedExpense per PLANNED occurrence lacking one (sourceOccurrenceKey
-    existence check first, so re-runs are idempotent); REC-25 isRecurring/sourceRecurringRuleId
-    provenance set'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function
@@ -6074,51 +5823,6 @@ entries:
     (MIT-043)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08C
-- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt
-  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter
-  kind: function
-  method: writeCritical
-  receiver: null
-  parameterTypes:
-  - Long?
-  - String
-  - String?
-  - String?
-  - String?
-  - Long
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: THE sanctioned recurring lifecycle event writer --
-    its own writes ARE the audit trail itself (RecurringLifecycleEvent rows emitted
-    by the GR-08c1 RecurringLifecycleCoordinator and GR-08f RecurringRuleLifecycleCoordinator
-    through the Hilt-bound interface); critical events are never swallowed; occurredAt
-    defaults to TimeProvider.now() only when the caller passes 0'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt
-  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter
-  kind: function
-  method: writeDiagnostic
-  receiver: null
-  parameterTypes:
-  - Long?
-  - String
-  - String?
-  - String?
-  - String?
-  - Long
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: best-effort diagnostic event branch of the sanctioned
-    lifecycle event writer -- non-cancellation failures are logged and swallowed so
-    diagnostics can never regress a lifecycle transition; CancellationException is
-    rethrown'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
   kind: function
@@ -6788,82 +6492,6 @@ entries:
     request.recordPriceHistory'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08N
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/DefaultExpenseCategoryAssignmentService.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.DefaultExpenseCategoryAssignmentService
-  kind: function
-  method: assignCategoryIfUnset
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  - String
-  - String?
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: updateCategory
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: P3-03EA-09 default category assignment -- barrier-checked,
-    then the targeted updateCategory inside database.withTransaction only when the
-    get-if-unset check finds the expense uncategorized (SkippedAlreadySet/SkippedExpenseMissing
-    otherwise); atomic with the audit event'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/DefaultExpenseCategoryAssignmentService.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.DefaultExpenseCategoryAssignmentService
-  kind: function
-  method: assignCategoryIfUnset
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  - String
-  - String?
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: EXPENSE_CATEGORY_ASSIGNED TransactionEvent audit
-    row in the SAME withTransaction as the category update (P3-03EA-09 atomic update
-    + event); event carries ids/source/controlled actor only'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/DebugExpenseAuditWriter.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.DebugExpenseAuditWriter
-  kind: function
-  method: writeDeleteAllEvent
-  receiver: null
-  parameterTypes:
-  - Int
-  - String?
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: DEBUG_DELETE_ALL_EXPENSES aggregate audit row --
-    invoked ONLY from ExpenseRepository.deleteAllExpenses (requireDebugExpenseOperation
-    throws in release + writeBarrier.checkWritesAllowed) inside the caller''s database.withTransaction;
-    metadata carries counts and debugOnly=true only'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/DebugExpenseAuditWriter.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.DebugExpenseAuditWriter
-  kind: function
-  method: writeRestoreSnapshotEvent
-  receiver: null
-  parameterTypes:
-  - Int
-  - Int
-  - String?
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: RESTORED_FROM_DEBUG_SNAPSHOT aggregate audit row
-    -- invoked ONLY from ExpenseRepository.restoreDebugSnapshot (same release-throw
-    + barrier gating) inside the caller''s database.withTransaction; before/restored
-    counts only'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function
@@ -7691,49 +7319,6 @@ entries:
     writeBarrier check; direct barrier not claimed.
   owner: '@panospao7'
   linkedIssue: MIT-003
-- path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
-  ownerFqcn: com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl
-  kind: function
-  method: start
-  receiver: null
-  parameterTypes:
-  - String
-  - String?
-  - String?
-  - Int?
-  - Int?
-  - String?
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
-  operation: insert
-  barrierMode: workerMediated
-  reason: 'GR-08p1 EXACT_POLICY: PR8 RUNNING job-run row insert -- invoked inside
-    the workers'' WorkerExecutionGuard.runGuardedWithContext contexts (the GR-08i3
-    precedent cites this callable as workerMediated); accessor spelled as the source
-    constructor-property alias dao (the legacy MIT-003 row spelled the derived backgroundJobRunDao
-    identity, which never matched the scanner''s receiver text)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
-  ownerFqcn: com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle
-  kind: function
-  method: terminal
-  receiver: null
-  parameterTypes:
-  - String
-  - com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle.TerminalArgs
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
-  operation: completeTerminal
-  barrierMode: workerMediated
-  reason: 'GR-08p1 EXACT_POLICY: PR12B mutex-serialized terminal state machine --
-    conditional completeTerminal update under a 5s withTimeout backstop; affected==1
-    is Durable, affected==0 with a non-RUNNING row is AlreadyTerminal, timeout is
-    classified NotDurable (retriable, never marked complete); TimeoutCancellationException
-    handled intentionally, plain CancellationException rethrown; status/reason fields
-    carry sanitized controlled codes only (WorkerReasonCodes/EventMetadataSanitizer/classifyDiagnostic)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
   ownerFqcn: com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
   kind: function
@@ -7845,43 +7430,6 @@ entries:
     to SCHEDULED so a worker that crashed mid-send retries instead of being stuck'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
-- path: app/src/main/java/com/yourname/expensetracker/util/JsonExpenseImporter.kt
-  ownerFqcn: com.yourname.expensetracker.util.JsonExpenseImporter
-  kind: function
-  method: parseV1Row
-  receiver: null
-  parameterTypes:
-  - org.json.JSONObject
-  - Int
-  - Long?
-  daoAccessor: categoryDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: JSON v1 import get-or-create category convenience
-    -- same getByName-then-default-insert shape as parseV2Row; expense creation stays
-    delegated to TransactionLifecycleCoordinator.createExpense'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/util/JsonExpenseImporter.kt
-  ownerFqcn: com.yourname.expensetracker.util.JsonExpenseImporter
-  kind: function
-  method: parseV2Row
-  receiver: null
-  parameterTypes:
-  - org.json.JSONObject
-  - Int
-  - Long?
-  daoAccessor: categoryDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: JSON v2 import get-or-create category convenience
-    -- getByName first, default icon/color insert only when the named category does
-    not exist; ALL expense mutations of the import route through TransactionLifecycleCoordinator.createExpense
-    (the authoritative expense path)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
   ownerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
   kind: function
