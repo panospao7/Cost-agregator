@@ -1,0 +1,453 @@
+﻿# GR-08 batch 9, part 1 (GR-08i1) tracked batch manifest -- DB_UNAUTHORIZED_MUTATION
+# exact-policy authorization for data/database/GroupTransactionCoordinator.kt.
+#
+# Batch scope (plan): GR-08i covered THREE files (GroupTransactionCoordinator.kt,
+# RecurringOccurrenceMaterializer.kt, NotificationIntakeWorker.kt -- plan prose
+# said 15 findings each) as ONE batch, with a forced split if the combined
+# unique fingerprint count exceeded 25.  Scope verification against the
+# trusted START report (build/guard-debug/gr08i/before.json == trusted
+# GR-08h after.json, 291 findings / 20 advisory diagnostics; reference copy
+# SHA-256 recorded below): GroupTransactionCoordinator.kt carries exactly 14
+# DB_UNAUTHORIZED_MUTATION findings collapsing to 14 UNIQUE fingerprints
+# (dedup key: callable identity + daoAccessor + daoFqcn + operation; every
+# finding here is its own tuple -- no two sites share a callable+DAO+
+# operation identity), RecurringOccurrenceMaterializer.kt carries 15
+# findings / 6 unique fingerprints, and NotificationIntakeWorker.kt carries
+# 15 findings / 7 unique fingerprints.  Combined unique count 27 > the
+# 25-fingerprint batch cap, so the batch was SPLIT into GR-08i1 (this
+# manifest) / GR-08i2 (GR-08i2.yml) / GR-08i3 (GR-08i3.yml) per the GR-08c
+# and GR-08e precedent, one part per file; each part is within the cap.
+#
+# PLAN-COUNT RECONCILIATION (14 vs the plan's 15): the trusted report
+# carries 14 findings for this file.  The plan's 15th mutating DAO call
+# site, addExpenseToGroupAtomic's groupExpenseDao.insert (line 1032), is
+# ALREADY authorized by the active policy's legacy MIT-003 direct row
+# (barrierMode=direct; writeBarrier.checkWritesAllowed is the first
+# statement of that callable), so the scanner never reported it as a
+# finding.  Evidence: build/guard-debug/gr08i/probe-gr08i-scanner-exp.json
+# (empty-policy scan emits line 1032; the active-policy report does not)
+# and build/guard-debug/gr08i/probe-gr08i-line1032-history.json (line 1032
+# absent from every batch report GR-08a..GR-08h).  CONSEQUENCE FOR THE
+# DELTA: the batch resolves 44 findings (14 + 15 + 15), so the rescan delta
+# expectation is 291 -> 247, NOT the plan-prose 291 -> 246.
+#
+# All 14 file findings are DB_UNAUTHORIZED_MUTATION with disposition
+# EXACT_POLICY: this is the data/database layer coordinator -- the
+# AUTHORITATIVE writer for atomic group mutations per
+# docs/architecture/LEGAL_PATHS.md ("Group Mutations": CREATE group ->
+# GroupLifecycleCoordinator.createGroup() ->
+# GroupTransactionCoordinator.createGroupWithMembersAtomic(); ADD member ->
+# GroupTransactionCoordinator.addMemberToGroup(); ADD expense to group ->
+# GroupTransactionCoordinator.addExpenseToGroup() / addExpenseWithLink();
+# CREATE system expense AND link to group (atomic) ->
+# GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup(); ARCHIVE /
+# DELETE group -> GroupTransactionCoordinator.permanentlyDeleteGroup() hard
+# delete with cascade cleanup via ExpenseGroupDao + GroupExpenseDao +
+# GroupMemberDao; FORBIDDEN: ExpenseGroupDao.insert() /
+# GroupMemberDao.insert() / GroupExpenseDao.insert() outside
+# GroupTransactionCoordinator).
+#
+# Chain-form census: ZERO database-chained `database.xxxDao()` call sites
+# in this file (every finding reports identity.call_form=receiver with a
+# plain constructor-property accessor; the injected `database: AppDatabase`
+# constructor property is only ever used as the androidx.room.withTransaction
+# extension receiver and is NEVER dereferenced as a DAO factory in the file
+# body).  NO GR-08e accessor-normalization source change is needed for this
+# batch; every seed row spells the constructor-property accessor exactly as
+# the scanner reports it.
+#
+# Closure additions (GR-08i1 blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in every mutating-callable body was enumerated, not just
+# the findings: the 14 findings == the 14 uncovered mutating DAO call sites,
+# and every called mutating DAO method (ExpenseGroupDao.insert/archiveGroup/
+# delete, GroupMemberDao.insert/insertAll/deleteAllForGroup,
+# GroupExpenseDao.insert/deleteAllForGroup, ExpenseDao.clearSharedExpenseFlags)
+# is an abstract Room-annotated method.  The two body-carrying @Transaction
+# convenience methods that EXIST in the touched DAOs --
+# ExpenseGroupDao.insertGroupWithMembers and GroupMemberDao.setCurrentUser --
+# are NOT called from this file, so no convenience-method closure row exists
+# for this batch (ExpenseDao's @Transaction methods are read-only composites
+# and equally unreached).  The only other DAO-accessor calls in the mutating
+# bodies are read-only lookups (groupDao.getById/getGroupById,
+# memberDao.getActiveMembersForGroup/getCurrentUser,
+# groupExpenseDao.getByIdempotencyKey/getGroupExpenseForExpense/
+# getExpensesForGroupOnce, expenseDao.getById).  Constructor-property DAO
+# aliases (GR-08a pattern): all four DAO accessors (groupDao, memberDao,
+# groupExpenseDao, expenseDao) are direct @Inject constructor properties
+# resolved natively by the evidence verifier; there are NO alias
+# indirections.
+#
+# barrierMode is `helper` for every row: the write barrier runs at each
+# callable entrypoint (writeBarrier.checkWritesAllowed is the FIRST
+# statement of every mutating callable in the file), then the mutations run
+# inside the database.withTransaction block -- the barrier is NOT re-checked
+# directly before each individual mutation, and no direct-barrier proof is
+# claimed.
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 rows verbatim); passing only GR-08i1-seed.yml would drop
+# the earlier batches' rows from the rendered candidate.
+schemaVersion: 1
+batchId: GR-08i1
+startSha: 64913de1
+startReport:
+  path: build/guard-debug/gr08i/before.json
+  # SHA-256 of the reference copy (trusted GR-08h after report; 291 findings
+  # / 20 advisory).  ORCHESTRATOR: fill this in from the reference-copy step
+  # before the generate step.  Reference copy created by the batch agent;
+  # expected SHA-256:
+  # 57c2a6688a96484303b4bc8a17f8886cb7ea06bde9f1f85261e68a2a742a8307
+  sha256: 
+  trusted: true
+  findingCount: 291
+activePolicySha256: b2d9d2eaf38d5076076c838ca90ea3b342bb71de5ef708f88b0143a24f6eb4bb
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08I
+counts:
+  fileFindings: 14
+  batchCallablesFindings: 14
+  uniqueFingerprints: 14
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=addExpenseToGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22Double%22%2C%22Long%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.data.database.entity.SplitType%22%2C%22String%3F%22%2C%22Long%22%2C%22String%3F%22%2C%22%28Long%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupExpenseDao|identity.accessor=groupExpenseDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=addExpenseWithLink|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22Double%22%2C%22Long%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.data.database.entity.SplitType%22%2C%22String%3F%22%2C%22Long%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupExpenseDao|identity.accessor=groupExpenseDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=addMemberToGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22Boolean%22%2C%22%28Long%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=archiveGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=archiveGroup|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createGroupWithMembers|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22String%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%2C%22%28Long%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createGroupWithMembers|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22String%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%2C%22%28Long%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createGroupWithMembersAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ExpenseGroup%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createGroupWithMembersAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ExpenseGroup%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createSystemExpenseAndLinkToGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22Double%22%2C%22Long%22%2C%22String%22%2C%22com.yourname.expensetracker.data.database.entity.SplitType%22%2C%22String%3F%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.database.entity.TransactionType%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupExpenseDao|identity.accessor=groupExpenseDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=archiveGroup|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroupAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=clearSharedExpenseFlags|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroupAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroupAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupExpenseDao|identity.accessor=groupExpenseDao|identity.operation=deleteAllForGroup|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroupAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=deleteAllForGroup|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+# â”€â”€ createGroupWithMembers (2 sites: 1 group insert + 1 member insertAll) â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createGroupWithMembers|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22String%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%2C%22%28Long%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: createGroupWithMembers
+    receiver: null
+    parameterTypes:
+    - String
+    - String?
+    - String
+    - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+    - (Long) -> Unit
+    kind: function
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: insert
+  locations: [243]
+  disposition: EXACT_POLICY
+  rationale: "Inserts the ExpenseGroup row as the first write of the atomic create-group transaction (group + members + onInsideTransaction callback commit or roll back together); LEGAL_PATHS.md Group Mutations names GroupTransactionCoordinator as the legal writer and forbids ExpenseGroupDao.insert() outside it."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createGroupWithMembers|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22String%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%2C%22%28Long%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: createGroupWithMembers
+    receiver: null
+    parameterTypes:
+    - String
+    - String?
+    - String
+    - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+    - (Long) -> Unit
+    kind: function
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: insertAll
+  locations: [255]
+  disposition: EXACT_POLICY
+  rationale: "Inserts the initial members (G01 currentUserGroupKey invariant applied, joinedAt normalized) inside the same atomic transaction as the group insert, so a member failure rolls the group back (no orphaned groups)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ addMemberToGroup (1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=addMemberToGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22Boolean%22%2C%22%28Long%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: addMemberToGroup
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    - String?
+    - Boolean
+    - (Long) -> Unit
+    kind: function
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: insert
+  locations: [319]
+  disposition: EXACT_POLICY
+  rationale: "Inserts the validated new member inside the withTransaction block that closes the read-check-then-insert TOCTOU window (group-active, duplicate-name and single-currentUser checks run in the same transaction); LEGAL_PATHS.md ADD member names GroupTransactionCoordinator.addMemberToGroup() as the legal path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ addExpenseToGroup (1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=addExpenseToGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22Double%22%2C%22Long%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.data.database.entity.SplitType%22%2C%22String%3F%22%2C%22Long%22%2C%22String%3F%22%2C%22%28Long%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupExpenseDao|identity.accessor=groupExpenseDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: addExpenseToGroup
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    - Double
+    - Long
+    - String?
+    - com.yourname.expensetracker.data.database.entity.SplitType
+    - String?
+    - Long
+    - String?
+    - (Long) -> Unit
+    kind: function
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: insert
+  locations: [423]
+  disposition: EXACT_POLICY
+  rationale: "Persists the standalone group expense (expenseId null) inside the withTransaction block after group-active/payer/split/idempotency/single-currency validation; LEGAL_PATHS.md forbids GroupExpenseDao.insert() outside GroupTransactionCoordinator."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ addExpenseWithLink (1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=addExpenseWithLink|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22Double%22%2C%22Long%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.data.database.entity.SplitType%22%2C%22String%3F%22%2C%22Long%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupExpenseDao|identity.accessor=groupExpenseDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: addExpenseWithLink
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    - Double
+    - Long
+    - String?
+    - com.yourname.expensetracker.data.database.entity.SplitType
+    - String?
+    - Long
+    - String?
+    kind: function
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: insert
+  locations: [599]
+  disposition: EXACT_POLICY
+  rationale: "Persists the group expense linked to the system expense inside the withTransaction block, atomic with the ownership update via TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2 (post-commit side effects deferred to PostCommitActionRunner after outer commit)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ deleteGroup / archiveGroup (2 sites, same archiveGroup operation) â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=archiveGroup|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: deleteGroup
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: archiveGroup
+  locations: [685]
+  disposition: EXACT_POLICY
+  rationale: "Soft-deletes the group (isActive=false) behind the write barrier; the coordinator is the legal writer for group archive per LEGAL_PATHS.md (archiveGroup: sets isActive=false, preserves expense history)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=archiveGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=archiveGroup|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: archiveGroup
+    receiver: null
+    parameterTypes:
+    - Long
+    - () -> Unit
+    kind: function
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: archiveGroup
+  locations: [702]
+  disposition: EXACT_POLICY
+  rationale: "Archives the group (isActive=false) inside the withTransaction block so the onInsideTransaction work commits or rolls back with the archive transition."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ createGroupWithMembersAtomic (2 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createGroupWithMembersAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ExpenseGroup%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: createGroupWithMembersAtomic
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.ExpenseGroup
+    - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+    kind: function
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: insert
+  locations: [763]
+  disposition: EXACT_POLICY
+  rationale: "Low-level atomic create -- inserts the ExpenseGroup entity first; a member-insertion failure rolls the group back (prevents orphaned groups); LEGAL_PATHS.md CREATE group names GroupTransactionCoordinator.createGroupWithMembersAtomic() as the atomic insert path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createGroupWithMembersAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ExpenseGroup%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: createGroupWithMembersAtomic
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.ExpenseGroup
+    - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+    kind: function
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: insertAll
+  locations: [775]
+  disposition: EXACT_POLICY
+  rationale: "Inserts the member entities (G01 currentUserGroupKey invariant applied) inside the same atomic transaction as the group insert."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ createSystemExpenseAndLinkToGroup (1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=createSystemExpenseAndLinkToGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22Double%22%2C%22Long%22%2C%22String%22%2C%22com.yourname.expensetracker.data.database.entity.SplitType%22%2C%22String%3F%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.database.entity.TransactionType%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupExpenseDao|identity.accessor=groupExpenseDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: createSystemExpenseAndLinkToGroup
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    - Double
+    - Long
+    - String
+    - com.yourname.expensetracker.data.database.entity.SplitType
+    - String?
+    - Long
+    - com.yourname.expensetracker.data.database.entity.TransactionType
+    - String?
+    - String?
+    kind: function
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: insert
+  locations: [948]
+  disposition: EXACT_POLICY
+  rationale: "Creates the group-expense link row inside the withTransaction block after TransactionLifecycleCoordinator.createExpenseDbOnlyV2 created the system expense (DEFER side effects); any failure throws GroupExpenseAtomicRollback so Room rolls back BOTH the expense and the link (LEGAL_PATHS.md: CREATE system expense AND link to group (atomic))."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ deleteGroupAtomic (4 sites: cascade delete + flag clear) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroupAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupExpenseDao|identity.accessor=groupExpenseDao|identity.operation=deleteAllForGroup|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: deleteGroupAtomic
+    receiver: null
+    parameterTypes:
+    - Long
+    - () -> Unit
+    kind: function
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: deleteAllForGroup
+  locations: [1054]
+  disposition: EXACT_POLICY
+  rationale: "Hard-delete cascade -- deletes the group's expense rows first (child table) inside the withTransaction block; LEGAL_PATHS.md DELETE group names GroupTransactionCoordinator.permanentlyDeleteGroup() -> cascade cleanup via GroupExpenseDao."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroupAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=deleteAllForGroup|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: deleteGroupAtomic
+    receiver: null
+    parameterTypes:
+    - Long
+    - () -> Unit
+    kind: function
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: deleteAllForGroup
+  locations: [1061]
+  disposition: EXACT_POLICY
+  rationale: "Hard-delete cascade -- deletes the group's members inside the same transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroupAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|identity.accessor=groupDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: deleteGroupAtomic
+    receiver: null
+    parameterTypes:
+    - Long
+    - () -> Unit
+    kind: function
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: delete
+  locations: [1065]
+  disposition: EXACT_POLICY
+  rationale: "Hard-delete cascade -- deletes the group row last (parent table) inside the same transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FGroupTransactionCoordinator.kt|symbol.owner=com.yourname.expensetracker.data.database.GroupTransactionCoordinator|symbol.name=deleteGroupAtomic|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22%28%29%20-%3E%20Unit%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=clearSharedExpenseFlags|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+    method: deleteGroupAtomic
+    receiver: null
+    parameterTypes:
+    - Long
+    - () -> Unit
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: clearSharedExpenseFlags
+  locations: [1069]
+  disposition: EXACT_POLICY
+  rationale: "Clears orphaned shared-expense flags (isSharedExpense/myShareAmount/mySharePercentage/sharedWithName) on the linked system expenses inside the same transaction (P2-CURRENT-008), atomic with the BULK_UPDATED TransactionLifecycleEvent."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for this file: after the GR-08i1 promotion GroupTransactionCoordinator.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (14/14 authorized; the 15th mutating site, addExpenseToGroupAtomic's groupExpenseDao.insert, was already authorized by the legacy MIT-003 direct row and never appeared in the report).  Out-of-batch stability: the rescan delta expectation for the WHOLE GR-08i batch is 291 -> 247 (44 = 14 GR-08i1 + 15 GR-08i2 + 15 GR-08i3; the plan prose's 291 -> 246 assumed 15 GTC findings, but the trusted report carries 14 because the 15th site is already authorized).  The remaining 247 include the still-unauthorized files deferred to future batches, which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

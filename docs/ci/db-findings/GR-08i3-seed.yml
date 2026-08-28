@@ -1,0 +1,193 @@
+# GR-08 batch 9, part 3 (GR-08i3) reviewed exact v2 policy seed rows (MIT-DB-08I).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: worker/NotificationIntakeWorker.kt -- 15 DB_UNAUTHORIZED_MUTATION
+# findings collapsing to 7 UNIQUE fingerprints (dedup key: callable identity
+# + daoAccessor + daoFqcn + operation; 5 tuples live on doWork --
+# 5x markTerminal, 3x markRetryableFailure, 3x markFinalFailure, 1x
+# claimForProcessing, 1x markPrivacyDeniedAndPurgeAllPayload -- plus 1x
+# purgePayloadBestEffort/purgeAllPayload and 1x
+# runPrivacyCleanupGuarded/markPrivacyDeniedAndPurgeAllPayload).  Unique
+# count 7 <= the 25-fingerprint batch cap, so this part needed NO further
+# split.  This is the worker layer for notification intake processing: the
+# worker owns the intake-row state machine (claim -> process -> terminal)
+# and the privacy purge of stored notification payloads, so every row is a
+# legal-writer EXACT_POLICY authorization.
+#
+# WORKER-GUARD VERIFICATION (GR-08i task-4 gate, satisfied for EVERY row
+# before EXACT_POLICY disposition):
+# * doWork -- the ENTIRE mutating body runs inside
+#   executionGuard.runGuardedWithContext(WorkerGuardRequest(workerName =
+#   WORKER_NAME, requiresDatabaseWrite = true, requiredCapabilities =
+#   listOf(PrivacyCapability.NOTIFICATION_CAPTURE), blockedPolicy =
+#   BlockedPolicy.RETRY, ...)) { ctx -> ... }: the guard checks the
+#   restore/write barrier FIRST, then logs the run (WorkerRunLogger), and
+#   every intakeDao mutation below happens inside that guard lambda.
+# * runPrivacyCleanupGuarded -- wraps its own body in a SECOND
+#   executionGuard.runGuardedWithContext with requiresDatabaseWrite = true
+#   and requiredCapabilities = emptyList(): the privacy-cleanup path runs
+#   when the guard itself skipped the main run for privacy denial, and it
+#   must stay runnable so it can delete raw data (never gated on the
+#   raw-retention capability it enforces -- AGENTS.md privacy-cleanup rule).
+# * purgePayloadBestEffort -- performs no guard check of its own but is
+#   invoked ONLY from inside the doWork guard lambda (8 call sites), rethrows
+#   CancellationException, and swallows non-cancellation cleanup failures so
+#   post-terminal cleanup can never regress a committed terminal state.
+# * Cancellation propagation: doWork catches TimeoutCancellationException
+#   FIRST (intentional timeout handling -> retryable/final mark +
+#   RetryableWorkerException or terminal failure), then
+#   RetryableWorkerException (rethrow), then CancellationException (rethrow),
+#   and additionally CancellationSafe.rethrowIfCancellation in the generic
+#   handler -- no swallowed cancellation anywhere.
+# * Retry contract: retries are signalled ONLY by RetryableWorkerException
+#   (WORKER_RETRYABLE_ERROR / WORKER_TIMEOUT / WORKER_UNHANDLED_EXCEPTION
+#   reason codes); plain RuntimeExceptions are intentional terminal
+#   failures (PERMANENT), never retry signals.
+# * Idempotency across WorkManager retries: claimForProcessing is an atomic
+#   conditional claim; claimed == 0 returns idempotent NO_WORK success.
+# * Privacy posture: payload is loaded ONLY after the mid-run privacy
+#   recheck; denial marks privacy-denied AND purges all payload columns in
+#   one statement; failureCode fields carry controlled constants only
+#   (MAX_ATTEMPTS_EXCEEDED / TIMEOUT / WORKER_EXCEPTION / RETRYABLE_ERROR),
+#   never raw exception text or notification payloads.
+#
+# barrierMode is `workerMediated` for every row (the established mode of the
+# active policy's worker rows, e.g. DataRetentionWorker.doWork and
+# WorkerRunLoggerImpl.start): the write barrier is mediated by
+# WorkerExecutionGuard.runGuardedWithContext, and NO direct-barrier proof is
+# claimed.  The v2 evidence verifier imposes no local direct-barrier
+# requirement on workerMediated rows.
+#
+# Closure additions (GR-08i3 blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in every mutating-callable body was enumerated, not just
+# the findings: the 15 findings == the 15 mutating DAO call sites, and every
+# called mutating DAO method (NotificationIntakeDao.claimForProcessing /
+# markTerminal / markRetryableFailure / markFinalFailure /
+# markPrivacyDeniedAndPurgeAllPayload / purgeAllPayload) is an abstract
+# Room-annotated method.  NotificationIntakeDao carries ZERO @Transaction
+# methods at all -- a fully abstract interface -- so no convenience-method
+# closure row exists for this batch.  The only other DAO-accessor calls in
+# the bodies are the read-only lookups intakeDao.getProcessingMetadataById
+# (2 sites) and intakeDao.getPayloadForProcessing (1 site).  All pipeline
+# writes (raw notification, expense, review rows) happen inside
+# NotificationRepository.processAndSave -> NotificationProcessingPipeline,
+# whose writers are already authorized by GR-08a/GR-08b.  Constructor-
+# property DAO aliases (GR-08a pattern): the single DAO accessor (intakeDao)
+# is a direct @AssistedInject constructor property resolved natively by the
+# evidence verifier; there are NO alias indirections and NO database-chained
+# `database.xxxDao()` call sites (chain-form census: 0 -- the worker does
+# not even inject AppDatabase).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 rows verbatim); passing only this file would drop the
+# earlier batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── doWork intake state machine (intakeDao, 5 tuples) ────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
+  ownerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
+  kind: function
+  method: doWork
+  receiver: null
+  parameterTypes: []
+  daoAccessor: intakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: claimForProcessing
+  barrierMode: workerMediated
+  reason: "GR-08i3 EXACT_POLICY: atomic per-row claim (conditional UPDATE) inside the WorkerExecutionGuard.runGuardedWithContext lambda -- the load-bearing overlap guard so concurrent WorkManager retries can never double-process an intake row; claimed == 0 returns idempotent NO_WORK success"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
+  ownerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
+  kind: function
+  method: doWork
+  receiver: null
+  parameterTypes: []
+  daoAccessor: intakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: markFinalFailure
+  barrierMode: workerMediated
+  reason: "GR-08i3 EXACT_POLICY: terminal failure mark (MAX_ATTEMPTS_EXCEEDED, exhausted TIMEOUT, exhausted WORKER_EXCEPTION) inside the guard lambda; failureCode carries a controlled constant only -- never raw exception text (privacy posture); the 3 call sites share this one fingerprint"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
+  ownerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
+  kind: function
+  method: doWork
+  receiver: null
+  parameterTypes: []
+  daoAccessor: intakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: markPrivacyDeniedAndPurgeAllPayload
+  barrierMode: workerMediated
+  reason: "GR-08i3 EXACT_POLICY: mid-run privacy recheck (PR12H-2) -- when NOTIFICATION_CAPTURE is denied the row is marked privacy-denied AND all stored payload columns purged in one statement BEFORE any payload is loaded (privacy fail-closed posture; no raw notification text is ever materialized on the denied path)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
+  ownerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
+  kind: function
+  method: doWork
+  receiver: null
+  parameterTypes: []
+  daoAccessor: intakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: markRetryableFailure
+  barrierMode: workerMediated
+  reason: "GR-08i3 EXACT_POLICY: retryable-failure mark with computed backoff inside the guard lambda for retryable pipeline errors, worker timeouts, and exceptions; every mark is followed by RetryableWorkerException so WorkManager owns the retry (never a plain RuntimeException -- that would burn the attempt budget as PERMANENT); the 3 call sites share this one fingerprint"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
+  ownerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
+  kind: function
+  method: doWork
+  receiver: null
+  parameterTypes: []
+  daoAccessor: intakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: markTerminal
+  barrierMode: workerMediated
+  reason: "GR-08i3 EXACT_POLICY: terminal intake-state write (PAYLOAD_UNAVAILABLE_PRIVACY, FILTER_REJECTED, FAILED_FINAL, PROCESSED, DROPPED_DUPLICATE, DROPPED_POLICY) inside the guard lambda after the pipeline outcome; finalOutcome carries the outcome class simple name only; the 5 call sites share this one fingerprint"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── best-effort payload purge (purgePayloadBestEffort, 1 tuple) ──────────────
+- path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
+  ownerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
+  kind: function
+  method: purgePayloadBestEffort
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - com.yourname.expensetracker.domain.workers.WorkerRunContext?
+  daoAccessor: intakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: purgeAllPayload
+  barrierMode: workerMediated
+  reason: "GR-08i3 EXACT_POLICY: best-effort payload purge after every terminal path; invoked ONLY from inside the doWork guard lambda (WorkerExecutionGuard-mediated, direct barrier not claimed), rethrows CancellationException, and swallows non-cancellation cleanup failures so post-terminal cleanup can never regress a committed terminal state"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── privacy-cleanup path (runPrivacyCleanupGuarded, 1 tuple) ─────────────────
+- path: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt
+  ownerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
+  kind: function
+  method: runPrivacyCleanupGuarded
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: intakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: markPrivacyDeniedAndPurgeAllPayload
+  barrierMode: workerMediated
+  reason: "GR-08i3 EXACT_POLICY: privacy-cleanup path when the guard itself skipped the main run for privacy denial -- runs in its OWN WorkerExecutionGuard.runGuardedWithContext with requiresDatabaseWrite = true and requiredCapabilities = emptyList() so cleanup can always run to delete raw data (never gated on the capability it enforces)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I

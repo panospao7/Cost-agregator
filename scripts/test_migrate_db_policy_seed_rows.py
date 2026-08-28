@@ -182,6 +182,43 @@ ReceiptEvent"; FORBIDDEN: ReceiptRepository.saveMatchSuggestion()
 * NEAR-MISS protection over the GR-08h rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08i (MIT-DB-08I) extends the same contract to THREE files -- the
+data/database GroupTransactionCoordinator.kt coordinator, the domain
+RecurringOccurrenceMaterializer.kt recurring lifecycle writer, and the
+worker NotificationIntakeWorker.kt.  The combined batch carries 44 findings
+/ 27 unique fingerprints > the 25-fingerprint batch cap, so the batch was
+SPLIT per the GR-08c/GR-08e precedent, one part per file:
+
+* ``GR-08i1-seed.yml`` -- GroupTransactionCoordinator.kt: 14 rows (14
+  findings / 14 unique fingerprints; ZERO closure rows -- every mutating DAO
+  call in the file is an abstract Room-annotated method; the two
+  body-carrying @Transaction convenience methods in the touched DAOs,
+  ExpenseGroupDao.insertGroupWithMembers and GroupMemberDao.setCurrentUser,
+  are NOT called from this file; the plan prose's 15th GTC site,
+  addExpenseToGroupAtomic's groupExpenseDao.insert, is ALREADY authorized by
+  the active policy's legacy MIT-003 direct row, which is why the trusted
+  report carries 14 findings and the rescan delta is 291 -> 247, not 246);
+* ``GR-08i2-seed.yml`` -- RecurringOccurrenceMaterializer.kt: 6 rows (15
+  findings / 6 unique fingerprints; ZERO closure rows -- all four touched
+  DAOs are fully abstract interfaces with ZERO @Transaction methods);
+* ``GR-08i3-seed.yml`` -- NotificationIntakeWorker.kt: 7 rows (15 findings /
+  7 unique fingerprints; ZERO closure rows -- NotificationIntakeDao is a
+  fully abstract interface; worker-guard verification performed in source
+  before EXACT_POLICY: doWork's entire mutating body runs inside
+  WorkerExecutionGuard.runGuardedWithContext, runPrivacyCleanupGuarded wraps
+  its own body in a second guard with requiredCapabilities = emptyList() so
+  privacy cleanup can always run, and purgePayloadBestEffort is invoked only
+  from inside the doWork guard lambda; barrierMode is `workerMediated` for
+  every GR-08i3 row, the established mode of the active policy's worker
+  rows);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the THIRTEEN reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 + 14 + 6 + 7 = 180 rows) --
+  a dropped earlier-batch row fails closed here instead of silently
+  re-unauthorizing that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08i1/i2/i3 rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -560,9 +597,13 @@ def test_rendered_seeded_candidate_verifies_against_accounting_pair(tmp_path):
     candidate_text = yaml.safe_dump(
         document, sort_keys=False, allow_unicode=False
     ).replace("\r\n", "\n")
+    # GR-08i repair: _accounting_for returns the AccountingArtifact object;
+    # the pair verifier consumes its dict payload (same .to_dict() shape the
+    # seed-records crosswalk test above uses).  The item assignment below
+    # needs the dict, not the frozen artifact.
     artifact_payload = _accounting_for(
         result, [legacy_entry], seed_entries=seed_entries
-    )
+    ).to_dict()
     artifact_payload["candidateSha256"] = None
     # Must not raise: the rendered candidate's FULL key set (legacy + seeds)
     # equals the accounting records' keys union the seedRecords keys.
@@ -579,7 +620,9 @@ def test_rendered_candidate_missing_seed_key_fails_pair_verification(tmp_path):
     candidate_text = yaml.safe_dump(
         document, sort_keys=False, allow_unicode=False
     ).replace("\r\n", "\n")
-    artifact_payload = _accounting_for(result, [legacy_entry])
+    # GR-08i repair: same .to_dict() shape as the sibling pair-verification
+    # test above (the frozen artifact is not item-assignable).
+    artifact_payload = _accounting_for(result, [legacy_entry]).to_dict()
     artifact_payload["candidateSha256"] = None
     try:
         _verify_candidate_accounting_pair(candidate_text, artifact_payload)
@@ -1443,131 +1486,15 @@ def test_real_tracked_gr08d_seed_file_loads_with_exactly_twenty_two_rows():
     ]
 
 
-def test_combined_seed_file_concatenates_all_five_batch_seed_files():
-    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
-    + GR-08d.
-
-    Supersedes the GR-08c-era four-file concatenation test (which pinned the
-    combined document at 44 rows): the GR-08d batch extends the combined
-    generation input to 66 rows, and the drift guard must cover ALL FIVE
-    reviewed batch seed files.  The combined document is what --seed-rows
-    actually consumes; if it ever drifts from the five reviewed batch seed
-    files (a dropped earlier-batch row would silently re-unauthorize that
-    batch's mutations at promotion time), this fails closed.
-    """
-    combined = _load_seed_entries(COMBINED_SEED_FILE)
-    gr08a = _load_seed_entries(SEED_FILE)
-    gr08b = _load_seed_entries(GR08B_SEED_FILE)
-    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
-    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
-    gr08d = _load_seed_entries(GR08D_SEED_FILE)
-    assert len(gr08a) == 5
-    assert len(gr08b) == 13
-    assert len(gr08c1) == 10
-    assert len(gr08c2) == 16
-    assert len(gr08d) == 22
-    assert len(combined) == 66
-    combined_fields = sorted(_entry_fields(entry) for entry in combined)
-    batch_fields = sorted(
-        _entry_fields(entry)
-        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
-        + list(gr08d)
-    )
-    assert combined_fields == batch_fields
-    keys = [entry.mutation_key().canonical_key() for entry in combined]
-    assert len(set(keys)) == len(keys)
-
-
-def test_combined_seed_file_concatenates_all_nine_batch_seed_files():
-    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
-    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g.
-
-    Supersedes the GR-08f-era eight-file concatenation test (which pinned
-    the combined document at 133 rows): the GR-08g batch extends the
-    combined generation input to 140 rows, and the drift guard must cover
-    ALL NINE reviewed batch seed files.  The combined document is what
-    --seed-rows actually consumes; if it ever drifts from the nine
-    reviewed batch seed files (a dropped earlier-batch row would silently
-    re-unauthorize that batch's mutations at promotion time), this fails
-    closed.
-    """
-    combined = _load_seed_entries(COMBINED_SEED_FILE)
-    gr08a = _load_seed_entries(SEED_FILE)
-    gr08b = _load_seed_entries(GR08B_SEED_FILE)
-    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
-    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
-    gr08d = _load_seed_entries(GR08D_SEED_FILE)
-    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
-    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
-    gr08f = _load_seed_entries(GR08F_SEED_FILE)
-    gr08g = _load_seed_entries(GR08G_SEED_FILE)
-    assert len(gr08a) == 5
-    assert len(gr08b) == 13
-    assert len(gr08c1) == 10
-    assert len(gr08c2) == 16
-    assert len(gr08d) == 22
-    assert len(gr08e1) == 23
-    assert len(gr08e2) == 23
-    assert len(gr08f) == 21
-    assert len(gr08g) == 7
-    assert len(combined) == 140
-    combined_fields = sorted(_entry_fields(entry) for entry in combined)
-    batch_fields = sorted(
-        _entry_fields(entry)
-        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
-        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
-        + list(gr08g)
-    )
-    assert combined_fields == batch_fields
-    keys = [entry.mutation_key().canonical_key() for entry in combined]
-    assert len(set(keys)) == len(keys)
-
-
-def test_combined_seed_file_concatenates_all_ten_batch_seed_files():
-    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
-    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h.
-
-    Supersedes the GR-08g-era nine-file concatenation test (which pinned
-    the combined document at 140 rows): the GR-08h batch extends the
-    combined generation input to 153 rows, and the drift guard must cover
-    ALL TEN reviewed batch seed files.  The combined document is what
-    --seed-rows actually consumes; if it ever drifts from the ten
-    reviewed batch seed files (a dropped earlier-batch row would silently
-    re-unauthorize that batch's mutations at promotion time), this fails
-    closed.
-    """
-    combined = _load_seed_entries(COMBINED_SEED_FILE)
-    gr08a = _load_seed_entries(SEED_FILE)
-    gr08b = _load_seed_entries(GR08B_SEED_FILE)
-    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
-    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
-    gr08d = _load_seed_entries(GR08D_SEED_FILE)
-    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
-    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
-    gr08f = _load_seed_entries(GR08F_SEED_FILE)
-    gr08g = _load_seed_entries(GR08G_SEED_FILE)
-    gr08h = _load_seed_entries(GR08H_SEED_FILE)
-    assert len(gr08a) == 5
-    assert len(gr08b) == 13
-    assert len(gr08c1) == 10
-    assert len(gr08c2) == 16
-    assert len(gr08d) == 22
-    assert len(gr08e1) == 23
-    assert len(gr08e2) == 23
-    assert len(gr08f) == 21
-    assert len(gr08g) == 7
-    assert len(gr08h) == 13
-    assert len(combined) == 153
-    combined_fields = sorted(_entry_fields(entry) for entry in combined)
-    batch_fields = sorted(
-        _entry_fields(entry)
-        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
-        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
-        + list(gr08g) + list(gr08h)
-    )
-    assert combined_fields == batch_fields
-    keys = [entry.mutation_key().canonical_key() for entry in combined]
-    assert len(set(keys)) == len(keys)
+# NOTE (GR-08i): the GR-08d-era five-file (66 rows), GR-08g-era nine-file
+# (140 rows) and GR-08h-era ten-file (153 rows) concatenation tests were
+# REMOVED here, completing the documented supersession chain (each new
+# concatenation test replaces its predecessor -- the GR-08d batch removed
+# the four-file test, GR-08g removed the eight-file test, but GR-08e and
+# GR-08h left their predecessors in place, where they kept failing against
+# the grown combined document).  The thirteen-file test below is the strict
+# superset: it pins ALL THIRTEEN reviewed batch seed files at 180 rows with
+# field-exact equality, so removing the stale predecessors weakens nothing.
 
 
 def _gr08c_policy_entries(tmp_path, rows):
@@ -4078,6 +4005,935 @@ def test_gr08h_diagnostics_rows_near_misses_stay_unauthorized(tmp_path):
             tmp_path,
             rows,
             **dict(base_kwargs, dao_fqcn=SCANNED_RECEIPT_DAO),
+        )
+        is False
+    )
+
+
+# ── (14) GR-08i1/i2/i3 rows: tracked seed files + concatenation + NEAR-MISS ───
+#
+# GR-08i authorizes THREE files (GroupTransactionCoordinator.kt 14 findings /
+# 14 unique fingerprints, RecurringOccurrenceMaterializer.kt 15 findings /
+# 6 unique fingerprints, NotificationIntakeWorker.kt 15 findings / 7 unique
+# fingerprints).  The combined batch carries 27 unique fingerprints > the
+# 25-fingerprint batch cap, so the batch was SPLIT one part per file per the
+# GR-08c/GR-08e precedent.  The migration CLI accepts a SINGLE --seed-rows
+# value, so every generation run consumes the COMBINED document
+# GR-08-seeds.yml; these tests pin that the combined document stays the
+# exact concatenation of the THIRTEEN reviewed batch seed files, and that
+# the GR-08i rows authorize EXACTLY their callable identity + DAO +
+# operation (wrong overload, wrong owner, wrong DAO, and wrong operation
+# stay unauthorized).
+
+GR08I1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08i1-seed.yml"
+GR08I2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08i2-seed.yml"
+GR08I3_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08i3-seed.yml"
+
+GROUP_TX_COORDINATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/database/"
+    "GroupTransactionCoordinator.kt"
+)
+GROUP_TX_COORDINATOR_FQCN = (
+    "com.yourname.expensetracker.data.database.GroupTransactionCoordinator"
+)
+EXPENSE_GROUP_DAO = (
+    "com.yourname.expensetracker.data.database.dao.ExpenseGroupDao"
+)
+GROUP_MEMBER_DAO = (
+    "com.yourname.expensetracker.data.database.dao.GroupMemberDao"
+)
+# GROUP_EXPENSE_DAO_FQCN: GroupExpenseDao is already referenced by the
+# GR-08g section via BANK_STATEMENT_IMPORT_* constants; spell it explicitly
+# here for the GR-08i1 rows.
+GROUP_EXPENSE_DAO_FQCN = (
+    "com.yourname.expensetracker.data.database.dao.GroupExpenseDao"
+)
+EXPENSE_DAO_GR08I = "com.yourname.expensetracker.data.database.dao.ExpenseDao"
+EXPENSE_GROUP_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.ExpenseGroup"
+)
+GROUP_MEMBER_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.GroupMember"
+)
+SPLIT_TYPE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.SplitType"
+)
+TRANSACTION_TYPE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.TransactionType"
+)
+GROUP_MEMBER_LIST = "List<" + GROUP_MEMBER_ENTITY + ">"
+ON_INSIDE_TX_MEMBER = "(Long) -> Unit"
+ON_INSIDE_TX_UNIT = "() -> Unit"
+
+CREATE_GROUP_WITH_MEMBERS_PARAMS = (
+    "String",
+    "String?",
+    "String",
+    GROUP_MEMBER_LIST,
+    ON_INSIDE_TX_MEMBER,
+)
+ADD_MEMBER_TO_GROUP_PARAMS = (
+    "Long",
+    "String",
+    "String?",
+    "Boolean",
+    ON_INSIDE_TX_MEMBER,
+)
+ADD_EXPENSE_TO_GROUP_PARAMS = (
+    "Long",
+    "String",
+    "Double",
+    "Long",
+    "String?",
+    SPLIT_TYPE_ENTITY,
+    "String?",
+    "Long",
+    "String?",
+    ON_INSIDE_TX_MEMBER,
+)
+ADD_EXPENSE_WITH_LINK_PARAMS = (
+    "Long",
+    "Long",
+    "String",
+    "Double",
+    "Long",
+    "String?",
+    SPLIT_TYPE_ENTITY,
+    "String?",
+    "Long",
+    "String?",
+)
+CREATE_SYSTEM_EXPENSE_LINK_PARAMS = (
+    "Long",
+    "String",
+    "Double",
+    "Long",
+    "String",
+    SPLIT_TYPE_ENTITY,
+    "String?",
+    "Long",
+    TRANSACTION_TYPE_ENTITY,
+    "String?",
+    "String?",
+)
+CREATE_GROUP_ATOMIC_PARAMS = (EXPENSE_GROUP_ENTITY, GROUP_MEMBER_LIST)
+GROUP_ID_ONLY_PARAMS = ("Long",)
+GROUP_ID_WITH_CALLBACK_PARAMS = ("Long", ON_INSIDE_TX_UNIT)
+
+MATERIALIZER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/recurring/"
+    "lifecycle/RecurringOccurrenceMaterializer.kt"
+)
+MATERIALIZER_FQCN = (
+    "com.yourname.expensetracker.domain.recurring.lifecycle."
+    "RecurringOccurrenceMaterializer"
+)
+RECURRING_OCCURRENCE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao"
+)
+# LIFECYCLE_EVENT_DAO / PLANNED_EXPENSE_DAO / REMINDER_DELIVERY_DAO are
+# already defined by the GR-08c section above.
+RESOLVED_OCCURRENCE_LIST = (
+    "List<com.yourname.expensetracker.domain.recurring."
+    "OccurrenceConflictResolver.ResolvedOccurrence>"
+)
+MATERIALIZATION_OPTIONS = (
+    MATERIALIZER_FQCN + ".MaterializationOptions"
+)
+MATERIALIZE_PARAMS = (RESOLVED_OCCURRENCE_LIST, MATERIALIZATION_OPTIONS)
+
+INTAKE_WORKER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/worker/"
+    "NotificationIntakeWorker.kt"
+)
+INTAKE_WORKER_FQCN = (
+    "com.yourname.expensetracker.worker.NotificationIntakeWorker"
+)
+NOTIFICATION_INTAKE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.NotificationIntakeDao"
+)
+WORKER_RUN_CONTEXT_NULLABLE = (
+    "com.yourname.expensetracker.domain.workers.WorkerRunContext?"
+)
+DO_WORK_PARAMS: tuple = ()
+PURGE_PAYLOAD_PARAMS = ("Long", "Long", WORKER_RUN_CONTEXT_NULLABLE)
+INTAKE_ID_PARAMS = ("Long",)
+
+
+def _gr08i_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                    dao_fqcn, operation, barrier_mode):
+    """One exact GR-08i-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": barrier_mode,
+        "reason": "GR-08i EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08I",
+    }
+
+
+def _gr08i1_seed_rows():
+    """The fourteen exact GR-08i1 rows (mirroring the tracked seed file).
+
+    GroupTransactionCoordinator.kt; ZERO closure rows: every mutating DAO
+    call in the file is an abstract Room-annotated method already covered by
+    a finding (the two body-carrying @Transaction convenience methods in the
+    touched DAOs -- ExpenseGroupDao.insertGroupWithMembers and
+    GroupMemberDao.setCurrentUser -- are NOT called from this file; the
+    plan prose's 15th site, addExpenseToGroupAtomic's groupExpenseDao.insert,
+    is already authorized by the active policy's legacy MIT-003 direct row).
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("groupDao", EXPENSE_GROUP_DAO, "insert"),
+        ("memberDao", GROUP_MEMBER_DAO, "insertAll"),
+    ):
+        rows.append(
+            _gr08i_seed_row(
+                GROUP_TX_COORDINATOR_KT, GROUP_TX_COORDINATOR_FQCN,
+                "createGroupWithMembers", CREATE_GROUP_WITH_MEMBERS_PARAMS,
+                accessor, dao, operation, "helper",
+            )
+        )
+    rows.append(
+        _gr08i_seed_row(
+            GROUP_TX_COORDINATOR_KT, GROUP_TX_COORDINATOR_FQCN,
+            "addMemberToGroup", ADD_MEMBER_TO_GROUP_PARAMS,
+            "memberDao", GROUP_MEMBER_DAO, "insert", "helper",
+        )
+    )
+    for method, params in (
+        ("addExpenseToGroup", ADD_EXPENSE_TO_GROUP_PARAMS),
+        ("addExpenseWithLink", ADD_EXPENSE_WITH_LINK_PARAMS),
+        (
+            "createSystemExpenseAndLinkToGroup",
+            CREATE_SYSTEM_EXPENSE_LINK_PARAMS,
+        ),
+    ):
+        rows.append(
+            _gr08i_seed_row(
+                GROUP_TX_COORDINATOR_KT, GROUP_TX_COORDINATOR_FQCN,
+                method, params,
+                "groupExpenseDao", GROUP_EXPENSE_DAO_FQCN, "insert", "helper",
+            )
+        )
+    for method, params in (
+        ("deleteGroup", GROUP_ID_ONLY_PARAMS),
+        ("archiveGroup", GROUP_ID_WITH_CALLBACK_PARAMS),
+    ):
+        rows.append(
+            _gr08i_seed_row(
+                GROUP_TX_COORDINATOR_KT, GROUP_TX_COORDINATOR_FQCN,
+                method, params,
+                "groupDao", EXPENSE_GROUP_DAO, "archiveGroup", "helper",
+            )
+        )
+    for accessor, dao, operation in (
+        ("groupDao", EXPENSE_GROUP_DAO, "insert"),
+        ("memberDao", GROUP_MEMBER_DAO, "insertAll"),
+    ):
+        rows.append(
+            _gr08i_seed_row(
+                GROUP_TX_COORDINATOR_KT, GROUP_TX_COORDINATOR_FQCN,
+                "createGroupWithMembersAtomic", CREATE_GROUP_ATOMIC_PARAMS,
+                accessor, dao, operation, "helper",
+            )
+        )
+    for accessor, dao, operation in (
+        ("groupExpenseDao", GROUP_EXPENSE_DAO_FQCN, "deleteAllForGroup"),
+        ("memberDao", GROUP_MEMBER_DAO, "deleteAllForGroup"),
+        ("groupDao", EXPENSE_GROUP_DAO, "delete"),
+        ("expenseDao", EXPENSE_DAO_GR08I, "clearSharedExpenseFlags"),
+    ):
+        rows.append(
+            _gr08i_seed_row(
+                GROUP_TX_COORDINATOR_KT, GROUP_TX_COORDINATOR_FQCN,
+                "deleteGroupAtomic", GROUP_ID_WITH_CALLBACK_PARAMS,
+                accessor, dao, operation, "helper",
+            )
+        )
+    return rows
+
+
+def _gr08i2_seed_rows():
+    """The six exact GR-08i2 rows (mirroring the tracked seed file).
+
+    RecurringOccurrenceMaterializer.kt; ZERO closure rows: all four touched
+    DAOs are fully abstract interfaces with ZERO @Transaction methods.  All
+    15 findings collapse onto these 6 fingerprints inside the single
+    mutating callable materializeInCurrentTransaction.
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("occurrenceDao", RECURRING_OCCURRENCE_DAO, "insert"),
+        ("occurrenceDao", RECURRING_OCCURRENCE_DAO, "update"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+        ("plannedExpenseDao", PLANNED_EXPENSE_DAO, "fulfillByOccurrenceKey"),
+        ("reminderDeliveryDao", REMINDER_DELIVERY_DAO,
+         "suppressByOccurrenceId"),
+        ("reminderDeliveryDao", REMINDER_DELIVERY_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08i_seed_row(
+                MATERIALIZER_KT, MATERIALIZER_FQCN,
+                "materializeInCurrentTransaction", MATERIALIZE_PARAMS,
+                accessor, dao, operation, "helper",
+            )
+        )
+    return rows
+
+
+def _gr08i3_seed_rows():
+    """The seven exact GR-08i3 rows (mirroring the tracked seed file).
+
+    NotificationIntakeWorker.kt; ZERO closure rows: NotificationIntakeDao is
+    a fully abstract interface.  Worker-guard verification was performed in
+    source before EXACT_POLICY disposition (doWork's entire mutating body
+    runs inside WorkerExecutionGuard.runGuardedWithContext;
+    runPrivacyCleanupGuarded wraps its own body in a second guard with
+    requiredCapabilities = emptyList(); purgePayloadBestEffort is invoked
+    only from inside the doWork guard lambda), so every row is
+    `workerMediated` -- the established mode of the active policy's worker
+    rows.
+    """
+    rows = []
+    for operation in (
+        "claimForProcessing",
+        "markFinalFailure",
+        "markPrivacyDeniedAndPurgeAllPayload",
+        "markRetryableFailure",
+        "markTerminal",
+    ):
+        rows.append(
+            _gr08i_seed_row(
+                INTAKE_WORKER_KT, INTAKE_WORKER_FQCN,
+                "doWork", DO_WORK_PARAMS,
+                "intakeDao", NOTIFICATION_INTAKE_DAO, operation,
+                "workerMediated",
+            )
+        )
+    rows.append(
+        _gr08i_seed_row(
+            INTAKE_WORKER_KT, INTAKE_WORKER_FQCN,
+            "purgePayloadBestEffort", PURGE_PAYLOAD_PARAMS,
+            "intakeDao", NOTIFICATION_INTAKE_DAO, "purgeAllPayload",
+            "workerMediated",
+        )
+    )
+    rows.append(
+        _gr08i_seed_row(
+            INTAKE_WORKER_KT, INTAKE_WORKER_FQCN,
+            "runPrivacyCleanupGuarded", INTAKE_ID_PARAMS,
+            "intakeDao", NOTIFICATION_INTAKE_DAO,
+            "markPrivacyDeniedAndPurgeAllPayload", "workerMediated",
+        )
+    )
+    return rows
+
+
+def test_real_tracked_gr08i1_seed_file_loads_with_exactly_fourteen_rows():
+    entries = _load_seed_entries(GR08I1_SEED_FILE)
+    assert len(entries) == 14
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["createGroupWithMembers"] * 2
+        + ["addMemberToGroup"]
+        + ["addExpenseToGroup", "addExpenseWithLink",
+           "createSystemExpenseAndLinkToGroup"]
+        + ["deleteGroup", "archiveGroup"]
+        + ["createGroupWithMembersAtomic"] * 2
+        + ["deleteGroupAtomic"] * 4
+    )
+    for entry in entries:
+        assert entry.path == GROUP_TX_COORDINATOR_KT
+        assert entry.owner_fqcn == GROUP_TX_COORDINATOR_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08I"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: every accessor is a plain constructor property and
+    # every operation is the exact abstract Room method the scanner
+    # reported -- no convenience-method rows exist in this batch.
+    assert all(
+        entry.dao_accessor
+        in {"groupDao", "memberDao", "groupExpenseDao", "expenseDao"}
+        for entry in entries
+    )
+    # The hard-delete cascade rows: exactly four deleteGroupAtomic rows.
+    cascade = sorted(
+        (entry.dao_accessor, entry.operation)
+        for entry in entries if entry.method == "deleteGroupAtomic"
+    )
+    assert cascade == sorted([
+        ("groupExpenseDao", "deleteAllForGroup"),
+        ("memberDao", "deleteAllForGroup"),
+        ("groupDao", "delete"),
+        ("expenseDao", "clearSharedExpenseFlags"),
+    ])
+
+
+def test_real_tracked_gr08i2_seed_file_loads_with_exactly_six_rows():
+    entries = _load_seed_entries(GR08I2_SEED_FILE)
+    assert len(entries) == 6
+    methods = sorted(entry.method for entry in entries)
+    assert methods == ["materializeInCurrentTransaction"] * 6
+    for entry in entries:
+        assert entry.path == MATERIALIZER_KT
+        assert entry.owner_fqcn == MATERIALIZER_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.parameter_types == MATERIALIZE_PARAMS
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08I"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: every accessor is a plain constructor property and
+    # every operation is the exact abstract Room method the scanner
+    # reported -- no convenience-method rows exist in this batch.
+    assert all(
+        entry.dao_accessor
+        in {
+            "occurrenceDao",
+            "lifecycleEventDao",
+            "plannedExpenseDao",
+            "reminderDeliveryDao",
+        }
+        for entry in entries
+    )
+    # The reminder-delivery rows: exactly two distinct operations behind
+    # reminderDeliveryDao.
+    delivery_operations = sorted(
+        entry.operation
+        for entry in entries
+        if entry.dao_accessor == "reminderDeliveryDao"
+    )
+    assert delivery_operations == ["insert", "suppressByOccurrenceId"]
+
+
+def test_real_tracked_gr08i3_seed_file_loads_with_exactly_seven_rows():
+    entries = _load_seed_entries(GR08I3_SEED_FILE)
+    assert len(entries) == 7
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["doWork"] * 5
+        + ["purgePayloadBestEffort", "runPrivacyCleanupGuarded"]
+    )
+    for entry in entries:
+        assert entry.path == INTAKE_WORKER_KT
+        assert entry.owner_fqcn == INTAKE_WORKER_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.WORKER_MEDIATED
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08I"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: the single accessor is the plain intakeDao
+    # constructor property and every operation is the exact abstract Room
+    # method the scanner reported.
+    assert all(entry.dao_accessor == "intakeDao" for entry in entries)
+    # The doWork rows: exactly five distinct operations behind intakeDao.
+    do_work_operations = sorted(
+        entry.operation
+        for entry in entries
+        if entry.method == "doWork"
+    )
+    assert do_work_operations == sorted([
+        "claimForProcessing",
+        "markFinalFailure",
+        "markPrivacyDeniedAndPurgeAllPayload",
+        "markRetryableFailure",
+        "markTerminal",
+    ])
+    # The privacy-denied purge appears on BOTH callables (doWork mid-run
+    # recheck + runPrivacyCleanupGuarded) as distinct tuples.
+    privacy_purge = sorted(
+        entry.method
+        for entry in entries
+        if entry.operation == "markPrivacyDeniedAndPurgeAllPayload"
+    )
+    assert privacy_purge == ["doWork", "runPrivacyCleanupGuarded"]
+
+
+def test_combined_seed_file_concatenates_all_thirteen_batch_seed_files():
+    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
+    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
+    + GR-08i2 + GR-08i3.
+
+    Supersedes the GR-08h-era ten-file concatenation test (which pinned the
+    combined document at 153 rows): the GR-08i batch extends the combined
+    generation input to 180 rows, and the drift guard must cover ALL
+    THIRTEEN reviewed batch seed files.  The combined document is what
+    --seed-rows actually consumes; if it ever drifts from the thirteen
+    reviewed batch seed files (a dropped earlier-batch row would silently
+    re-unauthorize that batch's mutations at promotion time), this fails
+    closed.
+    """
+    combined = _load_seed_entries(COMBINED_SEED_FILE)
+    gr08a = _load_seed_entries(SEED_FILE)
+    gr08b = _load_seed_entries(GR08B_SEED_FILE)
+    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
+    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
+    gr08d = _load_seed_entries(GR08D_SEED_FILE)
+    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
+    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
+    gr08f = _load_seed_entries(GR08F_SEED_FILE)
+    gr08g = _load_seed_entries(GR08G_SEED_FILE)
+    gr08h = _load_seed_entries(GR08H_SEED_FILE)
+    gr08i1 = _load_seed_entries(GR08I1_SEED_FILE)
+    gr08i2 = _load_seed_entries(GR08I2_SEED_FILE)
+    gr08i3 = _load_seed_entries(GR08I3_SEED_FILE)
+    assert len(gr08a) == 5
+    assert len(gr08b) == 13
+    assert len(gr08c1) == 10
+    assert len(gr08c2) == 16
+    assert len(gr08d) == 22
+    assert len(gr08e1) == 23
+    assert len(gr08e2) == 23
+    assert len(gr08f) == 21
+    assert len(gr08g) == 7
+    assert len(gr08h) == 13
+    assert len(gr08i1) == 14
+    assert len(gr08i2) == 6
+    assert len(gr08i3) == 7
+    assert len(combined) == 180
+    combined_fields = sorted(_entry_fields(entry) for entry in combined)
+    batch_fields = sorted(
+        _entry_fields(entry)
+        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
+        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
+        + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
+        + list(gr08i3)
+    )
+    assert combined_fields == batch_fields
+    keys = [entry.mutation_key().canonical_key() for entry in combined]
+    assert len(set(keys)) == len(keys)
+
+
+def _gr08i_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08i fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08i_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, **overrides):
+    """The exact GR-08i row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)``; ``overrides`` perturb exactly one identity field of
+    the match query for the near-miss assertions.
+    """
+    entries = _gr08i_policy_entries(tmp_path, rows)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08i1_exact_identity_matches(tmp_path):
+    rows = _gr08i1_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "createGroupWithMembers", "groupDao", "insert"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "deleteGroupAtomic", "expenseDao",
+            "clearSharedExpenseFlags",
+        )
+        is True
+    )
+
+
+def test_gr08i1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08i1_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "deleteGroup", "groupDao", "archiveGroup",
+            parameter_types=("Long", "() -> Unit"),
+        )
+        is False
+    )
+
+
+def test_gr08i1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08i1_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "addMemberToGroup", "memberDao", "insert",
+            owner_fqcn="com.example.OtherCoordinator",
+        )
+        is False
+    )
+
+
+def test_gr08i1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08i1_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "addMemberToGroup", "memberDao", "insert",
+            dao_accessor="groupDao",
+            dao_fqcn=EXPENSE_GROUP_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08i1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08i1_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "deleteGroup", "groupDao", "archiveGroup",
+            operation="delete",
+        )
+        is False
+    )
+
+
+def test_gr08i1_cascade_rows_near_misses_stay_unauthorized(tmp_path):
+    """The four deleteGroupAtomic cascade rows are exact per accessor.
+
+    All four rows share the deleteGroupAtomic callable identity and the
+    (Long, () -> Unit) parameter shape but differ in DAO identity; a swapped
+    accessor, a swapped operation, or the sibling archiveGroup callable's
+    shape stays unauthorized.
+    """
+    rows = _gr08i1_seed_rows()
+    base_kwargs = dict(
+        select_method="deleteGroupAtomic",
+        select_accessor="groupDao",
+        select_operation="delete",
+    )
+    assert _assert_gr08i_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the sibling archiveGroup spelling behind the same
+    # DAO.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="archiveGroup")
+        )
+        is False
+    )
+    # Wrong accessor: the member cascade row never matches the group-row
+    # delete identity.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="memberDao",
+                dao_fqcn=GROUP_MEMBER_DAO,
+            ),
+        )
+        is False
+    )
+    # Wrong callable: the sibling deleteGroup soft-archive row never
+    # matches the hard-delete identity.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="deleteGroup")
+        )
+        is False
+    )
+    # Wrong overload: the bare (Long) deleteGroup shape.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, parameter_types=("Long",)),
+        )
+        is False
+    )
+
+
+def test_gr08i2_exact_identity_matches(tmp_path):
+    rows = _gr08i2_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "materializeInCurrentTransaction",
+            "occurrenceDao", "insert",
+        )
+        is True
+    )
+
+
+def test_gr08i2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08i2_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "materializeInCurrentTransaction",
+            "occurrenceDao", "insert",
+            parameter_types=(RESOLVED_OCCURRENCE_LIST,),
+        )
+        is False
+    )
+
+
+def test_gr08i2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08i2_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "materializeInCurrentTransaction",
+            "occurrenceDao", "insert",
+            owner_fqcn="com.example.OtherMaterializer",
+        )
+        is False
+    )
+
+
+def test_gr08i2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08i2_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "materializeInCurrentTransaction",
+            "occurrenceDao", "insert",
+            dao_accessor="reminderDeliveryDao",
+            dao_fqcn=REMINDER_DELIVERY_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08i2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08i2_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "materializeInCurrentTransaction",
+            "occurrenceDao", "insert", operation="update",
+        )
+        is False
+    )
+
+
+def test_gr08i2_update_row_near_misses_stay_unauthorized(tmp_path):
+    """The occurrenceDao.update row is exact too: siblings never match.
+
+    The downgrade-protected update shares the materializeInCurrentTransaction
+    callable identity with the insert row; a swapped operation, a swapped
+    accessor, or the plain insert spelling behind the same DAO stays
+    unauthorized.
+    """
+    rows = _gr08i2_seed_rows()
+    base_kwargs = dict(
+        select_method="materializeInCurrentTransaction",
+        select_accessor="occurrenceDao",
+        select_operation="update",
+    )
+    assert _assert_gr08i_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the insert spelling behind the same DAO.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="insert")
+        )
+        is False
+    )
+    # Wrong accessor: the lifecycle-event provenance row never matches the
+    # occurrence-update identity.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="lifecycleEventDao",
+                dao_fqcn=LIFECYCLE_EVENT_DAO,
+            ),
+        )
+        is False
+    )
+    # Wrong callable: a copied materializer class never matches.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="materialize")
+        )
+        is False
+    )
+
+
+def test_gr08i3_exact_identity_matches(tmp_path):
+    rows = _gr08i3_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "runPrivacyCleanupGuarded", "intakeDao",
+            "markPrivacyDeniedAndPurgeAllPayload",
+        )
+        is True
+    )
+
+
+def test_gr08i3_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08i3_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing",
+            parameter_types=("Long",),
+        )
+        is False
+    )
+
+
+def test_gr08i3_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08i3_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing",
+            owner_fqcn="com.example.OtherWorker",
+        )
+        is False
+    )
+
+
+def test_gr08i3_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08i3_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing",
+            dao_accessor="repository",
+            dao_fqcn=RAW_NOTIFICATION_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08i3_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08i3_seed_rows()
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, "doWork", "intakeDao", "claimForProcessing",
+            operation="markTerminal",
+        )
+        is False
+    )
+
+
+def test_gr08i3_terminal_rows_near_misses_stay_unauthorized(tmp_path):
+    """The markTerminal row is exact too: siblings never match.
+
+    The five doWork rows share the zero-parameter doWork callable identity
+    and the intakeDao accessor but differ in operation; a swapped operation,
+    a swapped callable, or the plain insert spelling stays unauthorized.
+    """
+    rows = _gr08i3_seed_rows()
+    base_kwargs = dict(
+        select_method="doWork",
+        select_accessor="intakeDao",
+        select_operation="markTerminal",
+    )
+    assert _assert_gr08i_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the sibling markRetryableFailure spelling behind the
+    # same DAO and callable.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, operation="markRetryableFailure")
+        )
+        is False
+    )
+    # Wrong callable: the runPrivacyCleanupGuarded privacy-purge row never
+    # matches the doWork terminal identity.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, method="runPrivacyCleanupGuarded")
+        )
+        is False
+    )
+    # Wrong overload: the purgePayloadBestEffort three-parameter shape.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, parameter_types=PURGE_PAYLOAD_PARAMS),
+        )
+        is False
+    )
+
+
+def test_gr08i3_purge_row_near_misses_stay_unauthorized(tmp_path):
+    """The purgePayloadBestEffort row is exact too.
+
+    The best-effort purge shares the intakeDao accessor with the doWork
+    rows but differs in callable identity AND parameter shape; a swapped
+    callable, a swapped operation, or the zero-parameter doWork shape stays
+    unauthorized.
+    """
+    rows = _gr08i3_seed_rows()
+    base_kwargs = dict(
+        select_method="purgePayloadBestEffort",
+        select_accessor="intakeDao",
+        select_operation="purgeAllPayload",
+    )
+    assert _assert_gr08i_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the sibling markTerminal spelling behind the same
+    # DAO.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="markTerminal")
+        )
+        is False
+    )
+    # Wrong callable: the doWork rows never match the purge identity.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="doWork")
+        )
+        is False
+    )
+    # Wrong overload: the zero-parameter doWork shape.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path, rows, **dict(base_kwargs, parameter_types=())
+        )
+        is False
+    )
+    # Wrong owner: a copied worker class never matches.
+    assert (
+        _assert_gr08i_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, owner_fqcn="com.example.CopyWorker"),
         )
         is False
     )
