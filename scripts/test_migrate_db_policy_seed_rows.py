@@ -354,6 +354,43 @@ precedent into two file groups:
 * NEAR-MISS protection over the GR-08l1/l2 rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08n (MIT-DB-08N) extends the same contract to SIX files -- the
+data/repository AiArtifactRepositoryImpl.kt (AI artifact writer),
+BudgetRepository.kt (budget maintenance/notification writer) and
+MerchantLocationRepository.kt (merchant-location cache/correction writer),
+plus data/repository ReceiptRepository.kt (receipt maintenance writer),
+domain/investment/InvestmentTracker.kt (THE investment writer per
+docs/architecture/LEGAL_PATHS.md "Investment Mutations") and
+domain/subscription/SubscriptionManagerEngine.kt (THE subscription ENGINE
+per LEGAL_PATHS.md "Subscription Mutations").  The combined batch carries
+29 findings / 29 unique fingerprints > the 25-fingerprint batch cap, so the
+batch was SPLIT per the GR-08c/GR-08e/GR-08i/GR-08j/GR-08k/GR-08l/GR-08m
+precedent into two file groups:
+
+* ``GR-08n1-seed.yml`` -- AiArtifactRepositoryImpl.kt (5 rows / 5 findings /
+  5 unique fingerprints) + BudgetRepository.kt (6 rows / 5 findings /
+  5 unique fingerprints) + MerchantLocationRepository.kt (5 rows / 4
+  findings / 4 unique fingerprints) = 16 rows; TWO closure rows (the
+  GR-08b/GR-08d/GR-08l1 blind-spot pattern: BudgetRepository.
+  restoreDebugSnapshot -> budgetDao.replaceAllAndEnforceActiveScopes and
+  MerchantLocationRepository.saveCorrection -> dao.upsertLocation --
+  body-carrying @Transaction DAO convenience methods the findings scanner
+  never reported);
+* ``GR-08n2-seed.yml`` -- ReceiptRepository.kt (5 rows / 5 findings /
+  5 unique fingerprints) + InvestmentTracker.kt (5 rows / 5 findings /
+  5 unique fingerprints) + SubscriptionManagerEngine.kt (5 rows / 5
+  findings / 5 unique fingerprints) = 15 rows; ZERO closure rows -- all
+  eight touched DAOs are fully abstract interfaces with ZERO @Transaction
+  methods;
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the TWENTY-THREE reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 + 14 + 6 + 7 + 11 + 21
+  + 19 + 18 + 22 + 23 + 16 + 12 + 16 + 15 = 353 rows) -- a dropped
+  earlier-batch row fails closed here instead of silently re-unauthorizing
+  that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08n1/n2 rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -6964,18 +7001,18 @@ def test_real_tracked_gr08l2_seed_file_loads_with_exactly_twenty_three_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_twenty_one_batch_seed_files():
+def test_combined_seed_file_concatenates_all_twenty_three_batch_seed_files():
     """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
     + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
     + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1
-    + GR-08l2 + GR-08m1 + GR-08m2.
+    + GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2.
 
-    Supersedes the GR-08l-era nineteen-file concatenation test (which pinned
-    the combined document at 294 rows): the GR-08m batch extends the combined
-    generation input to 322 rows (16 GR-08m1 + 12 GR-08m2), and the drift
-    guard must cover ALL TWENTY-ONE reviewed batch seed files.  The combined
+    Supersedes the GR-08m-era twenty-one-file concatenation test (which pinned
+    the combined document at 322 rows): the GR-08n batch extends the combined
+    generation input to 353 rows (16 GR-08n1 + 15 GR-08n2), and the drift
+    guard must cover ALL TWENTY-THREE reviewed batch seed files.  The combined
     document is what --seed-rows actually consumes; if it ever drifts from
-    the twenty-one reviewed batch seed files (a dropped earlier-batch row
+    the twenty-three reviewed batch seed files (a dropped earlier-batch row
     would silently re-unauthorize that batch's mutations at promotion time),
     this fails closed.
     """
@@ -7001,6 +7038,8 @@ def test_combined_seed_file_concatenates_all_twenty_one_batch_seed_files():
     gr08l2 = _load_seed_entries(GR08L2_SEED_FILE)
     gr08m1 = _load_seed_entries(GR08M1_SEED_FILE)
     gr08m2 = _load_seed_entries(GR08M2_SEED_FILE)
+    gr08n1 = _load_seed_entries(GR08N1_SEED_FILE)
+    gr08n2 = _load_seed_entries(GR08N2_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
@@ -7022,7 +7061,9 @@ def test_combined_seed_file_concatenates_all_twenty_one_batch_seed_files():
     assert len(gr08l2) == 23
     assert len(gr08m1) == 16
     assert len(gr08m2) == 12
-    assert len(combined) == 322
+    assert len(gr08n1) == 16
+    assert len(gr08n2) == 15
+    assert len(combined) == 353
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
@@ -7031,7 +7072,7 @@ def test_combined_seed_file_concatenates_all_twenty_one_batch_seed_files():
         + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
         + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
         + list(gr08k2) + list(gr08l1) + list(gr08l2) + list(gr08m1)
-        + list(gr08m2)
+        + list(gr08m2) + list(gr08n1) + list(gr08n2)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -8279,6 +8320,757 @@ def test_gr08m2_multi_row_callables_near_misses_stay_unauthorized(tmp_path):
         _assert_gr08m_exact_match(
             tmp_path, rows, "doWork", "deliveryDao", "recoverStaleClaimed",
             operation="deleteOlderThan",
+        )
+        is False
+    )
+
+
+# ── GR-08n (MIT-DB-08N): AiArtifactRepositoryImpl.kt + BudgetRepository.kt ───
+# + MerchantLocationRepository.kt (GR-08n1) and ReceiptRepository.kt +
+# InvestmentTracker.kt + SubscriptionManagerEngine.kt (GR-08n2).  The
+# combined batch carries 29 findings / 29 unique fingerprints > the
+# 25-fingerprint batch cap, so it was SPLIT into two file groups; the
+# generation run consumes the COMBINED document GR-08-seeds.yml; these tests
+# pin that the combined document stays the exact concatenation of the
+# TWENTY-THREE reviewed batch seed files, and that the GR-08n rows authorize
+# EXACTLY their callable identity + DAO + operation (wrong overload, wrong
+# owner, wrong DAO, and wrong operation stay unauthorized).
+
+GR08N1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08n1-seed.yml"
+GR08N2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08n2-seed.yml"
+
+AI_ARTIFACT_REPOSITORY_IMPL_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "AiArtifactRepositoryImpl.kt"
+)
+AI_ARTIFACT_REPOSITORY_IMPL_FQCN = (
+    "com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl"
+)
+AI_ARTIFACT_DAO = "com.yourname.expensetracker.data.database.dao.AiArtifactDao"
+AI_ARTIFACT_RECORD = "com.yourname.expensetracker.domain.dto.AiArtifactRecord"
+
+BUDGET_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "BudgetRepository.kt"
+)
+BUDGET_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.BudgetRepository"
+)
+BUDGET_DAO_GR08N = "com.yourname.expensetracker.data.database.dao.BudgetDao"
+DEBUG_BUDGET_SNAPSHOT = (
+    "com.yourname.expensetracker.data.repository.BudgetRepository."
+    "DebugBudgetSnapshot"
+)
+
+MERCHANT_LOCATION_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "MerchantLocationRepository.kt"
+)
+MERCHANT_LOCATION_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.MerchantLocationRepository"
+)
+MERCHANT_LOCATION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.MerchantLocationDao"
+)
+MERCHANT_LOCATION_CORRECTION = (
+    "com.yourname.expensetracker.data.database.entity."
+    "MerchantLocationCorrection"
+)
+
+RECEIPT_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "ReceiptRepository.kt"
+)
+RECEIPT_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.ReceiptRepository"
+)
+SCANNED_RECEIPT_DAO_GR08N = (
+    "com.yourname.expensetracker.data.database.dao.ScannedReceiptDao"
+)
+RECEIPT_EVENT_DAO_GR08N = (
+    "com.yourname.expensetracker.data.database.dao.ReceiptEventDao"
+)
+SCANNED_RECEIPT_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.ScannedReceipt"
+)
+CATEGORIZATION_STATUS = (
+    "com.yourname.expensetracker.data.database.entity.CategorizationStatus"
+)
+
+INVESTMENT_TRACKER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/investment/"
+    "InvestmentTracker.kt"
+)
+INVESTMENT_TRACKER_FQCN = (
+    "com.yourname.expensetracker.domain.investment.InvestmentTracker"
+)
+INVESTMENT_DAO = "com.yourname.expensetracker.data.database.dao.InvestmentDao"
+INVESTMENT_VALUE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.InvestmentValueDao"
+)
+INVESTMENT_TRANSACTION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.InvestmentTransactionDao"
+)
+INVESTMENT_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.Investment"
+)
+
+SUBSCRIPTION_MANAGER_ENGINE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/subscription/"
+    "SubscriptionManagerEngine.kt"
+)
+SUBSCRIPTION_MANAGER_ENGINE_FQCN = (
+    "com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine"
+)
+SUBSCRIPTION_PRICE_HISTORY_DAO = (
+    "com.yourname.expensetracker.data.database.dao."
+    "SubscriptionPriceHistoryDao"
+)
+SUBSCRIPTION_USAGE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao"
+)
+SUBSCRIPTION_CANDIDATE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao"
+)
+CREATE_SUBSCRIPTION_REQUEST = (
+    "com.yourname.expensetracker.domain.subscription.CreateSubscriptionRequest"
+)
+SUBSCRIPTION_CANDIDATE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.SubscriptionCandidate"
+)
+RECURRENCE_FREQUENCY = (
+    "com.yourname.expensetracker.domain.model.RecurrenceFrequency"
+)
+
+
+def _gr08n_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                    dao_fqcn, operation, barrier_mode="helper"):
+    """One exact GR-08n-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": barrier_mode,
+        "reason": "GR-08n EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08N",
+    }
+
+
+def _gr08n1_seed_rows():
+    """The sixteen exact GR-08n1 rows (mirroring the tracked seed file).
+
+    AiArtifactRepositoryImpl.kt (5 rows) + BudgetRepository.kt (6 rows --
+    5 findings-derived plus the restoreDebugSnapshot
+    replaceAllAndEnforceActiveScopes CLOSURE row) +
+    MerchantLocationRepository.kt (5 rows -- 4 findings-derived plus the
+    saveCorrection upsertLocation CLOSURE row).
+    """
+    rows = []
+    rows.append(
+        _gr08n_seed_row(
+            AI_ARTIFACT_REPOSITORY_IMPL_KT, AI_ARTIFACT_REPOSITORY_IMPL_FQCN,
+            "upsert", (AI_ARTIFACT_RECORD,),
+            "dao", AI_ARTIFACT_DAO, "upsert",
+        )
+    )
+    for method in ("markDismissed", "markApplied", "deleteExpired"):
+        rows.append(
+            _gr08n_seed_row(
+                AI_ARTIFACT_REPOSITORY_IMPL_KT,
+                AI_ARTIFACT_REPOSITORY_IMPL_FQCN,
+                method, ("Long",),
+                "dao", AI_ARTIFACT_DAO, method,
+            )
+        )
+    rows.append(
+        _gr08n_seed_row(
+            AI_ARTIFACT_REPOSITORY_IMPL_KT, AI_ARTIFACT_REPOSITORY_IMPL_FQCN,
+            "deleteByTargetKey", ("String",),
+            "dao", AI_ARTIFACT_DAO, "deleteByTargetKey",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            BUDGET_REPOSITORY_KT, BUDGET_REPOSITORY_FQCN,
+            "deleteAll", (),
+            "budgetDao", BUDGET_DAO_GR08N, "deleteAll",
+        )
+    )
+    for operation in ("deleteAll", "replaceAllAndEnforceActiveScopes"):
+        rows.append(
+            _gr08n_seed_row(
+                BUDGET_REPOSITORY_KT, BUDGET_REPOSITORY_FQCN,
+                "restoreDebugSnapshot", (DEBUG_BUDGET_SNAPSHOT,),
+                "budgetDao", BUDGET_DAO_GR08N, operation,
+            )
+        )
+    for operation in ("updateExceededNotification", "updateCriticalNotification",
+                      "updateWarningNotification"):
+        rows.append(
+            _gr08n_seed_row(
+                BUDGET_REPOSITORY_KT, BUDGET_REPOSITORY_FQCN,
+                operation, ("Long", "Long"),
+                "budgetDao", BUDGET_DAO_GR08N, operation,
+            )
+        )
+    rows.append(
+        _gr08n_seed_row(
+            MERCHANT_LOCATION_REPOSITORY_KT,
+            MERCHANT_LOCATION_REPOSITORY_FQCN,
+            "getCachedLocation", ("String",),
+            "dao", MERCHANT_LOCATION_DAO, "incrementHitCount",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            MERCHANT_LOCATION_REPOSITORY_KT,
+            MERCHANT_LOCATION_REPOSITORY_FQCN,
+            "getCachedLocationForArea", ("String", "String"),
+            "dao", MERCHANT_LOCATION_DAO, "incrementHitCountForArea",
+        )
+    )
+    for operation in ("upsertCorrection", "upsertLocation"):
+        rows.append(
+            _gr08n_seed_row(
+                MERCHANT_LOCATION_REPOSITORY_KT,
+                MERCHANT_LOCATION_REPOSITORY_FQCN,
+                "saveCorrection", (MERCHANT_LOCATION_CORRECTION,),
+                "dao", MERCHANT_LOCATION_DAO, operation,
+            )
+        )
+    rows.append(
+        _gr08n_seed_row(
+            MERCHANT_LOCATION_REPOSITORY_KT,
+            MERCHANT_LOCATION_REPOSITORY_FQCN,
+            "evictStaleCache", (),
+            "dao", MERCHANT_LOCATION_DAO, "deleteStaleEntries",
+        )
+    )
+    return rows
+
+
+def _gr08n2_seed_rows():
+    """The fifteen exact GR-08n2 rows (mirroring the tracked seed file).
+
+    ReceiptRepository.kt (5 rows) + InvestmentTracker.kt (5 rows) +
+    SubscriptionManagerEngine.kt (5 rows); ZERO closure rows -- all eight
+    touched DAOs are fully abstract interfaces.
+    """
+    accept_params = (
+        SUBSCRIPTION_CANDIDATE_ENTITY, RECURRENCE_FREQUENCY, "Long",
+    )
+    rows = []
+    rows.append(
+        _gr08n_seed_row(
+            RECEIPT_REPOSITORY_KT, RECEIPT_REPOSITORY_FQCN,
+            "updateCategorizationStatus", ("Long", CATEGORIZATION_STATUS),
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO_GR08N,
+            "updateCategorizationStatus",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            RECEIPT_REPOSITORY_KT, RECEIPT_REPOSITORY_FQCN,
+            "deleteReceipt", (SCANNED_RECEIPT_ENTITY,),
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO_GR08N, "delete",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            RECEIPT_REPOSITORY_KT, RECEIPT_REPOSITORY_FQCN,
+            "clearAllScannedReceipts", (),
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO_GR08N, "deleteAll",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            RECEIPT_REPOSITORY_KT, RECEIPT_REPOSITORY_FQCN,
+            "clearMatchForReceipt", ("Long",),
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO_GR08N, "update",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            RECEIPT_REPOSITORY_KT, RECEIPT_REPOSITORY_FQCN,
+            "writeReceiptEvent",
+            ("Long", "String", "Long", "String", "String", "String",
+             "String", "String?"),
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08N, "insert",
+        )
+    )
+    for accessor, dao, operation in (
+        ("investmentDao", INVESTMENT_DAO, "insert"),
+        ("investmentValueDao", INVESTMENT_VALUE_DAO, "insert"),
+        ("investmentTransactionDao", INVESTMENT_TRANSACTION_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08n_seed_row(
+                INVESTMENT_TRACKER_KT, INVESTMENT_TRACKER_FQCN,
+                "addHolding", (INVESTMENT_ENTITY,),
+                accessor, dao, operation,
+            )
+        )
+    rows.append(
+        _gr08n_seed_row(
+            INVESTMENT_TRACKER_KT, INVESTMENT_TRACKER_FQCN,
+            "updatePrice", ("Long", "Double"),
+            "investmentDao", INVESTMENT_DAO, "updatePrice",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            INVESTMENT_TRACKER_KT, INVESTMENT_TRACKER_FQCN,
+            "updatePrice", ("Long", "Double"),
+            "investmentValueDao", INVESTMENT_VALUE_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            SUBSCRIPTION_MANAGER_ENGINE_KT, SUBSCRIPTION_MANAGER_ENGINE_FQCN,
+            "validateAndCreate", (CREATE_SUBSCRIPTION_REQUEST,),
+            "priceHistoryDao", SUBSCRIPTION_PRICE_HISTORY_DAO, "insert",
+        )
+    )
+    for accessor, dao, operation in (
+        ("priceHistoryDao", SUBSCRIPTION_PRICE_HISTORY_DAO, "insert"),
+        ("candidateDao", SUBSCRIPTION_CANDIDATE_DAO, "markAsConverted"),
+    ):
+        rows.append(
+            _gr08n_seed_row(
+                SUBSCRIPTION_MANAGER_ENGINE_KT,
+                SUBSCRIPTION_MANAGER_ENGINE_FQCN,
+                "acceptCandidate", accept_params,
+                accessor, dao, operation,
+            )
+        )
+    rows.append(
+        _gr08n_seed_row(
+            SUBSCRIPTION_MANAGER_ENGINE_KT, SUBSCRIPTION_MANAGER_ENGINE_FQCN,
+            "recordUsage", ("Long", "Int?", "String?"),
+            "usageDao", SUBSCRIPTION_USAGE_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08n_seed_row(
+            SUBSCRIPTION_MANAGER_ENGINE_KT, SUBSCRIPTION_MANAGER_ENGINE_FQCN,
+            "recordPriceChange", ("Long", "Double", "String?"),
+            "priceHistoryDao", SUBSCRIPTION_PRICE_HISTORY_DAO, "insert",
+        )
+    )
+    return rows
+
+
+def test_real_tracked_gr08n1_seed_file_loads_with_exactly_sixteen_rows():
+    entries = _load_seed_entries(GR08N1_SEED_FILE)
+    assert len(entries) == 16
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["upsert", "markDismissed", "markApplied", "deleteExpired",
+         "deleteByTargetKey"]
+        + ["deleteAll"]
+        + ["restoreDebugSnapshot"] * 2
+        + ["updateExceededNotification", "updateCriticalNotification",
+           "updateWarningNotification"]
+        + ["getCachedLocation", "getCachedLocationForArea"]
+        + ["saveCorrection"] * 2
+        + ["evictStaleCache"]
+    )
+    for entry in entries:
+        assert entry.path in (AI_ARTIFACT_REPOSITORY_IMPL_KT,
+                              BUDGET_REPOSITORY_KT,
+                              MERCHANT_LOCATION_REPOSITORY_KT)
+        assert entry.owner_fqcn in (AI_ARTIFACT_REPOSITORY_IMPL_FQCN,
+                                    BUDGET_REPOSITORY_FQCN,
+                                    MERCHANT_LOCATION_REPOSITORY_FQCN)
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08N"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # The two BudgetRepository deleteAll rows live in DIFFERENT callables
+    # (deleteAll() and restoreDebugSnapshot()), so they are distinct keys.
+    delete_all = [
+        entry for entry in entries
+        if entry.dao_accessor == "budgetDao" and entry.operation == "deleteAll"
+    ]
+    assert sorted(entry.method for entry in delete_all) == [
+        "deleteAll", "restoreDebugSnapshot",
+    ]
+    # The TWO closure rows: the body-carrying @Transaction convenience
+    # methods the findings scanner never reported (GR-08b/GR-08d/GR-08l1
+    # blind-spot pattern).
+    closure = sorted(
+        (entry.method, entry.dao_accessor, entry.operation)
+        for entry in entries if "CLOSURE" in entry.reason
+    )
+    assert closure == [
+        ("restoreDebugSnapshot", "budgetDao",
+         "replaceAllAndEnforceActiveScopes"),
+        ("saveCorrection", "dao", "upsertLocation"),
+    ]
+
+
+def test_real_tracked_gr08n2_seed_file_loads_with_exactly_fifteen_rows():
+    entries = _load_seed_entries(GR08N2_SEED_FILE)
+    assert len(entries) == 15
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["updateCategorizationStatus", "deleteReceipt",
+         "clearAllScannedReceipts", "clearMatchForReceipt",
+         "writeReceiptEvent"]
+        + ["addHolding"] * 3
+        + ["updatePrice"] * 2
+        + ["validateAndCreate"]
+        + ["acceptCandidate"] * 2
+        + ["recordUsage", "recordPriceChange"]
+    )
+    for entry in entries:
+        assert entry.path in (RECEIPT_REPOSITORY_KT,
+                              INVESTMENT_TRACKER_KT,
+                              SUBSCRIPTION_MANAGER_ENGINE_KT)
+        assert entry.owner_fqcn in (RECEIPT_REPOSITORY_FQCN,
+                                    INVESTMENT_TRACKER_FQCN,
+                                    SUBSCRIPTION_MANAGER_ENGINE_FQCN)
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08N"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # The three addHolding rows hit THREE different DAOs and the three
+    # priceHistoryDao.insert rows live in THREE different engine callables,
+    # so every finding is its own fingerprint/key.
+    add_holding = sorted(
+        entry.dao_fqcn for entry in entries if entry.method == "addHolding"
+    )
+    assert add_holding == [
+        INVESTMENT_DAO, INVESTMENT_TRANSACTION_DAO, INVESTMENT_VALUE_DAO,
+    ]
+    price_history_inserts = sorted(
+        entry.method for entry in entries
+        if entry.dao_accessor == "priceHistoryDao"
+        and entry.operation == "insert"
+    )
+    assert price_history_inserts == [
+        "acceptCandidate", "recordPriceChange", "validateAndCreate",
+    ]
+    # ZERO closure rows for this part (all eight touched DAOs are fully
+    # abstract interfaces).
+    assert not any("CLOSURE" in entry.reason for entry in entries)
+
+
+def _gr08n_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08n fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08n_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, select_parameters=None,
+                              **overrides):
+    """The exact GR-08n row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)`` -- optionally narrowed by ``select_parameters`` when
+    several rows share the same (method, accessor, operation) triple (the
+    GR-08n addHolding / updatePrice / acceptCandidate rows); ``overrides``
+    perturb exactly one identity field of the match query for the near-miss
+    assertions.
+    """
+    entries = _gr08n_policy_entries(tmp_path, rows)
+    candidates = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ]
+    if select_parameters is not None:
+        candidates = [
+            entry
+            for entry in candidates
+            if tuple(entry.parameter_types) == tuple(select_parameters)
+        ]
+    target = candidates[0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08n1_exact_identity_matches(tmp_path):
+    rows = _gr08n1_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "upsert", "dao", "upsert"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "deleteAll", "budgetDao", "deleteAll",
+            select_parameters=(),
+        )
+        is True
+    )
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "evictStaleCache", "dao", "deleteStaleEntries",
+            select_parameters=(),
+        )
+        is True
+    )
+
+
+def test_gr08n1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08n1_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "updateExceededNotification", "budgetDao",
+            "updateExceededNotification",
+            parameter_types=("Long", "String"),
+        )
+        is False
+    )
+
+
+def test_gr08n1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08n1_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "upsert", "dao", "upsert",
+            owner_fqcn="com.example.OtherArtifactRepository",
+        )
+        is False
+    )
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "getCachedLocation", "dao", "incrementHitCount",
+            owner_fqcn="com.example.OtherLocationRepository",
+        )
+        is False
+    )
+
+
+def test_gr08n1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08n1_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "deleteAll", "budgetDao", "deleteAll",
+            select_parameters=(),
+            dao_accessor="dao",
+            dao_fqcn=AI_ARTIFACT_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08n1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08n1_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "markDismissed", "dao", "markDismissed",
+            operation="markApplied",
+        )
+        is False
+    )
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "saveCorrection", "dao", "upsertCorrection",
+            operation="upsertLocation",
+        )
+        is False
+    )
+
+
+def test_gr08n1_shared_operation_distinct_callables_near_misses(tmp_path):
+    """The two deleteAll rows are exact per callable identity.
+
+    deleteAll() and restoreDebugSnapshot() both carry a budgetDao deleteAll
+    row; each row authorizes EXACTLY its own callable, so a swapped method
+    or parameter shape stays unauthorized.
+    """
+    rows = _gr08n1_seed_rows()
+    # The deleteAll() row never matches the restoreDebugSnapshot identity.
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "deleteAll", "budgetDao", "deleteAll",
+            select_parameters=(),
+            method="restoreDebugSnapshot",
+        )
+        is False
+    )
+    # The restoreDebugSnapshot row never matches the parameterless
+    # deleteAll() query shape (the query's parameter_types override makes
+    # the match query claim the deleteAll() identity).
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "restoreDebugSnapshot", "budgetDao", "deleteAll",
+            parameter_types=(),
+        )
+        is False
+    )
+
+
+def test_gr08n2_exact_identity_matches(tmp_path):
+    rows = _gr08n2_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "addHolding", "investmentDao", "insert"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "acceptCandidate", "candidateDao",
+            "markAsConverted"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "writeReceiptEvent", "receiptEventDao", "insert"
+        )
+        is True
+    )
+
+
+def test_gr08n2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08n2_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "updatePrice", "investmentDao", "updatePrice",
+            parameter_types=("Long", "Float"),
+        )
+        is False
+    )
+
+
+def test_gr08n2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08n2_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "recordUsage", "usageDao", "insert",
+            owner_fqcn="com.example.OtherSubscriptionEngine",
+        )
+        is False
+    )
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "clearMatchForReceipt", "scannedReceiptDao",
+            "update",
+            owner_fqcn="com.yourname.expensetracker.domain.receipt.lifecycle."
+                       "ReceiptMatchLifecycleService",
+        )
+        is False
+    )
+
+
+def test_gr08n2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08n2_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "addHolding", "investmentValueDao", "insert",
+            dao_accessor="investmentDao",
+            dao_fqcn=INVESTMENT_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08n2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08n2_seed_rows()
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "updatePrice", "investmentDao", "updatePrice",
+            operation="insert",
+        )
+        is False
+    )
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "acceptCandidate", "candidateDao",
+            "markAsConverted",
+            operation="insert",
+        )
+        is False
+    )
+
+
+def test_gr08n2_multi_row_callables_near_misses_stay_unauthorized(tmp_path):
+    """The multi-row callables are exact per (accessor, operation) identity.
+
+    addHolding carries THREE rows (investmentDao / investmentValueDao /
+    investmentTransactionDao inserts), updatePrice carries TWO rows
+    (investmentDao updatePrice, investmentValueDao insert) and
+    acceptCandidate carries TWO rows (priceHistoryDao insert,
+    candidateDao markAsConverted); each row authorizes EXACTLY its own
+    identity, so a swapped operation or accessor stays unauthorized.
+    """
+    rows = _gr08n2_seed_rows()
+    # addHolding: the investmentValueDao row never matches the
+    # investmentTransactionDao identity.
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "addHolding", "investmentValueDao", "insert",
+            dao_accessor="investmentTransactionDao",
+            dao_fqcn=INVESTMENT_TRANSACTION_DAO,
+        )
+        is False
+    )
+    # updatePrice: the investmentDao updatePrice row never matches the
+    # investmentValueDao insert identity behind the same callable.
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "updatePrice", "investmentDao", "updatePrice",
+            dao_accessor="investmentValueDao",
+            dao_fqcn=INVESTMENT_VALUE_DAO,
+            operation="insert",
+        )
+        is False
+    )
+    # acceptCandidate: the candidateDao row never matches the
+    # priceHistoryDao identity behind the same callable.
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "acceptCandidate", "candidateDao",
+            "markAsConverted",
+            dao_accessor="priceHistoryDao",
+            dao_fqcn=SUBSCRIPTION_PRICE_HISTORY_DAO,
+            operation="insert",
+        )
+        is False
+    )
+    # validateAndCreate: the priceHistoryDao row never matches the
+    # acceptCandidate identity behind the same accessor + operation.
+    assert (
+        _assert_gr08n_exact_match(
+            tmp_path, rows, "validateAndCreate", "priceHistoryDao", "insert",
+            method="acceptCandidate",
         )
         is False
     )

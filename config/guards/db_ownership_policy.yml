@@ -413,6 +413,87 @@ entries:
     Worker writes privacy audit events for retention purges.
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: deleteByTargetKey
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: deleteByTargetKey
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked target-scoped artifact cleanup (e.g.
+    when a PendingReview is approved/rejected) -- SQL delete by targetKey, no payloads
+    materialized'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: deleteExpired
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: deleteExpired
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked TTL cleanup -- SQL delete of artifacts
+    whose expiresAt has passed (no raw payloads materialized into Kotlin memory);
+    called by the artifact cleanup path with a TimeProvider-supplied now'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: markApplied
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: markApplied
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked artifact application -- flips status
+    to APPLIED with a TimeProvider-supplied updatedAt so applied suggestions stay
+    auditable'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: markDismissed
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: markDismissed
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked artifact dismissal -- flips status
+    to DISMISSED so the UI does not resurface it while the record is preserved for
+    diagnostics; updatedAt comes from the injected TimeProvider'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: upsert
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.dto.AiArtifactRecord
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: upsert
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked AI artifact insert-or-replace behind
+    the write barrier; the (targetKey, capability, promptVersion, sourceHash) unique
+    index makes re-running a provider with the same inputs overwrite instead of accumulating
+    duplicates'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
   kind: function
@@ -573,6 +654,22 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
   kind: function
+  method: deleteAll
+  receiver: null
+  parameterTypes: []
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked delete-every-budget maintenance;
+    the budget_forecasts -> budgets FK is CASCADE (schema v142) so the single parent-table
+    delete purges every forecast and no orphan forecast rows survive (P6-CURRENT-005
+    / P6-P1-15)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
   method: deleteBudget
   receiver: null
   parameterTypes:
@@ -602,6 +699,40 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
   kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.BudgetRepository.DebugBudgetSnapshot
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: empty-snapshot branch of the debug-only budget restore
+    -- BuildConfig.DEBUG-gated (errors in release) AND write-barrier-checked before
+    any mutation; the CASCADE FK purge keeps forecasts consistent with the empty restore'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.BudgetRepository.DebugBudgetSnapshot
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: replaceAllAndEnforceActiveScopes
+  barrierMode: helper
+  reason: 'GR-08n1 CLOSURE: non-empty-snapshot branch of the debug-only budget restore,
+    evidenced in this repository-layer class with no findings-report row (body-carrying
+    @Transaction BudgetDao convenience method wrapping the scope deactivations + insertAll
+    so active-scope enforcement stays atomic with the re-insert; GR-08b/GR-08d/GR-08l1
+    scanner blind-spot pattern)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
   method: updateBudget
   receiver: null
   parameterTypes:
@@ -614,6 +745,55 @@ entries:
     \ scope"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateCriticalNotification
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateCriticalNotification
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked lastCriticalNotifiedAt stamp written
+    by the budget threshold notifier (dedup for critical-threshold notifications)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateExceededNotification
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateExceededNotification
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked lastExceededNotifiedAt stamp written
+    by the budget threshold notifier so exceeded-budget notifications are not re-fired
+    in a loop'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateWarningNotification
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateWarningNotification
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked lastWarningNotifiedAt stamp written
+    by the budget threshold notifier (dedup for warning-threshold notifications)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/BusinessExpenseRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.BusinessExpenseRepository
   kind: function
@@ -845,6 +1025,89 @@ entries:
     per LEGAL_PATHS.md Lifecycle Events'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: evictStaleCache
+  receiver: null
+  parameterTypes: []
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: deleteStaleEntries
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked TTL maintenance -- SQL delete of
+    cache entries older than the CACHE_TTL cutoff (called by the backfill/maintenance
+    worker; no payloads materialized)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: getCachedLocation
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: incrementHitCount
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked global cache-lookup hit-counter increment
+    (areaKey = ''global'') -- the cache''s only mutation on the read path, written
+    after the TTL freshness check so stale entries are not counted'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: getCachedLocationForArea
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: incrementHitCountForArea
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked area-scoped (v30) cache-lookup hit-counter
+    increment -- written after the TTL freshness check on the normalized-name + areaKey
+    lookup'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: saveCorrection
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: upsertCorrection
+  barrierMode: helper
+  reason: 'GR-08n1 EXACT_POLICY: barrier-checked user-correction persistence -- OnConflictStrategy.IGNORE
+    insert whose 0 return surfaces W13 conflicts to the caller instead of failing
+    silently; the correction''s normalizedMerchantName is already normalized (Bug
+    #12: never double-normalized)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: saveCorrection
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: upsertLocation
+  barrierMode: helper
+  reason: 'GR-08n1 CLOSURE: cache-mirror write that applies the user''s fix to the
+    main location cache immediately after the correction insert, evidenced in this
+    repository-layer class with no findings-report row (body-carrying @Transaction
+    MerchantLocationDao convenience method wrapping the get-or-update/insert so hitCount
+    carry-forward stays atomic; GR-08b/GR-08d/GR-08l1 scanner blind-spot pattern)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
   kind: function
@@ -1785,6 +2048,96 @@ entries:
     \ before promptStateDao.insertPromptState"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: clearAllScannedReceipts
+  receiver: null
+  parameterTypes: []
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: barrier-checked delete-all-receipts maintenance (WARNING-deprecated,
+    P3-0D5-09, points at ReceiptLifecycleCoordinator) -- SQL delete-all after per-receipt
+    stored-image cleanup'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: clearMatchForReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: barrier-checked match-field clear (expenseId/matchStatus/suggestedExpenseId/matchConfidence
+    reset via the abstract @Update) -- ERROR-deprecated source-compatibility shim
+    pointing at ReceiptMatchLifecycleService.clearMatchForReceipt (the GR-08h legal
+    path); Kotlin callers are compile-time blocked and the row exists only so the
+    surviving shim body is not an unauthorized mutation'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: deleteReceipt
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: delete
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: barrier-checked single-receipt delete (WARNING-deprecated
+    shim pointing at ReceiptLifecycleCoordinator.deleteReceipt, the legal path) --
+    the entity-typed @Delete runs after the stored-image cleanup'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: updateCategorizationStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.CategorizationStatus
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: updateCategorizationStatus
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: barrier-checked itemCategorizationStatus stamp for
+    the receipt categorization pipeline (status name persisted via the abstract @Query
+    update)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: writeReceiptEvent
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Long
+  - String
+  - String
+  - String
+  - String
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: private Pipeline-3 lifecycle-event helper -- best-effort
+    ReceiptEvent insert (failures are logged and never fail the business operation),
+    CancellationException rethrown (catch order: cancellation rethrow, then generic
+    catch), message/errorDetails bounded with take(500) before persistence'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
   kind: function
@@ -3776,6 +4129,93 @@ entries:
     or leftAt update'')'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: addHolding
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Investment
+  daoAccessor: investmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS ADD HOLDING -- barrier-checked, fully
+    validated (symbol/name/quantity/purchasePrice/currency/purchaseDate/currentPrice/purchaseFees)
+    holding insert inside database.withTransaction (atomic with the value snapshot
+    + BUY transaction record)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: addHolding
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Investment
+  daoAccessor: investmentTransactionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentTransactionDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS ADD HOLDING -- PR-I1 BUY transaction
+    record (cost-basis tracking) inside the same database.withTransaction as the holding
+    insert; InvestmentTransactionDao.insert outside the addHolding transaction is
+    FORBIDDEN'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: addHolding
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Investment
+  daoAccessor: investmentValueDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentValueDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS ADD HOLDING -- initial InvestmentValue
+    snapshot (purchasePrice * quantity) inside the same database.withTransaction as
+    the holding insert; InvestmentValueDao.insert outside the addHolding/updatePrice
+    transactions is FORBIDDEN'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: updatePrice
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  daoAccessor: investmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentDao
+  operation: updatePrice
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS UPDATE PRICE -- barrier-checked, require(newPrice
+    finite && > 0) validated price update inside database.withTransaction (atomic
+    with the value-history snapshot); InvestmentDao.updatePrice outside the tracker
+    validation + value history is FORBIDDEN'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: updatePrice
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  daoAccessor: investmentValueDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentValueDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS UPDATE PRICE -- InvestmentValue snapshot
+    with dayChange/dayChangePercent inside the same database.withTransaction as the
+    price update; InvestmentValueDao.insert outside the updatePrice/addHolding transactions
+    is FORBIDDEN'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
   ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
   kind: function
@@ -5517,6 +5957,98 @@ entries:
     is applied'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: acceptCandidate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
+  - com.yourname.expensetracker.domain.model.RecurrenceFrequency
+  - Long
+  daoAccessor: candidateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+  operation: markAsConverted
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS ACCEPT candidate -- candidate mark-converted
+    inside the same database.withTransaction as the subscription + baseline price
+    history (all-or-nothing conversion); SubscriptionCandidateDao mutations outside
+    validateAndCreate/acceptCandidate are FORBIDDEN'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: acceptCandidate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
+  - com.yourname.expensetracker.domain.model.RecurrenceFrequency
+  - Long
+  daoAccessor: priceHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS ACCEPT candidate (SUB-1/SUB-2) -- barrier-checked,
+    validated baseline price-history insert with the candidate currency inside database.withTransaction
+    (atomic with the subscription insert + candidate mark-converted)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: recordPriceChange
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  - String?
+  daoAccessor: priceHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS RECORD price change -- barrier-checked,
+    validated, change-gated (> 0.01) SubscriptionPriceHistory insert with TimeProvider
+    recordedAt (W04: no 0L sentinel) inside database.withTransaction (atomic with
+    the REC-7 subscription amount update via RecurringExpenseRepository); SubscriptionPriceHistoryDao.insert
+    outside the engine callables is FORBIDDEN'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: recordUsage
+  receiver: null
+  parameterTypes:
+  - Long
+  - Int?
+  - String?
+  daoAccessor: usageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS RECORD usage -- barrier-checked SubscriptionUsage
+    insert (usedAt from the injected TimeProvider; the documented single-write form
+    of the usage record)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: validateAndCreate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.subscription.CreateSubscriptionRequest
+  daoAccessor: priceHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS CREATE subscription -- barrier-checked,
+    validated baseline SubscriptionPriceHistory insert inside database.withTransaction
+    (atomic with the subscription insert via RecurringExpenseRepository), gated on
+    request.recordPriceHistory'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function
