@@ -86,6 +86,14 @@ Covered contracts (one test each):
     evidences ``dao.markProcessed`` end to end; sibling-owner headers stay
     isolated; the bridge never widens unlisted coverage; unknown
     accessors still fail closed.
+41. GR-08d closure: an expression-bodied target (``fun f(): T = <expr>``,
+    the exact ``recoverStuckReviews`` blocker shape) is verifiable -- the
+    parser captures the full bounded expression text as the body while the
+    declaration keeps its fail-closed ``UNSUPPORTED_EXPRESSION_BODY``
+    status, and the verifier scans that expression with the SAME mutation
+    machinery.  Trusted for the exact seeded identity; unlisted, missing,
+    wrong-overload, uncapturable-expression, and mixed
+    TYPE_UNRESOLVED-sibling shapes all stay fail-closed.
 
 Implementation-aligned notes (verified against current source):
 
@@ -2677,3 +2685,189 @@ def test_gr08b_closure_row_verifies_pending_review_upsert(tmp_path):
         "|pendingReviewDao|com.example.data.PendingReviewDao"
         "|upsertByRawNotificationId",
     )
+
+
+# ===========================================================================
+# 41. GR-08d closure: expression-bodied targets (the recoverStuckReviews
+#     blocker shape) verify against their captured expression body.
+# ===========================================================================
+
+GR08D_EXPRESSION_SOURCE = """\
+package com.example
+
+import com.example.data.GroupDao
+
+class Repo(private val groupDao: GroupDao) {
+    /** Recover reviews stuck in PROCESSING after process death. */
+    fun recoverStuckReviews(): Int = groupDao.recoverStuckProcessing()
+
+    private data class Outcome(val id: Long)
+}
+
+data class Group(val id: Int)
+"""
+
+GR08D_EXPRESSION_UNLISTED_SOURCE = """\
+package com.example
+
+import com.example.data.GroupDao
+
+class Repo(private val groupDao: GroupDao) {
+    fun recoverStuckReviews(): Int = groupDao.recoverStuckProcessing()
+        .also { groupDao.delete(1) }
+}
+
+data class Group(val id: Int)
+"""
+
+GR08D_EXPRESSION_MISSING_SOURCE = """\
+package com.example
+
+import com.example.data.GroupDao
+
+class Repo(private val groupDao: GroupDao) {
+    fun recoverStuckReviews(): Int = 0
+}
+
+data class Group(val id: Int)
+"""
+
+GR08D_EXPRESSION_UNCAPTURABLE_SOURCE = """\
+package com.example
+
+import com.example.data.GroupDao
+
+class Repo(private val groupDao: GroupDao) {
+    fun recoverStuckReviews(): Int =
+}
+
+data class Group(val id: Int)
+"""
+
+GR08D_EXPRESSION_MIXED_SIBLING_SOURCE = """\
+package com.example
+
+import com.example.data.GroupDao
+
+class Repo(private val groupDao: GroupDao) {
+    fun recoverStuckReviews(): Int = groupDao.recoverStuckProcessing()
+
+    fun recoverStuckReviews(scope: ProjectType) {}
+}
+
+data class Group(val id: Int)
+"""
+
+
+def _gr08d_entry(**overrides):
+    """Zero-parameter GR-08d-shaped row (helper barrier, like the seed)."""
+    fields = dict(
+        path=REPO_KT,
+        owner_fqcn="com.example.Repo",
+        kind=CallableKind.FUNCTION,
+        method="recoverStuckReviews",
+        receiver=None,
+        parameter_types=(),
+        dao_accessor="groupDao",
+        dao_fqcn="com.example.data.GroupDao",
+        operation="recoverStuckProcessing",
+        barrier_mode=BarrierMode.HELPER,
+        reason="GR-08d expression-body evidence unit test",
+        owner="db-guard-tests",
+        linked_issue="MIT-DB-08D",
+    )
+    fields.update(overrides)
+    return PolicyEntry(**fields)
+
+
+def test_gr08d_expression_body_target_verifies_trusted(tmp_path):
+    """The exact blocker shape: zero-param expression-bodied recovery fun.
+
+    The seeded identity resolves against the captured expression body and
+    the group verifies trusted with the accessor-scoped mutation key.
+    """
+    _write_repo(tmp_path, GR08D_EXPRESSION_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_gr08d_entry()], str(tmp_path)
+    )
+    assert result.trusted is True
+    assert _codes(result) == []
+    assert len(result.groups) == 1
+    group = result.groups[0]
+    assert group.trusted is True
+    assert group.mutation_keys == ("groupDao|recoverStuckProcessing",)
+    assert group.diagnostics == ()
+
+
+def test_gr08d_expression_body_unlisted_mutation_fails_closed(tmp_path):
+    """An extra mutation inside the captured expression stays unlisted."""
+    _write_repo(tmp_path, GR08D_EXPRESSION_UNLISTED_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_gr08d_entry()], str(tmp_path)
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_UNLISTED_MUTATION]
+    context = _first_context(result)
+    assert context.get("method") == "recoverStuckReviews"
+    assert context.get("count") == 1
+    assert result.groups[0].mutation_keys == (
+        "groupDao|delete",
+        "groupDao|recoverStuckProcessing",
+    )
+
+
+def test_gr08d_expression_body_missing_mutation_fails_closed(tmp_path):
+    """An expression without the declared mutation never authorizes it."""
+    _write_repo(tmp_path, GR08D_EXPRESSION_MISSING_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_gr08d_entry()], str(tmp_path)
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_MUTATION_NOT_FOUND]
+    context = _first_context(result)
+    assert context.get("dao_accessor") == "groupDao"
+    assert context.get("operation") == "recoverStuckProcessing"
+
+
+def test_gr08d_expression_body_wrong_overload_fails_closed(tmp_path):
+    """A wrong-overload claim never resolves to the expression-bodied fun."""
+    _write_repo(tmp_path, GR08D_EXPRESSION_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_gr08d_entry(parameter_types=("Long",))], str(tmp_path)
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_CALLABLE_MISSING]
+    context = _first_context(result)
+    assert context.get("method") == "recoverStuckReviews"
+    assert context.get("count") == 0
+
+
+def test_gr08d_expression_body_uncapturable_stays_parser_uncertain(tmp_path):
+    """A structurally malformed expression captures NO body: the historical
+    SIGNATURE_UNSUPPORTED -> PARSER_UNCERTAIN mapping is preserved."""
+    _write_repo(tmp_path, GR08D_EXPRESSION_UNCAPTURABLE_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_gr08d_entry()], str(tmp_path)
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_PARSER_UNCERTAIN]
+    context = _first_context(result)
+    assert context.get("method") == "recoverStuckReviews"
+    assert context.get("status") == "SIGNATURE_UNSUPPORTED"
+
+
+def test_gr08d_expression_body_with_type_unresolved_sibling_fails_closed(
+    tmp_path,
+):
+    """Mixed same-name statuses never verify: one TYPE_UNRESOLVED sibling
+    keeps the whole same-name family in the fail-closed PARSER_UNCERTAIN
+    family (neither closure branch may fire on a partial match)."""
+    _write_repo(tmp_path, GR08D_EXPRESSION_MIXED_SIBLING_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_gr08d_entry()], str(tmp_path)
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_PARSER_UNCERTAIN]
+    context = _first_context(result)
+    assert context.get("method") == "recoverStuckReviews"
+    assert context.get("status") == "SIGNATURE_UNSUPPORTED"

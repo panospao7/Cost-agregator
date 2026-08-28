@@ -54,6 +54,24 @@ cap), so the batch was SPLIT by callable groups:
 * NEAR-MISS protection over the GR-08c1/c2 rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08d (MIT-DB-08D) extends the same contract to the
+ReviewQueueRepository.kt repository-layer callables:
+
+* ``GR-08d-seed.yml`` -- 22 rows: the 19 findings-derived rows (27
+  findings / 19 unique fingerprints, within the 25-fingerprint batch cap so
+  NO split was required) PLUS 3 closure rows for body-carrying
+  @Transaction PendingReviewDao convenience methods the findings scanner
+  never reported (``upsertByRawNotificationId`` in markAsRelevant,
+  ``bulkUpdateCategoryByMerchant`` in updatePendingReviewCategoryBulk,
+  ``bulkRenameMerchant`` in updatePendingReviewMerchantBulk -- the GR-08b
+  blind-spot pattern);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the FIVE reviewed batch seed files (5 + 13 + 10 + 16 +
+  22 = 66 rows) -- a dropped earlier-batch row fails closed here instead of
+  silently re-unauthorizing that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08d rows, including the closure rows
+  (wrong overload / owner / DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -1099,14 +1117,231 @@ def test_real_tracked_gr08c2_seed_file_loads_with_exactly_sixteen_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_four_batch_seed_files():
-    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2.
+# ── (8) GR-08d rows: tracked seed file + concatenation + NEAR-MISS ────────────
+#
+# GR-08d authorizes the ReviewQueueRepository.kt repository-layer callables
+# (27 findings / 19 unique fingerprints, within the 25-fingerprint batch cap
+# so NO split was required).  The migration CLI accepts a SINGLE --seed-rows
+# value, so every generation run consumes the COMBINED document
+# GR-08-seeds.yml; these tests pin that the combined document stays the
+# exact concatenation of the FIVE reviewed batch seed files, and that the
+# GR-08d rows authorize EXACTLY their callable identity + DAO + operation
+# (wrong overload, wrong owner, wrong DAO, and wrong operation stay
+# unauthorized), including the 3 closure rows for body-carrying
+# @Transaction PendingReviewDao convenience methods.
 
-    Supersedes the GR-08b-era two-file concatenation test (which pinned the
-    combined document at 18 rows): the GR-08c split extends the combined
-    generation input to 44 rows, and the drift guard must cover ALL FOUR
+GR08D_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08d-seed.yml"
+
+REVIEW_QUEUE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "ReviewQueueRepository.kt"
+)
+REVIEW_QUEUE_FQCN = (
+    "com.yourname.expensetracker.data.repository.ReviewQueueRepository"
+)
+PENDING_REVIEW_DAO_GR08D = (
+    "com.yourname.expensetracker.data.database.dao.PendingReviewDao"
+)
+RAW_NOTIFICATION_DAO_GR08D = (
+    "com.yourname.expensetracker.data.database.dao.RawNotificationDao"
+)
+SOURCE_STATS_DAO_GR08D = (
+    "com.yourname.expensetracker.data.database.dao.SourceStatsDao"
+)
+TRANSACTION_EVENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.TransactionEventDao"
+)
+USER_CORRECTION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.UserCorrectionDao"
+)
+TRANSACTION_TYPE = (
+    "com.yourname.expensetracker.data.database.entity.TransactionType?"
+)
+TRANSFER_DIRECTION = (
+    "com.yourname.expensetracker.data.database.entity.TransferDirection?"
+)
+APPROVE_PARAMS = (
+    "Long",
+    "Double?",
+    "String?",
+    "String?",
+    "Long?",
+    "Long?",
+    TRANSACTION_TYPE,
+    TRANSFER_DIRECTION,
+    "String?",
+    "Boolean",
+    "Double?",
+    "Double?",
+    "String?",
+    "String?",
+)
+MARK_RELEVANT_PARAMS = ("Long", "Boolean")
+REJECT_PARAMS = ("Long",)
+RECOVER_PARAMS_GR08D: tuple = ()
+CATEGORY_BULK_PARAMS = ("String", "Long")
+MERCHANT_BULK_PARAMS = ("String", "String")
+
+
+def _gr08d_seed_row(method, dao_accessor, dao_fqcn, operation, params):
+    """One exact GR-08d-shaped v2 seed row mapping."""
+    return {
+        "path": REVIEW_QUEUE_KT,
+        "ownerFqcn": REVIEW_QUEUE_FQCN,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(params),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08d EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08D",
+    }
+
+
+def _gr08d_seed_rows():
+    """The twenty-two exact GR-08d rows (mirroring the tracked seed file).
+
+    Nineteen findings-derived rows plus the 3 closure rows for
+    body-carrying @Transaction PendingReviewDao convenience methods
+    (upsertByRawNotificationId, bulkUpdateCategoryByMerchant,
+    bulkRenameMerchant).
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("pendingReviewDao", PENDING_REVIEW_DAO_GR08D, "transitionStatus"),
+        ("pendingReviewDao", PENDING_REVIEW_DAO_GR08D, "updateStatus"),
+        ("rawNotificationDao", RAW_NOTIFICATION_DAO_GR08D, "markRelevance"),
+        ("sourceStatsDao", SOURCE_STATS_DAO_GR08D, "incrementAccepted"),
+        ("sourceStatsDao", SOURCE_STATS_DAO_GR08D, "decrementPending"),
+        ("sourceStatsDao", SOURCE_STATS_DAO_GR08D, "incrementDuplicate"),
+        ("transactionEventDao", TRANSACTION_EVENT_DAO, "insert"),
+        ("userCorrectionDao", USER_CORRECTION_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08d_seed_row(
+                "approveReview", accessor, dao, operation, APPROVE_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("pendingReviewDao", PENDING_REVIEW_DAO_GR08D, "transitionStatus"),
+        ("rawNotificationDao", RAW_NOTIFICATION_DAO_GR08D, "markRelevance"),
+        ("sourceStatsDao", SOURCE_STATS_DAO_GR08D, "incrementRejected"),
+        ("sourceStatsDao", SOURCE_STATS_DAO_GR08D, "decrementPending"),
+        ("userCorrectionDao", USER_CORRECTION_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08d_seed_row(
+                "rejectReview", accessor, dao, operation, REJECT_PARAMS,
+            )
+        )
+    rows.append(
+        _gr08d_seed_row(
+            "recoverStuckReviews",
+            "pendingReviewDao",
+            PENDING_REVIEW_DAO_GR08D,
+            "recoverStuckProcessing",
+            RECOVER_PARAMS_GR08D,
+        )
+    )
+    for accessor, dao, operation in (
+        ("rawNotificationDao", RAW_NOTIFICATION_DAO_GR08D, "markRelevance"),
+        ("sourceStatsDao", SOURCE_STATS_DAO_GR08D, "incrementAccepted"),
+        ("sourceStatsDao", SOURCE_STATS_DAO_GR08D, "incrementDuplicate"),
+        ("sourceStatsDao", SOURCE_STATS_DAO_GR08D, "incrementPending"),
+        ("userCorrectionDao", USER_CORRECTION_DAO, "insert"),
+        # Closure row: body-carrying @Transaction convenience method.
+        (
+            "pendingReviewDao",
+            PENDING_REVIEW_DAO_GR08D,
+            "upsertByRawNotificationId",
+        ),
+    ):
+        rows.append(
+            _gr08d_seed_row(
+                "markAsRelevant", accessor, dao, operation,
+                MARK_RELEVANT_PARAMS,
+            )
+        )
+    # Closure rows: body-carrying @Transaction convenience methods.
+    rows.append(
+        _gr08d_seed_row(
+            "updatePendingReviewCategoryBulk",
+            "pendingReviewDao",
+            PENDING_REVIEW_DAO_GR08D,
+            "bulkUpdateCategoryByMerchant",
+            CATEGORY_BULK_PARAMS,
+        )
+    )
+    rows.append(
+        _gr08d_seed_row(
+            "updatePendingReviewMerchantBulk",
+            "pendingReviewDao",
+            PENDING_REVIEW_DAO_GR08D,
+            "bulkRenameMerchant",
+            MERCHANT_BULK_PARAMS,
+        )
+    )
+    return rows
+
+
+def test_real_tracked_gr08d_seed_file_loads_with_exactly_twenty_two_rows():
+    entries = _load_seed_entries(GR08D_SEED_FILE)
+    assert len(entries) == 22
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["approveReview"] * 8
+        + ["rejectReview"] * 5
+        + ["recoverStuckReviews"]
+        + ["markAsRelevant"] * 6
+        + ["updatePendingReviewCategoryBulk"]
+        + ["updatePendingReviewMerchantBulk"]
+    )
+    for entry in entries:
+        assert entry.path == REVIEW_QUEUE_KT
+        assert entry.owner_fqcn == REVIEW_QUEUE_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08D"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # The closure rows: the three body-carrying @Transaction
+    # PendingReviewDao convenience methods (GR-08b blind-spot pattern).
+    closure = sorted(
+        (entry.method, entry.dao_accessor, entry.operation)
+        for entry in entries
+        if entry.dao_accessor == "pendingReviewDao"
+        and entry.operation
+        in (
+            "upsertByRawNotificationId",
+            "bulkUpdateCategoryByMerchant",
+            "bulkRenameMerchant",
+        )
+    )
+    assert closure == [
+        ("markAsRelevant", "pendingReviewDao",
+         "upsertByRawNotificationId"),
+        ("updatePendingReviewCategoryBulk", "pendingReviewDao",
+         "bulkUpdateCategoryByMerchant"),
+        ("updatePendingReviewMerchantBulk", "pendingReviewDao",
+         "bulkRenameMerchant"),
+    ]
+
+
+def test_combined_seed_file_concatenates_all_five_batch_seed_files():
+    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
+    + GR-08d.
+
+    Supersedes the GR-08c-era four-file concatenation test (which pinned the
+    combined document at 44 rows): the GR-08d batch extends the combined
+    generation input to 66 rows, and the drift guard must cover ALL FIVE
     reviewed batch seed files.  The combined document is what --seed-rows
-    actually consumes; if it ever drifts from the four reviewed batch seed
+    actually consumes; if it ever drifts from the five reviewed batch seed
     files (a dropped earlier-batch row would silently re-unauthorize that
     batch's mutations at promotion time), this fails closed.
     """
@@ -1115,15 +1350,18 @@ def test_combined_seed_file_concatenates_all_four_batch_seed_files():
     gr08b = _load_seed_entries(GR08B_SEED_FILE)
     gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
     gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
+    gr08d = _load_seed_entries(GR08D_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
     assert len(gr08c2) == 16
-    assert len(combined) == 44
+    assert len(gr08d) == 22
+    assert len(combined) == 66
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
         for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
+        + list(gr08d)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -1542,6 +1780,236 @@ def test_gr08b_closure_row_near_misses_stay_unauthorized(tmp_path):
     assert (
         match_mutation(
             target, **dict(base, method="handleNeedsReviewInTransaction")
+        )
+        is False
+    )
+
+
+# ── (9) GR-08d NEAR-MISS protection ───────────────────────────────────────────
+#
+# The GR-08d rows authorize EXACTLY their callable identity + DAO +
+# operation.  Each test mutates exactly one identity field of a real GR-08d
+# row and asserts the mutation stays unauthorized.  The closure rows get the
+# same exactness treatment (GR-08b closure precedent).
+
+
+def test_gr08d_exact_identity_matches(tmp_path):
+    rows = _gr08d_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "approveReview", "pendingReviewDao",
+            "transitionStatus",
+        )
+        is True
+    )
+
+
+def test_gr08d_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08d_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "approveReview", "pendingReviewDao",
+            "transitionStatus", parameter_types=("Long",),
+        )
+        is False
+    )
+
+
+def test_gr08d_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08d_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "approveReview", "pendingReviewDao",
+            "transitionStatus",
+            owner_fqcn="com.example.OtherRepository",
+        )
+        is False
+    )
+
+
+def test_gr08d_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08d_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "approveReview", "pendingReviewDao",
+            "transitionStatus",
+            dao_accessor="rawNotificationDao",
+            dao_fqcn=RAW_NOTIFICATION_DAO_GR08D,
+        )
+        is False
+    )
+
+
+def test_gr08d_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08d_seed_rows()
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, "approveReview", "pendingReviewDao",
+            "transitionStatus", operation="updateStatus",
+        )
+        is False
+    )
+
+
+def test_gr08d_recover_stuck_row_near_misses_stay_unauthorized(tmp_path):
+    """The zero-parameter recovery row is exact too: siblings never match."""
+    rows = _gr08d_seed_rows()
+    base_kwargs = dict(
+        select_method="recoverStuckReviews",
+        select_accessor="pendingReviewDao",
+        select_operation="recoverStuckProcessing",
+    )
+    assert _assert_gr08c_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong overload: a synthetic single-parameter shape.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, **dict(base_kwargs, parameter_types=("Long",))
+        )
+        is False
+    )
+    # Wrong operation: the plain status-update spelling behind the same DAO.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="updateStatus")
+        )
+        is False
+    )
+    # Wrong callable: the sibling rejectReview transition row never matches
+    # the recovery identity.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="rejectReview")
+        )
+        is False
+    )
+
+
+def test_gr08d_closure_rows_near_misses_stay_unauthorized(tmp_path):
+    """The three closure rows are exact too: mutants never match.
+
+    The closure rows authorize EXACTLY the body-carrying @Transaction
+    PendingReviewDao convenience methods on their own callable identities;
+    a wrong operation (the plain Room insert/update spellings behind the
+    convenience bodies), a wrong DAO identity behind the same accessor
+    spelling, a wrong overload, or a sibling callable's shape stays
+    unauthorized.
+    """
+    rows = _gr08d_seed_rows()
+
+    # (1) markAsRelevant / pendingReviewDao / upsertByRawNotificationId.
+    upsert_kwargs = dict(
+        select_method="markAsRelevant",
+        select_accessor="pendingReviewDao",
+        select_operation="upsertByRawNotificationId",
+    )
+    assert _assert_gr08c_exact_match(tmp_path, rows, **upsert_kwargs) is True
+    # Wrong operation: the plain Room insert behind the convenience body.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path, rows, **dict(upsert_kwargs, operation="insert")
+        )
+        is False
+    )
+    # Wrong DAO identity behind the accessor spelling.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                upsert_kwargs,
+                dao_accessor="rawNotificationDao",
+                dao_fqcn=RAW_NOTIFICATION_DAO_GR08D,
+            ),
+        )
+        is False
+    )
+    # Wrong overload: the rejectReview (Long) shape.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path,
+            rows,
+            **dict(upsert_kwargs, parameter_types=("Long",)),
+        )
+        is False
+    )
+
+    # (2) updatePendingReviewCategoryBulk / bulkUpdateCategoryByMerchant.
+    category_kwargs = dict(
+        select_method="updatePendingReviewCategoryBulk",
+        select_accessor="pendingReviewDao",
+        select_operation="bulkUpdateCategoryByMerchant",
+    )
+    assert (
+        _assert_gr08c_exact_match(tmp_path, rows, **category_kwargs) is True
+    )
+    # Wrong operation: the abstract by-key update behind the convenience
+    # body never matches the convenience-method identity.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                category_kwargs,
+                operation="bulkUpdateCategoryByMerchantKey",
+            ),
+        )
+        is False
+    )
+    # Wrong overload: the merchant-rename (String, String) shape.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path,
+            rows,
+            **dict(category_kwargs, parameter_types=("String", "String")),
+        )
+        is False
+    )
+    # Wrong callable: the sibling bulk-rename closure row never matches.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                category_kwargs, method="updatePendingReviewMerchantBulk"
+            ),
+        )
+        is False
+    )
+
+    # (3) updatePendingReviewMerchantBulk / bulkRenameMerchant.
+    merchant_kwargs = dict(
+        select_method="updatePendingReviewMerchantBulk",
+        select_accessor="pendingReviewDao",
+        select_operation="bulkRenameMerchant",
+    )
+    assert (
+        _assert_gr08c_exact_match(tmp_path, rows, **merchant_kwargs) is True
+    )
+    # Wrong operation: the abstract by-key rename behind the convenience
+    # body never matches the convenience-method identity.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path,
+            rows,
+            **dict(merchant_kwargs, operation="bulkRenameMerchantByKey"),
+        )
+        is False
+    )
+    # Wrong overload: the category-bulk (String, Long) shape.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path,
+            rows,
+            **dict(merchant_kwargs, parameter_types=("String", "Long")),
+        )
+        is False
+    )
+    # Wrong owner: a copied repository class never matches.
+    assert (
+        _assert_gr08c_exact_match(
+            tmp_path,
+            rows,
+            **dict(merchant_kwargs, owner_fqcn="com.example.CopyRepository"),
         )
         is False
     )

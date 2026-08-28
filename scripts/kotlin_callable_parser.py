@@ -1070,6 +1070,119 @@ def _header_body_start(text: str, start: int, scope_end: int, limit: int = MAX_D
     return None, scope_end
 
 
+# GR-08d: expression-bodied members (``fun f(): T = <expr>``) keep their
+# historical fail-closed ``UNSUPPORTED_EXPRESSION_BODY`` status -- they can
+# never act as exactly-resolved braced candidates -- but the evidence
+# verifier can only authorize their mutation when the EXPRESSION TEXT itself
+# is captured and scannable.  The walker below bounds one expression body
+# with the same semantics the declaration scanner uses for accessor
+# expressions: balanced ``()``/``[]``/``{}`` spans keep the expression alive;
+# a top-level ``;``, a fresh-line sibling declaration boundary, the owner
+# scope's closing ``}``, or the scope end terminates it.  Structural
+# malformation (stray ``)``/``]``, an unclosed bracket at the boundary)
+# yields NO capture so the caller keeps the bodyless fail-closed shape
+# instead of authorizing a truncated body.
+_EXPRESSION_SIBLING_KEYWORD = re.compile(
+    r"(?:fun|val|var|class|interface|object|enum|annotation|typealias|init)\b"
+)
+_EXPRESSION_SIBLING_MODIFIER = re.compile(
+    r"(?:value|override|operator|suspend|inline|infix|tailrec|external|expect|actual|inner|"
+    r"const|lateinit|vararg|noinline|crossinline|reified|"
+    r"data|sealed|open|abstract|final|public|private|protected|internal|companion)\b"
+)
+
+
+def _at_fresh_line(masked: str, index: int) -> bool:
+    """True when ``index`` is the first token of its source line."""
+    cursor = index - 1
+    while cursor >= 0 and masked[cursor] in " \t\r":
+        cursor -= 1
+    return cursor < 0 or masked[cursor] == "\n"
+
+
+def _expression_starts_sibling(masked: str, index: int, scope_end: int) -> bool:
+    """True when ``index`` starts the next sibling's declaration header.
+
+    Fresh-line declaration keywords, annotations, and modifier chains
+    (``private data class ...``) bound an expression body; ``object :`` opens
+    an anonymous-object EXPRESSION and never bounds one.  The owner scope's
+    closing ``}`` (or the scope end) is always a boundary.
+    """
+    if index >= scope_end or masked[index] == "}":
+        return True
+    if not _at_fresh_line(masked, index):
+        return False
+    if masked[index] == "@":
+        return True
+    if masked.startswith("object", index):
+        cursor = index + len("object")
+        while cursor < scope_end and masked[cursor] in " \t\r\n":
+            cursor += 1
+        if cursor < scope_end and masked[cursor] == ":":
+            return False
+    if _EXPRESSION_SIBLING_KEYWORD.match(masked, index) is not None:
+        return True
+    modifier = _EXPRESSION_SIBLING_MODIFIER.match(masked, index)
+    if modifier is None:
+        return False
+    cursor = modifier.end()
+    while cursor < scope_end:
+        while cursor < scope_end and masked[cursor] in " \t\r\n":
+            cursor += 1
+        if cursor >= scope_end:
+            return False
+        if masked[cursor] == "@":
+            return True
+        if _EXPRESSION_SIBLING_KEYWORD.match(masked, cursor) is not None:
+            return True
+        modifier = _EXPRESSION_SIBLING_MODIFIER.match(masked, cursor)
+        if modifier is None:
+            return False
+        cursor = modifier.end()
+    return False
+
+
+def _expression_body_end(masked: str, start: int, scope_end: int) -> int | None:
+    """Exclusive end of one fun expression body after ``=``, or ``None``.
+
+    ``None`` means "no capturable expression": an empty expression (the next
+    token is already a sibling boundary) or structurally malformed text.
+    """
+    if start >= scope_end or _expression_starts_sibling(masked, start, scope_end):
+        return None
+    stack: list[str] = []
+    closers = {"(": ")", "[": "]", "{": "}"}
+    index = start
+    while index < scope_end:
+        char = masked[index]
+        if char == "-" and index + 1 < scope_end and masked[index + 1] == ">":
+            # A Kotlin ``->`` arrow is expression text, never a delimiter.
+            index += 2
+            continue
+        if char in closers:
+            stack.append(closers[char])
+        elif char in ")]}":
+            if not stack:
+                if char == "}":
+                    return index
+                return None
+            if stack.pop() != char:
+                return None
+        elif not stack:
+            if char == ";":
+                return index
+            if char == "\n":
+                cursor = index + 1
+                while cursor < scope_end and masked[cursor].isspace():
+                    cursor += 1
+                if cursor >= scope_end:
+                    return scope_end
+                if _expression_starts_sibling(masked, cursor, scope_end):
+                    return index
+        index += 1
+    return None
+
+
 def find_owner_declarations(text: str) -> tuple[OwnerDeclaration, ...]:
     masked = mask_kotlin_source(text)
     package_match = re.search(r"\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)", masked)
@@ -1283,7 +1396,23 @@ def find_callable_declarations(
             body = text[q:end]
         status = "RESOLVED_EXACTLY"
         if q < scope_end and masked[q] == "=":
+            # GR-08d: the status stays UNSUPPORTED_EXPRESSION_BODY (an
+            # expression-bodied declaration can never act as an
+            # exactly-resolved braced candidate), but the full expression
+            # text is captured as the body so the evidence verifier can scan
+            # it for mutations.  A non-capturable expression (empty or
+            # structurally malformed) keeps the bodyless fail-closed shape.
             status = "UNSUPPORTED_EXPRESSION_BODY"
+            expr_start = q + 1
+            while expr_start < scope_end and masked[expr_start].isspace():
+                expr_start += 1
+            expr_end = _expression_body_end(masked, expr_start, scope_end)
+            if expr_end is not None:
+                while expr_end > expr_start and masked[expr_end - 1].isspace():
+                    expr_end -= 1
+                if expr_end > expr_start:
+                    end = expr_end
+                    body = text[expr_start:expr_end]
         if unresolved_types:
             # Tolerant retention names the type-resolution fact -- the
             # exact failure strict mode died on for this declaration.

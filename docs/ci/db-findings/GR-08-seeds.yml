@@ -1,15 +1,17 @@
-# COMBINED reviewed exact v2 policy seed rows (MIT-DB-08A + MIT-DB-08B + MIT-DB-08C).
+# COMBINED reviewed exact v2 policy seed rows
+# (MIT-DB-08A + MIT-DB-08B + MIT-DB-08C + MIT-DB-08D).
 #
 # Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
 # The migration CLI accepts a SINGLE --seed-rows value, so every generation
 # run that must keep earlier batches authorized consumes THIS combined
 # document: it contains the GR-08a rows (docs/ci/db-findings/GR-08a-seed.yml),
 # the GR-08b rows (docs/ci/db-findings/GR-08b-seed.yml), the GR-08c1 rows
-# (docs/ci/db-findings/GR-08c1-seed.yml), and the GR-08c2 rows
-# (docs/ci/db-findings/GR-08c2-seed.yml) VERBATIM.  The
+# (docs/ci/db-findings/GR-08c1-seed.yml), the GR-08c2 rows
+# (docs/ci/db-findings/GR-08c2-seed.yml), and the GR-08d rows
+# (docs/ci/db-findings/GR-08d-seed.yml) VERBATIM.  The
 # per-batch seed files remain the reviewed batch-scope records; this file is
 # the generation input.  scripts/test_migrate_db_policy_seed_rows.py guards
-# the concatenation so the combined document can never drift from the four
+# the concatenation so the combined document can never drift from the five
 # batch files.
 #
 # Loaded through `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact
@@ -744,3 +746,423 @@ entries:
   reason: "GR-08c2 EXACT_POLICY: REMINDER_SNOOZED provenance event written inside the snooze transaction after the delivery update"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08C
+# ── GR-08d rows (verbatim from GR-08d-seed.yml) ──────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: approveReview
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  - String?
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.TransactionType?
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - Boolean
+  - Double?
+  - Double?
+  - String?
+  - String?
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: transitionStatus
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: conditional PENDING->PROCESSING claim (expectedStatus guard makes double-approval races return ALREADY_PROCESSED) inside the approval transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: approveReview
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  - String?
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.TransactionType?
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - Boolean
+  - Double?
+  - Double?
+  - String?
+  - String?
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: updateStatus
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: terminal review status write (APPROVED or DUPLICATE) on every post-coordinator branch inside the approval transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: approveReview
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  - String?
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.TransactionType?
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - Boolean
+  - Double?
+  - Double?
+  - String?
+  - String?
+  daoAccessor: rawNotificationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: relevance bookkeeping for the source notification on the created-expense branch inside the approval transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: approveReview
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  - String?
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.TransactionType?
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - Boolean
+  - Double?
+  - Double?
+  - String?
+  - String?
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementAccepted
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: per-source accepted counter increment on the created-expense branch inside the approval transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: approveReview
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  - String?
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.TransactionType?
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - Boolean
+  - Double?
+  - Double?
+  - String?
+  - String?
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: decrementPending
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: per-source pending counter decrement on every resolved branch (created, duplicate-skipped, insert-conflict) inside the approval transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: approveReview
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  - String?
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.TransactionType?
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - Boolean
+  - Double?
+  - Double?
+  - String?
+  - String?
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementDuplicate
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: per-source duplicate counter increment on the duplicate-skipped and insert-conflict branches inside the approval transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: approveReview
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  - String?
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.TransactionType?
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - Boolean
+  - Double?
+  - Double?
+  - String?
+  - String?
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: SOURCE_LINKED provenance event for pending-review source-link promotion, written only when promotion inserted links, inside the approval transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: approveReview
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  - String?
+  - Long?
+  - Long?
+  - com.yourname.expensetracker.data.database.entity.TransactionType?
+  - com.yourname.expensetracker.data.database.entity.TransferDirection?
+  - String?
+  - Boolean
+  - Double?
+  - Double?
+  - String?
+  - String?
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: approval correction record (wasApproved=true) capturing user edits, written on the created-expense branch inside the approval transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: rejectReview
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: transitionStatus
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: conditional PENDING->REJECTED transition (expectedStatus guard makes double-rejection a no-op) inside the rejection transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: rejectReview
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: rawNotificationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: relevance bookkeeping marking the source notification not-relevant on the rejected branch inside the rejection transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: rejectReview
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementRejected
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: per-source rejected counter increment on the rejected branch inside the rejection transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: rejectReview
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: decrementPending
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: per-source pending counter decrement on the rejected branch inside the rejection transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: rejectReview
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: rejection correction record (wasRejected=true) written only after a successful status transition, inside the rejection transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: recoverStuckReviews
+  receiver: null
+  parameterTypes: []
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: recoverStuckProcessing
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: crash-recovery sweep resetting reviews stuck in PROCESSING (process death mid-approval) back to PENDING so they can be reviewed again"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: markAsRelevant
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: rawNotificationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: manual relevance flip for a notification, first write of the markAsRelevant transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: markAsRelevant
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementAccepted
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: per-source accepted counter increment when manual recovery creates an expense, inside the markAsRelevant transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: markAsRelevant
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementDuplicate
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: per-source duplicate counter increment when manual recovery hits the coordinator dedupe path, inside the markAsRelevant transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: markAsRelevant
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementPending
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: per-source pending counter increment when a placeholder review is newly created (existing==null guard), inside the markAsRelevant transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: markAsRelevant
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08d EXACT_POLICY: manual-relevance correction record written on every branch (expense-created, duplicate, placeholder-review, neither) inside the markAsRelevant transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: markAsRelevant
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: upsertByRawNotificationId
+  barrierMode: helper
+  reason: "GR-08d CLOSURE: placeholder review-row upsert on the partial-parse branch, evidenced in this repository-layer class with no findings-report row (body-carrying @Transaction PendingReviewDao convenience method the scanner gating never reported; GR-08b pattern)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: updatePendingReviewCategoryBulk
+  receiver: null
+  parameterTypes:
+  - String
+  - Long
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: bulkUpdateCategoryByMerchant
+  barrierMode: helper
+  reason: "GR-08d CLOSURE: bulk category re-key across a merchant's pending reviews, evidenced in this repository-layer class with no findings-report row (body-carrying @Transaction PendingReviewDao convenience method wrapping two abstract mutating @Query updates; scanner blind spot)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReviewQueueRepository
+  kind: function
+  method: updatePendingReviewMerchantBulk
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: bulkRenameMerchant
+  barrierMode: helper
+  reason: "GR-08d CLOSURE: bulk merchant rename (display value + merchantKey) across a merchant's pending reviews, evidenced in this repository-layer class with no findings-report row (body-carrying @Transaction PendingReviewDao convenience method wrapping two abstract mutating @Query updates; scanner blind spot)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08D

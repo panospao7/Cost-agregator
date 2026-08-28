@@ -69,6 +69,20 @@ closed with the distinct controlled ``DB_V2_POLICY_SIGNATURE_UNRESOLVED``
 code (never ``PARSER_UNCERTAIN``, never a silent pass).  Every other failure
 family (masking, structure, signature grammar) stays fatal in both modes.
 
+GR-08d: expression-bodied targets (``fun f(): T = <expr>``) are verifiable
+too.  The shared parser retains them with the historical fail-closed
+``UNSUPPORTED_EXPRESSION_BODY`` status -- they can never act as
+exactly-resolved braced candidates -- while capturing the full bounded
+expression text as the body.  When EVERY same-name declaration of the target
+carries that status WITH a captured body, the entry's exact signature is
+matched against those declarations and the captured expression is scanned by
+the SAME mutation machinery as a braced body (required pair, unlisted
+mutation, daoFqcn cross-check, barrierMode gate).  An uncapturable
+expression (empty or structurally malformed), a signature mismatch, or an
+ambiguous/missing exact match keeps the historical fail-closed mapping
+(``DB_V2_POLICY_CALLABLE_MISSING`` / ``..._CALLABLE_AMBIGUOUS`` /
+``..._PARSER_UNCERTAIN`` with status ``SIGNATURE_UNSUPPORTED``).
+
 The result is an :class:`EvidenceResult`: deterministic frozen dataclasses
 grouped by canonical callable key, with per-group trust, sorted mutation
 keys, bounded diagnostics, and a JSON-ready ``to_dict()`` that carries
@@ -691,6 +705,65 @@ def _verify_callable_group(group, ck, owner, masked, text, group_errors,
                 )
             )
             return group_errors, ()
+        # GR-08d: an expression-bodied target (``fun f(): T = <expr>``) is
+        # retained with ``UNSUPPORTED_EXPRESSION_BODY`` and the parser now
+        # captures the full expression text as its body.  When EVERY
+        # same-name declaration carries that status WITH a captured body,
+        # the exact signature match is verified against those declarations
+        # and the captured expression is scanned by the SAME mutation
+        # machinery as a braced body.  Anything ambiguous, missing, or
+        # uncaptured keeps the historical fail-closed mapping below.
+        if status == "SIGNATURE_UNSUPPORTED" and same_name and all(
+            d.status == "UNSUPPORTED_EXPRESSION_BODY"
+            and isinstance(d.body, str)
+            and d.body
+            for d in same_name
+        ):
+            try:
+                params_norm = tuple(
+                    normalize_type_text(p, allow_vararg=True)
+                    for p in ck.parameter_types
+                )
+                recv_norm = (
+                    normalize_type_text(ck.receiver)
+                    if ck.receiver is not None
+                    else None
+                )
+            except SignatureError:
+                group_errors.append(
+                    PolicyError(
+                        DB_V2_POLICY_PARSER_UNCERTAIN,
+                        {"method": ck.method, "status": "SIGNATURE_ERROR"},
+                    )
+                )
+                return group_errors, ()
+            expr_matches = [
+                d
+                for d in same_name
+                if d.signature.receiver == recv_norm
+                and d.signature.parameter_types == params_norm
+            ]
+            if len(expr_matches) > 1:
+                group_errors.append(
+                    PolicyError(
+                        DB_V2_POLICY_CALLABLE_AMBIGUOUS,
+                        {"method": ck.method, "count": len(expr_matches)},
+                    )
+                )
+                return group_errors, ()
+            if len(expr_matches) != 1:
+                group_errors.append(
+                    PolicyError(
+                        DB_V2_POLICY_CALLABLE_MISSING,
+                        {"method": ck.method, "count": 0},
+                    )
+                )
+                return group_errors, ()
+            actual_keys = _check_mutations(
+                group, ck, owner, masked, text, expr_matches[0], callables,
+                group_errors, dao_fqcn_index, project_types,
+            )
+            return group_errors, actual_keys
         group_errors.append(
             PolicyError(
                 DB_V2_POLICY_PARSER_UNCERTAIN,

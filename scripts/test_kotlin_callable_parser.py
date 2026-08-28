@@ -604,6 +604,144 @@ class Fixture {
                         parameter_types=("Int",))
 
 
+# ------------------------------------------------- expression body capture
+#
+# GR-08d: an expression-bodied member keeps its fail-closed
+# ``UNSUPPORTED_EXPRESSION_BODY`` status (it can never act as an
+# exactly-resolved braced candidate), but the full bounded expression text
+# is captured as the body so the evidence verifier can scan it for
+# mutations.  A non-capturable expression keeps the bodyless shape.
+
+
+def test_expression_body_text_is_captured_status_stays_fail_closed(parse_file):
+    source = """package example
+class Fixture(private val dao: ExampleDao) {
+    /** Recover stuck rows. */
+    suspend fun recoverStuckReviews(): Int = dao.recoverStuckProcessing()
+}
+"""
+    declarations = parse_file(source)
+    assert len(declarations) == 1
+    _assert_declaration(
+        declarations[0],
+        owner="example.Fixture",
+        name="recoverStuckReviews",
+        status="UNSUPPORTED_EXPRESSION_BODY",
+    )
+    decl = declarations[0]
+    assert decl.body == "dao.recoverStuckProcessing()"
+    # The span covers the expression (not just the header ``=``), and the
+    # body is exactly the tail slice of the declaration span.
+    span = source[decl.start_offset:decl.end_offset]
+    assert span.endswith("dao.recoverStuckProcessing()")
+    assert source[decl.end_offset - len(decl.body):decl.end_offset] == decl.body
+    # The fail-closed resolution contract is unchanged.
+    assert parser.resolve_callable(
+        declarations, "example.Fixture", "recoverStuckReviews", None, ()
+    ) == "SIGNATURE_UNSUPPORTED"
+
+
+def test_expression_body_continuation_lines_captured_sibling_excluded(parse_file):
+    source = """package example
+class Fixture(private val dao: ExampleDao) {
+    fun recover(): Int = dao
+        .recoverStuckProcessing()
+        .also { dao.markRecovered() }
+
+    fun braced(): Int {
+        return dao.other()
+    }
+}
+"""
+    declarations = parse_file(source)
+    by_name = {d.signature.function_name: d for d in declarations}
+    assert by_name["braced"].status == "RESOLVED_EXACTLY"
+    recover = by_name["recover"]
+    assert recover.status == "UNSUPPORTED_EXPRESSION_BODY"
+    assert recover.body == (
+        "dao\n"
+        "        .recoverStuckProcessing()\n"
+        "        .also { dao.markRecovered() }"
+    )
+    assert "braced" not in recover.body
+
+
+def test_expression_body_stops_at_modifier_prefixed_sibling(parse_file):
+    source = """package example
+class Fixture(private val dao: ExampleDao) {
+    fun recover(): Int = dao.recoverStuckProcessing()
+
+    private data class Outcome(val id: Long)
+
+    fun braced(): Int {
+        return dao.other()
+    }
+}
+"""
+    declarations = parse_file(source)
+    by_name = {d.signature.function_name: d for d in declarations}
+    recover = by_name["recover"]
+    assert recover.status == "UNSUPPORTED_EXPRESSION_BODY"
+    assert recover.body == "dao.recoverStuckProcessing()"
+    # Neither the sibling data class nor the braced fun is swallowed.
+    assert "Outcome" not in recover.body
+    assert "braced" not in recover.body
+    assert by_name["braced"].status == "RESOLVED_EXACTLY"
+
+
+def test_expression_body_semicolon_and_owner_close_bound_the_capture(parse_file):
+    source = """package example
+class Fixture(private val dao: ExampleDao) {
+    fun semi(): Int = dao.recoverStuckProcessing();
+    fun last(): Int = dao.recoverStuckProcessing()
+}
+"""
+    declarations = parse_file(source)
+    by_name = {d.signature.function_name: d for d in declarations}
+    assert by_name["semi"].body == "dao.recoverStuckProcessing()"
+    assert by_name["last"].body == "dao.recoverStuckProcessing()"
+
+
+def test_expression_body_uncapturable_shapes_stay_bodyless(parse_file):
+    """An empty or sibling-bounded expression captures NO body.
+
+    The declaration keeps the bodyless ``=``-boundary span so downstream
+    consumers fail closed instead of ever scanning a truncated body.
+    (Bracket-imbalanced shapes stay in the pre-existing whole-file
+    structural-failure family and are pinned separately below.)
+    """
+    for snippet in (
+        "fun f(): Int = ",
+        "fun f(): Int =\n    val broken = 1",
+    ):
+        source = "package example\nclass Fixture {\n    %s\n}\n" % snippet
+        declarations = parse_file(source)
+        assert len(declarations) == 1
+        decl = declarations[0]
+        assert decl.status == "UNSUPPORTED_EXPRESSION_BODY"
+        assert decl.body is None
+        # The span ends exactly at the header ``=`` boundary, as before.
+        assert source[decl.end_offset:decl.end_offset + 1] == "="
+
+
+def test_expression_body_unclosed_header_bracket_stays_whole_file_fatal(
+    parse_file,
+):
+    """The adjacent forbidden shape: an unclosed bracket in the declaration
+    header keeps its pre-existing whole-file structural failure -- the
+    expression walker never runs and never captures a truncated body.
+    (Structural codes are deliberately outside the ParserError vocabulary,
+    so the boundary carries the generic PARSER_ERROR code.)"""
+    source = """package example
+class Fixture {
+    fun f(): Int = dao.recover(
+}
+"""
+    with pytest.raises(parser.ParserError) as excinfo:
+        parse_file(source)
+    assert excinfo.value.code == "PARSER_ERROR"
+
+
 def test_comparison_operators_in_body_do_not_break_parsing(parse_file):
     source = """package example
 class Fixture {
