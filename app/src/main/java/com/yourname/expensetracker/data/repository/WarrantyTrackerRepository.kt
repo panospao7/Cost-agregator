@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
+import com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
@@ -54,6 +55,7 @@ class WarrantyTrackerRepository @Inject constructor(
     private val database: AppDatabase,
     private val warrantyDao: WarrantyDao,
     private val returnWindowDao: ReturnWindowDao,
+    private val warrantyLifecycleEventDao: WarrantyLifecycleEventDao,
     private val receiptRepository: Lazy<ReceiptRepository>,
     private val cloudExtractionService: CloudWarrantyExtractionService,
     private val aiSettingsRepository: AiSettingsRepository,
@@ -122,7 +124,7 @@ class WarrantyTrackerRepository @Inject constructor(
 
         // PR-W1: Record CREATED lifecycle event
         try {
-            database.warrantyLifecycleEventDao().insert(
+            warrantyLifecycleEventDao.insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warrantyId,
                     eventType = WarrantyLifecycleEventTypes.CREATED,
@@ -151,7 +153,7 @@ class WarrantyTrackerRepository @Inject constructor(
         if (id > 0L) {
             // PR-W1: Record CREATED lifecycle event
             try {
-                database.warrantyLifecycleEventDao().insert(
+                warrantyLifecycleEventDao.insert(
                     WarrantyLifecycleEvent(
                         warrantyId = id,
                         eventType = WarrantyLifecycleEventTypes.CREATED,
@@ -210,7 +212,7 @@ class WarrantyTrackerRepository @Inject constructor(
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.updateWarranty")
         warrantyDao.updateWarranty(warranty)
         try {
-            database.warrantyLifecycleEventDao().insert(
+            warrantyLifecycleEventDao.insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warranty.id,
                     eventType = WarrantyLifecycleEventTypes.UPDATED,
@@ -228,7 +230,7 @@ class WarrantyTrackerRepository @Inject constructor(
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.deleteWarranty")
         warrantyDao.deleteWarranty(warranty)
         try {
-            database.warrantyLifecycleEventDao().insert(
+            warrantyLifecycleEventDao.insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warranty.id,
                     eventType = WarrantyLifecycleEventTypes.DELETED,
@@ -257,7 +259,7 @@ class WarrantyTrackerRepository @Inject constructor(
             }
             warrantyDao.deleteWarranty(warranty)
             try {
-                database.warrantyLifecycleEventDao().insert(
+                warrantyLifecycleEventDao.insert(
                     WarrantyLifecycleEvent(
                         warrantyId = warranty.id,
                         eventType = WarrantyLifecycleEventTypes.AI_EXTRACTION_DISCARDED,
@@ -285,7 +287,7 @@ class WarrantyTrackerRepository @Inject constructor(
 
         // PR-W1: Record CLAIMED lifecycle event
         try {
-            database.warrantyLifecycleEventDao().insert(
+            warrantyLifecycleEventDao.insert(
                 WarrantyLifecycleEvent(
                     warrantyId = warrantyId,
                     eventType = WarrantyLifecycleEventTypes.CLAIMED,
@@ -426,7 +428,7 @@ class WarrantyTrackerRepository @Inject constructor(
         val resultNow = now
         if (expiredWarranties > 0 || expiredReturnWindows > 0) {
             try {
-                database.warrantyLifecycleEventDao().insert(
+                warrantyLifecycleEventDao.insert(
                     WarrantyLifecycleEvent(
                         warrantyId = -1L,
                         eventType = WarrantyLifecycleEventTypes.EXPIRED,
@@ -535,7 +537,7 @@ class WarrantyTrackerRepository @Inject constructor(
             // PR4-FINALGATE: Write discard diagnostic to warranty lifecycle events.
             // We use warrantyId = -1 as a sentinel to indicate this is not tied to a specific warranty.
             try {
-                database.warrantyLifecycleEventDao().insert(
+                warrantyLifecycleEventDao.insert(
                     WarrantyLifecycleEvent(
                         warrantyId = -1L,
                         eventType = WarrantyLifecycleEventTypes.AI_EXTRACTION_DISCARDED,

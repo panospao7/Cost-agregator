@@ -25,6 +25,7 @@ class NotificationRepositoryStressTest {
     private val pendingReviewDao = mockk<PendingReviewDao>(relaxed = true)
     private val userCorrectionDao = mockk<UserCorrectionDao>(relaxed = true)
     private val sourceStatsDao = mockk<SourceStatsDao>(relaxed = true)
+    private val transactionEventDao = mockk<TransactionEventDao>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
     private val pipeline = mockk<NotificationProcessingPipeline>(relaxed = true)
 
@@ -69,6 +70,7 @@ class NotificationRepositoryStressTest {
             pendingReviewDao,
             userCorrectionDao,
             sourceStatsDao,
+            transactionEventDao,
             classifier,
             pipeline,
             mockk(relaxed = true),

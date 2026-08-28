@@ -1,0 +1,397 @@
+# GR-08 batch 5, part 1 (GR-08e1) reviewed exact v2 policy seed rows
+# (MIT-DB-08E).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: NotificationRepository.kt -- 23 DB_UNAUTHORIZED_MUTATION findings
+# collapsing to 23 UNIQUE fingerprints (dedup key: callable identity +
+# daoAccessor + daoFqcn + operation; every finding in this file is a distinct
+# tuple -- no per-call-site repeats).  Unique count 23 <= the 25-fingerprint
+# batch cap.  The COMBINED GR-08e batch (this file + GR-08e2-seed.yml) would
+# carry 46 unique fingerprints > the cap, so the batch was SPLIT into
+# GR-08e1 (this file) / GR-08e2 per the GR-08c precedent (a split is forced
+# only above 25).  This is the REPOSITORY layer -- a legal writer layer per
+# docs/architecture/LEGAL_PATHS.md -- so every row is a legal-writer
+# EXACT_POLICY authorization: raw-notification persistence and deletion,
+# package blocking, per-source stats bookkeeping, review/correction cleanup,
+# and the BULK_DELETED audit event, all guarded by
+# writeBarrier.checkWritesAllowed at each public entrypoint.
+#
+# barrierMode is `helper` for every row: the write barrier runs at the
+# repository public entrypoints (every mutating callable opens with
+# writeBarrier.checkWritesAllowed), not directly before each individual
+# mutation inside the transaction bodies, and no direct-barrier proof is
+# claimed.
+#
+# GR-08e SOURCE CHANGE (accessor normalization): the BULK_DELETED audit
+# write in deleteAllNotifications previously reached the DAO through the
+# database-chained form `database.transactionEventDao().insert(...)`.  The
+# findings scanner reports that receiver text verbatim
+# (`database.transactionEventDao()`), but the v2 source-evidence verifier
+# resolves chain-form bodies to the Room accessor identity
+# (`transactionEventDao`) and fails any row spelled with the chain text
+# (DB_V2_POLICY_MUTATION_NOT_FOUND -- empirically evidenced in
+# build/guard-debug/gr08e/probe-accessor-spellings.json), so NO spelling of a
+# chain-form row can pass both gates.  The batch therefore normalizes the
+# call site to the codebase-standard constructor-property injection
+# (ReviewQueueRepository.kt precedent, GR-08d): `transactionEventDao` is now
+# an @Inject constructor property (provided by DaoModule) and the row below
+# spells `transactionEventDao`.  Room caches DAO instances per database, so
+# the injected instance is the same object the chained call returned; the
+# mutation stays inside the same database.withTransaction block and all
+# lifecycle/privacy semantics are preserved.  Callable signatures are
+# unchanged, so every finding fingerprint is unchanged.
+#
+# Closure additions (GR-08e blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in ALL mutating-callable bodies was enumerated, not just
+# the findings: the 23 findings == the 23 mutating DAO call sites, and every
+# called DAO method (RawNotificationDao, BlockedPackageDao, SourceStatsDao,
+# UserCorrectionDao, PendingReviewDao, ExpenseDao.deleteAll,
+# TransactionEventDao.insert) is an abstract Room-annotated method -- this
+# file calls NO body-carrying @Transaction DAO convenience method (the
+# PendingReviewDao calls are getByRawId/deleteByRawId/deleteAll, all
+# abstract).  Read-only callables (getAllNotifications,
+# getRecentNotifications, getNotificationsByPackage, getAllPackages,
+# getCount, exists, getSourceStats, getClassifierStatsFlow,
+# getClassifierStats, isPackageBlocked, getBlockedPackages,
+# createDebugSnapshot, getSourceStatsSnapshot) perform no mutations;
+# processAndSave/processAndSaveAll/retrainClassifier delegate to the
+# pipeline/classifier whose own writes live in already-authorized batch
+# scopes (GR-08a/GR-08b).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 rows verbatim); passing only this file would
+# drop the earlier batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── save / unblockPackage / blockPackage (3 rows) ────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: save
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: raw-notification persistence writer behind the write barrier; the repository is the legal storage writer for captured notifications"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: blockPackage
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: blockedPackageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BlockedPackageDao
+  operation: block
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: package-block writer (IGNORE conflict strategy keeps re-blocks idempotent) behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: unblockPackage
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: blockedPackageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BlockedPackageDao
+  operation: unblock
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: package-unblock delete behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── delete (3 rows) ──────────────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: delete
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: decrementPending
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: per-source pending counter decrement when the deleted notification still had a PENDING review, inside the delete transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: delete
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: deleteByRawId
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: detached-review cleanup for the deleted notification, inside the delete transaction so review state and raw row never diverge"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: delete
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: delete
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: terminal raw-notification row delete, last write of the delete transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── deleteAllNotifications (5 rows) ──────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAllNotifications
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: BULK_DELETED TransactionEvent audit write (expenseId null, provider-derived occurredAt, bounded metadata) before the bulk mutation, inside the deleteAllNotifications transaction; accessor normalized to the injected transactionEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAllNotifications
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: notification-specific bulk cleanup (never touches expenses) inside the deleteAllNotifications transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAllNotifications
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: pending-review bulk cleanup alongside the raw-notification purge, inside the deleteAllNotifications transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAllNotifications
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: user-correction bulk cleanup alongside the raw-notification purge, inside the deleteAllNotifications transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAllNotifications
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: resetAllPendingCounts
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: per-source pending counters reset to zero after the review purge, inside the deleteAllNotifications transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── deleteAll (deprecated, DeprecationLevel.ERROR) (5 rows) ──────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAll
+  receiver: null
+  parameterTypes: []
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: raw-notification wipe inside the full-reset transaction (compile-error-deprecated full wipe kept for development resets; barrier-guarded)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAll
+  receiver: null
+  parameterTypes: []
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: expenses wipe inside the full-reset transaction (the dangerous half of the deprecated deleteAll; documented WARNING and compile-error deprecation gate usage)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAll
+  receiver: null
+  parameterTypes: []
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: pending-review wipe inside the full-reset transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAll
+  receiver: null
+  parameterTypes: []
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: user-correction wipe inside the full-reset transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: deleteAll
+  receiver: null
+  parameterTypes: []
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: resetAllPendingCounts
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: per-source pending counters reset inside the full-reset transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── resetSourceStats (1 row) ─────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: resetSourceStats
+  receiver: null
+  parameterTypes: []
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: per-source stats table reset behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── restoreDebugSnapshot (4 rows, DEBUG-only) ────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: DEBUG-gated snapshot restore (UnsupportedOperationException in release) clearing raw notifications inside the restore transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: DEBUG-gated snapshot restore clearing per-source stats inside the restore transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: insertAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: DEBUG-gated snapshot restore re-inserting the captured raw-notification rows (IGNORE conflict basis) inside the restore transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: insertAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: DEBUG-gated snapshot restore re-inserting the captured per-source stats rows inside the restore transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── restoreSourceStatsSnapshot (2 rows, DEBUG restore path) ──────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: restoreSourceStatsSnapshot
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.data.database.entity.SourceStats>
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: stats snapshot restore clearing existing rows inside the restore transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+  kind: function
+  method: restoreSourceStatsSnapshot
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.data.database.entity.SourceStats>
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: insertAll
+  barrierMode: helper
+  reason: "GR-08e1 EXACT_POLICY: stats snapshot restore re-inserting the captured rows inside the restore transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E

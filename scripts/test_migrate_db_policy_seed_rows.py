@@ -72,6 +72,31 @@ ReviewQueueRepository.kt repository-layer callables:
 * NEAR-MISS protection over the GR-08d rows, including the closure rows
   (wrong overload / owner / DAO / operation stay unauthorized).
 
+GR-08e (MIT-DB-08E) extends the same contract to the two repository-layer
+files NotificationRepository.kt and WarrantyTrackerRepository.kt.  The
+combined batch carries 46 findings / 46 unique fingerprints > the
+25-fingerprint batch cap, so the batch was SPLIT per the GR-08c precedent:
+
+* ``GR-08e1-seed.yml`` -- NotificationRepository.kt: 23 rows (23 findings /
+  23 unique fingerprints; ZERO closure rows -- every mutating DAO call in
+  the file is an abstract Room-annotated method);
+* ``GR-08e2-seed.yml`` -- WarrantyTrackerRepository.kt: 23 rows (23
+  findings / 23 unique fingerprints; ZERO closure rows -- WarrantyDao,
+  ReturnWindowDao and WarrantyLifecycleEventDao are fully abstract);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the SEVEN reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 = 112 rows) -- a dropped earlier-batch
+  row fails closed here instead of silently re-unauthorizing that batch's
+  mutations at promotion;
+* NEAR-MISS protection over the GR-08e1/e2 rows, including the
+  accessor-normalized rows (the GR-08e source change replaced the
+  database-chained ``database.xxxDao()`` receivers with injected
+  constructor properties because no chain-form spelling can pass both the
+  scanner gate and the v2 evidence verifier; the seed rows spell the
+  normalized ``transactionEventDao`` / ``warrantyLifecycleEventDao``
+  accessors, and a wrong accessor spelling -- including the historical
+  chain text -- stays unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -1368,6 +1393,45 @@ def test_combined_seed_file_concatenates_all_five_batch_seed_files():
     assert len(set(keys)) == len(keys)
 
 
+def test_combined_seed_file_concatenates_all_seven_batch_seed_files():
+    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
+    + GR-08d + GR-08e1 + GR-08e2.
+
+    Supersedes the GR-08d-era five-file concatenation test (which pinned the
+    combined document at 66 rows): the GR-08e batch extends the combined
+    generation input to 112 rows, and the drift guard must cover ALL SEVEN
+    reviewed batch seed files.  The combined document is what --seed-rows
+    actually consumes; if it ever drifts from the seven reviewed batch seed
+    files (a dropped earlier-batch row would silently re-unauthorize that
+    batch's mutations at promotion time), this fails closed.
+    """
+    combined = _load_seed_entries(COMBINED_SEED_FILE)
+    gr08a = _load_seed_entries(SEED_FILE)
+    gr08b = _load_seed_entries(GR08B_SEED_FILE)
+    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
+    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
+    gr08d = _load_seed_entries(GR08D_SEED_FILE)
+    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
+    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
+    assert len(gr08a) == 5
+    assert len(gr08b) == 13
+    assert len(gr08c1) == 10
+    assert len(gr08c2) == 16
+    assert len(gr08d) == 22
+    assert len(gr08e1) == 23
+    assert len(gr08e2) == 23
+    assert len(combined) == 112
+    combined_fields = sorted(_entry_fields(entry) for entry in combined)
+    batch_fields = sorted(
+        _entry_fields(entry)
+        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
+        + list(gr08d) + list(gr08e1) + list(gr08e2)
+    )
+    assert combined_fields == batch_fields
+    keys = [entry.mutation_key().canonical_key() for entry in combined]
+    assert len(set(keys)) == len(keys)
+
+
 def _gr08c_policy_entries(tmp_path, rows):
     entries = []
     for position, row in enumerate(rows):
@@ -2010,6 +2074,719 @@ def test_gr08d_closure_rows_near_misses_stay_unauthorized(tmp_path):
             tmp_path,
             rows,
             **dict(merchant_kwargs, owner_fqcn="com.example.CopyRepository"),
+        )
+        is False
+    )
+
+
+# ── (10) GR-08e1/e2 rows: tracked seed files + concatenation + NEAR-MISS ──────
+#
+# GR-08e authorizes the two repository-layer files NotificationRepository.kt
+# and WarrantyTrackerRepository.kt (46 findings / 46 unique fingerprints >
+# the 25-fingerprint batch cap, hence the GR-08e1/e2 split).  The migration
+# CLI accepts a SINGLE --seed-rows value, so every generation run consumes
+# the COMBINED document GR-08-seeds.yml; these tests pin that the combined
+# document stays the exact concatenation of the SEVEN reviewed batch seed
+# files, and that the GR-08e1/e2 rows authorize EXACTLY their callable
+# identity + DAO + operation (wrong overload, wrong owner, wrong DAO, and
+# wrong operation stay unauthorized).  The accessor-normalized rows (the
+# GR-08e source change replaced the database-chained receivers with injected
+# constructor properties) get explicit near-miss coverage: the historical
+# chain-text accessor spelling stays unauthorized.
+
+GR08E1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08e1-seed.yml"
+GR08E2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08e2-seed.yml"
+
+NOTIFICATION_REPO_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "NotificationRepository.kt"
+)
+NOTIFICATION_REPO_FQCN = (
+    "com.yourname.expensetracker.data.repository.NotificationRepository"
+)
+WARRANTY_REPO_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "WarrantyTrackerRepository.kt"
+)
+WARRANTY_REPO_FQCN = (
+    "com.yourname.expensetracker.data.repository.WarrantyTrackerRepository"
+)
+BLOCKED_PACKAGE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.BlockedPackageDao"
+)
+EXPENSE_DAO_GR08E = (
+    "com.yourname.expensetracker.data.database.dao.ExpenseDao"
+)
+WARRANTY_DAO = "com.yourname.expensetracker.data.database.dao.WarrantyDao"
+RETURN_WINDOW_DAO = (
+    "com.yourname.expensetracker.data.database.dao.ReturnWindowDao"
+)
+WARRANTY_LIFECYCLE_EVENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao"
+)
+RAW_NOTIFICATION_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.RawNotification"
+)
+DEBUG_SNAPSHOT = NOTIFICATION_REPO_FQCN + ".DebugNotificationsSnapshot"
+SOURCE_STATS_LIST = (
+    "List<com.yourname.expensetracker.data.database.entity.SourceStats>"
+)
+WARRANTY_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.Warranty"
+)
+RETURN_WINDOW_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.ReturnWindow"
+)
+SCANNED_RECEIPT_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.ScannedReceipt"
+)
+WARRANTY_EXTRACTION_RESULT = (
+    "com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult"
+)
+DELETE_ALL_NOTIFICATIONS_PARAMS = ("Long",)
+DELETE_ALL_PARAMS: tuple = ()
+RESTORE_SNAPSHOT_PARAMS = (DEBUG_SNAPSHOT,)
+RESTORE_STATS_PARAMS = (SOURCE_STATS_LIST,)
+WARRANTY_PARAMS = (WARRANTY_ENTITY,)
+RETURN_WINDOW_PARAMS = (RETURN_WINDOW_ENTITY,)
+MARK_AS_RETURNED_PARAMS = ("Long", "Double?", "String?")
+UPSERT_RETURN_WINDOW_PARAMS = ("Long", WARRANTY_ENTITY + "?")
+TO_WARRANTY_ENTITY_PARAMS = (SCANNED_RECEIPT_ENTITY,)
+
+
+def _gr08e_seed_row(path, owner_fqcn, method, dao_accessor, dao_fqcn,
+                    operation, params):
+    """One exact GR-08e-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(params),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08e EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08E",
+    }
+
+
+def _gr08e1_seed_rows():
+    """The twenty-three exact GR-08e1 rows (mirroring the tracked seed file).
+
+    NotificationRepository.kt; ZERO closure rows.  The
+    deleteAllNotifications/transactionEventDao row spells the NORMALIZED
+    accessor (the GR-08e source change replaced the database-chained
+    receiver with an injected constructor property).
+    """
+    rows = []
+    rows.append(
+        _gr08e_seed_row(
+            NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN, "save", "dao",
+            RAW_NOTIFICATION_DAO, "insert", (RAW_NOTIFICATION_ENTITY,),
+        )
+    )
+    rows.append(
+        _gr08e_seed_row(
+            NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN, "blockPackage",
+            "blockedPackageDao", BLOCKED_PACKAGE_DAO, "block", ("String",),
+        )
+    )
+    rows.append(
+        _gr08e_seed_row(
+            NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN, "unblockPackage",
+            "blockedPackageDao", BLOCKED_PACKAGE_DAO, "unblock", ("String",),
+        )
+    )
+    for accessor, dao, operation in (
+        ("sourceStatsDao", SOURCE_STATS_DAO, "decrementPending"),
+        ("pendingReviewDao", PENDING_REVIEW_DAO, "deleteByRawId"),
+        ("dao", RAW_NOTIFICATION_DAO, "delete"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN, "delete",
+                accessor, dao, operation, (RAW_NOTIFICATION_ENTITY,),
+            )
+        )
+    for accessor, dao, operation in (
+        ("transactionEventDao", TRANSACTION_EVENT_DAO, "insert"),
+        ("dao", RAW_NOTIFICATION_DAO, "deleteAll"),
+        ("pendingReviewDao", PENDING_REVIEW_DAO, "deleteAll"),
+        ("userCorrectionDao", USER_CORRECTION_DAO, "deleteAll"),
+        ("sourceStatsDao", SOURCE_STATS_DAO, "resetAllPendingCounts"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN,
+                "deleteAllNotifications", accessor, dao, operation,
+                DELETE_ALL_NOTIFICATIONS_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("dao", RAW_NOTIFICATION_DAO, "deleteAll"),
+        ("expenseDao", EXPENSE_DAO_GR08E, "deleteAll"),
+        ("pendingReviewDao", PENDING_REVIEW_DAO, "deleteAll"),
+        ("userCorrectionDao", USER_CORRECTION_DAO, "deleteAll"),
+        ("sourceStatsDao", SOURCE_STATS_DAO, "resetAllPendingCounts"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN, "deleteAll",
+                accessor, dao, operation, DELETE_ALL_PARAMS,
+            )
+        )
+    rows.append(
+        _gr08e_seed_row(
+            NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN, "resetSourceStats",
+            "sourceStatsDao", SOURCE_STATS_DAO, "deleteAll",
+            DELETE_ALL_PARAMS,
+        )
+    )
+    for accessor, dao, operation in (
+        ("dao", RAW_NOTIFICATION_DAO, "deleteAll"),
+        ("sourceStatsDao", SOURCE_STATS_DAO, "deleteAll"),
+        ("dao", RAW_NOTIFICATION_DAO, "insertAll"),
+        ("sourceStatsDao", SOURCE_STATS_DAO, "insertAll"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN,
+                "restoreDebugSnapshot", accessor, dao, operation,
+                RESTORE_SNAPSHOT_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("sourceStatsDao", SOURCE_STATS_DAO, "deleteAll"),
+        ("sourceStatsDao", SOURCE_STATS_DAO, "insertAll"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                NOTIFICATION_REPO_KT, NOTIFICATION_REPO_FQCN,
+                "restoreSourceStatsSnapshot", accessor, dao, operation,
+                RESTORE_STATS_PARAMS,
+            )
+        )
+    return rows
+
+
+def _gr08e2_seed_rows():
+    """The twenty-three exact GR-08e2 rows (mirroring the tracked seed file).
+
+    WarrantyTrackerRepository.kt; ZERO closure rows.  The eight
+    warrantyLifecycleEventDao rows spell the NORMALIZED accessor (the
+    GR-08e source change replaced the database-chained receivers with an
+    injected constructor property).
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("warrantyDao", WARRANTY_DAO, "insertWarranty"),
+        ("warrantyLifecycleEventDao", WARRANTY_LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "addWarranty",
+                accessor, dao, operation, WARRANTY_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("warrantyDao", WARRANTY_DAO, "insertWarrantyIgnore"),
+        ("warrantyLifecycleEventDao", WARRANTY_LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                WARRANTY_REPO_KT, WARRANTY_REPO_FQCN,
+                "addWarrantyIgnoreConflicts", accessor, dao, operation,
+                WARRANTY_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("warrantyDao", WARRANTY_DAO, "updateWarranty"),
+        ("warrantyLifecycleEventDao", WARRANTY_LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "updateWarranty",
+                accessor, dao, operation, WARRANTY_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("warrantyDao", WARRANTY_DAO, "deleteWarranty"),
+        ("warrantyLifecycleEventDao", WARRANTY_LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "deleteWarranty",
+                accessor, dao, operation, WARRANTY_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("returnWindowDao", RETURN_WINDOW_DAO, "deleteReturnWindow"),
+        ("warrantyDao", WARRANTY_DAO, "deleteWarranty"),
+        ("warrantyLifecycleEventDao", WARRANTY_LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                WARRANTY_REPO_KT, WARRANTY_REPO_FQCN,
+                "rejectAutoDetectedWarranty", accessor, dao, operation,
+                WARRANTY_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("warrantyDao", WARRANTY_DAO, "updateWarrantyStatus"),
+        ("warrantyLifecycleEventDao", WARRANTY_LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "markWarrantyAsClaimed",
+                accessor, dao, operation, ("Long",),
+            )
+        )
+    for accessor, dao, operation in (
+        ("warrantyDao", WARRANTY_DAO, "markExpiredWarranties"),
+        ("returnWindowDao", RETURN_WINDOW_DAO, "markExpiredReturnWindows"),
+        ("warrantyLifecycleEventDao", WARRANTY_LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08e_seed_row(
+                WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "reconcileExpiredItems",
+                accessor, dao, operation, ("Long",),
+            )
+        )
+    rows.append(
+        _gr08e_seed_row(
+            WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "toWarrantyEntityOrNull",
+            "warrantyLifecycleEventDao", WARRANTY_LIFECYCLE_EVENT_DAO,
+            "insert", TO_WARRANTY_ENTITY_PARAMS,
+        )
+    )
+    # Fix the receiver on the extension-function row (the generic row helper
+    # leaves it None; the tracked seed file carries the extension receiver).
+    rows[-1]["receiver"] = WARRANTY_EXTRACTION_RESULT
+    rows.append(
+        _gr08e_seed_row(
+            WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "addReturnWindow",
+            "returnWindowDao", RETURN_WINDOW_DAO, "insertReturnWindow",
+            RETURN_WINDOW_PARAMS,
+        )
+    )
+    rows.append(
+        _gr08e_seed_row(
+            WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "updateReturnWindow",
+            "returnWindowDao", RETURN_WINDOW_DAO, "updateReturnWindow",
+            RETURN_WINDOW_PARAMS,
+        )
+    )
+    rows.append(
+        _gr08e_seed_row(
+            WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "deleteReturnWindow",
+            "returnWindowDao", RETURN_WINDOW_DAO, "deleteReturnWindow",
+            RETURN_WINDOW_PARAMS,
+        )
+    )
+    rows.append(
+        _gr08e_seed_row(
+            WARRANTY_REPO_KT, WARRANTY_REPO_FQCN, "markAsReturned",
+            "returnWindowDao", RETURN_WINDOW_DAO, "updateReturnWindow",
+            MARK_AS_RETURNED_PARAMS,
+        )
+    )
+    for operation in ("insertReturnWindow", "updateReturnWindow"):
+        rows.append(
+            _gr08e_seed_row(
+                WARRANTY_REPO_KT, WARRANTY_REPO_FQCN,
+                "upsertReturnWindowForReceipt", "returnWindowDao",
+                RETURN_WINDOW_DAO, operation, UPSERT_RETURN_WINDOW_PARAMS,
+            )
+        )
+    return rows
+
+
+def test_real_tracked_gr08e1_seed_file_loads_with_exactly_twenty_three_rows():
+    entries = _load_seed_entries(GR08E1_SEED_FILE)
+    assert len(entries) == 23
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["save"]
+        + ["blockPackage", "unblockPackage"]
+        + ["delete"] * 3
+        + ["deleteAllNotifications"] * 5
+        + ["deleteAll"] * 5
+        + ["resetSourceStats"]
+        + ["restoreDebugSnapshot"] * 4
+        + ["restoreSourceStatsSnapshot"] * 2
+    )
+    for entry in entries:
+        assert entry.path == NOTIFICATION_REPO_KT
+        assert entry.owner_fqcn == NOTIFICATION_REPO_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08E"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: every accessor is a plain constructor property or
+    # the normalized transactionEventDao property; no convenience methods.
+    assert all(
+        entry.dao_accessor
+        in {
+            "dao",
+            "blockedPackageDao",
+            "expenseDao",
+            "pendingReviewDao",
+            "userCorrectionDao",
+            "sourceStatsDao",
+            "transactionEventDao",
+        }
+        for entry in entries
+    )
+    # The normalized accessor row: exactly one, on deleteAllNotifications.
+    normalized = [
+        (entry.method, entry.dao_accessor, entry.operation)
+        for entry in entries
+        if entry.dao_accessor == "transactionEventDao"
+    ]
+    assert normalized == [
+        ("deleteAllNotifications", "transactionEventDao", "insert")
+    ]
+
+
+def test_real_tracked_gr08e2_seed_file_loads_with_exactly_twenty_three_rows():
+    entries = _load_seed_entries(GR08E2_SEED_FILE)
+    assert len(entries) == 23
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["addWarranty"] * 2
+        + ["addWarrantyIgnoreConflicts"] * 2
+        + ["updateWarranty"] * 2
+        + ["deleteWarranty"] * 2
+        + ["rejectAutoDetectedWarranty"] * 3
+        + ["markWarrantyAsClaimed"] * 2
+        + ["reconcileExpiredItems"] * 3
+        + ["toWarrantyEntityOrNull"]
+        + ["addReturnWindow", "updateReturnWindow", "deleteReturnWindow"]
+        + ["markAsReturned"]
+        + ["upsertReturnWindowForReceipt"] * 2
+    )
+    for entry in entries:
+        assert entry.path == WARRANTY_REPO_KT
+        assert entry.owner_fqcn == WARRANTY_REPO_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08E"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: every accessor is a plain constructor property or
+    # the normalized warrantyLifecycleEventDao property.
+    assert all(
+        entry.dao_accessor
+        in {"warrantyDao", "returnWindowDao", "warrantyLifecycleEventDao"}
+        for entry in entries
+    )
+    # The normalized accessor rows: exactly eight, all lifecycle inserts.
+    normalized = sorted(
+        (entry.method, entry.operation)
+        for entry in entries
+        if entry.dao_accessor == "warrantyLifecycleEventDao"
+    )
+    assert normalized == sorted([
+        ("addWarranty", "insert"),
+        ("addWarrantyIgnoreConflicts", "insert"),
+        ("updateWarranty", "insert"),
+        ("deleteWarranty", "insert"),
+        ("rejectAutoDetectedWarranty", "insert"),
+        ("markWarrantyAsClaimed", "insert"),
+        ("reconcileExpiredItems", "insert"),
+        ("toWarrantyEntityOrNull", "insert"),
+    ])
+    # The extension-function row carries its receiver identity.
+    extension = [
+        entry for entry in entries if entry.method == "toWarrantyEntityOrNull"
+    ]
+    assert len(extension) == 1
+    assert extension[0].receiver == WARRANTY_EXTRACTION_RESULT
+
+
+def _gr08e_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08e fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08e_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, **overrides):
+    """The exact GR-08e row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)``; ``overrides`` perturb exactly one identity field of
+    the match query for the near-miss assertions.
+    """
+    entries = _gr08e_policy_entries(tmp_path, rows)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08e1_exact_identity_matches(tmp_path):
+    rows = _gr08e1_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "save", "dao", "insert"
+        )
+        is True
+    )
+
+
+def test_gr08e1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08e1_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "save", "dao", "insert",
+            parameter_types=("String",),
+        )
+        is False
+    )
+
+
+def test_gr08e1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08e1_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "save", "dao", "insert",
+            owner_fqcn="com.example.OtherRepository",
+        )
+        is False
+    )
+
+
+def test_gr08e1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08e1_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "save", "dao", "insert",
+            dao_accessor="sourceStatsDao",
+            dao_fqcn=SOURCE_STATS_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08e1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08e1_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "save", "dao", "insert", operation="insertAll"
+        )
+        is False
+    )
+
+
+def test_gr08e1_normalized_accessor_row_near_misses_stay_unauthorized(tmp_path):
+    """The accessor-normalized audit row is exact too: mutants never match.
+
+    The GR-08e source change replaced the database-chained
+    ``database.transactionEventDao()`` receiver with the injected
+    ``transactionEventDao`` constructor property.  The seed row spells the
+    NORMALIZED accessor; the historical chain text, a wrong DAO identity
+    behind the normalized spelling, a wrong overload, and the sibling
+    deleteAll identity all stay unauthorized.
+    """
+    rows = _gr08e1_seed_rows()
+    base_kwargs = dict(
+        select_method="deleteAllNotifications",
+        select_accessor="transactionEventDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08e_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong accessor: the historical database-chained spelling.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, dao_accessor="database.transactionEventDao()")
+        )
+        is False
+    )
+    # Wrong DAO identity behind the normalized spelling.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, dao_fqcn=SOURCE_STATS_DAO)
+        )
+        is False
+    )
+    # Wrong overload: the deprecated zero-parameter deleteAll shape.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, **dict(base_kwargs, parameter_types=())
+        )
+        is False
+    )
+    # Wrong callable: the sibling deleteAll identity never matches.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="deleteAll")
+        )
+        is False
+    )
+
+
+def test_gr08e2_exact_identity_matches(tmp_path):
+    rows = _gr08e2_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty"
+        )
+        is True
+    )
+
+
+def test_gr08e2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08e2_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty",
+            parameter_types=(RETURN_WINDOW_ENTITY,),
+        )
+        is False
+    )
+
+
+def test_gr08e2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08e2_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty",
+            owner_fqcn="com.example.OtherRepository",
+        )
+        is False
+    )
+
+
+def test_gr08e2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08e2_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty",
+            dao_accessor="returnWindowDao",
+            dao_fqcn=RETURN_WINDOW_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08e2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08e2_seed_rows()
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, "addWarranty", "warrantyDao", "insertWarranty",
+            operation="insertWarrantyIgnore",
+        )
+        is False
+    )
+
+
+def test_gr08e2_normalized_accessor_rows_near_misses_stay_unauthorized(tmp_path):
+    """The accessor-normalized lifecycle rows are exact too: mutants never
+    match.
+
+    The GR-08e source change replaced the database-chained
+    ``database.warrantyLifecycleEventDao()`` receivers with the injected
+    ``warrantyLifecycleEventDao`` constructor property.  The seed rows spell
+    the NORMALIZED accessor; the historical chain text, a wrong DAO identity
+    behind the normalized spelling, a wrong operation, and the sibling
+    callable's shape all stay unauthorized.
+    """
+    rows = _gr08e2_seed_rows()
+    base_kwargs = dict(
+        select_method="addWarranty",
+        select_accessor="warrantyLifecycleEventDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08e_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong accessor: the historical database-chained spelling.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="database.warrantyLifecycleEventDao()",
+            ),
+        )
+        is False
+    )
+    # Wrong DAO identity behind the normalized spelling.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, **dict(base_kwargs, dao_fqcn=WARRANTY_DAO)
+        )
+        is False
+    )
+    # Wrong operation: the plain Room insert spelling behind the sibling DAO.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="insertWarranty")
+        )
+        is False
+    )
+    # Wrong callable: the sibling addWarrantyIgnoreConflicts lifecycle row
+    # never matches the addWarranty identity.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, method="addWarrantyIgnoreConflicts")
+        )
+        is False
+    )
+
+
+def test_gr08e2_extension_row_near_misses_stay_unauthorized(tmp_path):
+    """The extension-function row pins its receiver identity too."""
+    rows = _gr08e2_seed_rows()
+    base_kwargs = dict(
+        select_method="toWarrantyEntityOrNull",
+        select_accessor="warrantyLifecycleEventDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08e_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong receiver: a bare function shape never matches the extension.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows, **dict(base_kwargs, receiver=None)
+        )
+        is False
+    )
+    # Wrong overload: the addWarranty entity shape.
+    assert (
+        _assert_gr08e_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, parameter_types=(WARRANTY_ENTITY,))
         )
         is False
     )

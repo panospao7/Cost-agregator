@@ -3,6 +3,7 @@ package com.yourname.expensetracker.data.repository
 import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
+import com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
 import com.yourname.expensetracker.data.database.entity.*
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRoute
@@ -37,6 +38,7 @@ class WarrantyTrackerRepositoryTest {
     private val currencySettingsRepository: CurrencySettingsRepository = mockk(relaxed = true)
     private val warrantyDao: WarrantyDao = mockk()
     private val returnWindowDao: ReturnWindowDao = mockk()
+    private val warrantyLifecycleEventDao: WarrantyLifecycleEventDao = mockk(relaxed = true)
     private val receiptRepository: ReceiptRepository = mockk(relaxed = true)
     private val cloudExtractionService: CloudWarrantyExtractionService = mockk()
     private val aiSettingsRepository: AiSettingsRepository = mockk()
@@ -51,6 +53,7 @@ class WarrantyTrackerRepositoryTest {
             database = database,
             warrantyDao = warrantyDao,
             returnWindowDao = returnWindowDao,
+            warrantyLifecycleEventDao = warrantyLifecycleEventDao,
             receiptRepository = object : Lazy<ReceiptRepository> {
                 override fun get() = receiptRepository
             },
@@ -418,7 +421,7 @@ class WarrantyTrackerRepositoryTest {
         repository.addWarrantyIgnoreConflicts(warranty)
 
         coVerify {
-            database.warrantyLifecycleEventDao().insert(match {
+            warrantyLifecycleEventDao.insert(match {
                 it.warrantyId == 3L && it.eventType == "CREATED"
             })
         }
@@ -539,7 +542,7 @@ class WarrantyTrackerRepositoryTest {
         repository.updateWarranty(testWarranty)
 
         coVerify {
-            database.warrantyLifecycleEventDao().insert(match {
+            warrantyLifecycleEventDao.insert(match {
                 it.eventType == "UPDATED" && it.warrantyId == testWarranty.id
             })
         }
@@ -561,7 +564,7 @@ class WarrantyTrackerRepositoryTest {
         repository.deleteWarranty(testWarranty)
 
         coVerify {
-            database.warrantyLifecycleEventDao().insert(match {
+            warrantyLifecycleEventDao.insert(match {
                 it.eventType == "DELETED" && it.warrantyId == testWarranty.id
             })
         }
@@ -575,7 +578,7 @@ class WarrantyTrackerRepositoryTest {
         repository.reconcileExpiredItems(1_700_000_000_000L)
 
         coVerify {
-            database.warrantyLifecycleEventDao().insert(match {
+            warrantyLifecycleEventDao.insert(match {
                 it.eventType == "EXPIRED" && it.warrantyId == -1L
             })
         }
@@ -588,7 +591,7 @@ class WarrantyTrackerRepositoryTest {
 
         repository.reconcileExpiredItems(1_700_000_000_000L)
 
-        coVerify(exactly = 0) { database.warrantyLifecycleEventDao().insert(any()) }
+        coVerify(exactly = 0) { warrantyLifecycleEventDao.insert(any()) }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -771,9 +774,7 @@ class WarrantyTrackerRepositoryTest {
             updatedAt = 0L
         )
         coEvery { warrantyDao.insertWarranty(any()) } returns 4L
-        every { database.warrantyLifecycleEventDao() } returns mockk {
-            coEvery { insert(any()) } throws RuntimeException("Simulated DB failure")
-        }
+        coEvery { warrantyLifecycleEventDao.insert(any()) } throws RuntimeException("Simulated DB failure")
 
         val result = repository.addWarranty(testWarranty)
 
@@ -793,9 +794,7 @@ class WarrantyTrackerRepositoryTest {
             warrantyEndDate = 2000
         )
         coEvery { warrantyDao.updateWarranty(any()) } just Runs
-        every { database.warrantyLifecycleEventDao() } returns mockk {
-            coEvery { insert(any()) } throws RuntimeException("Simulated DB failure")
-        }
+        coEvery { warrantyLifecycleEventDao.insert(any()) } throws RuntimeException("Simulated DB failure")
 
         repository.updateWarranty(testWarranty)
 
