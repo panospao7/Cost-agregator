@@ -391,6 +391,41 @@ precedent into two file groups:
 * NEAR-MISS protection over the GR-08n1/n2 rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08o (MIT-DB-08O) extends the same contract to SEVEN files -- the domain
+receipt/lifecycle ReceiptSideEffectPlanner.kt (post-commit matcher
+side-effect writer), data/repository CategoryRepository.kt (category
+seeding/maintenance writer), ReceiptItemCategorizationRepository.kt
+(receipt item categorization writer) and SharedExpenseDataPortAdapter.kt
+(the SharedExpenseDataPort adapter), domain/bank/BankApiIntegration.kt
+(stub-mode-gated bank API integration), domain/health/
+FinancialHealthScoreV2.kt (sole HealthScoreHistoryDao writer) and
+domain/provenance/SourceLinkBackfillWorker.kt (PR8 provenance backfill
+runner -- NOT a WorkManager worker).  The combined batch carries 22
+findings / 21 unique fingerprints (the two processMatchResult
+receiptEventDao.insert sites share one fingerprint) <= the 25-fingerprint
+batch cap, so NO split was required:
+
+* ``GR-08o-seed.yml`` -- 24 rows: the 21 findings-derived rows (22
+  findings / 21 unique fingerprints) PLUS 1 closure row for the
+  body-carrying @Transaction CategoryDao convenience method the findings
+  scanner never reported (``ensureDefaultCategories ->
+  categoryDao.seedDefaultsIfEmpty`` -- the B4 atomic count-check +
+  insertAll seeding convenience; the GR-08b/GR-08d/GR-08l1/GR-08n1
+  blind-spot pattern) PLUS 2 residual closure rows (the GR-08o
+  post-promotion rescan: the two findings popularly labeled
+  "CategoryRepository" actually live in MerchantCategoryRepository.kt --
+  deleteAll/dao/deleteAll and insert/dao/insert; CategoryRepository.kt
+  itself carries neither callable and stays at 0 -- the GR-08l1
+  suffix-substring grouping-artifact precedent);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the TWENTY-FOUR reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 + 14 + 6 + 7 + 11 + 21
+  + 19 + 18 + 22 + 23 + 16 + 12 + 16 + 15 + 24 = 377 rows) -- a dropped
+  earlier-batch row fails closed here instead of silently re-unauthorizing
+  that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08o rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -7001,20 +7036,22 @@ def test_real_tracked_gr08l2_seed_file_loads_with_exactly_twenty_three_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_twenty_three_batch_seed_files():
+def test_combined_seed_file_concatenates_all_twenty_four_batch_seed_files():
     """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
     + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
     + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1
-    + GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2.
+    + GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 + GR-08o.
 
-    Supersedes the GR-08m-era twenty-one-file concatenation test (which pinned
-    the combined document at 322 rows): the GR-08n batch extends the combined
-    generation input to 353 rows (16 GR-08n1 + 15 GR-08n2), and the drift
-    guard must cover ALL TWENTY-THREE reviewed batch seed files.  The combined
-    document is what --seed-rows actually consumes; if it ever drifts from
-    the twenty-three reviewed batch seed files (a dropped earlier-batch row
-    would silently re-unauthorize that batch's mutations at promotion time),
-    this fails closed.
+    Supersedes the GR-08n-era twenty-three-file concatenation test (which
+    pinned the combined document at 353 rows): the GR-08o batch extends the
+    combined generation input to 377 rows (24 GR-08o rows = 21
+    findings-derived + 1 closure + 2 residual closure), and the drift guard
+    must cover ALL TWENTY-FOUR reviewed batch seed files.  The combined
+    document is what
+    --seed-rows actually consumes; if it ever drifts from the twenty-four
+    reviewed batch seed files (a dropped earlier-batch row would silently
+    re-unauthorize that batch's mutations at promotion time), this fails
+    closed.
     """
     combined = _load_seed_entries(COMBINED_SEED_FILE)
     gr08a = _load_seed_entries(SEED_FILE)
@@ -7040,6 +7077,7 @@ def test_combined_seed_file_concatenates_all_twenty_three_batch_seed_files():
     gr08m2 = _load_seed_entries(GR08M2_SEED_FILE)
     gr08n1 = _load_seed_entries(GR08N1_SEED_FILE)
     gr08n2 = _load_seed_entries(GR08N2_SEED_FILE)
+    gr08o = _load_seed_entries(GR08O_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
@@ -7063,7 +7101,8 @@ def test_combined_seed_file_concatenates_all_twenty_three_batch_seed_files():
     assert len(gr08m2) == 12
     assert len(gr08n1) == 16
     assert len(gr08n2) == 15
-    assert len(combined) == 353
+    assert len(gr08o) == 24
+    assert len(combined) == 377
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
@@ -7072,7 +7111,7 @@ def test_combined_seed_file_concatenates_all_twenty_three_batch_seed_files():
         + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
         + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
         + list(gr08k2) + list(gr08l1) + list(gr08l2) + list(gr08m1)
-        + list(gr08m2) + list(gr08n1) + list(gr08n2)
+        + list(gr08m2) + list(gr08n1) + list(gr08n2) + list(gr08o)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -9071,6 +9110,690 @@ def test_gr08n2_multi_row_callables_near_misses_stay_unauthorized(tmp_path):
         _assert_gr08n_exact_match(
             tmp_path, rows, "validateAndCreate", "priceHistoryDao", "insert",
             method="acceptCandidate",
+        )
+        is False
+    )
+
+
+# ── GR-08o (MIT-DB-08O): ReceiptSideEffectPlanner.kt + CategoryRepository.kt ─
+# + ReceiptItemCategorizationRepository.kt + SharedExpenseDataPortAdapter.kt +
+# BankApiIntegration.kt + FinancialHealthScoreV2.kt +
+# SourceLinkBackfillWorker.kt.  The combined batch carries 22 findings /
+# 21 unique fingerprints (the two processMatchResult receiptEventDao.insert
+# sites share one fingerprint) <= the 25-fingerprint batch cap, so NO split
+# was required; the generation run consumes the COMBINED document
+# GR-08-seeds.yml; these tests pin that the combined document stays the
+# exact concatenation of the TWENTY-FOUR reviewed batch seed files, and that
+# the GR-08o rows authorize EXACTLY their callable identity + DAO +
+# operation (wrong overload, wrong owner, wrong DAO, and wrong operation
+# stay unauthorized).  The GR-08o post-promotion rescan left TWO residual
+# findings popularly labeled "CategoryRepository" -- actually
+# MerchantCategoryRepository.kt (deleteAll/dao/deleteAll and
+# insert/dao/insert; CategoryRepository.kt carries neither callable and
+# stays at 0) -- closed by 2 residual closure rows (24 rows total; the
+# GR-08l1 suffix-substring grouping-artifact precedent).
+
+GR08O_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08o-seed.yml"
+
+RECEIPT_SIDE_EFFECT_PLANNER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/"
+    "ReceiptSideEffectPlanner.kt"
+)
+RECEIPT_SIDE_EFFECT_PLANNER_FQCN = (
+    "com.yourname.expensetracker.domain.receipt.lifecycle."
+    "ReceiptSideEffectPlanner"
+)
+SCANNED_RECEIPT_DAO_GR08O = (
+    "com.yourname.expensetracker.data.database.dao.ScannedReceiptDao"
+)
+RECEIPT_EVENT_DAO_GR08O = (
+    "com.yourname.expensetracker.data.database.dao.ReceiptEventDao"
+)
+MATCH_RESULT = (
+    "com.yourname.expensetracker.domain.receiptmatching.MatchResult"
+)
+SCANNED_RECEIPT_ENTITY_GR08O = (
+    "com.yourname.expensetracker.data.database.entity.ScannedReceipt"
+)
+
+CATEGORY_REPOSITORY_KT_GR08O = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "CategoryRepository.kt"
+)
+CATEGORY_REPOSITORY_FQCN_GR08O = (
+    "com.yourname.expensetracker.data.repository.CategoryRepository"
+)
+CATEGORY_DAO_GR08O = "com.yourname.expensetracker.data.database.dao.CategoryDao"
+MERCHANT_CATEGORY_DAO_GR08O = (
+    "com.yourname.expensetracker.data.database.dao.MerchantCategoryDao"
+)
+
+# GR-08o residual closure file (GR-08o post-promotion rescan): the two
+# findings popularly labeled "CategoryRepository" live in THIS file --
+# CategoryRepository.kt carries neither callable and stays at 0.
+MERCHANT_CATEGORY_REPOSITORY_KT_GR08O = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "MerchantCategoryRepository.kt"
+)
+MERCHANT_CATEGORY_REPOSITORY_FQCN_GR08O = (
+    "com.yourname.expensetracker.data.repository.MerchantCategoryRepository"
+)
+MERCHANT_CATEGORY_ENTITY_GR08O = (
+    "com.yourname.expensetracker.data.database.entity.MerchantCategory"
+)
+
+RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "ReceiptItemCategorizationRepository.kt"
+)
+RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository."
+    "ReceiptItemCategorizationRepository"
+)
+RECEIPT_ITEM_CATEGORIZATION_DAO = (
+    "com.yourname.expensetracker.data.database.dao."
+    "ReceiptItemCategorizationDao"
+)
+RECEIPT_ITEM_CATEGORIZATION_RESULT = (
+    "com.yourname.expensetracker.domain.ai.model."
+    "ReceiptItemCategorizationResult"
+)
+
+SHARED_EXPENSE_DATA_PORT_ADAPTER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "SharedExpenseDataPortAdapter.kt"
+)
+SHARED_EXPENSE_DATA_PORT_ADAPTER_FQCN = (
+    "com.yourname.expensetracker.data.repository.SharedExpenseDataPortAdapter"
+)
+GROUP_MEMBER_DAO_GR08O = (
+    "com.yourname.expensetracker.data.database.dao.GroupMemberDao"
+)
+EXPENSE_GROUP_DAO_GR08O = (
+    "com.yourname.expensetracker.data.database.dao.ExpenseGroupDao"
+)
+SHARED_EXPENSE_MEMBER = (
+    "com.yourname.expensetracker.domain.groups.SharedExpenseMember"
+)
+
+BANK_API_INTEGRATION_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/bank/"
+    "BankApiIntegration.kt"
+)
+BANK_API_INTEGRATION_FQCN = (
+    "com.yourname.expensetracker.domain.bank.BankApiIntegration"
+)
+BANK_CONNECTION_DAO_GR08O = (
+    "com.yourname.expensetracker.data.database.dao.BankConnectionDao"
+)
+PENDING_REVIEW_DAO_GR08O = (
+    "com.yourname.expensetracker.data.database.dao.PendingReviewDao"
+)
+BANK_CONNECTION_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.BankConnection"
+)
+
+FINANCIAL_HEALTH_SCORE_V2_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/health/"
+    "FinancialHealthScoreV2.kt"
+)
+FINANCIAL_HEALTH_SCORE_V2_FQCN = (
+    "com.yourname.expensetracker.domain.health.FinancialHealthScoreV2"
+)
+HEALTH_SCORE_HISTORY_DAO = (
+    "com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao"
+)
+HEALTH_TREND = "com.yourname.expensetracker.domain.health.HealthTrend"
+SAVE_TO_HISTORY_PARAMS = (
+    "Int", "Int", "Int", "Int", "Int", "Long", "Long", HEALTH_TREND,
+    "String?",
+)
+
+SOURCE_LINK_BACKFILL_WORKER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/provenance/"
+    "SourceLinkBackfillWorker.kt"
+)
+SOURCE_LINK_BACKFILL_WORKER_FQCN = (
+    "com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker"
+)
+ENTITY_SOURCE_LINK_DAO = (
+    "com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao"
+)
+EXPENSE_ENTITY_GR08O = (
+    "com.yourname.expensetracker.data.database.entity.Expense"
+)
+ENTITY_SOURCE_LINK_LIST = (
+    "List<com.yourname.expensetracker.data.database.entity.EntitySourceLink>"
+)
+BACKFILL_PARAMS = (EXPENSE_ENTITY_GR08O, ENTITY_SOURCE_LINK_LIST)
+
+
+def _gr08o_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                    dao_fqcn, operation, barrier_mode="helper"):
+    """One exact GR-08o-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": barrier_mode,
+        "reason": "GR-08o EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08O",
+    }
+
+
+def _gr08o_seed_rows():
+    """The twenty-four exact GR-08o rows (mirroring the tracked seed file).
+
+    ReceiptSideEffectPlanner.kt (3 rows) + CategoryRepository.kt (4 rows --
+    3 findings-derived plus the ensureDefaultCategories
+    seedDefaultsIfEmpty CLOSURE row) + ReceiptItemCategorizationRepository.kt
+    (3 rows) + SharedExpenseDataPortAdapter.kt (3 rows) +
+    BankApiIntegration.kt (3 rows) + FinancialHealthScoreV2.kt (3 rows) +
+    SourceLinkBackfillWorker.kt (3 rows) + TWO residual closure rows (the
+    GR-08o post-promotion rescan: MerchantCategoryRepository.kt
+    deleteAll/dao/deleteAll and insert/dao/insert -- true path in
+    MerchantCategoryRepository.kt, NOT CategoryRepository.kt).
+    """
+    process_match_params = (MATCH_RESULT, SCANNED_RECEIPT_ENTITY_GR08O)
+    write_match_event_params = (
+        SCANNED_RECEIPT_ENTITY_GR08O, "String", "String", "Long?", "Float?",
+        "String?",
+    )
+    rows = []
+    rows.append(
+        _gr08o_seed_row(
+            RECEIPT_SIDE_EFFECT_PLANNER_KT, RECEIPT_SIDE_EFFECT_PLANNER_FQCN,
+            "processMatchResult", process_match_params,
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO_GR08O, "update",
+        )
+    )
+    rows.append(
+        _gr08o_seed_row(
+            RECEIPT_SIDE_EFFECT_PLANNER_KT, RECEIPT_SIDE_EFFECT_PLANNER_FQCN,
+            "processMatchResult", process_match_params,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08O, "insert",
+        )
+    )
+    rows.append(
+        _gr08o_seed_row(
+            RECEIPT_SIDE_EFFECT_PLANNER_KT, RECEIPT_SIDE_EFFECT_PLANNER_FQCN,
+            "writeMatchEvent", write_match_event_params,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08O, "insert",
+        )
+    )
+    for accessor, dao, operation in (
+        ("merchantCategoryDao", MERCHANT_CATEGORY_DAO_GR08O, "insertAll"),
+        ("categoryDao", CATEGORY_DAO_GR08O, "insert"),
+        ("merchantCategoryDao", MERCHANT_CATEGORY_DAO_GR08O,
+         "updateNormalizedCanonicalName"),
+        # CLOSURE row: body-carrying @Transaction CategoryDao convenience
+        # method the findings scanner never reported.
+        ("categoryDao", CATEGORY_DAO_GR08O, "seedDefaultsIfEmpty"),
+    ):
+        rows.append(
+            _gr08o_seed_row(
+                CATEGORY_REPOSITORY_KT_GR08O, CATEGORY_REPOSITORY_FQCN_GR08O,
+                "ensureDefaultCategories", (),
+                accessor, dao, operation,
+            )
+        )
+    rows.append(
+        _gr08o_seed_row(
+            RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_KT,
+            RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_FQCN,
+            "deleteByReceiptId", ("Long",),
+            "dao", RECEIPT_ITEM_CATEGORIZATION_DAO, "deleteByReceiptId",
+        )
+    )
+    rows.append(
+        _gr08o_seed_row(
+            RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_KT,
+            RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_FQCN,
+            "saveCategorizationResult",
+            ("Long", RECEIPT_ITEM_CATEGORIZATION_RESULT, "Long"),
+            "dao", RECEIPT_ITEM_CATEGORIZATION_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08o_seed_row(
+            RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_KT,
+            RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_FQCN,
+            "updateUserCorrection", ("Long", "Long?", "String?", "Long"),
+            "dao", RECEIPT_ITEM_CATEGORIZATION_DAO, "updateUserCorrection",
+        )
+    )
+    rows.append(
+        _gr08o_seed_row(
+            SHARED_EXPENSE_DATA_PORT_ADAPTER_KT,
+            SHARED_EXPENSE_DATA_PORT_ADAPTER_FQCN,
+            "removeMember", (SHARED_EXPENSE_MEMBER,),
+            "memberDao", GROUP_MEMBER_DAO_GR08O, "update",
+        )
+    )
+    for operation in ("archiveGroup", "restoreGroup"):
+        rows.append(
+            _gr08o_seed_row(
+                SHARED_EXPENSE_DATA_PORT_ADAPTER_KT,
+                SHARED_EXPENSE_DATA_PORT_ADAPTER_FQCN,
+                operation, ("Long",),
+                "groupDao", EXPENSE_GROUP_DAO_GR08O, operation,
+            )
+        )
+    rows.append(
+        _gr08o_seed_row(
+            BANK_API_INTEGRATION_KT, BANK_API_INTEGRATION_FQCN,
+            "completeConnection", ("String", "String"),
+            "bankConnectionDao", BANK_CONNECTION_DAO_GR08O, "insert",
+        )
+    )
+    rows.append(
+        _gr08o_seed_row(
+            BANK_API_INTEGRATION_KT, BANK_API_INTEGRATION_FQCN,
+            "syncTransactions", (BANK_CONNECTION_ENTITY, "Long?"),
+            "pendingReviewDao", PENDING_REVIEW_DAO_GR08O, "insert",
+        )
+    )
+    rows.append(
+        _gr08o_seed_row(
+            BANK_API_INTEGRATION_KT, BANK_API_INTEGRATION_FQCN,
+            "refreshToken", (BANK_CONNECTION_ENTITY,),
+            "bankConnectionDao", BANK_CONNECTION_DAO_GR08O, "updateToken",
+        )
+    )
+    for operation in ("update", "insert", "deleteOlderThan"):
+        rows.append(
+            _gr08o_seed_row(
+                FINANCIAL_HEALTH_SCORE_V2_KT, FINANCIAL_HEALTH_SCORE_V2_FQCN,
+                "saveToHistory", SAVE_TO_HISTORY_PARAMS,
+                "healthScoreHistoryDao", HEALTH_SCORE_HISTORY_DAO, operation,
+            )
+        )
+    for method in (
+        "backfillLegacySource", "backfillReceiptLinks",
+        "backfillNotificationLinks",
+    ):
+        rows.append(
+            _gr08o_seed_row(
+                SOURCE_LINK_BACKFILL_WORKER_KT,
+                SOURCE_LINK_BACKFILL_WORKER_FQCN,
+                method, BACKFILL_PARAMS,
+                "sourceLinkDao", ENTITY_SOURCE_LINK_DAO, "insert",
+            )
+        )
+    # Residual closure rows (GR-08o post-promotion rescan): the two
+    # findings popularly labeled "CategoryRepository" live in
+    # MerchantCategoryRepository.kt; CategoryRepository.kt stays at 0.
+    rows.append(
+        _gr08o_seed_row(
+            MERCHANT_CATEGORY_REPOSITORY_KT_GR08O,
+            MERCHANT_CATEGORY_REPOSITORY_FQCN_GR08O,
+            "deleteAll", (),
+            "dao", MERCHANT_CATEGORY_DAO_GR08O, "deleteAll",
+        )
+    )
+    rows.append(
+        _gr08o_seed_row(
+            MERCHANT_CATEGORY_REPOSITORY_KT_GR08O,
+            MERCHANT_CATEGORY_REPOSITORY_FQCN_GR08O,
+            "insert", (MERCHANT_CATEGORY_ENTITY_GR08O,),
+            "dao", MERCHANT_CATEGORY_DAO_GR08O, "insert",
+        )
+    )
+    return rows
+
+
+def test_real_tracked_gr08o_seed_file_loads_with_exactly_twenty_four_rows():
+    entries = _load_seed_entries(GR08O_SEED_FILE)
+    assert len(entries) == 24
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["processMatchResult"] * 2
+        + ["writeMatchEvent"]
+        + ["ensureDefaultCategories"] * 4
+        + ["deleteByReceiptId", "saveCategorizationResult",
+           "updateUserCorrection"]
+        + ["removeMember", "archiveGroup", "restoreGroup"]
+        + ["completeConnection", "syncTransactions", "refreshToken"]
+        + ["saveToHistory"] * 3
+        + ["backfillLegacySource", "backfillReceiptLinks",
+           "backfillNotificationLinks"]
+        + ["deleteAll", "insert"]
+    )
+    for entry in entries:
+        assert entry.path in (
+            RECEIPT_SIDE_EFFECT_PLANNER_KT,
+            CATEGORY_REPOSITORY_KT_GR08O,
+            RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_KT,
+            SHARED_EXPENSE_DATA_PORT_ADAPTER_KT,
+            BANK_API_INTEGRATION_KT,
+            FINANCIAL_HEALTH_SCORE_V2_KT,
+            SOURCE_LINK_BACKFILL_WORKER_KT,
+            MERCHANT_CATEGORY_REPOSITORY_KT_GR08O,
+        )
+        assert entry.owner_fqcn in (
+            RECEIPT_SIDE_EFFECT_PLANNER_FQCN,
+            CATEGORY_REPOSITORY_FQCN_GR08O,
+            RECEIPT_ITEM_CATEGORIZATION_REPOSITORY_FQCN,
+            SHARED_EXPENSE_DATA_PORT_ADAPTER_FQCN,
+            BANK_API_INTEGRATION_FQCN,
+            FINANCIAL_HEALTH_SCORE_V2_FQCN,
+            SOURCE_LINK_BACKFILL_WORKER_FQCN,
+            MERCHANT_CATEGORY_REPOSITORY_FQCN_GR08O,
+        )
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08O"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # The two processMatchResult rows hit TWO different DAOs and the three
+    # saveToHistory rows carry THREE distinct operations behind the same
+    # callable, so every row is its own key.
+    process_match = sorted(
+        entry.dao_fqcn for entry in entries
+        if entry.method == "processMatchResult"
+    )
+    assert process_match == [
+        RECEIPT_EVENT_DAO_GR08O, SCANNED_RECEIPT_DAO_GR08O,
+    ]
+    save_history_ops = sorted(
+        entry.operation for entry in entries
+        if entry.method == "saveToHistory"
+    )
+    assert save_history_ops == ["deleteOlderThan", "insert", "update"]
+    # The THREE closure rows: the body-carrying @Transaction CategoryDao
+    # convenience method the findings scanner never reported
+    # (GR-08b/GR-08d/GR-08l1/GR-08n1 blind-spot pattern) plus the TWO
+    # GR-08o post-promotion residual rows.
+    closure = sorted(
+        (entry.method, entry.dao_accessor, entry.operation)
+        for entry in entries if "CLOSURE" in entry.reason
+    )
+    assert closure == [
+        ("deleteAll", "dao", "deleteAll"),
+        ("ensureDefaultCategories", "categoryDao", "seedDefaultsIfEmpty"),
+        ("insert", "dao", "insert"),
+    ]
+    # The residual rows spell the TRUE paths: no closure row may claim the
+    # CategoryRepository.kt path for the residual callables (a
+    # CategoryRepository.kt row could never match the v2 fingerprints).
+    residual_paths = sorted(
+        entry.path
+        for entry in entries
+        if entry.method in ("deleteAll", "insert")
+    )
+    assert residual_paths == [MERCHANT_CATEGORY_REPOSITORY_KT_GR08O] * 2
+
+
+def _gr08o_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08o fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08o_exact_match(tmp_path, rows, select_method,
+                              select_accessor, select_operation,
+                              select_parameters=None, **overrides):
+    """The exact GR-08o row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)`` -- optionally narrowed by ``select_parameters`` when
+    several rows share the same (method, accessor, operation) triple (the
+    GR-08o ensureDefaultCategories / backfill rows); ``overrides`` perturb
+    exactly one identity field of the match query for the near-miss
+    assertions.
+    """
+    entries = _gr08o_policy_entries(tmp_path, rows)
+    candidates = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ]
+    if select_parameters is not None:
+        candidates = [
+            entry
+            for entry in candidates
+            if tuple(entry.parameter_types) == tuple(select_parameters)
+        ]
+    target = candidates[0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08o_exact_identity_matches(tmp_path):
+    rows = _gr08o_seed_rows()
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "processMatchResult", "scannedReceiptDao",
+            "update",
+        )
+        is True
+    )
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "ensureDefaultCategories", "categoryDao",
+            "seedDefaultsIfEmpty", select_parameters=(),
+        )
+        is True
+    )
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "backfillNotificationLinks", "sourceLinkDao",
+            "insert",
+        )
+        is True
+    )
+
+
+def test_gr08o_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08o_seed_rows()
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "updateUserCorrection", "dao",
+            "updateUserCorrection",
+            parameter_types=("Long", "Long?", "String?", "String"),
+        )
+        is False
+    )
+
+
+def test_gr08o_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08o_seed_rows()
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "processMatchResult", "receiptEventDao",
+            "insert",
+            owner_fqcn="com.yourname.expensetracker.domain.receipt.lifecycle."
+                       "ReceiptMatchLifecycleService",
+        )
+        is False
+    )
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "saveToHistory", "healthScoreHistoryDao",
+            "insert",
+            owner_fqcn="com.example.OtherHealthEngine",
+        )
+        is False
+    )
+
+
+def test_gr08o_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08o_seed_rows()
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "ensureDefaultCategories", "categoryDao",
+            "insert", select_parameters=(),
+            dao_accessor="merchantCategoryDao",
+            dao_fqcn=MERCHANT_CATEGORY_DAO_GR08O,
+        )
+        is False
+    )
+
+
+def test_gr08o_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08o_seed_rows()
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "refreshToken", "bankConnectionDao",
+            "updateToken",
+            operation="insert",
+        )
+        is False
+    )
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "archiveGroup", "groupDao", "archiveGroup",
+            operation="restoreGroup",
+        )
+        is False
+    )
+
+
+def test_gr08o_shared_operation_distinct_callables_near_misses(tmp_path):
+    """The multi-row callables are exact per (accessor, operation) identity.
+
+    ensureDefaultCategories carries FOUR rows (merchantCategoryDao insertAll,
+    categoryDao insert, merchantCategoryDao updateNormalizedCanonicalName,
+    categoryDao seedDefaultsIfEmpty) and the three backfill callables share
+    the sourceLinkDao insert identity; each row authorizes EXACTLY its own
+    callable identity, so a swapped method or accessor stays unauthorized.
+    """
+    rows = _gr08o_seed_rows()
+    # The seedDefaultsIfEmpty closure row never matches the plain
+    # categoryDao insert identity behind the same callable.
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "ensureDefaultCategories", "categoryDao",
+            "seedDefaultsIfEmpty", select_parameters=(),
+            operation="insert",
+        )
+        is False
+    )
+    # The backfillLegacySource row never matches the
+    # backfillNotificationLinks identity behind the same accessor +
+    # operation.
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "backfillLegacySource", "sourceLinkDao",
+            "insert",
+            method="backfillNotificationLinks",
+        )
+        is False
+    )
+    # The removeMember row never matches the archiveGroup identity behind
+    # the same adapter.
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "removeMember", "memberDao", "update",
+            method="archiveGroup",
+        )
+        is False
+    )
+
+
+def test_gr08o_residual_closure_rows_exact_and_near_misses(tmp_path):
+    """The two residual closure rows are exact per callable identity.
+
+    The GR-08o post-promotion rescan left TWO residual findings popularly
+    labeled "CategoryRepository" -- in fact MerchantCategoryRepository.kt
+    (deleteAll/dao/deleteAll and insert/dao/insert); CategoryRepository.kt
+    carries neither callable and stays at 0.  Each row authorizes EXACTLY
+    its own (path, callable, DAO, operation) identity: the misattributed
+    CategoryRepository.kt path, a wrong overload, wrong owner, wrong DAO,
+    and wrong operation all stay unauthorized.
+    """
+    rows = _gr08o_seed_rows()
+    # deleteAll: exact match...
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "deleteAll", "dao", "deleteAll"
+        )
+        is True
+    )
+    # ...and the misattributed CategoryRepository.kt path stays unauthorized.
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "deleteAll", "dao", "deleteAll",
+            path=CATEGORY_REPOSITORY_KT_GR08O,
+        )
+        is False
+    )
+    # deleteAll: wrong DAO identity behind the same accessor spelling and
+    # wrong operation stay unauthorized.
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "deleteAll", "dao", "deleteAll",
+            dao_accessor="merchantCategoryDao",
+            dao_fqcn=MERCHANT_CATEGORY_DAO_GR08O,
+        )
+        is False
+    )
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "deleteAll", "dao", "deleteAll",
+            operation="update",
+        )
+        is False
+    )
+    # insert: exact match...
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "insert", "dao", "insert",
+            select_parameters=(MERCHANT_CATEGORY_ENTITY_GR08O,),
+        )
+        is True
+    )
+    # ...the zero-parameter deleteAll overload identity never matches it...
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "insert", "dao", "insert",
+            select_parameters=(MERCHANT_CATEGORY_ENTITY_GR08O,),
+            parameter_types=(),
+        )
+        is False
+    )
+    # ...and the misattributed CategoryRepository.kt path stays unauthorized.
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "insert", "dao", "insert",
+            select_parameters=(MERCHANT_CATEGORY_ENTITY_GR08O,),
+            path=CATEGORY_REPOSITORY_KT_GR08O,
+        )
+        is False
+    )
+    # insert: wrong owner stays unauthorized.
+    assert (
+        _assert_gr08o_exact_match(
+            tmp_path, rows, "insert", "dao", "insert",
+            select_parameters=(MERCHANT_CATEGORY_ENTITY_GR08O,),
+            owner_fqcn="com.example.OtherMerchantRepository",
         )
         is False
     )

@@ -1086,44 +1086,6 @@ entries:
     per LEGAL_PATHS.md Lifecycle Events'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantCategoryRepository
-  kind: function
-  method: deleteAll
-  receiver: null
-  parameterTypes: []
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
-  operation: deleteAll
-  barrierMode: helper
-  reason: 'GR-08o CLOSURE: residual gr08o-rescan site (NOT a CategoryRepository.kt
-    finding -- suffix-substring grouping artifact) -- barrier-checked full merchant-dictionary
-    reset (SQL DELETE FROM merchant_categories, no payloads materialized) followed
-    by categorization cache invalidation; DB_WRITE_OWNERSHIP.md/dao-map.md owner of
-    merchant_categories; currently no production caller -- authorized as the exact
-    static site AS WRITTEN'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08O
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantCategoryRepository
-  kind: function
-  method: insert
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.MerchantCategory
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08o CLOSURE: residual gr08o-rescan site (NOT a CategoryRepository.kt
-    finding) -- barrier-checked single-mapping insert (OnConflictStrategy.IGNORE;
-    rowId > 0 is Inserted, otherwise Conflict with only the merchantPattern logged)
-    and cache invalidation only after actual success; the LEGAL_PATHS ''LEARN merchant
-    category'' write surface routed through CategorizationEngine.learnMerchantCategory
-    (its FORBIDDEN clause bars callers outside that engine path, not this repository
-    method)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
   kind: function

@@ -845,6 +845,67 @@ entries:
     \ checks"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: ensureDefaultCategories
+  receiver: null
+  parameterTypes: []
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked BUG-012 backfill -- ensures the ''Uncategorized''
+    default category exists for pre-existing users (OnConflictStrategy.IGNORE insert,
+    only when a one-shot read shows it missing)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: ensureDefaultCategories
+  receiver: null
+  parameterTypes: []
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: seedDefaultsIfEmpty
+  barrierMode: helper
+  reason: 'GR-08o CLOSURE: B4 atomic seeding convenience, evidenced in this repository-layer
+    class with no findings-report row (body-carrying @Transaction CategoryDao method
+    wrapping the count-check + insertAll so concurrent seeding cannot duplicate default
+    categories; GR-08b/GR-08d/GR-08l1/GR-08n1 scanner blind-spot pattern)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: ensureDefaultCategories
+  receiver: null
+  parameterTypes: []
+  daoAccessor: merchantCategoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+  operation: insertAll
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked merchant-dictionary seeding -- bulk
+    OnConflictStrategy.IGNORE insert of the MerchantCategoryProvider blueprint mappings
+    after the default categories exist'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: ensureDefaultCategories
+  receiver: null
+  parameterTypes: []
+  daoAccessor: merchantCategoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+  operation: updateNormalizedCanonicalName
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked canonical-name normalization backfill
+    -- fills normalizedCanonicalName for getMappingsMissingCanonicalName rows using
+    the CategorizationEngine normalizer (targeted SQL update, no payloads materialized)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.ExpenseRepository
   kind: function
@@ -1025,6 +1086,44 @@ entries:
     per LEGAL_PATHS.md Lifecycle Events'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+  kind: function
+  method: deleteAll
+  receiver: null
+  parameterTypes: []
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: 'GR-08o CLOSURE: residual gr08o-rescan site (NOT a CategoryRepository.kt
+    finding -- suffix-substring grouping artifact) -- barrier-checked full merchant-dictionary
+    reset (SQL DELETE FROM merchant_categories, no payloads materialized) followed
+    by categorization cache invalidation; DB_WRITE_OWNERSHIP.md/dao-map.md owner of
+    merchant_categories; currently no production caller -- authorized as the exact
+    static site AS WRITTEN'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantCategoryRepository
+  kind: function
+  method: insert
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantCategory
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o CLOSURE: residual gr08o-rescan site (NOT a CategoryRepository.kt
+    finding) -- barrier-checked single-mapping insert (OnConflictStrategy.IGNORE;
+    rowId > 0 is Inserted, otherwise Conflict with only the merchantPattern logged)
+    and cache invalidation only after actual success; the LEGAL_PATHS ''LEARN merchant
+    category'' write surface routed through CategorizationEngine.learnMerchantCategory
+    (its FORBIDDEN clause bars callers outside that engine path, not this repository
+    method)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
   kind: function
@@ -2048,6 +2147,60 @@ entries:
     \ before promptStateDao.insertPromptState"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptItemCategorizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
+  kind: function
+  method: deleteByReceiptId
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+  operation: deleteByReceiptId
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked receipt-scoped cleanup -- SQL delete
+    of all categorization rows for one receipt (no payloads materialized); used when
+    a receipt''s categorization is recomputed'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptItemCategorizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
+  kind: function
+  method: saveCategorizationResult
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked per-item categorization persistence
+    -- inserts one ReceiptItemCategorization row per result item (OnConflictStrategy.ABORT)
+    and returns the successful-insert count; deliberately does NOT side-effect receipt
+    status (N4: status transitions are driven by the calling use cases)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptItemCategorizationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository
+  kind: function
+  method: updateUserCorrection
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long?
+  - String?
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+  operation: updateUserCorrection
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked user-correction recording -- targeted
+    SQL update of userCorrectedCategoryId/Name/At for one item without overriding
+    the receipt''s categorization status (N4)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
   kind: function
@@ -2878,6 +3031,56 @@ entries:
     the write barrier (single SQL UPDATE, no read-modify-write)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SharedExpenseDataPortAdapter.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SharedExpenseDataPortAdapter
+  kind: function
+  method: archiveGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: archiveGroup
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked port-level soft archive -- targeted
+    SQL update isActive=0 for one group (the LEGAL_PATHS group FORBIDDEN list prohibits
+    INSERTs outside GroupTransactionCoordinator, not this status flip; multi-table
+    mutations on this port delegate to the coordinator)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SharedExpenseDataPortAdapter.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SharedExpenseDataPortAdapter
+  kind: function
+  method: removeMember
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.groups.SharedExpenseMember
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked soft-left member removal via the SharedExpenseDataPort
+    -- sets leftAt = timeProvider.now() on the member row (history-preserving; LEGAL_PATHS
+    ''Shared Expense Management (Groups -- Alternative Facade)'' explicitly legalizes
+    SharedExpenseDataPort.removeMember())'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/SharedExpenseDataPortAdapter.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.SharedExpenseDataPortAdapter
+  kind: function
+  method: restoreGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: restoreGroup
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked port-level soft restore -- targeted
+    SQL update isActive=1 for one group (inverse of archiveGroup; same coordinator-delegation
+    boundary)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
   kind: function
@@ -3846,6 +4049,59 @@ entries:
     -- the canonical OCR-text privacy purge'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt
+  ownerFqcn: com.yourname.expensetracker.domain.bank.BankApiIntegration
+  kind: function
+  method: completeConnection
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  daoAccessor: bankConnectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankConnectionDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: stub-mode-gated (requireStubMode errors in release)
+    barrier-checked demo connection persistence -- P10-P1-01: the BankConnection row
+    survives process death; tokens stored only via BankTokenCipher.encryptIfNeeded'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt
+  ownerFqcn: com.yourname.expensetracker.domain.bank.BankApiIntegration
+  kind: function
+  method: refreshToken
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.BankConnection
+  daoAccessor: bankConnectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankConnectionDao
+  operation: updateToken
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: stub-mode-gated P10-P1-06 token-refresh persistence
+    -- PRIVATE helper whose sole caller syncTransactions barrier-checks before the
+    refresh branch; persists refreshed stub tokens only after BankTokenCipher.decryptWithResult
+    succeeds (KeyInvalidated/Failed never write)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt
+  ownerFqcn: com.yourname.expensetracker.domain.bank.BankApiIntegration
+  kind: function
+  method: syncTransactions
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.BankConnection
+  - Long?
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: stub-mode-gated low-confidence bank-transaction review
+    intake -- P10-P1-04 routing below BANK_REVIEW_CONFIDENCE_THRESHOLD; dedup-checked
+    via getPendingDuplicateCandidateInRangeTypeAware first, then inserted inside database.withTransaction
+    with a second barrier check; ALL expense mutations go through TransactionLifecycleCoordinator.createExpenseStandaloneV2;
+    CancellationException rethrown (P10-CURRENT-018)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
   ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
   kind: function
@@ -4129,6 +4385,80 @@ entries:
     or leftAt update'')'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08K
+- path: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt
+  ownerFqcn: com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
+  kind: function
+  method: saveToHistory
+  receiver: null
+  parameterTypes:
+  - Int
+  - Int
+  - Int
+  - Int
+  - Int
+  - Long
+  - Long
+  - com.yourname.expensetracker.domain.health.HealthTrend
+  - String?
+  daoAccessor: healthScoreHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked 90-day TTL cleanup -- SQL delete of
+    history rows older than the TimeProvider-supplied cutoff (no payloads materialized);
+    keeps the trend table bounded'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt
+  ownerFqcn: com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
+  kind: function
+  method: saveToHistory
+  receiver: null
+  parameterTypes:
+  - Int
+  - Int
+  - Int
+  - Int
+  - Int
+  - Long
+  - Long
+  - com.yourname.expensetracker.domain.health.HealthTrend
+  - String?
+  daoAccessor: healthScoreHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked get-or-update history write (insert
+    branch) -- first score for a (periodStart, periodEnd) period inserts the HealthScoreHistory
+    row; CancellationException rethrown and persistence failures logged without failing
+    the score computation'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt
+  ownerFqcn: com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
+  kind: function
+  method: saveToHistory
+  receiver: null
+  parameterTypes:
+  - Int
+  - Int
+  - Int
+  - Int
+  - Int
+  - Long
+  - Long
+  - com.yourname.expensetracker.domain.health.HealthTrend
+  - String?
+  daoAccessor: healthScoreHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked get-or-update history write (update
+    branch) -- re-scoring an existing (periodStart, periodEnd) period updates the
+    row in place instead of duplicating it; FinancialHealthScoreV2 is the SOLE HealthScoreHistoryDao
+    writer'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
   ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
   kind: function
@@ -4216,6 +4546,61 @@ entries:
     is FORBIDDEN'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkBackfillWorker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker
+  kind: function
+  method: backfillLegacySource
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Expense
+  - List<com.yourname.expensetracker.data.database.entity.EntitySourceLink>
+  daoAccessor: sourceLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: PR8 legacy-source provenance backfill -- inserts the
+    isPrimary LEGACY_BACKFILL EntitySourceLink for expenses with a legacy source string
+    (role/sourceEntityType-guarded, OnConflictStrategy.IGNORE so re-runs are idempotent);
+    metadataJson carries only the legacy source name via SafeProvenanceMetadata'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkBackfillWorker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker
+  kind: function
+  method: backfillNotificationLinks
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Expense
+  - List<com.yourname.expensetracker.data.database.entity.EntitySourceLink>
+  daoAccessor: sourceLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: PR8 notification provenance backfill -- inserts the
+    CREATED_FROM EntitySourceLink pointing at the rawNotificationId of approved pending
+    reviews (RAW_NOTIFICATION sourceEntityType-guarded per expense, OnConflictStrategy.IGNORE
+    so re-runs are idempotent); stores only the notification ID -- never raw notification
+    text'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkBackfillWorker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker
+  kind: function
+  method: backfillReceiptLinks
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Expense
+  - List<com.yourname.expensetracker.data.database.entity.EntitySourceLink>
+  daoAccessor: sourceLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: PR8 receipt-link provenance backfill -- inserts LINKED_PROOF
+    EntitySourceLink rows for receipt-expense links lacking provenance (SCANNED_RECEIPT
+    sourceEntityType-guarded per expense, OnConflictStrategy.IGNORE so re-runs are
+    idempotent; confidence/createdAt carried from the existing link)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt
   ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor
   kind: function
@@ -4958,6 +5343,64 @@ entries:
     a ReceiptEvent'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptSideEffectPlanner
+  kind: function
+  method: processMatchResult
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.receiptmatching.MatchResult
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: two durable match-event writes in one callable --
+    MATCH_SUGGESTED (Suggested branch, atomic with the status update under withTransaction)
+    and MATCH_NOT_FOUND (NoMatch branch, PR4: NoMatch is no longer silent); both barrier-checked,
+    metadata carries only IDs/scores -- never raw OCR text'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptSideEffectPlanner
+  kind: function
+  method: processMatchResult
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.receiptmatching.MatchResult
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked Suggested-branch match-status update
+    -- persists suggestedExpenseId/matchStatus=SUGGESTED/matchConfidence atomically
+    with the MATCH_SUGGESTED ReceiptEvent under database.withTransaction (the machine
+    counterpart of ReceiptMatchLifecycleService.saveMatchSuggestion)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptSideEffectPlanner
+  kind: function
+  method: writeMatchEvent
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+  - String
+  - String
+  - Long?
+  - Float?
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08o EXACT_POLICY: barrier-checked P3-P1-03 match-event diagnostics writer
+    (MATCH_ATTEMPTED / MATCH_FAILED / MATCH_SKIPPED_ALREADY_LINKED / AUTO_MATCHED
+    / SIDE_EFFECT_SKIPPED_PRIVACY / RAW_USED_EPHEMERALLY); message.take(500) and controlled
+    errorDetails constants only; CancellationException rethrown'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08O
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function

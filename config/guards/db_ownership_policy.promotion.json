@@ -1,10 +1,10 @@
 {
   "recordedShas": {
-    "accounting_sha256": "a1b752abc306e739855aab357ce541d2c33970f04957e43391356013b90bd2fa",
-    "active_sha256": "6d7c4e455961db6d7d968465e601c5ce2e206b86a98f55a9da19b151d0a860ee",
-    "candidate_sha256": "6d7c4e455961db6d7d968465e601c5ce2e206b86a98f55a9da19b151d0a860ee",
-    "evidence_report_sha256": "03b42560a0ccecfeddfde395e14b84456fe3364bfce1baa7ad1fd4eab1ce2253",
-    "previous_v1_sha256": "c70da79bb79ea9e7f758a0674392879770914b963b67a5452d820dcefefe9148",
+    "accounting_sha256": "b0047ef1f08b39708cf09491fa549b4b4760b6c88d452a02366aa081f781a8da",
+    "active_sha256": "8bcf16c16bb023b955c75135edb7213d89a4f22769a7d686a9dcc2d346522368",
+    "candidate_sha256": "8bcf16c16bb023b955c75135edb7213d89a4f22769a7d686a9dcc2d346522368",
+    "evidence_report_sha256": "088f7df48b76599ba11040891237fc14cea7d12932c10a1d25e79660ba5d6c5d",
+    "previous_v1_sha256": "8de9fc7a88052b1b03411fd078150140431c056aec10ed826f8af432e3bbc4b7",
     "tree_sha256": "a7700ced5ec8a62e2f60de39f687bd6edb46140b7a73ba59865e62a51f1d19e0"
   },
   "schema": "db-policy-v2-promotion-record",
