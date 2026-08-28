@@ -1967,6 +1967,230 @@ entries:
   reason: "Canonical receipt deletion \u2014 deletes the scanned-receipt row"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: approveMatchSuggestion
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: writes the MATCH_APPROVED lifecycle event inside the
+    same transaction as the MANUALLY_MATCHED transition'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: approveMatchSuggestion
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: transitions the receipt to MANUALLY_MATCHED (expenseId=suggestedId,
+    suggestedExpenseId and matchConfidence cleared) inside the withTransaction block,
+    atomic with the MATCH_APPROVED ReceiptEvent so the match state can never disagree
+    with its event'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: clearMatchForReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: writes the MATCH_CLEARED lifecycle event inside the
+    same transaction as the UNMATCHED clear'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: clearMatchForReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: clears the match (expenseId=null, matchStatus=UNMATCHED,
+    suggestedExpenseId=null, matchConfidence=null) inside the withTransaction block,
+    atomic with the MATCH_CLEARED ReceiptEvent; LEGAL_PATHS.md names clearMatchForReceipt()
+    as the legal path'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordAutoMatchLinkFailed
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long?
+  - String?
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: P9-P1-08 diagnostics-only writer -- durable AUTO_MATCH_LINK_FAILED
+    audit event; errorDetails carry only the sanitized reason code (WorkerReasonCodes.sanitizeReasonCode)
+    and a length/filter-bounded exception class name -- never raw exception text (privacy
+    posture)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordMatchAttempted
+  receiver: null
+  parameterTypes:
+  - Long
+  - Int
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: P9-P1-08 diagnostics-only writer -- durable MATCH_ATTEMPTED
+    audit event (lookbackDays recorded; no match-status mutation) so worker-side match
+    attempts leave a durable trace; LEGAL_PATHS.md AUTO-MATCH section names this durable
+    per-outcome event'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordMatchNotFound
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: P9-P1-08 diagnostics-only writer -- durable MATCH_NOT_FOUND
+    audit event for the previously-silent no-candidate branch'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordMatchSkippedDocumentType
+  receiver: null
+  parameterTypes:
+  - Long
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: P9-P1-08 diagnostics-only writer -- durable MATCH_SKIPPED_DOCUMENT_TYPE
+    audit event for receipts the worker previously skipped silently (documentType/processingStatus
+    recorded, no match-status mutation)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordNotificationSuppressed
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long?
+  - String
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: PR12L-3 durable notification-suppression diagnostic
+    (NOTIFICATION_SUPPRESSED audit event, no match-status mutation); same sanitized
+    reason-code + bounded error-class posture -- never raw exception text or notification
+    payloads'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: rejectAllSuggestions
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: writes the MATCH_REJECTED lifecycle event inside the
+    same transaction as the REJECTED transition'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: rejectAllSuggestions
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: transitions matchStatus to REJECTED and clears suggestedExpenseId
+    inside the withTransaction block, atomic with the MATCH_REJECTED ReceiptEvent;
+    LEGAL_PATHS.md names rejectAllSuggestions() as the legal path (the ReceiptRepository
+    spelling is DeprecationLevel.ERROR)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: saveMatchSuggestion
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - Double
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: writes the MATCH_SUGGESTED lifecycle event inside
+    the same transaction as the match-state update (LEGAL_PATHS.md: any match mutation
+    without a ReceiptEvent is FORBIDDEN)'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: saveMatchSuggestion
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - Double
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: 'GR-08h EXACT_POLICY: persists the SUGGESTED match state (suggestedExpenseId,
+    matchStatus=SUGGESTED, matchConfidence, updatedAt) inside the withTransaction
+    block, atomic with the MATCH_SUGGESTED ReceiptEvent; LEGAL_PATHS.md MATCH receipt
+    names saveMatchSuggestion() as the legal path and forbids any match mutation without
+    a ReceiptEvent'
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
   kind: function

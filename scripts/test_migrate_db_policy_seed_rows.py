@@ -150,6 +150,38 @@ BankStatementImportRunDao.insertRun outside the processor are FORBIDDEN):
 * NEAR-MISS protection over the GR-08g rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08h (MIT-DB-08H) extends the same contract to the
+ReceiptMatchLifecycleService.kt receipt-lifecycle callables -- the
+AUTHORITATIVE writer for match mutations (docs/architecture/LEGAL_PATHS.md,
+"MATCH receipt (suggest/approve/reject/clear)":
+ReceiptMatchLifecycleService.saveMatchSuggestion() /
+approveMatchSuggestion() / rejectAllSuggestions() / clearMatchForReceipt();
+"Each operation: DatabaseWriteBarrier check -> withTransaction ->
+ReceiptEvent"; FORBIDDEN: ReceiptRepository.saveMatchSuggestion()
+[DeprecationLevel.ERROR] and "Any match mutation without ReceiptEvent"):
+
+* ``GR-08h-seed.yml`` -- 13 rows: the 13 findings collapse to 13 UNIQUE
+  fingerprints (each per-call-site finding is its own tuple: the four
+  match-mutation callables each carry exactly one scannedReceiptDao.update
+  + one receiptEventDao.insert site, and the five P9-P1-08/PR12L-3
+  diagnostics writers each carry exactly one receiptEventDao.insert site),
+  within the 25-fingerprint batch cap so NO split was required; ZERO
+  closure rows -- the blind-spot sweep found every mutating DAO call in the
+  file is an abstract Room-annotated method already covered by a finding
+  (ReceiptEventDao is a fully abstract interface with exactly two methods
+  and ScannedReceiptDao is likewise fully abstract -- NEITHER carries a
+  body-carrying @Transaction convenience method at all; the only other
+  DAO-accessor calls are the nine read-only scannedReceiptDao.getById
+  lookups, and the database.withTransaction calls are the
+  androidx.room.withTransaction extension, not DAO accessors);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the TEN reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 = 153 rows) -- a dropped
+  earlier-batch row fails closed here instead of silently re-unauthorizing
+  that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08h rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -1485,6 +1517,53 @@ def test_combined_seed_file_concatenates_all_nine_batch_seed_files():
         for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
         + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
         + list(gr08g)
+    )
+    assert combined_fields == batch_fields
+    keys = [entry.mutation_key().canonical_key() for entry in combined]
+    assert len(set(keys)) == len(keys)
+
+
+def test_combined_seed_file_concatenates_all_ten_batch_seed_files():
+    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
+    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h.
+
+    Supersedes the GR-08g-era nine-file concatenation test (which pinned
+    the combined document at 140 rows): the GR-08h batch extends the
+    combined generation input to 153 rows, and the drift guard must cover
+    ALL TEN reviewed batch seed files.  The combined document is what
+    --seed-rows actually consumes; if it ever drifts from the ten
+    reviewed batch seed files (a dropped earlier-batch row would silently
+    re-unauthorize that batch's mutations at promotion time), this fails
+    closed.
+    """
+    combined = _load_seed_entries(COMBINED_SEED_FILE)
+    gr08a = _load_seed_entries(SEED_FILE)
+    gr08b = _load_seed_entries(GR08B_SEED_FILE)
+    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
+    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
+    gr08d = _load_seed_entries(GR08D_SEED_FILE)
+    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
+    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
+    gr08f = _load_seed_entries(GR08F_SEED_FILE)
+    gr08g = _load_seed_entries(GR08G_SEED_FILE)
+    gr08h = _load_seed_entries(GR08H_SEED_FILE)
+    assert len(gr08a) == 5
+    assert len(gr08b) == 13
+    assert len(gr08c1) == 10
+    assert len(gr08c2) == 16
+    assert len(gr08d) == 22
+    assert len(gr08e1) == 23
+    assert len(gr08e2) == 23
+    assert len(gr08f) == 21
+    assert len(gr08g) == 7
+    assert len(gr08h) == 13
+    assert len(combined) == 153
+    combined_fields = sorted(_entry_fields(entry) for entry in combined)
+    batch_fields = sorted(
+        _entry_fields(entry)
+        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
+        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
+        + list(gr08g) + list(gr08h)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -3590,6 +3669,415 @@ def test_gr08g_receipt_status_row_near_misses_stay_unauthorized(tmp_path):
             tmp_path,
             rows,
             **dict(base_kwargs, parameter_types=("android.net.Uri", "Long")),
+        )
+        is False
+    )
+
+
+# ── (13) GR-08h rows: tracked seed file + concatenation + NEAR-MISS ───────────
+#
+# GR-08h authorizes the ReceiptMatchLifecycleService.kt receipt-lifecycle
+# callables (13 findings / 13 unique fingerprints, within the 25-fingerprint
+# batch cap so NO split was required).  The migration CLI accepts a SINGLE
+# --seed-rows value, so every generation run consumes the COMBINED document
+# GR-08-seeds.yml; these tests pin that the combined document stays the
+# exact concatenation of the TEN reviewed batch seed files, and that the
+# GR-08h rows authorize EXACTLY their callable identity + DAO + operation
+# (wrong overload, wrong owner, wrong DAO, and wrong operation stay
+# unauthorized).
+
+GR08H_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08h-seed.yml"
+
+RECEIPT_MATCH_LIFECYCLE_SERVICE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/receipt/"
+    "lifecycle/ReceiptMatchLifecycleService.kt"
+)
+RECEIPT_MATCH_LIFECYCLE_SERVICE_FQCN = (
+    "com.yourname.expensetracker.domain.receipt.lifecycle."
+    "ReceiptMatchLifecycleService"
+)
+RECEIPT_EVENT_DAO_GR08H = (
+    "com.yourname.expensetracker.data.database.dao.ReceiptEventDao"
+)
+# SCANNED_RECEIPT_DAO is already defined by the GR-08g section above.
+
+SAVE_MATCH_SUGGESTION_PARAMS = ("Long", "Long", "Double")
+SINGLE_RECEIPT_ID_PARAMS = ("Long",)
+RECORD_MATCH_ATTEMPTED_PARAMS = ("Long", "Int")
+RECORD_MATCH_SKIPPED_PARAMS = ("Long", "String?")
+RECORD_AUTO_MATCH_LINK_FAILED_PARAMS = ("Long", "Long?", "String?", "String?")
+RECORD_NOTIFICATION_SUPPRESSED_PARAMS = ("Long", "Long?", "String", "String?")
+
+
+def _gr08h_seed_row(method, parameter_types, dao_accessor, dao_fqcn, operation):
+    """One exact GR-08h-shaped v2 seed row mapping."""
+    return {
+        "path": RECEIPT_MATCH_LIFECYCLE_SERVICE_KT,
+        "ownerFqcn": RECEIPT_MATCH_LIFECYCLE_SERVICE_FQCN,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08h EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08H",
+    }
+
+
+def _gr08h_seed_rows():
+    """The thirteen exact GR-08h rows (mirroring the tracked seed file).
+
+    ZERO closure rows: the blind-spot sweep found every mutating DAO call
+    in the file is an abstract Room-annotated method already covered by a
+    finding (ReceiptEventDao is a fully abstract interface with exactly two
+    methods and ScannedReceiptDao is likewise fully abstract -- NEITHER
+    carries a body-carrying @Transaction convenience method at all; the
+    only other DAO-accessor calls are the nine read-only
+    scannedReceiptDao.getById lookups, and the database.withTransaction
+    calls are the androidx.room.withTransaction extension, not DAO
+    accessors).
+    """
+    return [
+        # Match-state transitions (scannedReceiptDao.update, 4 callables).
+        _gr08h_seed_row(
+            "saveMatchSuggestion", SAVE_MATCH_SUGGESTION_PARAMS,
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO, "update",
+        ),
+        _gr08h_seed_row(
+            "approveMatchSuggestion", SINGLE_RECEIPT_ID_PARAMS,
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO, "update",
+        ),
+        _gr08h_seed_row(
+            "rejectAllSuggestions", SINGLE_RECEIPT_ID_PARAMS,
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO, "update",
+        ),
+        _gr08h_seed_row(
+            "clearMatchForReceipt", SINGLE_RECEIPT_ID_PARAMS,
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO, "update",
+        ),
+        # Lifecycle events (receiptEventDao.insert, 9 callables).
+        _gr08h_seed_row(
+            "saveMatchSuggestion", SAVE_MATCH_SUGGESTION_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+        _gr08h_seed_row(
+            "approveMatchSuggestion", SINGLE_RECEIPT_ID_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+        _gr08h_seed_row(
+            "rejectAllSuggestions", SINGLE_RECEIPT_ID_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+        _gr08h_seed_row(
+            "clearMatchForReceipt", SINGLE_RECEIPT_ID_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+        _gr08h_seed_row(
+            "recordMatchAttempted", RECORD_MATCH_ATTEMPTED_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+        _gr08h_seed_row(
+            "recordMatchNotFound", SINGLE_RECEIPT_ID_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+        _gr08h_seed_row(
+            "recordMatchSkippedDocumentType", RECORD_MATCH_SKIPPED_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+        _gr08h_seed_row(
+            "recordAutoMatchLinkFailed",
+            RECORD_AUTO_MATCH_LINK_FAILED_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+        _gr08h_seed_row(
+            "recordNotificationSuppressed",
+            RECORD_NOTIFICATION_SUPPRESSED_PARAMS,
+            "receiptEventDao", RECEIPT_EVENT_DAO_GR08H, "insert",
+        ),
+    ]
+
+
+def test_real_tracked_gr08h_seed_file_loads_with_exactly_thirteen_rows():
+    entries = _load_seed_entries(GR08H_SEED_FILE)
+    assert len(entries) == 13
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted([
+        "saveMatchSuggestion",
+        "saveMatchSuggestion",
+        "approveMatchSuggestion",
+        "approveMatchSuggestion",
+        "rejectAllSuggestions",
+        "rejectAllSuggestions",
+        "clearMatchForReceipt",
+        "clearMatchForReceipt",
+        "recordMatchAttempted",
+        "recordMatchNotFound",
+        "recordMatchSkippedDocumentType",
+        "recordAutoMatchLinkFailed",
+        "recordNotificationSuppressed",
+    ])
+    for entry in entries:
+        assert entry.path == RECEIPT_MATCH_LIFECYCLE_SERVICE_KT
+        assert entry.owner_fqcn == RECEIPT_MATCH_LIFECYCLE_SERVICE_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08H"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: every accessor is a plain constructor property and
+    # every operation is the exact abstract Room method the scanner
+    # reported -- no convenience-method rows exist in this batch.
+    assert all(
+        entry.dao_accessor in {"scannedReceiptDao", "receiptEventDao"}
+        for entry in entries
+    )
+    # The match-state rows: exactly four scannedReceiptDao.update rows, one
+    # per match-mutation callable.
+    update_methods = sorted(
+        entry.method
+        for entry in entries
+        if entry.dao_accessor == "scannedReceiptDao"
+    )
+    assert update_methods == [
+        "approveMatchSuggestion",
+        "clearMatchForReceipt",
+        "rejectAllSuggestions",
+        "saveMatchSuggestion",
+    ]
+    # The event rows: exactly nine receiptEventDao.insert rows, one per
+    # event-writing callable.
+    insert_methods = sorted(
+        entry.method
+        for entry in entries
+        if entry.dao_accessor == "receiptEventDao"
+    )
+    assert insert_methods == [
+        "approveMatchSuggestion",
+        "clearMatchForReceipt",
+        "recordAutoMatchLinkFailed",
+        "recordMatchAttempted",
+        "recordMatchNotFound",
+        "recordMatchSkippedDocumentType",
+        "recordNotificationSuppressed",
+        "rejectAllSuggestions",
+        "saveMatchSuggestion",
+    ]
+
+
+def _gr08h_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08h fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08h_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, **overrides):
+    """The exact GR-08h row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)`` (unlike GR-08g, the batch spans NINE callables, so
+    the callable name is part of the selection key); ``overrides`` perturb
+    exactly one identity field of the match query for the near-miss
+    assertions.
+    """
+    entries = _gr08h_policy_entries(tmp_path, rows)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08h_exact_identity_matches(tmp_path):
+    rows = _gr08h_seed_rows()
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
+            "update",
+        )
+        is True
+    )
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, "recordNotificationSuppressed",
+            "receiptEventDao", "insert",
+        )
+        is True
+    )
+
+
+def test_gr08h_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08h_seed_rows()
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
+            "update", parameter_types=("Long", "Long"),
+        )
+        is False
+    )
+
+
+def test_gr08h_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08h_seed_rows()
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
+            "update",
+            owner_fqcn="com.example.OtherMatchService",
+        )
+        is False
+    )
+
+
+def test_gr08h_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08h_seed_rows()
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
+            "update",
+            dao_accessor="receiptEventDao",
+            dao_fqcn=RECEIPT_EVENT_DAO_GR08H,
+        )
+        is False
+    )
+
+
+def test_gr08h_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08h_seed_rows()
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, "saveMatchSuggestion", "scannedReceiptDao",
+            "update", operation="insert",
+        )
+        is False
+    )
+
+
+def test_gr08h_match_state_rows_near_misses_stay_unauthorized(tmp_path):
+    """The four scannedReceiptDao.update rows are exact per callable.
+
+    All four rows share the scannedReceiptDao.update DAO identity but
+    differ in callable identity (and saveMatchSuggestion differs in
+    overload too); a swapped callable, a swapped overload, or the plain
+    insert spelling stays unauthorized.
+    """
+    rows = _gr08h_seed_rows()
+    base_kwargs = dict(
+        select_method="approveMatchSuggestion",
+        select_accessor="scannedReceiptDao",
+        select_operation="update",
+    )
+    assert _assert_gr08h_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong callable: the sibling rejectAllSuggestions row never matches
+    # the approveMatchSuggestion identity.
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="rejectAllSuggestions")
+        )
+        is False
+    )
+    # Wrong overload: the three-parameter saveMatchSuggestion shape.
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, parameter_types=("Long", "Long", "Double")),
+        )
+        is False
+    )
+    # Wrong operation: the ReceiptEventDao.insert spelling behind the other
+    # accessor.
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="receiptEventDao",
+                dao_fqcn=RECEIPT_EVENT_DAO_GR08H,
+                operation="insert",
+            ),
+        )
+        is False
+    )
+
+
+def test_gr08h_diagnostics_rows_near_misses_stay_unauthorized(tmp_path):
+    """The five diagnostics receiptEventDao.insert rows are exact per
+    callable AND per overload.
+
+    recordMatchAttempted / recordMatchSkippedDocumentType /
+    recordAutoMatchLinkFailed / recordNotificationSuppressed all write the
+    same receiptEventDao.insert operation; each row authorizes EXACTLY its
+    own callable identity + parameter shape, so a sibling callable's shape
+    or a perturbed overload stays unauthorized.
+    """
+    rows = _gr08h_seed_rows()
+    base_kwargs = dict(
+        select_method="recordMatchAttempted",
+        select_accessor="receiptEventDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08h_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong callable: the sibling recordMatchNotFound row never matches the
+    # recordMatchAttempted identity.
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="recordMatchNotFound")
+        )
+        is False
+    )
+    # Wrong overload: the single-parameter recordMatchNotFound shape.
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path, rows, **dict(base_kwargs, parameter_types=("Long",))
+        )
+        is False
+    )
+    # Wrong overload: the four-parameter recordAutoMatchLinkFailed shape.
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                parameter_types=("Long", "Long?", "String?", "String?"),
+            ),
+        )
+        is False
+    )
+    # Wrong DAO identity behind the accessor spelling.
+    assert (
+        _assert_gr08h_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, dao_fqcn=SCANNED_RECEIPT_DAO),
         )
         is False
     )
