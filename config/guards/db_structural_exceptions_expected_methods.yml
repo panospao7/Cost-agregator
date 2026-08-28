@@ -69,7 +69,7 @@ baseline:
 # only; ownership cardinality is an observational migration metric and is not
 # pinned here.
 counts:
-  structural_entries: 62
+  structural_entries: 64
 
 expected:
 
@@ -104,6 +104,25 @@ expected:
     reason: "Room database builder — FRESH_INSTALL_CALLBACK.onCreate raw SQL that rebuilds tables for fresh installs (exact declaration only)"
     owner: "@panospao7"
     linked_issue: "MIT-003"
+
+  # ── Room database builder (AppDatabase.kt — NAMED migration objects,
+  #    GR-08j): the scanner attributes `object MIGRATION_X_Y` migrate bodies
+  #    to the object's own class, so these exact tuples are required alongside
+  #    the bounded `class: AppDatabase` entry above. ─────────────────────────
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: MIGRATION_16_17
+    method_pattern: migrate
+    operation: execSQL
+    reason: "Room migration SQL — named migration object MIGRATION_16_17 (merchant canonical/alias schema v16→v17 with in-migration data backfill)"
+    owner: "@panospao7"
+    linked_issue: "MIT-DB-08J"
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: MIGRATION_41_42
+    method_pattern: migrate
+    operation: execSQL
+    reason: "Room migration SQL — named migration object MIGRATION_41_42 (exchange_rates schema v41→v42 with default-rate seeding)"
+    owner: "@panospao7"
+    linked_issue: "MIT-DB-08J"
 
   # ── Financial rescue (FinancialRescueCoordinator.kt) ───────────────
   - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt

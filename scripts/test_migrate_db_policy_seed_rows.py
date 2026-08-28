@@ -219,6 +219,43 @@ SPLIT per the GR-08c/GR-08e precedent, one part per file:
 * NEAR-MISS protection over the GR-08i1/i2/i3 rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08j (MIT-DB-08J) extends the same contract to FOUR top-density files --
+the data/database AppDatabase.kt named-object Room migrations (structural
+path, NOT seed rows), the domain ReceiptLinkService.kt receipt-lifecycle
+service, the data/store ExpenseWriteStore.kt write facade, and the data
+repository SourceStatsRepository.kt.  The combined batch carries 47 findings
+/ 34 unique fingerprints > the 25-fingerprint batch cap, so the batch was
+SPLIT per the GR-08c/GR-08e/GR-08i precedent into two file groups:
+
+* ``GR-08j1-seed.yml`` -- ReceiptLinkService.kt: 11 rows (12 findings / 11
+  unique fingerprints; the two unlinkReceiptFromExpense scannedReceiptDao.update
+  sites share one fingerprint; ZERO closure rows -- ReceiptExpenseLinkDao,
+  ScannedReceiptDao, WarrantyDao, ReturnWindowDao and
+  ReceiptItemCategorizationDao carry ZERO body-carrying @Transaction
+  convenience methods, and the file's only ExpenseDao call is the read-only
+  getById).  LEGAL_PATHS.md "LINK/UNLINK receipt" names this service the
+  authoritative legal path.  The AppDatabase.kt half of GR-08j1 (14
+  DB_FORBIDDEN_STRUCTURAL_OPERATION findings on the named-object migrations
+  MIGRATION_16_17 / MIGRATION_41_42) is NOT seed-authorized: those findings
+  carry no DAO identity, so they are resolved by TWO exact structural
+  exception tuples (class MIGRATION_16_17 / MIGRATION_41_42, method_pattern
+  migrate, operation execSQL) added to db_structural_exceptions.yml + its
+  canonical manifest + the pinned immutable contracts (62 -> 64).  The
+  adjudication: legitimate DB-infrastructure writers -- execSQL is the only
+  way to perform a Room schema migration, and the in-migration data
+  backfill/seeding must stay atomic with the DDL; CODE_FIX was rejected;
+* ``GR-08j2-seed.yml`` -- ExpenseWriteStore.kt (11 rows / 11 findings / 11
+  unique fingerprints) + SourceStatsRepository.kt (10 rows / 10 findings /
+  10 unique fingerprints); ZERO closure rows -- both files are single-
+  statement barrier-checked delegates with fully abstract DAOs;
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the FIFTEEN reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 + 14 + 6 + 7 + 11 + 21
+  = 212 rows) -- a dropped earlier-batch row fails closed here instead of
+  silently re-unauthorizing that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08j1/j2 rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -4467,59 +4504,15 @@ def test_real_tracked_gr08i3_seed_file_loads_with_exactly_seven_rows():
     assert privacy_purge == ["doWork", "runPrivacyCleanupGuarded"]
 
 
-def test_combined_seed_file_concatenates_all_thirteen_batch_seed_files():
-    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
-    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
-    + GR-08i2 + GR-08i3.
-
-    Supersedes the GR-08h-era ten-file concatenation test (which pinned the
-    combined document at 153 rows): the GR-08i batch extends the combined
-    generation input to 180 rows, and the drift guard must cover ALL
-    THIRTEEN reviewed batch seed files.  The combined document is what
-    --seed-rows actually consumes; if it ever drifts from the thirteen
-    reviewed batch seed files (a dropped earlier-batch row would silently
-    re-unauthorize that batch's mutations at promotion time), this fails
-    closed.
-    """
-    combined = _load_seed_entries(COMBINED_SEED_FILE)
-    gr08a = _load_seed_entries(SEED_FILE)
-    gr08b = _load_seed_entries(GR08B_SEED_FILE)
-    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
-    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
-    gr08d = _load_seed_entries(GR08D_SEED_FILE)
-    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
-    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
-    gr08f = _load_seed_entries(GR08F_SEED_FILE)
-    gr08g = _load_seed_entries(GR08G_SEED_FILE)
-    gr08h = _load_seed_entries(GR08H_SEED_FILE)
-    gr08i1 = _load_seed_entries(GR08I1_SEED_FILE)
-    gr08i2 = _load_seed_entries(GR08I2_SEED_FILE)
-    gr08i3 = _load_seed_entries(GR08I3_SEED_FILE)
-    assert len(gr08a) == 5
-    assert len(gr08b) == 13
-    assert len(gr08c1) == 10
-    assert len(gr08c2) == 16
-    assert len(gr08d) == 22
-    assert len(gr08e1) == 23
-    assert len(gr08e2) == 23
-    assert len(gr08f) == 21
-    assert len(gr08g) == 7
-    assert len(gr08h) == 13
-    assert len(gr08i1) == 14
-    assert len(gr08i2) == 6
-    assert len(gr08i3) == 7
-    assert len(combined) == 180
-    combined_fields = sorted(_entry_fields(entry) for entry in combined)
-    batch_fields = sorted(
-        _entry_fields(entry)
-        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
-        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
-        + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
-        + list(gr08i3)
-    )
-    assert combined_fields == batch_fields
-    keys = [entry.mutation_key().canonical_key() for entry in combined]
-    assert len(set(keys)) == len(keys)
+# NOTE (GR-08j): the GR-08i-era thirteen-file (180 rows) concatenation test
+# was REPLACED here, completing the documented supersession chain (each new
+# concatenation test replaces its predecessor).  The fifteen-file test below
+# is the strict superset: it pins ALL FIFTEEN reviewed batch seed files at
+# 212 rows with field-exact equality, so removing the stale predecessor
+# weakens nothing.  The GR-08j1 AppDatabase.kt structural half is NOT part
+# of the seed concatenation (no DAO identity -> structural exception tuples,
+# not seed rows); it is pinned by the structural manifest contract tests in
+# scripts/test_verify_db_access_boundaries.py.
 
 
 def _gr08i_policy_entries(tmp_path, rows):
@@ -4934,6 +4927,710 @@ def test_gr08i3_purge_row_near_misses_stay_unauthorized(tmp_path):
             tmp_path,
             rows,
             **dict(base_kwargs, owner_fqcn="com.example.CopyWorker"),
+        )
+        is False
+    )
+
+
+# ── (15) GR-08j1/j2 rows: tracked seed files + concatenation + NEAR-MISS ──────
+#
+# GR-08j authorizes FOUR top-density files.  The combined batch carries 47
+# findings / 34 unique fingerprints > the 25-fingerprint batch cap, so the
+# batch was SPLIT into two file groups per the GR-08c/GR-08e/GR-08i
+# precedent:
+#
+# * GR-08j1 -- ReceiptLinkService.kt (12 findings / 11 unique fingerprints;
+#   the two unlinkReceiptFromExpense scannedReceiptDao.update sites share one
+#   fingerprint).  The AppDatabase.kt half of GR-08j1 (14
+#   DB_FORBIDDEN_STRUCTURAL_OPERATION findings on the named-object migrations
+#   MIGRATION_16_17 / MIGRATION_41_42) is NOT seed-authorized: those findings
+#   carry no DAO identity, so they are resolved by TWO exact structural
+#   exception tuples (class MIGRATION_16_17 / MIGRATION_41_42, method_pattern
+#   migrate, operation execSQL) pinned by the structural manifest contract
+#   tests in scripts/test_verify_db_access_boundaries.py (62 -> 64).
+# * GR-08j2 -- ExpenseWriteStore.kt (11 findings / 11 unique fingerprints) +
+#   SourceStatsRepository.kt (10 findings / 10 unique fingerprints).
+#
+# The migration CLI accepts a SINGLE --seed-rows value, so every generation
+# run consumes the COMBINED document GR-08-seeds.yml; these tests pin that
+# the combined document stays the exact concatenation of the FIFTEEN
+# reviewed batch seed files, and that the GR-08j rows authorize EXACTLY
+# their callable identity + DAO + operation (wrong overload, wrong owner,
+# wrong DAO, and wrong operation stay unauthorized).
+
+GR08J1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08j1-seed.yml"
+GR08J2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08j2-seed.yml"
+
+RECEIPT_LINK_SERVICE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/receipt/"
+    "lifecycle/ReceiptLinkService.kt"
+)
+RECEIPT_LINK_SERVICE_FQCN = (
+    "com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService"
+)
+RECEIPT_EXPENSE_LINK_DAO = (
+    "com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao"
+)
+# SCANNED_RECEIPT_DAO / WARRANTY_DAO / RETURN_WINDOW_DAO are already defined
+# by the GR-08g / GR-08e sections above.
+RECEIPT_ITEM_CATEGORIZATION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao"
+)
+MATCH_STATUS_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.MatchStatus?"
+)
+LINK_RECEIPT_PARAMS = (
+    "Long",
+    "Long",
+    "String",
+    "String",
+    "String?",
+    "Float?",
+    "Boolean",
+    MATCH_STATUS_ENTITY,
+    "Boolean",
+    "Boolean",
+)
+UNLINK_RECEIPT_PARAMS = ("Long", "Long")
+
+EXPENSE_WRITE_STORE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/store/"
+    "ExpenseWriteStore.kt"
+)
+EXPENSE_WRITE_STORE_FQCN = (
+    "com.yourname.expensetracker.data.store.ExpenseWriteStore"
+)
+# EXPENSE_DAO_GR08I is already defined by the GR-08i section above.
+EXPENSE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.Expense"
+)
+EXPENSE_ENTITY_LIST = "List<" + EXPENSE_ENTITY + ">"
+
+SOURCE_STATS_REPOSITORY_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "SourceStatsRepository.kt"
+)
+SOURCE_STATS_REPOSITORY_FQCN = (
+    "com.yourname.expensetracker.data.repository.SourceStatsRepository"
+)
+SOURCE_STATS_DAO_GR08J = (
+    "com.yourname.expensetracker.data.database.dao.SourceStatsDao"
+)
+SOURCE_STATS_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.SourceStats"
+)
+PACKAGE_ONLY_PARAMS = ("String",)
+PACKAGE_AND_NOW_PARAMS = ("String", "Long")
+NO_PARAMS_GR08J: tuple = ()
+
+
+def _gr08j_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                    dao_fqcn, operation):
+    """One exact GR-08j-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08j EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08J",
+    }
+
+
+def _gr08j1_seed_rows():
+    """The eleven exact GR-08j1 rows (mirroring the tracked seed file).
+
+    ReceiptLinkService.kt; ZERO closure rows: every mutating DAO call in the
+    file is an abstract Room-annotated method already covered by a finding
+    (ReceiptExpenseLinkDao, ScannedReceiptDao, WarrantyDao, ReturnWindowDao
+    and ReceiptItemCategorizationDao carry ZERO body-carrying @Transaction
+    convenience methods; the file's only ExpenseDao call is the read-only
+    getById).  The two unlinkReceiptFromExpense scannedReceiptDao.update
+    sites share one fingerprint.
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("receiptExpenseLinkDao", RECEIPT_EXPENSE_LINK_DAO, "insert"),
+        ("scannedReceiptDao", SCANNED_RECEIPT_DAO, "claimForAutoMatch"),
+        ("scannedReceiptDao", SCANNED_RECEIPT_DAO, "update"),
+        ("warrantyDao", WARRANTY_DAO, "updateExpenseIdByReceiptId"),
+        ("returnWindowDao", RETURN_WINDOW_DAO, "updateExpenseIdByReceiptId"),
+        (
+            "receiptItemCategorizationDao",
+            RECEIPT_ITEM_CATEGORIZATION_DAO,
+            "linkToExpense",
+        ),
+    ):
+        rows.append(
+            _gr08j_seed_row(
+                RECEIPT_LINK_SERVICE_KT, RECEIPT_LINK_SERVICE_FQCN,
+                "linkReceiptToExpense", LINK_RECEIPT_PARAMS,
+                accessor, dao, operation,
+            )
+        )
+    for accessor, dao, operation in (
+        ("receiptExpenseLinkDao", RECEIPT_EXPENSE_LINK_DAO, "unlink"),
+        ("scannedReceiptDao", SCANNED_RECEIPT_DAO, "update"),
+        ("warrantyDao", WARRANTY_DAO, "updateExpenseIdByReceiptId"),
+        ("returnWindowDao", RETURN_WINDOW_DAO, "updateExpenseIdByReceiptId"),
+        (
+            "receiptItemCategorizationDao",
+            RECEIPT_ITEM_CATEGORIZATION_DAO,
+            "clearExpenseId",
+        ),
+    ):
+        rows.append(
+            _gr08j_seed_row(
+                RECEIPT_LINK_SERVICE_KT, RECEIPT_LINK_SERVICE_FQCN,
+                "unlinkReceiptFromExpense", UNLINK_RECEIPT_PARAMS,
+                accessor, dao, operation,
+            )
+        )
+    return rows
+
+
+def _gr08j2_seed_rows():
+    """The twenty-one exact GR-08j2 rows (mirroring the tracked seed file).
+
+    ExpenseWriteStore.kt (11 rows) + SourceStatsRepository.kt (10 rows);
+    ZERO closure rows: both files are single-statement barrier-checked
+    delegates with fully abstract DAOs and no constructor aliases.
+    """
+    rows = []
+    for method, params, operation in (
+        ("insert", (EXPENSE_ENTITY,), "insert"),
+        ("insertAll", (EXPENSE_ENTITY_LIST,), "insertAll"),
+        ("update", (EXPENSE_ENTITY,), "update"),
+        ("delete", (EXPENSE_ENTITY,), "delete"),
+        ("updateCategory", ("Long", "Long"), "updateCategory"),
+        ("updateCategoryNullable", ("Long", "Long?"), "updateCategoryNullable"),
+        ("updateMerchantKey", ("Long", "String"), "updateMerchantKey"),
+        ("incrementBackfillAttempts", ("Long",), "incrementBackfillAttempts"),
+        (
+            "conditionallySetLocation",
+            ("Long", "Double", "Double", "String", "String?", "String?"),
+            "conditionallySetLocation",
+        ),
+        ("updateMerchant", ("Long", "String"), "updateMerchant"),
+        ("deleteAll", NO_PARAMS_GR08J, "deleteAll"),
+    ):
+        rows.append(
+            _gr08j_seed_row(
+                EXPENSE_WRITE_STORE_KT, EXPENSE_WRITE_STORE_FQCN,
+                method, params, "expenseDao", EXPENSE_DAO_GR08I, operation,
+            )
+        )
+    for method, params, operation in (
+        ("insertIfNotExists", (SOURCE_STATS_ENTITY,), "insertIfNotExists"),
+        ("incrementTotal", PACKAGE_AND_NOW_PARAMS, "incrementTotal"),
+        ("incrementAccepted", PACKAGE_ONLY_PARAMS, "incrementAccepted"),
+        ("incrementRejected", PACKAGE_ONLY_PARAMS, "incrementRejected"),
+        ("incrementAutoRejected", PACKAGE_ONLY_PARAMS, "incrementAutoRejected"),
+        ("incrementPending", PACKAGE_ONLY_PARAMS, "incrementPending"),
+        ("incrementDuplicate", PACKAGE_ONLY_PARAMS, "incrementDuplicate"),
+        ("decrementPending", PACKAGE_ONLY_PARAMS, "decrementPending"),
+        ("resetAllPendingCounts", NO_PARAMS_GR08J, "resetAllPendingCounts"),
+        ("deleteAll", NO_PARAMS_GR08J, "deleteAll"),
+    ):
+        rows.append(
+            _gr08j_seed_row(
+                SOURCE_STATS_REPOSITORY_KT, SOURCE_STATS_REPOSITORY_FQCN,
+                method, params, "dao", SOURCE_STATS_DAO_GR08J, operation,
+            )
+        )
+    return rows
+
+
+def test_real_tracked_gr08j1_seed_file_loads_with_exactly_eleven_rows():
+    entries = _load_seed_entries(GR08J1_SEED_FILE)
+    assert len(entries) == 11
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["linkReceiptToExpense"] * 6 + ["unlinkReceiptFromExpense"] * 5
+    )
+    for entry in entries:
+        assert entry.path == RECEIPT_LINK_SERVICE_KT
+        assert entry.owner_fqcn == RECEIPT_LINK_SERVICE_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08J"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: every accessor is a plain constructor property and
+    # every operation is the exact abstract Room method the scanner
+    # reported -- no convenience-method rows exist in this batch.
+    assert all(
+        entry.dao_accessor
+        in {
+            "receiptExpenseLinkDao",
+            "scannedReceiptDao",
+            "warrantyDao",
+            "returnWindowDao",
+            "receiptItemCategorizationDao",
+        }
+        for entry in entries
+    )
+    # The scannedReceiptDao rows: exactly three distinct tuples -- the link
+    # claim (claimForAutoMatch), the link legacy update, and the shared
+    # unlink reconciliation update (2 call sites, 1 fingerprint).
+    scanned = sorted(
+        (entry.method, entry.operation)
+        for entry in entries if entry.dao_accessor == "scannedReceiptDao"
+    )
+    assert scanned == sorted([
+        ("linkReceiptToExpense", "claimForAutoMatch"),
+        ("linkReceiptToExpense", "update"),
+        ("unlinkReceiptFromExpense", "update"),
+    ])
+
+
+def test_real_tracked_gr08j2_seed_file_loads_with_exactly_twenty_one_rows():
+    entries = _load_seed_entries(GR08J2_SEED_FILE)
+    assert len(entries) == 21
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["insert", "insertAll", "update", "delete", "updateCategory",
+         "updateCategoryNullable", "updateMerchantKey",
+         "incrementBackfillAttempts", "conditionallySetLocation",
+         "updateMerchant", "deleteAll"]
+        + ["insertIfNotExists", "incrementTotal", "incrementAccepted",
+           "incrementRejected", "incrementAutoRejected", "incrementPending",
+           "incrementDuplicate", "decrementPending", "resetAllPendingCounts",
+           "deleteAll"]
+    )
+    store_entries = [e for e in entries if e.path == EXPENSE_WRITE_STORE_KT]
+    stats_entries = [
+        e for e in entries if e.path == SOURCE_STATS_REPOSITORY_KT
+    ]
+    assert len(store_entries) == 11
+    assert len(stats_entries) == 10
+    for entry in store_entries:
+        assert entry.owner_fqcn == EXPENSE_WRITE_STORE_FQCN
+        assert entry.dao_accessor == "expenseDao"
+        assert entry.dao_fqcn == EXPENSE_DAO_GR08I
+    for entry in stats_entries:
+        assert entry.owner_fqcn == SOURCE_STATS_REPOSITORY_FQCN
+        assert entry.dao_accessor == "dao"
+        assert entry.dao_fqcn == SOURCE_STATS_DAO_GR08J
+    for entry in entries:
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08J"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+
+
+def test_combined_seed_file_concatenates_all_fifteen_batch_seed_files():
+    """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
+    + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
+    + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2.
+
+    Supersedes the GR-08i-era thirteen-file concatenation test (which pinned
+    the combined document at 180 rows): the GR-08j batch extends the combined
+    generation input to 212 rows, and the drift guard must cover ALL FIFTEEN
+    reviewed batch seed files.  The combined document is what --seed-rows
+    actually consumes; if it ever drifts from the fifteen reviewed batch
+    seed files (a dropped earlier-batch row would silently re-unauthorize
+    that batch's mutations at promotion time), this fails closed.
+    """
+    combined = _load_seed_entries(COMBINED_SEED_FILE)
+    gr08a = _load_seed_entries(SEED_FILE)
+    gr08b = _load_seed_entries(GR08B_SEED_FILE)
+    gr08c1 = _load_seed_entries(GR08C1_SEED_FILE)
+    gr08c2 = _load_seed_entries(GR08C2_SEED_FILE)
+    gr08d = _load_seed_entries(GR08D_SEED_FILE)
+    gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
+    gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
+    gr08f = _load_seed_entries(GR08F_SEED_FILE)
+    gr08g = _load_seed_entries(GR08G_SEED_FILE)
+    gr08h = _load_seed_entries(GR08H_SEED_FILE)
+    gr08i1 = _load_seed_entries(GR08I1_SEED_FILE)
+    gr08i2 = _load_seed_entries(GR08I2_SEED_FILE)
+    gr08i3 = _load_seed_entries(GR08I3_SEED_FILE)
+    gr08j1 = _load_seed_entries(GR08J1_SEED_FILE)
+    gr08j2 = _load_seed_entries(GR08J2_SEED_FILE)
+    assert len(gr08a) == 5
+    assert len(gr08b) == 13
+    assert len(gr08c1) == 10
+    assert len(gr08c2) == 16
+    assert len(gr08d) == 22
+    assert len(gr08e1) == 23
+    assert len(gr08e2) == 23
+    assert len(gr08f) == 21
+    assert len(gr08g) == 7
+    assert len(gr08h) == 13
+    assert len(gr08i1) == 14
+    assert len(gr08i2) == 6
+    assert len(gr08i3) == 7
+    assert len(gr08j1) == 11
+    assert len(gr08j2) == 21
+    assert len(combined) == 212
+    combined_fields = sorted(_entry_fields(entry) for entry in combined)
+    batch_fields = sorted(
+        _entry_fields(entry)
+        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
+        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
+        + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
+        + list(gr08i3) + list(gr08j1) + list(gr08j2)
+    )
+    assert combined_fields == batch_fields
+    keys = [entry.mutation_key().canonical_key() for entry in combined]
+    assert len(set(keys)) == len(keys)
+
+
+def _gr08j_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08j fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08j_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, **overrides):
+    """The exact GR-08j row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)``; ``overrides`` perturb exactly one identity field of
+    the match query for the near-miss assertions.
+    """
+    entries = _gr08j_policy_entries(tmp_path, rows)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08j1_exact_identity_matches(tmp_path):
+    rows = _gr08j1_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "linkReceiptToExpense", "receiptExpenseLinkDao",
+            "insert",
+        )
+        is True
+    )
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "unlinkReceiptFromExpense", "scannedReceiptDao",
+            "update",
+        )
+        is True
+    )
+
+
+def test_gr08j1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08j1_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "unlinkReceiptFromExpense", "scannedReceiptDao",
+            "update", parameter_types=("Long",),
+        )
+        is False
+    )
+
+
+def test_gr08j1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08j1_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "linkReceiptToExpense", "receiptExpenseLinkDao",
+            "insert", owner_fqcn="com.example.OtherLinkService",
+        )
+        is False
+    )
+
+
+def test_gr08j1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08j1_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "linkReceiptToExpense", "receiptExpenseLinkDao",
+            "insert",
+            dao_accessor="scannedReceiptDao",
+            dao_fqcn=SCANNED_RECEIPT_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08j1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08j1_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "linkReceiptToExpense", "receiptExpenseLinkDao",
+            "insert", operation="unlink",
+        )
+        is False
+    )
+
+
+def test_gr08j1_claim_row_near_misses_stay_unauthorized(tmp_path):
+    """The claimForAutoMatch row is exact too: siblings never match.
+
+    The atomic claim shares the linkReceiptToExpense callable identity and
+    the scannedReceiptDao accessor with the legacy-field update row; a
+    swapped operation, a swapped callable, or the unlink callable's
+    two-parameter shape stays unauthorized.
+    """
+    rows = _gr08j1_seed_rows()
+    base_kwargs = dict(
+        select_method="linkReceiptToExpense",
+        select_accessor="scannedReceiptDao",
+        select_operation="claimForAutoMatch",
+    )
+    assert _assert_gr08j_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the sibling legacy-field update spelling behind the
+    # same DAO and callable.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="update")
+        )
+        is False
+    )
+    # Wrong callable: the unlink reconciliation row never matches the link
+    # claim identity.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, method="unlinkReceiptFromExpense")
+        )
+        is False
+    )
+    # Wrong overload: the unlink (Long, Long) shape.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, parameter_types=UNLINK_RECEIPT_PARAMS)
+        )
+        is False
+    )
+
+
+def test_gr08j1_propagation_rows_near_misses_stay_unauthorized(tmp_path):
+    """The warranty/return/itemCategorization rows are exact per callable.
+
+    linkReceiptToExpense and unlinkReceiptFromExpense both write
+    warrantyDao.updateExpenseIdByReceiptId and
+    returnWindowDao.updateExpenseIdByReceiptId; each row authorizes EXACTLY
+    its own callable identity, so the sibling callable's shape (the
+    ten-parameter link shape behind the unlink row, or vice versa) stays
+    unauthorized.
+    """
+    rows = _gr08j1_seed_rows()
+    base_kwargs = dict(
+        select_method="unlinkReceiptFromExpense",
+        select_accessor="warrantyDao",
+        select_operation="updateExpenseIdByReceiptId",
+    )
+    assert _assert_gr08j_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong callable: the link propagation row never matches the unlink
+    # identity.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="linkReceiptToExpense")
+        )
+        is False
+    )
+    # Wrong accessor: the return-window row never matches the warranty
+    # identity.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path,
+            rows,
+            **dict(
+                base_kwargs,
+                dao_accessor="returnWindowDao",
+                dao_fqcn=RETURN_WINDOW_DAO,
+            ),
+        )
+        is False
+    )
+    # Wrong operation: the plain Room update spelling behind the same DAO.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="update")
+        )
+        is False
+    )
+
+
+def test_gr08j2_exact_identity_matches(tmp_path):
+    rows = _gr08j2_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "insert", "expenseDao", "insert"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "insertIfNotExists", "dao", "insertIfNotExists"
+        )
+        is True
+    )
+
+
+def test_gr08j2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08j2_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "insert", "expenseDao", "insert",
+            parameter_types=(EXPENSE_ENTITY_LIST,),
+        )
+        is False
+    )
+
+
+def test_gr08j2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08j2_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "insert", "expenseDao", "insert",
+            owner_fqcn="com.example.OtherStore",
+        )
+        is False
+    )
+
+
+def test_gr08j2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08j2_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "insert", "expenseDao", "insert",
+            dao_accessor="dao",
+            dao_fqcn=SOURCE_STATS_DAO_GR08J,
+        )
+        is False
+    )
+
+
+def test_gr08j2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08j2_seed_rows()
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, "insert", "expenseDao", "insert",
+            operation="insertAll",
+        )
+        is False
+    )
+
+
+def test_gr08j2_delete_all_rows_near_misses_stay_unauthorized(tmp_path):
+    """The two zero-parameter deleteAll rows are exact per file identity.
+
+    ExpenseWriteStore.deleteAll (expenseDao) and
+    SourceStatsRepository.deleteAll (dao) share the empty parameter shape
+    but differ in path, owner, accessor, and DAO identity; a swapped file,
+    a swapped accessor, or the resetAllPendingCounts sibling operation
+    stays unauthorized.
+    """
+    rows = _gr08j2_seed_rows()
+    base_kwargs = dict(
+        select_method="deleteAll",
+        select_accessor="expenseDao",
+        select_operation="deleteAll",
+    )
+    assert _assert_gr08j_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong file/owner: the SourceStatsRepository deleteAll row never
+    # matches the ExpenseWriteStore identity.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, owner_fqcn=SOURCE_STATS_REPOSITORY_FQCN),
+        )
+        is False
+    )
+    # Wrong accessor/DAO: the stats dao spelling never matches the
+    # expenseDao identity.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, dao_accessor="dao",
+                   dao_fqcn=SOURCE_STATS_DAO_GR08J),
+        )
+        is False
+    )
+    # Wrong operation: the resetAllPendingCounts sibling behind the stats
+    # DAO.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="resetAllPendingCounts")
+        )
+        is False
+    )
+
+
+def test_gr08j2_stats_counter_rows_near_misses_stay_unauthorized(tmp_path):
+    """The per-source counter rows are exact per operation AND overload.
+
+    incrementAccepted / incrementRejected / incrementAutoRejected /
+    incrementPending / incrementDuplicate / decrementPending all share the
+    (String) shape behind the stats dao; each row authorizes EXACTLY its
+    own operation, and incrementTotal's (String, Long) overload never
+    matches a (String) row.
+    """
+    rows = _gr08j2_seed_rows()
+    base_kwargs = dict(
+        select_method="incrementAccepted",
+        select_accessor="dao",
+        select_operation="incrementAccepted",
+    )
+    assert _assert_gr08j_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the sibling incrementPending spelling behind the same
+    # DAO and callable shape.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="incrementPending")
+        )
+        is False
+    )
+    # Wrong overload: the incrementTotal (String, Long) shape.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, parameter_types=PACKAGE_AND_NOW_PARAMS)
+        )
+        is False
+    )
+    # Wrong callable: a copied repository class never matches.
+    assert (
+        _assert_gr08j_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, owner_fqcn="com.example.CopyRepository"),
         )
         is False
     )

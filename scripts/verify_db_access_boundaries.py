@@ -756,14 +756,17 @@ MANIFEST_COUNT_KEYS = frozenset({"structural_entries"})
 # a silent count change on either side is a configuration error (exit 2).
 # Ownership cardinality is NOT pinned here: it is an observational migration
 # metric, not structural authorization evidence.
-PINNED_STRUCTURAL_ENTRY_COUNT = 62
+# GR-08j: 62 -> 64 (two exact named-object Room-migration tuples,
+# MIGRATION_16_17/migrate and MIGRATION_41_42/migrate on AppDatabase.kt).
+PINNED_STRUCTURAL_ENTRY_COUNT = 64
 
 # ── Immutable checked-in tuple contracts (expected/fixtures classification) ────
 # The manifest's ``expected`` and ``fixtures`` sections must EXACTLY equal these
 # canonical (path, class, method_pattern, operation) tuple sets.  The sets are
 # IMMUTABLE — they pin the exact identities of the checked-in manifest:
 #
-#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 58 tuples.  Operation evidence is
+#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 60 tuples (58 pre-GR-08j + the two
+#     GR-08j named-object Room-migration tuples).  Operation evidence is
 #     REQUIRED for every expected tuple: the operation token must occur in the
 #     exact declaration body.
 #   * MANIFEST_IMMUTABLE_FIXTURE_TUPLES — 4 tuples.  Fixture tuples keep
@@ -821,6 +824,13 @@ MANIFEST_IMMUTABLE_EXPECTED_TUPLES = frozenset([
     (_STRUCT_PATH_APP_DATABASE, "AppDatabase", _MIGRATION_METHOD_PATTERN, "execSQL"),
     (_STRUCT_PATH_APP_DATABASE, "AppDatabase", "FRESH_INSTALL_CALLBACK", "execSQL"),
     (_STRUCT_PATH_APP_DATABASE, "AppDatabase", "onCreate", "execSQL"),
+    # GR-08j: named-object Room migrations — the scanner attributes
+    # `object MIGRATION_X_Y` migrate bodies to the object's own class, so
+    # these exact tuples are required alongside the bounded
+    # `class: AppDatabase` entry (the method_pattern is the exact method
+    # name `migrate`, not the bounded migration form).
+    (_STRUCT_PATH_APP_DATABASE, "MIGRATION_16_17", "migrate", "execSQL"),
+    (_STRUCT_PATH_APP_DATABASE, "MIGRATION_41_42", "migrate", "execSQL"),
     # ── Financial rescue (FinancialRescueCoordinator.kt) ─────────────────────
     (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "runRescueIfNeeded", "getDatabasePath"),
     (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "readOldDatabaseSnapshot", "openDatabase"),

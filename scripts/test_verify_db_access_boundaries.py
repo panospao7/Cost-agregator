@@ -4669,7 +4669,7 @@ def test_manifest_malformed_entry_fails_closed(tmp_path):
 
 
 def test_manifest_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
-    """A manifest whose counts.structural_entries drifts from the pinned 62
+    """A manifest whose counts.structural_entries drifts from the pinned 64
     contract fails with the controlled COUNT_MISMATCH code — on both the
     manifest side and the current-structural side.  Ownership cardinality is
     never part of this contract (GR-04 decoupling)."""
@@ -4954,11 +4954,11 @@ def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
 
 
 def test_manifest_immutable_contracts_pin_exact_counts():
-    """The immutable contracts pin EXACTLY 58 expected and 4 fixture tuples,
+    """The immutable contracts pin EXACTLY 60 expected and 4 fixture tuples,
     every tuple is canonical, and the two contracts are disjoint."""
-    assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 58
+    assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 60
     assert MANIFEST_IMMUTABLE_FIXTURE_COUNT == 4
-    assert len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES) == 58
+    assert len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES) == 60
     assert len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES) == 4
     assert MANIFEST_IMMUTABLE_EXPECTED_TUPLES.isdisjoint(
         MANIFEST_IMMUTABLE_FIXTURE_TUPLES
@@ -5048,7 +5048,7 @@ def test_manifest_classification_checked_in_manifest_accepted():
 def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     """The CURRENT structural exceptions YAML tuple set must EXACTLY equal the
     checked-in manifest's expected+fixtures tuple set — no missing, no extra,
-    no duplicates, and exactly the pinned 62 entries."""
+    no duplicates, and exactly the pinned 64 entries."""
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
     current_tuples = [
@@ -5062,8 +5062,8 @@ def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     assert len(current_tuples) == len(set(current_tuples)), "duplicates in current YAML"
     assert len(manifest_tuples) == len(set(manifest_tuples)), "duplicates in manifest"
     assert set(current_tuples) == set(manifest_tuples)
-    assert len(current_tuples) == 62
-    assert len(manifest_tuples) == 62
+    assert len(current_tuples) == 64
+    assert len(manifest_tuples) == 64
 
 
 def test_checked_in_structural_only_manifest_contract_via_production_apis():
@@ -5073,7 +5073,7 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     synthetic temp fixtures).
 
     GR-04: the manifest pins the structural count ONLY — its counts block is
-    exactly ``{structural_entries: 62}`` with no ownership cardinality.
+    exactly ``{structural_entries: 64}`` with no ownership cardinality.
 
     Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
     promoted schemaVersion-2 document.  It loads cleanly through the
@@ -5095,9 +5095,9 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
 
-    assert len(structural) == 62
+    assert len(structural) == 64
     assert manifest["counts"] == {
-        "structural_entries": 62,
+        "structural_entries": 64,
     }
     assert structural_manifest_classification_errors(manifest) == []
 

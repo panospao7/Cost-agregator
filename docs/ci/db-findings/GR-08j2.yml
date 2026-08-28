@@ -1,0 +1,513 @@
+﻿# GR-08 batch 10, part 2 (GR-08j2) tracked batch manifest -- top-density
+# files, group 2: data/store/ExpenseWriteStore.kt +
+# data/repository/SourceStatsRepository.kt.
+#
+# Batch scope (plan): GR-08j covered FOUR top-density files as ONE batch,
+# with a forced split if the combined unique fingerprint count exceeded 25
+# (see GR-08j1.yml for the split arithmetic: 34 combined unique > 25).
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08j/before.json == trusted GR-08i after.json,
+# 247 findings / 20 advisory diagnostics): ExpenseWriteStore.kt carries
+# exactly 11 DB_UNAUTHORIZED_MUTATION findings / 11 UNIQUE fingerprints and
+# SourceStatsRepository.kt carries exactly 10 findings / 10 UNIQUE
+# fingerprints (dedup key: callable identity + daoAccessor + daoFqcn +
+# operation).  This part is within the cap (21 unique).
+#
+# LAYER LEGALITY:
+# * ExpenseWriteStore is the SANCTIONED expense write facade -- its contract
+#   ("Coordinators receive this store. Direct DAO mutation outside
+#   coordinators/repositories is a static guard violation") makes it the
+#   barrier-mediated write path of the TransactionLifecycleCoordinator
+#   layer; every method runs writeBarrier.checkWritesAllowed as its FIRST
+#   statement, directly before the delegated DAO mutation.  LEGAL_PATHS.md
+#   forbids ExpenseDao.insert/update/delete from repositories directly --
+#   routing them through this barrier-checked store is the established
+#   coordinator-mediated path, not a bypass.  The deleteAll delegate is the
+#   debug-only expense wipe (doc comment requires BuildConfig.DEBUG at the
+#   caller), mirroring the GR-08e1 NotificationRepository.deleteAll
+#   expenseDao.deleteAll row.
+# * SourceStatsRepository is a repository-layer writer (legal writer layer)
+#   for per-source notification stats; every method runs
+#   writeBarrier.checkWritesAllowed directly before the delegated DAO
+#   mutation.  Its counters mirror the GR-08a/GR-08b/GR-08d/GR-08e1
+#   sourceStatsDao rows already authorized on the pipeline/review paths.
+#
+# barrierMode is `helper` for every row (the GR-08a..j batch convention; no
+# direct-barrier proof is claimed even though both files place the barrier
+# check immediately before each mutation).
+#
+# Chain-form census: ZERO database-chained `database.xxxDao()` call sites in
+# EITHER file (every DAO call goes through the injected expenseDao / dao
+# constructor properties; neither file injects AppDatabase).  NO GR-08e
+# accessor-normalization source change is needed for this batch.
+#
+# Closure additions (GR-08j blind-spot sweep): ZERO closure rows for BOTH
+# files.  Every method in both files is a single-statement delegate (or
+# barrier-check + delegate) with no @Transaction convenience methods and no
+# constructor aliases; every mutating call site is covered by a finding
+# (the remaining SourceStatsRepository methods getByPackage/getAll are
+# read-only; ExpenseWriteStore has no read methods at all).
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 rows verbatim, 212 rows); passing
+# only GR-08j2-seed.yml would drop the earlier batches' rows from the
+# rendered candidate.
+schemaVersion: 1
+batchId: GR-08j2
+startSha: 1858260b
+startReport:
+  path: build/guard-debug/gr08j/before.json
+  # SHA-256 of the reference copy (trusted GR-08i after report; 247 findings
+  # / 20 advisory).  ORCHESTRATOR: fill this in from the reference-copy step
+  # before the generate step (same value as GR-08j1.yml).
+  sha256: 
+  trusted: true
+  findingCount: 247
+activePolicySha256: 
+# ORCHESTRATOR: fill activePolicySha256 from the CURRENT active policy
+# (config/guards/db_ownership_policy.yml) at batch start, before generate
+# (same value as GR-08j1.yml).
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08J
+counts:
+  fileFindings: 21
+  batchCallablesFindings: 21
+  uniqueFingerprints: 21
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=insert|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=insertAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.data.database.entity.Expense%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=update|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=delete|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=updateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateCategory|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=updateCategoryNullable|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateCategoryNullable|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=updateMerchantKey|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateMerchantKey|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=incrementBackfillAttempts|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=incrementBackfillAttempts|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=conditionallySetLocation|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%2C%22Double%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=conditionallySetLocation|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=updateMerchant|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateMerchant|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=insertIfNotExists|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SourceStats%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=insertIfNotExists|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementTotal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementTotal|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementAccepted|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementAccepted|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementRejected|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementRejected|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementAutoRejected|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementAutoRejected|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementPending|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementDuplicate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementDuplicate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=decrementPending|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=decrementPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=resetAllPendingCounts|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=resetAllPendingCounts|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+# â”€â”€ ExpenseWriteStore.kt (11 fingerprints / 11 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=insert|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: insert
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Expense
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: insert
+  locations: [27]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked expense insert delegate -- the write facade coordinators call for single-expense persistence."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=insertAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.data.database.entity.Expense%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: insertAll
+    receiver: null
+    parameterTypes:
+    - List<com.yourname.expensetracker.data.database.entity.Expense>
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: insertAll
+  locations: [31]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked bulk expense insert delegate (debug/migration bulk paths per LEGAL_PATHS.md)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=update|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: update
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Expense
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: update
+  locations: [35]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked expense entity update delegate behind the coordinator write path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=delete|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: delete
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Expense
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: delete
+  locations: [39]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked expense entity delete delegate behind the coordinator delete path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=updateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateCategory|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: updateCategory
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateCategory
+  locations: [43]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked category re-key delegate (coordinator bulk-update path)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=updateCategoryNullable|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateCategoryNullable|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: updateCategoryNullable
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long?
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateCategoryNullable
+  locations: [47]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked nullable-category clear/set delegate (coordinator bulk-update path)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=updateMerchantKey|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateMerchantKey|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: updateMerchantKey
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateMerchantKey
+  locations: [51]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked merchantKey re-key delegate (merchant normalization path)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=incrementBackfillAttempts|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=incrementBackfillAttempts|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: incrementBackfillAttempts
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: incrementBackfillAttempts
+  locations: [55]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked backfill-attempt counter delegate (bounded enrichment retry bookkeeping)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=conditionallySetLocation|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%2C%22Double%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=conditionallySetLocation|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: conditionallySetLocation
+    receiver: null
+    parameterTypes:
+    - Long
+    - Double
+    - Double
+    - String
+    - String?
+    - String?
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: conditionallySetLocation
+  locations: [63]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked conditional location write delegate (guarded enrichment; returns affected-row count)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=updateMerchant|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateMerchant|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: updateMerchant
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateMerchant
+  locations: [67]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked merchant rename delegate (coordinator update path)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fstore%2FExpenseWriteStore.kt|symbol.owner=com.yourname.expensetracker.data.store.ExpenseWriteStore|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
+    method: deleteAll
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: deleteAll
+  locations: [72]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked debug-only expense wipe delegate (doc comment requires BuildConfig.DEBUG at the caller; the dangerous half of the debug reset, mirroring the GR-08e1 NotificationRepository.deleteAll expenseDao.deleteAll row)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ SourceStatsRepository.kt (10 fingerprints / 10 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=insertIfNotExists|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SourceStats%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=insertIfNotExists|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: insertIfNotExists
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.SourceStats
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: insertIfNotExists
+  locations: [16]
+  disposition: EXACT_POLICY
+  rationale: "Idempotent per-source stats row bootstrap behind the write barrier (conflict-safe insert keeps re-runs no-ops)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementTotal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementTotal|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: incrementTotal
+    receiver: null
+    parameterTypes:
+    - String
+    - Long
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotal
+  locations: [27]
+  disposition: EXACT_POLICY
+  rationale: "Per-source total counter increment behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementAccepted|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementAccepted|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: incrementAccepted
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementAccepted
+  locations: [32]
+  disposition: EXACT_POLICY
+  rationale: "Per-source accepted counter increment behind the write barrier (mirrors the GR-08d/GR-08e1 pipeline-side rows)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementRejected|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementRejected|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: incrementRejected
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementRejected
+  locations: [37]
+  disposition: EXACT_POLICY
+  rationale: "Per-source rejected counter increment behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementAutoRejected|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementAutoRejected|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: incrementAutoRejected
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementAutoRejected
+  locations: [42]
+  disposition: EXACT_POLICY
+  rationale: "Per-source auto-rejected counter increment behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementPending|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: incrementPending
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementPending
+  locations: [47]
+  disposition: EXACT_POLICY
+  rationale: "Per-source pending counter increment behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=incrementDuplicate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=incrementDuplicate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: incrementDuplicate
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementDuplicate
+  locations: [52]
+  disposition: EXACT_POLICY
+  rationale: "Per-source duplicate counter increment behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=decrementPending|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=decrementPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: decrementPending
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: decrementPending
+  locations: [57]
+  disposition: EXACT_POLICY
+  rationale: "Per-source pending counter decrement behind the write barrier (review-resolution mirror of the GR-08d/GR-08e1 rows)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=resetAllPendingCounts|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=resetAllPendingCounts|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: resetAllPendingCounts
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: resetAllPendingCounts
+  locations: [62]
+  disposition: EXACT_POLICY
+  rationale: "Per-source pending counters reset behind the write barrier (mirrors the GR-08e1 reset rows)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSourceStatsRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SourceStatsRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=dao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
+    method: deleteAll
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: deleteAll
+  locations: [67]
+  disposition: EXACT_POLICY
+  rationale: "Per-source stats table reset behind the write barrier (mirrors the GR-08e1 resetSourceStats row)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for the GR-08j2 files: after the GR-08j2 promotion ExpenseWriteStore.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (11/11 sites authorized across 11 fingerprints) and SourceStatsRepository.kt carries 0 (10/10 sites authorized across 10 fingerprints).  Out-of-batch stability: the rescan delta expectation for the WHOLE GR-08j batch is 247 -> 200 (47 = 14 AppDatabase + 12 ReceiptLinkService + 11 ExpenseWriteStore + 10 SourceStatsRepository); the remaining 200 include the still-unauthorized files deferred to future batches, which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []
