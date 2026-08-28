@@ -97,6 +97,26 @@ combined batch carries 46 findings / 46 unique fingerprints > the
   accessors, and a wrong accessor spelling -- including the historical
   chain text -- stays unauthorized).
 
+GR-08f (MIT-DB-08F) extends the same contract to the
+RecurringRuleLifecycleCoordinator.kt domain-lifecycle callables -- the MOST
+authoritative writer layer (recurring rule mutations MUST go through it per
+docs/architecture/LEGAL_PATHS.md):
+
+* ``GR-08f-seed.yml`` -- 21 rows: the 21 findings-derived rows (21
+  findings / 21 unique fingerprints, within the 25-fingerprint batch cap so
+  NO split was required); ZERO closure rows -- the blind-spot sweep found
+  every mutating DAO call in the file is an abstract Room-annotated method
+  already covered by a finding (all five mutated DAOs are fully abstract
+  interfaces; the sixth accessor, expenseDao, is called only read-only via
+  getExpensesBetween);
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the EIGHT reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 = 133 rows) -- a dropped
+  earlier-batch row fails closed here instead of silently re-unauthorizing
+  that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08f rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -1393,17 +1413,18 @@ def test_combined_seed_file_concatenates_all_five_batch_seed_files():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_seven_batch_seed_files():
+def test_combined_seed_file_concatenates_all_eight_batch_seed_files():
     """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
-    + GR-08d + GR-08e1 + GR-08e2.
+    + GR-08d + GR-08e1 + GR-08e2 + GR-08f.
 
-    Supersedes the GR-08d-era five-file concatenation test (which pinned the
-    combined document at 66 rows): the GR-08e batch extends the combined
-    generation input to 112 rows, and the drift guard must cover ALL SEVEN
-    reviewed batch seed files.  The combined document is what --seed-rows
-    actually consumes; if it ever drifts from the seven reviewed batch seed
-    files (a dropped earlier-batch row would silently re-unauthorize that
-    batch's mutations at promotion time), this fails closed.
+    Supersedes the GR-08e-era seven-file concatenation test (which pinned
+    the combined document at 112 rows): the GR-08f batch extends the
+    combined generation input to 133 rows, and the drift guard must cover
+    ALL EIGHT reviewed batch seed files.  The combined document is what
+    --seed-rows actually consumes; if it ever drifts from the eight
+    reviewed batch seed files (a dropped earlier-batch row would silently
+    re-unauthorize that batch's mutations at promotion time), this fails
+    closed.
     """
     combined = _load_seed_entries(COMBINED_SEED_FILE)
     gr08a = _load_seed_entries(SEED_FILE)
@@ -1413,6 +1434,7 @@ def test_combined_seed_file_concatenates_all_seven_batch_seed_files():
     gr08d = _load_seed_entries(GR08D_SEED_FILE)
     gr08e1 = _load_seed_entries(GR08E1_SEED_FILE)
     gr08e2 = _load_seed_entries(GR08E2_SEED_FILE)
+    gr08f = _load_seed_entries(GR08F_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
@@ -1420,12 +1442,13 @@ def test_combined_seed_file_concatenates_all_seven_batch_seed_files():
     assert len(gr08d) == 22
     assert len(gr08e1) == 23
     assert len(gr08e2) == 23
-    assert len(combined) == 112
+    assert len(gr08f) == 21
+    assert len(combined) == 133
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
         for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
-        + list(gr08d) + list(gr08e1) + list(gr08e2)
+        + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -2790,3 +2813,420 @@ def test_gr08e2_extension_row_near_misses_stay_unauthorized(tmp_path):
         )
         is False
     )
+
+
+# ── (11) GR-08f rows: tracked seed file + concatenation + NEAR-MISS ───────────
+#
+# GR-08f authorizes the RecurringRuleLifecycleCoordinator.kt
+# domain-lifecycle callables (21 findings / 21 unique fingerprints, within
+# the 25-fingerprint batch cap so NO split was required).  The migration
+# CLI accepts a SINGLE --seed-rows value, so every generation run consumes
+# the COMBINED document GR-08-seeds.yml; these tests pin that the combined
+# document stays the exact concatenation of the EIGHT reviewed batch seed
+# files, and that the GR-08f rows authorize EXACTLY their callable identity
+# + DAO + operation (wrong overload, wrong owner, wrong DAO, and wrong
+# operation stay unauthorized).
+
+GR08F_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08f-seed.yml"
+
+RULE_COORDINATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/recurring/"
+    "lifecycle/RecurringRuleLifecycleCoordinator.kt"
+)
+RULE_COORDINATOR_FQCN = (
+    "com.yourname.expensetracker.domain.recurring.lifecycle."
+    "RecurringRuleLifecycleCoordinator"
+)
+MANUAL_RECURRING_EXPENSE_DAO = (
+    "com.yourname.expensetracker.data.database.dao."
+    "ManualRecurringExpenseDao"
+)
+MANUAL_RECURRING_EXPENSE_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity."
+    "ManualRecurringExpense"
+)
+RULE_ID_PARAMS = ("Long",)
+ADVANCE_PARAMS = ("Long", "Long")
+RULE_ENTITY_PARAMS = (MANUAL_RECURRING_EXPENSE_ENTITY,)
+
+
+def _gr08f_seed_row(method, dao_accessor, dao_fqcn, operation, params):
+    """One exact GR-08f-shaped v2 seed row mapping."""
+    return {
+        "path": RULE_COORDINATOR_KT,
+        "ownerFqcn": RULE_COORDINATOR_FQCN,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(params),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": "helper",
+        "reason": "GR-08f EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08F",
+    }
+
+
+def _gr08f_seed_rows():
+    """The twenty-one exact GR-08f rows (mirroring the tracked seed file).
+
+    ZERO closure rows: the blind-spot sweep found every mutating DAO call
+    in the file is an abstract Room-annotated method already covered by a
+    finding (all five mutated DAOs are fully abstract interfaces; the
+    sixth accessor, expenseDao, is called only read-only via
+    getExpensesBetween).
+    """
+    rows = []
+    for accessor, dao, operation in (
+        ("manualRecurringExpenseDao", MANUAL_RECURRING_EXPENSE_DAO,
+         "setActiveStatus"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08f_seed_row(
+                "activateRule", accessor, dao, operation, RULE_ID_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("manualRecurringExpenseDao", MANUAL_RECURRING_EXPENSE_DAO,
+         "updateNextDate"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08f_seed_row(
+                "advanceNextDate", accessor, dao, operation, ADVANCE_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("manualRecurringExpenseDao", MANUAL_RECURRING_EXPENSE_DAO,
+         "insert"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08f_seed_row(
+                "createRule", accessor, dao, operation, RULE_ENTITY_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("manualRecurringExpenseDao", MANUAL_RECURRING_EXPENSE_DAO,
+         "setActiveStatus"),
+        ("reminderDeliveryDao", REMINDER_DELIVERY_DAO,
+         "deleteByOccurrenceIds"),
+        ("occurrenceDao", OCCURRENCE_DAO, "deleteOpenPlannedBySource"),
+        ("plannedExpenseDao", PLANNED_EXPENSE_DAO,
+         "deleteOpenPlannedByRecurringRuleId"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08f_seed_row(
+                "deactivateRule", accessor, dao, operation, RULE_ID_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("reminderDeliveryDao", REMINDER_DELIVERY_DAO,
+         "deleteByOccurrenceIds"),
+        ("plannedExpenseDao", PLANNED_EXPENSE_DAO,
+         "deleteByRecurringRuleId"),
+        ("occurrenceDao", OCCURRENCE_DAO, "deleteBySource"),
+        ("manualRecurringExpenseDao", MANUAL_RECURRING_EXPENSE_DAO,
+         "deleteById"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08f_seed_row(
+                "deleteRule", accessor, dao, operation, RULE_ID_PARAMS,
+            )
+        )
+    for accessor, dao, operation in (
+        ("reminderDeliveryDao", REMINDER_DELIVERY_DAO,
+         "deleteByOccurrenceIds"),
+        ("occurrenceDao", OCCURRENCE_DAO, "deleteOpenPlannedBySource"),
+        ("plannedExpenseDao", PLANNED_EXPENSE_DAO,
+         "deleteOpenPlannedByRecurringRuleId"),
+        ("manualRecurringExpenseDao", MANUAL_RECURRING_EXPENSE_DAO,
+         "update"),
+        ("lifecycleEventDao", LIFECYCLE_EVENT_DAO, "insert"),
+    ):
+        rows.append(
+            _gr08f_seed_row(
+                "updateRule", accessor, dao, operation, RULE_ENTITY_PARAMS,
+            )
+        )
+    return rows
+
+
+def test_real_tracked_gr08f_seed_file_loads_with_exactly_twenty_one_rows():
+    entries = _load_seed_entries(GR08F_SEED_FILE)
+    assert len(entries) == 21
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["activateRule"] * 2
+        + ["advanceNextDate"] * 2
+        + ["createRule"] * 2
+        + ["deactivateRule"] * 5
+        + ["deleteRule"] * 5
+        + ["updateRule"] * 5
+    )
+    for entry in entries:
+        assert entry.path == RULE_COORDINATOR_KT
+        assert entry.owner_fqcn == RULE_COORDINATOR_FQCN
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08F"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # ZERO closure rows: every accessor is a plain constructor property and
+    # every operation is the exact abstract Room method the scanner
+    # reported -- no convenience-method rows exist in this batch.
+    assert all(
+        entry.dao_accessor
+        in {
+            "manualRecurringExpenseDao",
+            "occurrenceDao",
+            "reminderDeliveryDao",
+            "plannedExpenseDao",
+            "lifecycleEventDao",
+        }
+        for entry in entries
+    )
+    # The lifecycle-event provenance rows: exactly six, one per callable.
+    provenance = sorted(
+        entry.method
+        for entry in entries
+        if entry.dao_accessor == "lifecycleEventDao"
+    )
+    assert provenance == [
+        "activateRule",
+        "advanceNextDate",
+        "createRule",
+        "deactivateRule",
+        "deleteRule",
+        "updateRule",
+    ]
+
+
+def _gr08f_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08f fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08f_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, **overrides):
+    """The exact GR-08f row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)``; ``overrides`` perturb exactly one identity field of
+    the match query for the near-miss assertions.
+    """
+    entries = _gr08f_policy_entries(tmp_path, rows)
+    target = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ][0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08f_exact_identity_matches(tmp_path):
+    rows = _gr08f_seed_rows()
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
+            "setActiveStatus",
+        )
+        is True
+    )
+
+
+def test_gr08f_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08f_seed_rows()
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
+            "setActiveStatus", parameter_types=("Long", "Boolean"),
+        )
+        is False
+    )
+
+
+def test_gr08f_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08f_seed_rows()
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
+            "setActiveStatus",
+            owner_fqcn="com.example.OtherCoordinator",
+        )
+        is False
+    )
+
+
+def test_gr08f_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08f_seed_rows()
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
+            "setActiveStatus",
+            dao_accessor="occurrenceDao",
+            dao_fqcn=OCCURRENCE_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08f_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08f_seed_rows()
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, "deactivateRule", "manualRecurringExpenseDao",
+            "setActiveStatus", operation="update",
+        )
+        is False
+    )
+
+
+def test_gr08f_advance_row_near_misses_stay_unauthorized(tmp_path):
+    """The two-parameter advance row is exact too: siblings never match."""
+    rows = _gr08f_seed_rows()
+    base_kwargs = dict(
+        select_method="advanceNextDate",
+        select_accessor="manualRecurringExpenseDao",
+        select_operation="updateNextDate",
+    )
+    assert _assert_gr08f_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong overload: the single-parameter rule-id shape.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, **dict(base_kwargs, parameter_types=("Long",))
+        )
+        is False
+    )
+    # Wrong operation: the plain Room update spelling behind the same DAO.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="update")
+        )
+        is False
+    )
+    # Wrong callable: the sibling activateRule status row never matches the
+    # advance identity.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="activateRule")
+        )
+        is False
+    )
+
+
+def test_gr08f_entity_rows_near_misses_stay_unauthorized(tmp_path):
+    """The ManualRecurringExpense-entity rows are exact too.
+
+    createRule/insert and updateRule/update share the entity parameter
+    shape but differ in callable + operation; a swapped operation, a
+    swapped callable, or the Long rule-id overload stays unauthorized.
+    """
+    rows = _gr08f_seed_rows()
+    base_kwargs = dict(
+        select_method="createRule",
+        select_accessor="manualRecurringExpenseDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08f_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong operation: the plain entity-update spelling.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, **dict(base_kwargs, operation="update")
+        )
+        is False
+    )
+    # Wrong callable: the sibling updateRule entity row never matches the
+    # createRule identity.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="updateRule")
+        )
+        is False
+    )
+    # Wrong overload: the Long rule-id shape.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, **dict(base_kwargs, parameter_types=("Long",))
+        )
+        is False
+    )
+    # Wrong owner: a copied coordinator class never matches.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, owner_fqcn="com.example.CopyCoordinator"),
+        )
+        is False
+    )
+
+
+def test_gr08f_provenance_rows_near_misses_stay_unauthorized(tmp_path):
+    """The lifecycleEventDao provenance rows are exact per callable.
+
+    All six callables write the same lifecycleEventDao.insert operation;
+    each row authorizes EXACTLY its own callable identity, so a sibling
+    callable's shape (e.g. deleteRule vs deactivateRule) stays
+    unauthorized.
+    """
+    rows = _gr08f_seed_rows()
+    base_kwargs = dict(
+        select_method="deleteRule",
+        select_accessor="lifecycleEventDao",
+        select_operation="insert",
+    )
+    assert _assert_gr08f_exact_match(tmp_path, rows, **base_kwargs) is True
+    # Wrong callable: the sibling deactivateRule provenance row never
+    # matches the deleteRule identity.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows, **dict(base_kwargs, method="deactivateRule")
+        )
+        is False
+    )
+    # Wrong DAO identity behind the accessor spelling.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path,
+            rows,
+            **dict(base_kwargs, dao_fqcn=OCCURRENCE_DAO),
+        )
+        is False
+    )
+    # Wrong overload: the (Long, Long) advance shape.
+    assert (
+        _assert_gr08f_exact_match(
+            tmp_path, rows,
+            **dict(base_kwargs, parameter_types=("Long", "Long"))
+        )
+        is False
+    )
+
