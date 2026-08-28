@@ -1,0 +1,374 @@
+# GR-08 batch 13, part 1 (GR-08m1) reviewed exact v2 policy seed rows --
+# DB_UNAUTHORIZED_MUTATION EXACT_POLICY authorization for
+# data/repository/AiChatRepositoryImpl.kt,
+# domain/diagnostics/OperationRunRecorder.kt and
+# data/backup/RestoreJournalImporter.kt.
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08m/before.json == trusted GR-08l after-l3.json,
+# 121 findings / 20 advisory diagnostics): AiChatRepositoryImpl.kt carries
+# exactly 6 DB_UNAUTHORIZED_MUTATION findings / 6 UNIQUE fingerprints,
+# OperationRunRecorder.kt carries exactly 6 findings / 6 UNIQUE
+# fingerprints, and RestoreJournalImporter.kt carries exactly 5 findings
+# collapsing to 4 UNIQUE fingerprints (dedup key: callable identity +
+# daoAccessor + daoFqcn + operation; importLastSuccessJournalIfPresent
+# carries the SAME operationRunDao.insert fingerprint at TWO call sites --
+# the legacy zero-event branch (line 39) and the get-or-insert branch
+# (line 64) -- so the two findings share one fingerprint and one seed row).
+# Combined batch scope (all FIVE GR-08m files) is 29 findings / 28 UNIQUE
+# fingerprints > the 25-fingerprint batch cap, so the batch was SPLIT into
+# GR-08m1 (this manifest: AiChatRepositoryImpl.kt + OperationRunRecorder.kt
+# + RestoreJournalImporter.kt, 17 findings / 16 unique fingerprints) and
+# GR-08m2 (ReceiptLifecycleCoordinator.kt + WarrantyExpirationWorker.kt,
+# 12 findings / 12 unique fingerprints) per the
+# GR-08c/GR-08e/GR-08i/GR-08j/GR-08k/GR-08l precedent; each part is within
+# the cap.
+#
+# Layer legality:
+# * AiChatRepositoryImpl is the repository-layer writer for AI assistant
+#   chat history (AiChatSessionDao + AiChatMessageDao per
+#   docs/architecture/dao-map.md).  Every mutating method runs
+#   writeBarrier.checkWritesAllowed at its entrypoint
+#   (createSession/appendMessage/clearSession/clearAllHistory/
+#   purgeOldMessages).  History persistence is privacy-gated (W34):
+#   createSession/appendMessage no-op (return null) unless
+#   shouldPersistHistory(); appendMessage stores payloadJson only in RAW
+#   mode and redacts text via CloudPayloadRedactor in REDACTED mode
+#   (NLP-6), OFF returns null before any write; appendMessage wraps the
+#   message insert + session updateLastTouched in one
+#   database.withTransaction (atomicity); clearSession/clearAllHistory/
+#   purgeOldMessages are user-initiated deletion / retention cleanup via
+#   SQL deletes (no raw payloads materialized).
+# * OperationRunRecorder (RoomOperationRunRecorder + its Handle) is THE
+#   canonical run-ledger writer for the OperationRun/OperationRunEvent
+#   diagnostics ledger used by every pipeline (workers, backup/restore,
+#   bank, email, export/import).  All six sites are diagnostics-ledger
+#   writes: start inserts the RUNNING row; Handle.event inserts a
+#   best-effort event (CancellationSafe.runCatchingCancellable -- failure
+#   is recorded to the durable MaintenanceSafeDiagnosticSink and NEVER
+#   fails the business operation); Handle.increment persists counters
+#   best-effort; Handle.finalizeNonCancellable finalizes inside
+#   withContext(NonCancellable) via the idempotent finalizeIfRunning
+#   (WHERE status = 'RUNNING' -- only the first terminal state wins);
+#   recoverStaleRunningOperationRuns is the startup crash recovery
+#   (finalizeIfRunning to STALE_ABORTED + best-effort STALE_RECOVERY
+#   event).  CancellationException is never swallowed
+#   (runCatchingCancellable rethrows; runOperation rethrows after
+#   recording CANCELLED).  Metadata and exception text pass through
+#   EventMetadataSanitizer.sanitizeJsonString/sanitizeExceptionMessage --
+#   no raw payloads persisted.  This is the sanctioned
+#   diagnostics/logging-persistence writer layer.
+# * RestoreJournalImporter is the restore-path post-restore diagnostics
+#   ingestion (P7-CURRENT-016): the restore/reset path bans Room after the
+#   DB swap (P7-CURRENT-005), so terminal restore/reset trails survive
+#   only in the on-disk journal until this class ingests them into the
+#   queryable OperationRun/OperationRunEvent ledger on the NEXT healthy
+#   startup.  Restore/write barrier semantics: the importer performs no
+#   direct writeBarrier call -- the temporal barrier is enforced by its
+#   ONLY caller AppStartupCoordinator.importRestoreJournals(), which runs
+#   it on startup when writes are allowed (DB healthy); the importer is
+#   the sanctioned post-barrier ingestion point, not a barrier bypass.
+#   Idempotent per event (isSuccessJournalImported/isFailureJournalImported
+#   gates, get-or-insert run row, per-eventId dedup via getByRunId +
+#   importedIds set blocking in-journal duplicates too); partial imports
+#   keep the journal for retry on the next startup;
+#   CancellationException is rethrown at every handler;
+#   exceptionMessage comes from event.exceptionMessageSafe (pre-sanitized
+#   at journal write time).
+#
+# barrierMode is `helper` for every row (the GR-08a..l batch convention; no
+# direct-barrier proof is claimed -- AiChatRepositoryImpl places
+# writeBarrier.checkWritesAllowed at each entrypoint, the run-ledger
+# writer's protection is its best-effort/idempotent diagnostics contract,
+# and the restore importer's protection is the caller-enforced temporal
+# restore barrier).
+#
+# Closure additions (GR-08m1 blind-spot sweep): ZERO closure rows.  Every
+# dao-accessor call in ALL batch callable bodies was enumerated, not just
+# the findings: every called mutating DAO method (AiChatSessionDao.insert /
+# updateLastTouched / deleteById / deleteAll, AiChatMessageDao.insert /
+# deleteOlderThan, OperationRunDao.insert / finalizeIfRunning /
+# incrementCounters, OperationRunEventDao.insert) is an abstract
+# Room-annotated method -- AiChatSessionDao, AiChatMessageDao,
+# OperationRunDao and OperationRunEventDao are fully abstract interfaces
+# with ZERO @Transaction methods, so no convenience-method closure row
+# exists.  The only other DAO-accessor calls in the bodies are read-only
+# lookups (sessionDao.getById/observeAll, messageDao.observeBySession,
+# runDao.getStaleRunning, operationRunDao.getByCorrelationId,
+# operationRunEventDao.getByRunId).
+#
+# Chain-form census AFTER review: ZERO database-chained
+# `appDatabase.xxxDao()` mutation receivers and ZERO method-local DAO
+# aliases in ALL THREE files.  AiChatRepositoryImpl's
+# `database.withTransaction` is the androidx.room.withTransaction
+# extension, not a DAO accessor; OperationRunRecorder and
+# RestoreJournalImporter do not inject AppDatabase at all.  Every DAO call
+# goes through the injected constructor properties sessionDao / messageDao
+# / runDao / eventDao / operationRunDao / operationRunEventDao.
+# NO accessor-normalization source change is needed for this part.
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1 +
+# GR-08l2 + GR-08m1 + GR-08m2 rows verbatim, 322 rows after GR-08m);
+# passing only GR-08m1-seed.yml would drop the earlier batches' rows from
+# the rendered candidate.
+schemaVersion: 2
+entries:
+# ── AiChatRepositoryImpl.kt (6 findings-derived rows) ───────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+  kind: function
+  method: createSession
+  receiver: null
+  parameterTypes:
+  - String?
+  daoAccessor: sessionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: barrier-checked assistant chat-session insert behind the write barrier; privacy-gated (W34) -- returns null without writing unless conversation-history persistence is enabled"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+  kind: function
+  method: appendMessage
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
+  - com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
+  - String
+  - String?
+  daoAccessor: messageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: barrier-checked chat-message insert inside database.withTransaction (atomic with the session touch); privacy posture enforced before the write -- payloadJson stored only in RAW mode, text redacted via CloudPayloadRedactor in REDACTED mode (NLP-6), OFF returns null before any write"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+  kind: function
+  method: appendMessage
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
+  - com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
+  - String
+  - String?
+  daoAccessor: sessionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+  operation: updateLastTouched
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: session updatedAt touch inside the same database.withTransaction as the message insert (single atomic append); authorized separately because the DAO accessor and operation differ from the message insert"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+  kind: function
+  method: clearSession
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: sessionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+  operation: deleteById
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: barrier-checked user-initiated single-session history deletion (SQL delete by id, no raw payloads materialized)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+  kind: function
+  method: clearAllHistory
+  receiver: null
+  parameterTypes: []
+  daoAccessor: sessionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: barrier-checked user-initiated clear-all assistant history (SQL delete-all, no raw payloads materialized)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+  kind: function
+  method: purgeOldMessages
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: messageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
+  operation: deleteOlderThan
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: barrier-checked retention cleanup (W34) -- SQL-deletes chat messages older than the cutoff (no raw payloads materialized)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+# ── OperationRunRecorder.kt (6 findings-derived rows) ───────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
+  kind: function
+  method: start
+  receiver: null
+  parameterTypes:
+  - String
+  - String?
+  - com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+  daoAccessor: runDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: canonical run-ledger writer -- inserts the RUNNING row with sanitizer-sanitized metadataJson; the subsequent STARTED event write is best-effort and must not orphan the RUNNING row (DDL-016-03)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
+  kind: function
+  method: recoverStaleRunningOperationRuns
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: runDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: finalizeIfRunning
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: startup crash recovery -- marks stale RUNNING rows STALE_ABORTED via the idempotent conditional finalize (WHERE status = 'RUNNING', only first terminal state wins)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
+  kind: function
+  method: recoverStaleRunningOperationRuns
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: eventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: best-effort STALE_RECOVERY event insert after a successful stale finalize (DDL-A8-11 -- event failure is recorded to the durable MaintenanceSafeDiagnosticSink and must not abort startup recovery); reasonCode is the controlled CANCELLED_BY_SYSTEM constant"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle
+  kind: function
+  method: event
+  receiver: null
+  parameterTypes:
+  - String
+  - com.yourname.expensetracker.domain.diagnostics.EventOutcome
+  - com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?
+  - com.yourname.expensetracker.domain.diagnostics.EventSeverity
+  - com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+  - String?
+  - Long?
+  - Throwable?
+  - Boolean
+  daoAccessor: eventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: the run-ledger event channel -- best-effort event insert (DDL-016-02) with sanitizer-sanitized metadata/exception fields and controlled reason codes; failure is recorded to the durable safe sink and NEVER fails the business operation; CancellationException rethrown via CancellationSafe.runCatchingCancellable"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle
+  kind: function
+  method: finalizeNonCancellable
+  receiver: null
+  parameterTypes:
+  - String
+  - String?
+  - Throwable?
+  daoAccessor: runDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: finalizeIfRunning
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: terminal run finalization inside withContext(NonCancellable) via the idempotent conditional finalize (WHERE status = 'RUNNING'); best-effort (DDL-81-07) so diagnostic finalization never fails business success; errorSummary passes through sanitizeExceptionMessage"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle
+  kind: function
+  method: increment
+  receiver: null
+  parameterTypes:
+  - Int
+  - Int
+  - Int
+  - Int
+  - Int
+  - Int
+  daoAccessor: runDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: incrementCounters
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: immediate counter persistence on the RUNNING row (crash-safe progress accounting, DDL-A8-10); best-effort with durable safe-sink diagnostic on failure"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+# ── RestoreJournalImporter.kt (5 findings -> 4 unique fingerprints) ─────────
+- path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  ownerFqcn: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+  kind: function
+  method: importLastSuccessJournalIfPresent
+  receiver: null
+  parameterTypes: []
+  daoAccessor: operationRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: post-restore ledger ingestion (P7-CURRENT-016) -- get-or-insert of the RESTORE_COSTBACKUP run row on the next healthy startup (covers BOTH call sites: the legacy zero-event branch line 39 and the get-or-insert branch line 64, which share this fingerprint); the restore/write barrier is enforced by the only caller AppStartupCoordinator.importRestoreJournals (runs only when writes are allowed after the P7-CURRENT-005 post-swap Room ban lifts); idempotent via isSuccessJournalImported + getByCorrelationId get-or-insert"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  ownerFqcn: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+  kind: function
+  method: importLastSuccessJournalIfPresent
+  receiver: null
+  parameterTypes: []
+  daoAccessor: operationRunEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: post-restore ledger ingestion -- per-event insert with eventId dedup (getByRunId + importedIds set blocks cross-startup AND in-journal duplicates, DDL-F876-13); per-event failures keep the journal for retry on the next startup; exceptionMessage comes from event.exceptionMessageSafe (pre-sanitized)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  ownerFqcn: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+  kind: function
+  method: importLastFailureJournalIfPresent
+  receiver: null
+  parameterTypes: []
+  daoAccessor: operationRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: post-restore/reset FAILURE journal ingestion (P7-CURRENT-016) -- get-or-insert of the RESTORE_OR_RESET FAILED_FINAL run row so terminal failure diagnostics (wrong password, verification/rollback/reset failures) become queryable on the next healthy startup; same caller-enforced temporal restore barrier and idempotency contract as the success path"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  ownerFqcn: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+  kind: function
+  method: importLastFailureJournalIfPresent
+  receiver: null
+  parameterTypes: []
+  daoAccessor: operationRunEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08m1 EXACT_POLICY: post-restore/reset FAILURE journal ingestion -- per-event insert with the same eventId dedup and retry-on-partial contract; eventType/stage carry controlled constants, exceptionMessage is the pre-sanitized exceptionMessageSafe"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M

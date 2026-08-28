@@ -6964,20 +6964,20 @@ def test_real_tracked_gr08l2_seed_file_loads_with_exactly_twenty_three_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_nineteen_batch_seed_files():
+def test_combined_seed_file_concatenates_all_twenty_one_batch_seed_files():
     """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
     + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
     + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1
-    + GR-08l2.
+    + GR-08l2 + GR-08m1 + GR-08m2.
 
-    Supersedes the GR-08k-era seventeen-file concatenation test (which pinned
-    the combined document at 249 rows): the GR-08l batch extends the combined
-    generation input to 291 rows and the GR-08l1 residual closure extends it
-    to 294 rows, and the drift guard must cover ALL NINETEEN reviewed batch
-    seed files.  The combined document is what --seed-rows actually consumes;
-    if it ever drifts from the nineteen reviewed batch seed files (a dropped
-    earlier-batch row would silently re-unauthorize that batch's mutations
-    at promotion time), this fails closed.
+    Supersedes the GR-08l-era nineteen-file concatenation test (which pinned
+    the combined document at 294 rows): the GR-08m batch extends the combined
+    generation input to 322 rows (16 GR-08m1 + 12 GR-08m2), and the drift
+    guard must cover ALL TWENTY-ONE reviewed batch seed files.  The combined
+    document is what --seed-rows actually consumes; if it ever drifts from
+    the twenty-one reviewed batch seed files (a dropped earlier-batch row
+    would silently re-unauthorize that batch's mutations at promotion time),
+    this fails closed.
     """
     combined = _load_seed_entries(COMBINED_SEED_FILE)
     gr08a = _load_seed_entries(SEED_FILE)
@@ -6999,6 +6999,8 @@ def test_combined_seed_file_concatenates_all_nineteen_batch_seed_files():
     gr08k2 = _load_seed_entries(GR08K2_SEED_FILE)
     gr08l1 = _load_seed_entries(GR08L1_SEED_FILE)
     gr08l2 = _load_seed_entries(GR08L2_SEED_FILE)
+    gr08m1 = _load_seed_entries(GR08M1_SEED_FILE)
+    gr08m2 = _load_seed_entries(GR08M2_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
@@ -7018,7 +7020,9 @@ def test_combined_seed_file_concatenates_all_nineteen_batch_seed_files():
     assert len(gr08k2) == 18
     assert len(gr08l1) == 22
     assert len(gr08l2) == 23
-    assert len(combined) == 294
+    assert len(gr08m1) == 16
+    assert len(gr08m2) == 12
+    assert len(combined) == 322
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
@@ -7026,7 +7030,8 @@ def test_combined_seed_file_concatenates_all_nineteen_batch_seed_files():
         + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
         + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
         + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
-        + list(gr08k2) + list(gr08l1) + list(gr08l2)
+        + list(gr08k2) + list(gr08l1) + list(gr08l2) + list(gr08m1)
+        + list(gr08m2)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -7493,6 +7498,787 @@ def test_gr08l2_overload_and_alias_rows_near_misses_stay_unauthorized(tmp_path):
         _assert_gr08l_exact_match(
             tmp_path, rows, "addGoal", "savingsGoalDao", "insertGoal",
             parameter_types=(DOMAIN_SAVINGS_GOAL,),
+        )
+        is False
+    )
+
+
+# ── GR-08m (MIT-DB-08M): AiChatRepositoryImpl.kt + OperationRunRecorder.kt ───
+# + RestoreJournalImporter.kt (GR-08m1) and ReceiptLifecycleCoordinator.kt
+# + WarrantyExpirationWorker.kt (GR-08m2).  The combined batch carries
+# 29 findings / 28 unique fingerprints > the 25-fingerprint batch cap, so it
+# was SPLIT into two file groups; the generation run consumes the COMBINED
+# document GR-08-seeds.yml; these tests pin that the combined document stays
+# the exact concatenation of the TWENTY-ONE reviewed batch seed files, and
+# that the GR-08m rows authorize EXACTLY their callable identity + DAO +
+# operation (wrong overload, wrong owner, wrong DAO, and wrong operation
+# stay unauthorized).
+
+GR08M1_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08m1-seed.yml"
+GR08M2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08m2-seed.yml"
+
+AI_CHAT_REPOSITORY_IMPL_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "AiChatRepositoryImpl.kt"
+)
+AI_CHAT_REPOSITORY_IMPL_FQCN = (
+    "com.yourname.expensetracker.data.repository.AiChatRepositoryImpl"
+)
+AI_CHAT_SESSION_DAO = (
+    "com.yourname.expensetracker.data.database.dao.AiChatSessionDao"
+)
+AI_CHAT_MESSAGE_DAO = (
+    "com.yourname.expensetracker.data.database.dao.AiChatMessageDao"
+)
+ASSISTANT_MESSAGE_ROLE = (
+    "com.yourname.expensetracker.domain.ai.model.AssistantMessageRole"
+)
+ASSISTANT_MESSAGE_KIND = (
+    "com.yourname.expensetracker.domain.ai.model.AssistantMessageKind"
+)
+
+OPERATION_RUN_RECORDER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/diagnostics/"
+    "OperationRunRecorder.kt"
+)
+ROOM_OPERATION_RUN_RECORDER_FQCN = (
+    "com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder"
+)
+ROOM_OPERATION_RUN_RECORDER_HANDLE_FQCN = (
+    "com.yourname.expensetracker.domain.diagnostics."
+    "RoomOperationRunRecorder.Handle"
+)
+OPERATION_RUN_DAO = (
+    "com.yourname.expensetracker.data.database.dao.OperationRunDao"
+)
+OPERATION_RUN_EVENT_DAO = (
+    "com.yourname.expensetracker.data.database.dao.OperationRunEventDao"
+)
+SAFE_EVENT_METADATA = (
+    "com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata"
+)
+EVENT_OUTCOME = "com.yourname.expensetracker.domain.diagnostics.EventOutcome"
+DIAGNOSTIC_REASON_CODE = (
+    "com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?"
+)
+EVENT_SEVERITY = (
+    "com.yourname.expensetracker.domain.diagnostics.EventSeverity"
+)
+
+RESTORE_JOURNAL_IMPORTER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/backup/"
+    "RestoreJournalImporter.kt"
+)
+RESTORE_JOURNAL_IMPORTER_FQCN = (
+    "com.yourname.expensetracker.data.backup.RestoreJournalImporter"
+)
+
+RECEIPT_LIFECYCLE_COORDINATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/"
+    "ReceiptLifecycleCoordinator.kt"
+)
+RECEIPT_LIFECYCLE_COORDINATOR_FQCN = (
+    "com.yourname.expensetracker.domain.receipt.lifecycle."
+    "ReceiptLifecycleCoordinator"
+)
+PENDING_REVIEW_DAO_GR08M = (
+    "com.yourname.expensetracker.data.database.dao.PendingReviewDao"
+)
+SCANNED_RECEIPT_DAO_GR08M = (
+    "com.yourname.expensetracker.data.database.dao.ScannedReceiptDao"
+)
+EMAIL_RECEIPT_DAO_GR08M = (
+    "com.yourname.expensetracker.data.database.dao.EmailReceiptDao"
+)
+ANDROID_URI = "android.net.Uri"
+RECEIPT_PROCESSING_OPTIONS = (
+    "com.yourname.expensetracker.domain.receipt.lifecycle."
+    "ReceiptLifecycleCoordinator.ReceiptProcessingOptions"
+)
+EMAIL_RECEIPT_DATA = (
+    "com.yourname.expensetracker.domain.receipt.EmailReceiptData"
+)
+
+WARRANTY_EXPIRATION_WORKER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/service/warranty/"
+    "WarrantyExpirationWorker.kt"
+)
+WARRANTY_EXPIRATION_WORKER_FQCN = (
+    "com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker"
+)
+WARRANTY_REMINDER_DELIVERY_DAO = (
+    "com.yourname.expensetracker.data.database.dao."
+    "WarrantyReminderDeliveryDao"
+)
+WARRANTY_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.Warranty"
+)
+
+
+def _gr08m_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                    dao_fqcn, operation, barrier_mode="helper"):
+    """One exact GR-08m-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": barrier_mode,
+        "reason": "GR-08m EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08M",
+    }
+
+
+def _gr08m1_seed_rows():
+    """The sixteen exact GR-08m1 rows (mirroring the tracked seed file).
+
+    AiChatRepositoryImpl.kt (6 rows) + OperationRunRecorder.kt (6 rows) +
+    RestoreJournalImporter.kt (4 rows -- the two
+    importLastSuccessJournalIfPresent operationRunDao.insert call sites
+    share ONE fingerprint, so 5 findings collapse to 4 rows); ZERO closure
+    rows -- every touched DAO is a fully abstract interface.
+    """
+    append_params = (
+        "Long", ASSISTANT_MESSAGE_ROLE, ASSISTANT_MESSAGE_KIND,
+        "String", "String?",
+    )
+    rows = []
+    rows.append(
+        _gr08m_seed_row(
+            AI_CHAT_REPOSITORY_IMPL_KT, AI_CHAT_REPOSITORY_IMPL_FQCN,
+            "createSession", ("String?",),
+            "sessionDao", AI_CHAT_SESSION_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            AI_CHAT_REPOSITORY_IMPL_KT, AI_CHAT_REPOSITORY_IMPL_FQCN,
+            "appendMessage", append_params,
+            "messageDao", AI_CHAT_MESSAGE_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            AI_CHAT_REPOSITORY_IMPL_KT, AI_CHAT_REPOSITORY_IMPL_FQCN,
+            "appendMessage", append_params,
+            "sessionDao", AI_CHAT_SESSION_DAO, "updateLastTouched",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            AI_CHAT_REPOSITORY_IMPL_KT, AI_CHAT_REPOSITORY_IMPL_FQCN,
+            "clearSession", ("Long",),
+            "sessionDao", AI_CHAT_SESSION_DAO, "deleteById",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            AI_CHAT_REPOSITORY_IMPL_KT, AI_CHAT_REPOSITORY_IMPL_FQCN,
+            "clearAllHistory", (),
+            "sessionDao", AI_CHAT_SESSION_DAO, "deleteAll",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            AI_CHAT_REPOSITORY_IMPL_KT, AI_CHAT_REPOSITORY_IMPL_FQCN,
+            "purgeOldMessages", ("Long",),
+            "messageDao", AI_CHAT_MESSAGE_DAO, "deleteOlderThan",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            OPERATION_RUN_RECORDER_KT, ROOM_OPERATION_RUN_RECORDER_FQCN,
+            "start", ("String", "String?", SAFE_EVENT_METADATA,),
+            "runDao", OPERATION_RUN_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            OPERATION_RUN_RECORDER_KT, ROOM_OPERATION_RUN_RECORDER_FQCN,
+            "recoverStaleRunningOperationRuns", ("Long",),
+            "runDao", OPERATION_RUN_DAO, "finalizeIfRunning",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            OPERATION_RUN_RECORDER_KT, ROOM_OPERATION_RUN_RECORDER_FQCN,
+            "recoverStaleRunningOperationRuns", ("Long",),
+            "eventDao", OPERATION_RUN_EVENT_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            OPERATION_RUN_RECORDER_KT, ROOM_OPERATION_RUN_RECORDER_HANDLE_FQCN,
+            "event",
+            (
+                "String", EVENT_OUTCOME, DIAGNOSTIC_REASON_CODE,
+                EVENT_SEVERITY, SAFE_EVENT_METADATA, "String?", "Long?",
+                "Throwable?", "Boolean",
+            ),
+            "eventDao", OPERATION_RUN_EVENT_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            OPERATION_RUN_RECORDER_KT, ROOM_OPERATION_RUN_RECORDER_HANDLE_FQCN,
+            "finalizeNonCancellable", ("String", "String?", "Throwable?",),
+            "runDao", OPERATION_RUN_DAO, "finalizeIfRunning",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            OPERATION_RUN_RECORDER_KT, ROOM_OPERATION_RUN_RECORDER_HANDLE_FQCN,
+            "increment", ("Int", "Int", "Int", "Int", "Int", "Int",),
+            "runDao", OPERATION_RUN_DAO, "incrementCounters",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RESTORE_JOURNAL_IMPORTER_KT, RESTORE_JOURNAL_IMPORTER_FQCN,
+            "importLastSuccessJournalIfPresent", (),
+            "operationRunDao", OPERATION_RUN_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RESTORE_JOURNAL_IMPORTER_KT, RESTORE_JOURNAL_IMPORTER_FQCN,
+            "importLastSuccessJournalIfPresent", (),
+            "operationRunEventDao", OPERATION_RUN_EVENT_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RESTORE_JOURNAL_IMPORTER_KT, RESTORE_JOURNAL_IMPORTER_FQCN,
+            "importLastFailureJournalIfPresent", (),
+            "operationRunDao", OPERATION_RUN_DAO, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RESTORE_JOURNAL_IMPORTER_KT, RESTORE_JOURNAL_IMPORTER_FQCN,
+            "importLastFailureJournalIfPresent", (),
+            "operationRunEventDao", OPERATION_RUN_EVENT_DAO, "insert",
+        )
+    )
+    return rows
+
+
+def _gr08m2_seed_rows():
+    """The twelve exact GR-08m2 rows (mirroring the tracked seed file).
+
+    ReceiptLifecycleCoordinator.kt (6 rows, barrierMode helper) +
+    WarrantyExpirationWorker.kt (6 rows, barrierMode workerMediated);
+    ZERO closure rows -- every touched DAO method invoked by the batch
+    callables is an abstract Room-annotated method.
+    """
+    process_input_params = (ANDROID_URI, RECEIPT_PROCESSING_OPTIONS)
+    email_params = (EMAIL_RECEIPT_DATA, "String", "String", "String",
+                    "String", "String", "String", "String?")
+    deliver_params = (WARRANTY_ENTITY, "Int", "Long", "String", "String")
+    rows = []
+    rows.append(
+        _gr08m_seed_row(
+            RECEIPT_LIFECYCLE_COORDINATOR_KT,
+            RECEIPT_LIFECYCLE_COORDINATOR_FQCN,
+            "processReceiptInput", process_input_params,
+            "pendingReviewDao", PENDING_REVIEW_DAO_GR08M,
+            "deleteByScannedReceiptId",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RECEIPT_LIFECYCLE_COORDINATOR_KT,
+            RECEIPT_LIFECYCLE_COORDINATOR_FQCN,
+            "processReceiptInput", process_input_params,
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO_GR08M, "delete",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RECEIPT_LIFECYCLE_COORDINATOR_KT,
+            RECEIPT_LIFECYCLE_COORDINATOR_FQCN,
+            "processReceiptInput", process_input_params,
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO_GR08M, "update",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RECEIPT_LIFECYCLE_COORDINATOR_KT,
+            RECEIPT_LIFECYCLE_COORDINATOR_FQCN,
+            "processReceiptInput", process_input_params,
+            "pendingReviewDao", PENDING_REVIEW_DAO_GR08M, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RECEIPT_LIFECYCLE_COORDINATOR_KT,
+            RECEIPT_LIFECYCLE_COORDINATOR_FQCN,
+            "processEmailReceipt", email_params,
+            "emailReceiptDao", EMAIL_RECEIPT_DAO_GR08M, "insertOrIgnore",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            RECEIPT_LIFECYCLE_COORDINATOR_KT,
+            RECEIPT_LIFECYCLE_COORDINATOR_FQCN,
+            "processEmailReceipt", email_params,
+            "pendingReviewDao", PENDING_REVIEW_DAO_GR08M, "insert",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            WARRANTY_EXPIRATION_WORKER_KT, WARRANTY_EXPIRATION_WORKER_FQCN,
+            "doWork", (),
+            "deliveryDao", WARRANTY_REMINDER_DELIVERY_DAO,
+            "recoverStaleClaimed", barrier_mode="workerMediated",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            WARRANTY_EXPIRATION_WORKER_KT, WARRANTY_EXPIRATION_WORKER_FQCN,
+            "doWork", (),
+            "deliveryDao", WARRANTY_REMINDER_DELIVERY_DAO,
+            "deleteOlderThan", barrier_mode="workerMediated",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            WARRANTY_EXPIRATION_WORKER_KT, WARRANTY_EXPIRATION_WORKER_FQCN,
+            "deliverReminder", deliver_params,
+            "deliveryDao", WARRANTY_REMINDER_DELIVERY_DAO, "insertOrIgnore",
+            barrier_mode="workerMediated",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            WARRANTY_EXPIRATION_WORKER_KT, WARRANTY_EXPIRATION_WORKER_FQCN,
+            "deliverReminder", deliver_params,
+            "deliveryDao", WARRANTY_REMINDER_DELIVERY_DAO, "claim",
+            barrier_mode="workerMediated",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            WARRANTY_EXPIRATION_WORKER_KT, WARRANTY_EXPIRATION_WORKER_FQCN,
+            "deliverReminder", deliver_params,
+            "deliveryDao", WARRANTY_REMINDER_DELIVERY_DAO,
+            "markSentFromClaimed", barrier_mode="workerMediated",
+        )
+    )
+    rows.append(
+        _gr08m_seed_row(
+            WARRANTY_EXPIRATION_WORKER_KT, WARRANTY_EXPIRATION_WORKER_FQCN,
+            "deliverReminder", deliver_params,
+            "deliveryDao", WARRANTY_REMINDER_DELIVERY_DAO, "markFailed",
+            barrier_mode="workerMediated",
+        )
+    )
+    return rows
+
+
+def test_real_tracked_gr08m1_seed_file_loads_with_exactly_sixteen_rows():
+    entries = _load_seed_entries(GR08M1_SEED_FILE)
+    assert len(entries) == 16
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["createSession"]
+        + ["appendMessage"] * 2
+        + ["clearSession", "clearAllHistory", "purgeOldMessages"]
+        + ["start"]
+        + ["recoverStaleRunningOperationRuns"] * 2
+        + ["event", "finalizeNonCancellable", "increment"]
+        + ["importLastSuccessJournalIfPresent"] * 2
+        + ["importLastFailureJournalIfPresent"] * 2
+    )
+    for entry in entries:
+        assert entry.path in (AI_CHAT_REPOSITORY_IMPL_KT,
+                              OPERATION_RUN_RECORDER_KT,
+                              RESTORE_JOURNAL_IMPORTER_KT)
+        assert entry.owner_fqcn in (
+            AI_CHAT_REPOSITORY_IMPL_FQCN,
+            ROOM_OPERATION_RUN_RECORDER_FQCN,
+            ROOM_OPERATION_RUN_RECORDER_HANDLE_FQCN,
+            RESTORE_JOURNAL_IMPORTER_FQCN,
+        )
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.barrier_mode is BarrierMode.HELPER
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08M"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # The Handle rows must spell the NESTED owner FQCN -- a row claiming the
+    # outer RoomOperationRunRecorder owner for a Handle callable could never
+    # match the v2 fingerprints.
+    handle_rows = [
+        entry for entry in entries
+        if entry.method in ("event", "finalizeNonCancellable", "increment")
+    ]
+    assert sorted(entry.method for entry in handle_rows) == [
+        "event", "finalizeNonCancellable", "increment",
+    ]
+    for entry in handle_rows:
+        assert entry.owner_fqcn == ROOM_OPERATION_RUN_RECORDER_HANDLE_FQCN
+    # ZERO closure rows for this part (every touched DAO is fully abstract).
+    assert not any("CLOSURE" in entry.reason for entry in entries)
+
+
+def test_real_tracked_gr08m2_seed_file_loads_with_exactly_twelve_rows():
+    entries = _load_seed_entries(GR08M2_SEED_FILE)
+    assert len(entries) == 12
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted(
+        ["processReceiptInput"] * 4
+        + ["processEmailReceipt"] * 2
+        + ["doWork"] * 2
+        + ["deliverReminder"] * 4
+    )
+    for entry in entries:
+        assert entry.path in (RECEIPT_LIFECYCLE_COORDINATOR_KT,
+                              WARRANTY_EXPIRATION_WORKER_KT)
+        assert entry.owner_fqcn in (RECEIPT_LIFECYCLE_COORDINATOR_FQCN,
+                                    WARRANTY_EXPIRATION_WORKER_FQCN)
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08M"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # Barrier-mode split: the receipt-authority rows are helper (the write
+    # barrier runs at the callable entrypoints); the worker rows are
+    # workerMediated (WorkerExecutionGuard.runGuardedWithContext verified in
+    # the doWork body -- the GR-08i3 worker-row convention).
+    coordinator_rows = [
+        entry for entry in entries
+        if entry.path == RECEIPT_LIFECYCLE_COORDINATOR_KT
+    ]
+    worker_rows = [
+        entry for entry in entries if entry.path == WARRANTY_EXPIRATION_WORKER_KT
+    ]
+    assert len(coordinator_rows) == 6
+    assert len(worker_rows) == 6
+    for entry in coordinator_rows:
+        assert entry.barrier_mode is BarrierMode.HELPER
+    for entry in worker_rows:
+        assert entry.barrier_mode is BarrierMode.WORKER_MEDIATED
+    # ZERO closure rows for this part (no body-carrying @Transaction
+    # convenience method is invoked from any batch callable).
+    assert not any("CLOSURE" in entry.reason for entry in entries)
+
+
+def _gr08m_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08m fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08m_exact_match(tmp_path, rows, select_method, select_accessor,
+                              select_operation, select_parameters=None,
+                              **overrides):
+    """The exact GR-08m row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)`` -- optionally narrowed by ``select_parameters`` when
+    several rows share the same (method, accessor, operation) triple (the
+    GR-08m appendMessage / recoverStaleRunningOperationRuns /
+    importLast*JournalIfPresent rows); ``overrides`` perturb exactly one
+    identity field of the match query for the near-miss assertions.
+    """
+    entries = _gr08m_policy_entries(tmp_path, rows)
+    candidates = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ]
+    if select_parameters is not None:
+        candidates = [
+            entry
+            for entry in candidates
+            if tuple(entry.parameter_types) == tuple(select_parameters)
+        ]
+    target = candidates[0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08m1_exact_identity_matches(tmp_path):
+    rows = _gr08m1_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "createSession", "sessionDao", "insert"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "increment", "runDao", "incrementCounters"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "importLastFailureJournalIfPresent",
+            "operationRunEventDao", "insert",
+        )
+        is True
+    )
+
+
+def test_gr08m1_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08m1_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "purgeOldMessages", "messageDao",
+            "deleteOlderThan",
+            parameter_types=("String",),
+        )
+        is False
+    )
+
+
+def test_gr08m1_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08m1_seed_rows()
+    # The Handle rows must not match under the OUTER recorder owner.
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "event", "eventDao", "insert",
+            owner_fqcn=ROOM_OPERATION_RUN_RECORDER_FQCN,
+        )
+        is False
+    )
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "start", "runDao", "insert",
+            owner_fqcn="com.example.OtherRunRecorder",
+        )
+        is False
+    )
+
+
+def test_gr08m1_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08m1_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "clearAllHistory", "sessionDao", "deleteAll",
+            dao_accessor="messageDao",
+            dao_fqcn=AI_CHAT_MESSAGE_DAO,
+        )
+        is False
+    )
+
+
+def test_gr08m1_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08m1_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "recoverStaleRunningOperationRuns", "runDao",
+            "finalizeIfRunning",
+            operation="incrementCounters",
+        )
+        is False
+    )
+
+
+def test_gr08m1_shared_fingerprint_and_multi_row_callables_near_misses(tmp_path):
+    """The shared-fingerprint and two-row callables are exact per identity.
+
+    importLastSuccessJournalIfPresent carries the SAME operationRunDao.insert
+    fingerprint at TWO call sites (one seed row covers both findings), and
+    appendMessage / recoverStaleRunningOperationRuns each carry TWO rows on
+    different DAO accessors; each row authorizes EXACTLY its own (callable,
+    accessor, operation) identity, so a swapped accessor or operation stays
+    unauthorized.
+    """
+    rows = _gr08m1_seed_rows()
+    # importLastSuccessJournalIfPresent: the runDao row never matches the
+    # eventDao identity (and vice versa).
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "importLastSuccessJournalIfPresent",
+            "operationRunDao", "insert",
+            dao_accessor="operationRunEventDao",
+            dao_fqcn=OPERATION_RUN_EVENT_DAO,
+        )
+        is False
+    )
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "importLastSuccessJournalIfPresent",
+            "operationRunEventDao", "insert",
+            dao_accessor="operationRunDao",
+            dao_fqcn=OPERATION_RUN_DAO,
+        )
+        is False
+    )
+    # appendMessage: the messageDao insert row never matches the sessionDao
+    # updateLastTouched identity.
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "appendMessage", "messageDao", "insert",
+            dao_accessor="sessionDao",
+            dao_fqcn=AI_CHAT_SESSION_DAO,
+        )
+        is False
+    )
+    # recoverStaleRunningOperationRuns: the runDao finalizeIfRunning row
+    # never matches the eventDao insert identity.
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "recoverStaleRunningOperationRuns", "runDao",
+            "finalizeIfRunning",
+            dao_accessor="eventDao",
+            dao_fqcn=OPERATION_RUN_EVENT_DAO,
+        )
+        is False
+    )
+    # The success-path run row never matches the failure-path callable
+    # identity (same DAO + operation, different method).
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "importLastSuccessJournalIfPresent",
+            "operationRunDao", "insert",
+            method="importLastFailureJournalIfPresent",
+        )
+        is False
+    )
+
+
+def test_gr08m2_exact_identity_matches(tmp_path):
+    rows = _gr08m2_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "processReceiptInput", "scannedReceiptDao",
+            "delete"
+        )
+        is True
+    )
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "deliverReminder", "deliveryDao", "claim"
+        )
+        is True
+    )
+
+
+def test_gr08m2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08m2_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "deliverReminder", "deliveryDao", "claim",
+            parameter_types=("Long", "Int", "Long"),
+        )
+        is False
+    )
+
+
+def test_gr08m2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08m2_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "processEmailReceipt", "emailReceiptDao",
+            "insertOrIgnore",
+            owner_fqcn="com.example.OtherReceiptCoordinator",
+        )
+        is False
+    )
+
+
+def test_gr08m2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08m2_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "processReceiptInput", "pendingReviewDao",
+            "insert",
+            dao_accessor="scannedReceiptDao",
+            dao_fqcn=SCANNED_RECEIPT_DAO_GR08M,
+        )
+        is False
+    )
+
+
+def test_gr08m2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08m2_seed_rows()
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "deliverReminder", "deliveryDao",
+            "markSentFromClaimed",
+            operation="markFailed",
+        )
+        is False
+    )
+
+
+def test_gr08m2_multi_row_callables_near_misses_stay_unauthorized(tmp_path):
+    """The multi-row callables are exact per (accessor, operation) identity.
+
+    processReceiptInput carries FOUR rows (pendingReviewDao
+    deleteByScannedReceiptId / insert, scannedReceiptDao delete / update)
+    and processEmailReceipt carries TWO rows (emailReceiptDao insertOrIgnore,
+    pendingReviewDao insert); each row authorizes EXACTLY its own identity,
+    so a swapped operation or accessor stays unauthorized.
+    """
+    rows = _gr08m2_seed_rows()
+    # processReceiptInput: the pendingReviewDao insert row never matches the
+    # deleteByScannedReceiptId identity.
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "processReceiptInput", "pendingReviewDao",
+            "insert",
+            operation="deleteByScannedReceiptId",
+        )
+        is False
+    )
+    # processReceiptInput: the scannedReceiptDao delete row never matches
+    # the update identity.
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "processReceiptInput", "scannedReceiptDao",
+            "delete",
+            operation="update",
+        )
+        is False
+    )
+    # processEmailReceipt: the emailReceiptDao row never matches the
+    # pendingReviewDao identity behind the same callable.
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "processEmailReceipt", "emailReceiptDao",
+            "insertOrIgnore",
+            dao_accessor="pendingReviewDao",
+            dao_fqcn=PENDING_REVIEW_DAO_GR08M,
+        )
+        is False
+    )
+    # doWork: the recoverStaleClaimed row never matches the deleteOlderThan
+    # identity behind the same callable.
+    assert (
+        _assert_gr08m_exact_match(
+            tmp_path, rows, "doWork", "deliveryDao", "recoverStaleClaimed",
+            operation="deleteOlderThan",
         )
         is False
     )
