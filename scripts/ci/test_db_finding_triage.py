@@ -18,11 +18,12 @@ Run:
     python -m pytest scripts/ci/test_db_finding_triage.py -v
 """
 
+import hashlib
 import json
 import os
 import sys
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -63,6 +64,7 @@ from generate_db_baseline_v2 import (  # noqa: E402
     _REQUIRED_METADATA,
     _parse_yaml_simple,
     build_baseline_candidate,
+    main as baseline_main,
     validate_triage_entry,
     write_json_atomic,
 )
@@ -90,6 +92,11 @@ _SYMBOL = CallableSymbol(
     parameters=("String", "long"),
     kind=KIND_FUNCTION,
 )
+
+# Explicit review-evidence timestamp used by direct build_baseline_candidate
+# call sites (the writer requires an explicit generated_at; never a hidden
+# current-time default).
+_CANDIDATE_GENERATED_AT = "2026-08-29T00:00:00Z"
 
 
 def _identity_for(rule: str, **overrides) -> Dict[str, str]:
@@ -706,7 +713,9 @@ class TestDeterministicOutput:
             ),
         ]
         current_fps = {e["fingerprint"]: 1 for e in entries}
-        candidate = build_baseline_candidate(entries, current_fps)
+        candidate = build_baseline_candidate(
+            entries, current_fps, generated_at=_CANDIDATE_GENERATED_AT
+        )
         fps = [e["fingerprint"] for e in candidate["entries"]]
         assert fps == sorted(fps)
 
@@ -922,7 +931,9 @@ class TestBaselineCandidate:
             evidence=["e"],
         )]
         current_fps = {entries[0]["fingerprint"]: 1}
-        candidate = build_baseline_candidate(entries, current_fps)
+        candidate = build_baseline_candidate(
+            entries, current_fps, generated_at=_CANDIDATE_GENERATED_AT
+        )
         assert candidate["baseline_schema_version"] == 2
         assert candidate["guard_output_schema_version"] == 2
         assert candidate["fingerprint_schema_version"] == 2
@@ -939,7 +950,9 @@ class TestBaselineCandidate:
             evidence=["e"],
         )]
         current_fps = {entries[0]["fingerprint"]: 1}
-        candidate = build_baseline_candidate(entries, current_fps)
+        candidate = build_baseline_candidate(
+            entries, current_fps, generated_at=_CANDIDATE_GENERATED_AT
+        )
         assert candidate["guard"] == "db_access"
 
     def test_candidate_entry_has_count(self) -> None:
@@ -954,7 +967,9 @@ class TestBaselineCandidate:
             evidence=["e"],
         )
         current_fps = {entry["fingerprint"]: 3}
-        candidate = build_baseline_candidate([entry], current_fps)
+        candidate = build_baseline_candidate(
+            [entry], current_fps, generated_at=_CANDIDATE_GENERATED_AT
+        )
         assert candidate["entries"][0]["count"] == 3
 
     def test_candidate_entry_classification_is_temporary_debt(self) -> None:
@@ -969,7 +984,9 @@ class TestBaselineCandidate:
             evidence=["e"],
         )
         current_fps = {entry["fingerprint"]: 1}
-        candidate = build_baseline_candidate([entry], current_fps)
+        candidate = build_baseline_candidate(
+            [entry], current_fps, generated_at=_CANDIDATE_GENERATED_AT
+        )
         assert candidate["entries"][0]["classification"] == "temporary_debt"
 
     def test_candidate_preserves_metadata(self) -> None:
@@ -984,7 +1001,9 @@ class TestBaselineCandidate:
             evidence=["e"],
         )
         current_fps = {entry["fingerprint"]: 1}
-        candidate = build_baseline_candidate([entry], current_fps)
+        candidate = build_baseline_candidate(
+            [entry], current_fps, generated_at=_CANDIDATE_GENERATED_AT
+        )
         ce = candidate["entries"][0]
         assert ce["owner"] == "test-owner"
         assert ce["linked_issue"] == "MIT-123"
@@ -992,13 +1011,14 @@ class TestBaselineCandidate:
         assert ce["expires"] == "2099-06-15"
 
     def test_candidate_has_generated_at(self) -> None:
-        """Candidate has a generated_at timestamp."""
+        """Candidate carries the explicit generated_at verbatim (no hidden
+        current-time default)."""
         entries = []
         current_fps = {}
-        candidate = build_baseline_candidate(entries, current_fps)
-        assert "generated_at" in candidate
-        # Should be ISO-8601
-        assert "T" in candidate["generated_at"]
+        candidate = build_baseline_candidate(
+            entries, current_fps, generated_at=_CANDIDATE_GENERATED_AT
+        )
+        assert candidate["generated_at"] == _CANDIDATE_GENERATED_AT
 
 
 # ------------------------------------------------------------------
@@ -1509,3 +1529,546 @@ class TestCrosswalkPathMatching:
         )
         assert outcome == "NO_CURRENT_MATCH"
         assert len(matched) == 0
+
+
+# ------------------------------------------------------------------
+# 15. Baseline writer main() guards (GR-09 writer hardening)
+# ------------------------------------------------------------------
+
+
+_BLOCKING_DIAGNOSTIC = {
+    "code": "DB_SOURCE_UNREADABLE",
+    "path": None,
+    "symbol": None,
+    "controlled_context": {},
+}
+
+_ADVISORY_DIAGNOSTIC = {
+    "code": "DB_SIGNATURE_UNRESOLVED",
+    "path": "app/src/main/java/com/example/Ui.kt",
+    "symbol": None,
+    "controlled_context": {"advisory": True},
+}
+
+
+def _write_writer_report(
+    path: Path,
+    *,
+    findings: Optional[List[GuardFinding]] = None,
+    diagnostics: Optional[List[Dict[str, Any]]] = None,
+    statistics: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Write a v2 report JSON file and return its SHA-256 hex digest."""
+    report_dict = {
+        "schema": "cost-aggregator.guard-findings",
+        "schema_version": 2,
+        "guard": "db_access",
+        "findings": [f.to_dict() for f in (findings or [])],
+        "diagnostics": diagnostics if diagnostics is not None else [],
+        "statistics": statistics if statistics is not None else {},
+    }
+    path.write_text(json.dumps(report_dict, indent=2) + "\n", encoding="utf-8")
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_writer_triage(path: Path, entries: List[Dict[str, Any]]) -> None:
+    """Write a minimal triage YAML both writer parsers accept.
+
+    Scalar values are quoted so PyYAML and the manual fallback parser agree
+    on types (an unquoted YYYY-MM-DD would become a ``date`` under PyYAML).
+    """
+    lines = ["triage_entries:"]
+    for entry in entries:
+        lines.append(f'  - fingerprint: "{entry["fingerprint"]}"')
+        lines.append(f'    classification: "{entry["classification"]}"')
+        lines.append(f'    owner: "{entry["owner"]}"')
+        lines.append(f'    linked_issue: "{entry["linked_issue"]}"')
+        lines.append(f'    reason: "{entry["reason"]}"')
+        lines.append(f'    expires: "{entry["expires"]}"')
+        lines.append(
+            f'    present_at_reference_sha: "{entry["present_at_reference_sha"]}"'
+        )
+        evidence = entry.get("evidence") or []
+        if evidence:
+            lines.append("    evidence:")
+            for item in evidence:
+                lines.append(f'      - "{item}"')
+        else:
+            lines.append("    evidence: []")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _approved_writer_entry(fingerprint: str, *, expires: str) -> Dict[str, Any]:
+    """A fully approved PREEXISTING_TEMPORARY_DEBT triage entry."""
+    return {
+        "fingerprint": fingerprint,
+        "classification": _ACCEPTED_CLASSIFICATION,
+        "owner": "@test-owner",
+        "linked_issue": "MIT-000",
+        "reason": "reviewed temporary debt",
+        "expires": expires,
+        "present_at_reference_sha": "abc12345def67890",
+        "evidence": ["reviewed in GR-08"],
+    }
+
+
+class TestBaselineWriterMainGuards:
+    """GR-09 writer hardening: main() rejects every plan-mandated state.
+
+    The writer requires an explicit --generated-at (never a hidden
+    current-time default) and an explicit --report-sha256 evidence hash, and
+    refuses to write a candidate on report diagnostics, untrusted reports,
+    hash mismatches, unapproved current findings (bulk-generation refusal),
+    duplicate/stale manifest fingerprints, expiry beyond --expires-max-days,
+    and output collisions with the active baseline/policy or the inputs.
+    """
+
+    @staticmethod
+    def _approval_time() -> datetime:
+        """The review-evidence approval instant used by these fixtures."""
+        return datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+
+    def _run_writer(
+        self,
+        tmp_path: Path,
+        *,
+        report: Path,
+        report_sha: str,
+        triage: Path,
+        output: Path,
+        generated_at: str,
+        extra_args: Optional[List[str]] = None,
+    ) -> None:
+        argv = [
+            "--triage", str(triage),
+            "--v2-report", str(report),
+            "--report-sha256", report_sha,
+            "--generated-at", generated_at,
+            "--output", str(output),
+            "--active-baseline", str(tmp_path / "active_baseline.json"),
+            "--active-policy", str(tmp_path / "active_policy.yml"),
+        ]
+        if extra_args:
+            argv.extend(extra_args)
+        baseline_main(argv)
+
+    def test_main_requires_generated_at(self, tmp_path: Path) -> None:
+        """Omitting --generated-at is an argparse error (exit 2)."""
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report)
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        output = tmp_path / "candidate.json"
+        with pytest.raises(SystemExit) as exc:
+            baseline_main([
+                "--triage", str(triage),
+                "--v2-report", str(report),
+                "--report-sha256", sha,
+                "--output", str(output),
+            ])
+        assert exc.value.code == 2
+        assert not output.exists()
+
+    def test_main_requires_report_sha256(self, tmp_path: Path) -> None:
+        """Omitting --report-sha256 is an argparse error (exit 2)."""
+        report = tmp_path / "report.json"
+        _write_writer_report(report)
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        output = tmp_path / "candidate.json"
+        with pytest.raises(SystemExit) as exc:
+            baseline_main([
+                "--triage", str(triage),
+                "--v2-report", str(report),
+                "--generated-at", "2026-08-29T00:00:00Z",
+                "--output", str(output),
+            ])
+        assert exc.value.code == 2
+        assert not output.exists()
+
+    def test_main_rejects_malformed_generated_at(self, tmp_path: Path) -> None:
+        """A date-only --generated-at fails closed (exit 2, no candidate)."""
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report)
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        output = tmp_path / "candidate.json"
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29",  # date-only: no time/timezone
+            )
+        assert exc.value.code == 2
+        assert not output.exists()
+
+    def test_main_rejects_report_hash_mismatch(self, tmp_path: Path) -> None:
+        """A --report-sha256 mismatch fails closed (exit 2, no candidate)."""
+        report = tmp_path / "report.json"
+        _write_writer_report(report)
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        output = tmp_path / "candidate.json"
+        wrong_sha = "0" * 64
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=wrong_sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 2
+        assert not output.exists()
+
+    def test_main_writes_candidate_with_explicit_generated_at(
+        self, tmp_path: Path,
+    ) -> None:
+        """A fully approved manifest writes the candidate with the explicit
+        generated_at verbatim and deterministic entry ordering."""
+        approval = self._approval_time()
+        generated_at = approval.strftime("%Y-%m-%dT00:00:00Z")
+        expires = (approval.date() + timedelta(days=60)).isoformat()
+        finding = _make_finding()
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report, findings=[finding])
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(
+            triage, [_approved_writer_entry(finding.fingerprint, expires=expires)]
+        )
+        output = tmp_path / "candidate.json"
+
+        self._run_writer(
+            tmp_path,
+            report=report,
+            report_sha=sha,
+            triage=triage,
+            output=output,
+            generated_at=generated_at,
+        )
+
+        assert output.exists(), "candidate was not written"
+        data = json.loads(output.read_text(encoding="utf-8"))
+        assert data["baseline_schema_version"] == 2
+        assert data["guard_output_schema_version"] == 2
+        assert data["fingerprint_schema_version"] == 2
+        assert data["guard"] == "db_access"
+        assert data["generated_at"] == generated_at
+        assert len(data["entries"]) == 1
+        entry = data["entries"][0]
+        assert entry["fingerprint"] == finding.fingerprint
+        assert entry["count"] == 1
+        assert entry["classification"] == "temporary_debt"
+        assert entry["expires"] == expires
+        assert entry["owner"] == "@test-owner"
+
+    def test_main_zero_findings_empty_triage_writes_no_candidate(
+        self, tmp_path: Path,
+    ) -> None:
+        """The GR-09 zero/zero state: exit 0, honest NO CANDIDATE, no file.
+
+        A trusted zero-findings report with an empty (complete) triage has
+        nothing to baseline: the writer exits 0 without writing a candidate
+        (the tracked empty baseline is authored from the review evidence).
+        """
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report)
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        output = tmp_path / "candidate.json"
+
+        self._run_writer(
+            tmp_path,
+            report=report,
+            report_sha=sha,
+            triage=triage,
+            output=output,
+            generated_at="2026-08-29T00:00:00Z",
+        )
+
+        assert not output.exists(), "no candidate should be written"
+
+    def test_main_accepts_advisory_only_report(self, tmp_path: Path) -> None:
+        """Advisory-only diagnostics keep the report trusted (exit 0).
+
+        Mirrors the frozen GR-09 evidence (zero findings, advisory-marked
+        DB_SIGNATURE_UNRESOLVED diagnostics, trusted statistics): the writer
+        does not fail on advisory diagnostics and writes no candidate for
+        the empty state.
+        """
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(
+            report,
+            diagnostics=[_ADVISORY_DIAGNOSTIC],
+            statistics={"trusted": True, "advisoryDiagnosticCount": 1},
+        )
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        output = tmp_path / "candidate.json"
+
+        self._run_writer(
+            tmp_path,
+            report=report,
+            report_sha=sha,
+            triage=triage,
+            output=output,
+            generated_at="2026-08-29T00:00:00Z",
+        )
+
+        assert not output.exists(), "no candidate should be written"
+
+    def test_main_rejects_blocking_diagnostics(self, tmp_path: Path) -> None:
+        """Blocking (non-advisory) diagnostics fail closed (exit 2)."""
+        report = tmp_path / "report.json"
+        _write_writer_report(report, diagnostics=[_BLOCKING_DIAGNOSTIC])
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        output = tmp_path / "candidate.json"
+        sha = hashlib.sha256(report.read_bytes()).hexdigest()
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 2
+        assert not output.exists()
+
+    def test_main_rejects_untrusted_statistics(self, tmp_path: Path) -> None:
+        """An explicit trusted=false statistics flag fails closed (exit 2)."""
+        report = tmp_path / "report.json"
+        _write_writer_report(report, statistics={"trusted": False})
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        output = tmp_path / "candidate.json"
+        sha = hashlib.sha256(report.read_bytes()).hexdigest()
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 2
+        assert not output.exists()
+
+    def test_main_rejects_unapproved_current_finding(
+        self, tmp_path: Path,
+    ) -> None:
+        """A current finding with no approved triage entry is a hard exit 1.
+
+        This is the bulk-generation refusal: an unreviewed (or partially
+        reviewed) report can never be copied into a baseline, because the
+        approved-debt set must exactly equal the current finding set.
+        """
+        finding = _make_finding()
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report, findings=[finding])
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])  # empty manifest: nothing approved
+        output = tmp_path / "candidate.json"
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 1
+        assert not output.exists()
+
+    def test_main_rejects_duplicate_triage_fingerprints(
+        self, tmp_path: Path,
+    ) -> None:
+        """Duplicate fingerprints in the manifest fail closed (exit 2)."""
+        approval = self._approval_time()
+        expires = (approval.date() + timedelta(days=30)).isoformat()
+        finding = _make_finding()
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report, findings=[finding])
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(
+            triage,
+            [
+                _approved_writer_entry(finding.fingerprint, expires=expires),
+                _approved_writer_entry(finding.fingerprint, expires=expires),
+            ],
+        )
+        output = tmp_path / "candidate.json"
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 2
+        assert not output.exists()
+
+    def test_main_rejects_stale_manifest_fingerprint(
+        self, tmp_path: Path,
+    ) -> None:
+        """A manifest fingerprint absent from the current report exits 1."""
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report)  # zero findings
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(
+            triage,
+            [_approved_writer_entry(
+                "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app/src/gone/Fixed.kt",
+                expires="2026-09-30",
+            )],
+        )
+        output = tmp_path / "candidate.json"
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 1
+        assert not output.exists()
+
+    def test_main_rejects_expiry_beyond_max_days(self, tmp_path: Path) -> None:
+        """Expiry more than --expires-max-days after approval exits 1."""
+        approval = self._approval_time()
+        generated_at = approval.strftime("%Y-%m-%dT00:00:00Z")
+        too_far = (approval.date() + timedelta(days=61)).isoformat()
+        finding = _make_finding()
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report, findings=[finding])
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(
+            triage, [_approved_writer_entry(finding.fingerprint, expires=too_far)]
+        )
+        output = tmp_path / "candidate.json"
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at=generated_at,
+            )
+        assert exc.value.code == 1
+        assert not output.exists()
+
+    def test_main_accepts_expiry_at_max_days_boundary(
+        self, tmp_path: Path,
+    ) -> None:
+        """Expiry exactly --expires-max-days (60) days after approval passes."""
+        approval = self._approval_time()
+        generated_at = approval.strftime("%Y-%m-%dT00:00:00Z")
+        boundary = (approval.date() + timedelta(days=60)).isoformat()
+        finding = _make_finding()
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report, findings=[finding])
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(
+            triage, [_approved_writer_entry(finding.fingerprint, expires=boundary)]
+        )
+        output = tmp_path / "candidate.json"
+
+        self._run_writer(
+            tmp_path,
+            report=report,
+            report_sha=sha,
+            triage=triage,
+            output=output,
+            generated_at=generated_at,
+        )
+
+        assert output.exists(), "boundary expiry must be accepted"
+        data = json.loads(output.read_text(encoding="utf-8"))
+        assert data["entries"][0]["expires"] == boundary
+
+    def test_main_rejects_expiry_beyond_custom_max_days(
+        self, tmp_path: Path,
+    ) -> None:
+        """A smaller --expires-max-days horizon is enforced (30 vs 31)."""
+        approval = self._approval_time()
+        generated_at = approval.strftime("%Y-%m-%dT00:00:00Z")
+        too_far = (approval.date() + timedelta(days=31)).isoformat()
+        finding = _make_finding()
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report, findings=[finding])
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(
+            triage, [_approved_writer_entry(finding.fingerprint, expires=too_far)]
+        )
+        output = tmp_path / "candidate.json"
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at=generated_at,
+                extra_args=["--expires-max-days", "30"],
+            )
+        assert exc.value.code == 1
+        assert not output.exists()
+
+    def test_main_rejects_output_colliding_with_report(
+        self, tmp_path: Path,
+    ) -> None:
+        """Output path equal to the v2 report fails closed (exit 2)."""
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report)
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        before = report.read_bytes()
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=report,  # collision with the evidence report
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 2
+        assert report.read_bytes() == before, "evidence report was overwritten"
+
+    def test_main_rejects_output_colliding_with_active_policy(
+        self, tmp_path: Path,
+    ) -> None:
+        """Output path equal to the active ownership policy fails closed."""
+        report = tmp_path / "report.json"
+        sha = _write_writer_report(report)
+        triage = tmp_path / "triage.yml"
+        _write_writer_triage(triage, [])
+        policy = tmp_path / "active_policy.yml"
+        policy.write_text("policy: authoritative-v2\n", encoding="utf-8")
+        before = policy.read_bytes()
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=policy,  # collision with the active policy
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 2
+        assert policy.read_bytes() == before, "active policy was overwritten"

@@ -738,7 +738,7 @@ tasks.named("check") {
 // Required inputs are validated BEFORE execution:
 //   scripts/ci/guard_ratchet.py
 //   scripts/verify_db_access_boundaries.py
-//   config/baselines/db_access.json
+//   config/baselines/db_access_v2.json
 //   config/guards/db_ownership_policy.yml
 //   config/guards/db_structural_exceptions.yml
 //   config/guards/db_structural_exceptions_expected_methods.yml
@@ -749,7 +749,7 @@ tasks.named("check") {
 // Test-only path overrides (production CI must use the defaults):
 //   -PdbGuardRatchetPath=...                 scripts/ci/guard_ratchet.py
 //   -PdbGuardScriptPath=...                  scripts/verify_db_access_boundaries.py
-//   -PdbGuardBaselinePath=...                config/baselines/db_access.json
+//   -PdbGuardBaselinePath=...                config/baselines/db_access_v2.json
 //   -PdbGuardOwnershipPolicyPath=...         config/guards/db_ownership_policy.yml
 //   -PdbGuardStructuralExceptionsPath=...    config/guards/db_structural_exceptions.yml
 //   -PdbGuardStructuralManifestPath=...      config/guards/db_structural_exceptions_expected_methods.yml
@@ -796,7 +796,7 @@ tasks.register("verifyDbAccessBoundaries") {
 
         val ratchetFile = resolveDbGuardPath("scripts/ci/guard_ratchet.py", "dbGuardRatchetPath")
         val guardFile = resolveDbGuardPath("scripts/verify_db_access_boundaries.py", "dbGuardScriptPath")
-        val baselineFile = resolveDbGuardPath("config/baselines/db_access.json", "dbGuardBaselinePath")
+        val baselineFile = resolveDbGuardPath("config/baselines/db_access_v2.json", "dbGuardBaselinePath")
         val ownershipPolicyFile = resolveDbGuardPath(
             "config/guards/db_ownership_policy.yml", "dbGuardOwnershipPolicyPath"
         )
@@ -813,7 +813,7 @@ tasks.register("verifyDbAccessBoundaries") {
         val requiredInputs = listOf(
             "scripts/ci/guard_ratchet.py" to ratchetFile,
             "scripts/verify_db_access_boundaries.py" to guardFile,
-            "config/baselines/db_access.json" to baselineFile,
+            "config/baselines/db_access_v2.json" to baselineFile,
             "config/guards/db_ownership_policy.yml" to ownershipPolicyFile,
             "config/guards/db_structural_exceptions.yml" to structuralExceptionsFile,
             "config/guards/db_structural_exceptions_expected_methods.yml" to structuralManifestFile,
@@ -917,7 +917,7 @@ tasks.register("verifyDbAccessBoundaries") {
             )
             2 -> throw GradleException(
                 "verifyDbAccessBoundaries: infrastructure error (missing baseline, malformed config, or ratchet failure). " +
-                "Check that config/baselines/db_access.json exists and is valid, and that the DB guard scripts " +
+                "Check that config/baselines/db_access_v2.json exists and is valid, and that the DB guard scripts " +
                 "and policy files under config/guards/ are present and valid."
             )
             else -> throw GradleException("verifyDbAccessBoundaries: unexpected exit code ${result.exitValue}")

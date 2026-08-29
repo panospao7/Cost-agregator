@@ -139,7 +139,7 @@ RATCHET_SCRIPT = Path(__file__).resolve().parent / "guard_ratchet.py"
 REQUIRED_INPUTS = [
     "scripts/ci/guard_ratchet.py",
     "scripts/verify_db_access_boundaries.py",
-    "config/baselines/db_access.json",
+    "config/baselines/db_access_v2.json",
     "config/guards/db_ownership_policy.yml",
     "config/guards/db_structural_exceptions.yml",
     "config/guards/db_structural_exceptions_expected_methods.yml",
@@ -264,7 +264,7 @@ def test_failure_message_uses_canonical_policy_paths() -> None:
 
 def test_infrastructure_exit_message_mentions_baseline() -> None:
     task = _verify_task_text()
-    assert "config/baselines/db_access.json" in task
+    assert "config/baselines/db_access_v2.json" in task
     assert "infrastructure error" in task.lower()
 
 
@@ -446,10 +446,10 @@ def test_task_invokes_authoritative_cli_argv_without_legacy_paths() -> None:
     must be passed to the ratchet together with the single-token
     ``--command-arg=--fail-on-violation`` child flag.  The task source must
     never reference the retired legacy shadow-report flag or the archived
-    legacy policy path: the ratchet consumes protocol-v2 reports only.  A
-    legacy v1 baseline surfaces as the controlled
-    RATCHET_V1_BASELINE_INCOMPATIBLE exit 2 until GR-09 migrates it (pinned
-    in test_guard_ratchet_v2.py).
+    legacy policy path: the ratchet consumes protocol-v2 reports only.  GR-09
+    migrated the baseline to the v2 envelope (config/baselines/db_access_v2.json);
+    a legacy v1 baseline still surfaces as the controlled
+    RATCHET_V1_BASELINE_INCOMPATIBLE exit 2 (pinned in test_guard_ratchet_v2.py).
     """
     task = _verify_task_text()
     command_region = _command_construction_region(task)
@@ -477,6 +477,24 @@ def test_task_invokes_authoritative_cli_argv_without_legacy_paths() -> None:
     )
     assert "db_ownership_policy.legacy.yml" not in task, (
         "task references the archived legacy policy path"
+    )
+
+
+def test_task_resolves_v2_baseline_path() -> None:
+    """GR-09: the task resolves dbGuardBaselinePath from the v2 baseline file.
+
+    The legacy v1 baseline (config/baselines/db_access.json) is format-
+    incompatible with the protocol-v2 ratchet (RATCHET_V1_BASELINE_INCOMPATIBLE
+    exit 2), so the task must resolve the baseline from the v2 envelope and
+    must no longer reference the legacy path anywhere in its source.
+    """
+    task = _verify_task_text()
+    assert (
+        'resolveDbGuardPath("config/baselines/db_access_v2.json", '
+        '"dbGuardBaselinePath")' in task
+    ), "task must resolve the baseline from the v2 baseline file"
+    assert "config/baselines/db_access.json" not in task, (
+        "task still references the legacy v1 baseline path"
     )
 
 
@@ -1129,8 +1147,8 @@ def test_helper_missing_guard_script_is_rejected(tmp_path: Path) -> None:
 def test_helper_missing_baseline_is_rejected(tmp_path: Path) -> None:
     """Missing ratchet baseline -> controlled 'not_found' code."""
     root = tmp_path
-    _write_all_valid_inputs_except(root, "config/baselines/db_access.json")
-    _assert_only_input_missing_is_rejected(root, "config/baselines/db_access.json")
+    _write_all_valid_inputs_except(root, "config/baselines/db_access_v2.json")
+    _assert_only_input_missing_is_rejected(root, "config/baselines/db_access_v2.json")
 
 
 def test_helper_missing_ownership_policy_is_rejected(tmp_path: Path) -> None:
@@ -1200,19 +1218,19 @@ def test_helper_accepts_candidate_with_differently_cased_root(
     same variable is uppercased and used for both the root and the candidate.
     """
     root = tmp_path / "repo"
-    target = root / "config" / "baselines" / "db_access.json"
+    target = root / "config" / "baselines" / "db_access_v2.json"
     target.parent.mkdir(parents=True)
     target.write_text("{}", encoding="utf-8")
 
     # Same relative file, but the candidate's textual root portion differs in
     # case from the real repository root passed as ``root``.
     cased_candidate = (
-        Path(str(root).upper()) / "config" / "baselines" / "db_access.json"
+        Path(str(root).upper()) / "config" / "baselines" / "db_access_v2.json"
     )
 
     resolved = resolve_db_guard_path(
         root,
-        "config/baselines/db_access.json",
+        "config/baselines/db_access_v2.json",
         str(cased_candidate),
     )
     # Accepted as Gradle does: same canonical relative file, never outside_root.
@@ -1241,9 +1259,9 @@ def test_helper_relative_override_resolves_against_repository_root(
 
     resolved = validate_db_guard_inputs(
         root,
-        [("config/baselines/db_access.json", "alt/baseline.json")],
+        [("config/baselines/db_access_v2.json", "alt/baseline.json")],
     )
-    assert resolved["config/baselines/db_access.json"] == baseline
+    assert resolved["config/baselines/db_access_v2.json"] == baseline
 
 
 def test_helper_resolve_returns_canonical_path(tmp_path: Path) -> None:

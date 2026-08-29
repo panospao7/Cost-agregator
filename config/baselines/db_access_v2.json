@@ -1,0 +1,8 @@
+{
+  "baseline_schema_version": 2,
+  "guard_output_schema_version": 2,
+  "fingerprint_schema_version": 2,
+  "guard": "db_access",
+  "generated_at": "2026-08-29T00:00:00Z",
+  "entries": []
+}

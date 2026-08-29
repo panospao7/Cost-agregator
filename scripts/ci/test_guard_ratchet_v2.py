@@ -16,8 +16,12 @@ COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA=2, and verifies:
        exit 1 + valid findings                 -> compare (exit 0 or 1)
        exit 1 + missing / malformed / empty report -> exit 2
        exit 2 / unexpected exit                -> exit 2
-       schema/guard mismatch / invalid report  -> exit 2
-       report with diagnostics                 -> exit 2
+        schema/guard mismatch / invalid report  -> exit 2
+        report with blocking (non-advisory)
+        diagnostics                             -> exit 2
+        advisory-only diagnostics (bounded
+        controlled_context["advisory"] marker,
+        GR-07 Option-B amendment)               -> never block; compare normally
   2. Baseline envelope validation:
        baseline_schema_version / guard_output_schema_version /
        fingerprint_schema_version must equal 2  -> exit 2 on mismatch
@@ -35,9 +39,10 @@ COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA=2, and verifies:
          fields (extra metadata, diagnostics, ...) and missing required
          keys are rejected as RATCHET_BASELINE_INVALID -> exit 2, and the
          active baseline file is never rewritten
-         expires must be exact canonical YYYY-MM-DD (unpadded dates, ISO
-         datetimes, and surrounding whitespace)   -> exit 2
-         expired entries                          -> exit 1
+          expires must be exact canonical YYYY-MM-DD (unpadded dates, ISO
+          datetimes, and surrounding whitespace)   -> exit 2
+          expired entries (GR-09 debt rule 9:
+          expired reviewed debt fails closed)     -> exit 2
   3. Count-aware comparison by fingerprint:
        NEW_KEYS / NEW_OCCURRENCES / RESOLVED_KEYS / RESOLVED_OCCURRENCES /
        UNCHANGED
@@ -63,12 +68,13 @@ COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA=2, and verifies:
          rejected for finding protocol v1 (exit 2)
          rejected when the candidate path equals the active baseline path
          candidate generation never modifies the active baseline
-         a candidate is written only when the state is contract-permitting
-         (no new findings, no unresolved classifications, no expired debt);
-         growth / unresolved / expired block the candidate (non-zero, no file)
-  10. v2 exit codes are independent of --fail-on-violation: comparison
-      deltas (new/resolved) and expired debt exit 1 whether or not the flag
-      is present; infrastructure/protocol failures stay exit 2.
+          a candidate is written only when the state is contract-permitting
+          (no new findings, no unresolved classifications, no expired debt);
+          growth / unresolved / expired block the candidate (non-zero, no file)
+   10. v2 exit codes are independent of --fail-on-violation: comparison
+       deltas (new/resolved) exit 1 whether or not the flag is present,
+       expired baseline debt fails closed with 2 in both modes;
+       infrastructure/protocol failures stay exit 2.
   11. Proposal candidate writes are atomic and sanitized: the candidate is
       written via a same-directory temp file, flushed/fsynced, and published
       with os.replace.  A failed write or replace exits 2 with the bounded
@@ -208,6 +214,24 @@ def _report_dict(
         "findings": findings if findings is not None else [],
         "diagnostics": diagnostics if diagnostics is not None else [],
         "statistics": statistics if statistics is not None else {},
+    }
+
+
+def _advisory_diagnostic(
+    path: str = "app/src/main/java/com/example/Ui.kt",
+) -> Dict:
+    """Build an advisory-marked scanner diagnostic (GR-07 Option-B amendment).
+
+    Mirrors the frozen GR-09 evidence shape: a bounded
+    ``DB_SIGNATURE_UNRESOLVED`` diagnostic whose controlled context carries
+    the ``advisory`` marker, which never breaks trust and never blocks the
+    ratchet.
+    """
+    return {
+        "code": "DB_SIGNATURE_UNRESOLVED",
+        "path": path,
+        "symbol": None,
+        "controlled_context": {"advisory": True},
     }
 
 
@@ -409,6 +433,153 @@ def test_v2_exit0_empty_valid_report_passes(tmp_path: Path) -> None:
     assert "Protocol: v2" in result.stdout
     assert "PASS" in result.stdout
     assert "NEW_KEYS: 0" in result.stdout
+
+
+def test_v2_empty_baseline_frozen_zero_findings_report_passes(
+    tmp_path: Path,
+) -> None:
+    """GR-09 frozen-evidence shape: empty baseline + zero-findings trusted
+    report carrying advisory-only diagnostics -> exit 0.
+
+    Pins the exact GR-09 semantics: the empty v2 baseline
+    (config/baselines/db_access_v2.json form: closed envelope, entries: [])
+    against a trusted zero-findings report whose diagnostics are all
+    advisory-marked (GR-07 Option-B amendment) passes with exit 0.  Advisory
+    diagnostics are never baseline-able debt and never block the ratchet.
+    """
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(
+        guard_py,
+        _report_dict(
+            findings=[],
+            diagnostics=[
+                _advisory_diagnostic(
+                    "app/src/main/java/com/example/UiScreen.kt"
+                ),
+                _advisory_diagnostic(
+                    "app/src/main/java/com/example/UiCard.kt"
+                ),
+            ],
+            statistics={
+                "trusted": True,
+                "findingCount": 0,
+                "advisoryDiagnosticCount": 2,
+            },
+        ),
+        exit_code=0,
+    )
+    baseline = _baseline(tmp_path)
+    _write_baseline_v2(baseline, _GUARD, [])
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 0, (
+        f"Expected exit 0, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "Protocol: v2" in result.stdout
+    assert "PASS" in result.stdout
+    assert "Baseline: 0 entries (0 occurrences)" in result.stdout
+    assert "Current:  0 keys (0 occurrences)" in result.stdout
+    assert "EXPIRED_BASELINE_ENTRIES: 0" in result.stdout
+
+
+def test_v2_empty_baseline_new_finding_exits_one(tmp_path: Path) -> None:
+    """empty baseline + one new finding -> exit 1 (no growth past zero debt).
+
+    With the GR-09 empty baseline every current finding is new debt: the
+    ratchet must fail with exit 1 and report the new key.
+    """
+    finding = _finding_dict()
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(guard_py, _report_dict(findings=[finding]), exit_code=1)
+    baseline = _baseline(tmp_path)
+    _write_baseline_v2(baseline, _GUARD, [])
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 1, (
+        f"Expected exit 1, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "NEW_KEYS: 1" in result.stdout
+    assert "FAIL" in result.stdout
+
+
+def test_v2_report_advisory_diagnostics_do_not_mask_growth(
+    tmp_path: Path,
+) -> None:
+    """advisory-only diagnostics + one new finding -> exit 1 (growth wins).
+
+    Advisory diagnostics never mask comparison growth: a report carrying
+    advisory-marked diagnostics and a new finding still exits 1 with the
+    new key reported.
+    """
+    finding = _finding_dict()
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(
+        guard_py,
+        _report_dict(
+            findings=[finding],
+            diagnostics=[_advisory_diagnostic()],
+        ),
+        exit_code=1,
+    )
+    baseline = _baseline(tmp_path)
+    _write_baseline_v2(baseline, _GUARD, [])
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 1, (
+        f"Expected exit 1, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "NEW_KEYS: 1" in result.stdout
+    assert "FAIL" in result.stdout
+
+
+def test_v2_report_blocking_diagnostic_among_advisory_exits_two(
+    tmp_path: Path,
+) -> None:
+    """one blocking diagnostic among advisory ones -> exit 2 (fail closed).
+
+    A single unflagged (blocking) diagnostic makes the report untrusted
+    regardless of any advisory-marked siblings: the ratchet exits 2 with the
+    controlled RATCHET_V2_REPORT_DIAGNOSTICS code and never compares.
+    """
+    blocking = {
+        "code": "DB_SOURCE_UNREADABLE",
+        "path": None,
+        "symbol": None,
+        "controlled_context": {},
+    }
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(
+        guard_py,
+        _report_dict(
+            findings=[],
+            diagnostics=[_advisory_diagnostic(), blocking],
+        ),
+        exit_code=1,
+    )
+    baseline = _baseline(tmp_path)
+    _write_baseline_v2(baseline, _GUARD, [])
+
+    result = _run_ratchet(
+        _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
+    )
+
+    assert result.returncode == 2, (
+        f"Expected exit 2, got {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+    assert "RATCHET_V2_REPORT_DIAGNOSTICS" in result.stderr
 
 
 def test_v2_exit0_report_with_findings_exits_two(tmp_path: Path) -> None:
@@ -956,8 +1127,13 @@ def test_v2_baseline_missing_file_exits_two(tmp_path: Path) -> None:
     assert "does-not-exist.json" not in result.stderr
 
 
-def test_v2_baseline_expired_exits_one(tmp_path: Path) -> None:
-    """expired baseline debt -> exit 1 (policy signal, not infra)."""
+def test_v2_baseline_expired_exits_two(tmp_path: Path) -> None:
+    """expired baseline debt -> exit 2 (fails closed, GR-09 debt rule 9).
+
+    Expired reviewed debt is an invalid baseline configuration state that
+    must be re-reviewed -- never a normal policy-violation signal -- so the
+    ratchet exits 2 even though the entry itself still compares unchanged.
+    """
     finding = _finding_dict()
     guard_py = _guard_py(tmp_path)
     _write_mock_guard(guard_py, _report_dict(findings=[finding]), exit_code=1)
@@ -970,8 +1146,8 @@ def test_v2_baseline_expired_exits_one(tmp_path: Path) -> None:
         _GUARD, [sys.executable, str(guard_py)], baseline, protocol=2, cwd=tmp_path
     )
 
-    assert result.returncode == 1, (
-        f"Expected exit 1, got {result.returncode}\n"
+    assert result.returncode == 2, (
+        f"Expected exit 2, got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert "EXPIRED_BASELINE_ENTRIES: 1" in result.stdout
@@ -1179,13 +1355,13 @@ def test_v2_baseline_noncanonical_expiry_exits_two(
     "expiry, expected_exit, stdout_marker",
     [
         ("2099-12-31", 0, "EXPIRED_BASELINE_ENTRIES: 0"),  # valid canonical, not expired
-        ("2000-01-01", 1, "EXPIRED_BASELINE_ENTRIES: 1"),  # valid canonical, expired
+        ("2000-01-01", 2, "EXPIRED_BASELINE_ENTRIES: 1"),  # valid canonical, expired
     ],
 )
 def test_v2_baseline_canonical_expiry_dates(
     tmp_path: Path, expiry: str, expected_exit: int, stdout_marker: str
 ) -> None:
-    """canonical YYYY-MM-DD expiry dates parse; expired ones stay exit 1."""
+    """canonical YYYY-MM-DD expiry dates parse; expired ones fail closed (2)."""
     finding = _finding_dict()
     guard_py = _guard_py(tmp_path)
     _write_mock_guard(guard_py, _report_dict(findings=[finding]), exit_code=1)
@@ -1929,6 +2105,65 @@ def test_propose_debt_reduction_writes_candidate_only(tmp_path: Path) -> None:
     assert entry["reason"] == "Existing debt awaiting lifecycle migration"
 
 
+def test_propose_candidate_entries_deterministically_sorted(
+    tmp_path: Path,
+) -> None:
+    """Candidate output is deterministic: entries sorted by fingerprint.
+
+    Two proposal runs over the same unchanged state produce byte-identical
+    entry lists (same order, same reviewed metadata) regardless of the
+    baseline's on-disk entry order -- the candidate is canonical and
+    deterministic (plan Step 4 case 13).
+    """
+    zeta = _finding_dict(name="zetaMethod")
+    alpha = _finding_dict(name="alphaMethod")
+    zeta_fp = _fingerprint_of(zeta)
+    alpha_fp = _fingerprint_of(alpha)
+    assert zeta_fp > alpha_fp, "fixture fingerprints must sort zeta after alpha"
+    guard_py = _guard_py(tmp_path)
+    _write_mock_guard(
+        guard_py,
+        _report_dict(findings=[zeta, alpha]),
+        exit_code=1,
+    )
+    baseline = _baseline(tmp_path)
+    # Deliberately NON-canonical on-disk order (zeta first).
+    _write_baseline_v2(
+        baseline, _GUARD,
+        [
+            _entry(zeta_fp, expires="2099-12-31"),
+            _entry(alpha_fp, expires="2099-12-31"),
+        ],
+    )
+    before = baseline.read_bytes()
+    candidate_one = tmp_path / "proposed_one.json"
+    candidate_two = tmp_path / "proposed_two.json"
+
+    for candidate in (candidate_one, candidate_two):
+        result = _run_ratchet(
+            _GUARD, [sys.executable, str(guard_py)], baseline,
+            protocol=2, cwd=tmp_path,
+            extra_args=["--propose-baseline", str(candidate)],
+        )
+        assert result.returncode == 0, (
+            f"Expected exit 0 (unchanged state), got {result.returncode}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+        assert "Proposal: candidate baseline written (2 entries)" in result.stdout
+
+    assert baseline.read_bytes() == before, "active baseline was modified"
+    data_one = json.loads(candidate_one.read_text(encoding="utf-8"))
+    data_two = json.loads(candidate_two.read_text(encoding="utf-8"))
+    assert data_one["entries"] == data_two["entries"], (
+        "candidate entries are not deterministic across runs"
+    )
+    candidate_fps = [entry["fingerprint"] for entry in data_one["entries"]]
+    assert candidate_fps == sorted(candidate_fps), (
+        "candidate entries are not sorted by fingerprint"
+    )
+    assert candidate_fps == [alpha_fp, zeta_fp]
+
+
 def test_propose_growth_writes_no_candidate(tmp_path: Path) -> None:
     """A new-key growth blocks the candidate: non-zero exit, no file.
 
@@ -1967,12 +2202,12 @@ def test_propose_growth_writes_no_candidate(tmp_path: Path) -> None:
 
 
 def test_propose_expired_debt_writes_no_candidate(tmp_path: Path) -> None:
-    """Expired baseline debt blocks the candidate: non-zero exit, no file.
+    """Expired baseline debt blocks the candidate: exit 2 (fail closed), no file.
 
     The proposal path treats expired debt as requiring review before any
     shrink: one controlled PROPOSAL_SKIPPED diagnostic is printed and the run
-    exits non-zero WITHOUT writing a candidate; the active baseline stays
-    byte-identical.
+    exits 2 WITHOUT writing a candidate (GR-09 debt rule 9: expired debt is
+    an invalid baseline state); the active baseline stays byte-identical.
     """
     finding = _finding_dict()
     guard_py = _guard_py(tmp_path)
@@ -1990,8 +2225,8 @@ def test_propose_expired_debt_writes_no_candidate(tmp_path: Path) -> None:
         extra_args=["--propose-baseline", str(candidate)],
     )
 
-    assert result.returncode == 1, (
-        f"Expected exit 1 (expired debt blocks proposal), got {result.returncode}\n"
+    assert result.returncode == 2, (
+        f"Expected exit 2 (expired debt blocks proposal), got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert "EXPIRED_BASELINE_ENTRIES: 1" in result.stdout
@@ -2088,8 +2323,8 @@ def test_v2_output_summary_written_and_matches_process(tmp_path: Path) -> None:
         extra_args=["--output-summary", str(summary_path)],
     )
 
-    assert result.returncode == 1, (
-        f"Expected exit 1 (new/resolved/expired deltas), got {result.returncode}\n"
+    assert result.returncode == 2, (
+        f"Expected exit 2 (expired debt fails closed), got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert "NEW_KEYS: 1" in result.stdout
@@ -2110,7 +2345,7 @@ def test_v2_output_summary_written_and_matches_process(tmp_path: Path) -> None:
     assert data["RESOLVED_OCCURRENCES"] == 0
     assert data["UNCHANGED"] == 2
     assert data["EXPIRED_BASELINE_ENTRIES"] == 1
-    assert data["final_exit_code"] == result.returncode == 1
+    assert data["final_exit_code"] == result.returncode == 2
 
 
 def test_v2_output_summary_write_failure_is_controlled_infra_error(
@@ -2238,8 +2473,8 @@ def test_propose_expired_debt_with_output_summary_writes_fresh_summary(
 
     A proposal blocked by expired baseline debt still writes a fresh summary:
     EXPIRED_BASELINE_ENTRIES is populated and ``final_exit_code`` equals the
-    process exit code (1).  No candidate is written and the active baseline
-    stays byte-identical.
+    process exit code (2 -- expired debt fails closed).  No candidate is
+    written and the active baseline stays byte-identical.
     """
     finding = _finding_dict()
     guard_py = _guard_py(tmp_path)
@@ -2261,8 +2496,8 @@ def test_propose_expired_debt_with_output_summary_writes_fresh_summary(
         ],
     )
 
-    assert result.returncode == 1, (
-        f"Expected exit 1 (expired debt blocks proposal), got {result.returncode}\n"
+    assert result.returncode == 2, (
+        f"Expected exit 2 (expired debt blocks proposal), got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert "EXPIRED_BASELINE_ENTRIES: 1" in result.stdout
@@ -2279,7 +2514,7 @@ def test_propose_expired_debt_with_output_summary_writes_fresh_summary(
     assert data["EXPIRED_BASELINE_ENTRIES"] == 1
     assert data["NEW_KEYS"] == 0
     assert data["UNCHANGED"] == 1
-    assert data["final_exit_code"] == result.returncode == 1
+    assert data["final_exit_code"] == result.returncode == 2
 
 
 def test_propose_debt_reduction_with_output_summary_writes_candidate_and_summary(
@@ -2396,11 +2631,12 @@ def test_propose_diagnostics_with_output_summary_exits_two_and_writes_no_summary
 def test_v2_delta_exit_independent_of_fail_flag(
     tmp_path: Path, kind: str, fail_flag: bool
 ) -> None:
-    """v2 comparison deltas and expired debt exit 1 with or without the flag.
+    """v2 comparison deltas exit 1, expired debt exits 2, with or without the flag.
 
-    The v2 exit code is a policy signal driven by the comparison state, not by
-    --fail-on-violation: new / resolved deltas and expired baseline debt exit 1
-    whether the flag is present or not (infrastructure failures stay 2).
+    The v2 exit code is driven by the comparison state, not by
+    --fail-on-violation: new / resolved deltas exit 1 whether the flag is
+    present or not, expired baseline debt fails closed with 2 in both modes
+    (GR-09 debt rule 9), and infrastructure failures stay 2.
     """
     finding = _finding_dict()
     other = _finding_dict(name="otherMethod")
@@ -2415,14 +2651,17 @@ def test_v2_delta_exit_independent_of_fail_flag(
             baseline, _GUARD, [_entry(other_fp, expires="2099-12-31")]
         )
         marker = "NEW_KEYS: 1"
+        expected_exit = 1
     elif kind == "resolved":
         _write_mock_guard(guard_py, _report_dict(findings=[]), exit_code=0)
         _write_baseline_v2(baseline, _GUARD, [_entry(fp, expires="2099-12-31")])
         marker = "RESOLVED_KEYS: 1"
+        expected_exit = 1
     else:  # expired
         _write_mock_guard(guard_py, _report_dict(findings=[finding]), exit_code=1)
         _write_baseline_v2(baseline, _GUARD, [_entry(fp, expires="2000-01-01")])
         marker = "EXPIRED_BASELINE_ENTRIES: 1"
+        expected_exit = 2
 
     extra_args = ["--fail-on-violation"] if fail_flag else None
     result = _run_ratchet(
@@ -2430,8 +2669,8 @@ def test_v2_delta_exit_independent_of_fail_flag(
         protocol=2, cwd=tmp_path, extra_args=extra_args,
     )
 
-    assert result.returncode == 1, (
-        f"Expected exit 1 for {kind} with fail_flag={fail_flag}, "
+    assert result.returncode == expected_exit, (
+        f"Expected exit {expected_exit} for {kind} with fail_flag={fail_flag}, "
         f"got {result.returncode}\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )

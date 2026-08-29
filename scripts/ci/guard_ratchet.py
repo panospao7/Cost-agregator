@@ -8,14 +8,20 @@ a stored baseline. Reports new, resolved, and unchanged findings.
 Exit codes:
   0 -- no new findings and no stale/resolved baseline entries (pass)
   1 -- policy violation:
-         protocol v1: new or stale/resolved findings detected when
-         --fail-on-violation is enabled
-         protocol v2: ANY comparison delta (new/resolved keys or
-         occurrences) or expired baseline debt -- independent of
-         --fail-on-violation, which has no effect on the v2 exit code
+          protocol v1: new or stale/resolved findings detected when
+          --fail-on-violation is enabled
+          protocol v2: ANY comparison delta (new/resolved keys or
+          occurrences) -- independent of --fail-on-violation, which has
+          no effect on the v2 exit code
   2 -- infrastructure/configuration failure (guard crash, missing or
-       malformed baseline, unlaunchable Python, unexpected child exit,
-       proposal misuse, etc.)
+        malformed baseline, unlaunchable Python, unexpected child exit,
+        proposal misuse, etc.).  Protocol v2: expired baseline debt also
+        fails closed with exit 2 (GR-09 debt rule 9 -- expired reviewed
+        debt is an invalid baseline state that must be re-reviewed, never
+        a normal policy-violation signal), and blocking (non-advisory)
+        report diagnostics are infrastructure failures while advisory
+        diagnostics (bounded controlled_context["advisory"] marker,
+        GR-07 Option-B amendment) never block.
 
 Usage (preferred -- repeatable single-token --command-arg=<value> list, shell=False):
   python scripts/ci/guard_ratchet.py \
@@ -1515,8 +1521,9 @@ class _ProposalResult:
 
     ``status`` is a bounded controlled constant describing the proposal
     outcome (``blocked_growth``, ``blocked_expired``, or ``written``);
-    ``exit_code`` is the exit code the proposal outcome maps to (policy
-    blocks map to 1, a successful candidate write to 0);
+    ``exit_code`` is the exit code the proposal outcome maps to (growth
+    blocks map to 1, expired-debt blocks fail closed with 2, a successful
+    candidate write to 0);
     ``candidate_written`` tells the caller whether a candidate baseline was
     published at the proposal path.  The result lets the v2 flow report a
     proposal-blocking condition and write its summary without exiting early.
@@ -1576,7 +1583,7 @@ def _write_v2_candidate(
         )
     if expired:
         return _ProposalResult(
-            status="blocked_expired", exit_code=1, candidate_written=False
+            status="blocked_expired", exit_code=2, candidate_written=False
         )
 
     # Candidate generation enforces the same entry-count bound as the active
@@ -1694,8 +1701,9 @@ def _main_v2(
     returns a controlled ``_ProposalResult`` (it never exits early), so the
     run still writes its summary and exits with the single final code below.
     The final exit code is the same as without a proposal: any comparison
-    delta or expired debt exits 1 regardless of --fail-on-violation;
-    infrastructure/protocol failures exit 2.
+    delta exits 1 and expired baseline debt fails closed with 2, both
+    regardless of --fail-on-violation; infrastructure/protocol failures
+    exit 2.
     """
     guard_name = args.guard_name
 
@@ -1752,11 +1760,24 @@ def _main_v2(
                 file=sys.stderr,
             )
             sys.exit(2)
-        if report.diagnostics:
+        # Advisory-aware diagnostics gate (GR-07 Option-B amendment, mirrored
+        # from verify_db_access_boundaries._diagnostic_is_advisory): scanner
+        # diagnostics flagged advisory in their bounded controlled context
+        # (controlled_context["advisory"] is True) never break trust and never
+        # block the run; every pre-scan/infrastructure diagnostic is unflagged
+        # and therefore always blocking (fail closed).  Only BLOCKING
+        # diagnostics take the infrastructure exit-2 path -- an advisory-only
+        # trusted report (e.g. the GR-09 zero-findings evidence) compares
+        # normally.
+        blocking_diagnostics = tuple(
+            item for item in report.diagnostics
+            if item.controlled_context.get("advisory") is not True
+        )
+        if blocking_diagnostics:
             print(
                 f"RATCHET_V2_REPORT_DIAGNOSTICS: "
                 f"guard={_sanitize_guard_name(guard_name)} report contains "
-                f"infrastructure diagnostics",
+                f"blocking infrastructure diagnostics",
                 file=sys.stderr,
             )
             sys.exit(2)
@@ -1842,17 +1863,20 @@ def _main_v2(
 
         print_report_v2(guard_name, entries, current_aggregates, comparison, expired)
 
-        # Outcome: expired / new / resolved debt is a policy signal (exit 1);
-        # anything else is exit 0.  Infrastructure/protocol failures exit 2.
-        # The final exit is computed BEFORE the proposal and the summary so a
-        # blocked proposal can still record the exact code the process is
-        # about to exit with.
-        if (
+        # Outcome: expired debt fails closed (exit 2, GR-09 debt rule 9 --
+        # an expired baseline is an invalid configuration state that must be
+        # re-reviewed, never a normal policy signal); new/resolved comparison
+        # deltas are policy signals (exit 1); anything else is exit 0.
+        # Infrastructure/protocol failures exit 2.  The final exit is computed
+        # BEFORE the proposal and the summary so a blocked proposal can still
+        # record the exact code the process is about to exit with.
+        if expired:
+            final_exit = 2
+        elif (
             comparison["new_keys"]
             or comparison["new_occurrences"]
             or comparison["resolved_keys"]
             or comparison["resolved_occurrences"]
-            or expired
         ):
             final_exit = 1
         else:

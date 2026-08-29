@@ -167,8 +167,11 @@ REDACTED_MARKER = "<redacted>"
 
 # Forbidden files that the GR-00 plan prohibits from changing.  The preservation
 # checker fails closed (ok=False) when any of these differ from HEAD.
+# GR-09: the v2 baseline is a control-plane input (suite/registry/Gradle wiring)
+# and is preserved alongside the legacy v1 baseline file.
 FORBIDDEN_PRESERVATION_PATHS = (
     "config/baselines/db_access.json",
+    "config/baselines/db_access_v2.json",
     "config/guards/db_ownership_policy.yml",
     "config/guards/db_ownership_policy.signatures.candidate.yml",
     "config/guards/db_structural_exceptions.yml",
@@ -186,6 +189,7 @@ INPUT_DISCOVERY_PATTERNS = (
     "config/guards/db_*.yml",
     "config/guards/production_source_roots.yml",
     "config/baselines/db_access.json",
+    "config/baselines/db_access_v2.json",
     "scripts/verify_db_access_boundaries.py",
     "scripts/ci/guard_ratchet.py",
     "scripts/ci/guard_registry.py",
@@ -202,6 +206,7 @@ INPUT_DISCOVERY_PATTERNS = (
 # by the missing-input diagnostic.
 REQUIRED_INPUT_CANDIDATES = (
     "config/baselines/db_access.json",
+    "config/baselines/db_access_v2.json",
     "config/guards/db_ownership_policy.yml",
     "config/guards/db_ownership_policy.signatures.candidate.yml",
     "config/guards/db_structural_exceptions.yml",

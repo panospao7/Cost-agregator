@@ -102,7 +102,7 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
             "--command-arg=config/guards/db_ownership_policy.yml",
             "--command-arg=--structural-exceptions",
             "--command-arg=config/guards/db_structural_exceptions.yml",
-            "--baseline", "config/baselines/db_access.json",
+            "--baseline", "config/baselines/db_access_v2.json",
             "--fail-on-violation",
             "--ci-mode",
         ],

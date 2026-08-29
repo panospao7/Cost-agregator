@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "guard": "db_access",
+  "approvedDebt": [],
+  "fixedInGr08Count": 497,
+  "evidenceReportSha256": "3d452c7f2d7a993ebb187d39b8c319d559f42abe7e2685b1d16934c7a695c588",
+  "approvedAt": "2026-08-29",
+  "reviewer": "@panospao7"
+}

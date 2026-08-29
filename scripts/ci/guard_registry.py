@@ -206,7 +206,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "script": "scripts/verify_db_access_boundaries.py",
         "tests": "scripts/test_verify_db_access_boundaries.py",
         "mode": "ratchet",
-        "baseline": "config/baselines/db_access.json",
+        "baseline": "config/baselines/db_access_v2.json",
         "allowlist": None,  # Legacy config/db_access_allowlist.yml is superseded
         "policies": [
             "config/guards/db_ownership_policy.yml",

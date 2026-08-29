@@ -609,10 +609,10 @@ class TestDbAccessRegistryMetadata:
         assert "--fail-on-violation" in flags
         assert "--structural-manifest" in flags
 
-    def test_baseline_still_v1_non_migrated(self):
-        """db_access baseline must still be the v1 (non-migrated) file."""
+    def test_baseline_migrated_to_v2(self):
+        """db_access baseline must be the v2 (GR-09-migrated) file."""
         entry = _reg.GUARD_REGISTRY["db_access"]
-        assert entry.get("baseline") == "config/baselines/db_access.json"
+        assert entry.get("baseline") == "config/baselines/db_access_v2.json"
 
 
 class TestDbAccessSuiteCommandTokens:
@@ -692,15 +692,32 @@ class TestDbAccessSuiteCommandTokens:
                 return
         assert False, "db_access not found in GUARD_MANIFEST"
 
+    def test_db_access_baseline_path_is_v2(self):
+        """The db_access ratchet command must pin the v2 baseline (GR-09)."""
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                assert "--baseline" in command, (
+                    f"--baseline not in command tokens: {command}"
+                )
+                assert "config/baselines/db_access_v2.json" in command, (
+                    f"v2 baseline path not in command tokens: {command}"
+                )
+                assert "config/baselines/db_access.json" not in command, (
+                    f"legacy v1 baseline path still in command tokens: {command}"
+                )
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
     def test_db_access_child_argv_is_authoritative_v2_cli(self):
         """The db_access child command must be the authoritative protocol-v2
         CLI argv: scripts/verify_db_access_boundaries.py invoked with
         --fail-on-violation, and the full command must never reference the
         retired legacy shadow-report flag or the archived legacy policy path.
 
-        The ratchet consumes protocol-v2 reports only; a legacy v1 baseline
-        surfaces as the controlled RATCHET_V1_BASELINE_INCOMPATIBLE exit 2
-        until GR-09 migrates it (pinned in test_guard_ratchet_v2.py).
+        The ratchet consumes protocol-v2 reports only; the suite pins the v2
+        baseline (config/baselines/db_access_v2.json, GR-09), while a legacy
+        v1 baseline surfaces as the controlled RATCHET_V1_BASELINE_INCOMPATIBLE
+        exit 2 (pinned in test_guard_ratchet_v2.py).
         """
         for name, command, _ in _runner.GUARD_MANIFEST:
             if name == "db_access":

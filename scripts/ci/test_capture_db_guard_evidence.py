@@ -54,6 +54,7 @@ TRACKED_FILES = [
     "scripts/ci/run_static_guard_suite.py",
     "scripts/ci/guard_findings.py",
     "config/baselines/db_access.json",
+    "config/baselines/db_access_v2.json",
     "config/guards/db_ownership_policy.yml",
     "config/guards/db_ownership_policy.signatures.candidate.yml",
     "config/guards/db_structural_exceptions.yml",
@@ -1409,6 +1410,51 @@ def test_input_manifest_includes_production_source_roots(tmp_path):
     assert rc == 0
 
 
+def test_input_manifest_includes_v2_baseline(tmp_path):
+    """GR-09: the v2 baseline is hashed in the manifest like every required input.
+
+    ``config/baselines/db_access_v2.json`` is a control-plane input (suite,
+    registry, and Gradle wiring all consume it), so the built input manifest
+    must observe it (exists + blob id + sha256) and the capture must not fail
+    closed over it when it is present.
+    """
+    rel = "config/baselines/db_access_v2.json"
+    assert rel in cap.REQUIRED_INPUT_CANDIDATES
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    entries = {e["rel_path"]: e for e in evidence["input_manifest"]}
+    entry = entries.get(rel)
+    assert entry is not None, f"{rel} missing from the built input manifest"
+    assert entry["exists"] is True
+    assert entry["blob_id"]
+    assert entry["sha256"]
+    assert not any(w.startswith(f"missing-required-input:{rel}") or
+                   w.startswith(f"missing-blob-id:{rel}")
+                   for w in evidence["infrastructure_warnings"])
+    assert rc == 0
+
+
+def test_v2_baseline_is_control_plane_input():
+    """GR-09: the v2 baseline is preserved, discovered, and required.
+
+    The capture tool must treat ``config/baselines/db_access_v2.json`` as a
+    control-plane input: forbidden to change (preservation checker), discovered
+    via the tracked-input pathspecs, and required in the input manifest.  The
+    legacy v1 baseline file stays preserved (GR-00 freeze) and required.
+    """
+    v2 = "config/baselines/db_access_v2.json"
+    legacy = "config/baselines/db_access.json"
+    assert v2 in cap.FORBIDDEN_PRESERVATION_PATHS
+    assert legacy in cap.FORBIDDEN_PRESERVATION_PATHS
+    assert v2 in cap.INPUT_DISCOVERY_PATTERNS
+    assert v2 in cap.REQUIRED_INPUT_CANDIDATES
+    assert legacy in cap.REQUIRED_INPUT_CANDIDATES
+
+
 # ── New tests: realpath / symlink / custom-matrix validation (requirement 3) ────
 def test_symlink_escape_rejected(tmp_path, monkeypatch):
     """Fail closed when the resolved (realpath) output escapes the repo root."""
@@ -2543,6 +2589,22 @@ def test_preservation_fails_on_mixed_changes(tmp_path):
     assert result["policy_ok"] is False
     assert result["production_ok"] is False
     assert result["untracked_ok"] is False
+
+
+def test_preservation_fails_on_staged_v2_baseline_change(tmp_path):
+    """A staged change to the v2 baseline (control-plane input) fails preservation.
+
+    GR-09 added ``config/baselines/db_access_v2.json`` to
+    ``FORBIDDEN_PRESERVATION_PATHS``; the preservation checker must fail closed
+    when it changes on any surface, exactly like the legacy v1 baseline file.
+    """
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(
+        dirty=False, staged_diff="config/baselines/db_access_v2.json\n")
+    result = cap.preservation_check(str(root), runner)
+    assert result["ok"] is False
+    assert result["policy_ok"] is False
+    assert result["staged_ok"] is False
 
 
 # ── New tests: complete custom CommandSpec schema validation (req 2 & 3) ──────────
