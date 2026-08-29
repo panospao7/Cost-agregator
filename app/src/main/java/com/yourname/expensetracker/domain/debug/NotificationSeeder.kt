@@ -2,10 +2,13 @@ package com.yourname.expensetracker.domain.debug
 
 import com.yourname.expensetracker.data.database.entity.RawNotification
 import com.yourname.expensetracker.domain.notification.RawNotificationFingerprint
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import kotlin.random.Random
 
-class NotificationSeeder @Inject constructor() {
+class NotificationSeeder @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
 
     val categories = mapOf(
         "Groceries" to listOf("AB Vassilopoulos", "Sklavenitis", "Lidl", "Masoutis", "My Market"),
@@ -39,7 +42,7 @@ class NotificationSeeder @Inject constructor() {
      */
     fun generate(count: Int, currencySymbol: String = "€"): List<RawNotification> {
         val notifications = mutableListOf<RawNotification>()
-        val now = System.currentTimeMillis()
+        val now = timeProvider.now()
         val twoMonthsMs = 60L * 24 * 60 * 60 * 1000
 
         for (i in 0 until count) {
@@ -94,7 +97,7 @@ class NotificationSeeder @Inject constructor() {
             title = "Deposit Received",
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis(),
+            capturedAt = timeProvider.now(),
             dedupeFingerprint = RawNotificationFingerprint.compute(
                 packageName = packageName,
                 title = "Deposit Received",
@@ -123,7 +126,7 @@ class NotificationSeeder @Inject constructor() {
             title = "Transaction Alert",
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis(),
+            capturedAt = timeProvider.now(),
             dedupeFingerprint = RawNotificationFingerprint.compute(
                 packageName = "com.simulation.$source".lowercase(),
                 title = "Transaction Alert",
@@ -154,7 +157,7 @@ class NotificationSeeder @Inject constructor() {
             title = "Recurring Payment",
             text = "Spent €%.2f at %s".format(amount, merchant),
             timestamp = date,
-            capturedAt = System.currentTimeMillis(),
+            capturedAt = timeProvider.now(),
             dedupeFingerprint = RawNotificationFingerprint.compute(
                 packageName = "com.simulation.revolut",
                 title = "Recurring Payment",
@@ -175,7 +178,7 @@ class NotificationSeeder @Inject constructor() {
             title = spamTitle,
             text = text,
             timestamp = date,
-            capturedAt = System.currentTimeMillis(),
+            capturedAt = timeProvider.now(),
             dedupeFingerprint = RawNotificationFingerprint.compute(
                 packageName = "com.android.mms",
                 title = spamTitle,
@@ -196,7 +199,7 @@ class NotificationSeeder @Inject constructor() {
             title = "Payment",
             text = unknownText,
             timestamp = date,
-            capturedAt = System.currentTimeMillis(),
+            capturedAt = timeProvider.now(),
             dedupeFingerprint = RawNotificationFingerprint.compute(
                 packageName = "com.unknown.app",
                 title = "Payment",

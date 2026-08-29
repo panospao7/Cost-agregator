@@ -9,6 +9,7 @@ import java.time.format.DateTimeParseException
 import java.util.*
 import java.util.regex.Pattern
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.TimeProvider
 
 /**
  * Data class representing extracted warranty information from OCR text.
@@ -28,10 +29,12 @@ data class WarrantyExtractionData(
 
 /**
  * Extracts warranty information from OCR receipt text using regex patterns.
- * 
+ *
  * This is a lightweight, on-device extraction that doesn't require cloud AI.
  */
-class WarrantyTextExtractor {
+class WarrantyTextExtractor(
+    private val timeProvider: TimeProvider
+) {
 
     private companion object {
         private const val MAX_RECEIPT_AGE_YEARS = 50L
@@ -184,11 +187,12 @@ class WarrantyTextExtractor {
     
     /**
      * Checks if the date is reasonable (not in the future, not too old).
+     * "Today" is derived from the injected [TimeProvider], never the wall clock.
      */
     private fun isReasonablePurchaseDate(timestamp: Long): Boolean {
         val zoneId = ZoneId.systemDefault()
         val purchaseDate = Instant.ofEpochMilli(timestamp).atZone(zoneId).toLocalDate()
-        val today = LocalDate.now(zoneId)
+        val today = Instant.ofEpochMilli(timeProvider.now()).atZone(zoneId).toLocalDate()
         val oldestAllowedDate = today.minusYears(MAX_RECEIPT_AGE_YEARS)
 
         return !purchaseDate.isAfter(today) && !purchaseDate.isBefore(oldestAllowedDate)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.content.FileProvider
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import timber.log.Timber
 import java.io.File
@@ -26,7 +27,8 @@ import javax.inject.Singleton
  */
 @Singleton
 class ReceiptAssetStore @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) {
     private val receiptsDir: File
         get() = File(context.filesDir, RECEIPTS_DIR).also {
@@ -44,7 +46,7 @@ class ReceiptAssetStore @Inject constructor(
         val cacheDir = File(context.cacheDir, CACHE_SUBDIR)
         if (!cacheDir.exists()) cacheDir.mkdirs()
 
-        val file = File(cacheDir, "camera_${System.currentTimeMillis()}.jpg")
+        val file = File(cacheDir, "camera_${timeProvider.now()}.jpg")
 
         return FileProvider.getUriForFile(
             context,
@@ -66,7 +68,7 @@ class ReceiptAssetStore @Inject constructor(
     suspend fun persistReceiptAsset(sourceUri: Uri): Result<String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         runCatching {
             val dir = receiptsDir
-            val fileName = "${System.currentTimeMillis()}_${UUID.randomUUID()}.jpg"
+            val fileName = "${timeProvider.now()}_${UUID.randomUUID()}.jpg"
             val destFile = File(dir, fileName)
 
             context.contentResolver.openInputStream(sourceUri)?.use { input ->

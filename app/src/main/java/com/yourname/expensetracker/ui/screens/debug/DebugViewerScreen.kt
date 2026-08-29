@@ -34,7 +34,13 @@ import com.yourname.expensetracker.domain.parser.ParsedTransaction
 @Composable
 fun DebugViewerScreen(
     debugData: DebugData,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    /**
+     * G-TIME-01: reference time for the "Copy as JSON" export metadata.
+     * Callers pass their ViewModel's TimeProvider-backed instant (S12-008
+     * pattern); this screen never reads the wall clock itself.
+     */
+    referenceNowMillis: Long
 ) {
     var selectedTab by remember { mutableStateOf(0) }
     
@@ -100,9 +106,9 @@ fun DebugViewerScreen(
             }
             
             when (selectedTab) {
-                0 -> RawTextTab(debugData)
-                1 -> ParsedDataTab(debugData)
-                2 -> LogsTab(debugData)
+                0 -> RawTextTab(debugData, referenceNowMillis)
+                1 -> ParsedDataTab(debugData, referenceNowMillis)
+                2 -> LogsTab(debugData, referenceNowMillis)
                 3 -> IssuesTab(debugData.issues)
             }
         }
@@ -110,7 +116,10 @@ fun DebugViewerScreen(
 }
 
 @Composable
-private fun RawTextTab(debugData: DebugData) {
+private fun RawTextTab(
+    debugData: DebugData,
+    referenceNowMillis: Long
+) {
     var searchText by remember { mutableStateOf("") }
     val clipboardManager = LocalClipboardManager.current
     
@@ -153,7 +162,7 @@ private fun RawTextTab(debugData: DebugData) {
                 
                 TextButton(
                     onClick = {
-                        clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
+                        clipboardManager.setText(AnnotatedString(debugData.toJson(referenceNowMillis)))
                     }
                 ) {
                     Icon(Icons.Default.Code, null, Modifier.size(16.dp))
@@ -196,7 +205,10 @@ private fun RawTextTab(debugData: DebugData) {
 }
 
 @Composable
-private fun ParsedDataTab(debugData: DebugData) {
+private fun ParsedDataTab(
+    debugData: DebugData,
+    referenceNowMillis: Long
+) {
     val clipboardManager = LocalClipboardManager.current
     
     if (debugData.parsedTransactions.isEmpty()) {
@@ -261,7 +273,7 @@ private fun ParsedDataTab(debugData: DebugData) {
                     
                     TextButton(
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
+                            clipboardManager.setText(AnnotatedString(debugData.toJson(referenceNowMillis)))
                         },
                         modifier = Modifier.align(Alignment.End)
                     ) {
@@ -384,7 +396,10 @@ private fun DetailRow(label: String, value: String) {
 }
 
 @Composable
-private fun LogsTab(debugData: DebugData) {
+private fun LogsTab(
+    debugData: DebugData,
+    referenceNowMillis: Long
+) {
     val clipboardManager = LocalClipboardManager.current
     
     Column(modifier = Modifier.fillMaxSize()) {
@@ -397,7 +412,7 @@ private fun LogsTab(debugData: DebugData) {
         ) {
             TextButton(
                 onClick = {
-                    clipboardManager.setText(AnnotatedString(debugData.toJson(System.currentTimeMillis())))
+                    clipboardManager.setText(AnnotatedString(debugData.toJson(referenceNowMillis)))
                 }
             ) {
                 Icon(Icons.Default.Code, null, Modifier.size(16.dp))

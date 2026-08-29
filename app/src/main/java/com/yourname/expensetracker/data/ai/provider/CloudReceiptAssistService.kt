@@ -56,7 +56,12 @@ class CloudReceiptAssistService @Inject constructor(
     private val cloudPayloadPolicy: CloudPayloadPolicy,
     // P8F-03: cloud-call provenance audit. Hilt resolves this from the PrivacyModule
     // binding; the default keeps @VisibleForTesting/secondary constructors fail-closed.
-    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP
+    private val auditLogger: PrivacyAuditLogger = PrivacyAuditLogger.NO_OP,
+    // G-TIME-01: reference clock for AI-output validation. Hilt injects the bound
+    // TimeProvider; the default keeps the @VisibleForTesting secondary constructor
+    // compiling unchanged.
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
+        com.yourname.expensetracker.domain.util.SystemTimeProvider()
 ) : ReceiptAssistService {
 
     private var apiKeyOverride: String? = null
@@ -564,7 +569,7 @@ class CloudReceiptAssistService @Inject constructor(
         val validatedTaxAmount = suggestion.optJSONObject("taxAmount")?.toSuggestedDoubleOrNull()
             ?.let { if (!AiOutputValidators.isPositiveAmount(it.value)) null else it }
         val validatedDate = suggestion.optJSONObject("date")?.toSuggestedLongOrNull()
-            ?.takeIf { AiOutputValidators.isPlausibleEpochMillis(it.value) }
+            ?.takeIf { AiOutputValidators.isPlausibleEpochMillis(it.value, timeProvider.now()) }
 
         return ReceiptAssistSuggestion(
             merchant = suggestion.optJSONObject("merchant")?.toSuggestedStringOrNull(),

@@ -14,7 +14,9 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import java.util.Calendar
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -215,8 +217,9 @@ class TaxEstimator @Inject constructor(
         var totalFraction = 0.0
 
         while (cursor < endDate) {
-            val calendar = Calendar.getInstance().apply { timeInMillis = cursor }
-            val year = calendar.get(Calendar.YEAR)
+            // G-TIME-01: pure derivation from the [cursor] parameter (java.time,
+            // system default timezone — same year field the Calendar produced).
+            val year = java.time.Instant.ofEpochMilli(cursor).atZone(java.time.ZoneId.systemDefault()).year
             val yearStart = startOfYear(year)
             val nextYearStart = startOfYear(year + 1)
             val segmentEnd = minOf(endDate, nextYearStart)
@@ -237,10 +240,16 @@ class TaxEstimator @Inject constructor(
         // T03/T09-FIXED: Use configured fiscal year start day/month instead of hardcoded Jan 1.
         val month = taxSettings.getFiscalYearStartMonth() - 1 // Calendar month is 0-based
         val day = taxSettings.getFiscalYearStartDay()
-        return Calendar.getInstance().apply {
-            set(year, month, day, 0, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+        // G-TIME-01: java.time construction of the fiscal-year start midnight.
+        // The month/day arithmetic below preserves the former lenient Calendar
+        // normalization exactly (month 12 → January of year+1; day overflow
+        // rolls into the following month), without reading the wall clock.
+        return java.time.LocalDate.of(year, 1, 1)
+            .plusMonths(month.toLong())
+            .plusDays((day - 1).toLong())
+            .atStartOfDay(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
     }
 
     /**

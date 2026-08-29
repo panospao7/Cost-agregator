@@ -518,7 +518,8 @@ class BankStatementParser @Inject constructor(
             merchant = merchantCleaner.clean(merchant),
             type = type,
             confidence = 0.95f,
-            date = timestamp
+            date = timestamp,
+            validationNowEpochMs = timeProvider.now()
         )
         if (BuildConfig.DEBUG) Timber.d("RevolutParser: Successfully parsed -> [REDACTED] | [REDACTED] | [REDACTED]")
         return tx
@@ -622,7 +623,8 @@ class BankStatementParser @Inject constructor(
                     merchant = cleanedMerchant,
                     type = type,
                     confidence = 0.90f,
-                    date = timestamp
+                    date = timestamp,
+                    validationNowEpochMs = timeProvider.now()
                 )
             } else {
                 // ── Old format ───────────────────────────────────────────────
@@ -676,7 +678,8 @@ class BankStatementParser @Inject constructor(
                     merchant = cleanedMerchant,
                     type = type,
                     confidence = 0.90f,
-                    date = timestamp
+                    date = timestamp,
+                    validationNowEpochMs = timeProvider.now()
                 )
             }
         } catch (e: Exception) {
@@ -930,7 +933,8 @@ class BankStatementParser @Inject constructor(
             merchant = merchantCleaner.clean(merchant),
             type = type,
             confidence = com.yourname.expensetracker.domain.util.AppConstants.Confidence.RECEIPT_FALLBACK,
-            date = dateValue
+            date = dateValue,
+            validationNowEpochMs = timeProvider.now()
         )
     }
 

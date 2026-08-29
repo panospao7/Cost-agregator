@@ -28,7 +28,6 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
@@ -181,24 +180,33 @@ fun CashFlowCalendarScreen(
                     }
                 }
                 is com.yourname.expensetracker.ui.model.LoadableUiState.Data -> {
-                val calendar = Calendar.getInstance()
-                calendar.time = state.currentMonth
-                calendar.set(Calendar.DAY_OF_MONTH, 1)
-                
-                // Get first day of week
-                val firstDayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
-                val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-                
+                // G-TIME-01: pure derivation from state.currentMonth (java.time,
+                // system default timezone). The per-day Date keeps the same
+                // time-of-day the Calendar version carried, and the leading-cell
+                // offset uses Calendar-style day-of-week numbering (SUNDAY=1).
+                val zone = ZoneId.systemDefault()
+                val baseZoned = state.currentMonth.toInstant().atZone(zone)
+                val monthDate = baseZoned.toLocalDate().withDayOfMonth(1)
+
+                // Get first day of week (Calendar-style: SUNDAY=1..SATURDAY=7)
+                val firstDayOfWeek = monthDate.dayOfWeek.value % 7 + 1
+                val daysInMonth = monthDate.lengthOfMonth()
+
                 // Create list with empty cells for alignment
                 val days = mutableListOf<DayCell?>()
-                
+
                 // Add empty cells for days before start of month
                 repeat(firstDayOfWeek - 1) { days.add(null) }
-                
+
                 // Add actual days
                 repeat(daysInMonth) { day ->
-                    calendar.set(Calendar.DAY_OF_MONTH, day + 1)
-                    val date = calendar.time
+                    val date = Date(
+                        monthDate.plusDays(day.toLong())
+                            .atTime(baseZoned.toLocalTime())
+                            .atZone(zone)
+                            .toInstant()
+                            .toEpochMilli()
+                    )
                     val cashFlow = dailyCashFlowByDate[normalizeDateKey(date)]
                     days.add(DayCell(day + 1, date, cashFlow))
                 }
@@ -328,14 +336,10 @@ private fun getRiskColor(riskLevel: CashFlowRiskLevel): Color {
 }
 
 private fun normalizeDateKey(date: Date): Long {
-    return Calendar.getInstance().run {
-        time = date
-        set(Calendar.HOUR_OF_DAY, 0)
-        set(Calendar.MINUTE, 0)
-        set(Calendar.SECOND, 0)
-        set(Calendar.MILLISECOND, 0)
-        timeInMillis
-    }
+    // G-TIME-01: pure derivation from the [date] parameter (java.time,
+    // system default timezone — same local midnight the Calendar produced).
+    return date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate()
+        .atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
 }
 
 @Composable

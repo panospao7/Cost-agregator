@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,7 +38,8 @@ data class BackupRestoreUiState(
 class BackupRestoreViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val databaseBackupRepository: DatabaseBackupRepository,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BackupRestoreUiState())
@@ -97,7 +99,10 @@ class BackupRestoreViewModel @Inject constructor(
                         lastBackupDate = java.time.format.DateTimeFormatter.ofPattern(
                             "yyyy-MM-dd HH:mm",
                             java.util.Locale.getDefault()
-                        ).format(java.time.LocalDateTime.now().atZone(java.time.ZoneId.systemDefault()))
+                        ).format(
+                            // G-TIME-01: derive the display timestamp from the injected TimeProvider.
+                            java.time.Instant.ofEpochMilli(timeProvider.now()).atZone(java.time.ZoneId.systemDefault())
+                        )
                     )
                 },
                 onFailure = { error ->

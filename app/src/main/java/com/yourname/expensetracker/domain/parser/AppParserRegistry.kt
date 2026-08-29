@@ -38,8 +38,8 @@ data class ParsedTransaction(
     // Transfer direction fields (auto-detected for transfers/deposits)
     val transferDirection: ParsedTransferDirection? = null,
     val transferAccountName: String? = null,
-    @Deprecated("Should be set to timeProvider.now() by the caller. Default uses wall clock for backward compat.")
-    private val validationNowEpochMs: Long = System.currentTimeMillis()
+    @Deprecated("Pass timeProvider.now() explicitly. The 0L default disables the future-date check.")
+    private val validationNowEpochMs: Long = 0L
 ) {
     /**
      * Helper property to quickly check if this is an incoming transaction
@@ -71,8 +71,14 @@ data class ParsedTransaction(
         }
         date?.let {
             require(it > 0) { "Date must be positive timestamp" }
-            require(it <= validationNowEpochMs + 86_400_000) { 
-                "Date cannot be in the future" 
+            // G-TIME-01: the future-date bound is anchored on a caller-supplied
+            // instant (typically timeProvider.now()). The 0L sentinel means the
+            // caller did not supply an anchor; production callers that set a
+            // [date] pass timeProvider.now() so the check stays enforced.
+            if (validationNowEpochMs > 0L) {
+                require(it <= validationNowEpochMs + 86_400_000) {
+                    "Date cannot be in the future"
+                }
             }
         }
         

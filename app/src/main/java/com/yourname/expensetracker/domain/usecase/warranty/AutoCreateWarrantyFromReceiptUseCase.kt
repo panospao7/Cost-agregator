@@ -64,7 +64,7 @@ class AutoCreateWarrantyFromReceiptUseCase @Inject constructor(
         private const val TAG = "AutoCreateWarranty"
     }
 
-    private val warrantyTextExtractor = WarrantyTextExtractor()
+    private val warrantyTextExtractor = WarrantyTextExtractor(timeProvider)
 
     /**
      * Execute the warranty creation from receipt.

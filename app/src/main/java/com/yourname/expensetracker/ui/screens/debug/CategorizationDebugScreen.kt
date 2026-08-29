@@ -76,7 +76,8 @@ fun CategorizationDebugScreen(
     LaunchedEffect(initialMerchant) {
         if (initialMerchant != null) {
             val amount = rawAmount.replace(",", ".").toDoubleOrNull() ?: 0.0
-            val timestamp = initialTimestamp ?: System.currentTimeMillis()
+            // G-TIME-01: "now" comes from the ViewModel's injected TimeProvider.
+            val timestamp = initialTimestamp ?: viewModel.referenceNowMillis()
             viewModel.testCategorization(rawMerchant, amount, timestamp)
         }
     }
@@ -153,7 +154,7 @@ fun CategorizationDebugScreen(
                     Button(
                         onClick = {
                             val amount = rawAmount.toDoubleOrNull() ?: 0.0
-                            val timestamp = parseTimeStrToTimestamp(timeString)
+                            val timestamp = parseTimeStrToTimestamp(timeString, viewModel.referenceNowMillis())
                             viewModel.testCategorization(rawMerchant, amount, timestamp)
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -314,19 +315,25 @@ private fun LayerResultCard(result: LayerDebugResult) {
     }
 }
 
-private fun parseTimeStrToTimestamp(timeStr: String): Long {
+/**
+ * Parses an "HH:mm" string into a timestamp on the day of [nowMillis].
+ *
+ * G-TIME-01: the date comes from the caller-supplied reference instant
+ * (ViewModel-injected TimeProvider), not the wall clock. The lenient
+ * Calendar normalization of the former implementation is preserved via
+ * local-time arithmetic (e.g. "25:00" rolls into the next day).
+ */
+private fun parseTimeStrToTimestamp(timeStr: String, nowMillis: Long): Long {
     return try {
         val parts = timeStr.split(":")
         val hours = parts[0].toIntOrNull() ?: 12
         val minutes = parts.getOrNull(1)?.toIntOrNull() ?: 0
-        
-        val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, hours)
-        cal.set(Calendar.MINUTE, minutes)
-        cal.set(Calendar.SECOND, 0)
-        
-        cal.timeInMillis
+
+        val zone = ZoneId.systemDefault()
+        val todayMidnight = Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate().atStartOfDay(zone)
+        todayMidnight.plusHours(hours.toLong()).plusMinutes(minutes.toLong())
+            .toInstant().toEpochMilli()
     } catch (e: Exception) {
-        System.currentTimeMillis()
+        nowMillis
     }
 }

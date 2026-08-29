@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.yourname.expensetracker.domain.categorization.CategorizationDebugTrace
 import com.yourname.expensetracker.domain.categorization.CategorizationEngine
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,7 +13,8 @@ import javax.inject.Inject
 
 @HiltViewModel
 class CategorizationDebugViewModel @Inject constructor(
-    private val categorizationEngine: CategorizationEngine
+    private val categorizationEngine: CategorizationEngine,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _debugTrace = MutableStateFlow<CategorizationDebugTrace?>(null)
@@ -20,6 +22,9 @@ class CategorizationDebugViewModel @Inject constructor(
 
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing
+
+    /** G-TIME-01: the screen's single TimeProvider-backed "now" source. */
+    fun referenceNowMillis(): Long = timeProvider.now()
 
     fun testCategorization(merchant: String, amount: Double, timestamp: Long) {
         if (merchant.isBlank()) return

@@ -513,10 +513,12 @@ fun ConsumeNavigationEvents(
             navigation.navigationEvents.collect { event ->
                 when (event) {
                     is NavigationEvent.NavigateTo -> {
-                        Timber.d("Navigation: screen=%s, timestamp=%d", event.destination.toString(), System.currentTimeMillis())
+                        // G-TIME-01: Timber already stamps every log line with the
+                        // wall-clock time, so no explicit timestamp is needed here.
+                        Timber.d("Navigation: screen=%s", event.destination.toString())
                     }
                     is NavigationEvent.NavigateBack -> {
-                        Timber.d("Navigation: back, timestamp=%d", System.currentTimeMillis())
+                        Timber.d("Navigation: back")
                     }
                 }
                 onEvent(event)

@@ -23,9 +23,12 @@ import com.yourname.expensetracker.domain.core.time.PeriodRange
  *
  * This object **NEVER calls the system clock** internally. Every function is
  * seeded from an explicit timestamp parameter (`now`, `timestamp`, `date`, etc.).
- * The `Calendar.getInstance()` calls inside this utility create a new `Calendar`
- * instance and then immediately set its `timeInMillis` to the **caller-provided**
- * timestamp — they do NOT fetch the current wall-clock time.
+ * Where legacy `java.util.Calendar` semantics are required (the pre-Gregorian
+ * compatibility seam below, lenient field normalization, and `Calendar.add`
+ * arithmetic), the Calendar instances are built with `Calendar.Builder` from the
+ * **caller-provided** timestamp or field values — `Calendar.Builder.setInstant`
+ * / `setDate` never read the current wall-clock time, so no wall-clock value
+ * ever enters a computation.
  *
  * This design means [TimePeriodUtils] can always be tested with arbitrary
  * timestamps without dependency injection, and is safe to use from any thread
@@ -195,6 +198,22 @@ object TimePeriodUtils {
     }
 
     /**
+     * Builds a default `GregorianCalendar` (system timezone/locale, lenient —
+     * identical to what `Calendar.getInstance()` produces) whose time is
+     * [timestamp], WITHOUT reading the wall clock: `Calendar.Builder.setInstant`
+     * seeds the calendar directly from the caller-provided epoch millisecond.
+     *
+     * Used by the pre-Gregorian compatibility seam helpers and the
+     * `Calendar.add`-based arithmetic helpers, where the exact legacy
+     * `java.util.Calendar` semantics (Julian cutover, lenient resolution,
+     * DST-gap handling) must be preserved bit-for-bit and a `java.time` port
+     * would change documented behavior.
+     */
+    private fun legacyCalendarAt(timestamp: Long): Calendar {
+        return Calendar.Builder().setInstant(timestamp).build()
+    }
+
+    /**
      * Legacy [Calendar]-based start of day (`00:00:00.000` local): the exact
      * algorithm [getStartOfDay] used before the java.time migration. Used by the
      * pre-Gregorian compatibility seam for timestamps before
@@ -202,8 +221,7 @@ object TimePeriodUtils {
      * offset behavior is reproduced exactly.
      */
     private fun legacyStartOfDay(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
+        val cal = legacyCalendarAt(timestamp)
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
@@ -217,8 +235,7 @@ object TimePeriodUtils {
      * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
      */
     private fun legacyEndOfDay(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = legacyStartOfDay(timestamp)
+        val cal = legacyCalendarAt(legacyStartOfDay(timestamp))
         cal.add(Calendar.DAY_OF_MONTH, 1)
         return cal.timeInMillis
     }
@@ -231,8 +248,7 @@ object TimePeriodUtils {
      * behavior are reproduced exactly.
      */
     private fun legacyStartOfWeek(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = legacyStartOfDay(timestamp)
+        val cal = legacyCalendarAt(legacyStartOfDay(timestamp))
         val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
         val daysFromMonday = if (dayOfWeek == Calendar.SUNDAY) 6 else dayOfWeek - Calendar.MONDAY
         cal.add(Calendar.DAY_OF_MONTH, -daysFromMonday)
@@ -245,8 +261,7 @@ object TimePeriodUtils {
      * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
      */
     private fun legacyEndOfWeek(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = legacyStartOfWeek(timestamp)
+        val cal = legacyCalendarAt(legacyStartOfWeek(timestamp))
         cal.add(Calendar.DAY_OF_MONTH, 7)
         return cal.timeInMillis
     }
@@ -260,8 +275,7 @@ object TimePeriodUtils {
      * behavior is reproduced exactly.
      */
     private fun legacyWeekRange(timestamp: Long, weekOffset: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
+        val cal = legacyCalendarAt(timestamp)
         if (weekOffset != 0) {
             cal.add(Calendar.DAY_OF_MONTH, weekOffset * 7)
         }
@@ -285,8 +299,7 @@ object TimePeriodUtils {
      * offset behavior is reproduced exactly.
      */
     private fun legacyStartOfMonth(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
+        val cal = legacyCalendarAt(timestamp)
         cal.set(Calendar.DAY_OF_MONTH, 1)
         cal.set(Calendar.HOUR_OF_DAY, 0)
         cal.set(Calendar.MINUTE, 0)
@@ -301,8 +314,7 @@ object TimePeriodUtils {
      * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
      */
     private fun legacyEndOfMonth(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = legacyStartOfMonth(timestamp)
+        val cal = legacyCalendarAt(legacyStartOfMonth(timestamp))
         cal.add(Calendar.MONTH, 1)
         return cal.timeInMillis
     }
@@ -316,8 +328,7 @@ object TimePeriodUtils {
      * behavior is reproduced exactly.
      */
     private fun legacyMonthRange(timestamp: Long, monthOffset: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
+        val cal = legacyCalendarAt(timestamp)
         if (monthOffset != 0) {
             cal.add(Calendar.MONTH, monthOffset)
         }
@@ -334,8 +345,7 @@ object TimePeriodUtils {
      * offset behavior is reproduced exactly.
      */
     private fun legacyStartOfQuarter(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
+        val cal = legacyCalendarAt(timestamp)
         val month = cal.get(Calendar.MONTH)
         val quarterStartMonth = (month / 3) * 3
         cal.set(Calendar.MONTH, quarterStartMonth)
@@ -353,8 +363,7 @@ object TimePeriodUtils {
      * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
      */
     private fun legacyEndOfQuarter(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = legacyStartOfQuarter(timestamp)
+        val cal = legacyCalendarAt(legacyStartOfQuarter(timestamp))
         cal.add(Calendar.MONTH, 3)
         return cal.timeInMillis
     }
@@ -368,8 +377,7 @@ object TimePeriodUtils {
      * so the old offset behavior is reproduced exactly.
      */
     private fun legacyQuarterRange(timestamp: Long, quarterOffset: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
+        val cal = legacyCalendarAt(timestamp)
         if (quarterOffset != 0) {
             cal.add(Calendar.MONTH, quarterOffset * 3)
         }
@@ -386,8 +394,7 @@ object TimePeriodUtils {
      * offset behavior is reproduced exactly.
      */
     private fun legacyStartOfYear(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
+        val cal = legacyCalendarAt(timestamp)
         cal.set(Calendar.MONTH, Calendar.JANUARY)
         cal.set(Calendar.DAY_OF_MONTH, 1)
         cal.set(Calendar.HOUR_OF_DAY, 0)
@@ -403,8 +410,7 @@ object TimePeriodUtils {
      * seam for timestamps before `GREGORIAN_CUTOVER_EPOCH_MILLIS`.
      */
     private fun legacyEndOfYear(timestamp: Long): Long {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = legacyStartOfYear(timestamp)
+        val cal = legacyCalendarAt(legacyStartOfYear(timestamp))
         cal.add(Calendar.YEAR, 1)
         return cal.timeInMillis
     }
@@ -418,8 +424,7 @@ object TimePeriodUtils {
      * reproduced exactly.
      */
     private fun legacyYearRange(timestamp: Long, yearOffset: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance()
-        cal.timeInMillis = timestamp
+        val cal = legacyCalendarAt(timestamp)
         if (yearOffset != 0) {
             cal.add(Calendar.YEAR, yearOffset)
         }
@@ -662,15 +667,14 @@ object TimePeriodUtils {
     }
 
     private fun getFirstMondayOfYear(year: Int): Long {
-        val jan1 = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, Calendar.JANUARY)
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
+        // G-TIME-01: Calendar.Builder constructs the calendar from explicit field
+        // values (no wall-clock read) while preserving the lenient Calendar
+        // normalization and Julian-cutover semantics of the former
+        // Calendar.getInstance() + set(...) construction.
+        val jan1 = Calendar.Builder()
+            .setDate(year, Calendar.JANUARY, 1)
+            .setTimeOfDay(0, 0, 0, 0)
+            .build()
 
         val dayOfWeek = jan1.get(Calendar.DAY_OF_WEEK)
         val daysUntilMonday = (Calendar.MONDAY - dayOfWeek + 7) % 7
@@ -806,15 +810,13 @@ object TimePeriodUtils {
      * compatibility seam for pre-cutover years.
      */
     fun getMonthRange(year: Int, month: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, month - 1)  // Calendar uses 0-based months
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
+        // G-TIME-01: Calendar.Builder from explicit fields (no wall-clock read);
+        // preserves the documented lenient month normalization (month 0 →
+        // December of the previous year, month 13 → January of the next year).
+        val cal = Calendar.Builder()
+            .setDate(year, month - 1, 1)  // Calendar uses 0-based months
+            .setTimeOfDay(0, 0, 0, 0)
+            .build()
         return getMonthRange(cal.timeInMillis, 0)
     }
 
@@ -1152,15 +1154,12 @@ object TimePeriodUtils {
      * which applies the pre-Gregorian compatibility seam for pre-cutover years.
      */
     fun getYearRange(year: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.YEAR, year)
-            set(Calendar.MONTH, Calendar.JANUARY)
-            set(Calendar.DAY_OF_MONTH, 1)
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
+        // G-TIME-01: Calendar.Builder from explicit fields (no wall-clock read);
+        // preserves the documented lenient out-of-range year normalization.
+        val cal = Calendar.Builder()
+            .setDate(year, Calendar.JANUARY, 1)
+            .setTimeOfDay(0, 0, 0, 0)
+            .build()
         return getYearRange(cal.timeInMillis)
     }
 
@@ -1184,9 +1183,10 @@ object TimePeriodUtils {
         replaceWith = ReplaceWith("getLastNCalendarDaysRange(now, days)")
     )
     fun getLastNDaysRange(now: Long, days: Int): Pair<Long, Long> {
-        val cal = Calendar.getInstance().apply { timeInMillis = now }
-        cal.add(Calendar.DAY_OF_MONTH, -days)
-        val start = getStartOfDay(cal.timeInMillis)
+        // G-TIME-01: pure derivation from the [now] parameter — shift by calendar
+        // days (DST-safe via [addDays]) then truncate to the day start, exactly
+        // as the former Calendar.add(DAY_OF_MONTH, -days) + getStartOfDay did.
+        val start = getStartOfDay(addDays(now, -days))
         return start to now
     }
 
@@ -1342,7 +1342,7 @@ object TimePeriodUtils {
      * Handles month-end coercion (e.g. Jan 31 + 1 month → Feb 28/29).
      */
     fun addMonths(timestamp: Long, months: Int): Long {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        val cal = legacyCalendarAt(timestamp)
         cal.add(Calendar.MONTH, months)
         return cal.timeInMillis
     }
@@ -1352,7 +1352,7 @@ object TimePeriodUtils {
      * DST-safe: correctly handles 23-hour and 25-hour days.
      */
     fun addDays(timestamp: Long, days: Int): Long {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        val cal = legacyCalendarAt(timestamp)
         cal.add(Calendar.DAY_OF_MONTH, days)
         return cal.timeInMillis
     }
@@ -1361,7 +1361,7 @@ object TimePeriodUtils {
      * Adds [years] calendar years to [timestamp] using [Calendar.add].
      */
     fun addYears(timestamp: Long, years: Int): Long {
-        val cal = Calendar.getInstance().apply { timeInMillis = timestamp }
+        val cal = legacyCalendarAt(timestamp)
         cal.add(Calendar.YEAR, years)
         return cal.timeInMillis
     }
@@ -1411,11 +1411,13 @@ object TimePeriodUtils {
         ReplaceWith("getAppCalendarWeekNumber(timestamp)")
     )
     fun getWeekOfYear(timestamp: Long): Int {
-        val cal = Calendar.getInstance().apply {
-            timeInMillis = timestamp
-            firstDayOfWeek = Calendar.MONDAY
-            minimalDaysInFirstWeek = 1
-        }
+        // G-TIME-01: Calendar.Builder from the caller-provided instant with the
+        // same explicit week definition (Monday-first, min 1 day) — no wall-clock
+        // read, identical week numbering to the former getInstance() version.
+        val cal = Calendar.Builder()
+            .setInstant(timestamp)
+            .setWeekDefinition(Calendar.MONDAY, 1)
+            .build()
         return cal.get(Calendar.WEEK_OF_YEAR)
     }
 

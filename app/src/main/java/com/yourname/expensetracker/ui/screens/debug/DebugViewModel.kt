@@ -470,7 +470,7 @@ class DebugViewModel @Inject constructor(
                     summary != null -> {
                         // Trigger immediate UI refresh hooks after successful import
                         loadDatabaseStats()
-                        _databaseImportRefreshSignal.tryEmit(System.currentTimeMillis())
+                        _databaseImportRefreshSignal.tryEmit(timeProvider.now())
                         com.yourname.expensetracker.domain.backup.DatabaseImportResult.Success(summary)
                     }
                     else -> com.yourname.expensetracker.domain.backup.DatabaseImportResult.Error("Import succeeded but summary unavailable")

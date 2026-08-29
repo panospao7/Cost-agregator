@@ -25,7 +25,7 @@ class ServiceDiagnosticsTest {
         // Clear any stale state from previous test runs
         context.getSharedPreferences("service_diagnostics", android.content.Context.MODE_PRIVATE)
             .edit().clear().commit()
-        diagnostics = ServiceDiagnostics(context)
+        diagnostics = ServiceDiagnostics(context, com.yourname.expensetracker.domain.util.SystemTimeProvider())
     }
 
     @Test

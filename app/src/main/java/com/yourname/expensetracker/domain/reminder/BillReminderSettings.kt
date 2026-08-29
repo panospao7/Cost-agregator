@@ -1,5 +1,8 @@
 package com.yourname.expensetracker.domain.reminder
 
+import java.time.Instant
+import java.time.ZoneId
+
 /**
  * Runtime settings controlling bill reminder dispatch.
  * Workers read this before querying or claiming reminder deliveries.
@@ -13,8 +16,10 @@ data class BillReminderSettings(
 ) {
     fun isWithinQuietHours(epochMillis: Long): Boolean {
         if (!quietHoursEnabled) return false
-        val calendar = java.util.Calendar.getInstance().apply { timeInMillis = epochMillis }
-        val minuteOfDay = calendar.get(java.util.Calendar.HOUR_OF_DAY) * 60 + calendar.get(java.util.Calendar.MINUTE)
+        // G-TIME-01: pure derivation from the [epochMillis] parameter (java.time,
+        // system default timezone — same minute-of-day the Calendar produced).
+        val zoned = Instant.ofEpochMilli(epochMillis).atZone(ZoneId.systemDefault())
+        val minuteOfDay = zoned.hour * 60 + zoned.minute
         return if (quietHoursStartMinuteOfDay <= quietHoursEndMinuteOfDay) {
             minuteOfDay in quietHoursStartMinuteOfDay..quietHoursEndMinuteOfDay
         } else {

@@ -458,7 +458,9 @@ private fun RecurringExpenseCard(
 
 @Composable
 private fun AddRecurringExpenseDialog(
-    referenceNowMillis: Long = System.currentTimeMillis(),
+    // G-TIME-01: required — the caller passes uiState.referenceNowMillis
+    // (ViewModel TimeProvider-backed); no wall-clock default.
+    referenceNowMillis: Long,
     onDismiss: () -> Unit,
     onAdd: (String, Double, RecurrenceFrequency, Long, String?) -> Unit
 ) {

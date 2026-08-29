@@ -26,7 +26,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import com.yourname.expensetracker.domain.model.TransactionSummary
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
-import java.util.Calendar
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 
 enum class BlockStatus {
     UNDER_BUDGET, // Time to Party (Green)
@@ -93,9 +93,9 @@ fun BudgetBlockPartyCard(
             // Calculate the day-of-week offset for the first day of the month
             // so blocks align to a proper calendar grid (Mon=0 .. Sun=6)
             val startOffset = if (days.isNotEmpty()) {
-                val cal = Calendar.getInstance().apply { timeInMillis = days.first().date }
-                // Calendar.MONDAY=2, so shift to 0-indexed Mon start
-                (cal.get(Calendar.DAY_OF_WEEK) + 5) % 7
+                // G-TIME-01: TimePeriodUtils.getDayOfWeek returns the Calendar-style
+                // constants (SUNDAY=1..SATURDAY=7) derived from the given timestamp.
+                (TimePeriodUtils.getDayOfWeek(days.first().date) + 5) % 7
             } else 0
 
             // Pad with null entries for empty leading cells

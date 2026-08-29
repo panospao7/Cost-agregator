@@ -18,6 +18,8 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 
 import timber.log.Timber
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.*
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -187,10 +189,11 @@ class SynthesisEngine @Inject constructor(
             Timber.d("$TAG: Filtered out ${plannedExpenses.size - filteredPlannedExpenses.size} non-PLANNED planned expenses")
         }
         
-        // Fix: Use single Calendar instance to avoid inconsistent dates if crossing midnight
-        val calendar = Calendar.getInstance().apply { timeInMillis = now }
-        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+        // G-TIME-01: derive calendar fields from the injected TimeProvider instant
+        // (java.time, system default timezone — same field values the Calendar read).
+        val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
+        val daysInMonth = today.lengthOfMonth()
+        val dayOfMonth = today.dayOfMonth
         val daysRemaining = (daysInMonth - dayOfMonth).coerceAtLeast(0)
 
         val (_, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(now)
@@ -320,12 +323,11 @@ class SynthesisEngine @Inject constructor(
         // Collect planned expenses with their dates (MUST=100%, LIKELY=70%)
         val plannedExpensesInRange = filteredPlannedExpenses.filter { it.date >= startOfToday && it.date < endOfMonthExclusive }
         
-        // Reuse single Calendar instance for grouping
-        val dayCalendar = Calendar.getInstance()
+        // Group planned expenses by day-of-month (java.time derivation)
         val mustExpensesByDay = plannedExpensesInRange
             .filter { it.priority == PlannedExpensePriority.MUST }
             .groupBy { expense ->
-                dayCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
+                Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).dayOfMonth
             }
             .mapValues { (_, exps) ->
                 exps.sumOf { expense ->
@@ -337,7 +339,7 @@ class SynthesisEngine @Inject constructor(
         val likelyExpensesByDay = plannedExpensesInRange
             .filter { it.priority == PlannedExpensePriority.LIKELY }
             .groupBy { expense ->
-                dayCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
+                Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).dayOfMonth
             }
             .mapValues { (_, exps) ->
                 exps.sumOf { expense ->
@@ -442,9 +444,10 @@ class SynthesisEngine @Inject constructor(
         budgetLimit: Double
     ): List<BlockPartyDay> {
         val now = timeProvider.now()
-        val calendar = Calendar.getInstance().apply { timeInMillis = now }
-        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+        // G-TIME-01: derive calendar fields from the injected TimeProvider instant.
+        val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
+        val daysInMonth = today.lengthOfMonth()
+        val dayOfMonth = today.dayOfMonth
         val (startOfMonth, endOfMonthExclusive) = TimePeriodUtils.getMonthRange(now)
         
         val components = forecast.components
@@ -487,13 +490,12 @@ class SynthesisEngine @Inject constructor(
 
         // Optimization: Group raw expenses by day once O(N) - use timestamp range filter
         // Pre-sort expenses by amount within each day for top 3 transactions
-        val dayBucketCalendar = Calendar.getInstance()
         val expensesByDay = expenses.filter {
             it.date >= startOfMonth &&
                 it.date < endOfMonthExclusive
         }
             .groupBy { expense ->
-                dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
+                Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).dayOfMonth
             }
             .mapValues { (_, dayExpenses) -> 
                 dayExpenses.sortedByDescending { it.amount }
@@ -501,10 +503,10 @@ class SynthesisEngine @Inject constructor(
 
         // Optimization: Group planned expenses by day - use timestamp range filter
         val plannedByDay = thisMonthPlanned.groupBy { expense ->
-            dayBucketCalendar.apply { timeInMillis = expense.date }.get(Calendar.DAY_OF_MONTH)
+            Instant.ofEpochMilli(expense.date).atZone(ZoneId.systemDefault()).dayOfMonth
         }
 
-        val dateCal = Calendar.getInstance().apply { timeInMillis = now }
+        val nowDate = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
 
         // Pre-calculate which days have recurring expenses.
         // When the occurrence DAO is available, use the canonical occurrence source
@@ -521,15 +523,13 @@ class SynthesisEngine @Inject constructor(
             buildRecurringByDayLegacy(
                 components.recurringExpenses,
                 now,
-                daysInMonth,
-                dateCal
+                daysInMonth
             )
         }
 
         return (1..daysInMonth).map { day ->
-            dateCal.set(Calendar.DAY_OF_MONTH, day)
-            dateCal.set(Calendar.HOUR_OF_DAY, 12)
-            val dateMs = dateCal.timeInMillis
+            // G-TIME-01: noon of each day derived from the injected TimeProvider instant.
+            val dateMs = nowDate.withDayOfMonth(day).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
             // 1. Use pre-calculated recurring expenses for this day
             val recurringItemsOnDay = recurringByDay[day] ?: emptyList()
@@ -599,30 +599,39 @@ class SynthesisEngine @Inject constructor(
         }
     }
 
+    /**
+     * G-TIME-01: java.time port of the former Calendar-based matcher.
+     *
+     * [targetDate] is the calendar day being checked (the caller derives it from
+     * the injected TimeProvider instant); [targetMillis] is that day at local
+     * noon (matching the former `dateCal` HOUR_OF_DAY=12 anchor used by the
+     * BIWEEKLY day-difference check). The anchor fields are derived from
+     * [pattern.nextExpectedDate] in the system default timezone — the same
+     * field values the former `anchorCal` Calendar produced.
+     */
     private fun isRecurringExpected(
-        pattern: RecurringPattern, 
-        dateCal: Calendar, 
-        anchorCal: Calendar
+        pattern: RecurringPattern,
+        targetDate: LocalDate,
+        targetMillis: Long
     ): Boolean {
         val anchor = pattern.nextExpectedDate
         val frequency = pattern.frequency
-        
-        anchorCal.timeInMillis = anchor
-        
+        val anchorDate = Instant.ofEpochMilli(anchor).atZone(ZoneId.systemDefault()).toLocalDate()
+
         return when (frequency) {
             RecurrenceFrequency.WEEKLY -> {
-                dateCal.get(Calendar.DAY_OF_WEEK) == anchorCal.get(Calendar.DAY_OF_WEEK)
+                targetDate.dayOfWeek == anchorDate.dayOfWeek
             }
             RecurrenceFrequency.BIWEEKLY -> {
-                val daysDiff = TimePeriodUtils.daysBetween(anchor, dateCal.timeInMillis)
+                val daysDiff = TimePeriodUtils.daysBetween(anchor, targetMillis)
                 val mod = Math.floorMod(daysDiff, BIWEEKLY_CYCLE_DAYS)
                 val distanceToCycle = minOf(mod, BIWEEKLY_CYCLE_DAYS - mod)
                 distanceToCycle <= BIWEEKLY_TOLERANCE_DAYS
             }
             RecurrenceFrequency.MONTHLY -> {
-                val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
-                val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                val anchorDay = anchorDate.dayOfMonth
+                val targetDay = targetDate.dayOfMonth
+                val maxDayInTargetMonth = targetDate.lengthOfMonth()
                 when {
                     anchorDay > maxDayInTargetMonth -> targetDay == maxDayInTargetMonth
                     else -> targetDay == anchorDay
@@ -630,29 +639,29 @@ class SynthesisEngine @Inject constructor(
             }
             RecurrenceFrequency.QUARTERLY -> {
                  // Check if this day-of-month matches the anchor AND the month is a quarter boundary from anchor
-                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                 val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
-                 val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                 val anchorDay = anchorDate.dayOfMonth
+                 val targetDay = targetDate.dayOfMonth
+                 val maxDayInTargetMonth = targetDate.lengthOfMonth()
                  val dayMatch = if (anchorDay > maxDayInTargetMonth) targetDay == maxDayInTargetMonth else targetDay == anchorDay
-                 val monthDiff = (dateCal.get(Calendar.YEAR) - anchorCal.get(Calendar.YEAR)) * 12 +
-                         (dateCal.get(Calendar.MONTH) - anchorCal.get(Calendar.MONTH))
+                 val monthDiff = (targetDate.year - anchorDate.year) * 12 +
+                         (targetDate.monthValue - anchorDate.monthValue)
                  dayMatch && monthDiff >= 0 && monthDiff % 3 == 0
             }
             RecurrenceFrequency.SEMI_ANNUALLY -> {
-                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                 val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
-                 val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                 val anchorDay = anchorDate.dayOfMonth
+                 val targetDay = targetDate.dayOfMonth
+                 val maxDayInTargetMonth = targetDate.lengthOfMonth()
                  val dayMatch = if (anchorDay > maxDayInTargetMonth) targetDay == maxDayInTargetMonth else targetDay == anchorDay
-                 val monthDiff = (dateCal.get(Calendar.YEAR) - anchorCal.get(Calendar.YEAR)) * 12 +
-                         (dateCal.get(Calendar.MONTH) - anchorCal.get(Calendar.MONTH))
+                 val monthDiff = (targetDate.year - anchorDate.year) * 12 +
+                         (targetDate.monthValue - anchorDate.monthValue)
                  dayMatch && monthDiff >= 0 && monthDiff % 6 == 0
             }
             RecurrenceFrequency.ANNUALLY -> {
-                 val anchorDay = anchorCal.get(Calendar.DAY_OF_MONTH)
-                 val targetDay = dateCal.get(Calendar.DAY_OF_MONTH)
-                 val maxDayInTargetMonth = dateCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                 val anchorDay = anchorDate.dayOfMonth
+                 val targetDay = targetDate.dayOfMonth
+                 val maxDayInTargetMonth = targetDate.lengthOfMonth()
                  val dayMatch = if (anchorDay > maxDayInTargetMonth) targetDay == maxDayInTargetMonth else targetDay == anchorDay
-                 val monthMatch = dateCal.get(Calendar.MONTH) == anchorCal.get(Calendar.MONTH)
+                 val monthMatch = targetDate.monthValue == anchorDate.monthValue
                  dayMatch && monthMatch
             }
             else -> false 
@@ -696,7 +705,6 @@ class SynthesisEngine @Inject constructor(
                     it.sourceType == RecurringLifecycleCoordinator.SOURCE_TYPE_RECURRING_RULE &&
                         it.sourceId in manualIds
                 }
-            val dayCal = Calendar.getInstance()
             for (occ in occurrences) {
                 // P6-CURRENT-014: every materialised occurrence marks its rule as
                 // "has occurrences" so it does NOT fall back to legacy date matching
@@ -707,7 +715,8 @@ class SynthesisEngine @Inject constructor(
                 // contribute to the bill-day map.
                 ruleIdsWithOccurrences.add(occ.sourceId)
                 if (occ.status != "PLANNED") continue
-                val day = dayCal.apply { timeInMillis = occ.dueDate }.get(Calendar.DAY_OF_MONTH)
+                // G-TIME-01: java.time day-of-month derivation (was Calendar scratch instance).
+                val day = Instant.ofEpochMilli(occ.dueDate).atZone(ZoneId.systemDefault()).dayOfMonth
                 if (day in 1..daysInMonth) {
                     result.getOrPut(day) { mutableListOf() }.add(occ.toRecurringPattern())
                 }
@@ -721,12 +730,13 @@ class SynthesisEngine @Inject constructor(
             if (missingPatterns.isNotEmpty()) {
                 Timber.w("$TAG: %d manual rule(s) have zero occurrence rows, falling back to legacy matching",
                     missingRuleIds.size)
-                val dateCal = Calendar.getInstance()
-                val anchorCal = Calendar.getInstance()
+                // G-TIME-01: target days derive from the caller's month window
+                // (itself anchored on the injected TimeProvider instant), not the wall clock.
+                val monthDate = Instant.ofEpochMilli(monthStart).atZone(ZoneId.systemDefault()).toLocalDate()
                 for (day in 1..daysInMonth) {
-                    dateCal.set(Calendar.DAY_OF_MONTH, day)
-                    dateCal.set(Calendar.HOUR_OF_DAY, 12)
-                    val onDay = missingPatterns.filter { isRecurringExpected(it, dateCal, anchorCal) }
+                    val targetDate = monthDate.withDayOfMonth(day)
+                    val targetMillis = targetDate.atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    val onDay = missingPatterns.filter { isRecurringExpected(it, targetDate, targetMillis) }
                     if (onDay.isNotEmpty()) {
                         result.getOrPut(day) { mutableListOf() }.addAll(onDay)
                     }
@@ -737,12 +747,11 @@ class SynthesisEngine @Inject constructor(
         // ── Legacy path for detected-only patterns ──────────────────────────
         val detectedPatterns = recurringPatterns.filter { it.id == null }
         if (detectedPatterns.isNotEmpty()) {
-            val dateCal = Calendar.getInstance()
-            val anchorCal = Calendar.getInstance()
+            val monthDate = Instant.ofEpochMilli(monthStart).atZone(ZoneId.systemDefault()).toLocalDate()
             for (day in 1..daysInMonth) {
-                dateCal.set(Calendar.DAY_OF_MONTH, day)
-                dateCal.set(Calendar.HOUR_OF_DAY, 12)
-                val onDay = detectedPatterns.filter { isRecurringExpected(it, dateCal, anchorCal) }
+                val targetDate = monthDate.withDayOfMonth(day)
+                val targetMillis = targetDate.atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                val onDay = detectedPatterns.filter { isRecurringExpected(it, targetDate, targetMillis) }
                 if (onDay.isNotEmpty()) {
                     result.getOrPut(day) { mutableListOf() }.addAll(onDay)
                 }
@@ -760,16 +769,16 @@ class SynthesisEngine @Inject constructor(
     private fun buildRecurringByDayLegacy(
         recurringPatterns: List<RecurringPattern>,
         now: Long,
-        daysInMonth: Int,
-        dateCal: Calendar
+        daysInMonth: Int
     ): Map<Int, List<RecurringPattern>> {
         val result = mutableMapOf<Int, List<RecurringPattern>>()
-        val anchorCal = Calendar.getInstance().apply { timeInMillis = now }
+        // G-TIME-01: target days derive from the injected TimeProvider instant.
+        val monthDate = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
         for (day in 1..daysInMonth) {
-            dateCal.set(Calendar.DAY_OF_MONTH, day)
-            dateCal.set(Calendar.HOUR_OF_DAY, 12)
+            val targetDate = monthDate.withDayOfMonth(day)
+            val targetMillis = targetDate.atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
             val recurringOnDay = recurringPatterns.filter {
-                isRecurringExpected(it, dateCal, anchorCal)
+                isRecurringExpected(it, targetDate, targetMillis)
             }
             if (recurringOnDay.isNotEmpty()) {
                 result[day] = recurringOnDay

@@ -186,17 +186,14 @@ class MainActivity : ComponentActivity() {
                     lifecycleScope.launch {
                         val expense = expenseRepository.getExpenseById(expenseId)
                         if (expense != null) {
-                            val calendar = java.util.Calendar.getInstance().apply {
-                                timeInMillis = expense.date
-                                set(java.util.Calendar.HOUR_OF_DAY, 0)
-                                set(java.util.Calendar.MINUTE, 0)
-                                set(java.util.Calendar.SECOND, 0)
-                                set(java.util.Calendar.MILLISECOND, 0)
-                            }
-                            val startOfDay = calendar.timeInMillis
-                            calendar.add(java.util.Calendar.DAY_OF_MONTH, 1)
+                            // G-TIME-01: pure derivation from expense.date (java.time,
+                            // system default timezone — same day boundaries the Calendar produced).
+                            val zone = java.time.ZoneId.systemDefault()
+                            val expenseDate = java.time.Instant.ofEpochMilli(expense.date).atZone(zone).toLocalDate()
+                            val startOfDay = expenseDate.atStartOfDay(zone).toInstant().toEpochMilli()
+                            val endOfNextDayStart = expenseDate.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
                             mainViewModel.navigateToTransactions(
-                                TransactionFilter(dateRange = startOfDay to calendar.timeInMillis)
+                                TransactionFilter(dateRange = startOfDay to endOfNextDayStart)
                             )
                         } else {
                             mainViewModel.navigateTo(NavigationDestination.Transactions(initialExpenseId = expenseId))

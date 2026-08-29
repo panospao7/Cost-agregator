@@ -2,6 +2,7 @@ package com.yourname.expensetracker.domain.debug
 
 import com.yourname.expensetracker.domain.ai.model.AiCapability
 import com.yourname.expensetracker.domain.ai.model.AiRouteDecision
+import com.yourname.expensetracker.domain.util.TimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -12,12 +13,14 @@ data class AiRuntimeEvent(
 )
 
 @Singleton
-class AiRuntimeDiagnostics @Inject constructor() {
+class AiRuntimeDiagnostics @Inject constructor(
+    private val timeProvider: TimeProvider
+) {
 
     private val lock = Any()
     private val events = ArrayDeque<AiRuntimeEvent>()
 
-    fun recordRouteDecision(capability: AiCapability, decision: AiRouteDecision, now: Long = System.currentTimeMillis()) {
+    fun recordRouteDecision(capability: AiCapability, decision: AiRouteDecision, now: Long = timeProvider.now()) {
         record(
             AiRuntimeEvent(
                 timestamp = now,
@@ -27,11 +30,11 @@ class AiRuntimeDiagnostics @Inject constructor() {
         )
     }
 
-    fun recordRuntimeRefresh(message: String, now: Long = System.currentTimeMillis()) {
+    fun recordRuntimeRefresh(message: String, now: Long = timeProvider.now()) {
         record(AiRuntimeEvent(timestamp = now, type = "runtime", message = message))
     }
 
-    fun recordInteraction(type: String, message: String, now: Long = System.currentTimeMillis()) {
+    fun recordInteraction(type: String, message: String, now: Long = timeProvider.now()) {
         record(AiRuntimeEvent(timestamp = now, type = type, message = message))
     }
 

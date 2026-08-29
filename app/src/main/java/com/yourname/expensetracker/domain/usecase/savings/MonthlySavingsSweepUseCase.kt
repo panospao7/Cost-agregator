@@ -18,7 +18,9 @@ import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
-import java.util.Calendar
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -82,29 +84,25 @@ class MonthlySavingsSweepUseCase @Inject constructor(
     suspend fun computeSweepRecommendation(): SavingsSweepRecommendation? {
         val now = timeProvider.now()
         val homeCurrency = currencySettingsRepository.homeCurrency().first()
-        val calendar = Calendar.getInstance().apply { timeInMillis = now }
+        // G-TIME-01: derive calendar fields from the injected TimeProvider instant
+        // (java.time, system default timezone — same field values the Calendar read).
+        val zone = ZoneId.systemDefault()
+        val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
 
         // Check if we're within the recommendation window (last N days of month)
-        if (!isWithinSweepWindow(calendar)) {
+        if (!isWithinSweepWindow(today)) {
             Timber.d("Not within sweep window, skipping")
             return null
         }
 
         // Calculate month boundaries
-        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+        val daysInMonth = today.lengthOfMonth()
+        val dayOfMonth = today.dayOfMonth
         val daysRemaining = daysInMonth - dayOfMonth
 
-        val monthStart = calendar.clone() as Calendar
-        monthStart.set(Calendar.DAY_OF_MONTH, 1)
-        monthStart.set(Calendar.HOUR_OF_DAY, 0)
-        monthStart.set(Calendar.MINUTE, 0)
-        monthStart.set(Calendar.SECOND, 0)
-        monthStart.set(Calendar.MILLISECOND, 0)
-
-        val nextMonthStart = monthStart.clone() as Calendar
-        nextMonthStart.add(Calendar.MONTH, 1)
-        val monthEndInclusive = nextMonthStart.timeInMillis - 1L
+        val monthStart = today.withDayOfMonth(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val nextMonthStart = today.withDayOfMonth(1).plusMonths(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val monthEndInclusive = nextMonthStart - 1L
 
         // Get budget statuses and calculate underspend
         val budgetStatuses = budgetRepository.getBudgetStatuses().first()
@@ -120,8 +118,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         }
 
         // Calculate spent to date for Monte Carlo (normalized to home currency)
-        val spentToDate = calculateSpentToDate(monthStart.timeInMillis, now, homeCurrency)
-        val knownUpcoming = calculateKnownUpcomingObligations(now, nextMonthStart.timeInMillis)
+        val spentToDate = calculateSpentToDate(monthStart, now, homeCurrency)
+        val knownUpcoming = calculateKnownUpcomingObligations(now, nextMonthStart)
 
         // Run Monte Carlo simulation
         val monteCarloResult = monteCarloSimulator.simulate(
@@ -188,9 +186,9 @@ class MonthlySavingsSweepUseCase @Inject constructor(
      * Check if we're within the sweep recommendation window.
      * Returns true during the last [DAYS_BEFORE_MONTH_END] days of the month.
      */
-    private fun isWithinSweepWindow(calendar: Calendar): Boolean {
-        val daysInMonth = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val dayOfMonth = calendar.get(Calendar.DAY_OF_MONTH)
+    private fun isWithinSweepWindow(today: LocalDate): Boolean {
+        val daysInMonth = today.lengthOfMonth()
+        val dayOfMonth = today.dayOfMonth
         return dayOfMonth >= (daysInMonth - DAYS_BEFORE_MONTH_END + 1)
     }
 
@@ -432,8 +430,8 @@ class MonthlySavingsSweepUseCase @Inject constructor(
      */
     fun shouldShowSweepPrompt(): Boolean {
         val now = timeProvider.now()
-        val calendar = Calendar.getInstance().apply { timeInMillis = now }
-        return isWithinSweepWindow(calendar)
+        val today = Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalDate()
+        return isWithinSweepWindow(today)
     }
 }
 
