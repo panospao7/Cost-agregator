@@ -474,6 +474,55 @@ combined batch carries 24 findings / 23 unique fingerprints <= the
 * NEAR-MISS protection over the GR-08p1 rows (wrong overload / owner /
   DAO / operation stay unauthorized).
 
+GR-08p2 (MIT-DB-08P2) extends the same contract to the FINAL fifteen files
+-- one finding each: the data/database ExpenseGroupDao.kt DAO-default-method
+special case (body-carrying @Transaction convenience whose flagged mutation
+is the cross-DAO ``memberDao.insertAll`` behind an explicit DAO-typed method
+parameter), data/privacy PrivacyAuditLoggerImpl.kt (THE sanctioned privacy
+audit logger), data/repository DatabaseBackupRepositoryImpl.kt (backup/
+restore path; the RestoreInternalWriteScope restore-mode gate; the accessor
+is the method-local alias ``dao``), data/repository GroupsRepositoryImpl.kt
+(barrier-checked soft delete), data/repository ReceiptInsertResolver.kt
+(P3-BLOCKER-11 centralized receipt-insert conflict resolver),
+domain/bank BankConnectionLifecycleCoordinator.kt (the bank-connection
+lifecycle coordinator), domain/budget BudgetForecastingEngine.kt
+(barrier-checked accuracy write), domain/diagnostics DiagnosticEventWriter.kt
+(THE sanctioned pipeline-diagnostics event writer), domain/groups
+SettlementCalculator.kt (domain calculator persistence entry point behind a
+caller-supplied DAO parameter), domain/notification/capture
+NotificationIntakeRecoveryScheduler.kt (intake recovery scheduler),
+domain/provenance SourceLinkWriterImpl.kt (THE sanctioned provenance
+source-link writer), domain/receipt/lifecycle ReceiptLifecycleEventWriter.kt
+and domain/transaction/lifecycle TransactionLifecycleEventWriter.kt (THE
+sanctioned receipt/transaction lifecycle event writers -- the event-writer
+layer the architecture mandates), service/debug LegacyDataMigrationService.kt
+(legacy one-time migration; expenses route through
+TransactionLifecycleCoordinator.createExpense) and util/CsvExpenseImporter.kt
+(CSV import path; same get-or-create category pattern as the GR-08p1
+JsonExpenseImporter rows).  Each of the FIFTEEN files carries exactly 1
+finding and each finding is its own distinct (callable, daoAccessor, daoFqcn,
+operation) tuple, so the combined batch carries 15 findings / 15 unique
+fingerprints <= the 25-fingerprint batch cap and NO split was required:
+
+* ``GR-08p2-seed.yml`` -- 15 rows: the 15 findings-derived rows.  ZERO
+  closure rows -- no body-carrying @Transaction DAO convenience method is
+  invoked from any batch callable (BudgetForecastDao's insertWithDeactivation
+  is invoked only from BudgetForecastingEngine.insertForecast, a callable
+  with NO finding whose deactivate-then-insert mutations are self-DAO calls
+  inside the DAO's own @Transaction default body and are never flagged).
+  ZERO chain-form receivers and ZERO accessor normalization needed (the only
+  Room accessor call, DatabaseBackupRepositoryImpl's
+  ``val dao = db.scannedReceiptDao()``, is an assignment to a method-local,
+  and the row spells that source alias).  Every row uses ``helper``;
+* the combined generation input ``GR-08-seeds.yml`` stays the exact
+  concatenation of the TWENTY-SIX reviewed batch seed files
+  (5 + 13 + 10 + 16 + 22 + 23 + 23 + 21 + 7 + 13 + 14 + 6 + 7 + 11 + 21
+  + 19 + 18 + 22 + 23 + 16 + 12 + 16 + 15 + 24 + 23 + 15 = 415 rows) -- a
+  dropped earlier-batch row fails closed here instead of silently
+  re-unauthorizing that batch's mutations at promotion;
+* NEAR-MISS protection over the GR-08p2 rows (wrong overload / owner /
+  DAO / operation stay unauthorized).
+
 Authored coverage; execution pending in this environment.
 """
 
@@ -7084,20 +7133,21 @@ def test_real_tracked_gr08l2_seed_file_loads_with_exactly_twenty_three_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_twenty_five_batch_seed_files():
+def test_combined_seed_file_concatenates_all_twenty_six_batch_seed_files():
     """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
     + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
     + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1
-    + GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 + GR-08o + GR-08p1.
+    + GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 + GR-08o + GR-08p1
+    + GR-08p2.
 
-    Supersedes the GR-08o-era twenty-four-file concatenation test (which
-    pinned the combined document at 377 rows): the GR-08p1 batch extends the
-    combined generation input to 400 rows (23 GR-08p1 rows = 23
-    findings-derived; the two DataRetentionWorker auditDao.insert sites
-    share one fingerprint so 24 findings collapse to 23 rows), and the
-    drift guard must cover ALL TWENTY-FIVE reviewed batch seed files.  The
-    combined document is what
-    --seed-rows actually consumes; if it ever drifts from the twenty-five
+    Supersedes the GR-08p1-era twenty-five-file concatenation test (which
+    pinned the combined document at 400 rows): the GR-08p2 batch -- the
+    FINAL GR-08 triage batch -- extends the combined generation input to
+    415 rows (15 GR-08p2 rows = 15 findings-derived; each of the fifteen
+    files carries exactly 1 finding and each finding is its own distinct
+    tuple), and the drift guard must cover ALL TWENTY-SIX reviewed batch
+    seed files.  The combined document is what
+    --seed-rows actually consumes; if it ever drifts from the twenty-six
     reviewed batch seed files (a dropped earlier-batch row would silently
     re-unauthorize that batch's mutations at promotion time), this fails
     closed.
@@ -7128,6 +7178,7 @@ def test_combined_seed_file_concatenates_all_twenty_five_batch_seed_files():
     gr08n2 = _load_seed_entries(GR08N2_SEED_FILE)
     gr08o = _load_seed_entries(GR08O_SEED_FILE)
     gr08p1 = _load_seed_entries(GR08P1_SEED_FILE)
+    gr08p2 = _load_seed_entries(GR08P2_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
@@ -7153,7 +7204,8 @@ def test_combined_seed_file_concatenates_all_twenty_five_batch_seed_files():
     assert len(gr08n2) == 15
     assert len(gr08o) == 24
     assert len(gr08p1) == 23
-    assert len(combined) == 400
+    assert len(gr08p2) == 15
+    assert len(combined) == 415
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
@@ -7163,7 +7215,7 @@ def test_combined_seed_file_concatenates_all_twenty_five_batch_seed_files():
         + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
         + list(gr08k2) + list(gr08l1) + list(gr08l2) + list(gr08m1)
         + list(gr08m2) + list(gr08n1) + list(gr08n2) + list(gr08o)
-        + list(gr08p1)
+        + list(gr08p1) + list(gr08p2)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -10590,6 +10642,688 @@ def test_gr08p1_shared_operation_distinct_callables_near_misses(tmp_path):
             tmp_path, rows, "projectFromRule", "plannedExpenseDao",
             "insertPlannedExpense", select_parameters=("Long", "Int"),
             method="projectFromOccurrencesInCurrentTransaction",
+        )
+        is False
+    )
+
+
+# ── GR-08p2 (MIT-DB-08P2): the FINAL triage batch -- fifteen 1-finding files ────
+# ExpenseGroupDao.kt (the DAO-default-method special case) +
+# PrivacyAuditLoggerImpl.kt + DatabaseBackupRepositoryImpl.kt +
+# GroupsRepositoryImpl.kt + ReceiptInsertResolver.kt +
+# BankConnectionLifecycleCoordinator.kt + BudgetForecastingEngine.kt +
+# DiagnosticEventWriter.kt + SettlementCalculator.kt +
+# NotificationIntakeRecoveryScheduler.kt + SourceLinkWriterImpl.kt +
+# ReceiptLifecycleEventWriter.kt + TransactionLifecycleEventWriter.kt +
+# LegacyDataMigrationService.kt + CsvExpenseImporter.kt.  Each of the
+# FIFTEEN files carries exactly 1 finding and each finding is its own
+# distinct (callable, daoAccessor, daoFqcn, operation) tuple, so the
+# combined batch carries 15 findings / 15 unique fingerprints <= the
+# 25-fingerprint batch cap, so NO split was required; the generation run
+# consumes the COMBINED document GR-08-seeds.yml; these tests pin that the
+# combined document stays the exact concatenation of the TWENTY-SIX reviewed
+# batch seed files, and that the GR-08p2 rows authorize EXACTLY their
+# callable identity + DAO + operation (wrong overload, wrong owner, wrong
+# DAO, and wrong operation stay unauthorized).  ZERO closure rows, ZERO
+# chain-form receivers, ZERO accessor normalization; every row is `helper`.
+
+GR08P2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08p2-seed.yml"
+
+EXPENSE_GROUP_DAO_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/database/dao/"
+    "ExpenseGroupDao.kt"
+)
+EXPENSE_GROUP_DAO_FQCN = (
+    "com.yourname.expensetracker.data.database.dao.ExpenseGroupDao"
+)
+GROUP_MEMBER_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.GroupMemberDao"
+)
+EXPENSE_GROUP_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.ExpenseGroup"
+)
+GROUP_MEMBER_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.GroupMember"
+)
+INSERT_GROUP_WITH_MEMBERS_PARAMS = (
+    EXPENSE_GROUP_ENTITY, GROUP_MEMBER_DAO_GR08P2,
+    "List<" + GROUP_MEMBER_ENTITY + ">",
+)
+
+PRIVACY_AUDIT_LOGGER_IMPL_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/privacy/"
+    "PrivacyAuditLoggerImpl.kt"
+)
+PRIVACY_AUDIT_LOGGER_IMPL_FQCN = (
+    "com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl"
+)
+PRIVACY_AUDIT_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.PrivacyAuditDao"
+)
+PRIVACY_CAPABILITY = (
+    "com.yourname.expensetracker.domain.privacy.PrivacyCapability"
+)
+PRIVACY_DECISION = (
+    "com.yourname.expensetracker.domain.privacy.PrivacyDecision"
+)
+LOG_DECISION_PARAMS = (PRIVACY_CAPABILITY, PRIVACY_DECISION, "Map<String, String>")
+
+DATABASE_BACKUP_REPOSITORY_IMPL_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "DatabaseBackupRepositoryImpl.kt"
+)
+DATABASE_BACKUP_REPOSITORY_IMPL_FQCN = (
+    "com.yourname.expensetracker.data.repository."
+    "DatabaseBackupRepositoryImpl"
+)
+SCANNED_RECEIPT_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.ScannedReceiptDao"
+)
+RESTORE_RECEIPT_ASSETS_PARAMS = (
+    "java.io.File",
+    "com.yourname.expensetracker.data.backup.CostbackupBundle.BackupManifest",
+    "com.yourname.expensetracker.data.database.AppDatabase",
+    "com.yourname.expensetracker.data.backup.RestoreJournal.JournalEntry?",
+    "com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink?",
+)
+
+GROUPS_REPOSITORY_IMPL_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "GroupsRepositoryImpl.kt"
+)
+GROUPS_REPOSITORY_IMPL_FQCN = (
+    "com.yourname.expensetracker.data.repository.GroupsRepositoryImpl"
+)
+
+RECEIPT_INSERT_RESOLVER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/data/repository/"
+    "ReceiptInsertResolver.kt"
+)
+RECEIPT_INSERT_RESOLVER_FQCN = (
+    "com.yourname.expensetracker.data.repository.ReceiptInsertResolver"
+)
+SCANNED_RECEIPT_ENTITY = (
+    "com.yourname.expensetracker.data.database.entity.ScannedReceipt"
+)
+
+BANK_CONNECTION_LIFECYCLE_COORDINATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/bank/"
+    "BankConnectionLifecycleCoordinator.kt"
+)
+BANK_CONNECTION_LIFECYCLE_COORDINATOR_FQCN = (
+    "com.yourname.expensetracker.domain.bank."
+    "BankConnectionLifecycleCoordinator"
+)
+BANK_CONNECTION_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.BankConnectionDao"
+)
+
+BUDGET_FORECASTING_ENGINE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/budget/"
+    "BudgetForecastingEngine.kt"
+)
+BUDGET_FORECASTING_ENGINE_FQCN = (
+    "com.yourname.expensetracker.domain.budget.BudgetForecastingEngine"
+)
+BUDGET_FORECAST_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.BudgetForecastDao"
+)
+
+DIAGNOSTIC_EVENT_WRITER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/diagnostics/"
+    "DiagnosticEventWriter.kt"
+)
+ROOM_DIAGNOSTIC_EVENT_WRITER_FQCN = (
+    "com.yourname.expensetracker.domain.diagnostics."
+    "RoomDiagnosticEventWriter"
+)
+PIPELINE_DIAGNOSTIC_EVENT_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao."
+    "PipelineDiagnosticEventDao"
+)
+DIAGNOSTIC_EVENT = (
+    "com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent"
+)
+
+SETTLEMENT_CALCULATOR_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/groups/"
+    "SettlementCalculator.kt"
+)
+SETTLEMENT_CALCULATOR_FQCN = (
+    "com.yourname.expensetracker.domain.groups.SettlementCalculator"
+)
+GROUP_SETTLEMENT_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.GroupSettlementDao"
+)
+TIME_PROVIDER = "com.yourname.expensetracker.domain.util.TimeProvider"
+RECORD_SETTLEMENT_PARAMS = (
+    "Long", "Long", "Long", "Double", "String",
+    GROUP_SETTLEMENT_DAO_GR08P2, TIME_PROVIDER,
+)
+
+NOTIFICATION_INTAKE_RECOVERY_SCHEDULER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/notification/"
+    "capture/NotificationIntakeRecoveryScheduler.kt"
+)
+NOTIFICATION_INTAKE_RECOVERY_SCHEDULER_FQCN = (
+    "com.yourname.expensetracker.domain.notification.capture."
+    "NotificationIntakeRecoveryScheduler"
+)
+NOTIFICATION_INTAKE_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.NotificationIntakeDao"
+)
+
+SOURCE_LINK_WRITER_IMPL_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/provenance/"
+    "SourceLinkWriterImpl.kt"
+)
+SOURCE_LINK_WRITER_IMPL_FQCN = (
+    "com.yourname.expensetracker.domain.provenance.SourceLinkWriterImpl"
+)
+ENTITY_SOURCE_LINK_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao"
+)
+TARGET_ENTITY_TYPE = (
+    "com.yourname.expensetracker.domain.provenance.TargetEntityType"
+)
+SOURCE_LINK_PAYLOAD = (
+    "com.yourname.expensetracker.domain.provenance.SourceLinkPayload"
+)
+LINK_TARGET_PARAMS = (TARGET_ENTITY_TYPE, "Long", SOURCE_LINK_PAYLOAD, "String?")
+
+RECEIPT_LIFECYCLE_EVENT_WRITER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/receipt/"
+    "lifecycle/ReceiptLifecycleEventWriter.kt"
+)
+ROOM_RECEIPT_LIFECYCLE_EVENT_WRITER_FQCN = (
+    "com.yourname.expensetracker.domain.receipt.lifecycle."
+    "RoomReceiptLifecycleEventWriter"
+)
+RECEIPT_EVENT_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.ReceiptEventDao"
+)
+TRANSACTION_CONTEXT = (
+    "com.yourname.expensetracker.domain.transaction.TransactionContext"
+)
+RECEIPT_LIFECYCLE_EVENT = (
+    "com.yourname.expensetracker.domain.receipt.lifecycle."
+    "ReceiptLifecycleEvent"
+)
+RECEIPT_WRITE_PARAMS = (TRANSACTION_CONTEXT, RECEIPT_LIFECYCLE_EVENT)
+
+TRANSACTION_LIFECYCLE_EVENT_WRITER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/domain/transaction/"
+    "lifecycle/TransactionLifecycleEventWriter.kt"
+)
+ROOM_TRANSACTION_LIFECYCLE_EVENT_WRITER_FQCN = (
+    "com.yourname.expensetracker.domain.transaction.lifecycle."
+    "RoomTransactionLifecycleEventWriter"
+)
+TRANSACTION_EVENT_DAO_GR08P2 = (
+    "com.yourname.expensetracker.data.database.dao.TransactionEventDao"
+)
+TRANSACTION_LIFECYCLE_EVENT = (
+    "com.yourname.expensetracker.domain.transaction.lifecycle."
+    "TransactionLifecycleEvent"
+)
+TRANSACTION_WRITE_PARAMS = (TRANSACTION_CONTEXT, TRANSACTION_LIFECYCLE_EVENT)
+
+LEGACY_DATA_MIGRATION_SERVICE_KT = (
+    "app/src/main/java/com/yourname/expensetracker/service/debug/"
+    "LegacyDataMigrationService.kt"
+)
+LEGACY_DATA_MIGRATION_SERVICE_FQCN = (
+    "com.yourname.expensetracker.service.debug.LegacyDataMigrationService"
+)
+CATEGORY_DAO_GR08P2 = "com.yourname.expensetracker.data.database.dao.CategoryDao"
+SQLITE_DATABASE = "android.database.sqlite.SQLiteDatabase"
+
+CSV_EXPENSE_IMPORTER_KT = (
+    "app/src/main/java/com/yourname/expensetracker/util/CsvExpenseImporter.kt"
+)
+CSV_EXPENSE_IMPORTER_FQCN = (
+    "com.yourname.expensetracker.util.CsvExpenseImporter"
+)
+
+
+def _gr08p2_seed_row(path, owner_fqcn, method, parameter_types, dao_accessor,
+                     dao_fqcn, operation, barrier_mode="helper"):
+    """One exact GR-08p2-shaped v2 seed row mapping."""
+    return {
+        "path": path,
+        "ownerFqcn": owner_fqcn,
+        "kind": "function",
+        "method": method,
+        "receiver": None,
+        "parameterTypes": list(parameter_types),
+        "daoAccessor": dao_accessor,
+        "daoFqcn": dao_fqcn,
+        "operation": operation,
+        "barrierMode": barrier_mode,
+        "reason": "GR-08p2 EXACT_POLICY test row",
+        "owner": "@panospao7",
+        "linkedIssue": "MIT-DB-08P2",
+    }
+
+
+def _gr08p2_seed_rows():
+    """The fifteen exact GR-08p2 rows (mirroring the tracked seed file).
+
+    One row per file -- each finding is its own distinct (callable,
+    daoAccessor, daoFqcn, operation) tuple.  The ExpenseGroupDao row spells
+    the explicit DAO-typed method parameter (memberDao), the
+    DatabaseBackupRepositoryImpl row spells the source method-local alias
+    (dao), and the SettlementCalculator row spells the explicit DAO-typed
+    method parameter (settlementDao).
+    """
+    return [
+        _gr08p2_seed_row(
+            EXPENSE_GROUP_DAO_KT, EXPENSE_GROUP_DAO_FQCN,
+            "insertGroupWithMembers", INSERT_GROUP_WITH_MEMBERS_PARAMS,
+            "memberDao", GROUP_MEMBER_DAO_GR08P2, "insertAll",
+        ),
+        _gr08p2_seed_row(
+            PRIVACY_AUDIT_LOGGER_IMPL_KT, PRIVACY_AUDIT_LOGGER_IMPL_FQCN,
+            "logDecision", LOG_DECISION_PARAMS,
+            "dao", PRIVACY_AUDIT_DAO_GR08P2, "insert",
+        ),
+        _gr08p2_seed_row(
+            DATABASE_BACKUP_REPOSITORY_IMPL_KT,
+            DATABASE_BACKUP_REPOSITORY_IMPL_FQCN,
+            "restoreReceiptAssets", RESTORE_RECEIPT_ASSETS_PARAMS,
+            "dao", SCANNED_RECEIPT_DAO_GR08P2, "update",
+        ),
+        _gr08p2_seed_row(
+            GROUPS_REPOSITORY_IMPL_KT, GROUPS_REPOSITORY_IMPL_FQCN,
+            "deleteMember", ("Long", "Long"),
+            "memberDao", GROUP_MEMBER_DAO_GR08P2, "update",
+        ),
+        _gr08p2_seed_row(
+            RECEIPT_INSERT_RESOLVER_KT, RECEIPT_INSERT_RESOLVER_FQCN,
+            "insertOrResolve", (SCANNED_RECEIPT_ENTITY,),
+            "scannedReceiptDao", SCANNED_RECEIPT_DAO_GR08P2, "insert",
+        ),
+        _gr08p2_seed_row(
+            BANK_CONNECTION_LIFECYCLE_COORDINATOR_KT,
+            BANK_CONNECTION_LIFECYCLE_COORDINATOR_FQCN,
+            "disconnectConnection", ("Long",),
+            "bankConnectionDao", BANK_CONNECTION_DAO_GR08P2, "disconnect",
+        ),
+        _gr08p2_seed_row(
+            BUDGET_FORECASTING_ENGINE_KT, BUDGET_FORECASTING_ENGINE_FQCN,
+            "updateForecastAccuracy", ("Long", "Double"),
+            "budgetForecastDao", BUDGET_FORECAST_DAO_GR08P2, "update",
+        ),
+        _gr08p2_seed_row(
+            DIAGNOSTIC_EVENT_WRITER_KT, ROOM_DIAGNOSTIC_EVENT_WRITER_FQCN,
+            "emit", (DIAGNOSTIC_EVENT,),
+            "dao", PIPELINE_DIAGNOSTIC_EVENT_DAO_GR08P2, "insert",
+        ),
+        _gr08p2_seed_row(
+            SETTLEMENT_CALCULATOR_KT, SETTLEMENT_CALCULATOR_FQCN,
+            "recordSettlement", RECORD_SETTLEMENT_PARAMS,
+            "settlementDao", GROUP_SETTLEMENT_DAO_GR08P2, "insert",
+        ),
+        _gr08p2_seed_row(
+            NOTIFICATION_INTAKE_RECOVERY_SCHEDULER_KT,
+            NOTIFICATION_INTAKE_RECOVERY_SCHEDULER_FQCN,
+            "recoverPending", ("Int",),
+            "intakeDao", NOTIFICATION_INTAKE_DAO_GR08P2,
+            "releaseStaleProcessing",
+        ),
+        _gr08p2_seed_row(
+            SOURCE_LINK_WRITER_IMPL_KT, SOURCE_LINK_WRITER_IMPL_FQCN,
+            "linkTarget", LINK_TARGET_PARAMS,
+            "sourceLinkDao", ENTITY_SOURCE_LINK_DAO_GR08P2, "insert",
+        ),
+        _gr08p2_seed_row(
+            RECEIPT_LIFECYCLE_EVENT_WRITER_KT,
+            ROOM_RECEIPT_LIFECYCLE_EVENT_WRITER_FQCN,
+            "write", RECEIPT_WRITE_PARAMS,
+            "dao", RECEIPT_EVENT_DAO_GR08P2, "insert",
+        ),
+        _gr08p2_seed_row(
+            TRANSACTION_LIFECYCLE_EVENT_WRITER_KT,
+            ROOM_TRANSACTION_LIFECYCLE_EVENT_WRITER_FQCN,
+            "write", TRANSACTION_WRITE_PARAMS,
+            "dao", TRANSACTION_EVENT_DAO_GR08P2, "insert",
+        ),
+        _gr08p2_seed_row(
+            LEGACY_DATA_MIGRATION_SERVICE_KT,
+            LEGACY_DATA_MIGRATION_SERVICE_FQCN,
+            "migrateCategories", (SQLITE_DATABASE,),
+            "categoryDao", CATEGORY_DAO_GR08P2, "insert",
+        ),
+        _gr08p2_seed_row(
+            CSV_EXPENSE_IMPORTER_KT, CSV_EXPENSE_IMPORTER_FQCN,
+            "getOrCreateCategory", ("String",),
+            "categoryDao", CATEGORY_DAO_GR08P2, "insert",
+        ),
+    ]
+
+
+def test_real_tracked_gr08p2_seed_file_loads_with_exactly_fifteen_rows():
+    entries = _load_seed_entries(GR08P2_SEED_FILE)
+    assert len(entries) == 15
+    methods = sorted(entry.method for entry in entries)
+    assert methods == sorted([
+        "insertGroupWithMembers",
+        "logDecision",
+        "restoreReceiptAssets",
+        "deleteMember",
+        "insertOrResolve",
+        "disconnectConnection",
+        "updateForecastAccuracy",
+        "emit",
+        "recordSettlement",
+        "recoverPending",
+        "linkTarget",
+        "write",
+        "write",
+        "migrateCategories",
+        "getOrCreateCategory",
+    ])
+    for entry in entries:
+        assert entry.path in (
+            EXPENSE_GROUP_DAO_KT,
+            PRIVACY_AUDIT_LOGGER_IMPL_KT,
+            DATABASE_BACKUP_REPOSITORY_IMPL_KT,
+            GROUPS_REPOSITORY_IMPL_KT,
+            RECEIPT_INSERT_RESOLVER_KT,
+            BANK_CONNECTION_LIFECYCLE_COORDINATOR_KT,
+            BUDGET_FORECASTING_ENGINE_KT,
+            DIAGNOSTIC_EVENT_WRITER_KT,
+            SETTLEMENT_CALCULATOR_KT,
+            NOTIFICATION_INTAKE_RECOVERY_SCHEDULER_KT,
+            SOURCE_LINK_WRITER_IMPL_KT,
+            RECEIPT_LIFECYCLE_EVENT_WRITER_KT,
+            TRANSACTION_LIFECYCLE_EVENT_WRITER_KT,
+            LEGACY_DATA_MIGRATION_SERVICE_KT,
+            CSV_EXPENSE_IMPORTER_KT,
+        )
+        assert entry.owner_fqcn in (
+            EXPENSE_GROUP_DAO_FQCN,
+            PRIVACY_AUDIT_LOGGER_IMPL_FQCN,
+            DATABASE_BACKUP_REPOSITORY_IMPL_FQCN,
+            GROUPS_REPOSITORY_IMPL_FQCN,
+            RECEIPT_INSERT_RESOLVER_FQCN,
+            BANK_CONNECTION_LIFECYCLE_COORDINATOR_FQCN,
+            BUDGET_FORECASTING_ENGINE_FQCN,
+            ROOM_DIAGNOSTIC_EVENT_WRITER_FQCN,
+            SETTLEMENT_CALCULATOR_FQCN,
+            NOTIFICATION_INTAKE_RECOVERY_SCHEDULER_FQCN,
+            SOURCE_LINK_WRITER_IMPL_FQCN,
+            ROOM_RECEIPT_LIFECYCLE_EVENT_WRITER_FQCN,
+            ROOM_TRANSACTION_LIFECYCLE_EVENT_WRITER_FQCN,
+            LEGACY_DATA_MIGRATION_SERVICE_FQCN,
+            CSV_EXPENSE_IMPORTER_FQCN,
+        )
+        assert entry.kind is CallableKind.FUNCTION
+        assert entry.receiver is None
+        assert entry.owner == "@panospao7"
+        assert entry.linked_issue == "MIT-DB-08P2"
+    keys = [entry.mutation_key().canonical_key() for entry in entries]
+    assert len(set(keys)) == len(keys)
+    # EVERY row is helper: none of the fifteen callables runs inside a
+    # WorkerExecutionGuard.runGuardedWithContext context.
+    assert all(entry.barrier_mode is BarrierMode.HELPER for entry in entries)
+    # The two `write` rows hit TWO different DAOs behind the same method
+    # name (the receipt vs transaction lifecycle event writers), and the
+    # two categoryDao insert rows hit TWO different callables (the legacy
+    # migration vs the CSV import path).
+    write_daos = sorted(
+        entry.dao_fqcn for entry in entries if entry.method == "write"
+    )
+    assert write_daos == [
+        RECEIPT_EVENT_DAO_GR08P2, TRANSACTION_EVENT_DAO_GR08P2,
+    ]
+    category_inserts = sorted(
+        entry.path for entry in entries
+        if entry.dao_fqcn == CATEGORY_DAO_GR08P2
+        and entry.operation == "insert"
+    )
+    assert category_inserts == [
+        CSV_EXPENSE_IMPORTER_KT, LEGACY_DATA_MIGRATION_SERVICE_KT,
+    ]
+    # The source-alias / explicit-parameter spellings: the
+    # DatabaseBackupRepositoryImpl row spells the method-local alias dao,
+    # the ExpenseGroupDao row spells the DAO-typed method parameter
+    # memberDao, and the SettlementCalculator row spells the DAO-typed
+    # method parameter settlementDao.
+    restore_row = [
+        entry for entry in entries
+        if entry.method == "restoreReceiptAssets"
+    ]
+    assert len(restore_row) == 1
+    assert restore_row[0].dao_accessor == "dao"
+    assert restore_row[0].dao_fqcn == SCANNED_RECEIPT_DAO_GR08P2
+    group_row = [
+        entry for entry in entries
+        if entry.method == "insertGroupWithMembers"
+    ]
+    assert len(group_row) == 1
+    assert group_row[0].dao_accessor == "memberDao"
+    assert group_row[0].dao_fqcn == GROUP_MEMBER_DAO_GR08P2
+    settlement_row = [
+        entry for entry in entries if entry.method == "recordSettlement"
+    ]
+    assert len(settlement_row) == 1
+    assert settlement_row[0].dao_accessor == "settlementDao"
+    assert settlement_row[0].dao_fqcn == GROUP_SETTLEMENT_DAO_GR08P2
+
+
+def _gr08p2_policy_entries(tmp_path, rows):
+    entries = []
+    for position, row in enumerate(rows):
+        entry, errors = build_policy_entry(row, position)
+        assert entry is not None and not errors, (
+            "GR-08p2 fixture row must be schema-valid: %s" % (errors,)
+        )
+        entries.append(entry)
+    return entries
+
+
+def _assert_gr08p2_exact_match(tmp_path, rows, select_method,
+                               select_accessor, select_operation,
+                               select_parameters=None, **overrides):
+    """The exact GR-08p2 row identity matches; mutants never do.
+
+    Target selection is fixed by ``(select_method, select_accessor,
+    select_operation)`` -- optionally narrowed by ``select_parameters`` when
+    several rows share the same (method, accessor, operation) triple (the
+    two `write` rows and the two categoryDao insert rows); ``overrides``
+    perturb exactly one identity field of the match query for the near-miss
+    assertions.
+    """
+    entries = _gr08p2_policy_entries(tmp_path, rows)
+    candidates = [
+        entry
+        for entry in entries
+        if entry.method == select_method
+        and entry.dao_accessor == select_accessor
+        and entry.operation == select_operation
+    ]
+    if select_parameters is not None:
+        candidates = [
+            entry
+            for entry in candidates
+            if tuple(entry.parameter_types) == tuple(select_parameters)
+        ]
+    target = candidates[0]
+    kwargs = dict(
+        path=target.path,
+        owner_fqcn=target.owner_fqcn,
+        kind=target.kind,
+        method=target.method,
+        receiver=target.receiver,
+        parameter_types=target.parameter_types,
+        dao_accessor=target.dao_accessor,
+        dao_fqcn=target.dao_fqcn,
+        operation=target.operation,
+    )
+    kwargs.update(overrides)
+    return match_mutation(target, **kwargs)
+
+
+def test_gr08p2_exact_identity_matches(tmp_path):
+    rows = _gr08p2_seed_rows()
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "insertGroupWithMembers", "memberDao",
+            "insertAll", select_parameters=INSERT_GROUP_WITH_MEMBERS_PARAMS,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "restoreReceiptAssets", "dao", "update",
+            select_parameters=RESTORE_RECEIPT_ASSETS_PARAMS,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "write", "dao", "insert",
+            select_parameters=RECEIPT_WRITE_PARAMS,
+        )
+        is True
+    )
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "getOrCreateCategory", "categoryDao", "insert",
+            select_parameters=("String",),
+        )
+        is True
+    )
+
+
+def test_gr08p2_near_miss_wrong_overload_stays_unauthorized(tmp_path):
+    rows = _gr08p2_seed_rows()
+    # A wrong parameter list never matches the restoreReceiptAssets row.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "restoreReceiptAssets", "dao", "update",
+            select_parameters=RESTORE_RECEIPT_ASSETS_PARAMS,
+            parameter_types=RESTORE_RECEIPT_ASSETS_PARAMS[:-1],
+        )
+        is False
+    )
+    # A wrong Map spelling (no space) never matches the logDecision row.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "logDecision", "dao", "insert",
+            select_parameters=LOG_DECISION_PARAMS,
+            parameter_types=(
+                PRIVACY_CAPABILITY, PRIVACY_DECISION, "Map<String,String>",
+            ),
+        )
+        is False
+    )
+
+
+def test_gr08p2_near_miss_wrong_owner_stays_unauthorized(tmp_path):
+    rows = _gr08p2_seed_rows()
+    # The receipt lifecycle event writer row never matches the transaction
+    # lifecycle event writer owner behind the same (write, dao, insert)
+    # triple shape.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "write", "dao", "insert",
+            select_parameters=RECEIPT_WRITE_PARAMS,
+            owner_fqcn=ROOM_TRANSACTION_LIFECYCLE_EVENT_WRITER_FQCN,
+        )
+        is False
+    )
+    # A foreign coordinator owner never matches the disconnectConnection
+    # row.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "disconnectConnection", "bankConnectionDao",
+            "disconnect", select_parameters=("Long",),
+            owner_fqcn="com.example.OtherBankCoordinator",
+        )
+        is False
+    )
+
+
+def test_gr08p2_near_miss_wrong_dao_stays_unauthorized(tmp_path):
+    rows = _gr08p2_seed_rows()
+    # The deleteMember row never matches the ExpenseGroupDao identity
+    # behind the same memberDao accessor spelling.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "deleteMember", "memberDao", "update",
+            select_parameters=("Long", "Long"),
+            dao_fqcn=EXPENSE_GROUP_DAO_FQCN,
+        )
+        is False
+    )
+    # The insertGroupWithMembers row never matches the ExpenseGroupDao
+    # self-DAO identity (the flagged mutation is the cross-DAO memberDao
+    # insertAll, not the DAO's own insert).
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "insertGroupWithMembers", "memberDao",
+            "insertAll", select_parameters=INSERT_GROUP_WITH_MEMBERS_PARAMS,
+            dao_accessor="insert",
+            dao_fqcn=EXPENSE_GROUP_DAO_FQCN,
+        )
+        is False
+    )
+
+
+def test_gr08p2_near_miss_wrong_operation_stays_unauthorized(tmp_path):
+    rows = _gr08p2_seed_rows()
+    # The recoverPending row never matches a different mutating-query
+    # operation behind the same intakeDao accessor.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "recoverPending", "intakeDao",
+            "releaseStaleProcessing", select_parameters=("Int",),
+            operation="insertOrIgnore",
+        )
+        is False
+    )
+    # The updateForecastAccuracy row never matches the insert operation
+    # behind the same budgetForecastDao accessor.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "updateForecastAccuracy", "budgetForecastDao",
+            "update", select_parameters=("Long", "Double"),
+            operation="insert",
+        )
+        is False
+    )
+
+
+def test_gr08p2_shared_shape_distinct_callables_near_misses(tmp_path):
+    """The same-shape rows are exact per (path, parameters) identity.
+
+    The two `write` rows share the (dao, insert) shape across the receipt
+    and transaction lifecycle event writers, and the two categoryDao insert
+    rows share the (accessor, operation) shape across the legacy migration
+    and the CSV import path; each row authorizes EXACTLY its own callable
+    identity, so a swapped path or parameter list stays unauthorized.
+    """
+    rows = _gr08p2_seed_rows()
+    # The receipt write row never matches the transaction write identity.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "write", "dao", "insert",
+            select_parameters=RECEIPT_WRITE_PARAMS,
+            parameter_types=TRANSACTION_WRITE_PARAMS,
+        )
+        is False
+    )
+    # The legacy migration row never matches the CSV importer identity
+    # behind the same categoryDao insert shape.
+    assert (
+        _assert_gr08p2_exact_match(
+            tmp_path, rows, "migrateCategories", "categoryDao", "insert",
+            select_parameters=(SQLITE_DATABASE,),
+            path=CSV_EXPENSE_IMPORTER_KT,
+            owner_fqcn=CSV_EXPENSE_IMPORTER_FQCN,
+            parameter_types=("String",),
         )
         is False
     )

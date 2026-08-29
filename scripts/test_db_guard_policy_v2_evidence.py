@@ -94,6 +94,16 @@ Covered contracts (one test each):
     machinery.  Trusted for the exact seeded identity; unlisted, missing,
     wrong-overload, uncapturable-expression, and mixed
     TYPE_UNRESOLVED-sibling shapes all stay fail-closed.
+42. GR-08p2 closure: a DAO-typed METHOD PARAMETER of the verified callable
+    binds its name to the declared DAO's Room accessor identity (the two
+    final seed blockers: the @Transaction DAO default method's cross-DAO
+    ``memberDao.insertAll(...)`` and the calculator entry point's
+    ``settlementDao.insert(...)``).  Binding is type-driven and exact --
+    the declared type must be a known DAO FQCN via the project type index
+    or an exact inventory match -- so a parameter typed as a NON-DAO type
+    with a dao-like name stays unresolved (MUTATION_NOT_FOUND) and a
+    parameter typed as a DIFFERENT DAO than the declared row still fails
+    with DAO_FQCN_MISMATCH on the bound identity.
 
 Implementation-aligned notes (verified against current source):
 
@@ -2871,3 +2881,322 @@ def test_gr08d_expression_body_with_type_unresolved_sibling_fails_closed(
     context = _first_context(result)
     assert context.get("method") == "recoverStuckReviews"
     assert context.get("status") == "SIGNATURE_UNSUPPORTED"
+
+
+# ===========================================================================
+# 42. GR-08p2 closure: DAO-typed METHOD PARAMETERS bind their names to the
+#     declared DAO's Room accessor identity.
+#
+# The two final seed blockers: ExpenseGroupDao.insertGroupWithMembers (a
+# @Transaction DAO default method whose cross-DAO mutation runs on the
+# DAO-typed parameter ``memberDao: GroupMemberDao``) and
+# SettlementCalculator.recordSettlement (a calculator entry point whose
+# mutation runs on ``settlementDao: GroupSettlementDao``).  The merged
+# class/method DAO map had no rule for method parameters, so the accessor
+# resolved through the bare ``\w+Dao`` naming convention to the PARAMETER
+# NAME and the inventory daoFqcn cross-check looked up a name that is never
+# a Room accessor -> DB_V2_POLICY_DAO_FQCN_MISMATCH.  Binding is
+# type-driven and exact; every negative shape stays fail-closed.
+# ===========================================================================
+
+GR08P2_DAO_DEFAULT_METHOD_SOURCE = """\
+package com.example
+
+interface ExpenseGroupDao {
+    @Transaction
+    suspend fun insertGroupWithMembers(
+        group: ExpenseGroup,
+        memberDao: GroupMemberDao,
+        members: List<GroupMember>
+    ): Long {
+        val groupId = insert(group)
+        if (groupId <= 0) {
+            throw IllegalStateException("Failed to create group")
+        }
+        val membersWithGroupId = members.map { it.copy(groupId = groupId) }
+        val memberIds = memberDao.insertAll(membersWithGroupId)
+        return memberIds.size.toLong()
+    }
+}
+
+interface GroupMemberDao
+
+data class ExpenseGroup(val id: Int)
+
+data class GroupMember(val groupId: Int)
+"""
+
+GR08P2_CALCULATOR_SOURCE = """\
+package com.example
+
+class SettlementCalculator {
+    suspend fun recordSettlement(
+        groupId: Long,
+        fromMemberId: Long,
+        toMemberId: Long,
+        amount: Double,
+        currency: String,
+        settlementDao: GroupSettlementDao,
+        timeProvider: TimeProvider
+    ): Long {
+        require(amount > 0) { "Settlement amount must be positive" }
+        require(fromMemberId != toMemberId) { "Cannot settle to self" }
+        writeBarrier.checkWritesAllowed("SettlementCalculator.recordSettlement")
+        val now = timeProvider.now()
+        return settlementDao.insert(GroupSettlementEntity(
+            groupId = groupId, fromMemberId = fromMemberId, toMemberId = toMemberId,
+            amount = amount, currency = currency, createdAt = now
+        ))
+    }
+}
+
+interface GroupSettlementDao
+
+interface TimeProvider {
+    fun now(): Long
+}
+
+data class GroupSettlementEntity(
+    val groupId: Long,
+    val fromMemberId: Long,
+    val toMemberId: Long,
+    val amount: Double,
+    val currency: String,
+    val createdAt: Long
+)
+"""
+
+GR08P2_NON_DAO_PARAMETER_SOURCE = """\
+package com.example
+
+interface ExpenseGroupDao {
+    @Transaction
+    suspend fun insertGroupWithMembers(
+        group: ExpenseGroup,
+        memberDao: MemberSnapshotDao,
+        members: List<GroupMember>
+    ): Long {
+        val groupId = insert(group)
+        return memberDao.insertAll(members)
+    }
+}
+
+class MemberSnapshotDao(val ids: List<Int>)
+
+interface GroupMemberDao
+
+data class ExpenseGroup(val id: Int)
+
+data class GroupMember(val groupId: Int)
+"""
+
+GR08P2_WRONG_DAO_PARAMETER_SOURCE = """\
+package com.example
+
+interface ExpenseGroupDao {
+    @Transaction
+    suspend fun insertGroupWithMembers(
+        group: ExpenseGroup,
+        memberDao: LegacyGroupMemberDao,
+        members: List<GroupMember>
+    ): Long {
+        val groupId = insert(group)
+        return memberDao.insertAll(members)
+    }
+}
+
+interface LegacyGroupMemberDao
+
+data class ExpenseGroup(val id: Int)
+
+data class GroupMember(val groupId: Int)
+"""
+
+
+def _gr08p2_dao_default_entry(**overrides):
+    """Policy row for the @Transaction DAO default method blocker shape.
+
+    The DAO interfaces are declared same-package in the fixture (instead of
+    imported from ``...data.database.dao``) so the project type index can
+    resolve the parameter's declared type exactly; the callable SHAPE --
+    @Transaction suspend default method, DAO-typed parameter, cross-DAO
+    ``insertAll`` -- matches the real ExpenseGroupDao blocker.
+    """
+    fields = dict(
+        path=REPO_KT,
+        owner_fqcn="com.example.ExpenseGroupDao",
+        kind=CallableKind.FUNCTION,
+        method="insertGroupWithMembers",
+        receiver=None,
+        parameter_types=(
+            "com.example.ExpenseGroup",
+            "com.example.GroupMemberDao",
+            "List<com.example.GroupMember>",
+        ),
+        dao_accessor="memberDao",
+        dao_fqcn="com.example.GroupMemberDao",
+        operation="insertAll",
+        barrier_mode=BarrierMode.HELPER,
+        reason="GR-08p2 DAO default method evidence unit test",
+        owner="db-guard-tests",
+        linked_issue="MIT-DB-08P2",
+    )
+    fields.update(overrides)
+    return PolicyEntry(**fields)
+
+
+def _gr08p2_calculator_entry(**overrides):
+    """Policy row for the calculator entry point blocker shape."""
+    fields = dict(
+        path=REPO_KT,
+        owner_fqcn="com.example.SettlementCalculator",
+        kind=CallableKind.FUNCTION,
+        method="recordSettlement",
+        receiver=None,
+        parameter_types=(
+            "Long",
+            "Long",
+            "Long",
+            "Double",
+            "String",
+            "com.example.GroupSettlementDao",
+            "com.example.TimeProvider",
+        ),
+        dao_accessor="settlementDao",
+        dao_fqcn="com.example.GroupSettlementDao",
+        operation="insert",
+        barrier_mode=BarrierMode.DIRECT,
+        reason="GR-08p2 calculator entry point evidence unit test",
+        owner="db-guard-tests",
+        linked_issue="MIT-DB-08P2",
+    )
+    fields.update(overrides)
+    return PolicyEntry(**fields)
+
+
+def test_gr08p2_dao_default_method_parameter_accessor_verifies_trusted(tmp_path):
+    """Blocker shape 1: @Transaction DAO default method, cross-DAO insert.
+
+    The mutation runs on the DAO-typed METHOD PARAMETER ``memberDao:
+    GroupMemberDao`` -- no property, no local.  Before GR-08p2 the accessor
+    resolved through the bare ``\\w+Dao`` naming convention to the parameter
+    name itself, so the inventory daoFqcn cross-check looked up
+    ``memberDao`` (never a Room accessor) and failed with
+    DB_V2_POLICY_DAO_FQCN_MISMATCH.  With the parameter bound to the
+    declared DAO's Room accessor identity the row verifies trusted and the
+    mutation key carries the resolved identity.
+    """
+    _write_repo(tmp_path, GR08P2_DAO_DEFAULT_METHOD_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_gr08p2_dao_default_entry()],
+        str(tmp_path),
+        room_inventory=_inventory("com.example.GroupMemberDao"),
+    )
+    assert result.trusted is True
+    assert _codes(result) == []
+    assert len(result.groups) == 1
+    group = result.groups[0]
+    assert group.trusted is True
+    assert group.diagnostics == ()
+    assert group.mutation_keys == ("groupMemberDao|insertAll",)
+
+
+def test_gr08p2_calculator_entry_point_parameter_accessor_verifies_trusted(
+    tmp_path,
+):
+    """Blocker shape 2: calculator entry point, DAO-typed parameter insert.
+
+    The same rule for the SettlementCalculator.recordSettlement shape: the
+    mutation runs on ``settlementDao: GroupSettlementDao`` and the direct
+    barrier claim stays locally consistent with the parameter binding in
+    place (the real body's writeBarrier call precedes the mutation).
+    """
+    _write_repo(tmp_path, GR08P2_CALCULATOR_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [_gr08p2_calculator_entry()],
+        str(tmp_path),
+        room_inventory=_inventory("com.example.GroupSettlementDao"),
+    )
+    assert result.trusted is True
+    assert _codes(result) == []
+    assert len(result.groups) == 1
+    group = result.groups[0]
+    assert group.trusted is True
+    assert group.diagnostics == ()
+    assert group.mutation_keys == ("groupSettlementDao|insert",)
+
+
+def test_gr08p2_non_dao_parameter_type_with_dao_like_name_stays_unresolved(
+    tmp_path,
+):
+    """Negative: a dao-like NAME is never enough -- the TYPE must be a
+    known DAO.
+
+    ``MemberSnapshotDao`` is a real project type (the index resolves it
+    uniquely) but it is NOT an inventoried DAO.  The parameter stays
+    unbound, the receiver keeps its bare naming-convention identity, and
+    the row claiming the type-derived Room accessor behind it fails closed
+    with MUTATION_NOT_FOUND -- a name-guessing binding would have gone
+    looking for that accessor instead.
+    """
+    _write_repo(tmp_path, GR08P2_NON_DAO_PARAMETER_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [
+            _gr08p2_dao_default_entry(
+                parameter_types=(
+                    "com.example.ExpenseGroup",
+                    "com.example.MemberSnapshotDao",
+                    "List<com.example.GroupMember>",
+                ),
+                dao_accessor="memberSnapshotDao",
+                dao_fqcn="com.example.MemberSnapshotDao",
+            )
+        ],
+        str(tmp_path),
+        room_inventory=_inventory("com.example.GroupMemberDao"),
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_MUTATION_NOT_FOUND]
+    context = _first_context(result)
+    assert context.get("dao_accessor") == "memberSnapshotDao"
+    assert context.get("operation") == "insertAll"
+
+
+def test_gr08p2_parameter_bound_to_different_dao_still_reports_fqcn_mismatch(
+    tmp_path,
+):
+    """Negative: binding is real, and the daoFqcn gate still fires on it.
+
+    The parameter binds to the declared type's OWN DAO identity
+    (LegacyGroupMemberDao -> legacyGroupMemberDao -- visible in the
+    mutation keys), and the row declaring the OTHER DAO's FQCN behind that
+    parameter fails closed with DB_V2_POLICY_DAO_FQCN_MISMATCH exactly as
+    before -- the binding never widens authorization across DAOs.
+    """
+    _write_repo(tmp_path, GR08P2_WRONG_DAO_PARAMETER_SOURCE)
+    result = verify_v2_policy_source_evidence(
+        [
+            _gr08p2_dao_default_entry(
+                parameter_types=(
+                    "com.example.ExpenseGroup",
+                    "com.example.LegacyGroupMemberDao",
+                    "List<com.example.GroupMember>",
+                ),
+            )
+        ],
+        str(tmp_path),
+        room_inventory=_inventory(
+            "com.example.GroupMemberDao",
+            "com.example.LegacyGroupMemberDao",
+        ),
+    )
+    assert result.trusted is False
+    assert _codes(result) == [DB_V2_POLICY_DAO_FQCN_MISMATCH]
+    context = _first_context(result)
+    assert context.get("method") == "insertGroupWithMembers"
+    assert context.get("dao_accessor") == "memberDao"
+    assert context.get("dao_fqcn") == "com.example.GroupMemberDao"
+    # Bounded context only: no raw source, paths, or payloads leak.
+    assert set(context.keys()) == {"method", "dao_accessor", "dao_fqcn"}
+    # The parameter DID bind -- to the declared type's own DAO identity.
+    assert result.groups[0].mutation_keys == ("legacyGroupMemberDao|insertAll",)

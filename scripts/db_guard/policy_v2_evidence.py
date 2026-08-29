@@ -36,6 +36,20 @@ mutations exist in the verified callables:
   before EVERY mutation in its own callable body; ``helper`` and
   ``workerMediated`` entries carry no local requirement here.  No
   dominance/reachability claims are made and mediation is never inferred;
+* DAO-typed METHOD PARAMETERS of the verified callable bind their names to
+  the declared DAO's Room accessor identity (GR-08p2) — the same semantics
+  as a method-local ``val x = ...Dao()`` alias — so a @Transaction DAO
+  default method's cross-DAO ``memberDao.insertAll(...)`` and a calculator
+  entry point's ``settlementDao.insert(...)`` resolve to the inventoried
+  DAO identity instead of the bare parameter-name fallback that made their
+  inventory daoFqcn cross-checks fail.  Binding is type-driven and exact:
+  the declared type must be a KNOWN DAO FQCN (an exact inventory match, or
+  a bare simple name the project type index resolves to exactly one
+  inventoried DAO FQCN); unresolvable or non-DAO types — including
+  dao-like NAMES that are not inventoried DAOs — stay unresolved and the
+  historical fail-closed resolution decides.  Without a Room inventory
+  nothing binds (no DAO ground truth), preserving the documented
+  no-inventory limitation;
 * when a Room inventory is provided, every group member's declared
   ``daoFqcn`` is cross-checked against the RESOLVED identity of the
   accessor evidenced at the mutation site (Plan Step-1 #8): an accessor
@@ -91,6 +105,7 @@ repository-relative paths only.
 from __future__ import annotations
 
 import os
+import re
 
 from dataclasses import dataclass
 
@@ -356,6 +371,165 @@ def _inventory_dao_fqcn_index(room_inventory):
         accessor = _interface_name_to_room_accessor(simple)
         index.setdefault(accessor, set()).add(fqcn)
     return {accessor: frozenset(fqcns) for accessor, fqcns in index.items()}
+
+
+# GR-08p2: the identifier shape a bound parameter name must have, and the
+# callable-parameter modifiers stripped before requiring exactly one
+# identifier token (``vararg members: GroupMemberDao`` binds ``members``).
+_PARAMETER_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_PARAMETER_NAME_MODIFIERS = frozenset({"vararg", "noinline", "crossinline"})
+
+
+def _split_parameter_segments(text):
+    """Split a Kotlin parameter-list body at top-level commas.
+
+    Mirrors the shared parser's delimiter rules — ``->`` arrows are not
+    generic closers, a ``>`` only closes an open ``<``, and parens,
+    brackets, and braces must balance — but never raises: any structural
+    imbalance returns ``None`` so the caller keeps EVERY parameter
+    unresolved (fail closed) instead of trusting a partial split.
+    """
+    segments = []
+    start = 0
+    stack = []
+    closers = {"(": ")", "[": "]", "{": "}"}
+    i = 0
+    n = len(text)
+    while i < n:
+        if text.startswith("->", i):
+            i += 2
+            continue
+        ch = text[i]
+        if ch in "(<[{":
+            stack.append(ch)
+        elif ch == ">":
+            # A ``>`` that does not close an open generic is comparison
+            # operator text inside a default-value expression; ignore it
+            # exactly like the shared parser does.
+            if stack and stack[-1] == "<":
+                stack.pop()
+        elif ch in ")]}":
+            if not stack or closers[stack[-1]] != ch:
+                return None
+            stack.pop()
+        elif ch == "," and not stack:
+            segments.append(text[start:i])
+            start = i + 1
+        i += 1
+    if stack:
+        return None
+    segments.append(text[start:])
+    return segments
+
+
+def _declared_type_dao_identity(type_text, project_types, known_dao_fqcns):
+    """Resolve one declared parameter type to a known DAO identity.
+
+    Two exact routes only (GR-08p2, never a guess):
+
+    * the spelled text IS a known DAO FQCN (a fully-qualified parameter
+      spelling matched against the inventory DAO set exactly);
+    * the spelled text is a bare simple name that the project type index
+      resolves to EXACTLY ONE FQCN which is a known DAO FQCN.
+
+    Everything else — generic/nullable/array/function-type spellings,
+    ambiguous simple names, types the index does not declare, and types
+    that are not inventoried DAOs — stays unresolved (``None``), so a
+    dao-like NAME alone can never bind.
+    """
+    text = type_text.strip()
+    if not text:
+        return None
+    if text in known_dao_fqcns:
+        return _interface_name_to_room_accessor(text.rsplit(".", 1)[-1])
+    if _PARAMETER_NAME_RE.fullmatch(text) is None:
+        return None
+    candidates = project_types.by_simple_name.get(text, ())
+    if len(candidates) != 1:
+        return None
+    fqcn = candidates[0]
+    if fqcn not in known_dao_fqcns:
+        return None
+    return _interface_name_to_room_accessor(fqcn.rsplit(".", 1)[-1])
+
+
+def _callable_parameter_bindings(decl, masked, project_types, dao_fqcn_index):
+    """Bind the verified callable's DAO-typed parameters (GR-08p2).
+
+    The accessor-identity map historically merged only class-scope
+    properties and method locals, so a DAO-typed METHOD PARAMETER
+    (``memberDao: GroupMemberDao`` on a @Transaction DAO default method,
+    ``settlementDao: GroupSettlementDao`` on a calculator entry point)
+    resolved through the bare ``\\w+Dao`` naming convention — the inventory
+    daoFqcn cross-check then looked up the PARAMETER NAME instead of the
+    derived Room accessor and failed with
+    ``DB_V2_POLICY_DAO_FQCN_MISMATCH``.
+
+    Returns ``{parameter_name: room_accessor_identity}`` for every
+    parameter whose declared type resolves to a KNOWN DAO FQCN (the
+    inventory DAO set) — the same semantics as a method-local
+    ``val x = ...Dao()`` alias.  ``decl.body`` is the tail slice of the
+    declaration span, so the header is ``masked[decl.start_offset :
+    decl.end_offset - len(decl.body)]`` for braced and captured-expression
+    bodies alike, and the declaration span starts at the ``fun`` keyword,
+    so the FIRST ``(`` in the header opens the parameter list (the same
+    convention ``find_callable_declarations`` uses).  Every uncertain
+    shape — no body, unbalanced list, modifier/annotation-padded names,
+    default-value-only segments, unresolvable or non-DAO types — yields no
+    binding for that parameter (fail closed; the historical resolution
+    decides).  Without an inventory there is no DAO ground truth and
+    nothing binds.
+    """
+    if project_types is None or not dao_fqcn_index:
+        return {}
+    known_dao_fqcns = set()
+    for fqcns in dao_fqcn_index.values():
+        known_dao_fqcns.update(fqcns)
+    if not known_dao_fqcns:
+        return {}
+    if not isinstance(decl.body, str) or not decl.body:
+        return {}
+    header = masked[decl.start_offset : decl.end_offset - len(decl.body)]
+    open_index = header.find("(")
+    if open_index < 0:
+        return {}
+    depth = 0
+    close_index = -1
+    for i in range(open_index, len(header)):
+        ch = header[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                close_index = i
+                break
+    if close_index < 0:
+        return {}
+    segments = _split_parameter_segments(header[open_index + 1 : close_index])
+    if segments is None:
+        return {}
+    bindings = {}
+    for segment in segments:
+        if ":" not in segment:
+            continue
+        name_part, type_text = segment.split(":", 1)
+        type_text = type_text.split("=", 1)[0]
+        names = [
+            token
+            for token in name_part.split()
+            if token not in _PARAMETER_NAME_MODIFIERS
+        ]
+        if len(names) != 1:
+            continue
+        if _PARAMETER_NAME_RE.fullmatch(names[0]) is None:
+            continue
+        identity = _declared_type_dao_identity(
+            type_text, project_types, known_dao_fqcns
+        )
+        if identity is not None:
+            bindings[names[0]] = identity
+    return bindings
 
 
 def verify_v2_policy_source_evidence(
@@ -950,7 +1124,14 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
     declaration span excluded — including callables declared inside nested
     named classes/objects within the owner body — so only property/field-
     level DAO declarations remain and sibling methods' or nested-owner
-    members' local aliases can never leak into scope.  A member's
+    members' local aliases can never leak into scope.  GR-08p2 adds the
+    third map layer between them: the verified callable's own DAO-typed
+    METHOD PARAMETERS bind their names to the declared DAO's Room accessor
+    identity (type-driven, exact, inventory-gated — see
+    :func:`_callable_parameter_bindings`), so a @Transaction DAO default
+    method's cross-DAO parameter mutation and a calculator entry point's
+    parameter mutation resolve to the inventoried DAO identity instead of
+    the bare parameter-name fallback.  A member's
     ``dao_accessor`` may spell the source property alias (``dao``) rather
     than the derived Room accessor identity (``rawNotificationDao``): the
     accessor spelling is resolved through the SAME merged map before the
@@ -1000,6 +1181,18 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
     )
     method_map = build_dao_var_map(body_lines)
     merged = dict(class_map)
+    # GR-08p2: a DAO-typed METHOD PARAMETER of the verified callable binds
+    # its name to the declared DAO's Room accessor identity — the same
+    # semantics as a method-local ``val x = ...Dao()`` alias.  Binding is
+    # driven by the declared TYPE only, resolved through two exact routes
+    # (project type index / exact known-DAO FQCN match); anything
+    # unresolvable stays unbound so the historical fail-closed resolution
+    # decides.  Parameters shadow class properties exactly like Kotlin
+    # scoping, and method locals keep the highest precedence (most-specific
+    # body evidence), so every pre-existing resolution is unchanged.
+    merged.update(
+        _callable_parameter_bindings(decl, masked, project_types, dao_fqcn_index)
+    )
     merged.update(method_map)
     matches = _extract_mutation_matches(decl.body, var_map=merged)
     pairs = []
