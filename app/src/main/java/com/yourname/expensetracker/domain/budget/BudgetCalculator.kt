@@ -48,8 +48,10 @@ class BudgetCalculator @Inject constructor(
 ) {
 
     /**
-     * BUD-10: Valid periodMode values. Any unrecognized value will throw
-     * an IllegalArgumentException instead of silently defaulting to CALENDAR.
+     * BUD-10: Valid periodMode values. Unrecognized non-blank values throw an
+     * IllegalArgumentException instead of silently defaulting to CALENDAR.
+     * Blank/empty values (budgets persisted before periodMode existed) fall
+     * back to the legacy CALENDAR default.
      */
     enum class PeriodMode {
         ROLLING,
@@ -57,11 +59,13 @@ class BudgetCalculator @Inject constructor(
 
         companion object {
             /**
-             * Safe parser: returns the matching enum or throws for invalid values.
-             * BUD-10: Previously, any non-ROLLING string silently became CALENDAR,
-             * masking data-integrity issues.
+             * Safe parser: blank/empty values default to CALENDAR (legacy
+             * fallback); any other unrecognized value throws (BUD-10).
              */
             fun fromString(value: String): PeriodMode {
+                if (value.isBlank()) {
+                    return CALENDAR
+                }
                 return try {
                     valueOf(value.uppercase())
                 } catch (e: IllegalArgumentException) {

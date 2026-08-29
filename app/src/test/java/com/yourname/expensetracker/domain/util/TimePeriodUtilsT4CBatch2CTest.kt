@@ -652,21 +652,32 @@ class TimePeriodUtilsT4CBatch2CTest {
             withZone(zoneId) {
                 for ((iso, ts) in instants) {
                     if (zoneId == "UTC") {
-                        assertEquals(
-                            "legacy and explicit must agree at/after cutover $zoneId $iso",
-                            legacyStartOfMonth(ts),
-                            explicitStartOfMonth(ts, zoneId)
-                        )
-                        assertEquals(
-                            "legacy end and explicit end must agree at/after cutover $zoneId $iso",
-                            legacyEndOfMonth(ts),
-                            explicitEndOfMonth(ts, zoneId)
-                        )
-                        assertEquals(
-                            "legacy range and explicit range must agree at/after cutover $zoneId $iso",
-                            legacyMonthRange(ts, 0),
-                            explicitMonthRange(ts, zoneId, 0)
-                        )
+                        // The legacy Calendar and proleptic java.time oracles
+                        // agree at/after the cutover only while the derived
+                        // boundary itself lies at/after the cutover. The month
+                        // containing the cutover starts (October 1582) before
+                        // it, where the legacy Calendar applies Julian date
+                        // rules (10-day offset), so the oracle-agreement check
+                        // is asserted only where it can hold. Production stays
+                        // pinned to the explicit java.time oracle below either
+                        // way.
+                        if (legacyStartOfMonth(ts) >= cutoverEpochMillis) {
+                            assertEquals(
+                                "legacy and explicit must agree at/after cutover $zoneId $iso",
+                                legacyStartOfMonth(ts),
+                                explicitStartOfMonth(ts, zoneId)
+                            )
+                            assertEquals(
+                                "legacy end and explicit end must agree at/after cutover $zoneId $iso",
+                                legacyEndOfMonth(ts),
+                                explicitEndOfMonth(ts, zoneId)
+                            )
+                            assertEquals(
+                                "legacy range and explicit range must agree at/after cutover $zoneId $iso",
+                                legacyMonthRange(ts, 0),
+                                explicitMonthRange(ts, zoneId, 0)
+                            )
+                        }
                     } else {
                         assertTrue(
                             "zone $zoneId is not independently verified as divergent at/after cutover",

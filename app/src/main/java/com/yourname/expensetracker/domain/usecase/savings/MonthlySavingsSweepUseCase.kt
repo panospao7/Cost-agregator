@@ -209,7 +209,11 @@ class MonthlySavingsSweepUseCase @Inject constructor(
         val underspend = selectedStatuses.sumOf { status ->
             status.remainingAmount.coerceAtLeast(0.0)
         }
-        val totalBudgeted = selectedStatuses.sumOf { it.effectiveLimit }
+        // T4C oracle: the sweep risk baseline uses the budgeted amount.
+        // effectiveLimit is a BudgetMonitor display concept and is 0 in
+        // legacy status snapshots, which would zero the budget-based
+        // fallback risk buffer.
+        val totalBudgeted = selectedStatuses.sumOf { it.budget.amount }
         val totalSpent = selectedStatuses.sumOf { it.spentAmount }
 
         return Triple(underspend, totalBudgeted, totalSpent)

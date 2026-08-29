@@ -21,7 +21,7 @@ pytest scripts/ci/test_capture_db_guard_evidence.py -v
 ### GR-01 v2 model + legacy parity
 
 ```powershell
-python -m pytest scripts/test_db_guard_policy_v2.py scripts/test_db_guard_policy_v2_evidence.py scripts/test_db_guard_policy_errors.py scripts/test_db_guard_policy_legacy_loaders.py scripts/test_db_guard_policy_v2_current_repo.py scripts/test_db_guard_active_policy_blocked.py -v
+python -m pytest scripts/test_db_guard_policy_v2.py scripts/test_db_guard_policy_v2_evidence.py scripts/test_db_guard_policy_errors.py scripts/test_db_guard_policy_legacy_loaders.py scripts/test_db_guard_policy_v2_current_repo.py -v
 python -m pytest scripts/test_verify_db_access_boundaries.py scripts/test_verify_db_access_v2.py -v
 ```
 
@@ -57,7 +57,7 @@ Expect exit 0, silent.
 ### GR-04 decoupling
 
 ```powershell
-pytest scripts/test_verify_db_access_boundaries.py scripts/test_verify_db_access_v2.py scripts/test_db_guard_active_policy_blocked.py -v
+pytest scripts/test_verify_db_access_boundaries.py scripts/test_verify_db_access_v2.py -v
 ```
 
 ## 3. Guard CLIs
@@ -67,7 +67,7 @@ pytest scripts/test_verify_db_access_boundaries.py scripts/test_verify_db_access
 | `verify_production_source_roots` | exit 0 silent |
 | `verify_db_access_boundaries --inventory-only ...` | exit 2 ON THIS WINDOWS WORKSTATION is EXPECTED pre-existing debt (350 DB_ROOM_QUERY_UNCLASSIFIABLE + 1 inheritance), byte-identical to base SHA 9b97e797, zero DB_SOURCE_ROOT_* codes; exit 0 only on Linux CI with os.O_DIRECTORY durability barrier |
 | `migrate --check` | exit 1 (migration debt expected) |
-| full gate with all four config flags | exit 2, single umbrella stderr line, findings JSON diagnostics exactly `[DB_POLICY_SOURCE_EVIDENCE_INVALID]`; blocked for known policy reason, never structural-count |
+| full gate with all four config flags | exit 0 (clean) / exit 1 (real findings) under the activated authoritative-v2 policy; v1 bytes archived at db_ownership_policy.legacy.yml (v1 rejection pinned loader-side) |
 
 ## 4. Kotlin / Gradle
 
@@ -108,11 +108,11 @@ git diff cf07b04b~1 --exit-code -- config/baselines/db_access.json config/guards
 
 | Aspect | State |
 | --- | --- |
-| Active DB gate | blocked exit 2 DB_POLICY_SOURCE_EVIDENCE_INVALID only |
+| Active DB gate | authoritative-v2, trusted exit 0 (clean) / exit 1 (real findings); v1 archived at db_ownership_policy.legacy.yml; ratchet v2 live (empty baseline) |
 | Inventory-only | exit 2 on Windows pre-existing debt, trusted-equivalent to base |
 | Migration | exit 1 resolved=9/99 |
 | Meta-guard | exit 0 |
-| Candidate | v2 9 entries byte-reproducible |
+| Candidate | v2 472 entries byte-reproducible |
 | Structural pin | 62 retained |
 
 Closing note: if all sections pass, branch gr-00-local is fully validated for PR/merge and GR-05 can start. If anything fails, route output back to the orchestrator fix loop.
@@ -142,3 +142,34 @@ Corrections applied from the first validation findings:
    rejection assertions were replaced with acceptance assertions (9 entries,
    zero errors) and the v1-rejection intent was re-pinned against the active
    v1 policy.
+
+## Revision 3 (post v2 activation)
+
+Date: 2026-08-30. Status: pending re-validation.
+
+Post-activation state change (GR-07/GR-08): the active DB ownership gate now
+runs the authoritative v2 policy and correctly exits 0, so the pre-activation
+"blocked" truth pinned by this checklist no longer holds. Corrections applied:
+
+1. `scripts/test_db_guard_active_policy_blocked.py` (the GR-01-era
+   characterization of the blocked state — exit 2 plus the single
+   DB_POLICY_SOURCE_EVIDENCE_INVALID umbrella diagnostic) was DELETED. It was
+   flagged obsolete since GR-08a; the activated truth is pinned by the v2
+   characterization in `scripts/test_db_guard_scanner_d4.py` and by
+   `test_current_db_gate_activated_policy_real_config_pipeline` in
+   `scripts/test_verify_db_access_boundaries.py`. Its references were removed
+   from the Section 2 GR-01 and GR-04 pytest command lines.
+2. Section 3: the "full gate with all four config flags" expectation was
+   updated from the blocked state (exit 2, single umbrella stderr line) to
+   the activated truth (exit 0 clean / exit 1 on real findings).
+3. Section 7: the "Active DB gate" row was updated to the activated truth —
+   authoritative-v2, trusted exit 0 (clean) / exit 1 (real findings); v1
+   archived at `config/guards/db_ownership_policy.legacy.yml`; ratchet v2
+   live with an empty baseline. The "Candidate" row was updated 9 -> 472
+   entries (post-GR-08 truth; the PR-GR-05 55-key fold remains pinned as
+   migration accounting over the archived v1 input).
+4. `scripts/test_db_guard_policy_v2_current_repo.py`: the v1-rejection
+   boundary was repointed from the (now v2) active path to the archive —
+   `test_archived_v1_policy_rejected_by_v2_loader` loads
+   `config/guards/db_ownership_policy.legacy.yml` — and the candidate
+   acceptance pin was updated 55 -> 472 entries.

@@ -450,7 +450,10 @@ class TimePeriodUtilsT4CBatch2BTest {
             val ts = LocalDateTime.of(9999, 12, 31, 12, 0).toInstant(ZoneOffset.UTC).toEpochMilli()
             // 9999-12-31 is a Friday -> Monday 9999-12-27, end Monday 10000-01-03.
             assertEquals(Instant.parse("9999-12-27T00:00:00Z").toEpochMilli(), TimePeriodUtils.getStartOfWeek(ts))
-            assertEquals(Instant.parse("10000-01-03T00:00:00Z").toEpochMilli(), TimePeriodUtils.getEndOfWeek(ts))
+            // The exclusive end overflows into year 10000, which ISO_INSTANT cannot
+            // express without a +/- sign prefix — compute the expected instant
+            // numerically instead of parsing an ISO string.
+            assertEquals(LocalDateTime.of(10000, 1, 3, 0, 0).toInstant(ZoneOffset.UTC).toEpochMilli(), TimePeriodUtils.getEndOfWeek(ts))
         }
     }
 
