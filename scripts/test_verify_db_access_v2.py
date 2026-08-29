@@ -347,7 +347,10 @@ def _clean_statistics(*, files_scanned: int = 1, declarations_scanned: int = 3,
         "trusted": True,
         # GR-07 Option-B amendment: trusted scans report how many of their
         # scanner diagnostics are advisory (non-DB-relevant callables).
-        "advisoryDiagnosticCount": 0,
+        # A trusted run carries zero blocking diagnostics by definition
+        # (the scanner computes trusted == no non-advisory diagnostic),
+        # so the advisory count equals the full diagnostic count here.
+        "advisoryDiagnosticCount": diagnostic_count,
     }
     statistics.update(_ACTIVATION_STATISTICS)
     statistics["sourceRootManifestSha256"] = manifest_sha256
@@ -1185,7 +1188,11 @@ def test_advisory_only_scanner_debt_keeps_run_trusted_exit_zero(
         }],
         # files: Fixture + multi/UiState + other/UiState + UiRepository;
         # declarations: Item + Repository + save + UiState x2 +
-        # UiRepository + render; diagnosticCount includes the advisory one.
+        # UiRepository + render; diagnosticCount includes the advisory one,
+        # and advisoryDiagnosticCount counts it too (a trusted run has zero
+        # blocking diagnostics, so every diagnostic is advisory — the
+        # scanner derives both counters from the same blocking/advisory
+        # split).
         "statistics": _clean_statistics(
             files_scanned=4, declarations_scanned=7, diagnostic_count=1,
         ),
@@ -1327,34 +1334,53 @@ def test_source_root_uses_project_defaults_for_policies(tmp_path: Path) -> None:
 # scan) costs minutes per run.  Both canonical-defaults regression tests below
 # share ONE module-scoped subprocess run and assert against the same bytes.
 
-# Activated end-state truth (GR-08m1): the real tree's residual scanner-family
-# debt is fully resolved by the GR-07/GR-08 hardening rounds and the 472-entry
-# exact policy covers every discovered mutation, so the full pipeline over the
-# canonical defaults runs TRUSTED and CLEAN — no diagnostic, no finding, and
-# no policy/loader/umbrella code anywhere in the report.
+# Activated truth: the 472-entry exact policy covers every discovered
+# mutation, so the full pipeline over the canonical defaults runs TRUSTED —
+# no finding, no BLOCKING diagnostic, and no policy/loader/umbrella code
+# anywhere in the report.
+#
+# GR-09 derivation (advisory-debt drift): the real tree again carries
+# advisory-only scanner debt.  The GR-09 static-suite3 guard run
+# (build/guard-debug/gr09/current-findings.json) reports 20 advisory
+# DB_SIGNATURE_UNRESOLVED diagnostics over non-DB-relevant UI/AI/location/
+# worker callables (first:
+# data/ai/provider/OnDeviceQueryInterpretationService.kt) with trusted=true
+# and findings=[].  That set grows and shrinks with the tree, so the shared
+# assertions below pin only the fail-closed shape — every diagnostic
+# advisory, zero findings — never the volatile paths or counts.
 
 
 def _assert_strict_trusted_clean_real_tree_report(report_path: Path) -> dict:
     """Structurally strict assertions over the cached real-tree report.
 
-    Pins the exact report schema, findings/diagnostics emptiness, trusted
-    semantics, zero counts, and the activation identifiers — deliberately
-    NEVER volatile per-counter tree statistics (files/declarations/inventory
-    counts grow with the tree).
+    Pins the exact report schema, findings emptiness, advisory-only
+    diagnostics (the scanner's own blocking rule: every diagnostic must
+    carry the advisory marker, so any BLOCKING diagnostic fails), trusted
+    semantics, count consistency, and the activation identifiers —
+    deliberately NEVER volatile per-counter tree statistics
+    (files/declarations/inventory counts grow with the tree) nor the
+    volatile advisory-debt path set (see the GR-09 derivation above).
     """
     _payload, data = _read_report_bytes(report_path)
     assert set(data) == REPORT_KEYS, f"unexpected report keys: {set(data) ^ REPORT_KEYS}"
     assert data["schema"] == "cost-aggregator.guard-findings"
     assert data["schema_version"] == 2
     assert data["guard"] == "db_access"
-    # Trusted clean run: nothing to report, nothing withheld.
+    # Trusted run: nothing withheld, no unauthorized mutation, and no
+    # BLOCKING diagnostic.  Advisory scanner debt (GR-07 Option-B) is
+    # reported but never breaks trust; only its fail-closed shape is
+    # pinned: every diagnostic must carry the advisory marker, mirroring
+    # the scanner's blocking rule, so any blocking diagnostic still fails.
     assert data["findings"] == []
-    assert data["diagnostics"] == []
+    for diagnostic in data["diagnostics"]:
+        assert diagnostic["controlled_context"].get("advisory") is True, (
+            diagnostic
+        )
     statistics = data["statistics"]
     assert statistics["trusted"] is True
     assert statistics["findingCount"] == 0
-    assert statistics["diagnosticCount"] == 0
-    assert statistics["advisoryDiagnosticCount"] == 0
+    assert statistics["diagnosticCount"] == len(data["diagnostics"])
+    assert statistics["advisoryDiagnosticCount"] == len(data["diagnostics"])
     for key, value in _ACTIVATION_STATISTICS.items():
         if key == "sourceRootManifestSha256":
             # The real tree declares a production source-root manifest; only
@@ -1394,13 +1420,15 @@ def test_default_project_root_uses_canonical_manifest(
 ) -> None:
     """The default project root resolves the CANONICAL production contract.
 
-    Activated end-state truth (structurally strict): with no explicit paths
-    the CLI runs the full pipeline over the real repository — active v2
-    policy loads, evidence passes, the canonical structural manifest verifies
-    — and exits 0 as a TRUSTED CLEAN scan: the real tree carries no residual
-    scanner-family debt and every discovered mutation is exactly authorized.
-    See ``_assert_strict_trusted_clean_real_tree_report`` for the pinned
-    structure; per-counter tree statistics are deliberately not pinned.
+    Activated truth (structurally strict): with no explicit paths the CLI
+    runs the full pipeline over the real repository — active v2 policy
+    loads, evidence passes, the canonical structural manifest verifies —
+    and exits 0 as a TRUSTED scan: every discovered mutation is exactly
+    authorized (no finding) and every reported diagnostic is advisory-only
+    scanner debt.  See ``_assert_strict_trusted_clean_real_tree_report``
+    for the pinned structure and the GR-09 advisory-debt derivation;
+    per-counter tree statistics and the volatile debt path set are
+    deliberately not pinned.
     """
     result = _real_tree_scan["result"]
     assert result.returncode == 0
@@ -2202,7 +2230,8 @@ counts:
     # paths.  Proven by the SHARED module-cached real-tree scan (one full
     # pipeline run for both consumers): the canonical defaults resolve the
     # real manifest, proceed past every policy stage into the scan, and end
-    # as a TRUSTED CLEAN run — never a policy/manifest failure.
+    # as a TRUSTED run (advisory-only scanner debt at most — see the GR-09
+    # derivation above) — never a policy/manifest failure.
     canonical = _real_tree_scan
     assert canonical["result"].returncode == 0
     _assert_cli_streams(canonical["result"], canonical["root"], diagnostic=False)

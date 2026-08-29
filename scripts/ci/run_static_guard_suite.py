@@ -22,6 +22,14 @@ Environment:
   scripts/) can take longer, so the default carries headroom for CI
   variance. Unset, blank, non-numeric, or non-positive values fall back
   to the built-in default.
+
+The db_access ratchet (guard_ratchet.py) enforces its own child-process
+timeout via its --timeout flag (default 300s). That default is shorter
+than the db_access full-tree D4 scan (~7-10 minutes), so the ratchet would
+kill a healthy scan and exit 2. The suite therefore passes the ratchet a
+derived child budget: max(GUARD_TIMEOUT_SECONDS - 60, 600) — 60s of
+headroom keeps the child timeout inside the suite's per-guard budget, and
+the 600s floor keeps the budget viable for the known scan cost.
 """
 
 import argparse
@@ -48,6 +56,72 @@ from typing import Any, Dict, List, Optional, Tuple
 # _resolve_python() remains the runtime safety net for manifest entries and
 # custom JSON manifests that still use "python3"/"python" literals.
 SUITE_PYTHON = sys.executable
+
+# ── Timeout budget ──────────────────────────────────────────────────────────────
+# Suite-level per-guard timeout in seconds.
+# The db_access full-tree D4 scan alone can take ~7-10 minutes and guard_tests
+# (pytest over scripts/) can take longer, so the default carries generous
+# headroom for CI variance. Override per environment with the
+# GUARD_TIMEOUT_SECONDS environment variable (positive integer seconds);
+# unset, blank, non-numeric, or non-positive values fall back to the default.
+# Defined before GUARD_MANIFEST because the db_access entry embeds a child
+# budget derived from it (see _ratchet_child_timeout below).
+DEFAULT_GUARD_TIMEOUT_SECONDS = 1500
+GUARD_TIMEOUT_SECONDS_ENV_VAR = "GUARD_TIMEOUT_SECONDS"
+
+
+def _resolve_guard_timeout() -> int:
+    """Resolve the per-guard timeout from the environment.
+
+    Reads GUARD_TIMEOUT_SECONDS (seconds). Falls back to
+    DEFAULT_GUARD_TIMEOUT_SECONDS when unset, blank, non-numeric, or
+    non-positive.
+    """
+    raw = os.environ.get(GUARD_TIMEOUT_SECONDS_ENV_VAR)
+    if raw is None or not raw.strip():
+        return DEFAULT_GUARD_TIMEOUT_SECONDS
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return DEFAULT_GUARD_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_GUARD_TIMEOUT_SECONDS
+
+
+GUARD_TIMEOUT_SECONDS = _resolve_guard_timeout()
+
+# The db_access ratchet (guard_ratchet.py) enforces its own child-process
+# timeout via its --timeout flag (default 300s). That default is shorter than
+# the db_access full-tree D4 scan (~7-10 minutes), so the ratchet kills a
+# healthy scan and exits 2 ("could not execute the guard command (timeout..)").
+# The suite therefore derives the ratchet's child budget from its own
+# per-guard budget:
+#
+#   child_budget = max(GUARD_TIMEOUT_SECONDS - 60, 600)
+#
+# - 60s headroom covers the ratchet's own work (interpreter startup, baseline
+#   load, report parsing) so the child timeout always fires before the
+#   suite's outer timeout whenever the suite budget is at least
+#   floor + headroom (660s).
+# - The 600s floor keeps the child budget viable for the known D4 scan cost
+#   (~7-10 minutes) even when the suite budget is lowered. When the suite
+#   budget is below 660s the floor exceeds the derivation and the suite's
+#   outer timeout is the effective bound (deliberate trade-off: prefer a
+#   viable child budget over a strictly nested one).
+RATCHET_CHILD_TIMEOUT_HEADROOM_SECONDS = 60
+RATCHET_CHILD_TIMEOUT_FLOOR_SECONDS = 600
+
+
+def _ratchet_child_timeout() -> int:
+    """Derive the guard_ratchet --timeout (child budget) for db_access.
+
+    See the comment above RATCHET_CHILD_TIMEOUT_HEADROOM_SECONDS for the
+    derivation rationale.
+    """
+    return max(
+        GUARD_TIMEOUT_SECONDS - RATCHET_CHILD_TIMEOUT_HEADROOM_SECONDS,
+        RATCHET_CHILD_TIMEOUT_FLOOR_SECONDS,
+    )
+
 
 GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     # ── Registry integrity (must run first) ─────────────────────────────────────
@@ -108,6 +182,11 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
         [
             "python3", "scripts/ci/guard_ratchet.py",
             "--guard-name", "db_access",
+            # Ratchet-level child budget derived from the suite budget; the
+            # ratchet's 300s default kills the ~7-10 min full-tree D4 scan.
+            # Must stay a ratchet flag, NOT a --command-arg: the child guard
+            # script has no --timeout flag. See _ratchet_child_timeout().
+            f"--timeout={_ratchet_child_timeout()}",
             "--command-arg=python",
             "--command-arg=scripts/verify_db_access_boundaries.py",
             "--command-arg=--fail-on-violation",
@@ -163,35 +242,6 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     # Pytest — always runs
     ("guard_tests", [SUITE_PYTHON, "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"], "blocking"),
 ]
-
-# Per-guard timeout in seconds.
-# The db_access full-tree D4 scan alone can take ~7-10 minutes and guard_tests
-# (pytest over scripts/) can take longer, so the default carries generous
-# headroom for CI variance. Override per environment with the
-# GUARD_TIMEOUT_SECONDS environment variable (positive integer seconds);
-# unset, blank, non-numeric, or non-positive values fall back to the default.
-DEFAULT_GUARD_TIMEOUT_SECONDS = 1500
-GUARD_TIMEOUT_SECONDS_ENV_VAR = "GUARD_TIMEOUT_SECONDS"
-
-
-def _resolve_guard_timeout() -> int:
-    """Resolve the per-guard timeout from the environment.
-
-    Reads GUARD_TIMEOUT_SECONDS (seconds). Falls back to
-    DEFAULT_GUARD_TIMEOUT_SECONDS when unset, blank, non-numeric, or
-    non-positive.
-    """
-    raw = os.environ.get(GUARD_TIMEOUT_SECONDS_ENV_VAR)
-    if raw is None or not raw.strip():
-        return DEFAULT_GUARD_TIMEOUT_SECONDS
-    try:
-        value = int(raw.strip())
-    except ValueError:
-        return DEFAULT_GUARD_TIMEOUT_SECONDS
-    return value if value > 0 else DEFAULT_GUARD_TIMEOUT_SECONDS
-
-
-GUARD_TIMEOUT_SECONDS = _resolve_guard_timeout()
 
 # Maximum length of stdout preview stored in summary JSON
 STDOUT_PREVIEW_MAX_CHARS = 500

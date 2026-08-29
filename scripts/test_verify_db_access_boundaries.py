@@ -5417,13 +5417,21 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     dedupe), as of the GR-08m1 exact-policy wave.  Re-derive after every
     policy promotion.
 
-    The run exits 0 as a TRUSTED CLEAN scan: the GR-07/GR-08 scanner
-    hardening rounds resolved the real tree's residual scanner-family debt
-    (unresolved signatures/scopes) and the exact policy covers every
-    discovered mutation, so no diagnostic and no finding remains.  The
-    report assertions stay structurally strict — schema shape, emptiness,
-    trust semantics, and the activation identifiers — never volatile
-    per-counter tree statistics."""
+    The run exits 0 as a TRUSTED scan: the exact policy covers every
+    discovered mutation (no finding) and no BLOCKING diagnostic remains.
+    GR-09 derivation (advisory-debt drift): the real tree again carries
+    advisory-only scanner debt — the GR-09 static-suite3 guard run
+    (build/guard-debug/gr09/current-findings.json) reports 20 advisory
+    DB_SIGNATURE_UNRESOLVED diagnostics over non-DB-relevant
+    UI/AI/location/worker callables (first:
+    data/ai/provider/OnDeviceQueryInterpretationService.kt) with
+    trusted=true and findings=[].  That set grows and shrinks with the
+    tree, so it is deliberately NOT pinned; the fail-closed shape is:
+    every diagnostic must carry the advisory marker (the scanner's own
+    blocking rule) and any blocking diagnostic or any finding still
+    fails.  The report assertions stay structurally strict — schema
+    shape, trust semantics, and the activation identifiers — never
+    volatile per-counter tree statistics."""
     import json
 
     monkeypatch.delenv("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", raising=False)
@@ -5480,16 +5488,24 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     assert report["schema"] == "cost-aggregator.guard-findings"
     assert report["schema_version"] == 2
     assert report["guard"] == "db_access"
-    # Trusted clean run: no scanner debt and no unauthorized mutation over
-    # the real tree — every policy stage ran clean over the activated
-    # configuration and the scan ended with nothing to report.
-    assert report["diagnostics"] == []
+    # Trusted run: no unauthorized mutation over the real tree — every
+    # policy stage ran clean over the activated configuration.  Advisory
+    # scanner debt (GR-07 Option-B) is reported but never breaks trust;
+    # only its fail-closed shape is pinned (see the docstring derivation):
+    # every diagnostic must carry the advisory marker, mirroring the
+    # scanner's blocking rule, so any blocking diagnostic still fails.
     assert report["findings"] == []
+    for diagnostic in report["diagnostics"]:
+        assert diagnostic["controlled_context"].get("advisory") is True, (
+            diagnostic
+        )
     statistics = report["statistics"]
     assert statistics["trusted"] is True
     assert statistics["findingCount"] == 0
-    assert statistics["diagnosticCount"] == 0
-    assert statistics["advisoryDiagnosticCount"] == 0
+    assert statistics["diagnosticCount"] == len(report["diagnostics"])
+    assert statistics["advisoryDiagnosticCount"] == len(
+        report["diagnostics"]
+    )
     # Activation identifiers stay pinned; per-counter tree statistics
     # (files/declarations/inventory) are deliberately not pinned.
     assert statistics["activePolicySchemaVersion"] == 2

@@ -17,6 +17,8 @@ Tests verify:
   9. All blocking guards pass produces exit 0.
   10. Per-guard timeout defaults to 1500s with GUARD_TIMEOUT_SECONDS env override.
   11. guard_tests resolves its interpreter portably (sys.executable).
+  12. db_access ratchet carries a --timeout token derived from the suite
+      budget: max(GUARD_TIMEOUT_SECONDS - 60, 600).
 
 Run:
   python -m pytest scripts/ci/test_run_static_guard_suite.py -v
@@ -820,6 +822,43 @@ class TestDbAccessSuiteCommandTokens:
                 return
         assert False, "db_access not found in GUARD_MANIFEST"
 
+    def test_db_access_ratchet_timeout_token_present(self):
+        """The db_access ratchet argv must carry a derived --timeout token.
+
+        guard_ratchet.py enforces its own child-process timeout via its
+        --timeout flag (default 300s), which is shorter than the db_access
+        full-tree D4 scan (~7-10 minutes): the ratchet kills a healthy scan
+        and exits 2. The suite must pass the derived budget as a
+        ratchet-level ``--timeout=<seconds>`` token.
+
+        The token must NOT be a --command-arg: verify_db_access_boundaries.py
+        has no --timeout flag, so a child-level token would crash the child
+        with an argparse error (exit 2).
+        """
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "db_access":
+                timeout_tokens = [
+                    tok for tok in command if tok.startswith("--timeout=")
+                ]
+                assert len(timeout_tokens) == 1, (
+                    f"expected exactly one --timeout=<seconds> token: {command}"
+                )
+                raw_value = timeout_tokens[0].split("=", 1)[1]
+                assert raw_value.isdigit(), (
+                    f"--timeout value must be a positive integer: "
+                    f"{timeout_tokens[0]!r}"
+                )
+                assert int(raw_value) >= 600, (
+                    f"--timeout must cover the ~7-10 min D4 scan "
+                    f"(floor 600s): {raw_value}"
+                )
+                assert "--command-arg=--timeout" not in command, (
+                    f"--timeout must be a ratchet-level flag, not a child arg "
+                    f"(the child guard has no --timeout flag): {command}"
+                )
+                return
+        assert False, "db_access not found in GUARD_MANIFEST"
+
     def test_db_access_child_argv_is_authoritative_v2_cli(self):
         """The db_access child command must be the authoritative protocol-v2
         CLI argv: scripts/verify_db_access_boundaries.py invoked with
@@ -877,3 +916,95 @@ class TestDbAccessSuiteCommandTokens:
         ]
         for name in expected:
             assert name in guard_names, f"Guard '{name}' missing from manifest"
+
+
+class TestDbAccessRatchetChildTimeout:
+    """The db_access ratchet's child budget is derived from the suite budget.
+
+    guard_ratchet.py defaults its child timeout to 300s, which is shorter
+    than the db_access full-tree D4 scan (~7-10 minutes); the ratchet kills
+    a healthy scan and exits 2. The suite derives the ratchet's --timeout as
+    max(GUARD_TIMEOUT_SECONDS - 60, 600):
+
+    - 60s headroom keeps the child timeout inside the suite's per-guard
+      budget (ratchet startup + baseline load + report parsing), so the
+      child timeout fires before the suite's outer timeout whenever the
+      suite budget is at least floor + headroom (660s).
+    - The 600s floor keeps the child budget viable for the known scan cost
+      even when the suite budget is lowered; below a 660s suite budget the
+      suite's outer timeout is the effective bound.
+    """
+
+    ENV_VAR = "GUARD_TIMEOUT_SECONDS"
+    HEADROOM = 60
+    FLOOR = 600
+
+    def _load_fresh_runner(self):
+        """Load a fresh runner module so import-time env resolution re-runs."""
+        spec = importlib.util.spec_from_file_location(
+            f"run_static_guard_suite_fresh_db_timeout_{id(self)}",
+            RUNNER_SCRIPT,
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _db_access_command(self, module):
+        for name, command, _ in module.GUARD_MANIFEST:
+            if name == "db_access":
+                return command
+        assert False, "db_access not found in GUARD_MANIFEST"
+
+    def _db_access_child_timeout(self, module):
+        command = self._db_access_command(module)
+        tokens = [tok for tok in command if tok.startswith("--timeout=")]
+        assert len(tokens) == 1, f"expected one --timeout token: {command}"
+        return int(tokens[0].split("=", 1)[1])
+
+    def test_default_derivation(self, monkeypatch):
+        """Default suite budget 1500s → child budget 1440s."""
+        monkeypatch.delenv(self.ENV_VAR, raising=False)
+        fresh = self._load_fresh_runner()
+        assert fresh.GUARD_TIMEOUT_SECONDS == 1500
+        assert fresh._ratchet_child_timeout() == 1440
+        assert self._db_access_child_timeout(fresh) == 1440
+
+    def test_derivation_tracks_env_override(self, monkeypatch):
+        """Child budget = suite budget - 60 while above the floor."""
+        for env_value, expected in (("700", 640), ("2000", 1940), ("3000", 2940)):
+            monkeypatch.setenv(self.ENV_VAR, env_value)
+            fresh = self._load_fresh_runner()
+            assert fresh.GUARD_TIMEOUT_SECONDS == int(env_value)
+            actual = self._db_access_child_timeout(fresh)
+            assert actual == expected, (
+                f"GUARD_TIMEOUT_SECONDS={env_value}: expected {expected}, "
+                f"got {actual}"
+            )
+
+    def test_floor_applies_when_suite_budget_low(self, monkeypatch):
+        """Below floor + headroom (660s) the 600s floor wins."""
+        for env_value in ("300", "100", "1"):
+            monkeypatch.setenv(self.ENV_VAR, env_value)
+            fresh = self._load_fresh_runner()
+            actual = self._db_access_child_timeout(fresh)
+            assert actual == self.FLOOR, (
+                f"GUARD_TIMEOUT_SECONDS={env_value}: expected floor "
+                f"{self.FLOOR}, got {actual}"
+            )
+
+    def test_boundary_at_floor_plus_headroom(self, monkeypatch):
+        """At a 660s suite budget the derivation exactly meets the floor."""
+        monkeypatch.setenv(self.ENV_VAR, "660")
+        fresh = self._load_fresh_runner()
+        assert fresh.GUARD_TIMEOUT_SECONDS == 660
+        assert self._db_access_child_timeout(fresh) == 600
+
+    def test_child_budget_fits_inside_suite_budget(self, monkeypatch):
+        """For suite budgets >= 660s the child timeout stays nested inside
+        the suite's per-guard timeout with the documented 60s headroom."""
+        for env_value in ("660", "700", "1500", "3000"):
+            monkeypatch.setenv(self.ENV_VAR, env_value)
+            fresh = self._load_fresh_runner()
+            child = self._db_access_child_timeout(fresh)
+            assert child == fresh.GUARD_TIMEOUT_SECONDS - self.HEADROOM
+            assert child < fresh.GUARD_TIMEOUT_SECONDS
