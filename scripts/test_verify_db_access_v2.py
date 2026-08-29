@@ -24,7 +24,6 @@ import pytest
 import yaml
 
 from scripts.ci.guard_findings import GuardRunReport
-from scripts.ci.finding_rule_catalog import known_diagnostic
 from scripts.db_guard.scanner import _diag_from_text
 from scripts.db_guard import reporting
 from scripts.db_guard import room_inventory
@@ -278,7 +277,6 @@ def _bypass_evidence(monkeypatch: pytest.MonkeyPatch):
 
 REPORT_KEYS = {"schema", "schema_version", "guard", "findings", "diagnostics", "statistics"}
 FINDING_KEYS = {"rule", "severity", "path", "location", "symbol", "identity", "message"}
-DIAGNOSTIC_KEYS = {"code", "path", "symbol", "controlled_context"}
 
 
 def _finding_sort_key(item: dict) -> tuple:
@@ -595,14 +593,20 @@ def test_name_only_policy_cannot_authorize_same_name_overloads(
     assert data["diagnostics"] == []
 
 
-def test_overloaded_dao_with_unresolved_argument_type_is_not_authorized(
+def test_overloaded_dao_with_argument_matching_no_overload_is_not_authorized(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
-    # The probe argument must be an expression with NO resolvable type
-    # (unknown constructor), so ``_argument_types`` returns None and the
-    # scanner fails closed with DB_SIGNATURE_UNRESOLVED before any overload
-    # filtering.  A known-typed argument that matches no overload would
-    # instead report DB_CALL_TARGET_AMBIGUOUS.
+    # GR-07 convergence round 5 derivation: a constructed argument IS an
+    # instance of its head type (``_argument_bindings`` resolves
+    # ``Name(...)`` through ``_constructor_call_type``), so ``UnknownItem()``
+    # resolves to the type text "UnknownItem" instead of leaving the argument
+    # list unresolved.  With TWO declared ``insert`` overloads matching
+    # neither "Item" nor "String", the mutation candidate set keeps the
+    # pinned DB_CALL_TARGET_AMBIGUOUS contract (the same resolvable-but-
+    # unmatched shape ``test_unknown_argument_expression_is_not_authorized_
+    # by_arity`` pins for a single candidate).  The run stays fail-closed:
+    # exit 2, untrusted, findings withheld — an argument list that matches
+    # no overload can never reach an authorization decision.
     source = SOURCE.replace(
         "fun insert(item: Item)",
         "fun insert(item: Item)\n    @androidx.room.Insert\n    fun insert(label: String)",
@@ -620,11 +624,11 @@ def test_overloaded_dao_with_unresolved_argument_type_is_not_authorized(
 
     assert result.returncode == 2
     data = _report(report, _expected(diagnostics=[{
-        "code": "DB_SIGNATURE_UNRESOLVED", "path": CANONICAL,
+        "code": "DB_CALL_TARGET_AMBIGUOUS", "path": CANONICAL,
         "symbol": None, "controlled_context": {},
     }]))
     assert data["findings"] == []
-    assert _codes(data, "diagnostics") == ["DB_SIGNATURE_UNRESOLVED"]
+    assert _codes(data, "diagnostics") == ["DB_CALL_TARGET_AMBIGUOUS"]
 
 
 @pytest.mark.parametrize("expression", [
@@ -632,8 +636,14 @@ def test_overloaded_dao_with_unresolved_argument_type_is_not_authorized(
     "array[expenseDao].insert(item)",
     "map[expenseDao].insert(item)",
     "context.expenseDao.insert(item)",
-    "expenseDao?.insert(item)",
-    "expenseDao  ?.  insert(item)",
+    # GR-07 convergence round 6 derivation: the two pure safe-call spellings
+    # on a BARE DAO accessor (``expenseDao?.insert(item)`` and its spaced
+    # form) were removed from this unresolved-scope table — a safe call's
+    # ``?`` is part of the CALL, not the receiver name, so the core
+    # identifier now resolves through the lexical environment and the exact
+    # policy authorizes the mutation.  That improved outcome is pinned by
+    # ``test_safe_call_on_bare_dao_accessor_is_exactly_authorized`` below;
+    # qualified/nested safe-call shapes keep the fail-closed diagnostic here.
     "context?.expenseDao?.insert(item)",
     "other?.expenseDao.insert(item)",
     "context.nested.expenseDao.insert(item)",
@@ -661,6 +671,29 @@ def test_qualified_dao_receiver_is_unresolved_in_structured_report(
     assert _codes(data, "diagnostics") == ["DB_DAO_SCOPE_UNRESOLVED"]
     diagnostic = data["diagnostics"][0]
     assert diagnostic["path"] == CANONICAL
+
+
+def test_safe_call_on_bare_dao_accessor_is_exactly_authorized(
+    tmp_path: Path, _bypass_evidence,
+) -> None:
+    """GR-07 convergence round 6: ``expenseDao?.insert(item)`` dispatches to
+    the SAME declared method as ``expenseDao.insert(item)`` — nullability
+    changes WHEN the call happens, never WHICH identity it names — so the
+    core receiver resolves through the lexical environment and the exact
+    policy authorizes the mutation (trusted clean run).  Unresolved
+    safe-call receivers (qualified/nested shapes) keep the fail-closed
+    DB_DAO_SCOPE_UNRESOLVED diagnostic pinned by the parametrized test
+    above."""
+    source = SOURCE.replace("expenseDao.insert(item)", "expenseDao?.insert(item)")
+    root = _fixture(tmp_path, source=source)
+    _policy(root)
+    _structural_policy(root)
+    report = root / "safe-call-receiver.json"
+
+    result = _run(root, report)
+
+    assert result.returncode == 0
+    _report(report, _expected())
 
 
 def test_direct_dao_receiver_remains_exactly_authorized_in_structured_report(
@@ -777,10 +810,14 @@ def test_property_body_is_not_silently_skipped(
     """A property accessor body is scanned, never skipped.
 
     The getter's ``expenseDao.insert(Item(1))`` mutation IS discovered inside
-    the property declaration range; its constructor argument has no resolvable
-    type, so the scan fails closed with the controlled DB_SIGNATURE_UNRESOLVED
-    diagnostic (exit 2, findings withheld) instead of silently ignoring the
-    body or guessing an authorization.
+    the property declaration range.  GR-07 convergence round 5 derivation: a
+    constructed argument IS an instance of its head type, so ``Item(1)``
+    resolves to "Item" and matches the DAO's declared ``insert(item: Item)``
+    overload — the previously-unresolved call now reaches the authorization
+    decision, and since the exact policy names only ``Repository.save``, the
+    getter's mutation is reported as a DB_UNAUTHORIZED_MUTATION finding
+    (exit 1, trusted run).  The body is neither silently ignored nor guessed
+    into an authorization.
     """
     source = SOURCE + """
 class PropertyRepository(private val expenseDao: ExpenseDao) {
@@ -793,29 +830,48 @@ class PropertyRepository(private val expenseDao: ExpenseDao) {
     _structural_policy(root)
     report = root / "property.json"
     result = _run(root, report)
-    assert result.returncode == 2
+    assert result.returncode == 1
     _report(report, {
         "schema": "cost-aggregator.guard-findings",
         "schema_version": 2,
         "guard": "db_access",
-        "findings": [],
-        "diagnostics": [
+        "findings": [
             {
-                "code": "DB_SIGNATURE_UNRESOLVED",
+                "rule": "DB_UNAUTHORIZED_MUTATION",
+                "severity": "error",
                 "path": "app/src/main/java/example/Fixture.kt",
-                "symbol": None,
-                "controlled_context": {},
+                "location": {"line": 19, "end_line": 19},
+                "symbol": {
+                    "owner": "example.PropertyRepository",
+                    "name": "saved",
+                    "receiver": None,
+                    "parameters": [],
+                    "kind": "property_getter",
+                },
+                "identity": {
+                    "dao": "example.ExpenseDao",
+                    "accessor": "expenseDao",
+                    "operation": "insert",
+                    "mutation_kind": "ROOM_INSERT",
+                    "call_form": "receiver",
+                },
+                "message": "Database mutation is not owned by an exact policy entry",
             }
         ],
-        "statistics": {"trusted": False},
+        "diagnostics": [],
+        "statistics": _clean_statistics(
+            declarations_scanned=5, finding_count=1,
+        ),
     })
 
 
 @pytest.mark.parametrize(("body", "expected_report"), [
     # Mutation arguments must use forms the scanner can resolve (locals with
-    # explicit type annotations or constructor parameters).  A bare
-    # ``Item(1)`` constructor expression has no resolvable argument type and
-    # fails closed with DB_SIGNATURE_UNRESOLVED before authorization.
+    # explicit type annotations or constructor parameters).  Since GR-07
+    # convergence round 5 a bare ``Item(1)`` constructor expression resolves
+    # to its head type, so an argument that matches no declared overload
+    # fails closed with DB_CALL_TARGET_AMBIGUOUS before authorization (see
+    # test_overloaded_dao_with_argument_matching_no_overload_is_not_authorized).
     (
         "class PropertyInitializer(private val expenseDao: ExpenseDao,\n"
         "        private val known: Item) {\n"
@@ -1060,10 +1116,16 @@ package com.example.other
 data class UiState(val label: String)
 """
 
+# GR-07 hardening step C derivation: the parser resolves parameter types
+# through the file's EXPLICIT IMPORTS, so the earlier
+# ``import com.example.multi.UiState`` line made both fixture signatures
+# resolve cleanly and their unresolved-signature debt disappeared.  Both
+# fixtures deliberately keep ``UiState`` UNIMPORTED: with two project
+# declarations of the simple name (multi/other) and no import, the parameter
+# type stays unresolvable and the advisory/blocking debt these tests pin is
+# preserved.
 _ADVISORY_UI_REPOSITORY = """\
 package example
-
-import com.example.multi.UiState
 
 class UiRepository {
     fun render(state: UiState): String {
@@ -1075,8 +1137,6 @@ class UiRepository {
 
 _MIXED_DB_REPOSITORY = """\
 package example
-
-import com.example.multi.UiState
 
 @androidx.room.Dao
 interface DebtDao {
@@ -1267,57 +1327,41 @@ def test_source_root_uses_project_defaults_for_policies(tmp_path: Path) -> None:
 # scan) costs minutes per run.  Both canonical-defaults regression tests below
 # share ONE module-scoped subprocess run and assert against the same bytes.
 
-# Activated truth: the real tree's residual debt is SCANNER-family only.  The
-# policy/loader/evidence stages run clean over the checked-in configuration,
-# so no umbrella or loader code may ever appear; every observed diagnostic
-# code must stay inside this closed scanner-debt family (extending it is a
-# deliberate, documented decision — never a silent new failure mode).
-_REAL_TREE_SCANNER_FAMILY = frozenset({
-    "DB_SIGNATURE_UNRESOLVED",
-    "DB_DAO_SCOPE_UNRESOLVED",
-    "DB_STRUCTURAL_SCOPE_UNSUPPORTED",
-    "DB_CALL_TARGET_AMBIGUOUS",
-})
+# Activated end-state truth (GR-08m1): the real tree's residual scanner-family
+# debt is fully resolved by the GR-07/GR-08 hardening rounds and the 472-entry
+# exact policy covers every discovered mutation, so the full pipeline over the
+# canonical defaults runs TRUSTED and CLEAN — no diagnostic, no finding, and
+# no policy/loader/umbrella code anywhere in the report.
 
 
-def _assert_strict_untrusted_scanner_family_report(report_path: Path) -> dict:
+def _assert_strict_trusted_clean_real_tree_report(report_path: Path) -> dict:
     """Structurally strict assertions over the cached real-tree report.
 
-    Pins the exact report schema, untrusted trust semantics, findings
-    withholding, bounded diagnostic shape, known scanner-family codes, and
-    canonical path discipline — deliberately NEVER volatile per-diagnostic
-    counts (the real tree's honest debt shrinks as hardening lands).
+    Pins the exact report schema, findings/diagnostics emptiness, trusted
+    semantics, zero counts, and the activation identifiers — deliberately
+    NEVER volatile per-counter tree statistics (files/declarations/inventory
+    counts grow with the tree).
     """
     _payload, data = _read_report_bytes(report_path)
     assert set(data) == REPORT_KEYS, f"unexpected report keys: {set(data) ^ REPORT_KEYS}"
     assert data["schema"] == "cost-aggregator.guard-findings"
     assert data["schema_version"] == 2
     assert data["guard"] == "db_access"
-    # Untrusted runs withhold findings entirely.
+    # Trusted clean run: nothing to report, nothing withheld.
     assert data["findings"] == []
-    assert data["statistics"] == {"trusted": False}
-    diagnostics = data["diagnostics"]
-    assert diagnostics, "real-tree debt must be reported honestly"
-    for item in diagnostics:
-        assert set(item) == DIAGNOSTIC_KEYS
-        assert item["symbol"] is None
-        # GR-07 Option-B amendment: a scanner diagnostic on a callable with
-        # NO DB-relevant content carries the bounded advisory marker; debt on
-        # DB-touching callables stays context-free.  No other context value
-        # may ever appear in this closed scanner-debt family.
-        assert item["controlled_context"] in ({}, {"advisory": True})
-        path = item["path"]
-        assert path is None or (
-            isinstance(path, str)
-            and path.startswith("app/src/main/java/")
-            and path.endswith(".kt")
-        )
-        assert known_diagnostic(item["code"]) is not None
-    codes = {item["code"] for item in diagnostics}
-    # No policy/loader/evidence/umbrella code may appear: those stages ran
-    # clean over the activated configuration.
-    assert "DB_POLICY_SOURCE_EVIDENCE_INVALID" not in codes
-    assert codes <= _REAL_TREE_SCANNER_FAMILY
+    assert data["diagnostics"] == []
+    statistics = data["statistics"]
+    assert statistics["trusted"] is True
+    assert statistics["findingCount"] == 0
+    assert statistics["diagnosticCount"] == 0
+    assert statistics["advisoryDiagnosticCount"] == 0
+    for key, value in _ACTIVATION_STATISTICS.items():
+        if key == "sourceRootManifestSha256":
+            # The real tree declares a production source-root manifest; only
+            # presence is pinned (the digest is content-derived).
+            assert statistics[key] is not None
+        else:
+            assert statistics[key] == value
     return data
 
 
@@ -1350,17 +1394,18 @@ def test_default_project_root_uses_canonical_manifest(
 ) -> None:
     """The default project root resolves the CANONICAL production contract.
 
-    Activated truth (structurally strict): with no explicit paths the CLI
-    runs the full pipeline over the real repository — active v2 policy loads,
-    evidence passes, the canonical structural manifest verifies — and exits 2
-    solely because the real tree carries honest scanner-family debt.  See
-    ``_assert_strict_untrusted_scanner_family_report`` for the pinned
-    structure; counts are deliberately not pinned.
+    Activated end-state truth (structurally strict): with no explicit paths
+    the CLI runs the full pipeline over the real repository — active v2
+    policy loads, evidence passes, the canonical structural manifest verifies
+    — and exits 0 as a TRUSTED CLEAN scan: the real tree carries no residual
+    scanner-family debt and every discovered mutation is exactly authorized.
+    See ``_assert_strict_trusted_clean_real_tree_report`` for the pinned
+    structure; per-counter tree statistics are deliberately not pinned.
     """
     result = _real_tree_scan["result"]
-    assert result.returncode == 2
-    _assert_cli_streams(result, _real_tree_scan["root"], diagnostic=True)
-    _assert_strict_untrusted_scanner_family_report(_real_tree_scan["report"])
+    assert result.returncode == 0
+    _assert_cli_streams(result, _real_tree_scan["root"], diagnostic=False)
+    _assert_strict_trusted_clean_real_tree_report(_real_tree_scan["report"])
 
 
 def test_explicit_structural_manifest_is_selected_for_source_root_fixture(
@@ -2156,12 +2201,12 @@ counts:
     # canonical manifest contract instead of inheriting temporary policy
     # paths.  Proven by the SHARED module-cached real-tree scan (one full
     # pipeline run for both consumers): the canonical defaults resolve the
-    # real manifest and proceed past every policy stage into honest
-    # scanner-family debt — never a policy/manifest failure.
+    # real manifest, proceed past every policy stage into the scan, and end
+    # as a TRUSTED CLEAN run — never a policy/manifest failure.
     canonical = _real_tree_scan
-    assert canonical["result"].returncode == 2
-    _assert_cli_streams(canonical["result"], canonical["root"], diagnostic=True)
-    _assert_strict_untrusted_scanner_family_report(canonical["report"])
+    assert canonical["result"].returncode == 0
+    _assert_cli_streams(canonical["result"], canonical["root"], diagnostic=False)
+    _assert_strict_trusted_clean_real_tree_report(canonical["report"])
 
 
 def test_report_does_not_depend_on_stdout_summary_parsing(
@@ -2369,11 +2414,27 @@ def test_accessor_policy_rejects_wrong_kind_or_parameter_signature(
     })
 
 
-def test_accessor_unknown_argument_type_is_not_authorized(
+def test_accessor_unknown_argument_type_is_authorized_by_exact_policy(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
-    source = ACCESSOR_SOURCE.replace("expenseDao.insert(item); return field",
-                                    "expenseDao.insert(field); return field")
+    """GR-07 convergence round 6 derivation: with an unresolvable argument
+    list (the accessor's implicit ``field``), the call still resolves when
+    the candidate set pins EXACTLY ONE declared mutator — argument types
+    only ever chose BETWEEN overloads, and the authorization comparison uses
+    the ENCLOSING callable's resolved signature, never the call arguments.
+    The exact property_getter policy entry therefore authorizes the getter's
+    mutation (trusted clean run).  The setter is stripped so this test
+    isolates the unknown-argument getter; wrong-kind rejection keeps its
+    dedicated coverage in
+    ``test_accessor_policy_rejects_wrong_kind_or_parameter_signature``.
+    """
+    source = ACCESSOR_SOURCE.replace(
+        "expenseDao.insert(item); return field",
+        "expenseDao.insert(field); return field",
+    ).replace(
+        "\n        set(value: Item) { expenseDao.insert(value); field = value }",
+        "",
+    )
     root = _fixture(tmp_path, source=source)
     _accessor_policy(root, "property_getter")
     _structural_policy(root)
@@ -2381,27 +2442,35 @@ def test_accessor_unknown_argument_type_is_not_authorized(
 
     result = _run(root, report)
 
-    assert result.returncode == 2
+    assert result.returncode == 0
     _report(report, {
         "schema": "cost-aggregator.guard-findings",
         "schema_version": 2,
         "guard": "db_access",
         "findings": [],
-        "diagnostics": [
-            {
-                "code": "DB_SIGNATURE_UNRESOLVED",
-                "path": "app/src/main/java/example/Fixture.kt",
-                "symbol": None,
-                "controlled_context": {},
-            },
-        ],
-        "statistics": {"trusted": False},
+        "diagnostics": [],
+        # A property and its accessors are ONE declaration range
+        # (declaration_scanner._property_bounds consumes header,
+        # initializer, and every accessor as a single declaration), so
+        # the scan sees Item + Repository + cached = 3 ranges.
+        "statistics": _clean_statistics(),
     })
 
 
 def test_accessor_unknown_constructor_expression_is_not_authorized(
     tmp_path: Path, _bypass_evidence,
 ) -> None:
+    """A constructor argument matching NO declared overload is never
+    authorized.
+
+    GR-07 convergence round 5 derivation: ``UnknownItem()`` resolves to its
+    constructor head type "UnknownItem" (a constructed value IS an instance
+    of its head type), which matches neither declared ``insert`` overload
+    parameter ("Item").  The mutation candidate set keeps the pinned
+    DB_CALL_TARGET_AMBIGUOUS contract — an unknown or mismatched argument
+    list must never reach an authorization decision — so the run fails
+    closed: exit 2, untrusted, findings withheld (the setter's wrong-kind
+    finding is withheld with the rest of the report)."""
     source = ACCESSOR_SOURCE.replace(
         "val item: Item = Item(0); expenseDao.insert(item)",
         "expenseDao.insert(UnknownItem())",
@@ -2421,7 +2490,7 @@ def test_accessor_unknown_constructor_expression_is_not_authorized(
         "findings": [],
         "diagnostics": [
             {
-                "code": "DB_SIGNATURE_UNRESOLVED",
+                "code": "DB_CALL_TARGET_AMBIGUOUS",
                 "path": "app/src/main/java/example/Fixture.kt",
                 "symbol": None,
                 "controlled_context": {},

@@ -3,6 +3,7 @@
   "generated": "2026-07-10T22:03:54.806036+00:00",
   "fingerprints": [
     "DAO app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt",
+    "DAO app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt",
     "DAO app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt",
     "DAO app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt",
     "DAO app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt",

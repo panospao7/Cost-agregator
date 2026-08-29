@@ -12,6 +12,13 @@ Fallback: AppDatabase.kt (APP_DATABASE_SCHEMA_VERSION) and DatabaseMigrations.kt
 Registered migrations are parsed from DatabaseMigrations.kt.
 Schema JSON files under app/schemas/ are used to verify version coverage.
 
+Kotlin sources are resolved ONLY under the declared production source root
+``<root>/app/src/main/java`` (exact known production paths first, then a
+scoped sorted search) — mirroring ``verify_time_boundaries`` and the
+approved-root contract in ``scripts/db_guard/source_roots.py``.  Stray
+copies of these file names under ``build/`` trees or test fixtures can
+never shadow the real production sources.
+
 Exit codes: 0 = all migrations present, 1 = missing migrations (with --fail-on-violation)
 
 Rule ID: G-MIG-01
@@ -28,6 +35,29 @@ from typing import Dict, List, Optional, Set, Tuple
 RULE_ID = "G-MIG-01"
 DESCRIPTION = "Validates Room database migration coverage from baseline to latest"
 
+# Declared production source root (repository-relative POSIX).  Kotlin
+# sources are resolved ONLY under this root — never across the whole
+# repository, where stray fixture copies under ``build/**`` can shadow the
+# real sources.  Mirrors ``SOURCE_SUBDIR`` in ``verify_time_boundaries.py``
+# and the approved-root contract in ``scripts/db_guard/source_roots.py``.
+SOURCE_SUBDIR = "app/src/main/java"
+
+# Exact known production paths (repository-relative POSIX), preferred before
+# the scoped fallback search.  These are the canonical locations in this
+# repository; fixture layouts and package moves resolve through the scoped
+# search under SOURCE_SUBDIR instead.
+_KNOWN_SOURCE_PATHS = {
+    "AppDatabase.kt": (
+        "app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt"
+    ),
+    "DatabaseMigrations.kt": (
+        "app/src/main/java/com/yourname/expensetracker/data/database/DatabaseMigrations.kt"
+    ),
+    "DatabaseSchemaPolicy.kt": (
+        "app/src/main/java/com/yourname/expensetracker/data/database/DatabaseSchemaPolicy.kt"
+    ),
+}
+
 
 def find_file(root: Path, filename: str) -> Optional[Path]:
     """Find a file by name anywhere under the given root directory."""
@@ -38,9 +68,29 @@ def find_file(root: Path, filename: str) -> Optional[Path]:
 
 
 def find_kotlin_source(root: Path, simple_name: str) -> Optional[Path]:
-    """Find a Kotlin source file by its simple name (e.g. 'AppDatabase.kt')."""
-    for path in root.rglob(simple_name):
-        if path.is_file() and "src" in path.parts:
+    """Find a production Kotlin source file by its simple name.
+
+    Resolution is root-aware and deterministic — only the declared
+    production source root ``<root>/app/src/main/java`` is searched, never
+    ``build/`` output trees, test fixtures, or any other part of the
+    repository:
+
+      1. the exact known production path for ``simple_name``, when one is
+         declared and exists on disk;
+      2. otherwise the first match in sorted order of a search scoped to
+         ``<root>/app/src/main/java`` (covers fixture layouts and package
+         moves without widening the scope).
+    """
+    known_rel = _KNOWN_SOURCE_PATHS.get(simple_name)
+    if known_rel is not None:
+        candidate = root.joinpath(*known_rel.split("/"))
+        if candidate.is_file():
+            return candidate
+    src_dir = root.joinpath(*SOURCE_SUBDIR.split("/"))
+    if not src_dir.is_dir():
+        return None
+    for path in sorted(src_dir.rglob(simple_name)):
+        if path.is_file():
             return path
     return None
 
@@ -80,11 +130,20 @@ def parse_baseline_version(migrations_path: Path) -> Tuple[Optional[int], Option
     return None, None
 
 
-def parse_policy_versions(policy_path: Path) -> Tuple[Optional[int], Optional[int]]:
+def parse_policy_versions(
+    policy_path: Path,
+    app_database_path: Optional[Path] = None,
+) -> Tuple[Optional[int], Optional[int]]:
     """Extract CURRENT_VERSION and MIGRATION_BASELINE from DatabaseSchemaPolicy.kt.
 
     This is the authoritative source — preferred over AppDatabase.kt and
     the baseline comment in DatabaseMigrations.kt.
+
+    ``app_database_path`` is the already-resolved production AppDatabase.kt
+    (the root-scoped result of ``find_kotlin_source``); it wins over the
+    policy file's sibling check.  Delegate resolution never searches the
+    whole project — an unbounded rglob could pick up a stray fixture copy
+    under ``build/`` trees.
 
     Returns (latest_version, baseline_version).
     """
@@ -94,7 +153,14 @@ def parse_policy_versions(policy_path: Path) -> Tuple[Optional[int], Optional[in
         print(f"ERROR reading {policy_path}: {e}", file=sys.stderr)
         return None, None
 
-    latest_match = re.search(r"CURRENT_VERSION\s*=\s*\S+\.APP_DATABASE_SCHEMA_VERSION", content)
+    # The qualifier is optional: DatabaseSchemaPolicy.kt declares the delegate
+    # unqualified ("const val CURRENT_VERSION = APP_DATABASE_SCHEMA_VERSION"),
+    # while a qualified form ("... = AppDatabase.APP_DATABASE_SCHEMA_VERSION")
+    # must also keep matching. A bare lookalike constant without a dot
+    # separator (e.g. FOO_APP_DATABASE_SCHEMA_VERSION) must NOT match.
+    latest_match = re.search(
+        r"CURRENT_VERSION\s*=\s*(?:[\w.]+\.)?APP_DATABASE_SCHEMA_VERSION", content
+    )
     baseline_match = re.search(r"MIGRATION_BASELINE\s*=\s*(\d+)", content)
 
     if not latest_match or not baseline_match:
@@ -107,22 +173,20 @@ def parse_policy_versions(policy_path: Path) -> Tuple[Optional[int], Optional[in
     baseline = int(baseline_match.group(1))
 
     # CURRENT_VERSION delegates to AppDatabase.APP_DATABASE_SCHEMA_VERSION.
-    # Try to resolve from the policy file's parent directory.
-    app_db_path = policy_path.parent / "AppDatabase.kt"
+    # Resolve it deterministically: the explicitly resolved production
+    # AppDatabase.kt first, then the policy file's own directory (the three
+    # canonical files are siblings in production).  Never search the whole
+    # project — stray copies under build/ must not shadow production.
+    candidates = []
+    if app_database_path is not None:
+        candidates.append(app_database_path)
+    candidates.append(policy_path.parent / "AppDatabase.kt")
+
     latest = None
-    if app_db_path.exists():
-        latest = parse_latest_version(app_db_path)
-    else:
-        # Fallback: search the project
-        root = policy_path
-        while root.parent != root:
-            root = root.parent
-            candidate = root / "app" / "src"
-            if candidate.exists():
-                break
-        for path in root.rglob("AppDatabase.kt"):
-            if path.is_file() and "src" in path.parts:
-                latest = parse_latest_version(path)
+    for candidate in candidates:
+        if candidate.is_file():
+            latest = parse_latest_version(candidate)
+            if latest is not None:
                 break
 
     return latest, baseline
@@ -254,7 +318,9 @@ def main():
     policy_source = False
 
     if policy_path is not None:
-        policy_latest, policy_baseline = parse_policy_versions(policy_path)
+        policy_latest, policy_baseline = parse_policy_versions(
+            policy_path, app_database_path=app_db_path
+        )
         if policy_latest is not None and policy_baseline is not None:
             latest_version = policy_latest
             baseline_version = policy_baseline

@@ -4412,8 +4412,9 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 #   * exact tuple-set equivalence between the manifest's `expected` + `fixtures`
 #     tuple set and the current structural-exception tuple set (missing/extra
 #     tuples and duplicates all fail);
-#   * the pinned structural entry count (62) via the manifest's `counts`
-#     section — the manifest governs structural exceptions ONLY, so a
+#   * the pinned structural entry count (64 — GR-08j raised it from 62 by
+#     adding two exact named-object Room-migration tuples) via the manifest's
+#     `counts` section — the manifest governs structural exceptions ONLY, so a
 #     legacy `ownership_entries` counts key is unknown-count-key metadata
 #     that fails closed as MANIFEST_INVALID (GR-04 decoupling);
 #   * exact source evidence for every manifest tuple (canonical path resolves
@@ -4555,19 +4556,25 @@ def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, 
 def test_manifest_missing_tuple_fails_closed(tmp_path, monkeypatch):
     """A manifest tuple with no EXACT structural exception entry fails with the
     controlled MISSING_TUPLE code — and no other code fires."""
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=63)
+    # GR-08j aligned the fixture arithmetic to the current canonical contract:
+    # the pinned structural count is 64 (62 -> 64), and the canonical-mode
+    # count stage requires counts.structural_entries == 64 AND exactly 64
+    # current entries.  The fixture therefore carries 65 manifest tuples over
+    # a 64-entry current set, leaving exactly one manifest tuple (m64)
+    # uncovered.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=65)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=63)
-    # Current structural exceptions omit m62; the manifest keeps it.
+    tuples = _manifest_tuples(path, class_name, n=65)
+    # Current structural exceptions omit m64; the manifest keeps it.
     current = _sexc_entries_for(tuples[:-1])
-    manifest = _manifest_dict(tuples)
+    manifest = _manifest_dict(tuples, structural=64)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
     )
     missing = [e for e in errors if e.startswith("MISSING_TUPLE")]
     assert len(missing) == 1, errors
-    assert "m62" in missing[0], missing
+    assert "m64" in missing[0], missing
     assert all(not e.startswith("EXTRA_TUPLE") for e in errors), errors
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
 
@@ -4576,19 +4583,22 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
     """A structural exception tuple with no manifest coverage fails with the
     controlled EXTRA_TUPLE code — an entry added without a manifest update can
     never silently pass."""
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=62)
+    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 64 current entries over
+    # a 63-tuple manifest leaves exactly one uncovered exception tuple (m63).
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=62)
-    # Current exceptions keep m61; the manifest does not cover it.
+    tuples = _manifest_tuples(path, class_name, n=64)
+    # Current exceptions keep m63; the manifest does not cover it.
     current = _sexc_entries_for(tuples)
-    manifest = _manifest_dict(tuples[:-1])
+    manifest = _manifest_dict(tuples[:-1], structural=64)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
     )
     extra = [e for e in errors if e.startswith("EXTRA_TUPLE")]
     assert len(extra) == 1, errors
-    assert "m61" in extra[0], extra
+    assert "m63" in extra[0], extra
     assert all(not e.startswith("MISSING_TUPLE") for e in errors), errors
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
 
@@ -4596,12 +4606,15 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
 def test_manifest_duplicate_tuple_fails_closed(tmp_path, monkeypatch):
     """A duplicated tuple inside the CURRENT structural exceptions fails with
     the controlled DUPLICATE_TUPLE code."""
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=61)
+    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 63 distinct tuples plus
+    # one duplicate give exactly 64 current entries against the 64-pin.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=63)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=61)
+    tuples = _manifest_tuples(path, class_name, n=63)
     current = _sexc_entries_for(tuples)
     current.append(_sexc(path, class_name, "m0", "execSQL"))  # duplicate m0
-    manifest = _manifest_dict(tuples)
+    manifest = _manifest_dict(tuples, structural=64)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)
@@ -4928,9 +4941,9 @@ class FooRepo(private val expenseDao: ExpenseDao) {
 #
 # The checked-in contract tests below load the REAL production files through
 # the production loaders (no synthetic temp fixtures): the pinned structural
-# count (62 — the manifest carries no ownership count), the exact tuple
-# classification, and the full structural-manifest gate must all pass on the
-# actual repo state.
+# count (64 — GR-08j raised it from 62; the manifest carries no ownership
+# count), the exact tuple classification, and the full structural-manifest
+# gate must all pass on the actual repo state.
 
 def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
     """Build a parsed manifest mapping from canonical (path, class,
@@ -5077,14 +5090,21 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
 
     Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
     promoted schemaVersion-2 document.  It loads cleanly through the
-    production v2 loader into exactly 48 immutable typed entries — a v1
+    production v2 loader into exactly 472 immutable typed entries — a v1
     document can never occupy the active path again, so there is no
     not-v2 rejection left to pin here.
+
+    Derivation of the 472 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 472 schemaVersion-2
+    entry rows (each with exactly one ``ownerFqcn``/``daoAccessor``/
+    ``operation`` mutation identity; the v2 loader performs no dedupe), as
+    of the GR-08m1 exact-policy wave that grew the document from the
+    48 GR-07-era rows.  Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 48
+    assert len(entries) == 472
     # Every loaded row is an immutable typed v2 entry: no legacy dict rows.
     for entry in entries:
         assert hasattr(entry, "owner_fqcn")
@@ -5385,19 +5405,26 @@ def test_no_executable_ownership_pin_references():
 
 
 def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeypatch):
-    """Activated truth (PR-GR-07 wave 2): invoking the CLI in-process with
-    the REAL config paths runs the FULL activated pipeline — the active
-    schemaVersion-2 policy loads (48 typed entries), the v2 evidence stage
-    runs over the real tree with NO loader/evidence failure, and the
-    structural-manifest gate IS consulted.  The run's exit 2 comes from
-    honest SCANNER-family debt over the real tree (unresolved signatures and
-    scopes are acceptable diagnostics), never from a policy/loader code;
-    untrusted runs withhold findings entirely.  Assertions are structurally
-    strict — shapes, codes families, and trust semantics — never volatile
-    per-diagnostic counts."""
-    import json
+    """Activated truth (PR-GR-07 wave 2, GR-08m1 end state): invoking the CLI
+    in-process with the REAL config paths runs the FULL activated pipeline —
+    the active schemaVersion-2 policy loads (472 typed entries), the v2
+    evidence stage runs over the real tree with NO loader/evidence failure,
+    and the structural-manifest gate IS consulted and stays clean.
 
-    from scripts.ci.finding_rule_catalog import known_diagnostic
+    Derivation of the 472 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 472 schemaVersion-2
+    entry rows (one exact mutation identity each; the v2 loader performs no
+    dedupe), as of the GR-08m1 exact-policy wave.  Re-derive after every
+    policy promotion.
+
+    The run exits 0 as a TRUSTED CLEAN scan: the GR-07/GR-08 scanner
+    hardening rounds resolved the real tree's residual scanner-family debt
+    (unresolved signatures/scopes) and the exact policy covers every
+    discovered mutation, so no diagnostic and no finding remains.  The
+    report assertions stay structurally strict — schema shape, emptiness,
+    trust semantics, and the activation identifiers — never volatile
+    per-counter tree statistics."""
+    import json
 
     monkeypatch.delenv("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", raising=False)
     findings_output = tmp_path / "db_guard_findings.json"
@@ -5426,7 +5453,7 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
         "--structural-manifest", _mod.STRUCTURAL_EXPECTED_METHODS_PATH,
         "--findings-output", str(findings_output),
     ])
-    assert exit_code == 2
+    assert exit_code == 0
 
     # Activated loading truth: the active document IS a schemaVersion-2
     # document whose rows load as typed v2 entries.
@@ -5439,7 +5466,7 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
         _mod.OWNERSHIP_POLICY_PATH
     )
     assert loaded
-    assert len(entries) == 48
+    assert len(entries) == 472
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.
@@ -5453,33 +5480,22 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     assert report["schema"] == "cost-aggregator.guard-findings"
     assert report["schema_version"] == 2
     assert report["guard"] == "db_access"
-    # Scanner-family diagnostics are present and honest...
-    diagnostics = report["diagnostics"]
-    assert diagnostics
-    for diagnostic in diagnostics:
-        assert set(diagnostic) == {"code", "path", "symbol", "controlled_context"}
-        assert diagnostic["symbol"] is None
-        assert diagnostic["controlled_context"] == {}
-        path = diagnostic["path"]
-        assert path is None or (
-            isinstance(path, str)
-            and path.startswith("app/src/main/java/")
-            and path.endswith(".kt")
-        )
-        code = diagnostic["code"]
-        assert known_diagnostic(code) is not None
-    codes = {diagnostic["code"] for diagnostic in diagnostics}
-    # ...but NO loader/evidence/umbrella code may appear: every policy stage
-    # ran clean over the activated configuration.
-    assert "DB_POLICY_SOURCE_EVIDENCE_INVALID" not in codes
-    assert "DB_V2_ACTIVE_POLICY_NOT_V2" not in codes
-    for code in codes:
-        assert "COUNT_MISMATCH" not in code
-        assert "MANIFEST_INVALID" not in code
-    # Untrusted runs (any diagnostic) withhold findings entirely — findings
-    # remain POSSIBLE on this pipeline, but only via a trusted scan.
+    # Trusted clean run: no scanner debt and no unauthorized mutation over
+    # the real tree — every policy stage ran clean over the activated
+    # configuration and the scan ended with nothing to report.
+    assert report["diagnostics"] == []
     assert report["findings"] == []
-    assert report["statistics"] == {"trusted": False}
+    statistics = report["statistics"]
+    assert statistics["trusted"] is True
+    assert statistics["findingCount"] == 0
+    assert statistics["diagnosticCount"] == 0
+    assert statistics["advisoryDiagnosticCount"] == 0
+    # Activation identifiers stay pinned; per-counter tree statistics
+    # (files/declarations/inventory) are deliberately not pinned.
+    assert statistics["activePolicySchemaVersion"] == 2
+    assert statistics["policyMode"] == "authoritative-v2"
+    assert statistics["scannerMode"] == "protocol-v2"
+    assert statistics["scannerVersion"] == 2
 
 
 def test_counts_type_rejections():
@@ -5562,9 +5578,13 @@ def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
     swapped tuple as MISSING_TUPLE and the original tuple as EXTRA_TUPLE — an
     operation change on the same (path, class, method_pattern) is never
     silently accepted as clean."""
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 64 current entries and
+    # counts.structural_entries=64 keep the count stage clean so the
+    # tuple-set stage is what rejects the changed operation.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name)
+    tuples = _manifest_tuples(path, class_name, n=64)
     current = _sexc_entries_for(tuples)
 
     # Same canonical path / class / method_pattern, DIFFERENT operation
@@ -5572,7 +5592,7 @@ def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
     # tuple-set stage is what rejects it).
     changed = [dict(t) for t in tuples]
     changed[0]["operation"] = "openDatabase"
-    manifest = _manifest_dict(changed)
+    manifest = _manifest_dict(changed, structural=64)
 
     errors = verify_structural_exceptions_manifest(
         current, manifest, str(src)

@@ -5,6 +5,7 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.yourname.expensetracker.R
+import com.yourname.expensetracker.domain.util.SystemTimeProvider
 import java.io.File
 
 /**
@@ -43,7 +44,7 @@ class RescueActivity : AppCompatActivity() {
         rescueButton.isEnabled = false
         statusText.text = "Running rescue..."
 
-        val coordinator = FinancialRescueCoordinator(this)
+        val coordinator = FinancialRescueCoordinator(this, SystemTimeProvider())
         Thread {
             val result = coordinator.runRescueIfNeeded()
             runOnUiThread {

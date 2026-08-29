@@ -15,6 +15,8 @@ Tests verify:
   7. Every manifest entry produces a log file.
   8. Missing command produces exit 2.
   9. All blocking guards pass produces exit 0.
+  10. Per-guard timeout defaults to 1500s with GUARD_TIMEOUT_SECONDS env override.
+  11. guard_tests resolves its interpreter portably (sys.executable).
 
 Run:
   python -m pytest scripts/ci/test_run_static_guard_suite.py -v
@@ -559,6 +561,116 @@ class TestArtifactGuardRejectedFromSourceSuite:
             f"release_artifact should not be in GUARD_MANIFEST; "
             f"found guards: {guard_names}"
         )
+
+
+class TestGuardTimeoutConfiguration:
+    """Per-guard timeout defaults to 1500s and is env-overridable.
+
+    The db_access full-tree D4 scan alone can take ~7-10 minutes and
+    guard_tests (pytest over scripts/) can take longer, so the previous
+    300s default timed out on slow machines. The GUARD_TIMEOUT_SECONDS
+    environment variable overrides the default per environment.
+    """
+
+    ENV_VAR = "GUARD_TIMEOUT_SECONDS"
+
+    def _load_fresh_runner(self):
+        """Load a fresh runner module so import-time env resolution re-runs."""
+        spec = importlib.util.spec_from_file_location(
+            f"run_static_guard_suite_fresh_{id(self)}",
+            RUNNER_SCRIPT,
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_default_timeout_is_1500(self, monkeypatch):
+        monkeypatch.delenv(self.ENV_VAR, raising=False)
+        fresh = self._load_fresh_runner()
+        assert fresh.DEFAULT_GUARD_TIMEOUT_SECONDS == 1500
+        assert fresh.GUARD_TIMEOUT_SECONDS == 1500
+
+    def test_env_override_changes_timeout(self, monkeypatch):
+        monkeypatch.setenv(self.ENV_VAR, "42")
+        fresh = self._load_fresh_runner()
+        assert fresh.GUARD_TIMEOUT_SECONDS == 42
+
+    def test_env_override_invalid_value_falls_back(self, monkeypatch):
+        monkeypatch.setenv(self.ENV_VAR, "not-a-number")
+        fresh = self._load_fresh_runner()
+        assert fresh.GUARD_TIMEOUT_SECONDS == 1500
+
+    def test_env_override_non_positive_falls_back(self, monkeypatch):
+        for bad in ("0", "-5"):
+            monkeypatch.setenv(self.ENV_VAR, bad)
+            fresh = self._load_fresh_runner()
+            assert fresh.GUARD_TIMEOUT_SECONDS == 1500, (
+                f"Expected fallback to default for {bad!r}"
+            )
+
+    def test_resolver_blank_value_falls_back(self, monkeypatch):
+        monkeypatch.setenv(self.ENV_VAR, "   ")
+        assert _runner._resolve_guard_timeout() == 1500
+
+    def test_env_override_applies_to_real_run(self, monkeypatch):
+        """End-to-end: the override governs the actual subprocess timeout."""
+        monkeypatch.setenv(self.ENV_VAR, "1")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scripts_dir = tmp_path / "scripts"
+            scripts_dir.mkdir()
+            out_dir = tmp_path / "output"
+            manifest_path = tmp_path / "manifest.json"
+
+            slow_guard = scripts_dir / "slow_guard.py"
+            _write_script(slow_guard, "import time\ntime.sleep(5)\n")
+
+            manifest = [
+                {"name": "slow_guard", "command": [sys.executable, str(slow_guard)], "mode": "blocking"},
+            ]
+            _write_manifest(manifest_path, manifest)
+
+            result = _run_runner(manifest_path, out_dir)
+
+            assert result.returncode == 2, f"Expected exit 2, got {result.returncode}"
+            with open(out_dir / "summary.json", 'r', encoding='utf-8') as f:
+                summary = json.load(f)
+            assert summary["summary"]["infra_errors"] == 1
+            assert "Timeout after 1s" in summary["results"][0]["stdout_preview"], (
+                f"Timeout message missing resolved override: "
+                f"{summary['results'][0]['stdout_preview']!r}"
+            )
+
+
+class TestGuardTestsInterpreterPortable:
+    """The guard_tests entry must resolve its interpreter portably.
+
+    The manifest entry must run pytest under the interpreter running the
+    suite (sys.executable) instead of a bare "python3" PATH lookup, which
+    may not resolve on Windows. What is tested (pytest targets and flags)
+    must remain unchanged.
+    """
+
+    def _guard_tests_command(self):
+        for name, command, _ in _runner.GUARD_MANIFEST:
+            if name == "guard_tests":
+                return command
+        assert False, "guard_tests not found in GUARD_MANIFEST"
+
+    def test_interpreter_is_suite_interpreter(self):
+        command = self._guard_tests_command()
+        assert command[0] == sys.executable, (
+            f"guard_tests must run under sys.executable, got: {command[0]!r}"
+        )
+
+    def test_pytest_targets_unchanged(self):
+        command = self._guard_tests_command()
+        assert command[1:] == [
+            "-m", "pytest",
+            "scripts/test_verify_*.py",
+            "scripts/ci/test_*.py",
+            "-v", "--tb=short",
+        ], f"guard_tests pytest invocation changed: {command[1:]}"
 
 
 # ── F2/D4 integration tests ───────────────────────────────────────────────────

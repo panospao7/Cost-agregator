@@ -245,8 +245,17 @@ def _same_path(first, second):
 
 def _write_report_atomic(path, text):
     # type: (str, str) -> None
-    """Atomically publish the report (temp sibling + ``os.replace``)."""
+    """Atomically publish the report (temp sibling + ``os.replace``).
+
+    The report's parent directory is created when missing (the same
+    contract as the sibling atomic writers in ``promote_db_policy_v2.py``
+    and ``generate_db_baseline_v2.py``), so the documented
+    ``--output build/...`` usage works in a fresh checkout.  Any creation
+    or write failure still propagates as ``OSError`` to the CLI's
+    controlled ``DB_V2_SHADOW_REPORT_WRITE_FAILED`` exit.
+    """
     directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
     handle_fd, temp_path = tempfile.mkstemp(
         prefix=".db_v2_shadow_report-", dir=directory
     )

@@ -253,7 +253,15 @@ def _make_repo(tmp_path, candidate_reason="synthetic promotion fixture entry"):
 
 
 def _default_extra():
-    return ["--evidence-report", EVIDENCE_RELPATH]
+    # The CLI requires BOTH evidence paths explicitly (--accounting and
+    # --evidence-report are argparse-required); the fixture writes the
+    # accounting artifact at its default relpath.
+    return [
+        "--accounting",
+        ACCOUNTING_RELPATH,
+        "--evidence-report",
+        EVIDENCE_RELPATH,
+    ]
 
 
 def _run(tmp_path, extra):
@@ -390,7 +398,11 @@ def test_refusal_candidate_loader_error_writes_nothing(tmp_path):
 
 def test_refusal_evidence_missing(tmp_path):
     _make_repo(tmp_path)
-    code = _run(tmp_path, ["--evidence-report", "build/missing.json"])
+    code = _run(
+        tmp_path,
+        ["--accounting", ACCOUNTING_RELPATH,
+         "--evidence-report", "build/missing.json"],
+    )
     assert code == 2
     _assert_untouched(tmp_path)
 
@@ -404,7 +416,11 @@ def test_refusal_evidence_untrusted(tmp_path):
         "build/untrusted.json",
         json.dumps(document, indent=2, sort_keys=True) + "\n",
     )
-    code = _run(tmp_path, ["--evidence-report", "build/untrusted.json"])
+    code = _run(
+        tmp_path,
+        ["--accounting", ACCOUNTING_RELPATH,
+         "--evidence-report", "build/untrusted.json"],
+    )
     assert code == 2
     _assert_untouched(tmp_path)
 
@@ -420,7 +436,11 @@ def test_refusal_evidence_diagnostics_present(tmp_path):
         "build/diagnostic.json",
         json.dumps(document, indent=2, sort_keys=True) + "\n",
     )
-    code = _run(tmp_path, ["--evidence-report", "build/diagnostic.json"])
+    code = _run(
+        tmp_path,
+        ["--accounting", ACCOUNTING_RELPATH,
+         "--evidence-report", "build/diagnostic.json"],
+    )
     assert code == 2
     _assert_untouched(tmp_path)
 
@@ -433,7 +453,11 @@ def test_refusal_stale_evidence_sha(tmp_path):
         "build/stale.json",
         json.dumps(document, indent=2, sort_keys=True) + "\n",
     )
-    code = _run(tmp_path, ["--evidence-report", "build/stale.json"])
+    code = _run(
+        tmp_path,
+        ["--accounting", ACCOUNTING_RELPATH,
+         "--evidence-report", "build/stale.json"],
+    )
     assert code == 2
     _assert_untouched(tmp_path)
 
@@ -447,7 +471,11 @@ def test_refusal_evidence_schema_unsupported(tmp_path):
         "build/wrong_schema.json",
         json.dumps(document, indent=2, sort_keys=True) + "\n",
     )
-    code = _run(tmp_path, ["--evidence-report", "build/wrong_schema.json"])
+    code = _run(
+        tmp_path,
+        ["--accounting", ACCOUNTING_RELPATH,
+         "--evidence-report", "build/wrong_schema.json"],
+    )
     assert code == 2
     _assert_untouched(tmp_path)
 

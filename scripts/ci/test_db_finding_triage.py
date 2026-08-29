@@ -1576,8 +1576,14 @@ def _write_writer_triage(path: Path, entries: List[Dict[str, Any]]) -> None:
 
     Scalar values are quoted so PyYAML and the manual fallback parser agree
     on types (an unquoted YYYY-MM-DD would become a ``date`` under PyYAML).
+
+    An EMPTY manifest must be spelled ``triage_entries: []``: a bare
+    ``triage_entries:`` key parses as ``None`` under PyYAML, which the
+    writer's fail-closed ``triage_entries must be a list`` guard rejects
+    with exit 2 before any zero-findings / unapproved-finding behavior can
+    be reached.
     """
-    lines = ["triage_entries:"]
+    lines = ["triage_entries:"] if entries else ["triage_entries: []"]
     for entry in entries:
         lines.append(f'  - fingerprint: "{entry["fingerprint"]}"')
         lines.append(f'    classification: "{entry["classification"]}"')
@@ -1783,14 +1789,17 @@ class TestBaselineWriterMainGuards:
         _write_writer_triage(triage, [])
         output = tmp_path / "candidate.json"
 
-        self._run_writer(
-            tmp_path,
-            report=report,
-            report_sha=sha,
-            triage=triage,
-            output=output,
-            generated_at="2026-08-29T00:00:00Z",
-        )
+        # The honest NO-CANDIDATE path is a controlled exit 0.
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 0
 
         assert not output.exists(), "no candidate should be written"
 
@@ -1812,14 +1821,17 @@ class TestBaselineWriterMainGuards:
         _write_writer_triage(triage, [])
         output = tmp_path / "candidate.json"
 
-        self._run_writer(
-            tmp_path,
-            report=report,
-            report_sha=sha,
-            triage=triage,
-            output=output,
-            generated_at="2026-08-29T00:00:00Z",
-        )
+        # The honest NO-CANDIDATE path is a controlled exit 0.
+        with pytest.raises(SystemExit) as exc:
+            self._run_writer(
+                tmp_path,
+                report=report,
+                report_sha=sha,
+                triage=triage,
+                output=output,
+                generated_at="2026-08-29T00:00:00Z",
+            )
+        assert exc.value.code == 0
 
         assert not output.exists(), "no candidate should be written"
 

@@ -14,6 +14,14 @@ Usage:
   python3 scripts/ci/run_static_guard_suite.py
   python3 scripts/ci/run_static_guard_suite.py --output-dir build/ci/static-guards
   python3 scripts/ci/run_static_guard_suite.py --manifest /path/to/custom_manifest.json
+
+Environment:
+  GUARD_TIMEOUT_SECONDS — optional per-guard timeout override, in seconds
+  (positive integer). Default: 1500 (25 minutes). The db_access full-tree
+  D4 scan alone can take ~7-10 minutes and guard_tests (pytest over
+  scripts/) can take longer, so the default carries headroom for CI
+  variance. Unset, blank, non-numeric, or non-positive values fall back
+  to the built-in default.
 """
 
 import argparse
@@ -33,6 +41,13 @@ from typing import Any, Dict, List, Optional, Tuple
 # mode: "blocking" or "warning"
 # A warning guard that exits 1 records a warning but doesn't fail the suite.
 # A blocking guard that exits 1 fails the suite.
+
+# Interpreter used to build manifest commands. Prefer the interpreter that is
+# running this suite (sys.executable) so guard commands stay portable on hosts
+# where a bare "python3" may not resolve (e.g. the Windows Store alias).
+# _resolve_python() remains the runtime safety net for manifest entries and
+# custom JSON manifests that still use "python3"/"python" literals.
+SUITE_PYTHON = sys.executable
 
 GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     # ── Registry integrity (must run first) ─────────────────────────────────────
@@ -146,11 +161,37 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     ),
 
     # Pytest — always runs
-    ("guard_tests", ["python3", "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"], "blocking"),
+    ("guard_tests", [SUITE_PYTHON, "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"], "blocking"),
 ]
 
-# Per-guard timeout in seconds
-GUARD_TIMEOUT_SECONDS = 300
+# Per-guard timeout in seconds.
+# The db_access full-tree D4 scan alone can take ~7-10 minutes and guard_tests
+# (pytest over scripts/) can take longer, so the default carries generous
+# headroom for CI variance. Override per environment with the
+# GUARD_TIMEOUT_SECONDS environment variable (positive integer seconds);
+# unset, blank, non-numeric, or non-positive values fall back to the default.
+DEFAULT_GUARD_TIMEOUT_SECONDS = 1500
+GUARD_TIMEOUT_SECONDS_ENV_VAR = "GUARD_TIMEOUT_SECONDS"
+
+
+def _resolve_guard_timeout() -> int:
+    """Resolve the per-guard timeout from the environment.
+
+    Reads GUARD_TIMEOUT_SECONDS (seconds). Falls back to
+    DEFAULT_GUARD_TIMEOUT_SECONDS when unset, blank, non-numeric, or
+    non-positive.
+    """
+    raw = os.environ.get(GUARD_TIMEOUT_SECONDS_ENV_VAR)
+    if raw is None or not raw.strip():
+        return DEFAULT_GUARD_TIMEOUT_SECONDS
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return DEFAULT_GUARD_TIMEOUT_SECONDS
+    return value if value > 0 else DEFAULT_GUARD_TIMEOUT_SECONDS
+
+
+GUARD_TIMEOUT_SECONDS = _resolve_guard_timeout()
 
 # Maximum length of stdout preview stored in summary JSON
 STDOUT_PREVIEW_MAX_CHARS = 500
