@@ -178,6 +178,21 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "broad source-line exemptions.",
     },
 
+    "deprecation_escalations": {
+        "script": "scripts/ci/verify_deprecation_escalations.py",
+        "tests": "scripts/ci/test_verify_deprecation_escalations.py",
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": None,
+        "description": "Deprecation escalation guard (PR-GR-10a) — every "
+                       "@Deprecated(DeprecationLevel.ERROR) site in "
+                       "production Kotlin must have a matching entry in the "
+                       "tracked changelog docs/ci/DEPRECATION_ESCALATIONS.md "
+                       "(file + symbol + date + reason + migration target) "
+                       "before landing; stale entries are flagged for cleanup",
+    },
+
     # ── Ratchet-wrapped guards (growth-enforcing baseline via guard_ratchet.py) ──
 
     "cancellation": {

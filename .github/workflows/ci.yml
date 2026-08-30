@@ -41,6 +41,49 @@ jobs:
         with:
           args: -color
 
+  # ── Compile Gate ─────────────────────────────────────────────────
+  # PR-GR-10a: mandatory pre-test compile gate. Rounds R12/R13 landed
+  # consecutive compileDebugKotlin breakages (setZone misuse; a
+  # @Deprecated(ERROR) call site) and zeroed all Kotlin validation for
+  # those rounds because the unit-test job never ran. Compiling first
+  # fails fast and blocks the ~20+ min unit-test cycle on broken builds.
+  #
+  # Reproduce locally:
+  #   ./gradlew :app:compileDebugKotlin --console=plain
+  compile:
+    needs: validate-workflow
+    name: Compile (Debug Kotlin)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Compile debug Kotlin sources
+        run: ./gradlew :app:compileDebugKotlin --no-daemon --stacktrace
+
+      - name: Upload compile reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compile-reports
+          path: app/build/reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # ── Static Guard Scripts ─────────────────────────────────────────
   # Runs all Python-based architecture guard scripts and their pytest
   # test suites. These enforce project-specific rules that Gradle-based
@@ -65,6 +108,7 @@ jobs:
   #   python3 scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation
   #   python3 scripts/verify_migration_matrix.py --fail-on-violation
   #   python3 scripts/verify_ignored_test_budget.py --fail-on-violation --baseline 29
+  #   python3 scripts/ci/verify_deprecation_escalations.py --root .
   #   python -m pytest scripts/test_*.py -v
   static-guards:
     needs: validate-workflow
@@ -98,7 +142,7 @@ jobs:
           retention-days: 7
 
   unit-tests:
-    needs: validate-workflow
+    needs: [validate-workflow, compile]
     name: Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 30

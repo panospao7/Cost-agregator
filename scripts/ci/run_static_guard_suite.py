@@ -149,6 +149,7 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
         ],
         "blocking",
     ),
+    ("deprecation_escalations", ["python3", "scripts/ci/verify_deprecation_escalations.py", "--root", "."], "blocking"),
 
     # release_artifact verification runs in the release-check CI job after assembleRelease, not here
 
