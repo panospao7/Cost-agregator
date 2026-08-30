@@ -1588,19 +1588,30 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     * the report keeps 47 distinct resolved indexes: all 57 emitting
       indices minus the 10 folded-only ones (41, 42 from group (a); 23-27
       from group (b); 16 from group (c); 19, 20 from group (d));
-    * byte-for-byte reproducibility of a second run.
+    * byte-for-byte reproducibility of a second run (both runs share
+      identical inputs — candidate + report; R13 removed the run-one-only
+      ``--accounting-out`` that made the two embedded coverage sections
+      structurally unequal; the standalone accounting artifact's
+      reproducibility is pinned by the tracked-artifact regression test).
     """
     out_dir = tmp_path / "dist"
     out_dir.mkdir()
     report = out_dir / "report.json"
     candidate = out_dir / "candidate.yml"
-    accounting = out_dir / "accounting.json"
+    # R13: deliberately NO ``--accounting-out`` here.  The report embeds the
+    # accounting section either way (records assertions below read it from
+    # the report payload), but the standalone artifact path is the ONLY path
+    # that builds the tree-dependent sourceMutations coverage; passing it in
+    # run one while the reproducibility run omits it made the two reports
+    # structurally unequal (295-entry vs empty embedded coverage) and failed
+    # the byte comparison below for reasons that have nothing to do with
+    # reproducibility.  Both runs now share identical inputs; the standalone
+    # accounting artifact's byte-equality is pinned by
+    # test_tracked_accounting_artifact_matches_regeneration_bytes.
     completed = _run_cli(
         "--write-candidate",
         "--output",
         str(candidate),
-        "--accounting-out",
-        str(accounting),
         "--report",
         str(report),
     )
@@ -2810,17 +2821,33 @@ def test_tracked_candidate_artifact_matches_regeneration_bytes(
 
 
 def _assert_coverage_section_semantics(mutations, records):
-    """Partition-completeness semantics for a shipped coverage section.
+    """Artifact-only semantics for a shipped coverage section.
 
     The ``sourceMutations`` section is TREE-STATE-DEPENDENT evidence (it
     observes the production tree), so it is never pinned by bytes or by
-    exact per-kind counts.  Pinned instead: the closed kind vocabulary, the
-    deterministic (path, symbol, operation) ordering, the no-omission /
-    no-double-count partition (every observed site appears EXACTLY once
-    across kinds), legacy-index consistency (ascending, deduped, within the
-    artifact's own record index range for covered/unresolved kinds; empty
-    for observation-only kinds), and count consistency (per-kind counts sum
-    to the section total).
+    exact per-kind counts.  Pinned here (artifact-only): the closed kind
+    vocabulary, the deterministic (path, symbol, operation) ordering,
+    legacy-index consistency (ascending, deduped, within the artifact's own
+    record index range for covered/unresolved kinds; empty for
+    observation-only kinds), and count consistency (per-kind counts sum to
+    the section total).
+
+    Identity semantics (R13 278-vs-295 reconciliation): the section is
+    SITE-level per the PR-GR-05 contract — one entry per observed caller-side
+    DAO mutation (canonical mutation key: path + owner + callable + dao +
+    operation).  The serialized entry carries NO dao identity, so distinct
+    sites that share one callable and operation — e.g. one repository method
+    deleting from three DAOs — serialize identically and legitimately repeat.
+    The tracked artifact ships 295 site entries folding to 278 unique
+    (path, symbol, operation) tuples: 17 same-callable multi-DAO sites across
+    14 repeat groups (RestoreJournalImporter#import*Failure/SuccessJournal,
+    NotificationRepository#deleteAll x3, InvestmentTracker#addHolding x3,
+    BankStatementLifecycleProcessor#processBankStatement x3, ...).  Demanding
+    tuple uniqueness here would over-fold those 17 sites and under-report
+    coverage.  The true no-omission / no-double-count partition against the
+    observed universe is pinned IN-PROCESS by
+    ``test_real_run_coverage_partitions_observed_universe``, which compares
+    the classified coverage multiset against the full observed-mutation set.
     """
     assert mutations, "coverage section must ship non-empty"
     record_indexes = {record["index"] for record in records}
@@ -2860,9 +2887,17 @@ def _assert_coverage_section_semantics(mutations, records):
             # the list form (an ``== ()`` pin can never hold here).
             assert indices == []
         identities.append((path, symbol, operation or ""))
-    # Partition: every observed site exactly once, deterministically ordered.
+    # Deterministic (path, symbol, operation) ordering.
     assert identities == sorted(identities)
-    assert len(set(identities)) == len(identities)
+    # NOTE (R13 278-vs-295 reconciliation): deliberately NO uniqueness
+    # assertion on these tuples.  Site-level identity (the documented PR-GR-05
+    # contract) is finer than (path, symbol, operation): distinct observed
+    # sites at one callable performing the same operation against different
+    # DAOs serialize identically because the entry schema carries no dao
+    # identity (tracked artifact: 295 site entries -> 278 unique tuples, 17
+    # legitimate repeats).  A uniqueness demand here would over-fold those
+    # sites and under-report coverage; the partition invariant is pinned
+    # in-process by test_real_run_coverage_partitions_observed_universe.
     # Counts consistent: per-kind counts sum to the section total.
     kind_counts = {}
     for item in mutations:

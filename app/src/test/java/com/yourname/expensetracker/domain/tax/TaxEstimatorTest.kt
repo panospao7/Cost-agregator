@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.tax
 import com.yourname.expensetracker.AnalyticsEngineTestBase
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.database.dao.BusinessCategoryTotal
+import com.yourname.expensetracker.data.database.dao.CurrencyTotal
 import com.yourname.expensetracker.data.repository.BusinessExpenseRepository
 import com.yourname.expensetracker.data.repository.TaxSettingsRepository
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -29,6 +30,10 @@ import java.util.Calendar
  * requested-period income alignment, business-only VAT scope, and real
  * yearly income in tax summaries.
  */
+// DEPRECATION_ERROR suppression is still required: the negative-control pins
+// coVerify(exactly = 0) { expenseDao.getTotalSpentBetween(...) } reference an
+// ERROR-deprecated DAO method (R13 removed the last positive use,
+// getTotalDepositsForPeriod).
 @Suppress("DEPRECATION_ERROR")
 class TaxEstimatorTest : AnalyticsEngineTestBase() {
 
@@ -233,7 +238,14 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
             BusinessCategoryTotal(businessCategory = "Office Supplies", total = 100.0, count = 1),
             BusinessCategoryTotal(businessCategory = "Software", total = 250.0, count = 1)
         )
-        coEvery { expenseDao.getTotalDepositsForPeriod(any(), any()) } returns 42000.0
+        // R13: income oracle stub moved to the currency-aware deposit
+        // aggregate (the replacement DAO variant TaxEstimator now sources
+        // getTaxYearSummary income from). Same 42000.0 fiscal-window deposit
+        // truth; single EUR bucket short-circuits in MoneyAggregateBuilder
+        // (no converter call), so the pinned total is exact.
+        coEvery { expenseDao.getDepositTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            CurrencyTotal(currency = "EUR", total = 42000.0, txCount = 1)
+        )
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 6200.0
         coEvery { businessExpenseRepository.getExpensesByCategory(any(), any()) } returns categoryTotals
         coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 120.0
@@ -265,7 +277,11 @@ class TaxEstimatorTest : AnalyticsEngineTestBase() {
             BusinessCategoryTotal(businessCategory = "Uncategorized", total = 75.0, count = 3)
         )
         // Total 425 = Office(200) + explicit-Uncategorized(75) + null-category(150)
-        coEvery { expenseDao.getTotalDepositsForPeriod(any(), any()) } returns 30000.0
+        // R13: same income-oracle stub migration as above (currency-aware
+        // deposit aggregate instead of the ERROR-deprecated raw-SUM DAO call).
+        coEvery { expenseDao.getDepositTotalsBetweenByCurrency(any(), any()) } returns listOf(
+            CurrencyTotal(currency = "EUR", total = 30000.0, txCount = 1)
+        )
         coEvery { businessExpenseRepository.getTotalBusinessExpenses(any(), any()) } returns 425.0
         coEvery { businessExpenseRepository.getExpensesByCategory(any(), any()) } returns categoryTotals
         coEvery { businessExpenseRepository.getTotalMileageDeduction(any(), any()) } returns 0.0

@@ -975,3 +975,40 @@ HEAD `8b45879e`; checkout clean.
 Python sweep 20 min -> 84 min; full-gate CLI >10 min (timed out). Suspected scaling of
 the GR-06 exact-source-evidence pass / root-aware source resolution with the 472-entry
 candidate. Partially improved by round 12 (sweep 51 min).
+
+---
+
+## Round 13 (2026-08-30) - after `554aebc9` "R12 loop items - TaxEstimator setTimeZone compile fix, seed-aware regeneration tripwires, barrier-metadata fixture honesty, checklist Revision 2"
+
+HEAD `554aebc9`; checkout clean.
+
+1. `git push origin gr-00-local` -> OK (`1e3d0333..554aebc9`).
+2. `:app:compileDebugKotlin` -> **FAILED** - new blocker:
+   `TaxEstimator.kt:309:38 getTotalDepositsForPeriod(...) is deprecated` (deprecated at
+   ERROR level by the R12 loop commit; the round-12 `setZone` error at line 265 is fixed).
+   Targeted Kotlin tests BLOCKED again (never executed this round).
+3. Targeted artifact suites (v2_evidence + seed_rows + signatures) ->
+   **2 failed / 358 passed / 1 skipped in 53:07** (suites alone now ~53 min - the
+   regeneration-heavy tests dominate; performance regression persists).
+   RESOLVED by redesigned tripwires (5 of 7): gr08a_header_alias_is_isolated_per_owner,
+   gr08a_inventory_fqcn_cross_check_resolves_alias_accessor,
+   test_real_tracked_gr08p2_seed_file_loads_with_exactly_fifteen_rows,
+   test_tracked_candidate_artifact_matches_regeneration_bytes,
+   test_real_run_coverage_partitions_observed_universe.
+   STILL FAILING (2): test_real_run_distribution_pinned_and_reproducible +
+   test_tracked_accounting_artifact_matches_regeneration_bytes - both pin
+   **278 vs 295 mutation keys** (regenerated accounting artifact folds to 278 unique keys
+   under the accessor-only fold semantics; the hand-documented pin expects 295; byte diff
+   at index 85329). Either the pin must be re-derived from the documented fold rules or
+   the fold is over-folding 17 keys.
+4. `pytest scripts -q` -> exit 1; **2 failed / 3063 passed / 24 skipped in 1:38:23**
+   (runtime worsened again: 51 -> 98 min). Only the two accounting-pin stragglers above;
+   everything else in the suite is green.
+
+### Loop items
+
+1. Fix `TaxEstimator.kt:309` deprecation-ERROR call site (or downgrade the annotation
+   level deliberately) - branch still does not compile; all Kotlin tests blocked.
+2. Reconcile 278-vs-295: re-derive the distribution/accounting pins from the documented
+   fold semantics or fix the fold; then regenerate + commit both artifacts.
+3. Performance: full sweep 98 min, three artifact suites 53 min - profiling pass overdue.

@@ -289,6 +289,29 @@ class TaxEstimator @Inject constructor(
     }
 
     /**
+     * Build a MoneyAggregate for income (deposits) grouped by currency.
+     *
+     * T01: Extends the MoneyAggregate pattern to income totals so that
+     * mixed-currency income is correctly represented without raw-summing.
+     *
+     * R13: Replaces the ERROR-deprecated raw-SUM
+     * [ExpenseDao.getTotalDepositsForPeriod] (whose annotation directs
+     * callers to currency-aware aggregation) with the same DEPOSIT-filtered
+     * per-currency DAO variant the documented replacement
+     * (MultiCurrencyRepository.getHomeCurrencyDepositTotal) itself uses —
+     * targeted at the FILING currency per the PR7 tax-domain invariant
+     * (tax numbers are filing-currency, not home-currency).
+     */
+    private suspend fun buildIncomeAggregate(startMs: Long, endMs: Long): MoneyAggregate {
+        val currencyTotals = expenseDao.getDepositTotalsBetweenByCurrency(startMs, endMs)
+        // PR7: Tax calculations always use filing currency as target, not home currency
+        val filingCurrency = taxSettings.getFilingCurrency()
+        val buckets = currencyTotals.map { Pair(it.total, it.currency) }
+        val counts = currencyTotals.map { it.txCount }
+        return MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter, counts)
+    }
+
+    /**
      * Get tax year summary for annual filing.
      * 
      * @param taxConfig The tax configuration to use (defaults to current configuration)
@@ -306,7 +329,12 @@ class TaxEstimator @Inject constructor(
         // T4C oracle: yearly income comes from the deposit total for the fiscal
         // window; the deductible total and its category breakdown come from the
         // business-expense repository aggregates.
-        val totalIncome = expenseDao.getTotalDepositsForPeriod(yearStart, yearEnd)
+        // R13: sourced through the currency-aware deposit aggregate
+        // (buildIncomeAggregate) instead of the ERROR-deprecated raw-SUM
+        // ExpenseDao.getTotalDepositsForPeriod — same fiscal window, same
+        // DEPOSIT scope, without the mixed-currency raw sum.
+        val incomeAggregate = buildIncomeAggregate(yearStart, yearEnd)
+        val totalIncome = incomeAggregate.displayAmount
         val estimate = estimateTaxes(
             yearStart, yearEnd, totalIncome,
             estimatedAnnualIncomeCurrency = filingCurrency,
@@ -346,8 +374,6 @@ class TaxEstimator @Inject constructor(
             )
         }
 
-        val incomeAggregate = MoneyAggregate.singleCurrency(totalIncome, CurrencyCode(filingCurrency))
-
         TaxYearSummary(
             year = year,
             totalIncome = estimate.estimatedIncome,
@@ -361,7 +387,10 @@ class TaxEstimator @Inject constructor(
             estimatedTaxAggregate = estimatedTaxAgg,
             categorizedDeductionsAggregate = categorizedDeductionsAggregate,
             isPartial = incomeAggregate.isPartial || estimate.isPartial,
-            conversionWarnings = estimate.conversionWarnings
+            conversionWarnings = (
+                incomeAggregate.conversionFailures.map { it.description } +
+                    estimate.conversionWarnings
+                )
         )
     }
 }
