@@ -11,6 +11,11 @@ try:  # package mode: imported as ``scripts.kotlin_callable_parser``
 except ImportError:  # pragma: no cover - flat mode: standalone tools put ``scripts`` on sys.path
     from db_policy_signature import FunctionSignature, SignatureError, normalize_type_text
 
+try:  # package mode: imported as ``scripts.kotlin_callable_parser``
+    from .run_cache import cached_value, project_types_digest
+except ImportError:  # pragma: no cover - flat mode: standalone tools put ``scripts`` on sys.path
+    from run_cache import cached_value, project_types_digest
+
 __all__ = [
     "ParserError", "CallableDeclaration", "OwnerDeclaration", "mask_kotlin_source",
     "canonical_source_path", "parse_kotlin_file", "find_owner_declarations",
@@ -226,7 +231,19 @@ def mask_kotlin_source(text: str) -> str:
     ``${`` that is never closed fails closed as MALFORMED_SOURCE.  Sources
     without ``${`` inside literals mask byte-for-byte identically to the
     previous non-template-aware masker.
+
+    PR-GR-10c: memoized per run by the exact input text (a pure function of
+    text; masking is idempotent, so re-masking an already-masked source is a
+    cache hit).  A failed mask is never cached -- the controlled
+    ``ParserError`` propagates exactly as before.
     """
+    if not isinstance(text, str):
+        return _mask_kotlin_source(text)
+    return cached_value("mask", text, lambda: _mask_kotlin_source(text))
+
+
+def _mask_kotlin_source(text: str) -> str:
+    """Masking implementation (uncached); see :func:`mask_kotlin_source`."""
     if not isinstance(text, str) or len(text) > MAX_SOURCE:
         _fail()
     out = list(text)
@@ -535,7 +552,19 @@ def project_type_declarations(text: str) -> tuple[str, ...]:
     closed through ``mask_kotlin_source`` exactly like every other parser
     entry point; index builders skip such files silently because the
     failing file already emits its own diagnostic.
+
+    PR-GR-10c: memoized per run by the exact input text (pure function of
+    text; failures never cached), so rebuilding the project type index over
+    an unchanged tree reuses every per-file declaration parse.
     """
+    if not isinstance(text, str):
+        return _project_type_declarations(text)
+    return cached_value(
+        "project_types", text, lambda: _project_type_declarations(text)
+    )
+
+
+def _project_type_declarations(text: str) -> tuple[str, ...]:
     masked = mask_kotlin_source(text)
     package_match = re.search(r"\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)", masked)
     package = package_match.group(1) if package_match else ""
@@ -565,7 +594,18 @@ def project_nested_type_declarations(text: str) -> tuple[str, ...]:
     ``Outer.Inner`` REFERENCES without ever adding nested simple names to the
     simple-name resolution map, so a bare ``Inner`` stays out of scope exactly
     as Kotlin requires without an import.
+
+    PR-GR-10c: memoized per run by the exact input text (pure function of
+    text; failures never cached).
     """
+    if not isinstance(text, str):
+        return _project_nested_type_declarations(text)
+    return cached_value(
+        "nested_types", text, lambda: _project_nested_type_declarations(text)
+    )
+
+
+def _project_nested_type_declarations(text: str) -> tuple[str, ...]:
     masked = mask_kotlin_source(text)
     owners = find_owner_declarations(masked)
     names: set[str] = set()
@@ -1184,6 +1224,21 @@ def _expression_body_end(masked: str, start: int, scope_end: int) -> int | None:
 
 
 def find_owner_declarations(text: str) -> tuple[OwnerDeclaration, ...]:
+    """Discover every class/object/interface owner declaration in ``text``.
+
+    PR-GR-10c: memoized per run by the exact input text (a pure function of
+    the text -- masking inside is idempotent, so the raw and pre-masked
+    spellings of one file yield equal results).  Results are tuples of
+    frozen dataclasses, safe to share; failures are never cached.
+    """
+    if not isinstance(text, str):
+        return _find_owner_declarations(text)
+    return cached_value(
+        "owners", text, lambda: _find_owner_declarations(text)
+    )
+
+
+def _find_owner_declarations(text: str) -> tuple[OwnerDeclaration, ...]:
     masked = mask_kotlin_source(text)
     package_match = re.search(r"\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)", masked)
     package = package_match.group(1) if package_match else ""
@@ -1300,7 +1355,45 @@ def find_callable_declarations(
     (``resolve_callable`` reports ``SIGNATURE_UNSUPPORTED`` for them).
     Every other failure family (masking, structure, signature grammar)
     stays fatal in both modes.
+
+    PR-GR-10c: memoized per run by the exact input text, the owner identity
+    (an :class:`OwnerDeclaration` carries its own offsets, so equal owners
+    over equal text are equal keys), the tolerance flag, and the project
+    type index's CONTENT digest (``project_types_digest`` -- equal-content
+    indexes share entries, different-content indexes can never collide).
+    Results are tuples of frozen dataclasses, safe to share; failures are
+    never cached.
     """
+    if not isinstance(text, str):
+        return _find_callable_declarations(
+            text, owner,
+            tolerate_unresolved_types=tolerate_unresolved_types,
+            project_types=project_types,
+        )
+    key = (
+        text,
+        owner,
+        bool(tolerate_unresolved_types),
+        project_types_digest(project_types),
+    )
+    return cached_value(
+        "callables", key,
+        lambda: _find_callable_declarations(
+            text, owner,
+            tolerate_unresolved_types=tolerate_unresolved_types,
+            project_types=project_types,
+        ),
+    )
+
+
+def _find_callable_declarations(
+    text: str,
+    owner: OwnerDeclaration | str,
+    *,
+    tolerate_unresolved_types: bool = False,
+    project_types: ProjectTypeIndex | None = None,
+) -> tuple[CallableDeclaration, ...]:
+    """Discovery implementation (uncached); see :func:`find_callable_declarations`."""
     masked = mask_kotlin_source(text)
     owner_name = owner.owner if isinstance(owner, OwnerDeclaration) else owner
     environment = _type_environment(masked, owner_name, project_types)

@@ -35,6 +35,7 @@ try:  # package mode: imported as ``scripts.db_guard.policy_v2_candidate``
         find_owner_declarations,
         resolve_callable,
     )
+    from ..run_cache import file_text
 except ImportError:  # pragma: no cover - flat mode: standalone tools put ``scripts`` on sys.path
     from db_policy_signature import SignatureError, normalize_type_text
     from kotlin_callable_parser import (
@@ -44,6 +45,7 @@ except ImportError:  # pragma: no cover - flat mode: standalone tools put ``scri
         find_owner_declarations,
         resolve_callable,
     )
+    from run_cache import file_text
 
 from .policy_model import PolicyEntry
 
@@ -639,9 +641,12 @@ def build_dao_fqcn_index(repo_root) -> dict[str, tuple[str, ...]]:
     index: dict[str, set] = {}
     for relative_posix in relative_names:
         try:
-            text = (
-                Path(repo_root) / Path(*relative_posix.split("/"))
-            ).read_text(encoding="utf-8")
+            # PR-GR-10c: per-run cached read (stamp-validated; a file
+            # changed within the run is re-read).  The broad skip-silently
+            # contract below is unchanged.
+            text = file_text(
+                str(Path(repo_root) / Path(*relative_posix.split("/")))
+            )
             masked = mask_kotlin_source(text)
             canonical = canonical_source_path(relative_posix)
             for dao in find_dao_declarations(masked, canonical):
@@ -1054,10 +1059,11 @@ def migrate_policy(legacy_entries, repo_root, dao_index=None) -> MigrationResult
             continue
 
         try:
-            with open(
-                os.path.join(repo_root, path), "r", encoding="utf-8"
-            ) as handle:
-                text = handle.read()
+            # PR-GR-10c: the per-run file cache dedupes repeated reads of
+            # the same entry file across the batch's stages and is
+            # stamp-validated (a file changed within the run is re-read).
+            # The OSError contract below is unchanged.
+            text = file_text(os.path.join(repo_root, path))
         except OSError:
             unresolved_rows.append(
                 UnresolvedRow(
@@ -2273,9 +2279,12 @@ def build_observed_mutation_set(
     unscannable = 0
     for relative_posix in relative_names:
         try:
-            text = (
-                root_path / Path(*relative_posix.split("/"))
-            ).read_text(encoding="utf-8")
+            # PR-GR-10c: per-run cached read (stamp-validated; a file
+            # changed within the run is re-read).  The broad
+            # skip-and-count contract below is unchanged.
+            text = file_text(
+                str(root_path / Path(*relative_posix.split("/")))
+            )
             # File-level prefilter: every route to an extracted mutation
             # (bare ``*Dao`` receivers, typed DAO properties, database
             # accessor aliases) requires a ``*Dao`` identifier somewhere in

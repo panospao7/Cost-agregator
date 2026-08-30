@@ -117,6 +117,7 @@ from ..kotlin_callable_parser import (
     mask_kotlin_source,
     resolve_callable,
 )
+from ..run_cache import file_text
 from ..db_policy_signature import (
     SignatureError,
     normalize_type_text,
@@ -707,8 +708,13 @@ def verify_v2_policy_source_evidence(
             else:
                 abs_path = os.path.join(repo_root, ck.path)
                 try:
-                    with open(abs_path, "r", encoding="utf-8") as handle:
-                        text = handle.read()
+                    # PR-GR-10c: the per-run file cache dedupes the repeated
+                    # per-group reads of the same file (~200 groups over
+                    # ~300 files) and is stamp-validated, so a file changed
+                    # within the run is re-read (re-read after write).  The
+                    # OSError contract below is unchanged: the cache never
+                    # swallows or caches a failed read.
+                    text = file_text(abs_path)
                 except OSError:
                     group_errors.append(
                         PolicyError(

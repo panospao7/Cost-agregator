@@ -10,6 +10,13 @@ Exit codes:
   1 — one or more blocking guards had violations
   2 — infrastructure error (guard crashed, missing command, timeout, etc.)
 
+Time budgets (PR-GR-10c): each guard may declare an optional
+expected_max_seconds (built-in guards via GUARD_TIME_BUDGETS; custom JSON
+manifests via a per-entry "expected_max_seconds" key).  A guard that
+finishes above its budget is marked outcome "slow" in the summary — a
+non-blocking warning; the exit code is unaffected and a failing guard keeps
+its violation/infra_error outcome.
+
 Usage:
   python3 scripts/ci/run_static_guard_suite.py
   python3 scripts/ci/run_static_guard_suite.py --output-dir build/ci/static-guards
@@ -244,6 +251,43 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
     ("guard_tests", [SUITE_PYTHON, "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"], "blocking"),
 ]
 
+# ── Per-guard time budgets (PR-GR-10c) ──────────────────────────────────────────
+# Optional expected_max_seconds per guard, declared here per built-in guard
+# name (custom JSON manifests may declare "expected_max_seconds" per entry
+# instead).  A guard that finishes ABOVE its budget is marked outcome "slow"
+# in the summary — a NON-BLOCKING warning: the exit code is unaffected and a
+# failing guard keeps its violation/infra_error outcome (a budget must never
+# mask a real failure).  Budgets are visibility only, never fail-closed.
+#
+# Initial budgets from observed full-suite durations: db_access ~700s and
+# guard_tests ~1500s get ~20% headroom over their observations (guard_tests'
+# budget sits above the default 1500s suite timeout, so it can only fire when
+# GUARD_TIMEOUT_SECONDS is raised); every other guard is small (well under
+# 300s observed) and gets a flat 300s ceiling.
+GUARD_TIME_BUDGETS: Dict[str, float] = {
+    "guard_registry": 300.0,
+    "source_provenance": 300.0,
+    "ui_dao": 300.0,
+    "worker": 300.0,
+    "receipt_link": 300.0,
+    "import_lifecycle": 300.0,
+    "cloud_payload": 300.0,
+    "pii_logging": 300.0,
+    "di_release": 300.0,
+    "allowlist_compliance": 300.0,
+    "ignored_test_budget": 300.0,
+    "lint_baseline_policy": 300.0,
+    "time_boundaries": 300.0,
+    "deprecation_escalations": 300.0,
+    "cancellation": 300.0,
+    "privacy": 300.0,
+    "db_access": 840.0,
+    "event_writers": 300.0,
+    "money": 300.0,
+    "migration_matrix": 300.0,
+    "guard_tests": 1800.0,
+}
+
 # Maximum length of stdout preview stored in summary JSON
 STDOUT_PREVIEW_MAX_CHARS = 500
 
@@ -294,7 +338,7 @@ def _expand_globs(command: List[str], cwd: Path) -> List[str]:
     return expanded
 
 
-def _load_manifest_from_json(path: Path) -> List[Tuple[str, List[str], str]]:
+def _load_manifest_from_json(path: Path) -> Tuple[List[Tuple[str, List[str], str]], Dict[str, float]]:
     """Load a custom guard manifest from a JSON file.
 
     Expected format:
@@ -302,18 +346,31 @@ def _load_manifest_from_json(path: Path) -> List[Tuple[str, List[str], str]]:
       {"name": "...", "command": [...], "mode": "blocking|warning"},
       ...
     ]
+
+    Each entry may optionally declare ``expected_max_seconds`` (a number
+    >= 0) — its PR-GR-10c time budget; entries without one get no budget
+    and can never be marked slow.
     """
     with open(path, 'r', encoding='utf-8') as f:
         data = json.load(f)
     manifest: List[Tuple[str, List[str], str]] = []
+    budgets: Dict[str, float] = {}
     for entry in data:
         name = entry["name"]
         command = entry["command"]
         mode = entry["mode"]
         if mode not in ("blocking", "warning"):
             raise ValueError(f"Invalid mode '{mode}' for guard '{name}': must be 'blocking' or 'warning'")
+        raw_budget = entry.get("expected_max_seconds")
+        if raw_budget is not None:
+            if isinstance(raw_budget, bool) or not isinstance(raw_budget, (int, float)) or raw_budget < 0:
+                raise ValueError(
+                    f"Invalid expected_max_seconds {raw_budget!r} for guard '{name}': "
+                    "must be a number >= 0"
+                )
+            budgets[name] = float(raw_budget)
         manifest.append((name, command, mode))
-    return manifest
+    return manifest, budgets
 
 
 def _resolve_python(command: List[str]) -> List[str]:
@@ -355,8 +412,16 @@ def run_guard(
     mode: str,
     output_dir: Path,
     project_root: Path,
+    expected_max_seconds: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Execute a single guard and return a structured result dict."""
+    """Execute a single guard and return a structured result dict.
+
+    ``expected_max_seconds`` (PR-GR-10c) is the guard's optional time
+    budget.  Exceeding it marks a PASSING guard's outcome as ``slow`` — a
+    non-blocking warning in the summary; the exit code is unaffected and a
+    violation/infra_error outcome is never masked by the budget.  The
+    comparison uses the raw (unrounded) duration.
+    """
     log_path = output_dir / f"{name}.log"
 
     start = time.monotonic()
@@ -392,8 +457,16 @@ def run_guard(
             errors='replace',
         )
 
+        budget_exceeded = (
+            expected_max_seconds is not None
+            and duration > expected_max_seconds
+        )
         if exit_code == 0:
-            outcome = "pass"
+            # PR-GR-10c: a passing guard over its time budget is marked
+            # "slow" (non-blocking visibility).  Failure outcomes keep
+            # their authoritative violation/infra_error semantics — a
+            # budget must never mask a real failure or change the exit.
+            outcome = "slow" if budget_exceeded else "pass"
         elif exit_code == 1:
             outcome = "violation"
         else:
@@ -437,15 +510,27 @@ def run_guard(
         "exit_code": exit_code,
         "outcome": outcome,
         "duration_seconds": round(duration, 2),
+        "expected_max_seconds": expected_max_seconds,
+        "budget_exceeded": (
+            expected_max_seconds is not None
+            and duration > expected_max_seconds
+        ),
         "log_path": str(log_path),
         "stdout_preview": stdout_preview,
     }
 
 
 def compute_summary(results: List[Dict[str, Any]]) -> Dict[str, int]:
-    """Derive aggregate counts from individual guard results."""
+    """Derive aggregate counts from individual guard results.
+
+    ``slow`` (PR-GR-10c) counts guards that passed but exceeded their
+    declared time budget.  Slow guards are a non-blocking warning: they are
+    deliberately NOT counted as passed, and ``determine_exit_code`` never
+    looks at them, so the suite exit is unaffected.
+    """
     total = len(results)
     passed = sum(1 for r in results if r["outcome"] == "pass")
+    slow = sum(1 for r in results if r["outcome"] == "slow")
     failed_blocking = sum(
         1 for r in results
         if r["outcome"] == "violation" and r["mode"] == "blocking"
@@ -458,6 +543,7 @@ def compute_summary(results: List[Dict[str, Any]]) -> Dict[str, int]:
     return {
         "total": total,
         "passed": passed,
+        "slow": slow,
         "failed_blocking": failed_blocking,
         "warning_violations": warning_violations,
         "infra_errors": infra_errors,
@@ -508,6 +594,7 @@ def write_summary_md(results: List[Dict[str, Any]], summary: Dict[str, int], out
     lines.append(f"| ------ | ----- |")
     lines.append(f"| Total guards | {summary['total']} |")
     lines.append(f"| Passed | {summary['passed']} |")
+    lines.append(f"| Slow (over budget) | {summary['slow']} |")
     lines.append(f"| Failed blocking | {summary['failed_blocking']} |")
     lines.append(f"| Warning violations | {summary['warning_violations']} |")
     lines.append(f"| Infra errors | {summary['infra_errors']} |")
@@ -520,6 +607,7 @@ def write_summary_md(results: List[Dict[str, Any]], summary: Dict[str, int], out
     for r in results:
         outcome_icon = {
             "pass": "✅",
+            "slow": "⏱",
             "violation": "❌",
             "infra_error": "💥",
         }.get(r["outcome"], "❓")
@@ -543,6 +631,21 @@ def write_summary_md(results: List[Dict[str, Any]], summary: Dict[str, int], out
         for r in results:
             if r["outcome"] == "violation" and r["mode"] == "warning":
                 lines.append(f"- **{r['name']}** — see `{r['log_path']}`")
+        lines.append("")
+
+    if summary["slow"] > 0:
+        lines.append("## ⏱ Slow Guards (over time budget — non-blocking)")
+        lines.append("")
+        for r in results:
+            if r["outcome"] == "slow":
+                budget = r.get("expected_max_seconds")
+                budget_text = (
+                    f"{budget:g}s" if budget is not None else "no budget"
+                )
+                lines.append(
+                    f"- **{r['name']}** — {r['duration_seconds']:.1f}s "
+                    f"exceeds its {budget_text} budget"
+                )
         lines.append("")
 
     if summary["infra_errors"] > 0:
@@ -587,9 +690,12 @@ def main() -> None:
     # Load manifest
     if args.manifest:
         print(f"Loading custom manifest from: {args.manifest}")
-        manifest = _load_manifest_from_json(args.manifest)
+        manifest, guard_budgets = _load_manifest_from_json(args.manifest)
     else:
         manifest = GUARD_MANIFEST
+        # PR-GR-10c: the built-in manifest declares its time budgets in
+        # GUARD_TIME_BUDGETS (keyed by guard name).
+        guard_budgets = dict(GUARD_TIME_BUDGETS)
 
     print(f"Project root: {project_root}")
     print(f"Output dir:  {output_dir}")
@@ -601,11 +707,15 @@ def main() -> None:
 
     for name, command, mode in manifest:
         print(f"\n[{len(results)+1}/{len(manifest)}] {name} ({mode}) ... ", end='', flush=True)
-        result = run_guard(name, command, mode, output_dir, project_root)
+        result = run_guard(
+            name, command, mode, output_dir, project_root,
+            expected_max_seconds=guard_budgets.get(name),
+        )
         results.append(result)
 
         outcome_label = {
             "pass": "PASS",
+            "slow": "SLOW (over budget)",
             "violation": "VIOLATION" if mode == "blocking" else "WARNING",
             "infra_error": "INFRA_ERROR",
         }.get(result["outcome"], "UNKNOWN")
@@ -621,6 +731,7 @@ def main() -> None:
     print(f"Suite complete in {overall_duration:.1f}s")
     print(f"  Total:            {summary['total']}")
     print(f"  Passed:           {summary['passed']}")
+    print(f"  Slow (over budget): {summary['slow']}")
     print(f"  Failed blocking:  {summary['failed_blocking']}")
     print(f"  Warning viols:    {summary['warning_violations']}")
     print(f"  Infra errors:     {summary['infra_errors']}")

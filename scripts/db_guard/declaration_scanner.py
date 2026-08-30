@@ -24,6 +24,7 @@ from ..kotlin_callable_parser import (
     project_nested_type_declarations,
     project_type_declarations,
 )
+from ..run_cache import file_text
 from .dao_accessors import AccessorError, find_dao_declarations
 from .source_roots import DB_SOURCE_ROOT_UNDECLARED, resolve_source_root_set
 
@@ -800,7 +801,13 @@ def build_project_type_index(pairs: Any) -> ProjectTypeIndex:
             if accepted >= MAX_PROJECT_TYPE_INDEX_FILES:
                 break
             try:
-                text = candidate.read_text(encoding="utf-8")
+                # PR-GR-10c: the per-run file cache dedupes the repeated
+                # full-tree reads across index builds (one per scan /
+                # verification / migration batch in the same process) and is
+                # stamp-validated, so a file changed within the run is
+                # re-read.  The skip-silently exception contract below is
+                # unchanged: the cache never swallows a failed read.
+                text = file_text(str(candidate))
                 declarations = project_type_declarations(text)
             except (OSError, UnicodeError, ParserError, ValueError):
                 continue

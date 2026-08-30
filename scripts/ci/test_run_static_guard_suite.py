@@ -19,6 +19,10 @@ Tests verify:
   11. guard_tests resolves its interpreter portably (sys.executable).
   12. db_access ratchet carries a --timeout token derived from the suite
       budget: max(GUARD_TIMEOUT_SECONDS - 60, 600).
+  13. PR-GR-10c time budgets: a guard over its expected_max_seconds is
+      marked outcome "slow" (non-blocking; exit unaffected; failures are
+      never masked), budgets are declared for every built-in guard, and
+      custom JSON manifests may declare per-entry budgets.
 
 Run:
   python -m pytest scripts/ci/test_run_static_guard_suite.py -v
@@ -31,6 +35,8 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import List
+
+import pytest
 
 # Import the runner to inspect GUARD_MANIFEST directly
 import importlib.util
@@ -1008,3 +1014,267 @@ class TestDbAccessRatchetChildTimeout:
             child = self._db_access_child_timeout(fresh)
             assert child == fresh.GUARD_TIMEOUT_SECONDS - self.HEADROOM
             assert child < fresh.GUARD_TIMEOUT_SECONDS
+
+
+# ── PR-GR-10c: per-guard time budgets ─────────────────────────────────────────
+
+
+class TestGuardTimeBudgets:
+    """Per-guard expected_max_seconds budgets are visibility-only.
+
+    A guard that finishes above its budget is marked outcome "slow" — a
+    non-blocking warning in the summary.  The exit code is unaffected and a
+    violation/infra_error outcome is never masked by the budget (a budget
+    must never flip a failing suite to green).
+    """
+
+    def _manifest(self, scripts_dir: Path, body: str, budget=None) -> list:
+        guard = scripts_dir / "budgeted_guard.py"
+        _write_script(guard, body)
+        entry = {
+            "name": "budgeted_guard",
+            "command": [sys.executable, str(guard)],
+            "mode": "blocking",
+        }
+        if budget is not None:
+            entry["expected_max_seconds"] = budget
+        return [entry]
+
+    def _summary(self, out_dir: Path) -> dict:
+        with open(out_dir / "summary.json", 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    def test_slow_outcome_when_over_budget_and_exit_unaffected(self):
+        """A passing guard over its budget is marked slow; exit stays 0."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scripts_dir = tmp_path / "scripts"
+            scripts_dir.mkdir()
+            out_dir = tmp_path / "output"
+            manifest_path = tmp_path / "manifest.json"
+
+            _write_manifest(manifest_path, self._manifest(
+                scripts_dir, "import time\ntime.sleep(0.3)\n", budget=0,
+            ))
+            result = _run_runner(manifest_path, out_dir)
+
+            assert result.returncode == 0, (
+                f"slow must never affect the exit code, got {result.returncode}"
+            )
+            summary = self._summary(out_dir)
+            guard = summary["results"][0]
+            assert guard["outcome"] == "slow"
+            assert guard["budget_exceeded"] is True
+            assert guard["expected_max_seconds"] == 0.0
+            assert summary["summary"]["slow"] == 1
+            # A slow guard is a warning, not a pass and not a failure.
+            assert summary["summary"]["passed"] == 0
+            assert summary["summary"]["failed_blocking"] == 0
+            assert summary["summary"]["infra_errors"] == 0
+
+    def test_pass_outcome_within_budget(self):
+        """A guard under its budget keeps outcome pass with the budget recorded."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scripts_dir = tmp_path / "scripts"
+            scripts_dir.mkdir()
+            out_dir = tmp_path / "output"
+            manifest_path = tmp_path / "manifest.json"
+
+            _write_manifest(manifest_path, self._manifest(
+                scripts_dir, "import sys; sys.exit(0)\n", budget=60,
+            ))
+            result = _run_runner(manifest_path, out_dir)
+
+            assert result.returncode == 0
+            summary = self._summary(out_dir)
+            guard = summary["results"][0]
+            assert guard["outcome"] == "pass"
+            assert guard["budget_exceeded"] is False
+            assert guard["expected_max_seconds"] == 60.0
+            assert summary["summary"]["slow"] == 0
+            assert summary["summary"]["passed"] == 1
+
+    def test_violation_outcome_is_never_masked_by_budget(self):
+        """A failing guard over its budget stays a violation (exit 1).
+
+        Marking it slow would hide the violation from the outcome field and
+        could flip failed_blocking — a fail-open change the budget feature
+        must never make.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scripts_dir = tmp_path / "scripts"
+            scripts_dir.mkdir()
+            out_dir = tmp_path / "output"
+            manifest_path = tmp_path / "manifest.json"
+
+            _write_manifest(manifest_path, self._manifest(
+                scripts_dir, "import time; time.sleep(0.3); import sys; sys.exit(1)\n",
+                budget=0,
+            ))
+            result = _run_runner(manifest_path, out_dir)
+
+            assert result.returncode == 1
+            summary = self._summary(out_dir)
+            guard = summary["results"][0]
+            assert guard["outcome"] == "violation"
+            assert guard["budget_exceeded"] is True
+            assert summary["summary"]["failed_blocking"] == 1
+            assert summary["summary"]["slow"] == 0
+
+    def test_infra_error_outcome_is_never_masked_by_budget(self):
+        """A crashing guard over its budget stays an infra error (exit 2)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scripts_dir = tmp_path / "scripts"
+            scripts_dir.mkdir()
+            out_dir = tmp_path / "output"
+            manifest_path = tmp_path / "manifest.json"
+
+            _write_manifest(manifest_path, self._manifest(
+                scripts_dir, "import time; time.sleep(0.3); import sys; sys.exit(2)\n",
+                budget=0,
+            ))
+            result = _run_runner(manifest_path, out_dir)
+
+            assert result.returncode == 2
+            summary = self._summary(out_dir)
+            guard = summary["results"][0]
+            assert guard["outcome"] == "infra_error"
+            assert guard["budget_exceeded"] is True
+            assert summary["summary"]["infra_errors"] == 1
+            assert summary["summary"]["slow"] == 0
+
+    def test_guard_without_budget_is_never_slow(self):
+        """No declared budget -> no budget check -> outcome can never be slow."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scripts_dir = tmp_path / "scripts"
+            scripts_dir.mkdir()
+            out_dir = tmp_path / "output"
+            manifest_path = tmp_path / "manifest.json"
+
+            _write_manifest(manifest_path, self._manifest(
+                scripts_dir, "import time; time.sleep(0.3); import sys; sys.exit(0)\n",
+                budget=None,
+            ))
+            result = _run_runner(manifest_path, out_dir)
+
+            assert result.returncode == 0
+            summary = self._summary(out_dir)
+            guard = summary["results"][0]
+            assert guard["outcome"] == "pass"
+            assert guard["expected_max_seconds"] is None
+            assert guard["budget_exceeded"] is False
+            assert summary["summary"]["slow"] == 0
+
+    def test_warning_mode_slow_guard_keeps_exit_zero(self):
+        """A warning-mode guard over its budget is slow; exit stays 0."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scripts_dir = tmp_path / "scripts"
+            scripts_dir.mkdir()
+            out_dir = tmp_path / "output"
+            manifest_path = tmp_path / "manifest.json"
+
+            entry = self._manifest(
+                scripts_dir, "import time; time.sleep(0.3); import sys; sys.exit(0)\n",
+                budget=0,
+            )[0]
+            entry["mode"] = "warning"
+            _write_manifest(manifest_path, [entry])
+            result = _run_runner(manifest_path, out_dir)
+
+            assert result.returncode == 0
+            summary = self._summary(out_dir)
+            assert summary["results"][0]["outcome"] == "slow"
+            assert summary["summary"]["slow"] == 1
+
+    def test_slow_section_written_to_summary_md(self):
+        """The human summary carries a dedicated non-blocking slow section."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            scripts_dir = tmp_path / "scripts"
+            scripts_dir.mkdir()
+            out_dir = tmp_path / "output"
+            manifest_path = tmp_path / "manifest.json"
+
+            _write_manifest(manifest_path, self._manifest(
+                scripts_dir, "import time; time.sleep(0.3)\n", budget=0,
+            ))
+            _run_runner(manifest_path, out_dir)
+
+            md_content = (out_dir / "summary.md").read_text(encoding='utf-8')
+            assert "## ⏱ Slow Guards (over time budget — non-blocking)" in md_content
+            assert "budgeted_guard" in md_content
+            assert "0s budget" in md_content
+
+    def test_json_manifest_invalid_budget_rejected(self):
+        """A negative or non-numeric expected_max_seconds fails the load."""
+        bad_manifests = [
+            [{"name": "g", "command": [sys.executable, "-c", "pass"],
+              "mode": "blocking", "expected_max_seconds": -1}],
+            [{"name": "g", "command": [sys.executable, "-c", "pass"],
+              "mode": "blocking", "expected_max_seconds": "soon"}],
+            [{"name": "g", "command": [sys.executable, "-c", "pass"],
+              "mode": "blocking", "expected_max_seconds": True}],
+        ]
+        for entries in bad_manifests:
+            with tempfile.TemporaryDirectory() as tmp:
+                manifest_path = Path(tmp) / "manifest.json"
+                _write_manifest(manifest_path, entries)
+                with pytest.raises(ValueError):
+                    _runner._load_manifest_from_json(manifest_path)
+
+    def test_builtin_budgets_declared_for_every_manifest_guard(self):
+        """Every built-in guard declares a budget; the known-expensive two
+        carry headroom over their observed durations (db_access ~700s,
+        guard_tests ~1500s)."""
+        budgets = _runner.GUARD_TIME_BUDGETS
+        for name, _command, _mode in _runner.GUARD_MANIFEST:
+            assert name in budgets, f"guard '{name}' has no time budget"
+            assert budgets[name] > 0
+        assert budgets["db_access"] >= 700
+        assert budgets["guard_tests"] >= 1500
+
+    def test_budget_comparison_uses_raw_duration_not_rounded(self):
+        """The budget check compares the RAW duration.
+
+        ``duration_seconds`` is rounded to 2 decimals for display; a budget
+        of 0.003s must still flag a guard whose raw duration is 0.004s even
+        though the rounded display value (0.0) would not.
+        """
+        class _FakeCompleted:
+            returncode = 0
+            stdout = "ok"
+            stderr = ""
+
+        real_run = _runner.subprocess.run
+        real_monotonic = _runner.time.monotonic
+        clock = {"now": 100.0}
+
+        def fake_run(command, **kwargs):
+            return _FakeCompleted()
+
+        def fake_monotonic():
+            clock["now"] += 0.004  # raw duration 0.004s per guard
+            return clock["now"]
+
+        _runner.subprocess.run = fake_run
+        _runner.time.monotonic = fake_monotonic
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                out_dir = Path(tmp) / "output"
+                out_dir.mkdir()
+                result = _runner.run_guard(
+                    "tiny", [sys.executable, "-c", "pass"], "blocking",
+                    out_dir, Path(tmp), expected_max_seconds=0.003,
+                )
+        finally:
+            _runner.subprocess.run = real_run
+            _runner.time.monotonic = real_monotonic
+
+        assert result["outcome"] == "slow"
+        assert result["budget_exceeded"] is True
+        assert result["duration_seconds"] == 0.0

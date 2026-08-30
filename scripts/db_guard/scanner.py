@@ -55,6 +55,7 @@ from ..kotlin_callable_parser import (
     ParserError, erase_star_projections, find_callable_declarations,
     find_owner_declarations, mask_kotlin_source,
 )
+from ..run_cache import file_text
 from .declaration_scanner import (
     anchor_for_declared_path,
     build_project_type_index,
@@ -2746,7 +2747,13 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     sources: dict[str, str] = {}
     for path in sorted(files):
         try:
-            sources[path] = files[path].read_text(encoding="utf-8")
+            # PR-GR-10c: the per-run file cache dedupes the repeated
+            # full-tree reads across scans in the same process (the
+            # guard_tests leg re-runs the real-tree scan per test module)
+            # and is stamp-validated, so a file changed within the run is
+            # re-read.  The (OSError, UnicodeError) contract below is
+            # unchanged: the cache never swallows a failed read.
+            sources[path] = file_text(str(files[path]))
         except (OSError, UnicodeError):
             diagnostics.append(GuardDiagnostic("DB_SOURCE_UNREADABLE", path=path))
 
