@@ -11082,8 +11082,15 @@ def test_real_tracked_gr08p2_seed_file_loads_with_exactly_fifteen_rows():
         if entry.dao_fqcn == CATEGORY_DAO_GR08P2
         and entry.operation == "insert"
     )
+    # Derivation of the expected order: the list is sorted() over the FULL
+    # repository-relative paths, and both paths share the
+    # `app/src/main/java/com/yourname/expensetracker/` prefix — so the
+    # comparison is decided at the `service/...` vs `util/...` segment
+    # ('s' < 'u'), putting LegacyDataMigrationService BEFORE
+    # CsvExpenseImporter.  (The seed file's own row order is irrelevant
+    # here; the pin below is the deterministic sorted() truth.)
     assert category_inserts == [
-        CSV_EXPENSE_IMPORTER_KT, LEGACY_DATA_MIGRATION_SERVICE_KT,
+        LEGACY_DATA_MIGRATION_SERVICE_KT, CSV_EXPENSE_IMPORTER_KT,
     ]
     # The source-alias / explicit-parameter spellings: the
     # DatabaseBackupRepositoryImpl row spells the method-local alias dao,

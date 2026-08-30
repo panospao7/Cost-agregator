@@ -1510,31 +1510,29 @@ def test_no_fixed_result_totals_enforced(tmp_path):
 
 
 def test_real_run_distribution_pinned_and_reproducible(tmp_path):
-    """Pin the CURRENT post-GR-07-wave-3 truth of the real repository run.
+    """Pin the CURRENT post-GR-08 real-repository run truth.
 
     The checked-in tracked candidate
     (``config/guards/db_ownership_policy.signatures.candidate.yml``) is the
-    CURRENT artifact, regenerated through ``--generate``; byte equality
-    between a fresh run and the tracked artifacts is pinned by the
-    dedicated regression tests in the tracked-artifact section below.
-    Pinned here — re-derived statically from checked-in evidence (the 99
-    legacy entries in the archived ``db_ownership_policy.legacy.yml``, the
-    tracked candidate's 55 entries, and the ledger's closed-status debt
-    breakdown
-    PARSER_UNCERTAIN=16 + DAO_IDENTITY_UNRESOLVED=14 + CALLABLE_MISSING=8 +
-    PARSER_UNSUPPORTED=0 + CALLABLE_AMBIGUOUS=5 + MUTATION_PAIR_MISSING=1
-    = 44) — and pinned as exact observable CLI numbers:
+    CURRENT artifact, regenerated through ``--generate`` WITH the combined
+    seed document (472 entries = 57 legacy-resolved + 415 seed rows);
+    byte/section equality between a fresh run and the tracked artifacts is
+    pinned by the dedicated regression tests in the tracked-artifact
+    section below.  Pinned here — re-derived statically from checked-in
+    evidence (the 99 legacy entries in the archived
+    ``db_ownership_policy.legacy.yml``, this no-seed run's 57-entry
+    candidate, and the ledger's closed-status debt breakdown
+    CALLABLE_AMBIGUOUS=5 + CALLABLE_MISSING=16 + DAO_IDENTITY_UNRESOLVED=20
+    + MUTATION_PAIR_MISSING=1 = 42; PARSER_UNCERTAIN=0 and
+    PARSER_UNSUPPORTED=0) — and pinned as exact observable CLI numbers:
 
-    * 99 inputs; 44 unresolved indices -> 55 resolving indices.  Versus
-      the pre-project-types-wiring truth (48/51), the GR-07 project-wide
-      type-index wiring resolved ALL 11 former PARSER_UNSUPPORTED rows:
-      7 of them now fully resolve (updateTransferDetails 15-17 and
-      updateTypeAndTransferDetails 18-21 of
-      TransactionLifecycleCoordinator, whose ``TransferDirection``
-      parameters are declared in another production file), while the
-      remaining 4 progress past signature resolution into
-      DAO_IDENTITY_UNRESOLVED debt (10 -> 14) — the ledger stays closed
-      over controlled constants only;
+    * 99 inputs; 42 unresolved indices -> 57 resolving indices.  Versus
+      the post-GR-07-wave-3 truth (55/44), the 16 former PARSER_UNCERTAIN
+      rows are gone: the GR-06 tolerant callable discovery and the GR-07
+      project-wide type-index wiring reclassified them — 2 now fully
+      resolve (55 -> 57), 8 moved to CALLABLE_MISSING (8 -> 16) and 6 to
+      DAO_IDENTITY_UNRESOLVED (14 -> 20) — the ledger stays closed over
+      controlled constants only;
 
     * keeper-index recount.  Fold semantics: emissions sharing a canonical
       mutation key fold only when their authorization metadata
@@ -1543,8 +1541,16 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
       authorization filters by ACCESSOR only, so one legacy row emits one
       resolved row per authorized-accessor mutation its method body
       performs.  Reading the archived policy entries against the real
-      method bodies gives TWO new fold groups alongside (a)/(b):
+      method bodies gives the same fold groups as the prior pin:
 
+      - (a) indices 40-42 — three scenario-reason variants of
+        BudgetRepository.addBudget (each row authorizes budgetDao, so each
+        emits the whole insert trio -> 3 keys x 3 rows), keeper 40;
+      - (b) indices 22-28 — six per-column expenseDao rows
+        (22-27) of TransactionLifecycleCoordinator.
+        updateOwnershipDbOnlyV2 (each emits all six column-update keys ->
+        6 keys x 6 rows, keeper 22) plus row 28, which alone authorizes
+        {transactionEventDao} and keeps its event-insert key;
       - (c) updateTransferDetails 15-17: the body performs
         expenseDao.updateTransferDirection +
         expenseDao.updateTransferAccountName +
@@ -1563,33 +1569,25 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
         19, 20; keys gained: 4;
 
     * the same-key emission groups among RESOLVED rows are therefore
-      (a) indices 40-42 — three scenario-reason variants of
-      BudgetRepository.addBudget (each row authorizes budgetDao, so each
-      emits the whole insert trio -> 3 keys x 3 rows), (b) indices 22-27
-      — six per-column expenseDao rows of
-      TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2 (each emits
-      all six column-update keys -> 6 keys x 6 rows), and the new groups
-      (c)/(d) above — all sharing barrierMode/owner/linkedIssue within
-      each group.  Same-accessor multi-row methods that remain
-      UNRESOLVED debt (bulkUpdateCategory 29-31, deleteExpense 34-35,
-      plus every GroupTransactionCoordinator /
+      (a) 40-42, (b) 22-27, (c) 15-16 and (d) 18-20 — all sharing
+      barrierMode/owner/linkedIssue within each group.  Same-accessor
+      multi-row methods that remain UNRESOLVED debt (bulkUpdateCategory
+      29-31, deleteExpense 34-35, plus every GroupTransactionCoordinator /
       GroupLifecycleCoordinator / AiChat / WarrantyExpirationWorker row)
       emit nothing and therefore form no fold groups;
-    * pre-dedupe the run emits 99 resolved rows (prior 84 = 3*3 + 6*6 +
-      39 single-carried keys, plus 15 new emissions: group (c) 2+2+1 and
-      group (d) 3+3+3+1); Slice 5 folding removes every redundant
-      emission — prior 3*(3-1) + 6*(6-1) = 36 plus new 2*(2-1) +
-      3*(3-1) = 8, i.e. 44 removed — leaving EXACTLY 55 unique keys.
+    * pre-dedupe the run emits 101 resolved rows (41 single-carried keys —
+      the prior 39 plus the 2 newly-resolving rows' keys — plus group
+      emissions (a) 3*3, (b) 6*6, (c) 2*2+1 and (d) 3*3+1); Slice 5
+      folding removes every redundant emission — 3*(3-1) + 6*(6-1) +
+      2*(2-1) + 3*(3-1) = 44 — leaving EXACTLY 57 unique keys.
       (A naive subtraction miscounts a key carried by n rows as one
       redundant row instead of n-1.);
     * duplicates=0 and exit 1 (visible debt, candidate writing allowed);
-    * the accounting records partition range(99) into 55 RESOLVED (kept
-      emitters plus folded same-key indices) and 44 UNRESOLVED;
-    * the report keeps 45 distinct resolved indexes: the prior 41
-      keepers plus the 4 new keeper indices (15 and 17 from group (c);
-      18 and 21 from group (d)) — i.e. all 55 emitting indices minus
-      the 10 folded-only ones (41, 42 from group (a); 23-27 from group
-      (b); 16 from group (c); 19, 20 from group (d));
+    * the accounting records partition range(99) into 57 RESOLVED (kept
+      emitters plus folded same-key indices) and 42 UNRESOLVED;
+    * the report keeps 47 distinct resolved indexes: all 57 emitting
+      indices minus the 10 folded-only ones (41, 42 from group (a); 23-27
+      from group (b); 16 from group (c); 19, 20 from group (d));
     * byte-for-byte reproducibility of a second run.
     """
     out_dir = tmp_path / "dist"
@@ -1612,8 +1610,8 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     payload = json.loads(report.read_text(encoding="utf-8"))
     counts = payload["counts"]
     assert counts["input"] == 99
-    assert counts["resolved"] == 55
-    assert counts["unresolved"] == 44
+    assert counts["resolved"] == 57
+    assert counts["unresolved"] == 42
     assert payload["duplicateMutationKeys"] == []
     document, errors = load_policy_v2(candidate)
     assert errors == []
@@ -1623,13 +1621,13 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     candidate_keys = {
         entry.mutation_key().canonical_key() for entry in document
     }
-    assert len(candidate_keys) == len(document) == 55
+    assert len(candidate_keys) == len(document) == 57
     assert counts["resolved"] == len(document)
     # Folded same-key indices keep NO resolved report row: only the
-    # lowest-index keeper of each fold group remains (39 single-carried
+    # lowest-index keeper of each fold group remains (41 single-carried
     # keys plus one keeper index for group (a)'s 3 keys, one for group
     # (b)'s 6 keys, two for group (c) — indices 15 and 17 — and two for
-    # group (d) — indices 18 and 21 -> 45 distinct report indexes).
+    # group (d) — indices 18 and 21 -> 47 distinct report indexes).
     report_resolved_indexes = {
         row["index"] for row in payload["resolved"]
     }
@@ -1637,7 +1635,7 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
         row["index"] for row in payload["unresolved"]
     }
     assert not (report_resolved_indexes & report_unresolved_indexes)
-    assert len(report_resolved_indexes) == 45
+    assert len(report_resolved_indexes) == 47
     # The accounting records tie EVERY legacy index to exactly one outcome.
     records = payload["accounting"]["records"]
     assert len(records) == 99
@@ -1653,7 +1651,7 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     }
     assert not (resolved_indexes & unresolved_indexes)
     assert resolved_indexes | unresolved_indexes == set(range(99))
-    assert len(resolved_indexes) == 55
+    assert len(resolved_indexes) == 57
     assert report_resolved_indexes <= resolved_indexes
     # Every folded index's RESOLVED record carries the shared key of its
     # keeper's candidate entry.
@@ -2710,18 +2708,32 @@ from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
 )
 
 
+COMBINED_SEED_FILE = (
+    REPO_ROOT / "docs" / "ci" / "db-findings" / "GR-08-seeds.yml"
+)
+
+
 @pytest.fixture(scope="module")
 def tracked_regeneration(tmp_path_factory):
-    """One ``--generate`` run with both targets overridden into tmp.
+    """One ``--generate`` run replicating the tracked artifacts' inputs.
 
     Shared by every test in this section so the (expensive, full-tree)
-    generation pipeline runs exactly once per module.
+    generation pipeline runs exactly once per module.  The tracked
+    candidate/accounting pair is generated WITH the combined reviewed seed
+    document (``--seed-rows docs/ci/db-findings/GR-08-seeds.yml`` -- the
+    single ``--seed-rows`` value every generation run consumes since
+    GR-08a; the tracked candidate is 472 entries = 57 legacy-resolved +
+    415 seed rows, and the tracked accounting's ``seedRecords`` crosswalk
+    carries the same 415 rows), so the regeneration here MUST pass the
+    same seed input or the comparison could never match.
     """
     out_dir = tmp_path_factory.mktemp("tracked-regen")
     candidate = out_dir / "candidate.yml"
     accounting = out_dir / "accounting.json"
     completed = _run_cli(
         "--generate",
+        "--seed-rows",
+        str(COMBINED_SEED_FILE),
         "--output",
         str(candidate),
         "--accounting-out",
@@ -2734,38 +2746,159 @@ def tracked_regeneration(tmp_path_factory):
     }
 
 
+def _canonical_candidate_entries_bytes(entries):
+    """Serialize a candidate entries list with the generator's own form.
+
+    Mirrors ``migrate_db_policy_signatures``' candidate serialization
+    (``yaml.safe_dump(..., sort_keys=False, allow_unicode=False)`` with
+    CRLF normalized away) so byte equality of this serialization is exact
+    data equality of the policy-entries section.
+    """
+    return yaml.safe_dump(
+        entries, sort_keys=False, allow_unicode=False
+    ).replace("\r\n", "\n").encode("utf-8")
+
+
+def _canonical_accounting_section_bytes(section):
+    """Serialize one accounting section with the artifact's own JSON form.
+
+    Mirrors the accounting artifact's serialization
+    (``json.dumps(..., sort_keys=False, separators=(",", ":"))``) so byte
+    equality of this serialization is exact data equality of the section.
+    """
+    return json.dumps(
+        section, sort_keys=False, separators=(",", ":")
+    ).encode("utf-8")
+
+
 def test_tracked_candidate_artifact_matches_regeneration_bytes(
     tracked_regeneration,
 ):
-    """The tracked candidate is byte-identical to a fresh regeneration.
+    """The tracked candidate's policy-entries section is byte-identical to
+    a fresh regeneration.
 
-    Any hand edit to the tracked candidate artifact fails here; the only
-    sanctioned way to change it is rerunning ``--generate``.
+    Contract change (round-12 artifact-drift reconciliation): the candidate
+    document is exactly ``{schemaVersion: 2, entries: [...]}`` — the
+    policy-entry section IS the artifact's entire stable content, and the
+    tree-coupled coverage evidence ships ONLY in the accounting artifact
+    (asserted semantically there).  The byte-exact comparison is therefore
+    scoped to the entries list under the generator's own canonical YAML
+    serialization (plus the schemaVersion pin) instead of raw whole-file
+    bytes.  Any hand edit to the tracked entries still fails here; the only
+    sanctioned way to change them is rerunning ``--generate``.
     """
     completed = tracked_regeneration["completed"]
     assert completed.returncode in (0, 1), completed.stderr
-    regenerated = tracked_regeneration["candidate"].read_bytes()
     assert TRACKED_CANDIDATE.is_file()
-    assert regenerated == TRACKED_CANDIDATE.read_bytes(), (
-        "tracked candidate artifact drifted from the regeneration output;"
-        " regenerate it via scripts/migrate_db_policy_signatures.py"
-        " --generate instead of hand-editing"
+    tracked_document = yaml.safe_load(
+        TRACKED_CANDIDATE.read_text(encoding="utf-8")
     )
+    regenerated_document = yaml.safe_load(
+        tracked_regeneration["candidate"].read_text(encoding="utf-8")
+    )
+    assert tracked_document["schemaVersion"] == 2
+    assert regenerated_document["schemaVersion"] == 2
+    assert (
+        _canonical_candidate_entries_bytes(regenerated_document["entries"])
+        == _canonical_candidate_entries_bytes(tracked_document["entries"])
+    ), (
+        "tracked candidate policy entries drifted from the regeneration"
+        " output; regenerate it via"
+        " scripts/migrate_db_policy_signatures.py --generate instead of"
+        " hand-editing"
+    )
+
+
+def _assert_coverage_section_semantics(mutations, records):
+    """Partition-completeness semantics for a shipped coverage section.
+
+    The ``sourceMutations`` section is TREE-STATE-DEPENDENT evidence (it
+    observes the production tree), so it is never pinned by bytes or by
+    exact per-kind counts.  Pinned instead: the closed kind vocabulary, the
+    deterministic (path, symbol, operation) ordering, the no-omission /
+    no-double-count partition (every observed site appears EXACTLY once
+    across kinds), legacy-index consistency (ascending, deduped, within the
+    artifact's own record index range for covered/unresolved kinds; empty
+    for observation-only kinds), and count consistency (per-kind counts sum
+    to the section total).
+    """
+    assert mutations, "coverage section must ship non-empty"
+    record_indexes = {record["index"] for record in records}
+    identities = []
+    for item in mutations:
+        assert set(item) == {
+            "kind",
+            "legacyIndices",
+            "operation",
+            "path",
+            "symbol",
+        }
+        assert item["kind"] in SOURCE_MUTATION_COVERAGE_KINDS
+        path = item["path"]
+        assert isinstance(path, str) and path
+        assert "\\" not in path and ":" not in path and not path.startswith("/")
+        assert all(
+            segment not in ("", ".", "..") for segment in path.split("/")
+        )
+        symbol = item["symbol"]
+        assert isinstance(symbol, str) and "#" in symbol
+        assert len(symbol) <= 200
+        operation = item["operation"]
+        assert operation is None or (
+            isinstance(operation, str) and operation
+        )
+        indices = item["legacyIndices"]
+        assert indices == sorted(set(indices))
+        if item["kind"] in (
+            COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW,
+            COVERAGE_OBSERVED_BUT_UNRESOLVED,
+        ):
+            assert indices
+            assert set(indices) <= record_indexes
+        else:
+            # JSON decoding yields a LIST, never a tuple: compare against
+            # the list form (an ``== ()`` pin can never hold here).
+            assert indices == []
+        identities.append((path, symbol, operation or ""))
+    # Partition: every observed site exactly once, deterministically ordered.
+    assert identities == sorted(identities)
+    assert len(set(identities)) == len(identities)
+    # Counts consistent: per-kind counts sum to the section total.
+    kind_counts = {}
+    for item in mutations:
+        kind_counts[item["kind"]] = kind_counts.get(item["kind"], 0) + 1
+    assert sum(kind_counts.values()) == len(mutations)
 
 
 def test_tracked_accounting_artifact_matches_regeneration_bytes(
     tracked_regeneration,
 ):
-    """The tracked accounting artifact is byte-identical to regeneration.
+    """Stable accounting sections are byte-identical to a fresh
+    regeneration; the tree-dependent coverage evidence is asserted
+    semantically.
 
-    Gated until the tracked artifact is regenerated WITH the PR-GR-05
-    source-mutation coverage section: while the checked-in artifact still
-    carries the pre-coverage empty ``sourceMutations`` list, this test
-    skips with that exact reason instead of failing on the known-pending
-    state.  Once regenerated (the only sanctioned path,
-    ``scripts/migrate_db_policy_signatures.py --generate``), the skip
-    disappears and ANY divergence — including hand edits to either the
-    tracked artifact or the generator output — fails the byte comparison.
+    Contract change (round-12 artifact-drift reconciliation): the
+    accounting artifact mixes POLICY-derived sections — which change only
+    when the archived legacy policy or the reviewed seed rows change — with
+    TREE-STATE-DEPENDENT evidence (the source-mutation coverage section and
+    the tree/candidate digests), which drifts whenever the production tree
+    evolves even with zero policy edits (e.g. deleteOldRates /
+    ExchangeRateStoreAdapter shifting between coverage kinds as the tree
+    evolved).  Pinning the WHOLE artifact by bytes made this tripwire fail
+    on every tree shift, so the comparison is now split:
+
+    * byte-exact, per section under the artifact's own canonical JSON
+      serialization: ``schema``, ``version``, ``sourcePolicyPath``,
+      ``sourcePolicySha256``, ``inputCount``, ``records`` (the legacy
+      crosswalk) and ``seedRecords`` (the reviewed seed crosswalk);
+    * semantic, tree-dependent: ``sourceMutations`` (partition completeness
+      via :func:`_assert_coverage_section_semantics`), ``sourceTreeSha``
+      (well-formed digest only — a tree-shape fingerprint by design) and
+      ``candidateSha256`` (must equal the sha256 of the tracked candidate
+      artifact bytes — the pair is regenerated together).
+
+    Any hand edit to the stable sections still fails here; the only
+    sanctioned way to change them is rerunning ``--generate``.
     """
     completed = tracked_regeneration["completed"]
     assert completed.returncode in (0, 1), completed.stderr
@@ -2780,11 +2913,48 @@ def test_tracked_accounting_artifact_matches_regeneration_bytes(
             " source-mutation coverage section; regenerate it via"
             " scripts/migrate_db_policy_signatures.py --generate"
         )
-    regenerated = tracked_regeneration["accounting"].read_bytes()
-    assert regenerated == TRACKED_ACCOUNTING.read_bytes(), (
-        "tracked accounting artifact drifted from the regeneration output;"
-        " regenerate it via scripts/migrate_db_policy_signatures.py"
-        " --generate instead of hand-editing"
+    regenerated_payload = json.loads(
+        tracked_regeneration["accounting"].read_text(encoding="utf-8")
+    )
+
+    # ── Stable sections: byte-exact under the artifact's own serializer. ──
+    for field in (
+        "schema",
+        "version",
+        "sourcePolicyPath",
+        "sourcePolicySha256",
+        "inputCount",
+    ):
+        assert regenerated_payload[field] == tracked_payload[field], field
+    for section in ("records", "seedRecords"):
+        assert _canonical_accounting_section_bytes(
+            regenerated_payload[section]
+        ) == _canonical_accounting_section_bytes(
+            tracked_payload[section]
+        ), (
+            "tracked accounting %s section drifted from the regeneration"
+            " output; regenerate it via"
+            " scripts/migrate_db_policy_signatures.py --generate instead of"
+            " hand-editing" % (section,)
+        )
+
+    # ── Tree-dependent digests: semantic assertions only. ─────────────────
+    for digest in (
+        tracked_payload["sourceTreeSha"],
+        regenerated_payload["sourceTreeSha"],
+    ):
+        assert isinstance(digest, str) and len(digest) == 64
+        int(digest, 16)  # lowercase hex digest; value is tree-dependent
+    # The candidate/accounting pair is regenerated together: the
+    # regenerated accounting's candidate digest must match the tracked
+    # candidate artifact bytes exactly.
+    assert regenerated_payload["candidateSha256"] == hashlib.sha256(
+        TRACKED_CANDIDATE.read_bytes()
+    ).hexdigest()
+
+    # ── Tree-dependent coverage section: semantic partition assertions. ──
+    _assert_coverage_section_semantics(
+        tracked_payload["sourceMutations"], tracked_payload["records"]
     )
 
 
@@ -2874,6 +3044,17 @@ def test_real_run_coverage_partitions_observed_universe(
     * oracle soundness: every site's resolved ``(dao fqcn, operation)``
       pair is attested by the Room inventory's mutator identities or by a
       kept candidate entry from the generated candidate document.
+
+    Post-activation input contract (round-12 fix): the in-process path
+    must migrate the ARCHIVED legacy v1 document
+    (``db_ownership_policy.legacy.yml``) — the CLI's default migration
+    input — NOT the activated v2 ``db_ownership_policy.yml``.  Feeding the
+    activated v2 document in as legacy input resolved nothing (v2 rows
+    carry no v1 ``class``/``daos`` hints), so every observed site fell
+    through to OBSERVED_NOT_IN_LEGACY_POLICY and the library-vs-CLI
+    equality failed.  The coverage section itself stays tree-dependent
+    evidence and is pinned only semantically (the partition invariants
+    below), never by bytes.
     """
     import yaml
 
@@ -2885,9 +3066,8 @@ def test_real_run_coverage_partitions_observed_universe(
         classify_source_mutations,
     )
 
-    policy_path = REPO_ROOT / "config" / "guards" / "db_ownership_policy.yml"
     legacy_entries = yaml.safe_load(
-        policy_path.read_text(encoding="utf-8")
+        LEGACY_POLICY.read_text(encoding="utf-8")
     )["entries"]
     result = migrate_policy(legacy_entries, str(REPO_ROOT))
     attested_pairs = frozenset(

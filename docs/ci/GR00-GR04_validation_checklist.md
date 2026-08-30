@@ -67,7 +67,7 @@ pytest scripts/test_verify_db_access_boundaries.py scripts/test_verify_db_access
 | `verify_production_source_roots` | exit 0 silent |
 | `verify_db_access_boundaries --inventory-only ...` | exit 2 ON THIS WINDOWS WORKSTATION is EXPECTED pre-existing debt (350 DB_ROOM_QUERY_UNCLASSIFIABLE + 1 inheritance), byte-identical to base SHA 9b97e797, zero DB_SOURCE_ROOT_* codes; exit 0 only on Linux CI with os.O_DIRECTORY durability barrier |
 | `migrate --check` | exit 1 (migration debt expected) |
-| full gate with all four config flags | exit 0 (clean) / exit 1 (real findings) under the activated authoritative-v2 policy; v1 bytes archived at db_ownership_policy.legacy.yml (v1 rejection pinned loader-side) |
+| full gate with all four config flags | exit 0 (clean) / exit 1 (real findings) under the activated authoritative-v2 policy; v1 bytes archived at db_ownership_policy.legacy.yml (v1 rejection pinned loader-side). Post-GR-05 REAL-TREE expectation (Revision 2): the gate ACCEPTS the current tree — exit 0, trusted=true, 0 findings, exactly 20 x DB_SIGNATURE_UNRESOLVED advisory diagnostics (GR-09 documented advisory truth, 588623d1); the blocked exit-2 DB_POLICY_SOURCE_EVIDENCE_INVALID wording describes the ARCHIVED-v1 fixture path only (pinned by the passing fixture test) |
 
 ## 4. Kotlin / Gradle
 
@@ -108,7 +108,7 @@ git diff cf07b04b~1 --exit-code -- config/baselines/db_access.json config/guards
 
 | Aspect | State |
 | --- | --- |
-| Active DB gate | authoritative-v2, trusted exit 0 (clean) / exit 1 (real findings); v1 archived at db_ownership_policy.legacy.yml; ratchet v2 live (empty baseline) |
+| Active DB gate | authoritative-v2, trusted exit 0 (clean) / exit 1 (real findings); v1 archived at db_ownership_policy.legacy.yml; ratchet v2 live (empty baseline). Post-GR-05 real tree (Revision 2): accepted — exit 0, trusted, 0 findings, 20 x DB_SIGNATURE_UNRESOLVED advisory |
 | Inventory-only | exit 2 on Windows pre-existing debt, trusted-equivalent to base |
 | Migration | exit 1 resolved=9/99 |
 | Meta-guard | exit 0 |
@@ -142,6 +142,27 @@ Corrections applied from the first validation findings:
    rejection assertions were replaced with acceptance assertions (9 entries,
    zero errors) and the v1-rejection intent was re-pinned against the active
    v1 policy.
+
+## Revision 2 (post GR-05 real-tree gate verification)
+
+Date: 2026-08-30 (recorded retroactively; verified by direct CLI run in
+validation round 12). Status: pending re-validation.
+
+Post-GR-05 real-tree state change: the full gate (all four config flags)
+run against the REAL production tree no longer matches a clean/real-findings
+dichotomy only — the gate ACCEPTS the current tree with advisory
+diagnostics. Corrections applied:
+
+1. Section 3: the "full gate with all four config flags" row now records
+   the post-GR-05 real-tree expectation — active gate exit 0, trusted=true,
+   0 findings, exactly 20 x DB_SIGNATURE_UNRESOLVED advisory diagnostics
+   (matching the GR-09 documented advisory truth at `588623d1`). The
+   blocked exit-2 `DB_POLICY_SOURCE_EVIDENCE_INVALID` wording describes the
+   ARCHIVED-v1 fixture path only (pinned by the passing fixture test).
+2. Section 7: the "Active DB gate" row records the accepted-with-advisories
+   real-tree state (exit 0, trusted, 0 findings, 20 x
+   DB_SIGNATURE_UNRESOLVED advisory) alongside the clean/real-findings
+   dichotomy.
 
 ## Revision 3 (post v2 activation)
 

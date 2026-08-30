@@ -262,7 +262,7 @@ class TaxEstimator @Inject constructor(
         // the following month) with system-default-zone DST semantics.
         return Calendar.Builder()
             .setCalendarType("gregory")
-            .setZone(TimeZone.getDefault())
+            .setTimeZone(TimeZone.getDefault())
             .setLenient(true)
             .setDate(year, month, day)
             .setTimeOfDay(0, 0, 0, 0)

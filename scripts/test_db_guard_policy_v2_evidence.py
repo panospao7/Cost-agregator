@@ -2172,6 +2172,11 @@ def test_gr08a_header_alias_is_isolated_per_owner(tmp_path):
     closed -- and the forged clear row would wrongly resolve.
     """
     _write_repo(tmp_path, GR08A_SIBLING_OWNERS_SOURCE)
+    # The fixture bodies carry NO local direct-barrier syntax, so the honest
+    # barrierMode metadata for these synthetic rows is `helper` (the GR-08a
+    # seed-row convention) — a `direct` claim (the _entry default) is
+    # correctly rejected by the Stage 3 barrier gate as
+    # DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT.
     honest = verify_v2_policy_source_evidence(
         [
             _entry(
@@ -2181,6 +2186,7 @@ def test_gr08a_header_alias_is_isolated_per_owner(tmp_path):
                 dao_accessor="dao",
                 dao_fqcn="com.example.data.GroupDao",
                 operation="insert",
+                barrier_mode=BarrierMode.HELPER,
             )
         ],
         str(tmp_path),
@@ -2190,7 +2196,8 @@ def test_gr08a_header_alias_is_isolated_per_owner(tmp_path):
     assert honest.groups[0].mutation_keys == ("groupDao|insert",)
 
     # Claiming FirstRepo's dao.clear mutation against SecondRepo fails
-    # closed: the sibling header alias is out of scope here.
+    # closed: the sibling header alias is out of scope here.  The row keeps
+    # the honest `helper` barrierMode for the same barrier-less body.
     forged = verify_v2_policy_source_evidence(
         [
             _entry(
@@ -2200,6 +2207,7 @@ def test_gr08a_header_alias_is_isolated_per_owner(tmp_path):
                 dao_accessor="dao",
                 dao_fqcn="com.example.data.GroupDao",
                 operation="clear",
+                barrier_mode=BarrierMode.HELPER,
             )
         ],
         str(tmp_path),
@@ -2286,11 +2294,16 @@ def test_gr08a_inventory_fqcn_cross_check_resolves_alias_accessor(tmp_path):
     with DAO_FQCN_MISMATCH naming the alias spelling.
     """
     _write_repo(tmp_path, GR08A_INVENTORY_SOURCE)
+    # The fixture body carries NO local direct-barrier syntax, so the honest
+    # barrierMode metadata is `helper` (the GR-08a seed-row convention); the
+    # _entry default `direct` claim is correctly rejected by the Stage 3
+    # barrier gate as DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT.
     entry = dict(
         owner_fqcn="com.example.InventoryRepo",
         method="insertGroup",
         parameter_types=("com.example.Group",),
         dao_accessor="dao",
+        barrier_mode=BarrierMode.HELPER,
     )
     matching = verify_v2_policy_source_evidence(
         [

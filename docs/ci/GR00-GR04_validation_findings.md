@@ -880,3 +880,98 @@ made for the A-family.
 
 Status: **pending / conditional** — no DONE/GREEN claim. GR-05 planning should not be
 concluded until both human gates above pass.
+
+---
+
+## Round 12 (2026-08-30) - after `1e3d0333` "regenerate tracked artifacts (472-entry candidate), restore v1-rejection semantics vs archive, fix time-oracle fallout"
+
+HEAD `1e3d0333`; checkout clean.
+
+### Commands executed
+
+1. `git push origin gr-00-local` -> OK (`8b45879e..1e3d0333`).
+2. Targeted Gradle tests -> **BLOCKED: compileDebugKotlin FAILED** -
+   `app/src/main/java/com/yourname/expensetracker/domain/tax/TaxEstimator.kt:265:14
+   Unresolved reference 'setZone'`. Zero tests executed this round; the 15-failure XMLs
+   under app/build/test-results were STALE round-11 artifacts (initially mis-read as test
+   failures). The compile error is in the fix commit itself.
+3. `pytest scripts -q` -> exit 1; **7 failed / 3058 passed / 24 skipped in 50:40**
+   (runtime improved 84 -> 51 min).
+
+### Sweep deltas vs round 11
+
+- FIXED (3): `test_active_db_gate_reports_blocked_pre_v2`,
+  `test_active_v1_policy_still_rejected_by_v2_loader`,
+  `test_candidate_signatures_accepted_by_v2_loader` - archived-v1 blocked path and
+  candidate acceptance now consistent with the 472-entry GR-05 candidate.
+- STILL FAILING (7, all artifact-drift family):
+  gr08a_header_alias_is_isolated_per_owner + gr08a_inventory_fqcn_cross_check_resolves_alias_accessor
+  (BARRIER_METADATA_INCONSISTENT, method insertGroup);
+  test_real_tracked_gr08p2_seed_file_loads_with_exactly_fifteen_rows (first row
+  LegacyDataMigrationService vs pinned CsvExpenseImporter);
+  test_tracked_candidate_artifact_matches_regeneration_bytes (byte drift, MIT-003 vs
+  regenerated MIT-DB-08I);
+  test_tracked_accounting_artifact_matches_regeneration_bytes;
+  test_real_run_distribution_pinned_and_reproducible;
+  test_real_run_coverage_partitions_observed_universe (deleteOldRates/
+  ExchangeRateStoreAdapter OBSERVED_NOT_IN_LEGACY_POLICY).
+
+### Real-repo gate state (direct CLI verification)
+
+Full gate (four config flags): **exit 0**, trusted=true, 0 findings, exactly
+**20 x DB_SIGNATURE_UNRESOLVED advisory diagnostics** - matches the GR-09 documented
+advisory truth (`588623d1`). The checklist section 7 row "blocked exit 2
+DB_POLICY_SOURCE_EVIDENCE_INVALID only" now describes the ARCHIVED-v1 fixture path only
+(pinned by the passing fixture test); the section 7 table needs Revision 2 to record the
+post-GR-05 accepted-with-advisories real-tree state.
+
+### Loop items
+
+1. Fix `TaxEstimator.kt:265:14` (`setZone` unresolved) - branch does not compile; all
+   Kotlin test tasks are blocked on it.
+2. Regenerate + commit tracked GR-05/GR-08 artifacts via
+   `python scripts/migrate_db_policy_signatures.py --generate` (candidate, accounting,
+   seed rows, distribution, coverage) and reconcile the two gr08a
+   BARRIER_METADATA_INCONSISTENT cases.
+3. Checklist section 7 / section 3 Revision 2: accepted-exit-0-with-20-advisories is the
+   new real-tree expectation.
+
+---
+
+## Round 11 (2026-08-29) - at `8b45879e` "eliminate all direct wall-clock reads" (retro-added 2026-08-30 for doc completeness)
+
+HEAD `8b45879e`; checkout clean.
+
+1. `git push origin gr-00-local` -> OK (`c5e9e096..8b45879e`).
+2. `:app:compileDebugKotlin` -> BUILD SUCCESSFUL in 6m53s (pre-existing deprecation
+   warning only, JsonExpenseImporter.kt:85).
+3. Targeted Kotlin tests (`TaxEstimator`, `TimePeriodUtilsT4C`, `TemporalConsistency`,
+   `SynthesisEngineGolden`, `MonthlySavingsSweep`) -> **15 failures across 7 classes**:
+   - TaxEstimatorTest 6/18: all "Expected X but was 0.0" (business-deduction/VAT
+     aggregates compute to zero)
+   - TimePeriodUtilsT4CBatch2DTest 4/36: ZoneId misattribution (Asia/Kolkata vs hardcoded
+     offset), Feb-29 year mapping ~3y off, legacy/explicit cutover disagreement 24h off,
+     year-overload mismatch
+   - TimePeriodUtilsT4CBatch2BTest 1/19: DateTimeParseException '10000-01-03T00:00:00Z'
+     (year-9999 boundary overflows)
+   - TimePeriodUtilsT4CBatch2CTest 1/28: cutover mismatch at 1582-10-15
+   - TemporalConsistencyTest 1/4: Invalid periodMode '' (no defaulting)
+   - SynthesisEngineGoldenTest 1/3: UnsupportedOperationException REST_OF_MONTH
+     calendar-bound
+   - MonthlySavingsSweepUseCaseTest 1/10: fallback risk buffer 12.0 vs expected 30.0
+   Fallout pattern: TimeProvider injection commit (78 violations, 40 files).
+4. `pytest scripts -q` -> exit 1; **10 failed / 3055 passed / 25 skipped in 1:23:40**:
+   - PRODUCTION-GATE REGRESSION (first ever): test_active_db_gate_reports_blocked_pre_v2
+     exit 0 (accepted) vs pinned blocked exit 2; v1 policy accepted by v2 loader;
+     candidate 472 entries vs pinned 55
+   - artifact drift x7: tracked candidate/accounting byte-drift (MIT-003 vs regenerated
+     MIT-DB-08I), seed row-0 drift, distribution pin, coverage partition
+     (deleteOldRates OBSERVED_NOT_IN_LEGACY_POLICY), gr08a x2 BARRIER_METADATA_INCONSISTENT
+   - Direct full-gate CLI verification did NOT complete within 10 minutes (was <1 min in
+     every prior round).
+
+### Performance regression (cross-cutting, new in round 11)
+
+Python sweep 20 min -> 84 min; full-gate CLI >10 min (timed out). Suspected scaling of
+the GR-06 exact-source-evidence pass / root-aware source resolution with the 472-entry
+candidate. Partially improved by round 12 (sweep 51 min).
