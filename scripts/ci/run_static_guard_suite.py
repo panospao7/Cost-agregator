@@ -172,6 +172,16 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
         ],
         "blocking",
     ),
+    # PR-GR-10e known-good scorecard: executes the six section-7 rows of
+    # docs/ci/GR00-GR04_validation_checklist.md (active DB gate accepted with
+    # 20 advisories, inventory-only platform durability branch, migration
+    # fold truth, source-roots meta-guard, candidate byte-reproducibility,
+    # structural manifest pin).  Deliberately expensive — it re-runs the full
+    # gate + inventory + migration fold — so its internal per-command
+    # timeouts (see the script docstring) must stay inside this suite's
+    # per-guard GUARD_TIMEOUT_SECONDS budget; raise the env override when
+    # running against a cold tree.
+    ("known_good_state", ["python3", "scripts/ci/verify_known_good_state.py"], "blocking"),
 
     # release_artifact verification runs in the release-check CI job after assembleRelease, not here
 
@@ -298,6 +308,12 @@ GUARD_TIME_BUDGETS: Dict[str, float] = {
     # (full legacy-policy migration over the production tree, no coverage
     # scan); observed migration runs sit well under this ceiling.
     "db_artifact_sync": 600.0,
+    # PR-GR-10e: the scorecard runs the full gate (~250s warm / ~700s cold)
+    # plus inventory, migration fold, meta-guard, and candidate verify
+    # (~180s combined warm).  1200s covers the warm path with headroom and
+    # most cold paths; the budget is visibility-only (outcome "slow") and
+    # never masks a real failure.
+    "known_good_state": 1200.0,
     "cancellation": 300.0,
     "privacy": 300.0,
     "db_access": 840.0,

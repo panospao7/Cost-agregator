@@ -217,6 +217,30 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "artifacts",
     },
 
+    "known_good_state": {
+        "script": "scripts/ci/verify_known_good_state.py",
+        "tests": "scripts/ci/test_verify_known_good_state.py",
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": None,
+        "description": "Known-good state scorecard (PR-GR-10e) — executes "
+                       "the six section-7 rows of "
+                       "docs/ci/GR00-GR04_validation_checklist.md against "
+                       "the live repository (active DB gate accepted with "
+                       "20 x DB_SIGNATURE_UNRESOLVED advisories, "
+                       "inventory-only platform durability branch, "
+                       "migration fold truth 99/57/42, source-roots "
+                       "meta-guard silent exit 0, candidate v2 "
+                       "byte-reproducible with 472 entries, structural "
+                       "manifest pin 64) and exits 1 on any drift from the "
+                       "documented known-good state (exit 2 "
+                       "infrastructure). Deliberately expensive: runs the "
+                       "real gate, inventory, and migration fold — meant "
+                       "for explicit suite/orchestrator runs, not "
+                       "per-commit loops",
+    },
+
     # ── Ratchet-wrapped guards (growth-enforcing baseline via guard_ratchet.py) ──
 
     "cancellation": {
