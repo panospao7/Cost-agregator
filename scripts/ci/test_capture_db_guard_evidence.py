@@ -44,6 +44,16 @@ DRIFT_SHA = "0123456789abcdef0123456789abcdef01234567"
 # capture tool source and carries no authority.
 RETIRED_TARGET_SHA = "9b97e7979130de605d164386bbf719cf20579475"
 
+# ── GATE-00R extension fixtures ───────────────────────────────────────────────
+# The caller-stated base pin (``base_ref=`` / ``--base-ref``): a valid 40-hex
+# SHA, deliberately different from TEST_SHA, injected by ``_capture`` by default
+# exactly like the run pin.  The fake git runner resolves it to itself.
+BASE_REF_SHA = "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a0"
+# The merge-base the fake git runner reports for ``git merge-base HEAD <base>``.
+MERGE_BASE_SHA = "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5"
+# 40-hex detector for fake git branches that must match a bare SHA argument.
+_SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
+
 # The complete set of tracked input files created by ``_make_root``.  The fake
 # git runner reports exactly these via ``git ls-files`` so the dynamic input
 # manifest discovery can be exercised.
@@ -102,8 +112,13 @@ def _capture(*args, **kwargs):
     fake repository checked out at ``TEST_SHA``, so the wrapper injects that pin
     by default.  Pin-specific tests (missing / invalid / mismatched pins, CLI
     argparse behavior) call ``cap.capture_evidence`` / ``cap.main`` directly.
+
+    GATE-00R extension: the base pin (``base_ref=`` / ``--base-ref``) is
+    mandatory under the same contract; the wrapper injects ``BASE_REF_SHA`` by
+    default so existing fixture captures keep exercising the success path.
     """
     kwargs.setdefault("expected_sha", TEST_SHA)
+    kwargs.setdefault("base_ref", BASE_REF_SHA)
     return cap.capture_evidence(*args, **kwargs)
 
 
@@ -225,13 +240,17 @@ class ConfigurableFakeRunner:
 
     def __init__(self, *, dirty: bool = False, command_returncodes=None,
                  launch_fail_token: str = None, write_reports: bool = True,
-                 staged_diff: str = "", untracked: str = "") -> None:
+                 staged_diff: str = "", untracked: str = "",
+                 branch: str = "main") -> None:
         self.dirty = dirty
         self.command_returncodes = dict(command_returncodes or {})
         self.launch_fail_token = launch_fail_token
         self.write_reports = write_reports
         self.staged_diff = staged_diff
         self.untracked = untracked
+        # Current branch reported by ``git branch --show-current``.  An empty
+        # string models a detached HEAD (exit 0, empty output -> branch=None).
+        self.branch = branch
         self.calls: list = []
         # Explicit fallthrough log: every argv that matched no registered
         # branch (assertable; the fallthrough always returns exit 0).
@@ -282,6 +301,18 @@ class ConfigurableFakeRunner:
             # forged/missing-blob-ID fail-closed path can be exercised by tests
             # that deliberately return an invalid blob.
             return FakeOutcome(0, "a" * 40)
+        if (len(argv) == 3 and argv[1] == "rev-parse"
+                and _SHA40_RE.match(argv[2])):
+            # GATE-00R: ``git rev-parse <base-ref>`` resolves the caller-stated
+            # 40-hex base pin to itself (a full object name echoes verbatim).
+            return FakeOutcome(0, argv[2])
+        if _is_git_cmd(argv, "merge-base", "HEAD"):
+            # GATE-00R: ``git merge-base HEAD <base-ref>`` resolves to the
+            # fixture merge-base SHA.
+            return FakeOutcome(0, MERGE_BASE_SHA)
+        if _is_git_cmd(argv, "branch", "--show-current"):
+            # GATE-00R: current branch observation (empty -> detached HEAD).
+            return FakeOutcome(0, self.branch)
         if _is_git_cmd(argv, "status", "--porcelain=v1"):
             base = " M config/guards/db_ownership_policy.yml\n" if self.dirty else ""
             # Surface untracked paths as porcelain ``??`` entries so the
@@ -573,7 +604,7 @@ def test_allow_dirty_captures_but_untrusted(tmp_path):
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=True)
     rc = cap.capture_evidence(str(root), str(out), runner=runner, allow_dirty=True,
-                             expected_sha=TEST_SHA,
+                             expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
                              command_matrix=_fake_matrix(str(root), str(out)),
                              )
     assert rc == 0
@@ -3381,7 +3412,7 @@ def test_arbitrary_valid_sha_accepted_as_run_pin(tmp_path):
     out = root / "out" / "run-1"
     runner = OtherCommitRunner(dirty=False)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
-                              expected_sha=OTHER_SHA,
+                              expected_sha=OTHER_SHA, base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 0
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -3400,6 +3431,7 @@ def test_missing_expected_sha_fails_closed_before_any_command(tmp_path):
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     # Controlled failure BEFORE any command: not even a git probe was issued.
@@ -3423,7 +3455,7 @@ def test_invalid_expected_sha_syntax_rejected(tmp_path, bad_pin):
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
-                              expected_sha=bad_pin,
+                              expected_sha=bad_pin, base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     assert runner.calls == []
@@ -3476,7 +3508,7 @@ def test_sha_mismatch_rejects_before_any_matrix_command(tmp_path):
     out = root / "out" / "run-1"
     runner = GuardCallSpyRunner(dirty=False, head_override="0" * 40)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
-                              expected_sha=TEST_SHA,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     # The pin gate stops every MATRIX command pre-launch.  The spy does still
@@ -3531,7 +3563,7 @@ def test_post_capture_identity_drift_returns_2(tmp_path, surface):
     out = root / "out" / "run-1"
     runner = MidCaptureDriftRunner(dirty=False, surface=surface, drift_after=1)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
-                              expected_sha=TEST_SHA,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -3553,7 +3585,7 @@ def test_clean_pin_capture_succeeds_with_child_exits_1_and_2(tmp_path):
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
-                              expected_sha=TEST_SHA,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 0
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -3571,7 +3603,7 @@ def test_evidence_and_git_state_record_pin_metadata(tmp_path):
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
-                              expected_sha=TEST_SHA,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 0
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -3945,7 +3977,7 @@ def test_untracked_side_effect_mid_matrix_trips_post_capture_drift_status(tmp_pa
     out = root / "out" / "run-1"
     runner = UntrackedSideEffectRunner(".pytest_cache/CACHEDIR.TAG", dirty=False)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
-                              expected_sha=TEST_SHA,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
@@ -3960,16 +3992,20 @@ def test_default_matrix_pins_no_cacheprovider_on_pytest_invocations(tmp_path):
     """Regression (B-1): every pytest-invoking entry of the default matrix pins
     ``-p no:cacheprovider`` so the matrix produces zero untracked working-tree
     side effects (no pytest config file exists and .gitignore has no
-    ``.pytest_cache`` entry, so an unpinned run would create one)."""
+    ``.pytest_cache`` entry, so an unpinned run would create one).
+
+    GATE-00R: the matrix now has TWO pytest-invoking rows — the focused DB
+    tests and the time-guard tests — and both must carry the pin."""
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     matrix = cap.default_command_matrix(str(root), str(out))
     pytest_specs = [s for s in matrix if "pytest" in s.argv]
-    assert len(pytest_specs) == 1
+    assert len(pytest_specs) == 2
+    assert {s.id for s in pytest_specs} == {"focused-python-tests", "time-tests"}
     for spec in pytest_specs:
         assert "-p" in spec.argv
         assert "no:cacheprovider" in spec.argv
-        # Appended (not inserted): the pin closes the focused-tests argv.
+        # Appended (not inserted): the pin closes each pytest argv.
         assert spec.argv[-2:] == ["-p", "no:cacheprovider"]
     # Source-level pin: the literal survives in the tool source itself, so the
     # guarantee cannot silently regress even if the matrix is rebuilt.
@@ -4002,5 +4038,351 @@ def test_declared_report_absent_is_missing_report_parser_error(tmp_path):
     assert cmd["report_sha256"] is None
     assert any("invalid-required-report:db-cli" in w
                for w in evidence["infrastructure_warnings"])
+
+
+# ── GATE-00R extension: base/merge-base/branch + platform preflight identity ──
+
+def test_preflight_records_base_merge_base_branch_and_platform(tmp_path):
+    """The GATE-00R preflight fields are recorded, bounded, and mirrored into
+    evidence.json: base_ref/base_sha/merge_base_sha/branch plus the bounded
+    platform identity fields (locale / timezone / os_identifier)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["base_ref"] == BASE_REF_SHA
+    assert gs["base_sha"] == BASE_REF_SHA
+    assert gs["merge_base_sha"] == MERGE_BASE_SHA
+    assert gs["branch"] == "main"
+    for key in ("locale", "timezone", "os_identifier"):
+        value = gs[key]
+        # Bounded (256 + the truncation marker allowance); real platform
+        # values are far shorter, and a lookup failure resolves to None.
+        assert value is None or (isinstance(value, str)
+                                 and 0 < len(value) <= 300), (key, value)
+    # The base/merge-base/branch preflight observations are recorded as
+    # sanitized preflight command records too.
+    argvs = [rec["argv"] for rec in gs["preflight_commands"]]
+    assert ["git", "rev-parse", BASE_REF_SHA] in argvs
+    assert ["git", "merge-base", "HEAD", BASE_REF_SHA] in argvs
+    assert ["git", "branch", "--show-current"] in argvs
+    branch_rec = next(rec for rec in gs["preflight_commands"]
+                      if rec["argv"] == ["git", "branch", "--show-current"])
+    assert branch_rec["output"] == "main"
+    # evidence.json mirrors the base identity additively.
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["base_ref"] == BASE_REF_SHA
+    assert evidence["base_sha"] == BASE_REF_SHA
+    assert evidence["merge_base_sha"] == MERGE_BASE_SHA
+    assert evidence["git_state"]["branch"] == "main"
+
+
+def test_platform_identity_fields_bounded_and_redacted(tmp_path, monkeypatch):
+    """locale/timezone/os_identifier are structured bounded fields: a hostile
+    platform value has secrets and absolute path forms redacted before it can
+    reach git-state.json."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    monkeypatch.setattr(cap.locale, "getlocale", lambda: ("en_US", "UTF-8"))
+    monkeypatch.setattr(cap.time, "tzname", ("Test/Zone", "Test/Daylight"))
+    monkeypatch.setattr(
+        cap.platform, "platform",
+        lambda: "Hostile-OS password=hunter2 C:\\abs\\path\\x")
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["locale"] == "en_US/UTF-8"
+    assert gs["timezone"] == "Test/Zone/Test/Daylight"
+    assert "hunter2" not in gs["os_identifier"]
+    assert "C:\\abs" not in gs["os_identifier"]
+    assert "<redacted-secret>" in gs["os_identifier"]
+    assert "<redacted-path>" in gs["os_identifier"]
+    assert len(gs["os_identifier"]) <= 256 + len("<truncated>")
+
+
+def test_platform_identity_lookup_failure_resolves_to_none(tmp_path, monkeypatch):
+    """A platform lookup failure resolves the field to None (never raises,
+    never persists raw content) and never fails the capture."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    def boom():
+        raise RuntimeError("simulated platform lookup failure")
+
+    monkeypatch.setattr(cap.locale, "getlocale", boom)
+    monkeypatch.setattr(cap.platform, "platform", boom)
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["locale"] is None
+    assert gs["os_identifier"] is None
+
+
+def test_missing_base_ref_fails_closed_before_any_command(tmp_path):
+    """Omitting the base pin is a controlled failure with ZERO runner calls."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    assert runner.calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == "missing-base-ref" for w in evidence["infrastructure_warnings"])
+    assert evidence["trusted"] is False
+    assert evidence["commands"] == []
+
+
+@pytest.mark.parametrize("bad_ref", [
+    "C1C2C3C4C5C6C7C8C9A0B1C2C3C4C5C6C7C8C9A0",     # uppercase hex (40)
+    "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a",      # 39 chars (short)
+    "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a0b",    # 41 chars (long)
+    "g" * 40,                                       # non-hex characters
+    "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a0!",    # punctuation
+])
+def test_invalid_base_ref_syntax_rejected(tmp_path, bad_ref):
+    """A base pin that is not exactly 40 lowercase hex fails closed pre-command."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=bad_ref,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    assert runner.calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == "invalid-base-ref" for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+
+
+def test_cli_requires_base_ref(tmp_path):
+    """--base-ref is mandatory on the CLI (argv-only execution)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    with pytest.raises(SystemExit) as excinfo:
+        cap.main(["--root", str(root), "--out", str(out),
+                  "--expected-sha", TEST_SHA])
+    assert excinfo.value.code == 2
+    # argparse rejects the invocation before any capture logic runs.
+    assert not (out / "evidence.json").is_file()
+
+
+def test_cli_rejects_invalid_base_ref_syntax(tmp_path):
+    """Invalid --base-ref syntax is a controlled pre-command failure."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    with pytest.raises(SystemExit) as excinfo:
+        cap.main(["--root", str(root), "--out", str(out),
+                  "--expected-sha", TEST_SHA,
+                  "--base-ref", "C" * 40])
+    assert excinfo.value.code == 2
+    assert not (out / "evidence.json").is_file()
+
+
+class BaseRevParseFailRunner(ConfigurableFakeRunner):
+    """Clean checkout, but ``git rev-parse <base-ref>`` fails (exit 1)."""
+
+    def _git(self, argv):
+        if (len(argv) == 3 and argv[1] == "rev-parse"
+                and _SHA40_RE.match(argv[2])):
+            return FakeOutcome(1, "")
+        return super()._git(argv)
+
+
+def test_base_resolution_failure_blocks_launch(tmp_path):
+    """An unresolvable base SHA fails closed pre-launch: no matrix command
+    starts, and the failure is diagnosed via ``git-meta-failed:base-sha``."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = BaseRevParseFailRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["base_sha"] is None
+    assert evidence["git_state"]["git_meta_ok"] is False
+    assert any(w == "git-meta-failed:base-sha"
+               for w in evidence["infrastructure_warnings"])
+    # Launch gate: the base identity is unresolved, so nothing ran.
+    assert evidence["commands"] == []
+
+
+class MergeBaseFailRunner(ConfigurableFakeRunner):
+    """Clean checkout, but ``git merge-base HEAD <base-ref>`` fails (exit 1)."""
+
+    def _git(self, argv):
+        if _is_git_cmd(argv, "merge-base", "HEAD"):
+            return FakeOutcome(1, "")
+        return super()._git(argv)
+
+
+def test_merge_base_failure_blocks_launch(tmp_path):
+    """An uncomputable merge-base fails closed pre-launch (launch gate)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = MergeBaseFailRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["merge_base_sha"] is None
+    assert any(w == "git-meta-failed:merge-base"
+               for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+
+
+class BranchFailRunner(ConfigurableFakeRunner):
+    """Clean checkout, but ``git branch --show-current`` fails (exit 1)."""
+
+    def _git(self, argv):
+        if _is_git_cmd(argv, "branch", "--show-current"):
+            return FakeOutcome(1, "")
+        return super()._git(argv)
+
+
+def test_branch_failure_fails_closed(tmp_path):
+    """A branch lookup failure is fatal (exit 2, git-meta-failed:branch) but —
+    unlike base/merge-base — it is an observability defect, not an identity
+    gate, so the matrix still runs and its observations are recorded."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = BranchFailRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["branch"] is None
+    assert any(w == "git-meta-failed:branch"
+               for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"]
+
+
+def test_detached_head_branch_is_observation_not_failure(tmp_path):
+    """Empty ``git branch --show-current`` output (detached HEAD, exit 0) is an
+    observation (branch=None), never a capture failure."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False, branch="")
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["branch"] is None
+    assert gs["git_meta_ok"] is True
+
+
+def test_default_matrix_appends_gate_00r_rows_in_declared_order(tmp_path):
+    """The four GATE-00R rows are APPENDED after the existing eight rows, in
+    the declared order, with the exact verified flags; every existing row is
+    preserved unchanged ahead of them."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    ids = [s.id for s in matrix]
+    assert ids == [
+        "registry-validation", "focused-python-tests", "room-inventory",
+        "db-cli", "db-ratchet", "static-suite", "gradle-db",
+        "gradle-task-graph",
+        # GATE-00R additions, declared order:
+        "time-direct", "time-tests", "db-inventory", "gradle-compile",
+    ]
+    by_id = {s.id: s for s in matrix}
+    # Flags verified against scripts/verify_time_boundaries.py argparse.
+    assert by_id["time-direct"].argv == [
+        "python", "scripts/verify_time_boundaries.py",
+        "--root", ".",
+        "--allowlist", "config/guards/time_boundary_exceptions.yml",
+        "--fail-on-violation",
+    ]
+    assert by_id["time-tests"].argv == [
+        "python", "-m", "pytest",
+        "scripts/test_verify_time_boundaries.py",
+        "-v", "--tb=short", "-p", "no:cacheprovider",
+    ]
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    assert by_id["db-inventory"].argv == [
+        "python", "scripts/verify_db_access_boundaries.py",
+        "--inventory-only",
+        "--findings-output", "/".join([bundle_rel, "reports", "db-inventory.json"]),
+        "--dump-room-mutators", "/".join([bundle_rel, "reports", "room-mutators.json"]),
+    ]
+    assert by_id["db-inventory"].report_path == "reports/db-inventory.json"
+    assert by_id["db-inventory"].required_artifacts == (
+        "reports/db-inventory.json", "reports/room-mutators.json")
+    assert by_id["db-inventory"].artifact_kinds == (
+        ("reports/db-inventory.json", "file"),
+        ("reports/room-mutators.json", "file"),
+    )
+    assert by_id["gradle-compile"].argv == [
+        "./gradlew", ":app:compileDebugKotlin",
+        "--no-daemon", "--stacktrace", "--console=plain",
+    ]
+
+
+class _DefaultMatrixFakeRunner(ConfigurableFakeRunner):
+    """Fake runner that also writes the ratchet ``--output-summary`` artifact so
+    the FULL default matrix (including its required-artifact gates) can be
+    executed end-to-end against the fixture repository."""
+
+    def __call__(self, argv, cwd):
+        outcome = super().__call__(argv, cwd)
+        if _matches(argv, "guard_ratchet.py") and "--output-summary" in argv:
+            idx = argv.index("--output-summary")
+            path = os.path.join(str(cwd), argv[idx + 1])
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"ok": True}, handle)
+        return outcome
+
+
+def test_default_matrix_gate_00r_rows_execute_with_semantic_summary(tmp_path):
+    """Executing the FULL default matrix: the GATE-00R rows run, their
+    classifications/exit codes reach the semantic summary, the db-inventory
+    reports land under <bundle>/reports/, and the base/merge-base identity is
+    retained additively (existing semantic fields unchanged)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = _DefaultMatrixFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA)
+    assert rc == 0
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert semantic["base_sha"] == BASE_REF_SHA
+    assert semantic["merge_base_sha"] == MERGE_BASE_SHA
+    by_id = {c["id"]: c for c in semantic["commands"]}
+    # New rows are present with their classifications/exit codes.
+    assert by_id["time-direct"]["exit_code"] == 0
+    assert by_id["time-direct"]["launch_error"] is None
+    assert by_id["time-tests"]["exit_code"] == 0
+    assert by_id["db-inventory"]["exit_code"] == 0
+    assert by_id["db-inventory"]["report_trusted"] is True
+    assert by_id["db-inventory"]["parser_error"] is None
+    assert by_id["gradle-compile"]["exit_code"] == 1
+    # Existing rows keep their recorded classifications.
+    assert by_id["db-cli"]["exit_code"] == 2
+    assert by_id["db-cli"]["report_trusted"] is False
+    assert by_id["room-inventory"]["report_trusted"] is True
+    # The db-inventory reports were written under <bundle>/reports/ and hashed.
+    assert (out / "reports" / "db-inventory.json").is_file()
+    assert (out / "reports" / "room-mutators.json").is_file()
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    hashes = evidence["required_artifact_hashes"]
+    assert "reports/db-inventory.json" in hashes
+    assert "reports/room-mutators.json" in hashes
+    # The run id never leaks through the new rows' bundle-relative argv paths.
+    for tok in by_id["db-inventory"]["argv"]:
+        assert "run-1" not in tok, tok
+    assert "--findings-output" in by_id["db-inventory"]["argv"]
+    assert "<bundle>/reports/db-inventory.json" in by_id["db-inventory"]["argv"]
 
 

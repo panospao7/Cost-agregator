@@ -15,7 +15,9 @@ What it does
 ------------
 1. Records a fixed, declared command matrix (preflight + registry validation +
    focused DB Python tests + inventory-only run + normal DB CLI + ratchet +
-   full static suite + Gradle wiring).
+   full static suite + Gradle wiring + the GATE-00R extension rows: direct
+   time guard, time guard tests, a second bundle-reports DB inventory, and
+   ``:app:compileDebugKotlin``).
 2. Streams combined stdout/stderr for every command (a single merged pipe,
    read incrementally) into an atomic temporary log file next to the final
    log path; on completion the temp file is ``os.replace``d onto the final
@@ -55,13 +57,24 @@ Preflight rejects the capture before any matrix command starts unless the
 observed ``git rev-parse HEAD`` equals the pin; after the matrix, HEAD/tree/
 status are re-observed and any drift marks the bundle incomplete/untrusted.
 
+GATE-00R extension (additive): the caller also supplies a mandatory base pin
+(``--base-ref`` / ``base_ref=``, exactly 40 lowercase hex).  Preflight resolves
+``git rev-parse <base-ref>``, ``git merge-base HEAD <base-ref>``, and
+``git branch --show-current``, and records bounded platform identity
+(``locale``, ``timezone``, ``os_identifier``) alongside the existing git/version
+preflight fields.  An unresolved base or merge-base is a launch gate (like the
+run pin): no matrix command starts, and the capture fails closed.
+
 Exit codes (the capture tool itself)
 ------------------------------------
 * ``0`` — capture completed and every required artifact is present.
 * ``2`` — capture incomplete, corrupt, dirty (without ``--allow-dirty``), a
   required artifact is missing, the ``--expected-sha`` run pin is missing or
-  syntactically invalid (not exactly 40 lowercase hex), the observed HEAD does
+  syntactically invalid (not exactly 40 lowercase hex), the ``--base-ref``
+  base pin is missing or syntactically invalid, the observed HEAD does
   not equal the requested pin (rejected before any matrix command starts),
+  the base SHA or merge-base cannot be resolved (also rejected before any
+  matrix command starts),
   HEAD/tree/status drifted during the capture (post-matrix re-check), or any
   command log ended INCOMPLETE (``output-limit-exceeded`` /
   ``log-write-failed`` / ``log-unreadable``).  The tool NEVER returns ``1``
@@ -78,7 +91,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import locale
 import os
+import platform
 import re
 import stat
 import subprocess
@@ -195,6 +210,12 @@ INPUT_DISCOVERY_PATTERNS = (
     "scripts/ci/guard_registry.py",
     "scripts/ci/run_static_guard_suite.py",
     "scripts/ci/guard_findings.py",
+    # GATE-00R extension: the time-direct / time-tests matrix rows execute the
+    # time guard, its test module, and pass the time exceptions allowlist, so
+    # all three are command inputs and belong in the hashed input manifest.
+    "scripts/verify_time_boundaries.py",
+    "scripts/test_verify_time_boundaries.py",
+    "config/guards/time_boundary_exceptions.yml",
     "app/build.gradle.kts",
     ".github/workflows/ci.yml",
     "settings.gradle.kts",
@@ -336,6 +357,10 @@ WARNING_CODE_ALLOWLIST = frozenset({
     "missing-expected-sha",
     "invalid-expected-sha",
     "post-capture-drift",
+    # GATE-00R extension: missing/invalid caller-stated base pin (``--base-ref``),
+    # validated with the same fail-closed pre-command contract as the run pin.
+    "missing-base-ref",
+    "invalid-base-ref",
     # Infrastructure observations.
     "missing-test-file",
     # Command-log capture failures (PR-GR-00R part B): a command log ended
@@ -949,6 +974,29 @@ def _sanitize_preflight_log(text: str) -> str:
     return "\n".join(shas)
 
 
+def _sanitize_branch_record(text: str) -> Optional[str]:
+    """Bounded, redacted branch name from ``git branch --show-current``.
+
+    A branch name is a single bounded identifier line: secret assignments and
+    absolute/UNC/backslash path forms are redacted, control characters are
+    stripped, and the value is length-bounded so a hostile branch name can never
+    leak raw machine/path/secret content into ``git-state.json``.  Empty output
+    (a detached HEAD, exit 0) resolves to ``None`` — an observation, not a
+    failure.
+    """
+    line = (text or "").strip()
+    if not line:
+        return None
+    cleaned = _redact_secrets(line)
+    cleaned = _redact_absolute_paths(cleaned)
+    cleaned = _CONTROL_CHAR_RE.sub("", cleaned).strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > 256:
+        cleaned = cleaned[:256] + "<truncated>"
+    return cleaned
+
+
 # ── Atomic writes (sibling temp + fsync + os.replace) ─────────────────────────
 def atomic_write_text(path: str, text: str) -> None:
     """Write ``text`` atomically; never echo raw paths on failure."""
@@ -1338,8 +1386,58 @@ def collect_environment() -> Dict[str, Any]:
     }
 
 
+# ── Platform identity (GATE-00R extension) ────────────────────────────────────
+def _collect_platform_identity() -> Dict[str, Any]:
+    """Bounded, redacted platform identity fields (plan preflight minimum).
+
+    ``locale`` / ``timezone`` / ``os_identifier`` are required preflight identity
+    fields.  Each value is redacted (secrets and absolute/UNC/backslash path
+    forms) and length-bounded before persistence, exactly like the allowlisted
+    version fields; a lookup failure resolves to ``None`` rather than raising or
+    persisting raw content.  No username, home path, token, or environment dump
+    is collected.
+    """
+    def _bounded_field(value: Optional[str]) -> Optional[str]:
+        if not isinstance(value, str) or not value:
+            return None
+        bounded = _bounded(_redact_secrets(value), 256)
+        return bounded or None
+
+    locale_val: Optional[str] = None
+    try:
+        parts = [str(p) for p in (locale.getlocale() or ()) if p]
+        if parts:
+            locale_val = "/".join(parts)
+    except Exception:
+        locale_val = None
+    tz_val: Optional[str] = None
+    try:
+        tz = time.tzname
+        if isinstance(tz, (tuple, list)):
+            names = [str(t) for t in tz if t]
+            tz_val = "/".join(names) if names else None
+        elif isinstance(tz, str) and tz:
+            tz_val = tz
+    except Exception:
+        tz_val = None
+    os_val: Optional[str] = None
+    try:
+        os_val = platform.platform()
+    except Exception:
+        os_val = None
+    return {
+        "locale": _bounded_field(locale_val),
+        "timezone": _bounded_field(tz_val),
+        "os_identifier": _bounded_field(os_val),
+    }
+
+
 # ── Preflight git / version capture ───────────────────────────────────────────
-def run_preflight(root: str, runner: Callable[[Sequence[str], str], RunOutcome]) -> Dict[str, Any]:
+def run_preflight(
+    root: str,
+    runner: Callable[[Sequence[str], str], RunOutcome],
+    base_ref: Optional[str] = None,
+) -> Dict[str, Any]:
     """Record the preflight command matrix (plan section A).
 
     Every preflight command is recorded as a bounded, sanitized record so a
@@ -1347,6 +1445,17 @@ def run_preflight(root: str, runner: Callable[[Sequence[str], str], RunOutcome])
     closed when the essential git identity commands (``HEAD`` / ``HEAD^{tree}``)
     cannot be resolved: without a known SHA/tree the evidence bundle is
     meaningless and must not be trusted.
+
+    GATE-00R extension: when a caller-stated ``base_ref`` pin is supplied (the
+    capture tool always supplies a validated one), ``git rev-parse <base-ref>``,
+    ``git merge-base HEAD <base-ref>``, and ``git branch --show-current`` are
+    observed as well.  A base/merge-base resolution failure (nonzero exit,
+    launch error, or a non-40-hex value) is recorded as a ``git_meta_failures``
+    entry (``base-sha`` / ``merge-base``) and fails the capture closed; the
+    caller additionally treats an unresolved base/merge-base as a launch gate.
+    A branch lookup failure (``branch``) is fatal the same way; empty branch
+    output (detached HEAD, exit 0) is an observation (``branch=None``), not a
+    failure.
     """
     records: List[Dict[str, Any]] = []
 
@@ -1373,6 +1482,12 @@ def run_preflight(root: str, runner: Callable[[Sequence[str], str], RunOutcome])
         elif argv in (["git", "diff", "--name-only"],
                       ["git", "diff", "--cached", "--name-only"]):
             output = _sanitize_git_filenames(outcome.combined, is_status=False)
+        elif argv == ["git", "branch", "--show-current"]:
+            # A branch name is a bounded single-line identifier.  The version
+            # field sanitizer (which requires a version digit) would wrongly
+            # reduce a digit-less branch name to the redaction marker, so the
+            # branch record uses the dedicated bounded sanitizer instead.
+            output = _sanitize_branch_record(outcome.combined) or ""
         else:
             # The only non-git preflight commands are the toolchain version
             # probes.  Their records are STRUCTURED identity observations,
@@ -1403,6 +1518,18 @@ def run_preflight(root: str, runner: Callable[[Sequence[str], str], RunOutcome])
     diff_raw = diff_out.combined
     staged_diff_raw = staged_diff_out.combined
 
+    # GATE-00R extension: base pin resolution, merge-base, and current branch.
+    # The base pin arrives pre-validated from ``capture_evidence``; a direct
+    # caller may omit it (``None``), in which case the base commands are skipped
+    # and the base identity fields resolve to ``None``.
+    if base_ref is not None:
+        base_out = run(["git", "rev-parse", base_ref])
+        merge_out = run(["git", "merge-base", "HEAD", base_ref])
+    else:
+        base_out = None
+        merge_out = None
+    branch_out = run(["git", "branch", "--show-current"])
+
     py = run(["python", "--version"])
     py3 = run(["python3", "--version"])
     java = run(["java", "-version"])
@@ -1428,11 +1555,46 @@ def run_preflight(root: str, runner: Callable[[Sequence[str], str], RunOutcome])
             ("staged-diff", staged_diff_out),
         ) if out.returncode != 0
     ]
+
+    # GATE-00R extension: base/merge-base identity and the branch observation
+    # are preflight git metadata too.  A base/merge-base resolution failure
+    # (nonzero exit, launch error, or a non-40-hex value) is a fail-closed
+    # identity defect — the caller-stated base pin cannot be tied to this
+    # checkout — and additionally blocks the matrix launch in
+    # ``capture_evidence``.  A branch lookup failure is fatal the same way;
+    # empty branch output (detached HEAD, exit 0) is an observation, not a
+    # failure.
+    base_raw = base_out.combined.strip() if base_out is not None else ""
+    merge_raw = merge_out.combined.strip() if merge_out is not None else ""
+    base_ok = (base_out is not None and base_out.returncode == 0
+               and _is_valid_sha40(base_raw))
+    merge_ok = (merge_out is not None and merge_out.returncode == 0
+                and _is_valid_sha40(merge_raw))
+    if base_ref is not None and not base_ok:
+        git_meta_failures.append("base-sha")
+    if base_ref is not None and not merge_ok:
+        git_meta_failures.append("merge-base")
+    if branch_out.returncode != 0:
+        git_meta_failures.append("branch")
     git_meta_ok = not git_meta_failures
+
+    platform_identity = _collect_platform_identity()
 
     return {
         "commit": head_raw if head_ok else None,
         "tree": tree_raw if tree_ok else None,
+        # GATE-00R extension: resolved base/merge-base identity (40-hex SHAs
+        # from successful git commands) and the bounded, sanitized current
+        # branch name (``None`` on a detached HEAD).  ``base_ref`` itself is
+        # attached by ``capture_evidence`` next to ``requested_sha``.
+        "base_sha": base_raw if base_ok else None,
+        "merge_base_sha": merge_raw if merge_ok else None,
+        "branch": _sanitize_branch_record(branch_out.combined),
+        # GATE-00R extension: bounded, redacted platform identity fields
+        # (plan preflight.json minimum).  A lookup failure resolves to None.
+        "locale": platform_identity["locale"],
+        "timezone": platform_identity["timezone"],
+        "os_identifier": platform_identity["os_identifier"],
         # Preflight status/diff/log metadata is sanitized and bounded before
         # persistence: absolute paths, secrets, SQL errors, and raw exception
         # text are redacted, and commit-message text is dropped (only SHAs are
@@ -1990,6 +2152,61 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             id="gradle-task-graph",
             log_name="07-gradle-task-graph.log",
             argv=["./gradlew", ":app:check", "--dry-run", "--no-daemon"],
+        ),
+        # ── GATE-00R extension rows (appended; existing rows unchanged) ──────
+        # Direct time-boundary guard observation (strict-zero guard, no
+        # baseline).  Flags verified against the script's current argparse:
+        # --root / --allowlist / --fail-on-violation.
+        CommandSpec(
+            id="time-direct",
+            log_name="08-time-direct.log",
+            argv=[
+                "python", "scripts/verify_time_boundaries.py",
+                "--root", ".",
+                "--allowlist", "config/guards/time_boundary_exceptions.yml",
+                "--fail-on-violation",
+            ],
+        ),
+        # Time-guard test module.  The pytest cacheprovider pin (zero untracked
+        # working-tree side effects) closes the argv exactly like the focused
+        # DB test row above.
+        CommandSpec(
+            id="time-tests",
+            log_name="09-time-tests.log",
+            argv=[
+                "python", "-m", "pytest",
+                "scripts/test_verify_time_boundaries.py",
+                "-v", "--tb=short",
+                "-p", "no:cacheprovider",
+            ],
+        ),
+        # Second inventory-only DB run writing under <bundle>/reports/ (the
+        # findings writer requires the parent directory to exist; the capture
+        # pre-creates it inside the bundle).  Outputs are bundle-relative per
+        # the existing output-containment rules.
+        CommandSpec(
+            id="db-inventory",
+            log_name="10-db-inventory.log",
+            argv=[
+                "python", "scripts/verify_db_access_boundaries.py",
+                "--inventory-only",
+                "--findings-output", rop("reports", "db-inventory.json"),
+                "--dump-room-mutators", rop("reports", "room-mutators.json"),
+            ],
+            report_path="reports/db-inventory.json",
+            required_artifacts=("reports/db-inventory.json", "reports/room-mutators.json"),
+            artifact_kinds=(
+                ("reports/db-inventory.json", "file"),
+                ("reports/room-mutators.json", "file"),
+            ),
+        ),
+        # Sequential compile observation (plan step 8); never run in parallel
+        # with other Gradle work — the matrix is strictly sequential.
+        CommandSpec(
+            id="gradle-compile",
+            log_name="11-gradle-compile.log",
+            argv=["./gradlew", ":app:compileDebugKotlin",
+                  "--no-daemon", "--stacktrace", "--console=plain"],
         ),
     ]
 
@@ -2678,6 +2895,11 @@ def build_semantic_summary(
         # the deterministic summary without breaking byte-identical comparison
         # across two runs at the same SHA.  Nothing run-specific leaks here.
         "requested_sha": git_state.get("requested_sha"),
+        # GATE-00R extension: the resolved base and merge-base SHAs are
+        # run-invariant identity fields (plan: the semantic summary must retain
+        # target/base/merge-base/tree SHA), so they are included additively.
+        "base_sha": git_state.get("base_sha"),
+        "merge_base_sha": git_state.get("merge_base_sha"),
         "trusted": trusted,
         "preservation_ok": bool(preservation.get("ok", False)),
         "versions": versions,
@@ -2786,6 +3008,7 @@ def capture_evidence(
     *,
     allow_dirty: bool = False,
     expected_sha: Optional[str] = None,
+    base_ref: Optional[str] = None,
     runner: Optional[Callable[[Sequence[str], str], RunOutcome]] = None,
     command_matrix: Optional[Sequence[CommandSpec]] = None,
     input_candidates: Optional[Sequence[str]] = None,
@@ -2796,8 +3019,11 @@ def capture_evidence(
     capture is incomplete, dirty (without ``--allow-dirty``), the output escapes
     the repository root (including via symlink), the run pin is missing or not
     exactly 40 lowercase hex (a controlled failure before any command is issued),
-    the observed HEAD does not equal the caller-stated ``expected_sha`` pin
-    (fails closed pre-launch — no matrix command starts), HEAD/tree/status
+    the ``base_ref`` base pin is missing or not exactly 40 lowercase hex (the
+    same controlled pre-command failure), the observed HEAD does not equal the
+    caller-stated ``expected_sha`` pin
+    (fails closed pre-launch — no matrix command starts), the base SHA or
+    merge-base cannot be resolved (also a pre-launch gate), HEAD/tree/status
     drifted while the matrix ran (post-matrix re-check marks the bundle
     incomplete/untrusted), preflight git identity could not be resolved, a
     required input is missing, a required report is present but invalid (or is a
@@ -2822,6 +3048,13 @@ def capture_evidence(
     bundle_rel = _posix_rel(out_dir, root)
     commands_dir = os.path.join(out_dir, "commands")
     os.makedirs(commands_dir, exist_ok=True)
+    # GATE-00R extension: the db-inventory matrix row writes its findings and
+    # room-mutators reports under <bundle>/reports/.  The findings writer
+    # requires its target's parent directory to exist (MISSING_PARENT
+    # otherwise), so pre-create it inside the bundle (bundle-internal; the
+    # bundle lives under the git-ignored build/ tree, so this is never an
+    # untracked working-tree side effect).
+    os.makedirs(os.path.join(out_dir, "reports"), exist_ok=True)
 
     capture_failed = False
     infrastructure_warnings: List[str] = []
@@ -2838,6 +3071,15 @@ def capture_evidence(
         infrastructure_warnings.append(make_warning(
             "missing-expected-sha" if expected_sha is None
             else "invalid-expected-sha"))
+
+    # ── Base-pin validation (GATE-00R extension) — same fail-closed contract ────
+    # The base ref is caller-supplied and mandatory, exactly like the run pin:
+    # it must be exactly 40 lowercase hex and is never derived from git state.
+    base_ref_ok = base_ref is not None and _is_valid_sha40(base_ref)
+    if not base_ref_ok:
+        capture_failed = True
+        infrastructure_warnings.append(make_warning(
+            "missing-base-ref" if base_ref is None else "invalid-base-ref"))
 
     # ── Compute the command matrix early ─────────────────────────────────────────
     matrix = list(command_matrix) if command_matrix is not None else default_command_matrix(root, out_dir)
@@ -2861,7 +3103,7 @@ def capture_evidence(
         matrix_validation_failed = True
         infrastructure_warnings.append(violation)
 
-    if matrix_validation_failed or not pin_ok:
+    if matrix_validation_failed or not pin_ok or not base_ref_ok:
         # Stop before any runner call: no preflight, no input-manifest Git calls,
         # no preservation diff, no command execution.  The capture fails closed
         # with an empty git state / manifest / preservation / command set.  The
@@ -2869,8 +3111,12 @@ def capture_evidence(
         # missing pin value itself is never persisted verbatim.
         git_state: Dict[str, Any] = {
             "requested_sha": expected_sha if pin_ok else None,
+            "base_ref": base_ref if base_ref_ok else None,
             "observed_sha": None,
             "tree_sha": None,
+            "base_sha": None,
+            "merge_base_sha": None,
+            "branch": None,
         }
         env_state = collect_environment()
         manifest: List[Dict[str, Any]] = []
@@ -2881,11 +3127,13 @@ def capture_evidence(
         results: List[CommandResult] = []
     else:
         # ── Preflight + dirty gate ────────────────────────────────────────────────
-        git_state = run_preflight(root, runner)
+        git_state = run_preflight(root, runner, base_ref=base_ref)
         # Record the run pin and the observed identity (PR-GR-00R part A): the
         # requested pin, the observed HEAD, and the observed tree SHA travel
-        # with the git state into git-state.json and evidence.json.
+        # with the git state into git-state.json and evidence.json.  The
+        # GATE-00R base pin is recorded alongside it (already validated above).
         git_state["requested_sha"] = expected_sha
+        git_state["base_ref"] = base_ref
         git_state["observed_sha"] = git_state.get("commit")
         git_state["tree_sha"] = git_state.get("tree")
         env_state = collect_environment()
@@ -2912,6 +3160,16 @@ def capture_evidence(
             capture_failed = True
             infrastructure_warnings.append(
                 make_warning("wrong-sha", str(git_state.get("observed_sha"))))
+
+        # ── Base-identity gate (GATE-00R extension): BEFORE any matrix command ────
+        # An unresolved base SHA or merge-base is a launch gate exactly like the
+        # run-pin gate: evidence that cannot be tied to a resolved base and
+        # merge-base is meaningless, so no matrix command starts.  The
+        # resolution failure itself is already diagnosed via the
+        # ``git-meta-failed`` warning (``base-sha`` / ``merge-base`` entries in
+        # ``git_meta_failures``), so no duplicate diagnostic is emitted here.
+        base_gate_failed = (git_state.get("base_sha") is None
+                            or git_state.get("merge_base_sha") is None)
 
         # Fail closed when any preflight git metadata command (status / diff /
         # staged-diff) failed.  An unobservable checkout state cannot be trusted, so
@@ -2962,13 +3220,16 @@ def capture_evidence(
         if not preservation.get("ok", False):
             untrusted = True
 
-        # ── Run commands (only when the run-pin gate passed) ──────────────────────
+        # ── Run commands (only when the run-pin and base-identity gates passed) ───
         # PR-GR-00R part A: a pin/HEAD mismatch blocks the launch entirely — no
         # matrix command, artifact hash, or report validation is performed
-        # against an unpinned commit.  Every derived stage below then no-ops on
-        # the empty executable matrix; the read-only git observations recorded
+        # against an unpinned commit.  GATE-00R: an unresolved base/merge-base
+        # blocks the launch the same way.  Every derived stage below then no-ops
+        # on the empty executable matrix; the read-only git observations recorded
         # above (manifest / preservation) stay in the bundle.
-        executable_matrix: List[CommandSpec] = [] if sha_gate_failed else matrix
+        executable_matrix: List[CommandSpec] = (
+            [] if (sha_gate_failed or base_gate_failed) else matrix
+        )
         results = []
         for spec in executable_matrix:
             try:
@@ -3131,6 +3392,11 @@ def capture_evidence(
         "requested_sha": git_state.get("requested_sha"),
         "observed_sha": git_state.get("observed_sha"),
         "tree_sha": git_state.get("tree_sha"),
+        # GATE-00R extension: the caller-stated base pin and the resolved
+        # base/merge-base identity (additive; mirrors the run-pin fields).
+        "base_ref": git_state.get("base_ref"),
+        "base_sha": git_state.get("base_sha"),
+        "merge_base_sha": git_state.get("merge_base_sha"),
         "trusted": trusted,
         "allow_dirty": bool(allow_dirty),
         "dirty": dirty,
@@ -3316,6 +3582,19 @@ def capture_evidence(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
+def _parse_sha40_arg(flag: str, value: str) -> str:
+    """argparse type shared by the SHA pins: exactly 40 lowercase hex characters.
+
+    A syntactically invalid pin raises ``argparse.ArgumentTypeError`` so the CLI
+    fails closed (exit 2) before any command is issued.  Pins are never derived
+    from HEAD; the caller must state them.
+    """
+    if not _is_valid_sha40(value):
+        raise argparse.ArgumentTypeError(
+            f"{flag} must be exactly 40 lowercase hexadecimal characters")
+    return value
+
+
 def _parse_expected_sha(value: str) -> str:
     """argparse type for ``--expected-sha``: exactly 40 lowercase hex characters.
 
@@ -3323,10 +3602,16 @@ def _parse_expected_sha(value: str) -> str:
     fails closed (exit 2) before any command is issued.  The pin is never
     derived from HEAD; the caller must state it.
     """
-    if not _is_valid_sha40(value):
-        raise argparse.ArgumentTypeError(
-            "--expected-sha must be exactly 40 lowercase hexadecimal characters")
-    return value
+    return _parse_sha40_arg("--expected-sha", value)
+
+
+def _parse_base_ref(value: str) -> str:
+    """argparse type for ``--base-ref`` (GATE-00R): exactly 40 lowercase hex.
+
+    The base pin is mandatory like ``--expected-sha``; preflight resolves it via
+    ``git rev-parse`` and computes ``git merge-base HEAD <base-ref>`` from it.
+    """
+    return _parse_sha40_arg("--base-ref", value)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -3340,11 +3625,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         metavar="<40-lowercase-hex>",
                         help="Caller-declared Git SHA this capture must observe at "
                              "HEAD (mandatory run pin; never derived from HEAD).")
+    parser.add_argument("--base-ref", required=True, type=_parse_base_ref,
+                        metavar="<40-lowercase-hex>",
+                        help="Caller-declared base Git SHA (mandatory; resolved via "
+                             "'git rev-parse' at preflight and used to compute "
+                             "'git merge-base HEAD <base-ref>').")
     parser.add_argument("--allow-dirty", action="store_true",
                         help="Capture despite a dirty checkout; marks evidence untrusted.")
     args = parser.parse_args(argv)
     return capture_evidence(args.root, args.out, allow_dirty=args.allow_dirty,
-                            expected_sha=args.expected_sha)
+                            expected_sha=args.expected_sha, base_ref=args.base_ref)
 
 
 if __name__ == "__main__":

@@ -63,6 +63,53 @@ per-run pin supplied by the caller:
   re-check is skipped when the pre-launch gate already blocked the launch
   (nothing ran, so nothing can have drifted).
 
+## GATE-00R extension: base/merge-base/branch + platform preflight identity
+
+Additive extension (existing output contracts unchanged; new fields only):
+
+- **Mandatory base pin (`--base-ref`)**: like `--expected-sha`, the base ref is
+  a caller-stated, mandatory pin that must be exactly 40 lowercase hexadecimal
+  characters and is never derived from git state. A missing pin warns
+  `missing-base-ref`; a syntactically invalid pin warns `invalid-base-ref`;
+  both fail closed **before any command is issued** (zero runner calls).
+- **Preflight resolution**: preflight resolves `git rev-parse <base-ref>`
+  (recorded as `base_sha`), `git merge-base HEAD <base-ref>` (recorded as
+  `merge_base_sha`), and `git branch --show-current` (recorded as a bounded,
+  sanitized `branch` value; empty output on a detached HEAD — exit 0 — is the
+  observation `branch: null`, not a failure). The caller-stated pin itself is
+  recorded as `base_ref` next to `requested_sha` in `git-state.json`,
+  `evidence.json`, and — for the resolved `base_sha` / `merge_base_sha` —
+  additively in `semantic-summary.json` (run-invariant, so byte-identical
+  two-run comparison still holds).
+- **Base-identity launch gate**: an unresolved `base_sha` or `merge_base_sha`
+  (nonzero exit, launch error, or a non-40-hex value) is a launch gate exactly
+  like the run-pin gate: no matrix command starts, the capture fails closed
+  (exit `2`), and the failure is diagnosed via `git-meta-failed:base-sha` /
+  `git-meta-failed:merge-base`. A branch lookup failure is fatal the same way
+  (`git-meta-failed:branch`) but does not block the launch — it is an
+  observability defect, not an identity defect.
+- **Platform identity fields**: `git-state.json` additionally records bounded,
+  redacted `locale` (`locale.getlocale()`), `timezone` (`time.tzname`), and
+  `os_identifier` (`platform.platform()`) values — each redacted (secrets and
+  absolute/UNC/backslash path forms) and length-bounded, with a lookup failure
+  resolving to `null`. No username, home path, token, or environment dump is
+  collected.
+- **Extended command matrix**: four rows are **appended** after the existing
+  eight (order and argv below; all existing rows unchanged): `time-direct`
+  (direct time-boundary guard), `time-tests` (time-guard test module, pinned
+  `-p no:cacheprovider` like every pytest row), `db-inventory` (a second
+  inventory-only DB run writing `reports/db-inventory.json` +
+  `reports/room-mutators.json` inside the bundle, both declared as required
+  hashed artifacts), and `gradle-compile` (`:app:compileDebugKotlin`,
+  sequential). The capture pre-creates the bundle-internal `reports/` directory
+  because the findings writer requires its target's parent to exist; the bundle
+  lives under the git-ignored `build/` tree, so this is never an untracked
+  working-tree side effect. The hashed input manifest additionally covers the
+  new command inputs (`scripts/verify_time_boundaries.py`,
+  `scripts/test_verify_time_boundaries.py`,
+  `config/guards/time_boundary_exceptions.yml`) when they are tracked at the
+  tested SHA.
+
 ## Capture exit codes: truthful observation vs failed capture
 
 The capture tool itself exits `0` or `2` — never `1`:
@@ -102,11 +149,18 @@ build/guard-evidence/<full-sha>/<run-id>/
     05-static-suite.log
     06-gradle-db.log
     07-gradle-task-graph.log
+    08-time-direct.log
+    09-time-tests.log
+    10-db-inventory.log
+    11-gradle-compile.log
   02-room-inventory.findings.json
   02-room-mutators.json
   03-db-cli.findings.json
   04-db-ratchet.summary.json
   05-static-suite/
+  reports/
+    db-inventory.json
+    room-mutators.json
 ```
 
 Command **logs** are written under `commands/` (repository-relative). Required
@@ -138,6 +192,9 @@ Top-level keys:
 | `requested_sha` | string? | Caller-stated `--expected-sha` run pin (never derived from HEAD; `null` when the pin itself was missing/invalid) |
 | `observed_sha` | string? | Observed `git rev-parse HEAD` (mirrors `commit`) |
 | `tree_sha` | string? | Observed `git rev-parse HEAD^{tree}` (mirrors `tree`) |
+| `base_ref` | string? | Caller-stated `--base-ref` base pin (GATE-00R; `null` when missing/invalid) |
+| `base_sha` | string? | Resolved `git rev-parse <base-ref>` (GATE-00R; `null` when unresolved) |
+| `merge_base_sha` | string? | Resolved `git merge-base HEAD <base-ref>` (GATE-00R; `null` when unresolved) |
 | `trusted` | bool | Bundle trusted-state (see below) |
 | `allow_dirty` | bool | Whether `--allow-dirty` was passed |
 | `dirty` | bool | Whether the checkout was dirty |
@@ -183,6 +240,7 @@ completeness contract), all `report_path`/`report_sha256` values, and any
 absolute/temp path.
 
 **Semantic (included, stable per SHA):** `commit`, `tree`, `requested_sha`,
+`base_sha` / `merge_base_sha` (GATE-00R extension, run-invariant),
 `trusted`, `preservation_ok`, interpreter/version fields,
 `input_manifest_sha256`, and per command `id` / `argv` / `exit_code` /
 `launch_error` / `report_schema_version` / `report_trusted` /
@@ -264,6 +322,10 @@ Executed in this order (plan sections A–H). Preflight (A) is recorded into
 | static-suite | `run_static_guard_suite.py --output-dir ...` | observation |
 | gradle-db | `./gradlew :app:verifyDbAccessBoundaries --no-daemon --stacktrace` | expected failure (blocked) |
 | gradle-task-graph | `./gradlew :app:check --dry-run --no-daemon` | task-graph capture |
+| time-direct | `python scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation` | observation (GATE-00R) |
+| time-tests | `python -m pytest scripts/test_verify_time_boundaries.py -v --tb=short -p no:cacheprovider` | observation (GATE-00R) |
+| db-inventory | `python scripts/verify_db_access_boundaries.py --inventory-only --findings-output <bundle>/reports/db-inventory.json --dump-room-mutators <bundle>/reports/room-mutators.json` | exit 0, trusted report (GATE-00R) |
+| gradle-compile | `./gradlew :app:compileDebugKotlin --no-daemon --stacktrace --console=plain` | observation (GATE-00R) |
 
 Every command runs as an **argv array with `shell=False`**. The ratchet uses
 repeatable `--command-arg=<value>` tokens (every child argument, including
@@ -378,10 +440,15 @@ sanitized command records under `git_state.preflight_commands` (each with
 is `false` when the essential `HEAD` / `HEAD^{tree}` identity cannot be
 resolved, which fails the capture closed. `git_state.git_meta_ok` is `false` when
 any preflight git metadata command (`git status --porcelain=v1`, `git diff
---name-only`, `git diff --cached --name-only`) fails (nonzero exit or launch
+--name-only`, `git diff --cached --name-only` — and, since GATE-00R,
+`git rev-parse <base-ref>`, `git merge-base HEAD <base-ref>`, and
+`git branch --show-current`) fails (nonzero exit or launch
 error); such a failure is **fatal** — the capture fails closed with
 `git-meta-failed:<which>` so an unobservable checkout state is never recorded as
-authoritative.
+authoritative. GATE-00R also records the resolved `base_sha` /
+`merge_base_sha` / `branch` fields and the bounded platform identity fields
+(`locale` / `timezone` / `os_identifier`) in `git-state.json` (see the
+GATE-00R extension section).
 
 ### Sanitization
 
@@ -441,6 +508,7 @@ authoritative.
     `invalid-required-report`, `symlink-artifact`, `artifact-hash-failed`,
     `preflight-failed`, `wrong-sha`, `git-meta-failed`,
     `missing-expected-sha`, `invalid-expected-sha`, `post-capture-drift`,
+    `missing-base-ref`, `invalid-base-ref`,
     `missing-test-file`, `incomplete-command-log`.
 
     - **Input-candidate realpath containment**: every input manifest candidate
@@ -656,10 +724,12 @@ and the loop cannot spin.
 ## How CI uploads artifacts
 
 CI runs the capture tool with
-`--root . --expected-sha <40-lowercase-hex> --out build/guard-evidence/<sha>/run-1`
+`--root . --expected-sha <40-lowercase-hex> --base-ref <40-lowercase-hex> --out build/guard-evidence/<sha>/run-1`
 (and a second `run-2` for reproducibility), where the `--expected-sha` value is
 the SHA the caller intends to capture — stated explicitly, never derived from
-HEAD. The `build/guard-evidence/` directory is uploaded as a CI artifact.
+HEAD — and the `--base-ref` value is the caller-stated base SHA whose
+resolution and merge-base are recorded at preflight (GATE-00R extension). The
+`build/guard-evidence/` directory is uploaded as a CI artifact.
 Because it is git-ignored, it is never committed to the repository.
 
 ## How a reviewer compares two bundles
