@@ -23,6 +23,10 @@ Tests verify:
       marked outcome "slow" (non-blocking; exit unaffected; failures are
       never masked), budgets are declared for every built-in guard, and
       custom JSON manifests may declare per-entry budgets.
+  14. PR-GR-10b db_artifact_sync wiring: the guard is registered blocking
+      in GUARD_REGISTRY with the migrate CLI as its script, present in
+      GUARD_MANIFEST with a tokenized --verify argv consuming the
+      reviewed seed input, and the registry validates cleanly.
 
 Run:
   python -m pytest scripts/ci/test_run_static_guard_suite.py -v
@@ -917,6 +921,7 @@ class TestDbAccessSuiteCommandTokens:
             "receipt_link", "import_lifecycle", "cloud_payload",
             "pii_logging", "di_release", "allowlist_compliance",
             "ignored_test_budget", "lint_baseline_policy", "time_boundaries",
+            "deprecation_escalations", "db_artifact_sync",
             "cancellation", "privacy", "db_access", "event_writers",
             "money", "migration_matrix", "guard_tests",
         ]
@@ -1278,3 +1283,92 @@ class TestGuardTimeBudgets:
         assert result["outcome"] == "slow"
         assert result["budget_exceeded"] is True
         assert result["duration_seconds"] == 0.0
+
+
+# ── PR-GR-10b: db_artifact_sync guard wiring ──────────────────────────────────
+
+
+class TestDbArtifactSyncGuardWiring:
+    """The PR-GR-10b artifact-sync tripwire is registered and wired.
+
+    The guard's command runs the migrate CLI's --verify mode (tokenized
+    argv per the GUARD_MANIFEST pattern) consuming the SAME reviewed seed
+    input every generation run uses; the suite's per-guard timeout budget
+    bounds the run.  Registry, manifest, and filesystem must stay
+    consistent so hand-edit drift of the tracked candidate/accounting
+    artifacts fails every suite run and CI.
+    """
+
+    GUARD_NAME = "db_artifact_sync"
+    GUARD_SCRIPT = "scripts/migrate_db_policy_signatures.py"
+    GUARD_TESTS = "scripts/test_migrate_db_policy_signatures.py"
+    SEED_INPUT = "docs/ci/db-findings/GR-08-seeds.yml"
+
+    def _manifest_entry(self):
+        for name, command, mode in _runner.GUARD_MANIFEST:
+            if name == self.GUARD_NAME:
+                return (name, command, mode)
+        assert False, f"{self.GUARD_NAME} not found in GUARD_MANIFEST"
+
+    def test_guard_is_registered_blocking_with_tests_field(self):
+        entry = _reg.GUARD_REGISTRY[self.GUARD_NAME]
+        assert entry["mode"] == "blocking"
+        assert entry["script"] == self.GUARD_SCRIPT
+        assert entry["tests"] == self.GUARD_TESTS
+        assert entry["description"]
+
+    def test_guard_files_exist_in_repository(self):
+        entry = _reg.GUARD_REGISTRY[self.GUARD_NAME]
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        assert (repo_root / entry["script"]).is_file()
+        assert (repo_root / entry["tests"]).is_file()
+        for policy in entry["policies"]:
+            assert (repo_root / policy).is_file(), policy
+
+    def test_guard_is_in_ci_manifest(self):
+        name, _command, mode = self._manifest_entry()
+        assert name == self.GUARD_NAME
+        assert mode == "blocking"
+
+    def test_manifest_command_is_tokenized_verify_argv(self):
+        """The command is a token list running the migrate CLI --verify."""
+        _name, command, _mode = self._manifest_entry()
+        assert isinstance(command, list), "command must be a list of tokens"
+        assert self.GUARD_SCRIPT in command, command
+        assert "--verify" in command, command
+
+    def test_manifest_command_consumes_reviewed_seed_input(self):
+        """The verify argv passes the combined reviewed seed document.
+
+        The R12 lesson: a seed-less regeneration can never match the
+        seeded tracked artifacts (472 entries = 57 legacy-resolved + 415
+        seed rows), so the tripwire MUST consume the same --seed-rows
+        input as generation or it would report permanent drift.
+        """
+        _name, command, _mode = self._manifest_entry()
+        assert "--seed-rows" in command, command
+        seed_index = command.index("--seed-rows")
+        assert command[seed_index + 1] == self.SEED_INPUT, command
+
+    def test_manifest_command_writes_nothing(self):
+        """The verify argv must not request artifact writes.
+
+        --verify never writes the tracked artifacts; the argv must not
+        contain --generate/--write-candidate/--check or an output target.
+        """
+        _name, command, _mode = self._manifest_entry()
+        joined = command
+        for forbidden in ("--generate", "--write-candidate", "--check"):
+            assert forbidden not in joined, command
+        assert "--output" not in joined, command
+        assert "--accounting-out" not in joined, command
+        assert "--write-accounting" not in joined, command
+
+    def test_time_budget_declared(self):
+        budgets = _runner.GUARD_TIME_BUDGETS
+        assert self.GUARD_NAME in budgets
+        assert budgets[self.GUARD_NAME] > 0
+
+    def test_registry_consistency_validation_passes(self):
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        assert _reg.validate_registry(str(repo_root)) == []

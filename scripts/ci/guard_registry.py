@@ -193,6 +193,30 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "before landing; stale entries are flagged for cleanup",
     },
 
+    "db_artifact_sync": {
+        "script": "scripts/migrate_db_policy_signatures.py",
+        "tests": "scripts/test_migrate_db_policy_signatures.py",
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": [
+            "config/guards/db_ownership_policy.legacy.yml",
+            "docs/ci/db-findings/GR-08-seeds.yml",
+            "config/guards/db_ownership_policy.signatures.candidate.yml",
+            "config/guards/db_ownership_policy.signatures.accounting.json",
+        ],
+        "description": "DB artifact sync tripwire (PR-GR-10b) — the migrate "
+                       "CLI's --verify mode regenerates the tracked "
+                       "candidate/accounting artifacts IN MEMORY from the "
+                       "same reviewed inputs (--seed-rows) and exits 1 when "
+                       "the tracked files drift: policy entries byte-exact, "
+                       "accounting stable sections byte-exact, coverage "
+                       "semantics (R12 contract), and the fold-derived "
+                       "distribution. Makes hand-edit drift visible in "
+                       "every suite run and CI; never writes the tracked "
+                       "artifacts",
+    },
+
     # ── Ratchet-wrapped guards (growth-enforcing baseline via guard_ratchet.py) ──
 
     "cancellation": {

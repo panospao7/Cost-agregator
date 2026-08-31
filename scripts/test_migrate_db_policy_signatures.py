@@ -2718,6 +2718,17 @@ from scripts.db_guard.policy_v2_candidate import (  # noqa: E402
     SOURCE_MUTATION_COVERAGE_KINDS,
 )
 
+# PR-GR-10b: the R12 comparison helpers below DELEGATE to this shared
+# module — the single comparison truth consumed by both the tripwire
+# tests and the migrate CLI's --verify mode, so the logic can never
+# drift apart again.
+from scripts.db_guard.artifact_verification import (  # noqa: E402
+    assert_coverage_section_semantics as _shared_assert_coverage_section_semantics,
+    canonical_accounting_section_bytes as _shared_canonical_accounting_section_bytes,
+    canonical_candidate_entries_bytes as _shared_canonical_candidate_entries_bytes,
+    distribution_from_accounting_records as _shared_distribution_from_accounting_records,
+)
+
 
 COMBINED_SEED_FILE = (
     REPO_ROOT / "docs" / "ci" / "db-findings" / "GR-08-seeds.yml"
@@ -2758,28 +2769,24 @@ def tracked_regeneration(tmp_path_factory):
 
 
 def _canonical_candidate_entries_bytes(entries):
-    """Serialize a candidate entries list with the generator's own form.
+    """Delegate to the shared PR-GR-10b comparison helper (single truth).
 
-    Mirrors ``migrate_db_policy_signatures``' candidate serialization
+    The generator's own candidate serialization
     (``yaml.safe_dump(..., sort_keys=False, allow_unicode=False)`` with
     CRLF normalized away) so byte equality of this serialization is exact
     data equality of the policy-entries section.
     """
-    return yaml.safe_dump(
-        entries, sort_keys=False, allow_unicode=False
-    ).replace("\r\n", "\n").encode("utf-8")
+    return _shared_canonical_candidate_entries_bytes(entries)
 
 
 def _canonical_accounting_section_bytes(section):
-    """Serialize one accounting section with the artifact's own JSON form.
+    """Delegate to the shared PR-GR-10b comparison helper (single truth).
 
-    Mirrors the accounting artifact's serialization
+    The accounting artifact's own JSON serialization
     (``json.dumps(..., sort_keys=False, separators=(",", ":"))``) so byte
     equality of this serialization is exact data equality of the section.
     """
-    return json.dumps(
-        section, sort_keys=False, separators=(",", ":")
-    ).encode("utf-8")
+    return _shared_canonical_accounting_section_bytes(section)
 
 
 def test_tracked_candidate_artifact_matches_regeneration_bytes(
@@ -2823,6 +2830,12 @@ def test_tracked_candidate_artifact_matches_regeneration_bytes(
 def _assert_coverage_section_semantics(mutations, records):
     """Artifact-only semantics for a shipped coverage section.
 
+    PR-GR-10b: DELEGATES to the shared implementation
+    (``scripts.db_guard.artifact_verification.assert_coverage_section_semantics``)
+    — the single comparison truth consumed by both this tripwire and the
+    migrate CLI's ``--verify`` mode — so the semantic contract can never
+    drift between the test suite and the CI guard.
+
     The ``sourceMutations`` section is TREE-STATE-DEPENDENT evidence (it
     observes the production tree), so it is never pinned by bytes or by
     exact per-kind counts.  Pinned here (artifact-only): the closed kind
@@ -2849,60 +2862,7 @@ def _assert_coverage_section_semantics(mutations, records):
     ``test_real_run_coverage_partitions_observed_universe``, which compares
     the classified coverage multiset against the full observed-mutation set.
     """
-    assert mutations, "coverage section must ship non-empty"
-    record_indexes = {record["index"] for record in records}
-    identities = []
-    for item in mutations:
-        assert set(item) == {
-            "kind",
-            "legacyIndices",
-            "operation",
-            "path",
-            "symbol",
-        }
-        assert item["kind"] in SOURCE_MUTATION_COVERAGE_KINDS
-        path = item["path"]
-        assert isinstance(path, str) and path
-        assert "\\" not in path and ":" not in path and not path.startswith("/")
-        assert all(
-            segment not in ("", ".", "..") for segment in path.split("/")
-        )
-        symbol = item["symbol"]
-        assert isinstance(symbol, str) and "#" in symbol
-        assert len(symbol) <= 200
-        operation = item["operation"]
-        assert operation is None or (
-            isinstance(operation, str) and operation
-        )
-        indices = item["legacyIndices"]
-        assert indices == sorted(set(indices))
-        if item["kind"] in (
-            COVERAGE_COVERED_BY_RESOLVED_LEGACY_ROW,
-            COVERAGE_OBSERVED_BUT_UNRESOLVED,
-        ):
-            assert indices
-            assert set(indices) <= record_indexes
-        else:
-            # JSON decoding yields a LIST, never a tuple: compare against
-            # the list form (an ``== ()`` pin can never hold here).
-            assert indices == []
-        identities.append((path, symbol, operation or ""))
-    # Deterministic (path, symbol, operation) ordering.
-    assert identities == sorted(identities)
-    # NOTE (R13 278-vs-295 reconciliation): deliberately NO uniqueness
-    # assertion on these tuples.  Site-level identity (the documented PR-GR-05
-    # contract) is finer than (path, symbol, operation): distinct observed
-    # sites at one callable performing the same operation against different
-    # DAOs serialize identically because the entry schema carries no dao
-    # identity (tracked artifact: 295 site entries -> 278 unique tuples, 17
-    # legitimate repeats).  A uniqueness demand here would over-fold those
-    # sites and under-report coverage; the partition invariant is pinned
-    # in-process by test_real_run_coverage_partitions_observed_universe.
-    # Counts consistent: per-kind counts sum to the section total.
-    kind_counts = {}
-    for item in mutations:
-        kind_counts[item["kind"]] = kind_counts.get(item["kind"], 0) + 1
-    assert sum(kind_counts.values()) == len(mutations)
+    _shared_assert_coverage_section_semantics(mutations, records)
 
 
 def test_tracked_accounting_artifact_matches_regeneration_bytes(
@@ -3249,3 +3209,274 @@ def test_candidate_row_without_declaring_file_stays_parser_unsupported(tmp_path)
     assert row.index == 0
     assert row.legacy_class == "Repository"
     assert row.legacy_method == "store"
+
+
+# ── Appended (PR-GR-10b): --verify artifact sync mode ─────────────────────────
+#
+# ONE --verify flow replacing the hand-edit drift loop of rounds R11-R13:
+# the migrate CLI regenerates the tracked candidate/accounting pair IN
+# MEMORY from the SAME reviewed inputs and compares it through the shared
+# comparison helpers (candidate entries byte-exact, accounting stable
+# sections byte-exact, coverage semantics, fold-derived distribution).
+# The CI tripwire guard ``db_artifact_sync`` runs exactly this mode, so
+# hand-edit drift fails every suite run and CI.  ``--verify`` must NEVER
+# write the tracked artifacts; drift exits 1, infrastructure exits 2.
+#
+# Cost posture: the happy-path fixture runs ONE verify subprocess per
+# module (shared by the happy-path, never-writes, and distribution
+# tests); each drift test runs its own verify subprocess against a
+# TAMPERED COPY under ``tmp_path`` — the real tracked artifacts are only
+# ever read.
+
+VERIFY_REPORT_SCHEMA = "db-policy-artifact-verify-report"
+
+
+@pytest.fixture(scope="module")
+def tracked_verify(tmp_path_factory):
+    """One happy-path ``--verify`` run against the real tracked artifacts.
+
+    Shared by the happy-path, never-writes, and distribution-derivation
+    tests so the (expensive, full-tree) regeneration runs exactly once
+    per module.  Fingerprints the tracked candidate/accounting artifacts
+    (and the active policy) around the run so the never-writes contract
+    is proven on the very same subprocess.
+    """
+    watched = (ACTIVE_POLICY, TRACKED_CANDIDATE, TRACKED_ACCOUNTING)
+    guards_dir = ACTIVE_POLICY.parent
+    listing_before = sorted(item.name for item in guards_dir.iterdir())
+    before = [_fingerprint(path) for path in watched]
+    out_dir = tmp_path_factory.mktemp("tracked-verify")
+    report = out_dir / "verify-report.json"
+    completed = _run_cli(
+        "--verify",
+        "--seed-rows",
+        str(COMBINED_SEED_FILE),
+        "--report",
+        str(report),
+    )
+    after = [_fingerprint(path) for path in watched]
+    return {
+        "completed": completed,
+        "report_path": report,
+        "tracked_untouched": before == after,
+        "guards_listing_unchanged": listing_before == sorted(
+            item.name for item in guards_dir.iterdir()
+        ),
+    }
+
+
+def test_verify_happy_path_tracked_artifacts_match(tracked_verify):
+    """Tracked artifacts == regeneration -> exit 0, all sections match.
+
+    The stdout JSON and the persisted ``--report`` JSON must be
+    identical (deterministic report output), every compared section must
+    report ``match``, and no detail block may appear anywhere on the
+    happy path.
+    """
+    completed = tracked_verify["completed"]
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    persisted = json.loads(
+        tracked_verify["report_path"].read_text(encoding="utf-8")
+    )
+    assert report == persisted
+    assert report["schema"] == VERIFY_REPORT_SCHEMA
+    assert report["version"] == 1
+    assert report["artifacts"] == {
+        "candidate": "tracked",
+        "accounting": "tracked",
+    }
+    assert report["candidate"]["match"] is True
+    assert set(report["candidate"]["sections"].values()) == {"match"}
+    assert report["accounting"]["match"] is True
+    assert set(report["accounting"]["sections"].values()) == {"match"}
+    assert set(report["accounting"]["semantic"].values()) == {"match"}
+    assert report["distribution"]["status"] == "match"
+    assert report["match"] is True
+    assert "detail" not in report["candidate"]
+    assert "detail" not in report["accounting"]
+    assert "detail" not in report["distribution"]
+
+
+def test_verify_never_writes_tracked_artifacts(tracked_verify):
+    """The verify subprocess leaves every tracked artifact byte-identical.
+
+    mtime/size/sha256 fingerprints of the active policy, the tracked
+    candidate, and the tracked accounting are taken before and after the
+    fixture's verify run; the config/guards directory listing must also
+    be unchanged (no temp files left behind).
+    """
+    assert tracked_verify["tracked_untouched"] is True
+    assert tracked_verify["guards_listing_unchanged"] is True
+
+
+def test_verify_report_distribution_matches_accounting_records(
+    tracked_verify,
+):
+    """Pin the DERIVATION: fold-derived distribution == records-derived.
+
+    The verify report emits the resolved/unresolved/keeper triple
+    derived from the ACTUAL fold (``derive_fold_distribution`` over the
+    ``MigrationResult``) and the same triple derived independently from
+    the tracked accounting's records.  This test re-derives the records
+    distribution from the tracked artifact and asserts the report's
+    fold-derived numbers equal it — the machine-checkable layer the R12
+    literal pins lacked.
+
+    Literal cross-check (kept deliberately, with its derivation): 57
+    resolved indices = 99 legacy inputs minus the 42 closed-status debt
+    rows (CALLABLE_AMBIGUOUS=5 + CALLABLE_MISSING=16 +
+    DAO_IDENTITY_UNRESOLVED=20 + MUTATION_PAIR_MISSING=1); keeper=47 =
+    the 57 emitting indices minus the 10 folded-only ones (41, 42 from
+    fold group (a); 23-27 from group (b); 16 from group (c); 19, 20 from
+    group (d)) — the full fold derivation is documented on
+    ``test_real_run_distribution_pinned_and_reproducible``.
+    """
+    completed = tracked_verify["completed"]
+    assert completed.returncode == 0, completed.stderr
+    report = json.loads(completed.stdout)
+    tracked_payload = json.loads(
+        TRACKED_ACCOUNTING.read_text(encoding="utf-8")
+    )
+    records_distribution = _shared_distribution_from_accounting_records(
+        tracked_payload["records"]
+    )
+    assert report["distribution"]["derivedFromFold"] == records_distribution
+    assert (
+        report["distribution"]["derivedFromTrackedRecords"]
+        == records_distribution
+    )
+    assert records_distribution == {
+        "resolved": 57,
+        "unresolved": 42,
+        "keeper": 47,
+    }
+
+
+def test_verify_detects_hand_edited_candidate(tmp_path):
+    """An injected hand edit to the tracked candidate -> exit 1, named.
+
+    The drift is injected into a COPY under ``tmp_path`` (the real
+    tracked artifacts are never written); the verify report must name
+    the drifted section (``candidate.entries``), flag the
+    candidate/accounting pair digest desync, and NEVER echo the drifted
+    content — details are bounded structural summaries only.
+    """
+    candidate_copy = tmp_path / "candidate.yml"
+    document = yaml.safe_load(TRACKED_CANDIDATE.read_text(encoding="utf-8"))
+    document["entries"][0]["reason"] = (
+        document["entries"][0]["reason"] + " hand-edit drift marker"
+    )
+    candidate_copy.write_bytes(
+        yaml.safe_dump(
+            document, sort_keys=False, allow_unicode=False
+        )
+        .replace("\r\n", "\n")
+        .encode("utf-8")
+    )
+    accounting_copy = tmp_path / "accounting.json"
+    accounting_copy.write_bytes(TRACKED_ACCOUNTING.read_bytes())
+    completed = _run_cli(
+        "--verify",
+        "--seed-rows",
+        str(COMBINED_SEED_FILE),
+        "--output",
+        str(candidate_copy),
+        "--accounting-out",
+        str(accounting_copy),
+    )
+    assert completed.returncode == 1, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["match"] is False
+    assert report["candidate"]["sections"]["entries"] == "mismatch"
+    assert report["candidate"]["sections"]["schemaVersion"] == "match"
+    assert report["accounting"]["semantic"]["candidateSha256Pair"] == (
+        "mismatch"
+    )
+    assert "hand-edit drift marker" not in completed.stdout
+    assert "detail" in report["candidate"]
+
+
+def test_verify_detects_seedless_regeneration(tmp_path):
+    """A seed-less regeneration can never match the seeded artifacts.
+
+    The R12 lesson pinned: the tracked candidate is 472 entries = 57
+    legacy-resolved + 415 seed rows, and the tracked accounting's
+    ``seedRecords`` crosswalk carries the same 415 rows.  Running
+    ``--verify`` WITHOUT the reviewed ``--seed-rows`` input must report
+    drift on exactly the seed-carrying sections (candidate entries +
+    accounting seedRecords) while the seed-independent sections
+    (records) still match — exit 1.
+    """
+    completed = _run_cli("--verify")
+    assert completed.returncode == 1, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["match"] is False
+    assert report["candidate"]["sections"]["entries"] == "mismatch"
+    assert report["accounting"]["sections"]["seedRecords"] == "mismatch"
+    assert report["accounting"]["sections"]["records"] == "match"
+    assert report["accounting"]["detail"]["seedRecords"] == (
+        "section present only in the tracked artifact"
+    )
+
+
+def test_verify_detects_coverage_semantic_drift(tmp_path):
+    """A semantically invalid coverage section -> exit 1, coverage named.
+
+    The R12 contract pins the tree-dependent ``sourceMutations`` section
+    SEMANTICALLY (closed kind vocabulary, ordering, index consistency) —
+    never by bytes.  Injecting a kind outside the closed vocabulary into
+    a COPY of the tracked accounting must fail the verify run through
+    the SHARED semantic helper, name the coverage section, and never
+    echo the tampered (untrusted) value.
+    """
+    accounting_copy = tmp_path / "accounting-tampered.json"
+    payload = json.loads(TRACKED_ACCOUNTING.read_text(encoding="utf-8"))
+    payload["sourceMutations"][0]["kind"] = "TAMPERED_KIND"
+    accounting_copy.write_bytes(
+        (
+            json.dumps(payload, sort_keys=False, separators=(",", ":"))
+            + "\n"
+        ).encode("utf-8")
+    )
+    completed = _run_cli(
+        "--verify",
+        "--seed-rows",
+        str(COMBINED_SEED_FILE),
+        "--accounting-out",
+        str(accounting_copy),
+    )
+    assert completed.returncode == 1, completed.stderr
+    report = json.loads(completed.stdout)
+    assert report["match"] is False
+    assert report["accounting"]["semantic"]["coverage"] == "mismatch"
+    assert "TAMPERED_KIND" not in completed.stdout
+    assert "coverage" in report["accounting"]["semanticDetail"]
+
+
+def test_verify_infrastructure_failure_missing_artifacts(tmp_path):
+    """Missing tracked artifacts -> exit 2 with a bounded diagnostic.
+
+    Infrastructure failures are not drift: an unreadable verification
+    baseline fails closed (exit 2) with the fixed bounded stderr
+    message — never a path, never a traceback — and writes nothing.
+    """
+    missing_candidate = tmp_path / "missing-candidate.yml"
+    missing_accounting = tmp_path / "missing-accounting.json"
+    completed = _run_cli(
+        "--verify",
+        "--seed-rows",
+        str(COMBINED_SEED_FILE),
+        "--output",
+        str(missing_candidate),
+        "--accounting-out",
+        str(missing_accounting),
+    )
+    assert completed.returncode == 2
+    assert completed.stderr.strip() == (
+        "tracked candidate artifact is missing, unreadable, or malformed"
+    )
+    assert "Traceback" not in completed.stderr
+    assert not missing_candidate.exists()
+    assert not missing_accounting.exists()
+    assert list(tmp_path.iterdir()) == []

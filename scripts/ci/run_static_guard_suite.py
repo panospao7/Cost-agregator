@@ -157,6 +157,21 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
         "blocking",
     ),
     ("deprecation_escalations", ["python3", "scripts/ci/verify_deprecation_escalations.py", "--root", "."], "blocking"),
+    # PR-GR-10b artifact-sync tripwire: the migrate CLI's --verify mode
+    # regenerates the tracked candidate/accounting artifacts IN MEMORY from
+    # the SAME reviewed inputs (--seed-rows) and exits 1 when the tracked
+    # files drift (hand-edit drift becomes visible in every suite run and
+    # CI).  Tokenized argv per the GUARD_MANIFEST pattern; the suite's
+    # per-guard timeout (GUARD_TIMEOUT_SECONDS budget) bounds the run.
+    (
+        "db_artifact_sync",
+        [
+            "python3", "scripts/migrate_db_policy_signatures.py",
+            "--verify",
+            "--seed-rows", "docs/ci/db-findings/GR-08-seeds.yml",
+        ],
+        "blocking",
+    ),
 
     # release_artifact verification runs in the release-check CI job after assembleRelease, not here
 
@@ -279,6 +294,10 @@ GUARD_TIME_BUDGETS: Dict[str, float] = {
     "lint_baseline_policy": 300.0,
     "time_boundaries": 300.0,
     "deprecation_escalations": 300.0,
+    # PR-GR-10b: the verify mode regenerates the artifact pair in memory
+    # (full legacy-policy migration over the production tree, no coverage
+    # scan); observed migration runs sit well under this ceiling.
+    "db_artifact_sync": 600.0,
     "cancellation": 300.0,
     "privacy": 300.0,
     "db_access": 840.0,
