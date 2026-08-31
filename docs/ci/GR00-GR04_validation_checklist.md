@@ -134,10 +134,10 @@ git diff cf07b04b~1 --exit-code -- config/baselines/db_access.json config/guards
 | --- | --- |
 | Active DB gate | authoritative-v2, trusted exit 0 (clean) / exit 1 (real findings); v1 archived at db_ownership_policy.legacy.yml; ratchet v2 live (empty baseline). Post-GR-05 real tree (Revision 2): accepted — exit 0, trusted, 0 findings, 20 x DB_SIGNATURE_UNRESOLVED advisory |
 | Inventory-only | exit 2 on Windows pre-existing debt, trusted-equivalent to base |
-| Migration | exit 1 resolved=9/99 |
+| Migration | exit 1 resolved=57/99 unresolved=42 (fold truth) |
 | Meta-guard | exit 0 |
 | Candidate | v2 472 entries byte-reproducible |
-| Structural pin | 62 retained |
+| Structural pin | 64 retained (60 expected + 4 fixtures) |
 | Test-result freshness | optional stamp row (PR-GR-10f): SKIP when never stamped (non-blocking); PASS when the stamp matches HEAD, is within max age, and no XML is newer than it; FAIL on stale/SHA drift |
 
 Closing note: if all sections pass, branch gr-00-local is fully validated for PR/merge and GR-05 can start. If anything fails, route output back to the orchestrator fix loop.
@@ -233,3 +233,19 @@ Date: 2026-08-31. Status: pending re-validation.
    FAIL on stale/SHA drift. The known-good-state scorecard now renders
    seven rows (six pinned + this optional one) and its summary line carries
    a skip count.
+
+## Revision 5 (post GR-10f §7 stale-cell corrections)
+
+Date: 2026-08-31. Status: pending re-validation.
+
+Two Section 7 cells flagged stale by the GR-10f coder were corrected to the
+current fold truth (the same truth already pinned by the known-good-state
+scorecard and the guard registry description: migration fold truth 99/57/42,
+structural manifest pin 64):
+
+1. Section 7: the "Migration" row was updated from the stale
+   `exit 1 resolved=9/99` to the current fold truth — exit 1,
+   resolved=57/99, unresolved=42 (99 inputs total).
+2. Section 7: the "Structural pin" row was updated from the stale
+   `62 retained` to the current structural_entries truth — 64 retained
+   (60 expected + 4 fixtures).

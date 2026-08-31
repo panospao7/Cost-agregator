@@ -84,6 +84,114 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # ── Evidence Gate (PR-GR-10d) ────────────────────────────────────────────
+  # Runs the §5 two-run DB-guard evidence capture (docs/ci/
+  # GR00-GR04_validation_checklist.md) on every PR: two capture runs of
+  # scripts/ci/capture_db_guard_evidence.py at the caller-pinned
+  # merge-commit SHA, then a byte-equality comparison of the two
+  # deterministic semantic-summary.json files. The capture tool exits 0
+  # only when a capture is complete/trusted with every required artifact
+  # present (including the observed DB gate child result); this job fails
+  # if either capture exits nonzero or the two summaries are not
+  # byte-identical.
+  #
+  # Runtime / scoping decision: the tool's argparse exposes NO subset or
+  # scoping flags (only --root / --out / --expected-sha / --allow-dirty),
+  # so the full declared command matrix runs twice per PR: registry
+  # validation, focused Python tests, inventory-only scan, DB CLI, DB
+  # ratchet, the full static guard suite, and two Gradle invocations
+  # (verifyDbAccessBoundaries + check --dry-run). Estimated ~15-30 min per
+  # run on a CI runner (~30-60 min total; the static-guards job bounds the
+  # suite at ~10 min and the DB gate child is ~4 min cached), so the job
+  # timeout is sized at 120 min for cold-cache variance. If this proves too
+  # heavy per-PR, the follow-up is an explicit subset flag in the capture
+  # tool itself (a strict-review change to its fixed declared matrix), not
+  # workflow-side scoping.
+  #
+  # PYTEST_ADDOPTS zero-side-effect pin: the static suite's guard_tests
+  # child runs pytest without disabling cacheprovider, and .pytest_cache/ is
+  # not git-ignored — a plain run would materialize an untracked
+  # .pytest_cache/ and the capture's post-matrix `git status` re-check would
+  # fail the capture closed (drift). Disabling cacheprovider for every
+  # pytest child keeps the captured checkout status-clean (same rationale as
+  # the tool's own focused-tests matrix entry).
+  #
+  # Reproduce locally:
+  #   python3 scripts/ci/capture_db_guard_evidence.py --root . \
+  #     --expected-sha $(git rev-parse HEAD) \
+  #     --out build/guard-evidence/<sha>/run-1
+  evidence-gate:
+    needs: [validate-workflow, compile]
+    name: Evidence Gate (Two-Run Capture)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      PYTEST_ADDOPTS: "-p no:cacheprovider"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install pytest pyyaml
+
+      - name: Grant execute permission for Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Resolve pinned commit SHA (caller-stated run pin)
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Capture evidence (run 1)
+        run: python3 scripts/ci/capture_db_guard_evidence.py --root . --expected-sha ${{ steps.sha.outputs.sha }} --out build/guard-evidence/${{ steps.sha.outputs.sha }}/run-1
+
+      - name: Capture evidence (run 2)
+        run: python3 scripts/ci/capture_db_guard_evidence.py --root . --expected-sha ${{ steps.sha.outputs.sha }} --out build/guard-evidence/${{ steps.sha.outputs.sha }}/run-2
+
+      - name: Compare semantic summaries (must be byte-identical)
+        run: |
+          run1="build/guard-evidence/${{ steps.sha.outputs.sha }}/run-1/semantic-summary.json"
+          run2="build/guard-evidence/${{ steps.sha.outputs.sha }}/run-2/semantic-summary.json"
+          if ! cmp -s "$run1" "$run2"; then
+            echo "::error::semantic-summary.json differs between run-1 and run-2 (non-deterministic evidence capture)"
+            diff "$run1" "$run2" || true
+            exit 1
+          fi
+          echo "Semantic summaries are byte-identical"
+
+      - name: Upload evidence bundle (run 1)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-run-1
+          path: build/guard-evidence/${{ steps.sha.outputs.sha }}/run-1/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload evidence bundle (run 2)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-run-2
+          path: build/guard-evidence/${{ steps.sha.outputs.sha }}/run-2/
+          if-no-files-found: error
+          retention-days: 7
+
   # ── Static Guard Scripts ─────────────────────────────────────────
   # Runs all Python-based architecture guard scripts and their pytest
   # test suites. These enforce project-specific rules that Gradle-based
