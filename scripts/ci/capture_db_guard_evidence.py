@@ -28,7 +28,10 @@ What it does
    capture failures.
 3. Every command log is in exactly one of two states:
    * ``COMPLETE`` — the entire combined stdout/stderr was captured within the
-     bounded size cap, written atomically, hashed (SHA-256), and marked
+     row's bounded size cap (the global ``CHILD_OUTPUT_LIMIT``, or a per-row
+     ``output_limit`` override up to ``MAX_ROW_OUTPUT_LIMIT`` for rows whose
+     real output needs more room — e.g. the verbose focused-python-tests
+     stream), written atomically, hashed (SHA-256), and marked
      complete (``logComplete=true``); or
    * ``INCOMPLETE`` — the size cap was exceeded (``output-limit-exceeded``),
      the log could not be written (``log-write-failed``), or the finished
@@ -130,6 +133,22 @@ SEMANTIC_SCHEMA = "db-guard-evidence.semantic/v1"
 # stdout/stderr.  Bounding prevents unbounded payloads from reaching the evidence
 # bundle (privacy: no unbounded user/SQL/secret output in artifacts).
 CHILD_OUTPUT_LIMIT = 20000
+
+# Per-row persisted-output cap override (GATE-00R two-run follow-up).
+# The log-completeness contract requires a COMPLETE log to be persistable: a
+# command whose entire stream cannot fit under its cap can never produce valid
+# evidence, so the cap must fit the row's real output.  The focused-python-tests
+# row streams ``pytest -v --tb=short`` over eleven focused DB test modules; in
+# the run-01 gate bundle its verbose stream measured ≈200,000 characters (the
+# 20,000-character default cap tripped at ≈10% progress — log_bytes=20011,
+# log_failure_code=output-limit-exceeded).  That row therefore carries a per-row
+# cap override of MAX_ROW_OUTPUT_LIMIT (≈2× measured headroom for test growth);
+# every other row keeps the tight global cap, ``validate_command_matrix``
+# rejects any row cap above this finite bound (fail closed), and a stream
+# exceeding even the raised cap still trips ``output-limit-exceeded`` → capture
+# exit 2.  The override changes only how much is PERSISTED — redaction and the
+# over-cap fail-closed semantics are unchanged.
+MAX_ROW_OUTPUT_LIMIT = 400000
 
 # ── Command-log capture contract (PR-GR-00R part B) ───────────────────────────
 # A command log is in exactly one of two states:
@@ -340,6 +359,10 @@ WARNING_CODE_ALLOWLIST = frozenset({
     "invalid-matrix-argv",
     "invalid-bundle-path",
     "missing-artifact-kind",
+    # Per-row output-cap override (GATE-00R follow-up): a custom row whose
+    # ``output_limit`` is not a bounded non-negative integer fails closed so the
+    # persisted-output bounding contract cannot be lifted by a hostile matrix.
+    "invalid-output-limit",
     # Required-input / artifact / report failures.
     "missing-required-input",
     "missing-blob-id",
@@ -399,6 +422,14 @@ class CommandSpec:
     # a required artifact whose kind is absent or not ``"file"``/``"dir"`` fails
     # closed with ``missing-artifact-kind:<id>:<rel>``.
     artifact_kinds: Tuple[Tuple[str, str], ...] = ()
+    # Per-row persisted-output cap override (GATE-00R follow-up): when set, this
+    # row's command log may persist up to this many sanitized characters instead
+    # of the global ``CHILD_OUTPUT_LIMIT``.  Must be ``None`` or an int in
+    # ``[0, MAX_ROW_OUTPUT_LIMIT]`` — anything else fails closed with
+    # ``invalid-output-limit:<id>`` before any runner call.  ``None`` (the
+    # default) keeps the global cap; redaction and the over-cap → exit-2
+    # semantics are identical under either cap.
+    output_limit: Optional[int] = None
 
 
 @dataclass
@@ -1177,8 +1208,10 @@ class _CommandLogSink:
     Sanitized chunks of the combined stdout/stderr stream are appended to a
     sibling temporary file; ``finish`` flushes, fsyncs, and ``os.replace``s it
     onto the final log path, so a reader only ever sees a fully published
-    artifact.  Once ``CHILD_OUTPUT_LIMIT`` sanitized characters have been
-    persisted the sink flags ``output-limit-exceeded``, appends the single
+    artifact.  Once the configured cap (``limit`` — the row's effective
+    persisted-output cap: a per-row override or the global
+    ``CHILD_OUTPUT_LIMIT``) sanitized characters have been persisted the sink
+    flags ``output-limit-exceeded``, appends the single
     ``LOG_TRUNCATION_MARKER``, and discards further input — the caller keeps
     draining the child pipe so the child can never block on a full pipe.  Any
     filesystem failure flags ``log-write-failed`` (sticky) instead of raising;
@@ -1188,8 +1221,9 @@ class _CommandLogSink:
     calls.
     """
 
-    def __init__(self, final_path: str) -> None:
+    def __init__(self, final_path: str, limit: int = CHILD_OUTPUT_LIMIT) -> None:
         self.final_path = final_path
+        self.limit = limit
         self.tmp_path: Optional[str] = None
         self._handle = None
         self._pending = ""
@@ -1250,7 +1284,7 @@ class _CommandLogSink:
 
     def _emit_line(self, line: str) -> None:
         sanitized = _sanitize_log_line(line)
-        room = CHILD_OUTPUT_LIMIT - self.persisted_chars
+        room = self.limit - self.persisted_chars
         if room <= 0:
             self._trip_cap()
             return
@@ -2024,6 +2058,46 @@ def parse_v2_report(path: str, raw: Optional[bytes] = None) -> Dict[str, Any]:
 
 
 # ── Command matrix (default) ──────────────────────────────────────────────────
+def _suite_python() -> str:
+    """Interpreter token for the capture matrix's Python rows.
+
+    Mirrors ``run_static_guard_suite.py``'s ``SUITE_PYTHON`` pattern: the
+    interpreter is resolved at matrix construction from ``sys.executable`` so
+    matrix rows never depend on a bare ``python3``/``python`` PATH name, which
+    is missing or broken on some hosts (on Windows the ``python3`` app-execution
+    alias exits 9009 — command not found — so every ``python3`` matrix row
+    failed to launch).
+
+    The capture tool's argv-containment contract is stricter than the static
+    suite's: every matrix argv token must be repository-relative-safe (no
+    absolute/machine path, no drive prefix, no backslash — enforced by
+    ``validate_command_matrix`` and pinned by the no-absolute-argv test), so the
+    resolved token is the running interpreter's *file name* (the
+    ``sys.executable`` basename) rather than its full path.  On Windows,
+    CreateProcess resolves a bare executable name against the calling process's
+    own executable directory first, so matrix rows run under the SAME
+    interpreter that runs this tool; on POSIX the name resolves via PATH (the
+    running interpreter is on PATH in every supported invocation).  The result
+    is deterministic across two runs on one machine, involves no shell, and
+    persists verbatim (a bare name is never redacted).
+    """
+    return os.path.basename(sys.executable) or "python3"
+
+
+def _suite_gradlew() -> str:
+    """Gradle wrapper launcher token for the capture matrix's Gradle rows.
+
+    Resolved at matrix construction, platform-conditional: the POSIX ``./gradlew``
+    name cannot launch on Windows (the wrapper batch file is ``gradlew.bat``;
+    the extensionless POSIX script is not executable there, so the rows exited
+    ``None`` with 0-byte logs).  ``gradlew.bat`` on Windows (``os.name == 'nt'``),
+    ``./gradlew`` elsewhere.  Both forms are repository-relative-safe argv
+    tokens (validator-clean, persisted verbatim) and keep the argv tokenized —
+    never a shell string.
+    """
+    return "gradlew.bat" if os.name == "nt" else "./gradlew"
+
+
 def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
     """Build the fixed command matrix (plan sections B–H).
 
@@ -2035,6 +2109,24 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
     absolute) so no machine path leaks through the evidence. The ratchet child
     command uses repeatable ``--command-arg=<value>`` tokens so option-like
     child values are never re-parsed by a shell.
+
+    Interpreter and wrapper tokens are resolved at matrix construction
+    (``_suite_python`` / ``_suite_gradlew``): every Python row runs under the
+    interpreter executing this tool and every Gradle row uses the
+    platform-correct wrapper launcher, so the matrix launches identically on
+    Windows and POSIX.  The ratchet row's nested ``--command-arg=python3`` token
+    is deliberately left for the ratchet's own cross-platform interpreter
+    resolution (``guard_ratchet.py`` resolves ``python3`` → ``sys.executable``
+    on Windows).  The db-ratchet row pins the GR-09-migrated v2 baseline
+    (``config/baselines/db_access_v2.json``) with ``--finding-protocol=2`` — the
+    legacy v1 baseline predates protocol 2 (RATCHET_V1_BASELINE_INCOMPATIBLE),
+    so the required ratchet summary artifact could never be produced — and
+    declares that summary as a hashed required artifact only (it is a ratchet
+    summary, not a protocol-v2 findings report, so no v2 report parse is
+    declared).  The
+    focused-python-tests row carries the per-row persisted-output cap override
+    (``MAX_ROW_OUTPUT_LIMIT``) so its verbose pytest stream stays a COMPLETE,
+    persistable log per the log-completeness contract.
     """
     bundle_rel = _posix_rel(out_dir, root)
 
@@ -2046,13 +2138,13 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
         CommandSpec(
             id="registry-validation",
             log_name="00-registry.log",
-            argv=["python3", "scripts/ci/verify_guard_registry.py"],
+            argv=[_suite_python(), "scripts/ci/verify_guard_registry.py"],
         ),
         CommandSpec(
             id="focused-python-tests",
             log_name="01-focused-python-tests.log",
             argv=[
-                "python3", "-m", "pytest",
+                _suite_python(), "-m", "pytest",
                 "scripts/ci/test_guard_findings.py",
                 "scripts/ci/test_guard_ratchet.py",
                 "scripts/ci/test_guard_ratchet_v2.py",
@@ -2074,12 +2166,17 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
                 # unreachable. The matrix must leave the working tree untouched.
                 "-p", "no:cacheprovider",
             ],
+            # Per-row persisted-output cap override (GATE-00R follow-up): the
+            # verbose pytest stream measured ≈200K chars (run-01 bundle: the
+            # 20,000-char global cap tripped at ≈10% progress), and a COMPLETE
+            # log must be persistable.  See MAX_ROW_OUTPUT_LIMIT.
+            output_limit=MAX_ROW_OUTPUT_LIMIT,
         ),
         CommandSpec(
             id="room-inventory",
             log_name="02-room-inventory.log",
             argv=[
-                "python3", "scripts/verify_db_access_boundaries.py",
+                _suite_python(), "scripts/verify_db_access_boundaries.py",
                 "--inventory-only",
                 "--findings-output", rop("02-room-inventory.findings.json"),
                 "--dump-room-mutators", rop("02-room-mutators.json"),
@@ -2095,7 +2192,7 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             id="db-cli",
             log_name="03-db-cli.log",
             argv=[
-                "python3", "scripts/verify_db_access_boundaries.py",
+                _suite_python(), "scripts/verify_db_access_boundaries.py",
                 "--fail-on-violation",
                 "--ownership-policy", "config/guards/db_ownership_policy.yml",
                 "--structural-exceptions", "config/guards/db_structural_exceptions.yml",
@@ -2110,8 +2207,11 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             id="db-ratchet",
             log_name="04-db-ratchet.log",
             argv=[
-                "python3", "scripts/ci/guard_ratchet.py",
+                _suite_python(), "scripts/ci/guard_ratchet.py",
                 "--guard-name=db_access",
+                # The nested interpreter token is resolved by the ratchet itself
+                # (guard_ratchet.py maps python3 → sys.executable on Windows),
+                # so the child command launches cross-platform unchanged.
                 "--command-arg=python3",
                 "--command-arg=scripts/verify_db_access_boundaries.py",
                 "--command-arg=--fail-on-violation",
@@ -2121,12 +2221,21 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
                 "--command-arg=config/guards/db_structural_exceptions.yml",
                 "--command-arg=--structural-manifest",
                 "--command-arg=config/guards/db_structural_exceptions_expected_methods.yml",
-                "--baseline=config/baselines/db_access.json",
+                # GR-09-migrated v2 baseline: protocol 2 rejects the legacy v1
+                # baseline (RATCHET_V1_BASELINE_INCOMPATIBLE), which left the
+                # required ratchet summary artifact permanently missing.
+                "--baseline=config/baselines/db_access_v2.json",
                 "--ci-mode",
                 "--finding-protocol=2",
                 "--output-summary", rop("04-db-ratchet.summary.json"),
             ],
-            report_path="04-db-ratchet.summary.json",
+            # No ``report_path``: the ratchet's ``--output-summary`` artifact is
+            # a ratchet summary (guard/protocol/schema/counts/final_exit_code —
+            # see ``guard_ratchet.write_summary_json_v2``), NOT a protocol-v2
+            # findings report, so a v2 report parse here would fail closed with
+            # SCHEMA_MISMATCH even after the v2 baseline fix.  The summary stays
+            # a required, tamper-evidently hashed artifact via
+            # ``required_artifacts`` below.
             required_artifacts=("04-db-ratchet.summary.json",),
             artifact_kinds=(("04-db-ratchet.summary.json", "file"),),
         ),
@@ -2134,7 +2243,7 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             id="static-suite",
             log_name="05-static-suite.log",
             argv=[
-                "python3", "scripts/ci/run_static_guard_suite.py",
+                _suite_python(), "scripts/ci/run_static_guard_suite.py",
                 "--output-dir", rop("05-static-suite"),
             ],
             required_artifacts=("05-static-suite", "05-static-suite/summary.json"),
@@ -2146,12 +2255,12 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
         CommandSpec(
             id="gradle-db",
             log_name="06-gradle-db.log",
-            argv=["./gradlew", ":app:verifyDbAccessBoundaries", "--no-daemon", "--stacktrace"],
+            argv=[_suite_gradlew(), ":app:verifyDbAccessBoundaries", "--no-daemon", "--stacktrace"],
         ),
         CommandSpec(
             id="gradle-task-graph",
             log_name="07-gradle-task-graph.log",
-            argv=["./gradlew", ":app:check", "--dry-run", "--no-daemon"],
+            argv=[_suite_gradlew(), ":app:check", "--dry-run", "--no-daemon"],
         ),
         # ── GATE-00R extension rows (appended; existing rows unchanged) ──────
         # Direct time-boundary guard observation (strict-zero guard, no
@@ -2161,7 +2270,7 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             id="time-direct",
             log_name="08-time-direct.log",
             argv=[
-                "python", "scripts/verify_time_boundaries.py",
+                _suite_python(), "scripts/verify_time_boundaries.py",
                 "--root", ".",
                 "--allowlist", "config/guards/time_boundary_exceptions.yml",
                 "--fail-on-violation",
@@ -2174,7 +2283,7 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             id="time-tests",
             log_name="09-time-tests.log",
             argv=[
-                "python", "-m", "pytest",
+                _suite_python(), "-m", "pytest",
                 "scripts/test_verify_time_boundaries.py",
                 "-v", "--tb=short",
                 "-p", "no:cacheprovider",
@@ -2188,7 +2297,7 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             id="db-inventory",
             log_name="10-db-inventory.log",
             argv=[
-                "python", "scripts/verify_db_access_boundaries.py",
+                _suite_python(), "scripts/verify_db_access_boundaries.py",
                 "--inventory-only",
                 "--findings-output", rop("reports", "db-inventory.json"),
                 "--dump-room-mutators", rop("reports", "room-mutators.json"),
@@ -2205,7 +2314,7 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
         CommandSpec(
             id="gradle-compile",
             log_name="11-gradle-compile.log",
-            argv=["./gradlew", ":app:compileDebugKotlin",
+            argv=[_suite_gradlew(), ":app:compileDebugKotlin",
                   "--no-daemon", "--stacktrace", "--console=plain"],
         ),
     ]
@@ -2329,6 +2438,14 @@ def validate_command_matrix(
             if kind not in ("file", "dir"):
                 violations.append(
                     make_warning("missing-artifact-kind", spec_id, _sanitize_warning_token(str(art)[:64])))
+        # output_limit (when present) must be a bounded non-negative integer so a
+        # hostile custom matrix cannot lift the persisted-output cap to an
+        # unbounded value — the bounding contract stays fail closed.
+        output_limit = spec.output_limit
+        if output_limit is not None:
+            if (isinstance(output_limit, bool) or not isinstance(output_limit, int)
+                    or output_limit < 0 or output_limit > MAX_ROW_OUTPUT_LIMIT):
+                violations.append(make_warning("invalid-output-limit", spec_id))
         # argv token validation (absolute/outside, secret, hostile, bounded).
         if len(safe_argv) == 0:
             # An empty argv is a malformed command and must be rejected outright.
@@ -2550,6 +2667,23 @@ def hash_artifact(path: str, kind: str, bundle_root: Optional[str] = None) -> Op
 
 
 # ── Run one command ───────────────────────────────────────────────────────────
+def _effective_output_limit(spec: CommandSpec) -> int:
+    """Resolve a spec's persisted-output cap for its command log.
+
+    A valid per-row ``output_limit`` override (int in ``[0, MAX_ROW_OUTPUT_LIMIT]``)
+    replaces the global ``CHILD_OUTPUT_LIMIT``; anything else (``None``, a bool,
+    a non-int, a negative value, or a value above the finite bound) falls back to
+    the global cap.  Matrix validation already fails closed on an invalid
+    override before any runner call; this defensive resolution keeps direct
+    ``run_command`` callers on the bounded global cap instead of raising.
+    """
+    limit = getattr(spec, "output_limit", None)
+    if (isinstance(limit, bool) or not isinstance(limit, int)
+            or limit < 0 or limit > MAX_ROW_OUTPUT_LIMIT):
+        return CHILD_OUTPUT_LIMIT
+    return limit
+
+
 def run_command(
     spec: CommandSpec,
     out_dir: str,
@@ -2563,7 +2697,8 @@ def run_command(
     and ``os.replace``d onto the final name on completion.  The resulting log
     is in exactly one of two states:
 
-    * ``COMPLETE`` — the entire stream fit within ``CHILD_OUTPUT_LIMIT``, was
+    * ``COMPLETE`` — the entire stream fit within the row's effective cap (the
+      per-row ``output_limit`` override or ``CHILD_OUTPUT_LIMIT``), was
       published atomically, and was read back + hashed (``log_complete=True``,
       ``log_sha256`` set, ``log_failure_code=None``); or
     * ``INCOMPLETE`` — the cap was exceeded (``output-limit-exceeded``), a
@@ -2621,7 +2756,9 @@ def run_command(
     # Open the atomic temp log BEFORE executing the child (PR-GR-00R part B):
     # a command whose log cannot be captured is never executed (no
     # uncapturable side effects) and fails closed with ``log-write-failed``.
-    sink = _CommandLogSink(log_abs)
+    # The sink cap is the row's effective persisted-output limit (per-row
+    # override or the global cap); redaction is identical under either cap.
+    sink = _CommandLogSink(log_abs, limit=_effective_output_limit(spec))
     if sink.open():
         if runner is subprocess_runner:
             # Production path: stream the live merged child pipe straight into

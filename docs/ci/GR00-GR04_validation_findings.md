@@ -1054,3 +1054,43 @@ The R13 loop items and 295-truth reconciliation are verified. GR-10a/GR-10c are 
 but their own pins need one more iteration (A: tool output/masking; B: cache invalidation
 semantics). T11 (8100-vs-8156) remains the only Kotlin failure. GR-10b (artifact
 pipeline) can proceed in parallel - its drift-driver is reconciled.
+
+---
+
+## Round 15 (2026-08-31) - GATE-00R two-run evidence attempt at `c10c41d4` (GATE-00R extension + GR-10d + checklist Rev 5)
+
+HEAD `c10c41d4af9b0eb32a127ed5ed0a812b80ae401b`; checkout clean.
+
+### Sequence results
+
+0. Capture self-tests: **52 failed / 125 passed / 8 skipped in 28.8s**. Dominant types
+   IndexError x12 / FileNotFoundError x6 / KeyError x1 - fixture plumbing in the new
+   GATE-00R pins; NO leak-class failures (no hunter2secret/password/over-cap payloads).
+1. run-01: exit 2 (bundle written, trusted=false).
+2. run-02: exit 2 (bundle written, trusted=false).
+3. `fc.exe` semantic-summary.json pair: **BYTE-IDENTICAL** ("no differences encountered")
+   - the failure path is itself deterministic, but the section-5 PASS condition
+   (both exit 0, trusted) is NOT met.
+
+### Blockers identified (with evidence)
+
+1. Windows launcher defect #1: python children launched as `python3` -> exit 9009 on
+   every db row (Windows "command not found"). WORKED AROUND via a python3.exe shim on
+   PATH for the capture invocation only (no repo changes).
+2. Windows launcher defect #2: gradle rows launch `./gradlew` (POSIX name) -> exit None,
+   0-20ms elapsed, 0-byte logs; unlaunchable on Windows. NO env-only workaround; tool must
+   resolve gradlew.bat on Windows.
+3. db-ratchet row: `RATCHET_V1_BASELINE_INCOMPATIBLE: active baseline is v1 (no
+   baseline_schema_version) and cannot be used with finding protocol v2` -> exit 2, no
+   summary.json -> missing-required-artifact. The capture matrix pins finding protocol v2
+   while config/baselines/db_access.json is still v1-schema; matrix row must pin protocol 1
+   (per the round-8b legacy-contract fix) or the baseline must migrate to v2 schema.
+4. focused-python-tests row: `incomplete-command-log:focused-python-tests:
+   output-limit-exceeded` - row output exceeds the capture cap; cap sizing or row scope.
+5. Self-test debt: 52 failing fixture-level pins in scripts/ci/test_capture_db_guard_evidence.py.
+
+### Operator-env notes
+
+Shim PATH + ANDROID_HOME were supplied for the capture invocations only; environment.json
+records redacted variables. Checkout untouched; both bundles remain on disk under
+build/guard-debug/gate-00r/ for loop inspection.

@@ -263,7 +263,11 @@ class ConfigurableFakeRunner:
             raise FileNotFoundError("simulated missing executable")
         if argv and argv[0] == "git":
             return self._git(argv)
-        if argv and _argv_basename(argv[0]) == "gradlew":
+        # Gradle wrapper launcher: the production matrix resolves the token at
+        # construction time (``gradlew.bat`` on Windows, ``./gradlew``
+        # elsewhere), so the fixture branch matches both launcher names by
+        # basename instead of pinning the POSIX form.
+        if argv and _argv_basename(argv[0]) in ("gradlew", "gradlew.bat"):
             return FakeOutcome(self.command_returncodes.get("gradle", 1), "gradle output")
         if "pytest" in argv:
             return FakeOutcome(self.command_returncodes.get("pytest", 0), "pytest output")
@@ -389,10 +393,15 @@ def _fake_matrix(root, out_dir):
 
     Mirrors the real ``default_command_matrix`` contract: argv tokens that point
     at bundle outputs are repository-relative (``bundle_rel/...``), while
-    ``report_path`` is relative to the bundle directory.  This keeps the matrix
-    valid under ``validate_command_matrix`` (no absolute/outside paths).
+    ``report_path`` is relative to the bundle directory; interpreter and Gradle
+    wrapper tokens are resolved through the same module-level resolvers the
+    production matrix uses (``_suite_python`` / ``_suite_gradlew``).  This keeps
+    the matrix valid under ``validate_command_matrix`` (no absolute/outside
+    paths) and exercising the resolved launcher tokens.
     """
     bundle_rel = cap._posix_rel(out_dir, str(root))
+    suite_python = cap._suite_python()
+    suite_gradlew = cap._suite_gradlew()
 
     def rop(*parts):
         return "/".join([bundle_rel, *parts])
@@ -400,11 +409,11 @@ def _fake_matrix(root, out_dir):
     return [
         cap.CommandSpec(
             id="registry-validation", log_name="00-registry.log",
-            argv=["python3", "scripts/ci/verify_guard_registry.py"],
+            argv=[suite_python, "scripts/ci/verify_guard_registry.py"],
         ),
         cap.CommandSpec(
             id="room-inventory", log_name="02-room-inventory.log",
-            argv=["python3", "scripts/verify_db_access_boundaries.py", "--inventory-only",
+            argv=[suite_python, "scripts/verify_db_access_boundaries.py", "--inventory-only",
                   "--findings-output", rop("02-room-inventory.findings.json"),
                   "--dump-room-mutators", rop("02-room-mutators.json")],
             report_path="02-room-inventory.findings.json",
@@ -416,7 +425,7 @@ def _fake_matrix(root, out_dir):
         ),
         cap.CommandSpec(
             id="db-cli", log_name="03-db-cli.log",
-            argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+            argv=[suite_python, "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
                   "--findings-output", rop("03-db-cli.findings.json")],
             report_path="03-db-cli.findings.json",
             required_artifacts=("03-db-cli.findings.json",),
@@ -424,7 +433,7 @@ def _fake_matrix(root, out_dir):
         ),
         cap.CommandSpec(
             id="static-suite", log_name="05-static-suite.log",
-            argv=["python3", "scripts/ci/run_static_guard_suite.py", "--output-dir", rop("05-static-suite")],
+            argv=[suite_python, "scripts/ci/run_static_guard_suite.py", "--output-dir", rop("05-static-suite")],
             required_artifacts=("05-static-suite", "05-static-suite/summary.json"),
             artifact_kinds=(
                 ("05-static-suite", "dir"),
@@ -433,7 +442,7 @@ def _fake_matrix(root, out_dir):
         ),
         cap.CommandSpec(
             id="gradle-db", log_name="06-gradle-db.log",
-            argv=["./gradlew", ":app:verifyDbAccessBoundaries", "--no-daemon"],
+            argv=[suite_gradlew, ":app:verifyDbAccessBoundaries", "--no-daemon"],
         ),
     ]
 
@@ -1668,14 +1677,23 @@ def test_child_output_bounded(tmp_path):
 
 # ── New tests: complete ratchet argv assertion (requirement 7) ──────────────────
 def test_ratchet_argv_complete(tmp_path):
-    """The full ratchet argv is asserted exactly, not merely --command-arg= presence."""
+    """The full ratchet argv is asserted exactly, not merely --command-arg= presence.
+
+    GATE-00R two-run follow-up: the outer interpreter token is the module-level
+    ``_suite_python()`` resolution (a bare ``python3`` exits 9009 on Windows),
+    and the baseline pin is the GR-09-migrated v2 baseline — protocol 2 rejects
+    the legacy v1 baseline (RATCHET_V1_BASELINE_INCOMPATIBLE), which left the
+    required ratchet summary artifact permanently missing.  The nested
+    ``--command-arg=python3`` token is unchanged: the ratchet resolves it to
+    ``sys.executable`` itself (Windows-safe per its own resolution contract).
+    """
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     matrix = cap.default_command_matrix(str(root), str(out))
     ratchet = next(s for s in matrix if s.id == "db-ratchet")
     bundle_rel = cap._posix_rel(str(out), str(root))
     expected = [
-        "python3", "scripts/ci/guard_ratchet.py",
+        cap._suite_python(), "scripts/ci/guard_ratchet.py",
         "--guard-name=db_access",
         "--command-arg=python3",
         "--command-arg=scripts/verify_db_access_boundaries.py",
@@ -1686,7 +1704,7 @@ def test_ratchet_argv_complete(tmp_path):
         "--command-arg=config/guards/db_structural_exceptions.yml",
         "--command-arg=--structural-manifest",
         "--command-arg=config/guards/db_structural_exceptions_expected_methods.yml",
-        "--baseline=config/baselines/db_access.json",
+        "--baseline=config/baselines/db_access_v2.json",
         "--ci-mode",
         "--finding-protocol=2",
         "--output-summary", "/".join([bundle_rel, "04-db-ratchet.summary.json"]),
@@ -3426,12 +3444,16 @@ def test_arbitrary_valid_sha_accepted_as_run_pin(tmp_path):
 
 
 def test_missing_expected_sha_fails_closed_before_any_command(tmp_path):
-    """Omitting the run pin is a controlled failure with ZERO runner calls."""
+    """Omitting the run pin is a controlled failure with ZERO runner calls.
+
+    The base pin is supplied (its own failure mode is covered by
+    ``test_missing_base_ref_fails_closed_before_any_command``) so this test
+    isolates the missing ``expected_sha`` contract."""
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     runner = ConfigurableFakeRunner(dirty=False)
     rc = cap.capture_evidence(str(root), str(out), runner=runner,
-                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
+                              base_ref=BASE_REF_SHA,
                               command_matrix=_fake_matrix(str(root), str(out)))
     assert rc == 2
     # Controlled failure BEFORE any command: not even a git probe was issued.
@@ -3465,12 +3487,15 @@ def test_invalid_expected_sha_syntax_rejected(tmp_path, bad_pin):
 
 
 # Basenames of every guard-suite executable a matrix command could invoke.
+# Both Gradle wrapper launcher names are listed: the production matrix resolves
+# the token at construction (``gradlew.bat`` on Windows, ``./gradlew`` elsewhere).
 _GUARD_SCRIPT_BASENAMES = frozenset({
     "verify_guard_registry.py",
     "verify_db_access_boundaries.py",
     "guard_ratchet.py",
     "run_static_guard_suite.py",
     "gradlew",
+    "gradlew.bat",
     "pytest",
 })
 
@@ -4282,7 +4307,12 @@ def test_detached_head_branch_is_observation_not_failure(tmp_path):
 def test_default_matrix_appends_gate_00r_rows_in_declared_order(tmp_path):
     """The four GATE-00R rows are APPENDED after the existing eight rows, in
     the declared order, with the exact verified flags; every existing row is
-    preserved unchanged ahead of them."""
+    preserved unchanged ahead of them.
+
+    GATE-00R two-run follow-up: interpreter and Gradle wrapper tokens are the
+    module-level resolutions (``_suite_python`` / ``_suite_gradlew``) so the
+    rows launch on Windows too (bare ``python``/``python3``/``./gradlew`` names
+    exit 9009 / launch-fail there)."""
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     matrix = cap.default_command_matrix(str(root), str(out))
@@ -4297,19 +4327,19 @@ def test_default_matrix_appends_gate_00r_rows_in_declared_order(tmp_path):
     by_id = {s.id: s for s in matrix}
     # Flags verified against scripts/verify_time_boundaries.py argparse.
     assert by_id["time-direct"].argv == [
-        "python", "scripts/verify_time_boundaries.py",
+        cap._suite_python(), "scripts/verify_time_boundaries.py",
         "--root", ".",
         "--allowlist", "config/guards/time_boundary_exceptions.yml",
         "--fail-on-violation",
     ]
     assert by_id["time-tests"].argv == [
-        "python", "-m", "pytest",
+        cap._suite_python(), "-m", "pytest",
         "scripts/test_verify_time_boundaries.py",
         "-v", "--tb=short", "-p", "no:cacheprovider",
     ]
     bundle_rel = cap._posix_rel(str(out), str(root))
     assert by_id["db-inventory"].argv == [
-        "python", "scripts/verify_db_access_boundaries.py",
+        cap._suite_python(), "scripts/verify_db_access_boundaries.py",
         "--inventory-only",
         "--findings-output", "/".join([bundle_rel, "reports", "db-inventory.json"]),
         "--dump-room-mutators", "/".join([bundle_rel, "reports", "room-mutators.json"]),
@@ -4322,7 +4352,7 @@ def test_default_matrix_appends_gate_00r_rows_in_declared_order(tmp_path):
         ("reports/room-mutators.json", "file"),
     )
     assert by_id["gradle-compile"].argv == [
-        "./gradlew", ":app:compileDebugKotlin",
+        cap._suite_gradlew(), ":app:compileDebugKotlin",
         "--no-daemon", "--stacktrace", "--console=plain",
     ]
 
@@ -4330,7 +4360,13 @@ def test_default_matrix_appends_gate_00r_rows_in_declared_order(tmp_path):
 class _DefaultMatrixFakeRunner(ConfigurableFakeRunner):
     """Fake runner that also writes the ratchet ``--output-summary`` artifact so
     the FULL default matrix (including its required-artifact gates) can be
-    executed end-to-end against the fixture repository."""
+    executed end-to-end against the fixture repository.
+
+    The summary mirrors the REAL ``guard_ratchet.write_summary_json_v2`` payload
+    shape (guard/protocol/schema/baseline/current/category counts/final exit
+    code) — the db-ratchet row declares it as a hashed required artifact, not as
+    a protocol-v2 findings report, so no v2 report parse is attempted on it.
+    """
 
     def __call__(self, argv, cwd):
         outcome = super().__call__(argv, cwd)
@@ -4340,8 +4376,23 @@ class _DefaultMatrixFakeRunner(ConfigurableFakeRunner):
             parent = os.path.dirname(path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
+            payload = {
+                "guard": "db_access",
+                "protocol": 2,
+                "schema": 2,
+                "baseline": {"keys": 0, "occurrences": 0},
+                "current": {"keys": 0, "occurrences": 0},
+                "NEW_KEYS": 0,
+                "NEW_OCCURRENCES": 0,
+                "RESOLVED_KEYS": 0,
+                "RESOLVED_OCCURRENCES": 0,
+                "UNCHANGED": 0,
+                "EXPIRED_BASELINE_ENTRIES": 0,
+                "final_exit_code": 0,
+            }
             with open(path, "w", encoding="utf-8") as handle:
-                json.dump({"ok": True}, handle)
+                json.dump(payload, handle, indent=2, ensure_ascii=False, sort_keys=True)
+                handle.write("\n")
         return outcome
 
 
@@ -4372,17 +4423,214 @@ def test_default_matrix_gate_00r_rows_execute_with_semantic_summary(tmp_path):
     assert by_id["db-cli"]["exit_code"] == 2
     assert by_id["db-cli"]["report_trusted"] is False
     assert by_id["room-inventory"]["report_trusted"] is True
+    # The db-ratchet row's --output-summary artifact is a hashed required
+    # artifact with NO v2 report parse declared (it is a ratchet summary, not a
+    # protocol-v2 findings report), so the row records no parser error.
+    assert by_id["db-ratchet"]["exit_code"] == 2
+    assert by_id["db-ratchet"]["parser_error"] is None
+    assert by_id["db-ratchet"]["report_schema_version"] is None
     # The db-inventory reports were written under <bundle>/reports/ and hashed.
     assert (out / "reports" / "db-inventory.json").is_file()
     assert (out / "reports" / "room-mutators.json").is_file()
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    evidence_by_id = {c["id"]: c for c in evidence["commands"]}
+    assert evidence_by_id["db-ratchet"]["report_path"] is None
     hashes = evidence["required_artifact_hashes"]
     assert "reports/db-inventory.json" in hashes
     assert "reports/room-mutators.json" in hashes
+    assert "04-db-ratchet.summary.json" in hashes
+    assert not any(w.startswith("invalid-required-report:db-ratchet")
+                   for w in evidence["infrastructure_warnings"])
     # The run id never leaks through the new rows' bundle-relative argv paths.
     for tok in by_id["db-inventory"]["argv"]:
         assert "run-1" not in tok, tok
     assert "--findings-output" in by_id["db-inventory"]["argv"]
     assert "<bundle>/reports/db-inventory.json" in by_id["db-inventory"]["argv"]
+
+
+# ── GATE-00R two-run follow-up: launcher resolution + per-row log cap ──────────
+
+def test_suite_python_resolves_running_interpreter_basename():
+    """``_suite_python()`` resolves the interpreter at construction to a bare,
+    validator-safe executable name derived from ``sys.executable``.
+
+    A bare ``python3`` PATH name exits 9009 on Windows (app-execution alias), so
+    the matrix must carry the running interpreter's own name; the capture tool's
+    argv-containment contract forbids an absolute machine path, hence the
+    basename form (CreateProcess resolves it against the calling process's
+    executable directory first — the SAME interpreter — and POSIX resolves it
+    via PATH)."""
+    token = cap._suite_python()
+    assert isinstance(token, str) and token
+    assert token == (os.path.basename(sys.executable) or "python3")
+    # Validator-safe: no separator, no drive prefix, safe charset (the exact
+    # checks the matrix validator applies to argv tokens).
+    _assert_no_absolute(token)
+    assert cap._SAFE_ARGV_TOKEN_RE.match(token)
+
+
+def test_suite_gradlew_is_platform_conditional():
+    """``_suite_gradlew()`` resolves the wrapper launcher at construction:
+    ``gradlew.bat`` on Windows (os.name == 'nt'), ``./gradlew`` elsewhere —
+    the POSIX name cannot launch on Windows (exit None / 0-byte logs)."""
+    token = cap._suite_gradlew()
+    assert token == ("gradlew.bat" if os.name == "nt" else "./gradlew")
+    # Tokenized argv element: a single repository-relative-safe token, never
+    # shell text.
+    assert " " not in token
+    assert cap._SAFE_ARGV_TOKEN_RE.match(token)
+
+
+def test_default_matrix_rows_use_resolved_launcher_tokens(tmp_path):
+    """Every default-matrix row resolves its interpreter/launcher through the
+    module-level resolvers: Python rows via ``_suite_python()`` (replacing the
+    bare ``python3``/``python`` names) and Gradle rows via ``_suite_gradlew()``
+    (replacing the POSIX-only ``./gradlew``)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    suite_python = cap._suite_python()
+    suite_gradlew = cap._suite_gradlew()
+    python_rows = {
+        "registry-validation", "focused-python-tests", "room-inventory",
+        "db-cli", "db-ratchet", "static-suite",
+        "time-direct", "time-tests", "db-inventory",
+    }
+    gradle_rows = {"gradle-db", "gradle-task-graph", "gradle-compile"}
+    assert python_rows | gradle_rows == {s.id for s in matrix}
+    for spec in matrix:
+        assert spec.argv, spec.id
+        if spec.id in gradle_rows:
+            assert spec.argv[0] == suite_gradlew, (spec.id, spec.argv[0])
+        else:
+            assert spec.argv[0] == suite_python, (spec.id, spec.argv[0])
+        # Resolved tokens stay validator-safe (no absolute/machine path).
+        _assert_no_absolute(spec.argv[0])
+
+
+def test_default_matrix_db_ratchet_pins_v2_baseline_with_protocol_2(tmp_path):
+    """The db-ratchet row pins the GR-09-migrated v2 baseline with
+    ``--finding-protocol=2``.
+
+    The legacy v1 baseline predates protocol 2 (RATCHET_V1_BASELINE_INCOMPATIBLE,
+    exit 2), so the required ratchet summary artifact could never be produced
+    (observed in the run-01 gate bundle: missing-required-artifact +
+    invalid-required-report for 04-db-ratchet.summary.json)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    ratchet = next(s for s in matrix if s.id == "db-ratchet")
+    assert "--baseline=config/baselines/db_access_v2.json" in ratchet.argv
+    assert "--finding-protocol=2" in ratchet.argv
+    assert "--baseline=config/baselines/db_access.json" not in ratchet.argv
+    # The v2 baseline is a preserved control-plane input and exists in the
+    # repository the capture tool guards (relative to the tool's own location).
+    assert "config/baselines/db_access_v2.json" in cap.FORBIDDEN_PRESERVATION_PATHS
+    v2_abs = os.path.join(os.path.dirname(cap.__file__),
+                          "..", "..", "config", "baselines", "db_access_v2.json")
+    assert os.path.isfile(v2_abs), "GR-09 v2 baseline missing from the repository"
+
+
+def test_default_matrix_focused_tests_row_has_raised_output_cap(tmp_path):
+    """The focused-python-tests row carries the per-row persisted-output cap
+    override (its verbose pytest stream measured ≈200K chars — the 20,000-char
+    global cap tripped at ≈10% progress in the run-01 gate bundle, and a
+    COMPLETE log must be persistable); every other row keeps the global cap."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    by_id = {s.id: s for s in matrix}
+    assert cap.MAX_ROW_OUTPUT_LIMIT > cap.CHILD_OUTPUT_LIMIT
+    assert by_id["focused-python-tests"].output_limit == cap.MAX_ROW_OUTPUT_LIMIT
+    for spec in matrix:
+        if spec.id != "focused-python-tests":
+            assert spec.output_limit is None, spec.id
+
+
+def test_row_output_cap_override_persists_complete_log(tmp_path):
+    """A row with a raised cap persists a COMPLETE, hashed log for a stream that
+    exceeds the global cap, while a default-cap row with the same stream stays
+    INCOMPLETE and fails the capture closed (over-cap → exit-2 semantics intact
+    for genuinely oversized logs)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class BigOutputRunner(ConfigurableFakeRunner):
+        """Inflates every non-git command's output past the global cap."""
+
+        def __call__(self, argv, cwd):
+            outcome = super().__call__(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN.
+                return outcome
+            return FakeOutcome(outcome.returncode,
+                               "x" * (cap.CHILD_OUTPUT_LIMIT * 3))
+
+    raised = cap.CommandSpec(
+        id="raised", log_name="00-raised.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        output_limit=cap.MAX_ROW_OUTPUT_LIMIT)
+    default = cap.CommandSpec(
+        id="default", log_name="01-default.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"])
+    runner = BigOutputRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=[raised, default])
+    # The default-cap row's log is incomplete → the capture fails closed.
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    by_id = {c["id"]: c for c in evidence["commands"]}
+    # The raised-cap row's entire stream fit: COMPLETE, hashed, sized.
+    assert by_id["raised"]["log_complete"] is True
+    assert by_id["raised"]["log_failure_code"] is None
+    assert by_id["raised"]["log_sha256"] != ""
+    assert by_id["raised"]["log_bytes"] == cap.CHILD_OUTPUT_LIMIT * 3
+    # The default-cap row tripped the global cap: INCOMPLETE, never hashed.
+    assert by_id["default"]["log_complete"] is False
+    assert by_id["default"]["log_failure_code"] == cap.LOG_OUTPUT_LIMIT_EXCEEDED
+    assert by_id["default"]["log_sha256"] == ""
+    assert any(w == "incomplete-command-log:default:output-limit-exceeded"
+               for w in evidence["infrastructure_warnings"])
+    _assert_no_tmp_leftovers(out)
+
+
+def test_validate_command_matrix_rejects_invalid_output_limit(tmp_path):
+    """A per-row ``output_limit`` that is not a bounded non-negative integer is
+    rejected (fail closed) so the persisted-output bounding contract cannot be
+    lifted by a hostile custom matrix."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    for bad in (-1, "big", 1.5, True, cap.MAX_ROW_OUTPUT_LIMIT + 1):
+        spec = cap.CommandSpec(
+            id="c", log_name="00.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py"],
+            output_limit=bad)
+        violations = cap.validate_command_matrix([spec], str(root))
+        assert any(v.startswith("invalid-output-limit:c:") for v in violations), bad
+    # Valid overrides (including the finite maximum) pass cleanly.
+    for good in (None, 0, cap.CHILD_OUTPUT_LIMIT, cap.MAX_ROW_OUTPUT_LIMIT):
+        spec = cap.CommandSpec(
+            id="ok", log_name="00.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py"],
+            output_limit=good)
+        assert cap.validate_command_matrix([spec], str(root)) == [], good
+
+
+def test_row_output_cap_overflow_fails_closed(tmp_path):
+    """A custom row whose ``output_limit`` exceeds the finite bound fails closed
+    with zero runner calls (stop-before-run)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(
+        id="greedy", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        output_limit=cap.MAX_ROW_OUTPUT_LIMIT + 1)]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-output-limit:greedy")
+               for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+    assert runner.calls == []
 
 
