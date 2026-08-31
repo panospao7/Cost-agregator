@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-test_verify_known_good_state.py -- tests for the PR-GR-10e scorecard.
+test_verify_known_good_state.py -- tests for the PR-GR-10e/10f scorecard.
 
 Covers:
-  * the all-pass path (exit 0, six PASS rows, deterministic rendering);
+  * the all-pass path (exit 0, six pinned PASS rows plus the optional
+    PR-GR-10f test-result freshness row, deterministic rendering);
   * each row's FAIL branch via fixture-injected command runners (no real
     CLI is ever spawned);
   * the INFRA branches and exit-code precedence (any INFRA row -> exit 2);
   * the platform-conditional inventory-only row (both documented branches,
     exercised by monkeypatching the module's barrier seam);
+  * the optional freshness row's outcome mapping: SKIP when no stamp exists
+    (documented, non-blocking, no child spawned), PASS/FAIL/INFRA per the
+    freshness CLI's exit code and bounded verdict line, SKIP on the
+    stamp-missing TOCTOU grace, bounded output_unparsed projection;
   * deterministic output (byte-identical across runs, no filesystem paths);
   * ASCII-safe rendering (pure-ASCII scorecard; non-ASCII glyphs mapped to
     ASCII equivalents so a cp1252-redirected Windows stdout cannot crash);
@@ -193,7 +198,14 @@ def _verify_handler(exit_code=0, match=True, raw_stdout=None):
     return handler
 
 
-def _router(gate=None, inventory=None, migrate_check=None, meta=None, verify=None):
+def _freshness_handler(exit_code=0, stdout=None):
+    if stdout is None:
+        stdout = "verdict=fresh commit_match=true xml_count=2 xml_newer=0\n"
+    return lambda argv, cwd, timeout: vkgs.CommandResult(exit_code, stdout, "")
+
+
+def _router(gate=None, inventory=None, migrate_check=None, meta=None,
+            verify=None, freshness=None):
     """Fixture-injected runner: dispatches on the invoked script/flag."""
     calls = []
 
@@ -216,6 +228,9 @@ def _router(gate=None, inventory=None, migrate_check=None, meta=None, verify=Non
         if "verify_production_source_roots.py" in joined:
             assert meta is not None, joined
             return meta(argv, cwd, timeout)
+        if "test_result_freshness.py" in joined:
+            assert freshness is not None, joined
+            return freshness(argv, cwd, timeout)
         raise AssertionError(f"unexpected command: {joined}")
 
     runner.calls = calls
@@ -229,6 +244,7 @@ def _passing_router():
         migrate_check=_migrate_check_handler(),
         meta=_meta_handler(),
         verify=_verify_handler(),
+        freshness=_freshness_handler(),
     )
 
 
@@ -249,11 +265,15 @@ def _run(repo, scratch, runner):
 
 
 class TestAllPass:
-    def test_all_six_rows_pass_exit_zero(self, scorecard_env):
+    def test_pinned_rows_pass_and_freshness_skips_without_stamp(
+        self, scorecard_env
+    ):
         repo, scratch = scorecard_env
         rows, exit_code = _run(repo, scratch, _passing_router())
         assert exit_code == 0
-        assert [row.outcome for row in rows] == [vkgs.OUTCOME_PASS] * 6
+        assert [row.outcome for row in rows] == (
+            [vkgs.OUTCOME_PASS] * 6 + [vkgs.OUTCOME_SKIP]
+        )
         assert [row.row for row in rows] == (
             vkgs.ROW_ACTIVE_DB_GATE,
             vkgs.ROW_INVENTORY_ONLY,
@@ -261,14 +281,24 @@ class TestAllPass:
             vkgs.ROW_META_SOURCE_ROOTS,
             vkgs.ROW_CANDIDATE_REPRODUCIBLE,
             vkgs.ROW_STRUCTURAL_MANIFEST,
+            vkgs.ROW_TEST_RESULT_FRESHNESS,
         )
+
+    def test_all_seven_rows_pass_with_fresh_stamp(self, scorecard_env):
+        repo, scratch = scorecard_env
+        results = repo.joinpath(*vkgs._FRESHNESS_RESULTS_RELPATH)
+        results.mkdir(parents=True)
+        (results / vkgs._FRESHNESS_STAMP_NAME).write_text("{}", encoding="utf-8")
+        rows, exit_code = _run(repo, scratch, _passing_router())
+        assert exit_code == 0
+        assert [row.outcome for row in rows] == [vkgs.OUTCOME_PASS] * 7
 
     def test_scorecard_rendering_is_deterministic(self, scorecard_env):
         repo, scratch = scorecard_env
         first = vkgs.render_scorecard(*_run(repo, scratch, _passing_router()))
         second = vkgs.render_scorecard(*_run(repo, scratch, _passing_router()))
         assert first == second
-        assert "summary: rows=6 pass=6 fail=0 infra=0 exit=0" in first
+        assert "summary: rows=7 pass=6 fail=0 infra=0 skip=1 exit=0" in first
 
     def test_rendered_scorecard_contains_no_paths(self, scorecard_env, tmp_path):
         repo, scratch = scorecard_env
@@ -286,6 +316,9 @@ class TestAllPass:
         assert "entries=472" in vkgs._EXPECTED_CANDIDATE
         assert "structural_entries=64" in vkgs._EXPECTED_STRUCTURAL
         assert vkgs._EXPECTED_META == "exit=0 silent"
+        assert vkgs._EXPECTED_FRESHNESS == (
+            "exit=0 verdict=fresh commit_match=true xml_newer=0"
+        )
 
     def test_structural_row_observed_carries_counts_only(self, scorecard_env):
         repo, scratch = scorecard_env
@@ -347,7 +380,7 @@ class TestGateFailBranches:
         assert "gate_exit=1" in gate.observed
         assert "findings=3" in gate.observed
         assert all(
-            row.outcome == vkgs.OUTCOME_PASS
+            row.outcome in (vkgs.OUTCOME_PASS, vkgs.OUTCOME_SKIP)
             for row in rows
             if row.row != vkgs.ROW_ACTIVE_DB_GATE
         )
@@ -830,6 +863,261 @@ class TestPlatformConditionalInventory:
         assert "dump=written" in inventory.observed
 
 
+# ── Optional freshness row (PR-GR-10f) ──────────────────────────────────────────
+
+
+class TestTestResultFreshnessRow:
+    def _with_stamp(self, repo: Path) -> None:
+        results = repo.joinpath(*vkgs._FRESHNESS_RESULTS_RELPATH)
+        results.mkdir(parents=True, exist_ok=True)
+        (results / vkgs._FRESHNESS_STAMP_NAME).write_text("{}", encoding="utf-8")
+
+    def test_skip_when_no_stamp_and_no_child_spawned(self, scorecard_env):
+        repo, scratch = scorecard_env
+        runner = _passing_router()
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 0
+        row = _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS)
+        assert row.outcome == vkgs.OUTCOME_SKIP
+        assert row.observed == "stamp=missing"
+        assert row.expected == vkgs._EXPECTED_FRESHNESS
+        spawned = [
+            call for call in runner.calls
+            if "test_result_freshness.py" in " ".join(call)
+        ]
+        assert spawned == []
+
+    def test_pass_when_stamp_exists_and_child_fresh(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+        rows, exit_code = _run(repo, scratch, _passing_router())
+        assert exit_code == 0
+        row = _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS)
+        assert row.outcome == vkgs.OUTCOME_PASS
+        assert row.observed == (
+            "exit=0 verdict=fresh commit_match=true xml_count=2 xml_newer=0"
+        )
+
+    def test_check_argv_targets_repo_root(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+        runner = _passing_router()
+        _run(repo, scratch, runner)
+        freshness_calls = [
+            call for call in runner.calls
+            if "test_result_freshness.py" in " ".join(call)
+        ]
+        assert len(freshness_calls) == 1
+        joined = " ".join(freshness_calls[0])
+        assert "--check" in joined
+        assert "--repo-root" in joined
+        assert str(repo) in joined
+
+    def test_fail_on_sha_drift(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+        runner = _router(
+            gate=_gate_handler(),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+            freshness=_freshness_handler(
+                exit_code=1,
+                stdout="verdict=sha_drift commit_match=false "
+                       "xml_count=0 xml_newer=0\n",
+            ),
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 1
+        row = _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS)
+        assert row.outcome == vkgs.OUTCOME_FAIL
+        assert row.observed == (
+            "exit=1 verdict=sha_drift commit_match=false "
+            "xml_count=0 xml_newer=0"
+        )
+
+    def test_fail_on_xml_newer_than_stamp(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+        runner = _router(
+            gate=_gate_handler(),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+            freshness=_freshness_handler(
+                exit_code=1,
+                stdout="verdict=xml_newer_than_stamp commit_match=true "
+                       "xml_count=3 xml_newer=1\n",
+            ),
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 1
+        row = _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS)
+        assert row.outcome == vkgs.OUTCOME_FAIL
+        assert "xml_newer=1" in row.observed
+
+    def test_skip_on_stamp_missing_after_probe(self, scorecard_env):
+        # TOCTOU grace: the stamp existed at probe time but the child saw it
+        # gone -> the documented never-stamped state, non-blocking SKIP.
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+        runner = _router(
+            gate=_gate_handler(),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+            freshness=_freshness_handler(
+                exit_code=1,
+                stdout="verdict=stamp_missing commit_match=false "
+                       "xml_count=0 xml_newer=0\n",
+            ),
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 0
+        row = _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS)
+        assert row.outcome == vkgs.OUTCOME_SKIP
+        assert row.observed == "stamp=missing"
+
+    def test_fail_closed_on_unparsed_child_output(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+        runner = _router(
+            gate=_gate_handler(),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+            freshness=_freshness_handler(
+                exit_code=1,
+                stdout="Traceback (most recent call last):\nboom\n",
+            ),
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 1
+        row = _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS)
+        assert row.outcome == vkgs.OUTCOME_FAIL
+        assert row.observed == "exit=1 output_unparsed"
+        assert "boom" not in row.observed
+        assert "Traceback" not in row.observed
+
+    def test_infra_on_child_exit_two(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+        runner = _router(
+            gate=_gate_handler(),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+            freshness=_freshness_handler(
+                exit_code=2,
+                stdout="verdict=malformed_stamp commit_match=false "
+                       "xml_count=0 xml_newer=0\n",
+            ),
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 2
+        row = _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS)
+        assert row.outcome == vkgs.OUTCOME_INFRA
+        assert row.observed == "freshness_exit=2"
+
+    def test_infra_on_timeout(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+
+        def timeout_handler(argv, cwd, timeout):
+            return vkgs.CommandResult(-1, "", "", timed_out=True)
+
+        runner = _router(
+            gate=_gate_handler(),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+            freshness=timeout_handler,
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 2
+        assert _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS).observed == (
+            "freshness_timeout"
+        )
+
+    def test_infra_on_spawn_failure(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+
+        def crash_handler(argv, cwd, timeout):
+            return vkgs.CommandResult(-1, "", "", crashed=True)
+
+        runner = _router(
+            gate=_gate_handler(),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+            freshness=crash_handler,
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 2
+        assert _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS).observed == (
+            "freshness_spawn_failed"
+        )
+
+    def test_unexpected_crash_fails_closed_to_infra(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+
+        def crashing_handler(argv, cwd, timeout):
+            raise RuntimeError("boom")
+
+        runner = _router(
+            gate=_gate_handler(),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+            freshness=crashing_handler,
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 2
+        row = _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS)
+        assert row.outcome == vkgs.OUTCOME_INFRA
+        assert row.observed == "check_crashed"
+        assert "boom" not in row.observed
+
+    def test_skip_does_not_block_fail_exit_code(self, scorecard_env):
+        # SKIP is non-blocking: a FAIL elsewhere still drives exit 1.
+        repo, scratch = scorecard_env
+        runner = _router(
+            gate=_gate_handler(exit_code=1, findings=2),
+            inventory=_inventory_handler(),
+            migrate_check=_migrate_check_handler(),
+            meta=_meta_handler(),
+            verify=_verify_handler(),
+        )
+        rows, exit_code = _run(repo, scratch, runner)
+        assert exit_code == 1
+        assert _row(rows, vkgs.ROW_TEST_RESULT_FRESHNESS).outcome == (
+            vkgs.OUTCOME_SKIP
+        )
+        assert _row(rows, vkgs.ROW_ACTIVE_DB_GATE).outcome == (
+            vkgs.OUTCOME_FAIL
+        )
+
+    def test_freshness_row_never_spawns_write_mode(self, scorecard_env):
+        repo, scratch = scorecard_env
+        self._with_stamp(repo)
+        runner = _passing_router()
+        _run(repo, scratch, runner)
+        for call in runner.calls:
+            joined = " ".join(call)
+            if "test_result_freshness.py" in joined:
+                assert "--write" not in joined, joined
+
+
 # ── Read-only posture of the underlying commands ────────────────────────────────
 
 
@@ -907,7 +1195,7 @@ class TestMain:
             vkgs.main(["--repo-root", str(repo), "--scratch-dir", str(scratch)])
         assert excinfo.value.code == 0
         out = capsys.readouterr().out
-        assert "summary: rows=6 pass=6 fail=0 infra=0 exit=0" in out
+        assert "summary: rows=7 pass=6 fail=0 infra=0 skip=1 exit=0" in out
 
     def test_main_exit_one_on_fail(self, scorecard_env, capsys, monkeypatch):
         repo, scratch = scorecard_env

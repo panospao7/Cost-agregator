@@ -60,6 +60,30 @@ Expect exit 0, silent.
 pytest scripts/test_verify_db_access_boundaries.py scripts/test_verify_db_access_v2.py -v
 ```
 
+### Test-result freshness stamp (PR-GR-10f)
+
+Gradle's JUnit XML does not record the commit the tests ran against, so stale
+result XMLs from an earlier round can be mis-read as fresh failures (the R12
+lesson: round-11 XMLs under app/build/test-results were consumed as round-12
+failures, wasting a round). Before consuming any test-result XML, run the
+stamp workflow: run tests -> write the stamp -> run --check:
+
+```powershell
+python scripts/ci/test_result_freshness.py --write --suite-name testDebugUnitTest
+python scripts/ci/test_result_freshness.py --check
+```
+
+`--write` atomically records {schemaVersion, commitSha, treeSha,
+completedAtUtc, suiteName} at app/build/test-results/.freshness-stamp.json
+immediately after the test run; `--check` exits 0 (fresh: stamp exists,
+matches HEAD, is within --max-age-hours (default 24), and no XML under the
+results directory is newer than the stamp), 1 (stale-mismatch: stamp
+missing, SHA drift, expired, or an XML newer than the stamp — the results
+must NOT be consumed), or 2 (infrastructure). The known-good-state scorecard
+carries this as an optional 7th row (test_result_freshness): SKIP
+(non-blocking) when no stamp exists, PASS when fresh, FAIL on stale/SHA
+drift.
+
 ## 3. Guard CLIs
 
 | Command | Expected |
@@ -114,6 +138,7 @@ git diff cf07b04b~1 --exit-code -- config/baselines/db_access.json config/guards
 | Meta-guard | exit 0 |
 | Candidate | v2 472 entries byte-reproducible |
 | Structural pin | 62 retained |
+| Test-result freshness | optional stamp row (PR-GR-10f): SKIP when never stamped (non-blocking); PASS when the stamp matches HEAD, is within max age, and no XML is newer than it; FAIL on stale/SHA drift |
 
 Closing note: if all sections pass, branch gr-00-local is fully validated for PR/merge and GR-05 can start. If anything fails, route output back to the orchestrator fix loop.
 
@@ -194,3 +219,17 @@ runs the authoritative v2 policy and correctly exits 0, so the pre-activation
    `test_archived_v1_policy_rejected_by_v2_loader` loads
    `config/guards/db_ownership_policy.legacy.yml` — and the candidate
    acceptance pin was updated 55 -> 472 entries.
+
+## Revision 4 (post PR-GR-10f stale-result guard)
+
+Date: 2026-08-31. Status: pending re-validation.
+
+1. Section 2 gained the test-result freshness stamp workflow (PR-GR-10f):
+   run tests -> `scripts/ci/test_result_freshness.py --write` -> `--check`
+   before consuming any XML under app/build/test-results (the R12
+   stale-round-11 lesson: stale XMLs were mis-read as fresh failures).
+2. Section 7 gained the optional `test_result_freshness` row: SKIP when no
+   stamp exists (workflow never adopted, non-blocking), PASS when fresh,
+   FAIL on stale/SHA drift. The known-good-state scorecard now renders
+   seven rows (six pinned + this optional one) and its summary line carries
+   a skip count.

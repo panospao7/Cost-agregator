@@ -2,7 +2,7 @@
 """
 verify_known_good_state.py -- PR-GR-10e executable known-good scorecard.
 
-Executes the six section-7 rows of docs/ci/GR00-GR04_validation_checklist.md
+Executes the section-7 rows of docs/ci/GR00-GR04_validation_checklist.md
 against the live repository and prints a deterministic scorecard, so silent
 drift of the documented known-good state (the R11 lesson: the table pinned a
 blocked exit-2 gate while the gate was activated exit-0) is detected
@@ -45,10 +45,24 @@ Rows (fixed order, one check each):
                               candidate must be a v2 document with exactly
                               472 entries.
 6. structural_manifest     -- the structural expected-methods manifest must
-                              pin counts.structural_entries=64
-                              (expected=60 + fixtures=4) and
-                              config/guards/db_structural_exceptions.yml must
-                              carry exactly 64 entries.
+                               pin counts.structural_entries=64
+                               (expected=60 + fixtures=4) and
+                               config/guards/db_structural_exceptions.yml must
+                               carry exactly 64 entries.
+7. test_result_freshness   -- OPTIONAL (PR-GR-10f).  The test-result
+                               freshness stamp at
+                               app/build/test-results/.freshness-stamp.json
+                               (written by
+                               scripts/ci/test_result_freshness.py --write
+                               right after a test run) must be fresh per
+                               scripts/ci/test_result_freshness.py --check:
+                               matches HEAD, within max age, no XML newer
+                               than the stamp.  SKIP (documented,
+                               non-blocking) when no stamp exists (the
+                               workflow was never adopted); PASS when fresh;
+                               FAIL on stale/SHA drift (the R12 lesson:
+                               stale round-11 XMLs were consumed as fresh
+                               failures).
 
 Output: a deterministic scorecard on stdout (fixed row order; row, result,
 expected, observed; no timestamps, no paths, no raw tool output).  The
@@ -58,7 +72,9 @@ character reduces to '?', so a cp1252-redirected Windows stdout (which
 would otherwise raise UnicodeEncodeError) can never crash the scorecard.
 
 Exit codes:
-  0 -- all six rows PASS (the known-good state holds);
+  0 -- all pinned rows PASS and the optional freshness row is PASS or SKIP
+       (the known-good state holds; SKIP only documents the never-stamped
+       state and is non-blocking);
   1 -- at least one row FAIL (documented state drift; route to the fix loop);
   2 -- infrastructure (a row could not be executed/observed: spawn failure,
        timeout, unreadable report, tool-side exit 2, missing PyYAML).  Any
@@ -75,16 +91,20 @@ exit-code semantics where they overlap):
   * meta-guard exit 0 -> verdict (must be silent); exit 2 -> FAIL (its
     documented topology-diagnostics path is determinable drift); other -> INFRA;
   * migrate --verify exit 0 -> verdict (plus candidate shape); exit 1 -> FAIL
-    (byte drift); exit 2/other -> INFRA.
+    (byte drift); exit 2/other -> INFRA;
+  * freshness --check exit 0 -> PASS; exit 1 -> FAIL, except the parsed
+    verdict stamp_missing which maps to the documented SKIP (never-stamped
+    state); exit 2/other -> INFRA.
 
 Runtime: deliberately expensive (full gate + inventory + migration fold +
 meta-guard + candidate verify; roughly gate ~250s warm / ~700s cold plus
-~60s inventory + ~60s migration + ~2s meta + ~60s verify).  The script is
+~60s inventory + ~60s migration + ~2s meta + ~60s verify + ~1s freshness
+stamp check).  The script is
 meant to be run explicitly (static-suite entry + orchestrator), not
 per-commit.  Internal per-command timeouts (gate 1200s; inventory, migrate,
-verify 600s; meta 300s) sit inside the static suite's default 1500s
-per-guard budget for the warm path; raise GUARD_TIMEOUT_SECONDS for the
-suite when running against a cold tree.
+verify 600s; meta 300s; freshness 120s) sit inside the static suite's
+default 1500s per-guard budget for the warm path; raise
+GUARD_TIMEOUT_SECONDS for the suite when running against a cold tree.
 
 Privacy posture: observed fields carry counts, controlled status constants,
 and booleans only -- never raw tool stdout/stderr, exception text, stack
@@ -118,10 +138,12 @@ ROW_MIGRATION_FOLD = "migration_fold"
 ROW_META_SOURCE_ROOTS = "meta_guard_source_roots"
 ROW_CANDIDATE_REPRODUCIBLE = "candidate_reproducible"
 ROW_STRUCTURAL_MANIFEST = "structural_manifest"
+ROW_TEST_RESULT_FRESHNESS = "test_result_freshness"
 
 OUTCOME_PASS = "PASS"
 OUTCOME_FAIL = "FAIL"
 OUTCOME_INFRA = "INFRA"
+OUTCOME_SKIP = "SKIP"
 
 
 # ── Repository paths (POSIX, repo-relative) ─────────────────────────────────────
@@ -140,6 +162,9 @@ _SEED_ROWS = "docs/ci/db-findings/GR-08-seeds.yml"
 _CANDIDATE = "config/guards/db_ownership_policy.signatures.candidate.yml"
 _META_SCRIPT = "scripts/ci/verify_production_source_roots.py"
 _META_MANIFEST = "config/guards/production_source_roots.yml"
+_FRESHNESS_SCRIPT = "scripts/ci/test_result_freshness.py"
+_FRESHNESS_RESULTS_RELPATH = ("app", "build", "test-results")
+_FRESHNESS_STAMP_NAME = ".freshness-stamp.json"
 
 _DEFAULT_SCRATCH_RELPATH = ("build", "guard-debug", "known-good-state")
 
@@ -168,6 +193,7 @@ _INVENTORY_TIMEOUT_SECONDS = 600
 _MIGRATE_TIMEOUT_SECONDS = 600
 _META_TIMEOUT_SECONDS = 300
 _VERIFY_TIMEOUT_SECONDS = 600
+_FRESHNESS_TIMEOUT_SECONDS = 120
 
 # Platform seam: a confirmable directory durability barrier (CPython exposes
 # os.O_DIRECTORY on Unix, not on Windows).  Read at check time so tests can
@@ -208,6 +234,7 @@ _EXPECTED_STRUCTURAL = (
     f"expected={_STRUCTURAL_EXPECTED} fixtures={_STRUCTURAL_FIXTURES} "
     f"yaml_entries={_STRUCTURAL_ENTRIES}"
 )
+_EXPECTED_FRESHNESS = "exit=0 verdict=fresh commit_match=true xml_newer=0"
 
 _MIGRATION_SUMMARY_RE = re.compile(
     r"db-policy migration: input=(\d+) resolved=(\d+) unresolved=(\d+) "
@@ -314,6 +341,42 @@ def _baseline_entries_empty(path: Path) -> bool:
     except Exception:
         return False
     return isinstance(document, dict) and document.get("entries") == []
+
+
+# ── Freshness child-output contract (scripts/ci/test_result_freshness.py) ───────
+
+# The freshness CLI prints exactly one bounded line per --check run.  Only
+# lines matching this strict shape with a controlled verdict token are
+# echoed into the scorecard; anything else reduces to the generic
+# 'output_unparsed' projection (fail closed, never raw output).
+_FRESHNESS_VERDICT_TOKENS = frozenset(
+    {
+        "fresh",
+        "stamp_missing",
+        "sha_drift",
+        "stamp_expired",
+        "xml_newer_than_stamp",
+        "malformed_stamp",
+        "git_unavailable",
+        "results_dir_error",
+    }
+)
+_FRESHNESS_LINE_RE = re.compile(
+    r"^verdict=([a-z_]+) commit_match=(true|false) "
+    r"xml_count=([0-9]+) xml_newer=([0-9]+)$"
+)
+
+
+def _parse_freshness_line(stdout: str) -> Optional[str]:
+    """Return the child's single bounded line if strictly well-formed,
+    else None (the caller renders a generic bounded projection)."""
+    text = (stdout or "").strip()
+    if not text or "\n" in text or "\r" in text:
+        return None
+    match = _FRESHNESS_LINE_RE.fullmatch(text)
+    if match is None or match.group(1) not in _FRESHNESS_VERDICT_TOKENS:
+        return None
+    return text
 
 
 # ── Real command runner ─────────────────────────────────────────────────────────
@@ -645,6 +708,45 @@ def _check_structural_manifest(ctx: _Context) -> Tuple[str, str]:
     return (OUTCOME_PASS if ok else OUTCOME_FAIL), observed
 
 
+# ── Row 7 (optional): test-result freshness stamp ───────────────────────────────
+
+
+@_row_check(ROW_TEST_RESULT_FRESHNESS, lambda: _EXPECTED_FRESHNESS)
+def _check_test_result_freshness(ctx: _Context) -> Tuple[str, str]:
+    stamp_path = ctx.repo_root.joinpath(
+        *_FRESHNESS_RESULTS_RELPATH, _FRESHNESS_STAMP_NAME
+    )
+    if not stamp_path.is_file():
+        # Documented optional-row contract: the stamp workflow was never
+        # adopted (no stamp was ever written) -> SKIP, non-blocking.  The
+        # row must never block a repo that does not use the stamp workflow.
+        return OUTCOME_SKIP, "stamp=missing"
+    argv = [
+        sys.executable, _FRESHNESS_SCRIPT,
+        "--check",
+        "--repo-root", str(ctx.repo_root),
+    ]
+    result = ctx.run_command(argv, ctx.repo_root, _FRESHNESS_TIMEOUT_SECONDS)
+    if result.timed_out:
+        raise _Infrastructure("freshness_timeout")
+    if result.crashed:
+        raise _Infrastructure("freshness_spawn_failed")
+    parsed = _parse_freshness_line(result.stdout or "")
+    if result.exit_code == 0:
+        observed = f"exit=0 {parsed}" if parsed else "exit=0 output_unparsed"
+        return OUTCOME_PASS, observed
+    if result.exit_code == 1:
+        if parsed is not None and "verdict=stamp_missing" in parsed:
+            # TOCTOU grace: the stamp vanished between the existence probe
+            # and the child run -> the documented never-stamped state.
+            return OUTCOME_SKIP, "stamp=missing"
+        observed = f"exit=1 {parsed}" if parsed else "exit=1 output_unparsed"
+        return OUTCOME_FAIL, observed
+    # Exit 2 (malformed stamp, git unavailable, scan error) or any other
+    # code: the freshness state cannot be determined -> INFRA (fail closed).
+    raise _Infrastructure(f"freshness_exit={result.exit_code}")
+
+
 # ── Scorecard driver ────────────────────────────────────────────────────────────
 
 
@@ -655,6 +757,7 @@ _ROW_CHECKS: Tuple[Tuple[str, Callable[[], str], Callable[[_Context], RowResult]
     (ROW_META_SOURCE_ROOTS, lambda: _EXPECTED_META, _check_meta_source_roots),
     (ROW_CANDIDATE_REPRODUCIBLE, lambda: _EXPECTED_CANDIDATE, _check_candidate_reproducible),
     (ROW_STRUCTURAL_MANIFEST, lambda: _EXPECTED_STRUCTURAL, _check_structural_manifest),
+    (ROW_TEST_RESULT_FRESHNESS, lambda: _EXPECTED_FRESHNESS, _check_test_result_freshness),
 )
 
 
@@ -672,7 +775,8 @@ def _execute_checks(ctx: _Context) -> Tuple[RowResult, ...]:
 
 
 def _scorecard_exit(rows: Sequence[RowResult]) -> int:
-    """0 all pass; 1 any FAIL; 2 any INFRA (infrastructure takes precedence)."""
+    """0 all pass (SKIP rows are documented non-blocking states and are
+    ignored); 1 any FAIL; 2 any INFRA (infrastructure takes precedence)."""
     if any(row.outcome == OUTCOME_INFRA for row in rows):
         return 2
     if any(row.outcome == OUTCOME_FAIL for row in rows):
@@ -689,7 +793,8 @@ def run_scorecard(
     scratch_dir: Optional[Path] = None,
     run_command: Optional[Callable[[Sequence[str], Path, int], CommandResult]] = None,
 ) -> Tuple[Tuple[RowResult, ...], int]:
-    """Run all six rows and return (rows, exit_code).
+    """Run all seven rows (six pinned + the optional freshness row) and
+    return (rows, exit_code).
 
     ``run_command`` is injectable for tests; the default shells out to the
     real CLIs under ``repo_root``.  Scratch outputs (gate/inventory findings
@@ -749,7 +854,8 @@ def render_scorecard(rows: Sequence[RowResult], exit_code: int) -> str:
     pure ASCII (safe for a cp1252-redirected Windows stdout)."""
     lines = [
         "KNOWN-GOOD STATE SCORECARD "
-        "(docs/ci/GR00-GR04_validation_checklist.md section 7, PR-GR-10e)",
+        "(docs/ci/GR00-GR04_validation_checklist.md section 7, "
+        "PR-GR-10e/10f)",
     ]
     for index, row in enumerate(rows, start=1):
         lines.append(f"[{index}/{len(rows)}] row={row.row} result={row.outcome}")
@@ -758,16 +864,17 @@ def render_scorecard(rows: Sequence[RowResult], exit_code: int) -> str:
     passed = sum(1 for row in rows if row.outcome == OUTCOME_PASS)
     failed = sum(1 for row in rows if row.outcome == OUTCOME_FAIL)
     infra = sum(1 for row in rows if row.outcome == OUTCOME_INFRA)
+    skipped = sum(1 for row in rows if row.outcome == OUTCOME_SKIP)
     lines.append(
         f"summary: rows={len(rows)} pass={passed} fail={failed} "
-        f"infra={infra} exit={exit_code}"
+        f"infra={infra} skip={skipped} exit={exit_code}"
     )
     return _ascii_safe("\n".join(lines) + "\n")
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Executable known-good state scorecard (PR-GR-10e).",
+        description="Executable known-good state scorecard (PR-GR-10e/10f).",
     )
     parser.add_argument(
         "--repo-root",

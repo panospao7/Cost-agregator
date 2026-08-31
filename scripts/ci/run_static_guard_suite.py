@@ -172,11 +172,11 @@ GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
         ],
         "blocking",
     ),
-    # PR-GR-10e known-good scorecard: executes the six section-7 rows of
+    # PR-GR-10e/10f known-good scorecard: executes the section-7 rows of
     # docs/ci/GR00-GR04_validation_checklist.md (active DB gate accepted with
     # 20 advisories, inventory-only platform durability branch, migration
     # fold truth, source-roots meta-guard, candidate byte-reproducibility,
-    # structural manifest pin).  Deliberately expensive — it re-runs the full
+    # structural manifest pin, optional test-result freshness row).  Deliberately expensive — it re-runs the full
     # gate + inventory + migration fold — so its internal per-command
     # timeouts (see the script docstring) must stay inside this suite's
     # per-guard GUARD_TIMEOUT_SECONDS budget; raise the env override when
