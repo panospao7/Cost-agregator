@@ -11,11 +11,23 @@ Exit codes:
   2 — infrastructure error (guard crashed, missing command, timeout, etc.)
 
 Time budgets (PR-GR-10c): each guard may declare an optional
-expected_max_seconds (built-in guards via GUARD_TIME_BUDGETS; custom JSON
-manifests via a per-entry "expected_max_seconds" key).  A guard that
-finishes above its budget is marked outcome "slow" in the summary — a
-non-blocking warning; the exit code is unaffected and a failing guard keeps
-its violation/infra_error outcome.
+expected_max_seconds (registry-derived guards resolve theirs from the named
+timeout profiles via the plan compiler; custom JSON manifests via a
+per-entry "expected_max_seconds" key).  A guard that finishes above its
+budget is marked outcome "slow" in the summary — a non-blocking warning;
+the exit code is unaffected and a failing guard keeps its
+violation/infra_error outcome.
+
+Command authority (PR-GR-10A Slice 2): the default guard legs are DERIVED
+from the registry execution schema via
+guard_execution_plan.compile_static_suite_plan.  This runner owns no guard
+commands — only guard order/filter (SUITE_GUARD_ORDER), its two
+infrastructure legs (registry integrity gate first, guard test runner
+last), output-dir handling, summary rendering, the suite-level subprocess
+timeout, and the ratchet child-budget adapter policy.  Every default-path
+run writes execution-plan.json, execution-plan.sha256, and
+effective-inputs.json evidence for the compiled plan.  Custom --manifest
+files remain a test-only input.
 
 Usage:
   python3 scripts/ci/run_static_guard_suite.py
@@ -40,28 +52,32 @@ the 600s floor keeps the budget viable for the known scan cost.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-# ── Declarative guard manifest ──────────────────────────────────────────────────
-# (name, command_parts, mode)
-# mode: "blocking" or "warning"
-# A warning guard that exits 1 records a warning but doesn't fail the suite.
-# A blocking guard that exits 1 fails the suite.
+# ── Interpreter and suite-level timeout policy ──────────────────────────────────
+# Suite legs are (name, command_parts, mode) tuples; mode is "blocking" or
+# "warning".  A warning guard that exits 1 records a warning but doesn't fail
+# the suite; a blocking guard that exits 1 fails it.  Guard COMMANDS are
+# registry-owned (see the derived-plan machinery below); the suite owns only
+# its infrastructure legs and runtime policy.
 
-# Interpreter used to build manifest commands. Prefer the interpreter that is
-# running this suite (sys.executable) so guard commands stay portable on hosts
-# where a bare "python3" may not resolve (e.g. the Windows Store alias).
-# _resolve_python() remains the runtime safety net for manifest entries and
-# custom JSON manifests that still use "python3"/"python" literals.
+# Interpreter used to build infrastructure-leg commands. Prefer the
+# interpreter that is running this suite (sys.executable) so commands stay
+# portable on hosts where a bare "python3" may not resolve (e.g. the Windows
+# Store alias).  _resolve_python() remains the runtime safety net for custom
+# JSON manifests that still use "python3"/"python" literals.
 SUITE_PYTHON = sys.executable
 
 # ── Timeout budget ──────────────────────────────────────────────────────────────
@@ -71,8 +87,9 @@ SUITE_PYTHON = sys.executable
 # headroom for CI variance. Override per environment with the
 # GUARD_TIMEOUT_SECONDS environment variable (positive integer seconds);
 # unset, blank, non-numeric, or non-positive values fall back to the default.
-# Defined before GUARD_MANIFEST because the db_access entry embeds a child
-# budget derived from it (see _ratchet_child_timeout below).
+# Defined before the derived-plan machinery below because the db_access
+# ratchet leg embeds a child budget derived from it (see
+# _ratchet_child_timeout).
 DEFAULT_GUARD_TIMEOUT_SECONDS = 1500
 GUARD_TIMEOUT_SECONDS_ENV_VAR = "GUARD_TIMEOUT_SECONDS"
 
@@ -130,198 +147,337 @@ def _ratchet_child_timeout() -> int:
     )
 
 
-GUARD_MANIFEST: List[Tuple[str, List[str], str]] = [
-    # ── Registry integrity (must run first) ─────────────────────────────────────
+# ── Registry-derived execution plan (PR-GR-10A Slice 2) ────────────────────────
+# The default guard legs are compiled from the registry execution schema
+# (guard_registry.GUARD_REGISTRY[*]["execution"]) by the pure plan compiler.
+# This runner owns NO guard commands: only guard order/filter, its two
+# infrastructure legs, output-dir handling, summary rendering, the
+# suite-level subprocess timeout, and the ratchet child-budget adapter
+# policy below.  There is no fallback to any hand-maintained command list.
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guard_execution_plan import (  # noqa: E402
+    ExecutionContext,
+    ExecutionPlan,
+    canonicalize_plan_for_comparison,
+    compile_static_suite_plan,
+)
+
+# Suite-owned infrastructure legs (not registry guards — they are suite
+# meta-infrastructure and stay suite-owned): the registry integrity gate
+# must run FIRST and the guard test runner runs LAST.  Commands are
+# byte-identical to the pre-migration manifest.
+SUITE_INFRASTRUCTURE_LEGS: List[Tuple[str, List[str], str]] = [
     ("guard_registry", ["python3", "scripts/ci/verify_guard_registry.py"], "blocking"),
-
-    # Blocking guards
-    ("source_provenance", ["python3", "scripts/verify_source_provenance_boundaries.py", "--root", "."], "blocking"),
-    ("ui_dao", ["python3", "scripts/verify_ui_dao_boundaries.py", "--fail-on-violation"], "blocking"),
-    ("worker", ["python3", "scripts/verify_worker_boundaries.py", "--fail-on-violation"], "blocking"),
-    ("receipt_link", ["python3", "scripts/verify_receipt_link_boundaries.py", "--fail-on-violation"], "blocking"),
-    ("import_lifecycle", ["python3", "scripts/verify_import_lifecycle_boundaries.py", "--fail-on-violation"], "blocking"),
-    ("cloud_payload", ["python3", "scripts/verify_cloud_payload_boundaries.py", "--fail-on-violation"], "blocking"),
-    ("pii_logging", ["python3", "scripts/verify_pii_logging_boundaries.py", "--fail-on-violation"], "blocking"),
-    ("di_release", ["python3", "scripts/verify_di_release_boundaries.py", "--fail-on-violation"], "blocking"),
-    ("allowlist_compliance", ["python3", "scripts/verify_allowlist_compliance.py", "--fail-on-violation"], "blocking"),
-    ("ignored_test_budget", ["python3", "scripts/verify_ignored_test_budget.py", "--fail-on-violation", "--baseline", "29"], "blocking"),
-    ("lint_baseline_policy", ["python3", "scripts/verify_lint_baseline_policy.py", "--fail-on-violation"], "blocking"),
     (
-        "time_boundaries",
-        [
-            "python3", "scripts/verify_time_boundaries.py",
-            "--root", ".",
-            "--allowlist", "config/guards/time_boundary_exceptions.yml",
-            "--fail-on-violation",
-        ],
+        "guard_tests",
+        [SUITE_PYTHON, "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"],
         "blocking",
     ),
-    ("deprecation_escalations", ["python3", "scripts/ci/verify_deprecation_escalations.py", "--root", "."], "blocking"),
-    # PR-GR-10b artifact-sync tripwire: the migrate CLI's --verify mode
-    # regenerates the tracked candidate/accounting artifacts IN MEMORY from
-    # the SAME reviewed inputs (--seed-rows) and exits 1 when the tracked
-    # files drift (hand-edit drift becomes visible in every suite run and
-    # CI).  Tokenized argv per the GUARD_MANIFEST pattern; the suite's
-    # per-guard timeout (GUARD_TIMEOUT_SECONDS budget) bounds the run.
-    (
-        "db_artifact_sync",
-        [
-            "python3", "scripts/migrate_db_policy_signatures.py",
-            "--verify",
-            "--seed-rows", "docs/ci/db-findings/GR-08-seeds.yml",
-        ],
-        "blocking",
-    ),
-    # PR-GR-10e/10f known-good scorecard: executes the section-7 rows of
-    # docs/ci/GR00-GR04_validation_checklist.md (active DB gate accepted with
-    # 20 advisories, inventory-only platform durability branch, migration
-    # fold truth, source-roots meta-guard, candidate byte-reproducibility,
-    # structural manifest pin, optional test-result freshness row).  Deliberately expensive — it re-runs the full
-    # gate + inventory + migration fold — so its internal per-command
-    # timeouts (see the script docstring) must stay inside this suite's
-    # per-guard GUARD_TIMEOUT_SECONDS budget; raise the env override when
-    # running against a cold tree.
-    ("known_good_state", ["python3", "scripts/ci/verify_known_good_state.py"], "blocking"),
-
-    # release_artifact verification runs in the release-check CI job after assembleRelease, not here
-
-    # Ratchet-wrapped guards (was warning backlog; now blocking via ratchet)
-    (
-        "cancellation",
-        [
-            "python3", "scripts/ci/guard_ratchet.py",
-            "--guard-name", "cancellation",
-            "--command", "python3 scripts/verify_cancellation_boundaries.py",
-            "--baseline", "config/baselines/cancellation.json",
-            "--fail-on-violation",
-            "--ci-mode",
-        ],
-        "blocking",
-    ),
-    (
-        "privacy",
-        [
-            "python3", "scripts/ci/guard_ratchet.py",
-            "--guard-name", "privacy",
-            "--command", "python3 scripts/verify_privacy_boundaries.py --root .",
-            "--baseline", "config/baselines/privacy.json",
-            "--fail-on-violation",
-            "--ci-mode",
-        ],
-        "blocking",
-    ),
-    (
-        "db_access",
-        [
-            "python3", "scripts/ci/guard_ratchet.py",
-            "--guard-name", "db_access",
-            # Ratchet-level child budget derived from the suite budget; the
-            # ratchet's 300s default kills the ~7-10 min full-tree D4 scan.
-            # Must stay a ratchet flag, NOT a --command-arg: the child guard
-            # script has no --timeout flag. See _ratchet_child_timeout().
-            f"--timeout={_ratchet_child_timeout()}",
-            "--command-arg=python",
-            "--command-arg=scripts/verify_db_access_boundaries.py",
-            "--command-arg=--fail-on-violation",
-            "--command-arg=--structural-manifest",
-            "--command-arg=config/guards/db_structural_exceptions_expected_methods.yml",
-            "--command-arg=--ownership-policy",
-            "--command-arg=config/guards/db_ownership_policy.yml",
-            "--command-arg=--structural-exceptions",
-            "--command-arg=config/guards/db_structural_exceptions.yml",
-            "--baseline", "config/baselines/db_access_v2.json",
-            "--fail-on-violation",
-            "--ci-mode",
-        ],
-        "blocking",
-    ),
-    (
-        "event_writers",
-        [
-            "python3", "scripts/ci/guard_ratchet.py",
-            "--guard-name", "event_writers",
-            "--command", "python3 scripts/verify_event_writers.py --fail-on-violation",
-            "--baseline", "config/baselines/event_writers.json",
-            "--fail-on-violation",
-            "--ci-mode",
-        ],
-        "blocking",
-    ),
-    (
-        "money",
-        [
-            "python3", "scripts/ci/guard_ratchet.py",
-            "--guard-name", "money",
-            "--command", "python3 scripts/verify_money_boundaries.py --root .",
-            "--baseline", "config/baselines/money.json",
-            "--fail-on-violation",
-            "--ci-mode",
-        ],
-        "blocking",
-    ),
-    (
-        "migration_matrix",
-        [
-            "python3", "scripts/ci/guard_ratchet.py",
-            "--guard-name", "migration_matrix",
-            "--command", "python3 scripts/verify_migration_matrix.py --fail-on-violation",
-            "--baseline", "config/baselines/migration_matrix.json",
-            "--fail-on-violation",
-            "--ci-mode",
-        ],
-        "blocking",
-    ),
-
-    # Pytest — always runs
-    ("guard_tests", [SUITE_PYTHON, "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"], "blocking"),
 ]
 
-# ── Per-guard time budgets (PR-GR-10c) ──────────────────────────────────────────
-# Optional expected_max_seconds per guard, declared here per built-in guard
-# name (custom JSON manifests may declare "expected_max_seconds" per entry
-# instead).  A guard that finishes ABOVE its budget is marked outcome "slow"
-# in the summary — a NON-BLOCKING warning: the exit code is unaffected and a
-# failing guard keeps its violation/infra_error outcome (a budget must never
-# mask a real failure).  Budgets are visibility only, never fail-closed.
-#
-# Initial budgets from observed full-suite durations: db_access ~700s and
-# guard_tests ~1500s get ~20% headroom over their observations (guard_tests'
-# budget sits above the default 1500s suite timeout, so it can only fire when
-# GUARD_TIMEOUT_SECONDS is raised); every other guard is small (well under
-# 300s observed) and gets a flat 300s ceiling.
-GUARD_TIME_BUDGETS: Dict[str, float] = {
+# Visibility-only time budgets for the infrastructure legs (registry-derived
+# guards resolve theirs from the named timeout profiles via the compiler —
+# plan.timeout_seconds).
+SUITE_INFRASTRUCTURE_TIME_BUDGETS: Dict[str, float] = {
     "guard_registry": 300.0,
-    "source_provenance": 300.0,
-    "ui_dao": 300.0,
-    "worker": 300.0,
-    "receipt_link": 300.0,
-    "import_lifecycle": 300.0,
-    "cloud_payload": 300.0,
-    "pii_logging": 300.0,
-    "di_release": 300.0,
-    "allowlist_compliance": 300.0,
-    "ignored_test_budget": 300.0,
-    "lint_baseline_policy": 300.0,
-    "time_boundaries": 300.0,
-    "deprecation_escalations": 300.0,
-    # PR-GR-10b: the verify mode regenerates the artifact pair in memory
-    # (full legacy-policy migration over the production tree, no coverage
-    # scan); observed migration runs sit well under this ceiling.
-    "db_artifact_sync": 600.0,
-    # PR-GR-10e: the scorecard runs the full gate (~250s warm / ~700s cold)
-    # plus inventory, migration fold, meta-guard, and candidate verify
-    # (~180s combined warm).  1200s covers the warm path with headroom and
-    # most cold paths; the budget is visibility-only (outcome "slow") and
-    # never masks a real failure.
-    "known_good_state": 1200.0,
-    "cancellation": 300.0,
-    "privacy": 300.0,
-    "db_access": 840.0,
-    "event_writers": 300.0,
-    "money": 300.0,
-    "migration_matrix": 300.0,
     "guard_tests": 1800.0,
 }
+
+# Suite-owned guard execution order (names only — command construction is
+# registry-owned).  Preserves the pre-migration execution order.  Derivation
+# fails closed when a compiled guard is missing from this list or the list
+# names a guard the registry no longer compiles, so registry/suite drift can
+# never silently drop a guard from enforcement.
+SUITE_GUARD_ORDER: Tuple[str, ...] = (
+    "source_provenance", "ui_dao", "worker", "receipt_link",
+    "import_lifecycle", "cloud_payload", "pii_logging", "di_release",
+    "allowlist_compliance", "ignored_test_budget", "lint_baseline_policy",
+    "time_boundaries", "deprecation_escalations", "db_artifact_sync",
+    "known_good_state", "cancellation", "privacy", "db_access",
+    "event_writers", "money", "migration_matrix",
+)
+
+# Ratchet child-budget adapter policy: only the db_access ratchet leg
+# carries a derived --timeout=<seconds> child budget (the pre-migration
+# manifest did exactly this; the ratchet's 300s default kills the ~7-10 min
+# full-tree D4 scan).  The token is a RATCHET-level flag, never a
+# --command-arg: the child guard script has no --timeout flag.  The
+# derivation stays keyed to the suite's per-guard budget (see
+# _ratchet_child_timeout) so the default child budget remains 1440s.
+RATCHET_CHILD_BUDGET_GUARDS = frozenset({"db_access"})
+
+# Registry plan mode → suite leg mode.  Ratchet-wrapped guards execute as
+# blocking legs (a ratchet violation must fail the suite); "policy" has no
+# suite mapping and fails derivation closed.
+_SUITE_LEG_MODE = {
+    "blocking": "blocking",
+    "ratchet": "blocking",
+    "warning": "warning",
+}
+
+# Controlled derivation-failure codes (bounded; never free-form paths).
+E_SUITE_ORDER_GAP = "E_SUITE_ORDER_GAP"
+E_SUITE_LEG_MODE = "E_SUITE_LEG_MODE"
+
+
+def _execution_argv_for_plan(plan: ExecutionPlan) -> List[str]:
+    """Outer argv for a compiled plan with suite adapter policy applied."""
+    argv = list(plan.outer_argv)
+    if (
+        plan.guard_id in RATCHET_CHILD_BUDGET_GUARDS
+        and plan.child_argv is not None
+        and len(argv) >= 4
+        and argv[2] == "--guard-name"
+    ):
+        argv.insert(4, f"--timeout={_ratchet_child_timeout()}")
+    return argv
+
+
+def _derive_default_suite_plan(
+    project_root: Path,
+) -> Tuple[List[Tuple[str, List[str], str]], Dict[str, float], List[ExecutionPlan], List[str]]:
+    """Compile the registry-derived suite plan into suite execution legs.
+
+    Returns ``(legs, budgets, plans, errors)``:
+
+      legs    [(name, argv, mode)] — registry integrity gate first, the
+              compiled guards in SUITE_GUARD_ORDER, guard test runner last;
+      budgets {name: visibility budget seconds} — named timeout profiles
+              resolved by the compiler (plan.timeout_seconds) plus the
+              infrastructure-leg budgets;
+      plans   the compiled ExecutionPlan values (the evidence authority);
+      errors  bounded failure strings; non-empty means fail closed (exit 2)
+              with NO fallback to any hand-maintained command list.
+    """
+    context = ExecutionContext(
+        repo_root=str(project_root),
+        interpreter_path=SUITE_PYTHON,
+        ci_mode=False,
+    )
+    plans, diags = compile_static_suite_plan(context)
+    errors = [
+        f"{diag.code} guard={diag.guard_id or '-'}: {diag.context}"
+        for diag in diags
+        if diag.severity == "error"
+    ]
+    if errors:
+        return [], {}, [], errors
+
+    by_id = {plan.guard_id: plan for plan in plans}
+    for guard_id in SUITE_GUARD_ORDER:
+        if guard_id not in by_id:
+            errors.append(
+                f"{E_SUITE_ORDER_GAP} guard={guard_id}: registry guard is "
+                f"missing from SUITE_GUARD_ORDER coverage"
+            )
+    for plan in plans:
+        if plan.guard_id not in SUITE_GUARD_ORDER:
+            errors.append(
+                f"{E_SUITE_ORDER_GAP} guard={plan.guard_id}: compiled guard "
+                f"is not placed in SUITE_GUARD_ORDER"
+            )
+    if errors:
+        return [], {}, [], errors
+
+    legs: List[Tuple[str, List[str], str]] = [SUITE_INFRASTRUCTURE_LEGS[0]]
+    budgets: Dict[str, float] = dict(SUITE_INFRASTRUCTURE_TIME_BUDGETS)
+    for guard_id in SUITE_GUARD_ORDER:
+        plan = by_id[guard_id]
+        leg_mode = _SUITE_LEG_MODE.get(plan.mode)
+        if leg_mode is None:
+            errors.append(
+                f"{E_SUITE_LEG_MODE} guard={guard_id}: no suite leg mapping "
+                f"for plan mode {plan.mode!r}"
+            )
+            continue
+        legs.append((guard_id, _execution_argv_for_plan(plan), leg_mode))
+        budgets[guard_id] = float(plan.timeout_seconds)
+    if errors:
+        return [], {}, [], errors
+    legs.append(SUITE_INFRASTRUCTURE_LEGS[1])
+    return legs, budgets, list(plans), []
+
+
+# ── Pre-migration compatibility view (PEP 562) ──────────────────────────────────
+# The legacy module-level command lists no longer exist.  Pre-migration
+# consumers (guard wiring tests) can still read them as DERIVED views
+# rendered in the legacy spelling: bare "python3" interpreter token and
+# repo-relative path tokens (the infrastructure legs pass through verbatim).
+# These views are never executed — main() executes the compiled plan argv —
+# and derivation failures raise AttributeError (fail closed).
+
+_COMPAT_VIEW_CACHE: Dict[str, Any] = {}
+
+
+def _legacy_view_token(token: str, repo_root: Path) -> str:
+    if token == SUITE_PYTHON:
+        return "python3"
+    if os.path.isabs(token):
+        try:
+            return (
+                Path(token).resolve().relative_to(repo_root.resolve()).as_posix()
+            )
+        except ValueError:
+            return token
+    return token
+
+
+def _legacy_view_argv(argv: List[str], repo_root: Path) -> List[str]:
+    rendered: List[str] = []
+    for token in argv:
+        if token.startswith("--command-arg="):
+            value = _legacy_view_token(token.split("=", 1)[1], repo_root)
+            rendered.append(f"--command-arg={value}")
+        else:
+            rendered.append(_legacy_view_token(token, repo_root))
+    return rendered
+
+
+def _legacy_compat_view(name: str) -> Any:
+    if "legs" not in _COMPAT_VIEW_CACHE:
+        project_root = _find_project_root()
+        legs, budgets, _plans, errors = _derive_default_suite_plan(project_root)
+        if errors:
+            raise AttributeError(
+                "registry-derived suite plan failed to compile; legacy "
+                "compatibility view unavailable: " + "; ".join(errors)
+            )
+        infra_names = {leg_name for leg_name, _argv, _mode in SUITE_INFRASTRUCTURE_LEGS}
+        manifest = [
+            (
+                leg_name,
+                argv if leg_name in infra_names else _legacy_view_argv(argv, project_root),
+                mode,
+            )
+            for leg_name, argv, mode in legs
+        ]
+        _COMPAT_VIEW_CACHE["legs"] = manifest
+        _COMPAT_VIEW_CACHE["budgets"] = dict(budgets)
+    return _COMPAT_VIEW_CACHE["legs" if name == "GUARD_MANIFEST" else "budgets"]
+
+
+def __getattr__(name: str) -> Any:
+    """PEP 562 derived compatibility views (see the block comment above)."""
+    if name in ("GUARD_MANIFEST", "GUARD_TIME_BUDGETS"):
+        return _legacy_compat_view(name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+# ── Plan evidence output (PR-GR-10A deliverable 4) ──────────────────────────────
+
+EVIDENCE_PLAN_JSON = "execution-plan.json"
+EVIDENCE_PLAN_SHA256 = "execution-plan.sha256"
+EVIDENCE_INPUTS_JSON = "effective-inputs.json"
+EVIDENCE_SCHEMA_VERSION = 1
+
+
+def _sha256_file(path: str) -> Optional[str]:
+    """Streaming sha256 hex digest; None when the file cannot be read."""
+    digest = hashlib.sha256()
+    try:
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    except OSError:
+        return None
+    return digest.hexdigest()
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=path.name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(tmp_name, str(path))
+    except BaseException:
+        with suppress(OSError):
+            os.remove(tmp_name)
+        raise
+
+
+def _plan_evidence_payload(
+    plans: List[ExecutionPlan],
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """Build the execution-plan.json and effective-inputs.json payloads.
+
+    Privacy: argv and paths are recorded in repo-relative canonical spelling
+    with the interpreter as a placeholder token — machine-specific absolute
+    spellings (which embed the user home) are deliberately excluded.  The
+    interpreter is recorded as a bounded name+version identity.  Only
+    content hashes and controlled fields are persisted; no secrets, no
+    environment dumps, no raw source.
+    """
+    interpreter_identity = (
+        f"{os.path.basename(SUITE_PYTHON)} "
+        f"{sys.version_info.major}.{sys.version_info.minor}."
+        f"{sys.version_info.micro}"
+    )
+    plan_guards: List[Dict[str, Any]] = []
+    input_guards: List[Dict[str, Any]] = []
+    for plan in plans:
+        canonical = canonicalize_plan_for_comparison(plan)
+        required_inputs = list(canonical["requiredInputs"])
+        input_hashes = {
+            relative: _sha256_file(absolute)
+            for relative, absolute in zip(required_inputs, plan.resolved_required_inputs)
+        }
+        plan_guards.append({
+            "guardId": plan.guard_id,
+            "mode": plan.mode,
+            "engine": plan.engine,
+            "resolvedOuterArgv": list(canonical["outerArgv"]),
+            "resolvedChildArgv": (
+                list(canonical["childArgv"])
+                if canonical["childArgv"] is not None
+                else None
+            ),
+            "interpreter": interpreter_identity,
+            "timeoutSeconds": plan.timeout_seconds,
+            "requiredInputs": required_inputs,
+            "inputHashes": dict(input_hashes),
+            "baselinePath": canonical["baseline"],
+            "baselineSha256": (
+                _sha256_file(plan.baseline) if plan.baseline else None
+            ),
+            "findingProtocol": plan.protocol,
+        })
+        input_guards.append({
+            "guardId": plan.guard_id,
+            "requiredInputs": required_inputs,
+            "inputHashes": dict(input_hashes),
+        })
+    plan_payload = {"schemaVersion": EVIDENCE_SCHEMA_VERSION, "guards": plan_guards}
+    inputs_payload = {"schemaVersion": EVIDENCE_SCHEMA_VERSION, "guards": input_guards}
+    return plan_payload, inputs_payload
+
+
+def _write_plan_evidence(plans: List[ExecutionPlan], output_dir: Path) -> None:
+    """Write execution-plan.json + execution-plan.sha256 + effective-inputs.json.
+
+    The JSON bytes are deterministic (sorted keys, no timestamp) so two
+    captures of the same plan are byte-identical and diffable.
+    """
+    plan_payload, inputs_payload = _plan_evidence_payload(plans)
+    plan_bytes = (
+        json.dumps(plan_payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    inputs_bytes = (
+        json.dumps(inputs_payload, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    _atomic_write_bytes(output_dir / EVIDENCE_PLAN_JSON, plan_bytes)
+    _atomic_write_bytes(output_dir / EVIDENCE_INPUTS_JSON, inputs_bytes)
+    digest = hashlib.sha256(plan_bytes).hexdigest()
+    _atomic_write_bytes(
+        output_dir / EVIDENCE_PLAN_SHA256,
+        f"{digest}  {EVIDENCE_PLAN_JSON}\n".encode("utf-8"),
+    )
+
 
 # Maximum length of stdout preview stored in summary JSON
 STDOUT_PREVIEW_MAX_CHARS = 500
@@ -722,15 +878,25 @@ def main() -> None:
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load manifest
+    # Load the execution legs: a custom JSON manifest (test-only input) or,
+    # by default, the registry-derived suite plan compiled from the registry
+    # execution schema.  Derivation failures are infrastructure errors
+    # (exit 2) — there is no fallback to any hand-maintained command list.
+    plans: Optional[List[ExecutionPlan]] = None
     if args.manifest:
         print(f"Loading custom manifest from: {args.manifest}")
         manifest, guard_budgets = _load_manifest_from_json(args.manifest)
     else:
-        manifest = GUARD_MANIFEST
-        # PR-GR-10c: the built-in manifest declares its time budgets in
-        # GUARD_TIME_BUDGETS (keyed by guard name).
-        guard_budgets = dict(GUARD_TIME_BUDGETS)
+        manifest, guard_budgets, plans, derive_errors = _derive_default_suite_plan(project_root)
+        if derive_errors:
+            print(
+                "REGISTRY-DERIVED SUITE PLAN FAILED (exit 2); refusing to "
+                "execute guards from any hand-maintained command list:"
+            )
+            for derive_error in derive_errors:
+                print(f"  {derive_error}")
+            sys.exit(2)
+        _write_plan_evidence(plans, output_dir)
 
     print(f"Project root: {project_root}")
     print(f"Output dir:  {output_dir}")
@@ -773,6 +939,10 @@ def main() -> None:
     print(f"  Exit code:        {determine_exit_code(summary)}")
     print(f"\n  Summary JSON: {output_dir / 'summary.json'}")
     print(f"  Summary MD:   {output_dir / 'summary.md'}")
+    if plans is not None:
+        print(f"  Plan JSON:    {output_dir / EVIDENCE_PLAN_JSON}")
+        print(f"  Plan SHA256:  {output_dir / EVIDENCE_PLAN_SHA256}")
+        print(f"  Inputs JSON:  {output_dir / EVIDENCE_INPUTS_JSON}")
 
     sys.exit(determine_exit_code(summary))
 

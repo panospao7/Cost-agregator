@@ -18,6 +18,18 @@ Guard modes:
   "ratchet"  — Blocking, but with a growth-enforcing baseline via guard_ratchet.py.
   "warning"  — A violation records a warning but does not fail CI.
   "policy"   — Meta-guard that validates other guard infrastructure.
+
+Execution schema (PR-GR-10A Slice 1 — additive):
+  Every active entry carries an "execution" section that owns HOW the guard
+  runs: engine, entrypoint, token arguments (never shell strings), mode,
+  requiredInputs, timeoutProfile (named semantics from the suite's time
+  budgets), outputContract, ratchet metadata (ratchet guards only),
+  testManifest (test files or the literal "none" for documented absence),
+  and a documentationAnchor.  Paths are repository-relative and resolved only
+  by the execution context (scripts/ci/guard_execution_plan.py).  The
+  per-guard argv/timeout/baseline values are transcribed from the static
+  suite's GUARD_MANIFEST / GUARD_TIME_BUDGETS — migration of truth, not
+  invention.  Existing fields above are kept intact.
 """
 
 import os
@@ -35,6 +47,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Source provenance boundary enforcement — validates "
                        "that all source files belong to expected packages",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_source_provenance_boundaries.py",
+            "arguments": ("--root", "."),
+            "mode": "blocking",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": "none",
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "ui_dao": {
@@ -46,6 +69,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "UI layer DAO access boundary — prevents UI from "
                        "directly accessing DAO methods",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_ui_dao_boundaries.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": ("scripts/allowlists/ui_dao_allowlist.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_ui_dao_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "worker": {
@@ -57,6 +91,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Worker boundary enforcement — validates WorkerExecutionGuard "
                        "usage, write barrier semantics, and cancellation propagation",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_worker_boundaries.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": ("scripts/allowlists/worker_allowlist.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_worker_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "receipt_link": {
@@ -68,6 +113,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Receipt link boundary — enforces receipt-expense link "
                        "creation only through approved coordinators",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_receipt_link_boundaries.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": ("scripts/allowlists/receipt_link_allowlist.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_receipt_link_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "import_lifecycle": {
@@ -79,6 +135,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Import lifecycle boundary — validates import operations "
                        "go through canonical ImportCoordinator",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_import_lifecycle_boundaries.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": ("scripts/allowlists/import_lifecycle_allowlist.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_import_lifecycle_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "cloud_payload": {
@@ -90,6 +157,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Cloud payload boundary — ensures PreparedCloudPayload "
                        "precedes network body construction",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_cloud_payload_boundaries.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": ("scripts/allowlists/cloud_payload_allowlist.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_cloud_payload_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "pii_logging": {
@@ -101,6 +179,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "PII logging boundary — strict-zero PII in logs, "
                        "diagnostics, exceptions, and persisted results",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_pii_logging_boundaries.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": ("scripts/allowlists/pii_logging_allowlist.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_pii_logging_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-policy.md",
+        },
     },
 
     "di_release": {
@@ -112,6 +201,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "DI release boundary — validates Hilt module bindings "
                        "for release vs debug configurations",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_di_release_boundaries.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": ("scripts/allowlists/di_release_allowlist.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_di_release_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "allowlist_compliance": {
@@ -123,6 +223,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Allowlist compliance — validates that all allowlist "
                        "entries have required reason, owner, and expiry fields",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_allowlist_compliance.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_allowlist_compliance.py",),
+            "documentationAnchor": "docs/ci/guard-policy.md",
+        },
     },
 
     "migration_matrix": {
@@ -135,6 +246,24 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "description": "Migration matrix validator — ensures Room schema "
                        "migrations are consistent and complete; ratcheted "
                        "to block new missing-migration gaps",
+        "execution": {
+            "engine": "python-ratchet",
+            "entrypoint": "scripts/verify_migration_matrix.py",
+            "arguments": (),
+            "mode": "ratchet",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "ratchet-baseline-v1;stdout-human;exit:0=pass,1=violation,2=infra",
+            "ratchet": {
+                "baselinePath": "config/baselines/migration_matrix.json",
+                "findingProtocol": 1,
+                "fingerprintSchema": 1,
+                "childArgumentTemplate": ("{entrypoint}", "--fail-on-violation"),
+                "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
+            },
+            "testManifest": ("scripts/test_verify_migration_matrix.py",),
+            "documentationAnchor": "docs/ci/MIGRATION_TEST_PROCEDURE.md",
+        },
     },
 
     "ignored_test_budget": {
@@ -146,6 +275,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Ignored test budget — enforces a maximum count of "
                        "@Ignore-annotated tests with a configurable baseline",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_ignored_test_budget.py",
+            "arguments": ("--fail-on-violation", "--baseline", "29"),
+            "mode": "blocking",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_ignored_test_budget.py",),
+            "documentationAnchor": "docs/ci/guard-policy.md",
+        },
     },
 
     "lint_baseline_policy": {
@@ -157,6 +297,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Lint baseline policy — validates that the lint baseline "
                        "only contains allowed issue types (MissingTranslation)",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_lint_baseline_policy.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": "none",
+            "documentationAnchor": "docs/ci/guard-policy.md",
+        },
     },
 
     "time_boundaries": {
@@ -176,6 +327,21 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "Clock.systemDefaultZone(), Clock.systemUTC()) outside "
                        "exact clock-adapter exceptions. No baselines, no "
                        "broad source-line exemptions.",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_time_boundaries.py",
+            "arguments": (
+                "--root", ".",
+                "--allowlist", "config/guards/time_boundary_exceptions.yml",
+                "--fail-on-violation",
+            ),
+            "mode": "blocking",
+            "requiredInputs": ("config/guards/time_boundary_exceptions.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_time_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-policy.md",
+        },
     },
 
     "deprecation_escalations": {
@@ -191,6 +357,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "tracked changelog docs/ci/DEPRECATION_ESCALATIONS.md "
                        "(file + symbol + date + reason + migration target) "
                        "before landing; stale entries are flagged for cleanup",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/ci/verify_deprecation_escalations.py",
+            "arguments": ("--root", "."),
+            "mode": "blocking",
+            "requiredInputs": ("docs/ci/DEPRECATION_ESCALATIONS.md",),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/ci/test_verify_deprecation_escalations.py",),
+            "documentationAnchor": "docs/ci/DEPRECATION_ESCALATIONS.md",
+        },
     },
 
     "db_artifact_sync": {
@@ -215,6 +392,25 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "distribution. Makes hand-edit drift visible in "
                        "every suite run and CI; never writes the tracked "
                        "artifacts",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/migrate_db_policy_signatures.py",
+            "arguments": (
+                "--verify",
+                "--seed-rows", "docs/ci/db-findings/GR-08-seeds.yml",
+            ),
+            "mode": "blocking",
+            "requiredInputs": (
+                "config/guards/db_ownership_policy.legacy.yml",
+                "docs/ci/db-findings/GR-08-seeds.yml",
+                "config/guards/db_ownership_policy.signatures.candidate.yml",
+                "config/guards/db_ownership_policy.signatures.accounting.json",
+            ),
+            "timeoutProfile": "artifact-sync",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_migrate_db_policy_signatures.py",),
+            "documentationAnchor": "docs/ci/DB_POLICY_SIGNATURES.md",
+        },
     },
 
     "known_good_state": {
@@ -241,6 +437,17 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "runs the real gate, inventory, and migration "
                        "fold — meant for explicit suite/orchestrator "
                        "runs, not per-commit loops",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/ci/verify_known_good_state.py",
+            "arguments": (),
+            "mode": "blocking",
+            "requiredInputs": ("docs/ci/GR00-GR04_validation_checklist.md",),
+            "timeoutProfile": "known-good-state",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/ci/test_verify_known_good_state.py",),
+            "documentationAnchor": "docs/ci/GR00-GR04_validation_checklist.md",
+        },
     },
 
     # ── Ratchet-wrapped guards (growth-enforcing baseline via guard_ratchet.py) ──
@@ -254,6 +461,24 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Cancellation boundary guard — detects unsafe "
                        "CancellationException handling in suspend/worker paths",
+        "execution": {
+            "engine": "python-ratchet",
+            "entrypoint": "scripts/verify_cancellation_boundaries.py",
+            "arguments": (),
+            "mode": "ratchet",
+            "requiredInputs": ("scripts/allowlists/cancellation_allowlist.yml",),
+            "timeoutProfile": "standard",
+            "outputContract": "ratchet-baseline-v1;stdout-human;exit:0=pass,1=violation,2=infra",
+            "ratchet": {
+                "baselinePath": "config/baselines/cancellation.json",
+                "findingProtocol": 1,
+                "fingerprintSchema": 1,
+                "childArgumentTemplate": ("{entrypoint}",),
+                "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
+            },
+            "testManifest": ("scripts/test_verify_cancellation_boundaries.py",),
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "privacy": {
@@ -265,6 +490,24 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Privacy boundary enforcement — cloud redaction, "
                        "privacy gate, pseudonym, and export guards (G1–G14)",
+        "execution": {
+            "engine": "python-ratchet",
+            "entrypoint": "scripts/verify_privacy_boundaries.py",
+            "arguments": (),
+            "mode": "ratchet",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "ratchet-baseline-v1;stdout-human;exit:0=pass,1=violation,2=infra",
+            "ratchet": {
+                "baselinePath": "config/baselines/privacy.json",
+                "findingProtocol": 1,
+                "fingerprintSchema": 1,
+                "childArgumentTemplate": ("{entrypoint}", "--root", "."),
+                "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
+            },
+            "testManifest": "none",
+            "documentationAnchor": "docs/ci/guard-policy.md",
+        },
     },
 
     "db_access": {
@@ -291,6 +534,38 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                        "with ownership policy, structural exceptions, and the "
                        "structural expected-methods manifest. Protocol v2: "
                        "structured findings via report file, never stdout.",
+        "execution": {
+            "engine": "python-ratchet",
+            "entrypoint": "scripts/verify_db_access_boundaries.py",
+            "arguments": (),
+            "mode": "ratchet",
+            "requiredInputs": (
+                "config/guards/db_ownership_policy.yml",
+                "config/guards/db_structural_exceptions.yml",
+                "config/guards/db_structural_exceptions_expected_methods.yml",
+                "config/guards/production_source_roots.yml",
+            ),
+            "timeoutProfile": "D4",
+            "outputContract": "findings-report-v2;ratchet-baseline-v2;stdout-human;exit:0=pass,1=violation,2=infra",
+            "ratchet": {
+                "baselinePath": "config/baselines/db_access_v2.json",
+                "findingProtocol": 2,
+                "fingerprintSchema": 2,
+                "childArgumentTemplate": (
+                    "{entrypoint}",
+                    "--fail-on-violation",
+                    "--structural-manifest",
+                    "config/guards/db_structural_exceptions_expected_methods.yml",
+                    "--ownership-policy",
+                    "config/guards/db_ownership_policy.yml",
+                    "--structural-exceptions",
+                    "config/guards/db_structural_exceptions.yml",
+                ),
+                "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
+            },
+            "testManifest": ("scripts/test_verify_db_access_boundaries.py",),
+            "documentationAnchor": "docs/ci/GUARD_FINDING_PROTOCOL.md",
+        },
     },
 
     "event_writers": {
@@ -302,6 +577,24 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Event writer boundary — ensures diagnostic/lifecycle "
                        "event construction only through canonical writers",
+        "execution": {
+            "engine": "python-ratchet",
+            "entrypoint": "scripts/verify_event_writers.py",
+            "arguments": (),
+            "mode": "ratchet",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "ratchet-baseline-v1;stdout-human;exit:0=pass,1=violation,2=infra",
+            "ratchet": {
+                "baselinePath": "config/baselines/event_writers.json",
+                "findingProtocol": 1,
+                "fingerprintSchema": 1,
+                "childArgumentTemplate": ("{entrypoint}", "--fail-on-violation"),
+                "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
+            },
+            "testManifest": "none",
+            "documentationAnchor": "docs/ci/guard-framework.md",
+        },
     },
 
     "money": {
@@ -313,6 +606,24 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         "policies": None,
         "description": "Money boundary guard — enforces safe currency conversion, "
                        "aggregation, and spending trend rules (G-MONEY-10–21)",
+        "execution": {
+            "engine": "python-ratchet",
+            "entrypoint": "scripts/verify_money_boundaries.py",
+            "arguments": (),
+            "mode": "ratchet",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "ratchet-baseline-v1;stdout-human;exit:0=pass,1=violation,2=infra",
+            "ratchet": {
+                "baselinePath": "config/baselines/money.json",
+                "findingProtocol": 1,
+                "fingerprintSchema": 1,
+                "childArgumentTemplate": ("{entrypoint}", "--root", "."),
+                "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
+            },
+            "testManifest": "none",
+            "documentationAnchor": "docs/ci/guard-policy.md",
+        },
     },
 }
 

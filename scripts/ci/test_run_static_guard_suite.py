@@ -25,24 +25,40 @@ Tests verify:
       custom JSON manifests may declare per-entry budgets.
   14. PR-GR-10b db_artifact_sync wiring: the guard is registered blocking
       in GUARD_REGISTRY with the migrate CLI as its script, present in
-      GUARD_MANIFEST with a tokenized --verify argv consuming the
+      the derived suite legs with a tokenized --verify argv consuming the
       reviewed seed input, and the registry validates cleanly.
+  15. PR-GR-10A Slice 2 migration: the default suite legs are DERIVED from
+      the registry execution schema via compile_static_suite_plan; the
+      pre-migration hard-coded manifest is recorded as a fixture and every
+      guard is proven semantically equal to its compiled plan (semantic
+      command equality per the GR-10A plan definition).
+  16. PR-GR-10A deliverable 4: every default-path suite run writes
+      execution-plan.json + execution-plan.sha256 + effective-inputs.json
+      (deterministic, repo-relative, path-free).
+  17. Derivation fails closed (exit 2 semantics) on compile diagnostics and
+      suite-order coverage gaps; the PEP 562 derived compatibility views
+      keep pre-migration consumers working.
+  18. verify_guard_registry.py owns plan validation: it never imports the
+      suite, the suite carries no legacy manifest assignment, and the
+      validator passes on the real tree.
 
 Run:
   python -m pytest scripts/ci/test_run_static_guard_suite.py -v
 """
 
+import ast
+import hashlib
 import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import pytest
 
-# Import the runner to inspect GUARD_MANIFEST directly
+# Import the runner to inspect the derived suite plan directly
 import importlib.util
 _runner_spec = importlib.util.spec_from_file_location(
     "run_static_guard_suite",
@@ -55,6 +71,66 @@ _runner_spec.loader.exec_module(_runner)
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
 RUNNER_SCRIPT = Path(__file__).resolve().parent / "run_static_guard_suite.py"
+CI_DIR = Path(__file__).resolve().parent
+REPO_ROOT = CI_DIR.parent.parent
+
+
+def _load_fresh_runner(tag: str):
+    """Load a fresh runner module so import-time env resolution re-runs."""
+    spec = importlib.util.spec_from_file_location(
+        f"run_static_guard_suite_fresh_{tag}",
+        RUNNER_SCRIPT,
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _derived(module=None):
+    """Derive the default suite legs/budgets/plans (asserting success)."""
+    module = module if module is not None else _runner
+    legs, budgets, plans, errors = module._derive_default_suite_plan(REPO_ROOT)
+    assert not errors, errors
+    return legs, budgets, plans
+
+
+def _rel_token(token: str, root: Path) -> str:
+    """Relativize an absolute token under ``root`` to a repo-relative spelling."""
+    if os.path.isabs(token):
+        root_str = str(root)
+        try:
+            contained = (
+                os.path.commonpath(
+                    [os.path.normcase(token), os.path.normcase(root_str)]
+                )
+                == os.path.normcase(root_str)
+            )
+        except ValueError:
+            return token
+        if contained:
+            return os.path.relpath(token, root_str).replace(os.sep, "/")
+    return token
+
+
+def _relativize_argv(argv: List[str], root: Path) -> List[str]:
+    relativized: List[str] = []
+    for token in argv:
+        if token.startswith("--command-arg="):
+            relativized.append(
+                "--command-arg=" + _rel_token(token.split("=", 1)[1], root)
+            )
+        else:
+            relativized.append(_rel_token(token, root))
+    return relativized
+
+
+def _leg(name: str, module=None) -> Tuple[str, List[str], str]:
+    """Return one derived suite leg with repo-relative path spellings."""
+    legs, _budgets, _plans = _derived(module)
+    for leg_name, command, mode in legs:
+        if leg_name == name:
+            return leg_name, _relativize_argv(command, REPO_ROOT), mode
+    assert False, f"{name} not found in derived suite legs"
 
 
 def _write_script(path: Path, content: str) -> None:
@@ -560,7 +636,7 @@ class TestOutputDirCreatedAutomatically:
 
 
 class TestArtifactGuardRejectedFromSourceSuite:
-    """Verify release_artifact is NOT in the default GUARD_MANIFEST.
+    """Verify release_artifact is NOT in the derived default suite legs.
 
     The Static Guards job runs from a source checkout and has no APK.
     The release_artifact verification runs in the release-check CI job
@@ -568,9 +644,10 @@ class TestArtifactGuardRejectedFromSourceSuite:
     """
 
     def test_artifact_guard_not_in_manifest(self):
-        guard_names = [name for name, _, _ in _runner.GUARD_MANIFEST]
+        legs, _budgets, _plans = _derived()
+        guard_names = [name for name, _, _ in legs]
         assert "release_artifact" not in guard_names, (
-            f"release_artifact should not be in GUARD_MANIFEST; "
+            f"release_artifact should not be in the derived suite legs; "
             f"found guards: {guard_names}"
         )
 
@@ -655,19 +732,19 @@ class TestGuardTimeoutConfiguration:
 
 
 class TestGuardTestsInterpreterPortable:
-    """The guard_tests entry must resolve its interpreter portably.
+    """The guard_tests infrastructure leg must resolve its interpreter portably.
 
-    The manifest entry must run pytest under the interpreter running the
-    suite (sys.executable) instead of a bare "python3" PATH lookup, which
-    may not resolve on Windows. What is tested (pytest targets and flags)
-    must remain unchanged.
+    The leg must run pytest under the interpreter running the suite
+    (sys.executable) instead of a bare "python3" PATH lookup, which may not
+    resolve on Windows. What is tested (pytest targets and flags) must
+    remain unchanged.
     """
 
     def _guard_tests_command(self):
-        for name, command, _ in _runner.GUARD_MANIFEST:
+        for name, command, _ in _runner.SUITE_INFRASTRUCTURE_LEGS:
             if name == "guard_tests":
                 return command
-        assert False, "guard_tests not found in GUARD_MANIFEST"
+        assert False, "guard_tests not found in SUITE_INFRASTRUCTURE_LEGS"
 
     def test_interpreter_is_suite_interpreter(self):
         command = self._guard_tests_command()
@@ -740,97 +817,93 @@ class TestDbAccessRegistryMetadata:
 
 
 class TestDbAccessSuiteCommandTokens:
-    """Verify the DB guard suite entry uses protocol-v2 --command-arg tokens."""
+    """Verify the DB guard derived leg uses protocol-v2 --command-arg tokens.
+
+    The leg argv is the registry-derived compiled plan (PR-GR-10A Slice 2)
+    with the suite's ratchet child-budget adapter policy applied; path
+    tokens are relativized here for assertion readability.
+    """
+
+    def _db_access_command(self) -> List[str]:
+        _name, command, _mode = _leg("db_access")
+        return command
 
     def test_db_access_command_is_list_of_tokens(self):
-        """The db_access manifest entry must use --command-arg token list."""
-        db_entry = None
-        for name, command, mode in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                db_entry = (name, command, mode)
-                break
-        assert db_entry is not None, "db_access not found in GUARD_MANIFEST"
-        _, command, _ = db_entry
+        """The db_access leg must use a token list (never a shell string)."""
+        command = self._db_access_command()
         assert isinstance(command, list), "command must be a list of tokens"
 
     def test_db_access_uses_guard_ratchet(self):
         """The db_access command must invoke guard_ratchet.py."""
-        for name, command, _ in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                assert any("guard_ratchet.py" in tok for tok in command), (
-                    f"guard_ratchet.py not in command tokens: {command}"
-                )
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        command = self._db_access_command()
+        assert any("guard_ratchet.py" in tok for tok in command), (
+            f"guard_ratchet.py not in command tokens: {command}"
+        )
 
     def test_db_access_no_legacy_command_string(self):
-        """The db_access entry must NOT use the legacy --command shell string."""
-        for name, command, _ in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                # Must not have a "--command" token (legacy form)
-                assert "--command" not in command, (
-                    f"db_access still uses legacy --command: {command}"
-                )
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        """The db_access leg must NOT use the legacy --command shell string."""
+        command = self._db_access_command()
+        # Must not have a "--command" token (legacy form)
+        assert "--command" not in command, (
+            f"db_access still uses legacy --command: {command}"
+        )
 
     def test_db_access_uses_command_arg_tokens(self):
-        """The db_access entry must use --command-arg tokens."""
-        for name, command, _ in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                assert "--command-arg=python" in command, (
-                    f"--command-arg=python not in command: {command}"
-                )
-                db_script_arg = None
-                for tok in command:
-                    if "verify_db_access_boundaries.py" in tok:
-                        db_script_arg = tok
-                        break
-                assert db_script_arg is not None, (
-                    f"verify_db_access_boundaries.py not in command tokens: {command}"
-                )
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        """The db_access child interpreter must be the resolved runtime."""
+        command = self._db_access_command()
+        assert f"--command-arg={sys.executable}" in command, (
+            f"resolved interpreter token not in command: {command}"
+        )
+        db_script_arg = None
+        for tok in command:
+            if "verify_db_access_boundaries.py" in tok:
+                db_script_arg = tok
+                break
+        assert db_script_arg is not None, (
+            f"verify_db_access_boundaries.py not in command tokens: {command}"
+        )
+
+    def test_db_access_no_bare_interpreter_token(self):
+        """Canonical plans never emit bare python/python3 (GR-10A rule 2)."""
+        command = self._db_access_command()
+        assert "--command-arg=python" not in command, command
+        assert "--command-arg=python3" not in command, command
+
+    def test_db_access_explicit_protocol_v2_intent(self):
+        """Registered protocol-v2 guards pass explicit protocol intent."""
+        command = self._db_access_command()
+        assert "--finding-protocol=2" in command, command
 
     def test_db_access_includes_structural_manifest(self):
         """The db_access command must include --structural-manifest."""
-        for name, command, _ in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                assert "--command-arg=--structural-manifest" in command, (
-                    f"--structural-manifest not in command tokens: {command}"
-                )
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        command = self._db_access_command()
+        assert "--command-arg=--structural-manifest" in command, (
+            f"--structural-manifest not in command tokens: {command}"
+        )
 
     def test_db_access_includes_canonical_policies(self):
         """The db_access command must include canonical policy paths."""
-        for name, command, _ in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                cmd_str = " ".join(command)
-                assert "db_ownership_policy.yml" in cmd_str, (
-                    f"ownership policy not in command: {command}"
-                )
-                assert "db_structural_exceptions.yml" in cmd_str, (
-                    f"structural exceptions not in command: {command}"
-                )
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        command = self._db_access_command()
+        cmd_str = " ".join(command)
+        assert "db_ownership_policy.yml" in cmd_str, (
+            f"ownership policy not in command: {command}"
+        )
+        assert "db_structural_exceptions.yml" in cmd_str, (
+            f"structural exceptions not in command: {command}"
+        )
 
     def test_db_access_baseline_path_is_v2(self):
         """The db_access ratchet command must pin the v2 baseline (GR-09)."""
-        for name, command, _ in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                assert "--baseline" in command, (
-                    f"--baseline not in command tokens: {command}"
-                )
-                assert "config/baselines/db_access_v2.json" in command, (
-                    f"v2 baseline path not in command tokens: {command}"
-                )
-                assert "config/baselines/db_access.json" not in command, (
-                    f"legacy v1 baseline path still in command tokens: {command}"
-                )
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        command = self._db_access_command()
+        assert "--baseline" in command, (
+            f"--baseline not in command tokens: {command}"
+        )
+        assert "config/baselines/db_access_v2.json" in command, (
+            f"v2 baseline path not in command tokens: {command}"
+        )
+        assert "config/baselines/db_access.json" not in command, (
+            f"legacy v1 baseline path still in command tokens: {command}"
+        )
 
     def test_db_access_ratchet_timeout_token_present(self):
         """The db_access ratchet argv must carry a derived --timeout token.
@@ -845,29 +918,26 @@ class TestDbAccessSuiteCommandTokens:
         has no --timeout flag, so a child-level token would crash the child
         with an argparse error (exit 2).
         """
-        for name, command, _ in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                timeout_tokens = [
-                    tok for tok in command if tok.startswith("--timeout=")
-                ]
-                assert len(timeout_tokens) == 1, (
-                    f"expected exactly one --timeout=<seconds> token: {command}"
-                )
-                raw_value = timeout_tokens[0].split("=", 1)[1]
-                assert raw_value.isdigit(), (
-                    f"--timeout value must be a positive integer: "
-                    f"{timeout_tokens[0]!r}"
-                )
-                assert int(raw_value) >= 600, (
-                    f"--timeout must cover the ~7-10 min D4 scan "
-                    f"(floor 600s): {raw_value}"
-                )
-                assert "--command-arg=--timeout" not in command, (
-                    f"--timeout must be a ratchet-level flag, not a child arg "
-                    f"(the child guard has no --timeout flag): {command}"
-                )
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        command = self._db_access_command()
+        timeout_tokens = [
+            tok for tok in command if tok.startswith("--timeout=")
+        ]
+        assert len(timeout_tokens) == 1, (
+            f"expected exactly one --timeout=<seconds> token: {command}"
+        )
+        raw_value = timeout_tokens[0].split("=", 1)[1]
+        assert raw_value.isdigit(), (
+            f"--timeout value must be a positive integer: "
+            f"{timeout_tokens[0]!r}"
+        )
+        assert int(raw_value) >= 600, (
+            f"--timeout must cover the ~7-10 min D4 scan "
+            f"(floor 600s): {raw_value}"
+        )
+        assert "--command-arg=--timeout" not in command, (
+            f"--timeout must be a ratchet-level flag, not a child arg "
+            f"(the child guard has no --timeout flag): {command}"
+        )
 
     def test_db_access_child_argv_is_authoritative_v2_cli(self):
         """The db_access child command must be the authoritative protocol-v2
@@ -880,42 +950,37 @@ class TestDbAccessSuiteCommandTokens:
         v1 baseline surfaces as the controlled RATCHET_V1_BASELINE_INCOMPATIBLE
         exit 2 (pinned in test_guard_ratchet_v2.py).
         """
-        for name, command, _ in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                assert (
-                    "--command-arg=scripts/verify_db_access_boundaries.py"
-                    in command
-                ), (
-                    "child command does not target "
-                    f"verify_db_access_boundaries.py: {command}"
-                )
-                assert "--command-arg=--fail-on-violation" in command, (
-                    f"child command lacks --fail-on-violation: {command}"
-                )
-                joined = " ".join(command)
-                assert "--legacy-shadow-report" not in joined, (
-                    f"legacy shadow report referenced by db_access: {command}"
-                )
-                assert "legacy-shadow" not in joined, (
-                    f"legacy shadow artifact referenced by db_access: {command}"
-                )
-                assert "db_ownership_policy.legacy.yml" not in joined, (
-                    f"archived legacy policy referenced by db_access: {command}"
-                )
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        command = self._db_access_command()
+        assert (
+            "--command-arg=scripts/verify_db_access_boundaries.py"
+            in command
+        ), (
+            "child command does not target "
+            f"verify_db_access_boundaries.py: {command}"
+        )
+        assert "--command-arg=--fail-on-violation" in command, (
+            f"child command lacks --fail-on-violation: {command}"
+        )
+        joined = " ".join(command)
+        assert "--legacy-shadow-report" not in joined, (
+            f"legacy shadow report referenced by db_access: {command}"
+        )
+        assert "legacy-shadow" not in joined, (
+            f"legacy shadow artifact referenced by db_access: {command}"
+        )
+        assert "db_ownership_policy.legacy.yml" not in joined, (
+            f"archived legacy policy referenced by db_access: {command}"
+        )
 
     def test_db_access_mode_is_blocking(self):
-        """The db_access entry must be blocking mode."""
-        for name, _, mode in _runner.GUARD_MANIFEST:
-            if name == "db_access":
-                assert mode == "blocking", f"Expected blocking, got {mode}"
-                return
-        assert False, "db_access not found in GUARD_MANIFEST"
+        """The db_access leg must be blocking mode."""
+        _name, _command, mode = _leg("db_access")
+        assert mode == "blocking", f"Expected blocking, got {mode}"
 
     def test_all_other_guards_preserved(self):
         """All non-db_access guards must still be present and unchanged."""
-        guard_names = [name for name, _, _ in _runner.GUARD_MANIFEST]
+        legs, _budgets, _plans = _derived()
+        guard_names = [name for name, _, _ in legs]
         expected = [
             "guard_registry", "source_provenance", "ui_dao", "worker",
             "receipt_link", "import_lifecycle", "cloud_payload",
@@ -926,7 +991,7 @@ class TestDbAccessSuiteCommandTokens:
             "money", "migration_matrix", "guard_tests",
         ]
         for name in expected:
-            assert name in guard_names, f"Guard '{name}' missing from manifest"
+            assert name in guard_names, f"Guard '{name}' missing from derived legs"
 
 
 class TestDbAccessRatchetChildTimeout:
@@ -952,19 +1017,15 @@ class TestDbAccessRatchetChildTimeout:
 
     def _load_fresh_runner(self):
         """Load a fresh runner module so import-time env resolution re-runs."""
-        spec = importlib.util.spec_from_file_location(
-            f"run_static_guard_suite_fresh_db_timeout_{id(self)}",
-            RUNNER_SCRIPT,
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+        return _load_fresh_runner(f"db_timeout_{id(self)}")
 
     def _db_access_command(self, module):
-        for name, command, _ in module.GUARD_MANIFEST:
+        legs, _budgets, _plans, errors = module._derive_default_suite_plan(REPO_ROOT)
+        assert not errors, errors
+        for name, command, _ in legs:
             if name == "db_access":
                 return command
-        assert False, "db_access not found in GUARD_MANIFEST"
+        assert False, "db_access not found in derived suite legs"
 
     def _db_access_child_timeout(self, module):
         command = self._db_access_command(module)
@@ -1232,12 +1293,12 @@ class TestGuardTimeBudgets:
                 with pytest.raises(ValueError):
                     _runner._load_manifest_from_json(manifest_path)
 
-    def test_builtin_budgets_declared_for_every_manifest_guard(self):
-        """Every built-in guard declares a budget; the known-expensive two
-        carry headroom over their observed durations (db_access ~700s,
-        guard_tests ~1500s)."""
-        budgets = _runner.GUARD_TIME_BUDGETS
-        for name, _command, _mode in _runner.GUARD_MANIFEST:
+    def test_builtin_budgets_declared_for_every_derived_guard(self):
+        """Every derived guard resolves a profile budget via the compiler;
+        the known-expensive two carry headroom over their observed durations
+        (db_access ~700s, guard_tests ~1500s)."""
+        _legs, budgets, _plans = _derived()
+        for name, _command, _mode in _legs:
             assert name in budgets, f"guard '{name}' has no time budget"
             assert budgets[name] > 0
         assert budgets["db_access"] >= 700
@@ -1292,11 +1353,11 @@ class TestDbArtifactSyncGuardWiring:
     """The PR-GR-10b artifact-sync tripwire is registered and wired.
 
     The guard's command runs the migrate CLI's --verify mode (tokenized
-    argv per the GUARD_MANIFEST pattern) consuming the SAME reviewed seed
-    input every generation run uses; the suite's per-guard timeout budget
-    bounds the run.  Registry, manifest, and filesystem must stay
-    consistent so hand-edit drift of the tracked candidate/accounting
-    artifacts fails every suite run and CI.
+    argv derived from the registry execution schema) consuming the SAME
+    reviewed seed input every generation run uses; the suite's per-guard
+    timeout budget bounds the run.  Registry, derived legs, and filesystem
+    must stay consistent so hand-edit drift of the tracked
+    candidate/accounting artifacts fails every suite run and CI.
     """
 
     GUARD_NAME = "db_artifact_sync"
@@ -1305,10 +1366,10 @@ class TestDbArtifactSyncGuardWiring:
     SEED_INPUT = "docs/ci/db-findings/GR-08-seeds.yml"
 
     def _manifest_entry(self):
-        for name, command, mode in _runner.GUARD_MANIFEST:
+        for name, command, mode in _derived()[0]:
             if name == self.GUARD_NAME:
-                return (name, command, mode)
-        assert False, f"{self.GUARD_NAME} not found in GUARD_MANIFEST"
+                return (name, _relativize_argv(command, REPO_ROOT), mode)
+        assert False, f"{self.GUARD_NAME} not found in derived suite legs"
 
     def test_guard_is_registered_blocking_with_tests_field(self):
         entry = _reg.GUARD_REGISTRY[self.GUARD_NAME]
@@ -1372,3 +1433,602 @@ class TestDbArtifactSyncGuardWiring:
     def test_registry_consistency_validation_passes(self):
         repo_root = Path(__file__).resolve().parent.parent.parent
         assert _reg.validate_registry(str(repo_root)) == []
+
+
+# ── PR-GR-10A Slice 2: registry-derived suite plan ──────────────────────────────
+
+if str(CI_DIR) not in sys.path:
+    sys.path.insert(0, str(CI_DIR))
+
+import guard_execution_plan as gep  # noqa: E402
+import verify_guard_registry as vgr  # noqa: E402
+
+_INTERPRETER_PLACEHOLDER = "<resolved-interpreter>"
+_RATCHET_GUARDS = frozenset({
+    "cancellation", "privacy", "db_access", "event_writers", "money",
+    "migration_matrix",
+})
+_INFRA_LEGS = frozenset({"guard_registry", "guard_tests"})
+
+# Verbatim pre-migration GUARD_MANIFEST, recorded before the PR-GR-10A
+# Slice 2 suite migration.  This fixture is the equivalence oracle: the
+# registry-derived suite plan must be semantically equal to it for EVERY
+# guard (semantic command equality per the GR-10A plan definition: same
+# guard id, mode, executable identity, script, normalized child tokens,
+# policies, baseline, protocol, timeout semantics, and required inputs —
+# absolute path spelling may differ).
+#
+# The db_access --timeout token is the pre-migration derivation at the
+# default suite budget: max(1500 - 60, 600) = 1440.  The comparison test
+# freezes GUARD_TIMEOUT_SECONDS to the default so the derived token matches.
+# The guard_tests interpreter token was SUITE_PYTHON (== sys.executable).
+LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
+    ("guard_registry", ["python3", "scripts/ci/verify_guard_registry.py"], "blocking"),
+    ("source_provenance", ["python3", "scripts/verify_source_provenance_boundaries.py", "--root", "."], "blocking"),
+    ("ui_dao", ["python3", "scripts/verify_ui_dao_boundaries.py", "--fail-on-violation"], "blocking"),
+    ("worker", ["python3", "scripts/verify_worker_boundaries.py", "--fail-on-violation"], "blocking"),
+    ("receipt_link", ["python3", "scripts/verify_receipt_link_boundaries.py", "--fail-on-violation"], "blocking"),
+    ("import_lifecycle", ["python3", "scripts/verify_import_lifecycle_boundaries.py", "--fail-on-violation"], "blocking"),
+    ("cloud_payload", ["python3", "scripts/verify_cloud_payload_boundaries.py", "--fail-on-violation"], "blocking"),
+    ("pii_logging", ["python3", "scripts/verify_pii_logging_boundaries.py", "--fail-on-violation"], "blocking"),
+    ("di_release", ["python3", "scripts/verify_di_release_boundaries.py", "--fail-on-violation"], "blocking"),
+    ("allowlist_compliance", ["python3", "scripts/verify_allowlist_compliance.py", "--fail-on-violation"], "blocking"),
+    ("ignored_test_budget", ["python3", "scripts/verify_ignored_test_budget.py", "--fail-on-violation", "--baseline", "29"], "blocking"),
+    ("lint_baseline_policy", ["python3", "scripts/verify_lint_baseline_policy.py", "--fail-on-violation"], "blocking"),
+    (
+        "time_boundaries",
+        [
+            "python3", "scripts/verify_time_boundaries.py",
+            "--root", ".",
+            "--allowlist", "config/guards/time_boundary_exceptions.yml",
+            "--fail-on-violation",
+        ],
+        "blocking",
+    ),
+    ("deprecation_escalations", ["python3", "scripts/ci/verify_deprecation_escalations.py", "--root", "."], "blocking"),
+    (
+        "db_artifact_sync",
+        [
+            "python3", "scripts/migrate_db_policy_signatures.py",
+            "--verify",
+            "--seed-rows", "docs/ci/db-findings/GR-08-seeds.yml",
+        ],
+        "blocking",
+    ),
+    ("known_good_state", ["python3", "scripts/ci/verify_known_good_state.py"], "blocking"),
+    (
+        "cancellation",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "cancellation",
+            "--command", "python3 scripts/verify_cancellation_boundaries.py",
+            "--baseline", "config/baselines/cancellation.json",
+            "--fail-on-violation",
+            "--ci-mode",
+        ],
+        "blocking",
+    ),
+    (
+        "privacy",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "privacy",
+            "--command", "python3 scripts/verify_privacy_boundaries.py --root .",
+            "--baseline", "config/baselines/privacy.json",
+            "--fail-on-violation",
+            "--ci-mode",
+        ],
+        "blocking",
+    ),
+    (
+        "db_access",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "db_access",
+            "--timeout=1440",
+            "--command-arg=python",
+            "--command-arg=scripts/verify_db_access_boundaries.py",
+            "--command-arg=--fail-on-violation",
+            "--command-arg=--structural-manifest",
+            "--command-arg=config/guards/db_structural_exceptions_expected_methods.yml",
+            "--command-arg=--ownership-policy",
+            "--command-arg=config/guards/db_ownership_policy.yml",
+            "--command-arg=--structural-exceptions",
+            "--command-arg=config/guards/db_structural_exceptions.yml",
+            "--baseline", "config/baselines/db_access_v2.json",
+            "--fail-on-violation",
+            "--ci-mode",
+        ],
+        "blocking",
+    ),
+    (
+        "event_writers",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "event_writers",
+            "--command", "python3 scripts/verify_event_writers.py --fail-on-violation",
+            "--baseline", "config/baselines/event_writers.json",
+            "--fail-on-violation",
+            "--ci-mode",
+        ],
+        "blocking",
+    ),
+    (
+        "money",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "money",
+            "--command", "python3 scripts/verify_money_boundaries.py --root .",
+            "--baseline", "config/baselines/money.json",
+            "--fail-on-violation",
+            "--ci-mode",
+        ],
+        "blocking",
+    ),
+    (
+        "migration_matrix",
+        [
+            "python3", "scripts/ci/guard_ratchet.py",
+            "--guard-name", "migration_matrix",
+            "--command", "python3 scripts/verify_migration_matrix.py --fail-on-violation",
+            "--baseline", "config/baselines/migration_matrix.json",
+            "--fail-on-violation",
+            "--ci-mode",
+        ],
+        "blocking",
+    ),
+    ("guard_tests", [sys.executable, "-m", "pytest", "scripts/test_verify_*.py", "scripts/ci/test_*.py", "-v", "--tb=short"], "blocking"),
+]
+
+# Verbatim pre-migration GUARD_TIME_BUDGETS (the named timeout profiles must
+# reproduce these exactly via the compiler).
+LEGACY_GUARD_TIME_BUDGETS_FIXTURE = {
+    "guard_registry": 300.0,
+    "source_provenance": 300.0,
+    "ui_dao": 300.0,
+    "worker": 300.0,
+    "receipt_link": 300.0,
+    "import_lifecycle": 300.0,
+    "cloud_payload": 300.0,
+    "pii_logging": 300.0,
+    "di_release": 300.0,
+    "allowlist_compliance": 300.0,
+    "ignored_test_budget": 300.0,
+    "lint_baseline_policy": 300.0,
+    "time_boundaries": 300.0,
+    "deprecation_escalations": 300.0,
+    "db_artifact_sync": 600.0,
+    "known_good_state": 1200.0,
+    "cancellation": 300.0,
+    "privacy": 300.0,
+    "db_access": 840.0,
+    "event_writers": 300.0,
+    "money": 300.0,
+    "migration_matrix": 300.0,
+    "guard_tests": 1800.0,
+}
+
+
+def _norm_token(token: str, root: Path) -> str:
+    """Normalize one argv token into the semantic comparison form.
+
+    Interpreter identities (bare python names or the resolved runtime) become
+    a placeholder; absolute paths under the repo root become repo-relative.
+    """
+    if token in ("python", "python3", sys.executable):
+        return _INTERPRETER_PLACEHOLDER
+    if token.startswith("--command-arg="):
+        return "--command-arg=" + _norm_token(token.split("=", 1)[1], root)
+    return _rel_token(token, root)
+
+
+def _semantic_ratchet(argv: List[str], root: Path, default_protocol: int) -> dict:
+    """Semantic form of a ratchet outer argv (either spelling)."""
+    parsed = {
+        "kind": "ratchet",
+        "ratchetScript": None,
+        "guardName": None,
+        "baseline": None,
+        "protocol": default_protocol,
+        "childTimeout": None,
+        "failOnViolation": False,
+        "ciMode": False,
+        "childArgv": [],
+    }
+    assert argv[0] in ("python", "python3", sys.executable), f"not an interpreter: {argv[0]!r}"
+    index = 1
+    while index < len(argv):
+        token = argv[index]
+        if "guard_ratchet.py" in token:
+            parsed["ratchetScript"] = os.path.basename(token)
+            index += 1
+        elif token == "--guard-name":
+            parsed["guardName"] = argv[index + 1]
+            index += 2
+        elif token == "--baseline":
+            parsed["baseline"] = _rel_token(argv[index + 1], root)
+            index += 2
+        elif token.startswith("--finding-protocol="):
+            parsed["protocol"] = int(token.split("=", 1)[1])
+            index += 1
+        elif token.startswith("--timeout="):
+            parsed["childTimeout"] = int(token.split("=", 1)[1])
+            index += 1
+        elif token == "--fail-on-violation":
+            parsed["failOnViolation"] = True
+            index += 1
+        elif token == "--ci-mode":
+            parsed["ciMode"] = True
+            index += 1
+        elif token == "--command":
+            # Legacy shell string: the ratchet tokenizes it shell-free, so
+            # whitespace splitting reproduces the executed child argv.
+            parts = argv[index + 1].split()
+            parsed["childArgv"] = [_norm_token(part, root) for part in parts]
+            index += 2
+        elif token.startswith("--command-arg="):
+            parsed["childArgv"].append(_norm_token(token.split("=", 1)[1], root))
+            index += 1
+        else:
+            raise AssertionError(f"unrecognized ratchet token: {token!r}")
+    return parsed
+
+
+def _semantic_direct(argv: List[str], root: Path) -> dict:
+    """Semantic form of a direct-guard outer argv (either spelling)."""
+    assert argv[0] in ("python", "python3", sys.executable), f"not an interpreter: {argv[0]!r}"
+    return {
+        "kind": "direct",
+        "script": _rel_token(argv[1], root),
+        "args": [_norm_token(token, root) for token in argv[2:]],
+    }
+
+
+def _fixture_protocol(guard_name: str) -> int:
+    """The protocol the ratchet resolves for a pre-migration manifest entry
+    (registry lookup, legacy default 1)."""
+    return int(_reg.GUARD_REGISTRY[guard_name].get("finding_protocol", 1))
+
+
+class TestDerivedPlanEqualsLegacyManifest:
+    """PR-GR-10A Slice 2 equivalence proof against the recorded fixture."""
+
+    def test_every_guard_semantically_equal_to_pre_migration_manifest(
+        self, monkeypatch
+    ):
+        monkeypatch.delenv("GUARD_TIMEOUT_SECONDS", raising=False)
+        fresh = _load_fresh_runner(f"equivalence_{id(self)}")
+        legs, _budgets, _plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
+        assert not errors, errors
+
+        fixture_names = [
+            name for name, _command, _mode in LEGACY_GUARD_MANIFEST_FIXTURE
+        ]
+        derived_names = [name for name, _command, _mode in legs]
+        assert derived_names == fixture_names, (
+            "derived suite legs must execute exactly the pre-migration "
+            "guard sequence, in order"
+        )
+
+        for (d_name, d_argv, d_mode), (f_name, f_argv, f_mode) in zip(
+            legs, LEGACY_GUARD_MANIFEST_FIXTURE
+        ):
+            assert d_name == f_name
+            assert d_mode == f_mode, f_name
+            if f_name in _INFRA_LEGS:
+                # Infrastructure legs are suite-owned and byte-identical.
+                assert d_argv == f_argv, f_name
+            elif f_name in _RATCHET_GUARDS:
+                protocol = _fixture_protocol(f_name)
+                derived = _semantic_ratchet(d_argv, REPO_ROOT, protocol)
+                legacy = _semantic_ratchet(f_argv, REPO_ROOT, protocol)
+                assert derived == legacy, (
+                    f"{f_name}: derived plan differs from the pre-migration "
+                    f"manifest:\n  derived={derived}\n  legacy={legacy}"
+                )
+            else:
+                derived = _semantic_direct(d_argv, REPO_ROOT)
+                legacy = _semantic_direct(f_argv, REPO_ROOT)
+                assert derived == legacy, (
+                    f"{f_name}: derived plan differs from the pre-migration "
+                    f"manifest:\n  derived={derived}\n  legacy={legacy}"
+                )
+
+    def test_derived_budgets_equal_pre_migration_budgets(self, monkeypatch):
+        """Named timeout profiles reproduce the pre-migration budget table."""
+        monkeypatch.delenv("GUARD_TIMEOUT_SECONDS", raising=False)
+        fresh = _load_fresh_runner(f"equivalence_budgets_{id(self)}")
+        _legs, budgets, _plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
+        assert not errors, errors
+        assert budgets == LEGACY_GUARD_TIME_BUDGETS_FIXTURE
+
+    def test_derived_plans_are_canonical_and_clean(self):
+        """Every derived plan uses the resolved interpreter and tokenized
+        argv — no bare python, no shell metacharacters, no legacy --command."""
+        _legs, _budgets, plans = _derived()
+        assert len(plans) == len(_reg.GUARD_REGISTRY)
+        for plan in plans:
+            argv = list(plan.outer_argv)
+            if plan.child_argv is not None:
+                argv.extend(plan.child_argv)
+            for token in argv:
+                assert token not in ("python", "python3"), (
+                    f"{plan.guard_id}: bare interpreter token in canonical plan"
+                )
+                for metachar in (";", "|", "&", "`", "$", "\n", "\r"):
+                    assert metachar not in token, (
+                        f"{plan.guard_id}: shell metacharacter in token"
+                    )
+            assert "--command" not in plan.outer_argv
+
+
+class TestSuitePlanEvidence:
+    """PR-GR-10A deliverable 4: plan evidence written per default-path run."""
+
+    def _evidence(self, tmp_path):
+        _legs, _budgets, plans = _derived()
+        _runner._write_plan_evidence(plans, tmp_path)
+        plan_bytes = (tmp_path / "execution-plan.json").read_bytes()
+        plan_doc = json.loads(plan_bytes.decode("utf-8"))
+        inputs_doc = json.loads(
+            (tmp_path / "effective-inputs.json").read_text(encoding="utf-8")
+        )
+        return plan_bytes, plan_doc, inputs_doc
+
+    def test_evidence_files_written_and_deterministic(self, tmp_path):
+        plan_bytes, plan_doc, inputs_doc = self._evidence(tmp_path)
+        assert plan_doc["schemaVersion"] == 1
+        assert inputs_doc["schemaVersion"] == 1
+        _runner._write_plan_evidence(_derived()[2], tmp_path)
+        assert (tmp_path / "execution-plan.json").read_bytes() == plan_bytes
+        assert not list(tmp_path.glob("*.tmp")), "atomic write left residue"
+
+    def test_sha256_sidecar_matches_plan_bytes(self, tmp_path):
+        plan_bytes, _plan_doc, _inputs_doc = self._evidence(tmp_path)
+        sidecar = (tmp_path / "execution-plan.sha256").read_text(encoding="utf-8")
+        digest = sidecar.split()[0]
+        assert digest == hashlib.sha256(plan_bytes).hexdigest()
+        assert "execution-plan.json" in sidecar
+
+    def test_evidence_is_path_free(self, tmp_path):
+        """No machine-specific absolute spellings (privacy: no user home)."""
+        plan_bytes, _plan_doc, _inputs_doc = self._evidence(tmp_path)
+        text = plan_bytes.decode("utf-8")
+        assert str(REPO_ROOT) not in text
+        assert sys.executable not in text
+        assert "\\Users" not in text
+
+    def test_per_guard_record_carries_deliverable_four_fields(self, tmp_path):
+        _plan_bytes, plan_doc, _inputs_doc = self._evidence(tmp_path)
+        by_id = {guard["guardId"]: guard for guard in plan_doc["guards"]}
+        assert set(by_id) == set(_reg.GUARD_REGISTRY)
+        required_fields = {
+            "guardId", "mode", "engine", "resolvedOuterArgv",
+            "resolvedChildArgv", "interpreter", "timeoutSeconds",
+            "requiredInputs", "inputHashes", "baselinePath",
+            "baselineSha256", "findingProtocol",
+        }
+        for guard in plan_doc["guards"]:
+            assert required_fields <= set(guard), guard["guardId"]
+        db = by_id["db_access"]
+        assert db["timeoutSeconds"] == 840  # D4 profile
+        assert db["findingProtocol"] == 2
+        assert db["baselinePath"] == "config/baselines/db_access_v2.json"
+        assert db["baselineSha256"]
+        assert db["resolvedChildArgv"][0] == _INTERPRETER_PLACEHOLDER
+        direct = by_id["time_boundaries"]
+        assert direct["resolvedChildArgv"] is None
+        assert direct["findingProtocol"] is None
+        assert direct["baselinePath"] is None
+        assert direct["timeoutSeconds"] == 300  # standard profile
+
+    def test_effective_inputs_hashes_match_files(self, tmp_path):
+        _plan_bytes, _plan_doc, inputs_doc = self._evidence(tmp_path)
+        by_id = {guard["guardId"]: guard for guard in inputs_doc["guards"]}
+        db = by_id["db_access"]
+        assert db["requiredInputs"] == [
+            "config/guards/db_ownership_policy.yml",
+            "config/guards/db_structural_exceptions.yml",
+            "config/guards/db_structural_exceptions_expected_methods.yml",
+            "config/guards/production_source_roots.yml",
+        ]
+        for relative, digest in db["inputHashes"].items():
+            absolute = REPO_ROOT / relative
+            assert digest == hashlib.sha256(absolute.read_bytes()).hexdigest()
+
+
+class TestSuiteMainWritesEvidence:
+    """main() writes plan evidence on the default path only."""
+
+    @staticmethod
+    def _fake_result(name, mode, output_dir, expected_max_seconds):
+        return {
+            "name": name,
+            "mode": mode,
+            "exit_code": 0,
+            "outcome": "pass",
+            "duration_seconds": 0.1,
+            "expected_max_seconds": expected_max_seconds,
+            "budget_exceeded": False,
+            "log_path": str(Path(output_dir) / f"{name}.log"),
+            "stdout_preview": "",
+        }
+
+    def test_main_writes_plan_evidence_and_summary(self, monkeypatch, tmp_path):
+        out_dir = tmp_path / "out"
+
+        def fake_run_guard(name, command, mode, output_dir, project_root,
+                           expected_max_seconds=None):
+            return self._fake_result(name, mode, output_dir, expected_max_seconds)
+
+        monkeypatch.setattr(_runner, "run_guard", fake_run_guard)
+        monkeypatch.setattr(
+            sys, "argv", [str(RUNNER_SCRIPT), "--output-dir", str(out_dir)]
+        )
+        with pytest.raises(SystemExit) as excinfo:
+            _runner.main()
+        assert excinfo.value.code == 0
+        for filename in (
+            "execution-plan.json", "execution-plan.sha256",
+            "effective-inputs.json", "summary.json", "summary.md",
+        ):
+            assert (out_dir / filename).exists(), filename
+
+    def test_main_custom_manifest_writes_no_plan_evidence(self, monkeypatch, tmp_path):
+        out_dir = tmp_path / "out"
+        manifest_path = tmp_path / "manifest.json"
+        _write_manifest(manifest_path, [
+            {"name": "only", "command": [sys.executable, "-c", "pass"],
+             "mode": "blocking"},
+        ])
+
+        def fake_run_guard(name, command, mode, output_dir, project_root,
+                           expected_max_seconds=None):
+            return self._fake_result(name, mode, output_dir, expected_max_seconds)
+
+        monkeypatch.setattr(_runner, "run_guard", fake_run_guard)
+        monkeypatch.setattr(sys, "argv", [
+            str(RUNNER_SCRIPT), "--manifest", str(manifest_path),
+            "--output-dir", str(out_dir),
+        ])
+        with pytest.raises(SystemExit) as excinfo:
+            _runner.main()
+        assert excinfo.value.code == 0
+        assert (out_dir / "summary.json").exists()
+        assert not (out_dir / "execution-plan.json").exists()
+
+
+class TestDerivedSuitePlanFailClosed:
+    """Derivation fails closed with bounded errors — no command-list fallback."""
+
+    def test_compile_diagnostic_fails_derivation(self, monkeypatch):
+        fresh = _load_fresh_runner(f"failclosed_compile_{id(self)}")
+
+        def broken(context, specs=None):
+            return (), (
+                gep.PlanDiagnostic(
+                    code="E_SYNTHETIC", guard_id="db_access",
+                    context="bounded synthetic failure", severity="error",
+                ),
+            )
+
+        monkeypatch.setattr(fresh, "compile_static_suite_plan", broken)
+        legs, _budgets, plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
+        assert legs == [] and plans == []
+        assert errors and "E_SYNTHETIC" in errors[0]
+
+    def test_suite_order_gap_fails_derivation(self, monkeypatch):
+        fresh = _load_fresh_runner(f"failclosed_order_{id(self)}")
+        monkeypatch.setattr(
+            fresh, "SUITE_GUARD_ORDER", fresh.SUITE_GUARD_ORDER[:-1]
+        )
+        legs, _budgets, _plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
+        assert legs == []
+        assert any("E_SUITE_ORDER_GAP" in error for error in errors)
+        assert any("migration_matrix" in error for error in errors)
+
+    def test_unknown_order_name_fails_derivation(self, monkeypatch):
+        fresh = _load_fresh_runner(f"failclosed_order2_{id(self)}")
+        monkeypatch.setattr(
+            fresh, "SUITE_GUARD_ORDER", fresh.SUITE_GUARD_ORDER + ("no_such_guard",)
+        )
+        legs, _budgets, _plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
+        assert legs == []
+        assert any("E_SUITE_ORDER_GAP" in error for error in errors)
+
+
+class TestCompatDerivedManifestView:
+    """PEP 562 derived compatibility views keep pre-migration consumers working.
+
+    Mirrors the exact assertions the pre-migration consumers make
+    (test_verify_known_good_state.py, test_verify_deprecation_escalations.py)
+    against the derived view — updated to the derived-plan reality without
+    weakening.
+    """
+
+    def test_known_good_state_legacy_command_exact(self):
+        for name, command, mode in _runner.GUARD_MANIFEST:
+            if name == "known_good_state":
+                assert mode == "blocking"
+                assert command == [
+                    "python3", "scripts/ci/verify_known_good_state.py"
+                ]
+                break
+        else:
+            assert False, "known_good_state missing from compatibility view"
+
+    def test_manifest_names_match_registry_exactly(self):
+        infra_names = {"guard_tests", "guard_registry"}
+        manifest_names = {
+            name for name, _command, _mode in _runner.GUARD_MANIFEST
+            if name not in infra_names
+        }
+        assert manifest_names == set(_reg.GUARD_REGISTRY)
+
+    def test_deprecation_escalations_present(self):
+        manifest_names = [name for name, _command, _mode in _runner.GUARD_MANIFEST]
+        assert "deprecation_escalations" in manifest_names
+
+    def test_time_budgets_view_known_good_state(self):
+        budgets = _runner.GUARD_TIME_BUDGETS
+        assert budgets["known_good_state"] >= 900
+
+    def test_unknown_attribute_still_raises(self):
+        with pytest.raises(AttributeError):
+            _runner.definitely_not_a_real_attribute  # noqa: B018
+
+
+class TestVerifyGuardRegistryDirection:
+    """PR-GR-10A Step 5: the validator owns plan validation, never the suite."""
+
+    def test_validator_never_imports_the_suite(self):
+        source = (CI_DIR / "verify_guard_registry.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add(node.module or "")
+        assert not any(
+            "run_static_guard_suite" in name for name in imported
+        ), imported
+
+    def test_suite_source_has_no_legacy_manifest_assignment(self):
+        source = (CI_DIR / "run_static_guard_suite.py").read_text(encoding="utf-8")
+        assert vgr.forbidden_manifest_assignments(source) == []
+        assert vgr.forbidden_manifest_assignments("GUARD_MANIFEST = []\n") == [
+            "GUARD_MANIFEST"
+        ]
+        assert vgr.forbidden_manifest_assignments(
+            "GUARD_TIME_BUDGETS: Dict[str, float] = {}\n"
+        ) == ["GUARD_TIME_BUDGETS"]
+        assert vgr.forbidden_manifest_assignments("SUITE_GUARD_ORDER = ()\n") == []
+
+    def test_suite_source_wires_the_compiler(self):
+        source = (CI_DIR / "run_static_guard_suite.py").read_text(encoding="utf-8")
+        assert vgr.suite_references_compiler(source)
+        assert not vgr.suite_references_compiler("x = 1\n")
+
+    def test_validator_passes_on_the_real_tree(self):
+        result = subprocess.run(
+            [sys.executable, str(CI_DIR / "verify_guard_registry.py"),
+             "--root", str(REPO_ROOT)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=180,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    def test_compiled_plan_coverage_validation(self):
+        _legs, _budgets, plans = _derived()
+        registry_order = list(_reg.GUARD_REGISTRY.keys())
+        assert vgr.validate_compiled_suite_plan(plans, registry_order) == []
+        assert vgr.validate_compiled_suite_plan(plans[:-1], registry_order)
+        assert vgr.validate_compiled_suite_plan([], registry_order)
+
+    def test_compiled_plan_missing_ratchet_guard_is_reported(self):
+        _legs, _budgets, plans = _derived()
+        registry_order = list(_reg.GUARD_REGISTRY.keys())
+        stripped = [plan for plan in plans if plan.guard_id != "db_access"]
+        errors = vgr.validate_compiled_suite_plan(stripped, registry_order)
+        assert any("db_access" in error and "missing" in error for error in errors)
