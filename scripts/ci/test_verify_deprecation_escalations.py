@@ -166,7 +166,10 @@ def _src_path(filename):
 # ── Masking ─────────────────────────────────────────────────────────────────────
 
 def test_mask_kotlin_blanks_comments_and_strings_keeps_newlines():
-    masked = vde.mask_kotlin('val a = 1 // @Deprecated("x")\nval b = "y("')
+    # Two-line snippet WITH its trailing newline (as file content would end):
+    # two input newlines in, two masked newlines out (1:1 preservation — the
+    # masker is offset-preserving, so it never adds or drops newlines).
+    masked = vde.mask_kotlin('val a = 1 // @Deprecated("x")\nval b = "y("\n')
     assert "Deprecated" not in masked
     assert "y(" not in masked
     assert masked.count("\n") == 2
@@ -336,10 +339,12 @@ def test_all_sites_covered_exits_zero(tmp_path, capsys):
 
 
 def test_new_site_without_entry_exits_one(tmp_path, capsys):
+    # The Dao.kt site is announced; the NEW oldApi site has no entry, so the
+    # exit-1 finding line must name it (file:line symbol).
     _make_repo(
         tmp_path,
         {_src_path("A.kt"): KOTLIN_SINGLE, _src_path("Dao.kt"): KOTLIN_DAO_STYLE},
-        rows=[(_src_path("A.kt"), "oldApi")],
+        rows=[(_src_path("Dao.kt"), "getTotalSpentBetween")],
     )
     code, out, _err = _run(tmp_path, capsys)
     assert code == 1

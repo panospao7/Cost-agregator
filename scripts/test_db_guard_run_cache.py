@@ -301,8 +301,11 @@ class SecondRepository(private val expenseDao: ExpenseDao) {
     )
     updated = scan_db_access(root, raw_query_policy=EMPTY_RAW_QUERY_POLICY)
     payload = updated.to_dict()
+    # BOTH unauthorized mutations are reported: the within-run write was
+    # observed (the cache cannot have pinned the old tree).
     assert [f["rule"] for f in payload["findings"]] == [
-        "DB_UNAUTHORIZED_MUTATION"
+        "DB_UNAUTHORIZED_MUTATION",
+        "DB_UNAUTHORIZED_MUTATION",
     ]
     assert {f["symbol"]["owner"] for f in payload["findings"]} == {
         "example.Repository",
@@ -363,9 +366,14 @@ def test_callable_cache_never_shares_resolutions_across_indexes(tmp_path):
     )
     tree_without_widget.mkdir(parents=True)
 
-    index_with = build_project_type_index((tree_with_widget, tree_with_widget))
+    # ``build_project_type_index`` takes the ordered (anchor, base) walking
+    # contract of ``declared_root_pairs``: a SEQUENCE of pairs, so each tree
+    # is wrapped as its own single (anchor, base) pair.
+    index_with = build_project_type_index(
+        ((tree_with_widget, tree_with_widget),)
+    )
     index_without = build_project_type_index(
-        (tree_without_widget, tree_without_widget)
+        ((tree_without_widget, tree_without_widget),)
     )
 
     resolved = find_callable_declarations(

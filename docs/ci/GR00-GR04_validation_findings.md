@@ -1012,3 +1012,45 @@ HEAD `554aebc9`; checkout clean.
 2. Reconcile 278-vs-295: re-derive the distribution/accounting pins from the documented
    fold semantics or fix the fold; then regenerate + commit both artifacts.
 3. Performance: full sweep 98 min, three artifact suites 53 min - profiling pass overdue.
+
+---
+
+## Round 14 (2026-08-30) - after `df52d616` R13 loop items + `ed4aee97` GR-10a (compile gate) + `58a2fa5d` GR-10c (cache seam)
+
+HEAD `58a2fa5d`; checkout clean.
+
+### Gate results
+
+1. TaxEstimator targeted run: **17/18 PASS** (was 6/18 failing). Compile blocker resolved
+   by the currency-aware deposit aggregate migration. Only T11 remains:
+   `getTaxYearSummary uses real yearly income and categorizes business deductions` -
+   `Expected 8100.0 +/-0.01, but was 8156.0 (diff: 56.0)` - the known escalated item.
+2. `pytest scripts -q` -> exit 1; **4 failed / 3122 passed / 24 skipped in 16:25**.
+   GR-10c perf: sweep 98 -> 16 min (claimed gate 600-700s -> 250s consistent). The two
+   migrate accounting pins (278-vs-295) are RESOLVED by the 295-truth reconciliation.
+
+### The 4 failures - all inside the two NEW guardrail tools (GR-10a/GR-10c self-tests)
+
+A. GR-10a deprecation-escalation verifier (2):
+   - scripts/ci/test_verify_deprecation_escalations.py::test_mask_kotlin_blanks_comments_and_strings_keeps_newlines -
+     masking collapses newlines (1 vs 2 expected); same masking-literal family as earlier
+     rounds, now in the new tool's copy
+   - ::test_new_site_without_entry_exits_one - exit-one output does not contain the
+     offending site name (`oldApi` missing; prints FAIL summary line instead) - output
+     contract drift between tool and pin
+
+B. GR-10c cache seam (2) - production-path risk, highest priority:
+   - scripts/test_db_guard_run_cache.py::test_scanner_picks_up_new_mutation_after_write_within_run -
+     scanner MISSES a new mutation written during the same run (stale cache invalidation:
+     expected [DB_UNAUTHORIZED_MUTATION], got an extra/unauthorized shape)
+   - ::test_callable_cache_never_shares_resolutions_across_indexes -
+     `TypeError: cannot unpack non-iterable WindowsPath object` - cached value is a bare
+     WindowsPath where a tuple is unpacked; likely platform-shaped cache value (Path vs
+     tuple) or test unpack bug - flag as Windows-conditional
+
+### Status
+
+The R13 loop items and 295-truth reconciliation are verified. GR-10a/GR-10c are shipped
+but their own pins need one more iteration (A: tool output/masking; B: cache invalidation
+semantics). T11 (8100-vs-8156) remains the only Kotlin failure. GR-10b (artifact
+pipeline) can proceed in parallel - its drift-driver is reconciled.

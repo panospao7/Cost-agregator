@@ -15,7 +15,11 @@ identity --
   ``(st_mtime_ns, st_size)`` stamp, so a file changed within a run is
   re-read on the next access (re-read after write) and a cache hit returns
   byte-identical text to a fresh read (same UTF-8 text-mode universal
-  newlines the callers used before);
+  newlines the callers used before).  The store path re-validates the stamp
+  AFTER the read (stat-read-restat): a write landing inside the read window
+  is detected and the read is repeated against the fresh stamp, so only a
+  stamp-stable read is ever cached and a within-run write can never pin
+  mismatched text;
 * the parser analyses (``cached_value`` consumers in
   ``kotlin_callable_parser``) key by the exact input text -- plus the owner
   identity, the tolerance flag, and the project type index's CONTENT digest
@@ -62,6 +66,11 @@ _CACHE_LIMITS = {
     "project_types": 8192,
     "nested_types": 8192,
 }
+
+# Bounded stat-read-restat attempts in ``file_text`` when a write lands
+# inside the read window.  One re-read covers every real within-run write;
+# the bound only caps pathological continuous writers deterministically.
+_FILE_READ_ATTEMPTS = 3
 
 _CACHES: dict[str, dict] = {}
 
@@ -132,24 +141,46 @@ def file_text(abs_path: str) -> str:
     universal newlines).  The stamp ``(st_mtime_ns, st_size)`` is taken
     BEFORE the read and validated on every access, so a file written after
     a cached read is re-read on the next access (re-read after write).
+    The store path re-validates the stamp AFTER the read as well
+    (stat-read-restat): when a write lands between the stamp and the
+    cache store, the read is repeated against the fresh stamp (bounded by
+    ``_FILE_READ_ATTEMPTS``), so a stored entry always provably describes
+    the text it holds and THIS access observes the newest complete content
+    -- a within-run write can never pin mismatched text.
 
     Exceptions are never cached: ``OSError`` and ``UnicodeDecodeError``
     propagate to the caller's existing handling (each consumer keeps its
     own controlled diagnostic contract).
     """
     key = _file_cache_key(abs_path)
-    stamp = _file_stamp(key)
     cache = _cache("file_text")
-    if stamp is not None:
-        cached = cache.get(key)
-        if cached is not None and cached[0] == stamp:
-            return cached[1]
-    with open(abs_path, "r", encoding="utf-8") as handle:
-        text = handle.read()
-    if stamp is not None:
-        if len(cache) >= _CACHE_LIMITS["file_text"]:
-            cache.clear()
-        cache[key] = (stamp, text)
+    text = ""
+    for _attempt in range(_FILE_READ_ATTEMPTS):
+        stamp = _file_stamp(key)
+        if stamp is not None:
+            cached = cache.get(key)
+            if cached is not None and cached[0] == stamp:
+                return cached[1]
+        with open(abs_path, "r", encoding="utf-8") as handle:
+            text = handle.read()
+        if stamp is None:
+            # Unstattable paths stay uncached: the caller's own ``open``
+            # failure (and its controlled diagnostic) decides, exactly like
+            # the uncached read.
+            return text
+        if _file_stamp(key) == stamp:
+            # Stamp stable across the read: the entry provably describes
+            # the text it holds.
+            if len(cache) >= _CACHE_LIMITS["file_text"]:
+                cache.clear()
+            cache[key] = (stamp, text)
+            return text
+        # The file changed while being read: discard and re-read against
+        # the fresh stamp so this access never returns torn text and never
+        # stores new text under an old stamp.
+    # Pathological continuous-writer fallback: return the newest read
+    # uncached (nothing inconsistent is ever stored; the next access
+    # re-stats as usual).
     return text
 
 
