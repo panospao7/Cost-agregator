@@ -85,6 +85,22 @@ def _validate_registry_self_consistency() -> list:
     return errors
 
 
+# Engines that are registry-declared but never compiled into the canonical
+# suite plan (plan Step 5: "unless declared external").  Kept in lockstep
+# with guard_execution_plan's non-Python engine vocabulary.
+_DECLARED_EXTERNAL_ENGINES = frozenset({"external", "gradle-native"})
+
+
+def declared_external_guard_ids() -> Set[str]:
+    """Registry guard ids whose execution engine is declared external."""
+    external: Set[str] = set()
+    for guard_id, entry in GUARD_REGISTRY.items():
+        execution = entry.get("execution") if isinstance(entry, dict) else None
+        if isinstance(execution, dict) and execution.get("engine") in _DECLARED_EXTERNAL_ENGINES:
+            external.add(guard_id)
+    return external
+
+
 def validate_compiled_suite_plan(
     plans: List[ExecutionPlan],
     registry_order: List[str],
@@ -92,28 +108,32 @@ def validate_compiled_suite_plan(
     """Validate the compiled canonical suite plan against the registry.
 
     Checks (plan Step 5): every active registry guard appears exactly once,
-    in deterministic registry order; every ratchet plan carries a baseline,
-    an explicit finding protocol, and a child argv.  Compilation itself
-    already enforces repo-relative tokens, no shell strings, no unresolved
-    templates, and required-input existence.
+    in deterministic registry order — EXCEPT guards whose execution engine is
+    declared external, which are registry-declared but excluded from the
+    suite plan by design; every ratchet plan carries a baseline, an explicit
+    finding protocol, and a child argv.  Compilation itself already enforces
+    repo-relative tokens, no shell strings, no unresolved templates, and
+    required-input existence.
 
     Returns a list of bounded error strings (empty when valid).
     """
     errors: List[str] = []
+    external = declared_external_guard_ids()
+    required_order = [gid for gid in registry_order if gid not in external]
     plan_ids = [plan.guard_id for plan in plans]
 
     duplicates = sorted({gid for gid in plan_ids if plan_ids.count(gid) > 1})
     for gid in duplicates:
         errors.append(f"compiled suite plan: guard '{gid}' appears more than once")
 
-    missing = [gid for gid in registry_order if plan_ids.count(gid) == 0]
+    missing = [gid for gid in required_order if plan_ids.count(gid) == 0]
     for gid in missing:
         errors.append(f"compiled suite plan: registry guard '{gid}' is missing")
-    extra = [gid for gid in plan_ids if gid not in set(registry_order)]
+    extra = [gid for gid in plan_ids if gid not in set(required_order)]
     for gid in extra:
         errors.append(f"compiled suite plan: unknown guard '{gid}' is present")
 
-    if not missing and not extra and not duplicates and plan_ids != list(registry_order):
+    if not missing and not extra and not duplicates and plan_ids != required_order:
         errors.append(
             "compiled suite plan: guard order is not the deterministic "
             "registry order"

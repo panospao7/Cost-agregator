@@ -198,7 +198,7 @@ SUITE_GUARD_ORDER: Tuple[str, ...] = (
     "allowlist_compliance", "ignored_test_budget", "lint_baseline_policy",
     "time_boundaries", "deprecation_escalations", "db_artifact_sync",
     "known_good_state", "cancellation", "privacy", "db_access",
-    "event_writers", "money", "migration_matrix",
+    "event_writers", "money", "raw_money_aggregates", "migration_matrix",
 )
 
 # Ratchet child-budget adapter policy: only the db_access ratchet leg

@@ -54,7 +54,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import pytest
 
@@ -988,7 +988,7 @@ class TestDbAccessSuiteCommandTokens:
             "ignored_test_budget", "lint_baseline_policy", "time_boundaries",
             "deprecation_escalations", "db_artifact_sync",
             "cancellation", "privacy", "db_access", "event_writers",
-            "money", "migration_matrix", "guard_tests",
+            "money", "raw_money_aggregates", "migration_matrix", "guard_tests",
         ]
         for name in expected:
             assert name in guard_names, f"Guard '{name}' missing from derived legs"
@@ -1608,6 +1608,24 @@ LEGACY_GUARD_TIME_BUDGETS_FIXTURE = {
     "guard_tests": 1800.0,
 }
 
+# PR-GR-10A Slice 3 suite additions: registry entries that legitimately join
+# the canonical suite AFTER the recorded pre-migration fixture.  Each entry
+# is pinned with its semantic command so post-migration additions stay under
+# the same equivalence discipline as the fixture.  Declared-external registry
+# entries (currency_guardrails_ps, release_artifact) are deliberately NOT
+# here: they are excluded from the canonical suite plan by design (plan
+# Step 5: "unless declared external").
+POST_SLICE2_SUITE_ADDITIONS: List[Tuple[str, List[str], str]] = [
+    (
+        "raw_money_aggregates",
+        ["python3", "scripts/verify_raw_money_aggregates.py", "--fail-on-violation"],
+        "blocking",
+    ),
+]
+POST_SLICE2_SUITE_BUDGET_ADDITIONS: Dict[str, float] = {
+    "raw_money_aggregates": 300.0,
+}
+
 
 def _norm_token(token: str, root: Path) -> str:
     """Normalize one argv token into the semantic comparison form.
@@ -1701,17 +1719,20 @@ class TestDerivedPlanEqualsLegacyManifest:
         legs, _budgets, _plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
         assert not errors, errors
 
+        expected_manifest = (
+            list(LEGACY_GUARD_MANIFEST_FIXTURE) + list(POST_SLICE2_SUITE_ADDITIONS)
+        )
         fixture_names = [
-            name for name, _command, _mode in LEGACY_GUARD_MANIFEST_FIXTURE
+            name for name, _command, _mode in expected_manifest
         ]
         derived_names = [name for name, _command, _mode in legs]
         assert derived_names == fixture_names, (
             "derived suite legs must execute exactly the pre-migration "
-            "guard sequence, in order"
+            "guard sequence plus the pinned Slice 3 additions, in order"
         )
 
         for (d_name, d_argv, d_mode), (f_name, f_argv, f_mode) in zip(
-            legs, LEGACY_GUARD_MANIFEST_FIXTURE
+            legs, expected_manifest
         ):
             assert d_name == f_name
             assert d_mode == f_mode, f_name
@@ -1740,13 +1761,19 @@ class TestDerivedPlanEqualsLegacyManifest:
         fresh = _load_fresh_runner(f"equivalence_budgets_{id(self)}")
         _legs, budgets, _plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
         assert not errors, errors
-        assert budgets == LEGACY_GUARD_TIME_BUDGETS_FIXTURE
+        expected_budgets = dict(LEGACY_GUARD_TIME_BUDGETS_FIXTURE)
+        expected_budgets.update(POST_SLICE2_SUITE_BUDGET_ADDITIONS)
+        assert budgets == expected_budgets
 
     def test_derived_plans_are_canonical_and_clean(self):
         """Every derived plan uses the resolved interpreter and tokenized
         argv — no bare python, no shell metacharacters, no legacy --command."""
         _legs, _budgets, plans = _derived()
-        assert len(plans) == len(_reg.GUARD_REGISTRY)
+        compilable = [
+            guard_id for guard_id in _reg.GUARD_REGISTRY
+            if guard_id not in vgr.declared_external_guard_ids()
+        ]
+        assert len(plans) == len(compilable)
         for plan in plans:
             argv = list(plan.outer_argv)
             if plan.child_argv is not None:
@@ -1760,6 +1787,81 @@ class TestDerivedPlanEqualsLegacyManifest:
                         f"{plan.guard_id}: shell metacharacter in token"
                     )
             assert "--command" not in plan.outer_argv
+
+
+class TestSlice3SuiteAdditionsAndExternalExclusion:
+    """PR-GR-10A Slice 3: the extracted raw_money_aggregates guard joins the
+    canonical suite; declared-external registry entries are excluded from the
+    suite plan by design and rejected by single-guard compilation."""
+
+    def test_raw_money_aggregates_leg_is_blocking_with_canonical_command(self):
+        legs, budgets, _plans, errors = _derived()
+        assert not errors, errors
+        matching = [
+            (name, command, mode) for name, command, mode in legs
+            if name == "raw_money_aggregates"
+        ]
+        assert len(matching) == 1
+        name, command, mode = matching[0]
+        assert mode == "blocking"
+        derived = _semantic_direct(command, REPO_ROOT)
+        assert derived == {
+            "kind": "direct",
+            "script": "scripts/verify_raw_money_aggregates.py",
+            "args": ["--fail-on-violation"],
+        }
+        assert budgets["raw_money_aggregates"] == 300.0
+
+    def test_declared_external_guards_are_excluded_from_derived_legs(self):
+        legs, _budgets, plans, errors = _derived()
+        assert not errors, errors
+        leg_names = {name for name, _command, _mode in legs}
+        plan_ids = {plan.guard_id for plan in plans}
+        for external in ("currency_guardrails_ps", "release_artifact"):
+            assert external in _reg.GUARD_REGISTRY
+            assert external not in leg_names, external
+            assert external not in plan_ids, external
+
+    def test_external_exclusion_is_a_warning_diagnostic_not_an_error(self):
+        context = gep.ExecutionContext(
+            repo_root=str(REPO_ROOT),
+            interpreter_path=sys.executable,
+            ci_mode=False,
+        )
+        specs, load_diags = gep.load_guard_specs(gep.DEFAULT_REGISTRY_PATH)
+        assert not [d for d in load_diags if d.severity == "error"]
+        _plans, diags = gep.compile_static_suite_plan(context, specs=specs)
+        for external in ("currency_guardrails_ps", "release_artifact"):
+            warnings = [
+                d for d in diags
+                if d.guard_id == external
+                and d.code == "E_ENGINE_EXTERNAL_SKIPPED"
+            ]
+            assert len(warnings) == 1, (external, warnings)
+            assert warnings[0].severity == "warning"
+        assert not [d for d in diags if d.severity == "error"], diags
+
+    def test_external_guard_single_guard_compile_is_rejected(self):
+        """The Python runner bridge cannot execute a declared-external guard:
+        single-guard compilation fails closed with E_ENGINE_NOT_COMPILABLE."""
+        context = gep.ExecutionContext(
+            repo_root=str(REPO_ROOT),
+            interpreter_path=sys.executable,
+            ci_mode=False,
+        )
+        plan, diags = gep.compile_guard_plan("currency_guardrails_ps", context)
+        assert plan is None
+        assert any(d.code == "E_ENGINE_NOT_COMPILABLE" for d in diags)
+
+    def test_validator_excludes_declared_external_from_required_plan(self):
+        _legs, _budgets, plans = _derived()
+        registry_order = list(_reg.GUARD_REGISTRY.keys())
+        assert vgr.validate_compiled_suite_plan(plans, registry_order) == []
+        # An external guard is NOT reported missing when absent from the plan.
+        assert not any(
+            "currency_guardrails_ps" in error
+            for error in vgr.validate_compiled_suite_plan(plans, registry_order)
+        )
 
 
 class TestSuitePlanEvidence:
@@ -1801,7 +1903,8 @@ class TestSuitePlanEvidence:
     def test_per_guard_record_carries_deliverable_four_fields(self, tmp_path):
         _plan_bytes, plan_doc, _inputs_doc = self._evidence(tmp_path)
         by_id = {guard["guardId"]: guard for guard in plan_doc["guards"]}
-        assert set(by_id) == set(_reg.GUARD_REGISTRY)
+        external = vgr.declared_external_guard_ids()
+        assert set(by_id) == set(_reg.GUARD_REGISTRY) - external
         required_fields = {
             "guardId", "mode", "engine", "resolvedOuterArgv",
             "resolvedChildArgv", "interpreter", "timeoutSeconds",
@@ -1959,11 +2062,13 @@ class TestCompatDerivedManifestView:
 
     def test_manifest_names_match_registry_exactly(self):
         infra_names = {"guard_tests", "guard_registry"}
+        external_names = vgr.declared_external_guard_ids()
         manifest_names = {
             name for name, _command, _mode in _runner.GUARD_MANIFEST
             if name not in infra_names
         }
-        assert manifest_names == set(_reg.GUARD_REGISTRY)
+        expected = set(_reg.GUARD_REGISTRY) - external_names
+        assert manifest_names == expected
 
     def test_deprecation_escalations_present(self):
         manifest_names = [name for name, _command, _mode in _runner.GUARD_MANIFEST]

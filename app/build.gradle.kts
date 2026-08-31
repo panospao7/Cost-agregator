@@ -26,6 +26,110 @@ fun pythonInterpreter(): String {
     return "python3"
 }
 
+// ── PR-GR-10A Slice 3: registered-runner Gradle bridge ──────────────────────
+// The guard tasks below are THIN WRAPPERS around
+// scripts/ci/run_registered_guard.py.  Gradle owns ONLY:
+//   - the configured Python executable (above) and its preflight;
+//   - the repository root;
+//   - task name/description identity;
+//   - fail-closed validation of the runner script itself;
+//   - test-only override forwarding (typed, root-contained, gated behind a
+//     dedicated test-mode property);
+//   - exit-to-GradleException mapping (0 pass / 1 violation / 2 infra).
+// Gradle does NOT own: the guard child command, ratchet argv, baseline or
+// policy/allowlist paths, finding protocol, timeout arithmetic, or source-
+// root semantics — those are owned by the registry execution schema
+// (scripts/ci/guard_registry.py), compiled by
+// scripts/ci/guard_execution_plan.py, and executed by the runner bridge.
+// See docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md.
+
+// The one input the Gradle plane still owns: the runner bridge script.
+// Every other guard input (entrypoint, policies, baseline, allowlist) is
+// validated fail-closed by the plan compiler BEFORE any child process is
+// launched.
+fun validateRegisteredRunnerInput(taskName: String, runnerFile: File) {
+    val rootCanonical = rootDir.canonicalFile
+    val canonical = runnerFile.canonicalFile
+    if (!canonical.path.startsWith(rootCanonical.path + File.separator, ignoreCase = true)) {
+        throw GradleException(
+            "$taskName: runner script points outside the repository root: " +
+            canonical.absolutePath
+        )
+    }
+    if (!canonical.exists()) {
+        throw GradleException(
+            "$taskName: registered-runner script not found: ${canonical.absolutePath} " +
+            "(scripts/ci/run_registered_guard.py)"
+        )
+    }
+    if (!canonical.isFile) {
+        throw GradleException(
+            "$taskName: registered-runner script is not a regular file: ${canonical.absolutePath}"
+        )
+    }
+    if (!canonical.canRead()) {
+        throw GradleException(
+            "$taskName: registered-runner script is not readable: ${canonical.absolutePath}"
+        )
+    }
+}
+
+// Preflight: launch the interpreter with --version. Failure to launch Python
+// (or a non-zero --version exit) is an infrastructure error, not a policy
+// violation.
+fun pythonPreflightOrThrow(taskName: String, pythonExecutable: String) {
+    val preflightExit: Int = try {
+        exec {
+            workingDir = rootDir
+            commandLine(pythonExecutable, "--version")
+            isIgnoreExitValue = true
+        }.exitValue
+    } catch (_: Exception) {
+        throw GradleException(
+            "$taskName: Python preflight failed — could not launch '$pythonExecutable' " +
+            "(infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
+        )
+    }
+    if (preflightExit != 0) {
+        throw GradleException(
+            "$taskName: Python preflight failed — '$pythonExecutable --version' exited " +
+            "$preflightExit (infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
+        )
+    }
+}
+
+// Execute one registered guard through the canonical runner bridge with an
+// argument list (shell=False), never a shell string, and map the universal
+// exit codes onto GradleException.
+fun runRegisteredGuardFromGradle(
+    taskName: String,
+    guardId: String,
+    pythonExecutable: String,
+    runnerFile: File,
+    extraArgs: List<String>,
+    onViolation: () -> Unit,
+    onInfra: () -> Unit,
+) {
+    val commandArgs = listOf(
+        pythonExecutable,
+        runnerFile.absolutePath,
+        "--guard-id", guardId,
+        "--context", "gradle",
+        "--root", rootDir.canonicalFile.absolutePath,
+    ) + extraArgs
+    val result = exec {
+        workingDir = rootDir
+        commandLine(commandArgs)
+        isIgnoreExitValue = true
+    }
+    when (result.exitValue) {
+        0 -> { /* pass: no violations */ }
+        1 -> onViolation()
+        2 -> onInfra()
+        else -> throw GradleException("$taskName: unexpected exit code ${result.exitValue}")
+    }
+}
+
 android {
     namespace = "com.yourname.expensetracker"
     compileSdk = 35
@@ -438,490 +542,204 @@ tasks.register("verifyNoIgnoredGrowth") {
 // are individually suppressed with migration TODOs. No separate grep/lint
 // rule is needed — the compiler-level ERROR deprecation is the guard.
 
-// ARCH-01: Lifecycle bypass guard — wired into check lifecycle (inline, no external kotlin dependency)
-tasks.register("checkLifecycleBypasses") {
-    group = "verification"
-    description = "Fails if production code contains direct ExpenseDao calls that bypass TransactionLifecycleCoordinator"
+// PR-GR-10A Slice 3 — SUBSUMED_AND_RETIRED: the inline ARCH-01 lifecycle
+// scanner task ``checkLifecycleBypasses`` (14 textual ``expenseDao.updateXxx(``
+// patterns with a file-name allowlist) has been retired.  The canonical
+// ``db_access`` D4 guard (scripts/db_guard/scanner.py + the ownership policy +
+// the db_access_v2 ratchet baseline) discovers every direct DAO mutation by
+// receiver TYPE via the Room inventory and authorizes it by exact policy
+// identity — a strict superset of the retired receiver-NAME textual rules.
+// Subsumption proof: scripts/test_lifecycle_scanner_subsumption.py and
+// docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md (inline lifecycle scanner row).
 
-    doLast {
-        val srcDir = file("$rootDir/app/src/main/java")
-        val forbiddenPatterns = listOf(
-            "expenseDao.updateCategory(" to "TransactionLifecycleCoordinator.updateCategory()",
-            "expenseDao.updateCategoryNullable(" to "TransactionLifecycleCoordinator.updateCategory()",
-            "expenseDao.updateMerchantAndKey(" to "TransactionLifecycleCoordinator.updateMerchant()",
-            "expenseDao.updateTransactionType(" to "TransactionLifecycleCoordinator.updateType()",
-            "expenseDao.updateTransferDirection(" to "TransactionLifecycleCoordinator.updateTransferDetails()",
-            "expenseDao.updateTransferAccountName(" to "TransactionLifecycleCoordinator.updateTransferDetails()",
-            "expenseDao.updateIsNotMine(" to "TransactionLifecycleCoordinator.updateOwnership()",
-            "expenseDao.updateOwnerName(" to "TransactionLifecycleCoordinator.updateOwnership()",
-            "expenseDao.updateIsSharedExpense(" to "TransactionLifecycleCoordinator.updateOwnership()",
-            "expenseDao.updateSharedWithName(" to "TransactionLifecycleCoordinator.updateOwnership()",
-            "expenseDao.updateMySharePercentage(" to "TransactionLifecycleCoordinator.updateOwnership()",
-            "expenseDao.updateMyShareAmount(" to "TransactionLifecycleCoordinator.updateOwnership()",
-            "expenseDao.updateLocation(" to "TransactionLifecycleCoordinator.updateLocation()",
-            "expenseDao.clearLocation(" to "TransactionLifecycleCoordinator.updateLocation()"
-        )
-        val allowlist = setOf(
-            "TransactionLifecycleCoordinator.kt",
-            "ReceiptLinkService.kt",
-            "GroupTransactionCoordinator.kt",
-            "GroupLifecycleCoordinator.kt",
-            "GroupBalanceCalculator.kt",
-            "LocationBackfillWorker.kt",
-            "MerchantKeyBackfillWorker.kt"
-        )
-        val violations = mutableListOf<String>()
-        if (srcDir.exists()) {
-            srcDir.walkTopDown()
-                .filter { it.isFile && it.extension == "kt" && !it.path.contains("test") && !it.path.contains("androidTest") }
-                .forEach { f ->
-                    val fileName = f.name
-                    if (fileName in allowlist) return@forEach
-                    val content = f.readText()
-                    for ((pattern, replacement) in forbiddenPatterns) {
-                        if (pattern in content) {
-                            violations.add("${f.path}: Direct call to '$pattern' — use $replacement instead")
-                        }
-                    }
-                }
-        } else {
-            throw GradleException("checkLifecycleBybasses: source directory not found at ${srcDir.absolutePath}")
-        }
-        if (violations.isNotEmpty()) {
-            throw GradleException("LIFECYCLE BYPASS: ${violations.size} violation(s):\n  ${violations.joinToString("\n  ")}")
-        } else {
-            logger.lifecycle("OK: No lifecycle bypass violations found.")
-        }
-    }
-}
-
-// Wire both guards into the check lifecycle
-tasks.named("check") {
-    dependsOn("checkLifecycleBypasses")
-}
-
-// PR-E23: Inline CI guard for raw Double financial totals.
-// Flags: sumOf { it.amount }, sumOf { it.effectiveAmount }, total: Double in public engine results.
+// PR-E23: raw Double financial totals are now enforced by the REGISTERED
+// guard ``raw_money_aggregates`` (scripts/verify_raw_money_aggregates.py,
+// G-MONEY-RAW-01..07) — EXTRACTED_AND_REGISTERED from the former inline KTS
+// scanner.  The task below is the thin Gradle bridge; the rules are owned by
+// the registry execution schema.
 tasks.register("checkRawMoneyAggregates") {
     group = "verification"
-    description = "Fails if production code uses raw Double financial aggregates without MoneyAggregate"
+    description = "Fails if production code uses raw Double financial aggregates without MoneyAggregate (registered guard raw_money_aggregates via run_registered_guard.py)"
     doLast {
-        val srcDir = file("$rootDir/app/src/main/java")
-        val rawSumPatterns = listOf(
-            Regex("""\.sumOf\s*\{\s*it\.amount\s*\}"""),
-            Regex("""\.sumOf\s*\{\s*it\.effectiveAmount\s*\}"""),
-            Regex("""\.sumOf\s*\{\s*it\.normalizedAmount\s*\}"""),
-            Regex("""\.sumOf\s*\{\s*it\.\w*[Pp]rice\s*\}"""),
-            Regex("""\.sumBy\s*\{\s*it\.amount\s*\.(?:toInt|roundToInt)\s*\(\)\s*\}"""),
-            Regex("""total\s*:\s*Double"""),
-            Regex("""var\s+total\s*=\s*0\.0\s*;?\s*//?\s*.*sum""")
+        val taskName = "checkRawMoneyAggregates"
+        val runnerFile = file("$rootDir/scripts/ci/run_registered_guard.py")
+        validateRegisteredRunnerInput(taskName, runnerFile)
+        val pythonExecutable = pythonInterpreter()
+        pythonPreflightOrThrow(taskName, pythonExecutable)
+        runRegisteredGuardFromGradle(
+            taskName = taskName,
+            guardId = "raw_money_aggregates",
+            pythonExecutable = pythonExecutable,
+            runnerFile = runnerFile,
+            extraArgs = listOf("--ci-mode"),
+            onViolation = {
+                throw GradleException(
+                    "RAW MONEY AGGREGATE: raw Double financial aggregate violations found " +
+                    "(G-MONEY-RAW-01..07). Route totals through MoneyAggregate / normalized " +
+                    "money primitives. See docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md."
+                )
+            },
+            onInfra = {
+                throw GradleException(
+                    "checkRawMoneyAggregates: infrastructure error (missing registry, guard " +
+                    "script, or source root — validated fail-closed by the plan compiler " +
+                    "before child execution). Check that scripts/ci/run_registered_guard.py " +
+                    "and scripts/verify_raw_money_aggregates.py are present and valid."
+                )
+            },
         )
-        val allowlistFiles = setOf(
-            "MoneyAggregateBuilder.kt", "MoneyAggregate.kt", "ConvertedMoney.kt",
-            "CurrencyConverter.kt", "MultiCurrencyRepository.kt", "ExpenseDao.kt", "BudgetDao.kt"
-        )
-        val violations = mutableListOf<String>()
-        if (srcDir.exists()) {
-            srcDir.walkTopDown().filter { it.extension == "kt" }.forEach { f ->
-                val fileName = f.name
-                if (fileName in allowlistFiles) return@forEach
-                val filePathLower = f.path.lowercase()
-                if (filePathLower.contains("test") || filePathLower.contains("androidtest")) return@forEach
-                val lines = f.readLines()
-                var inFromBuckets = false
-                var bracketDepth = 0
-                lines.forEachIndexed { lineNum, line ->
-                    val stripped = line.trim()
-                    if (stripped.contains("fromBuckets") && stripped.contains("{")) {
-                        inFromBuckets = true
-                        bracketDepth = 0
-                    }
-                    if (inFromBuckets) {
-                        bracketDepth += stripped.count { c -> c == '{' } - stripped.count { c -> c == '}' }
-                        if (bracketDepth <= 0) { inFromBuckets = false; bracketDepth = 0 }
-                        return@forEachIndexed
-                    }
-                    if (stripped.startsWith("import ") || stripped.startsWith("//") || stripped.startsWith("*") || stripped.startsWith("/*")) return@forEachIndexed
-                    for (pattern in rawSumPatterns) {
-                        if (pattern.containsMatchIn(stripped)) {
-                            violations.add("${f.path}:${lineNum + 1}: Raw money aggregate matches '${pattern.pattern}'")
-                        }
-                    }
-                }
-            }
-        } else {
-            throw GradleException("checkRawMoneyAggregates: source directory not found at ${srcDir.absolutePath}")
-        }
-        if (violations.isNotEmpty()) {
-            throw GradleException("RAW MONEY AGGREGATE: ${violations.size} violation(s):\n  ${violations.joinToString("\n  ")}")
-        } else {
-            logger.lifecycle("OK: No raw money aggregate violations found.")
-        }
     }
 }
 
-// PR-GR-02: Canonical direct-time boundary guard (G-TIME-01) via fail-closed
-// wrapper around scripts/verify_time_boundaries.py. The defective inline
-// Kotlin scanner (with its now()/now =/TimeProvider( substring exemptions)
-// has been removed and replaced by the tested canonical script.
-//
-// Required inputs are validated BEFORE execution (fail closed):
-//   scripts/verify_time_boundaries.py
-//   config/guards/time_boundary_exceptions.yml
-// A missing / non-regular / unreadable / outside-root input is a hard
-// GradleException — never a warning or a silent skip.
-//
-// Python interpreter (same contract as GR-01's verifyDbAccessBoundaries):
-//   -PpythonExecutable=/path/to/python3
-// A preflight `pythonExecutable --version` runs first; failure to launch
-// Python (or a non-zero --version exit) is an infrastructure error.
+// PR-GR-02 / PR-GR-10A Slice 3: canonical direct-time boundary guard
+// (G-TIME-01) as a THIN WRAPPER around the registered runner bridge.
+// The command, allowlist path, and exit semantics are owned by the registry
+// execution schema (guard id ``time_boundaries``) and compiled by
+// scripts/ci/guard_execution_plan.py — Gradle owns only the interpreter,
+// the root, and exit-to-GradleException mapping.
 tasks.register("checkDirectTimeCalls") {
     group = "verification"
-    description = "Fails if production code calls wall-clock APIs outside the exact time-boundary exceptions (fail closed)"
+    description = "Fails if production code calls wall-clock APIs outside the exact time-boundary exceptions (fail closed; canonical registry plan via run_registered_guard.py)"
     doLast {
-        val rootCanonical = rootDir.canonicalFile
-        val scriptFile = file("$rootDir/scripts/verify_time_boundaries.py").canonicalFile
-        val allowlistFile = file("$rootDir/config/guards/time_boundary_exceptions.yml").canonicalFile
-
-        val requiredInputs = listOf(
-            "scripts/verify_time_boundaries.py" to scriptFile,
-            "config/guards/time_boundary_exceptions.yml" to allowlistFile
-        )
-        for ((rel, candidate) in requiredInputs) {
-            if (!candidate.path.startsWith(rootCanonical.path + File.separator, ignoreCase = true)) {
-                throw GradleException(
-                    "checkDirectTimeCalls: required input for '$rel' points outside the repository root: " +
-                    candidate.absolutePath
-                )
-            }
-            if (!candidate.exists()) {
-                throw GradleException(
-                    "checkDirectTimeCalls: required input not found: ${candidate.absolutePath} ($rel)"
-                )
-            }
-            if (!candidate.isFile) {
-                throw GradleException(
-                    "checkDirectTimeCalls: required input is not a regular file: ${candidate.absolutePath} ($rel)"
-                )
-            }
-            if (!candidate.canRead()) {
-                throw GradleException(
-                    "checkDirectTimeCalls: required input is not readable: ${candidate.absolutePath} ($rel)"
-                )
-            }
-        }
-
+        val taskName = "checkDirectTimeCalls"
+        val runnerFile = file("$rootDir/scripts/ci/run_registered_guard.py")
+        validateRegisteredRunnerInput(taskName, runnerFile)
         val pythonExecutable = pythonInterpreter()
-
-        // Preflight: launch the interpreter with --version. Failure to launch
-        // Python is an infrastructure error, not a policy violation.
-        val preflightExit: Int = try {
-            exec {
-                workingDir = rootDir
-                commandLine(pythonExecutable, "--version")
-                isIgnoreExitValue = true
-            }.exitValue
-        } catch (_: Exception) {
-            throw GradleException(
-                "checkDirectTimeCalls: Python preflight failed — could not launch '$pythonExecutable' " +
-                "(infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
-            )
-        }
-        if (preflightExit != 0) {
-            throw GradleException(
-                "checkDirectTimeCalls: Python preflight failed — '$pythonExecutable --version' exited " +
-                "$preflightExit (infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
-            )
-        }
-
-        // Execute the canonical guard with an argument list (shell=False), never
-        // a shell string with embedded paths.
-        val commandArgs = listOf(
-            pythonExecutable,
-            scriptFile.absolutePath,
-            "--root", rootCanonical.absolutePath,
-            "--allowlist", allowlistFile.absolutePath,
-            "--fail-on-violation"
+        pythonPreflightOrThrow(taskName, pythonExecutable)
+        runRegisteredGuardFromGradle(
+            taskName = taskName,
+            guardId = "time_boundaries",
+            pythonExecutable = pythonExecutable,
+            runnerFile = runnerFile,
+            extraArgs = listOf("--ci-mode"),
+            onViolation = {
+                throw GradleException(
+                    "DIRECT TIME: direct wall-clock time boundary violations found. " +
+                    "Route the call through TimeProvider (timeProvider.now()) or add an exact exception entry " +
+                    "to config/guards/time_boundary_exceptions.yml with a reason, owner, and linked issue. " +
+                    "See docs/development/TIME_SEMANTICS.md."
+                )
+            },
+            onInfra = {
+                throw GradleException(
+                    "checkDirectTimeCalls: infrastructure error (missing/malformed registry, exceptions " +
+                    "policy, or guard inputs — validated fail-closed by the plan compiler before child " +
+                    "execution). Check that scripts/ci/run_registered_guard.py, " +
+                    "scripts/verify_time_boundaries.py and config/guards/time_boundary_exceptions.yml " +
+                    "are present and valid."
+                )
+            },
         )
-        val result = exec {
-            workingDir = rootDir
-            commandLine(commandArgs)
-            isIgnoreExitValue = true
-        }
-        when (result.exitValue) {
-            0 -> { /* pass: no direct wall-clock time violations */ }
-            1 -> throw GradleException(
-                "DIRECT TIME: direct wall-clock time boundary violations found. " +
-                "Route the call through TimeProvider (timeProvider.now()) or add an exact exception entry " +
-                "to config/guards/time_boundary_exceptions.yml with a reason, owner, and linked issue. " +
-                "See docs/development/TIME_SEMANTICS.md."
-            )
-            2 -> throw GradleException(
-                "checkDirectTimeCalls: infrastructure error (missing/malformed exceptions policy, " +
-                "empty source tree, or parser failure). Check that scripts/verify_time_boundaries.py and " +
-                "config/guards/time_boundary_exceptions.yml are present and valid."
-            )
-            else -> throw GradleException("checkDirectTimeCalls: unexpected exit code ${result.exitValue}")
-        }
     }
 }
 
-/**
- * CI-enforced boundary guard.
- *
- * FAILS BUILD on direct ExpenseDao insert/update/delete mutations
- * outside the lifecycle allowlist. Any new class that needs direct
- * ExpenseDao access MUST be added to [allowlistForGuard] with a
- * documented rationale in docs/expense-mutation-inventory.md.
- *
- * Allowlist (approved bypasses):
- * - TransactionLifecycleCoordinator — the canonical mutation entry point
- * - LocationBackfillWorker — background column backfill (1-2 cols, low-value events)
- * - MerchantKeyBackfillWorker — background column backfill (1 col, low-value events)
- * - GroupTransactionCoordinator — atomic group-expense creation within outer tx
- * - DebugExpenseRepository — BuildConfig.DEBUG guarded debug methods
- * - AppDatabase — Room infrastructure
- * - ReceiptLinkService — circular dependency constraint (RCP-30)
- * - ExpenseRepository — delegated to coordinator for all user paths
- * - MultiCurrencyRepository — analytics-only read path with conversion inserts
- * - NotificationRepository — notification capture, not expense mutation
- */
-val srcDirForGuard = layout.projectDirectory.dir("src/main/java").asFile
-val allowlistForGuard = setOf(
-    "TransactionLifecycleCoordinator", "LocationBackfillWorker", "MerchantKeyBackfillWorker",
-    "GroupTransactionCoordinator", "DebugExpenseRepository", "AppDatabase",
-    "ReceiptLinkService", "ExpenseRepository", "MultiCurrencyRepository",
-    "NotificationRepository"
-)
-tasks.register("checkLifecycleBypass") {
-    group = "verification"
-    description = "Fails if ExpenseDao.insert/update/delete called outside TransactionLifecycleCoordinator"
-    doLast {
-        val violations = mutableListOf<String>()
-        srcDirForGuard.walk().forEach { f ->
-            if (!f.name.endsWith(".kt") || f.isDirectory) return@forEach
-            val className = f.name.removeSuffix(".kt")
-            if (allowlistForGuard.any { className.contains(it) }) return@forEach
-            val text = f.readText()
-            val patterns = listOf("expenseDao\\.insert", "expenseDao\\.update", "expenseDao\\.delete")
-            for (pattern in patterns) {
-                if (Regex(pattern).containsMatchIn(text)) {
-                    violations.add("${f.path}: matches ${pattern}")
-                }
-            }
-        }
-        if (violations.isNotEmpty()) {
-            throw GradleException("LIFECYCLE BYPASS: Direct ExpenseDao mutations outside allowlist:\n  ${violations.joinToString("\n  ")}")
-        }
-    }
-}
+// PR-GR-10A Slice 3 — SUBSUMED_AND_RETIRED: the inline CI guard task
+// ``checkLifecycleBypass`` (textual ``expenseDao.insert|update|delete``
+// regexes with a class-name allowlist) has been retired.  Its positive
+// surface (direct ExpenseDao entity mutations) is a strict subset of the
+// canonical ``db_access`` D4 guard's discovery space, which authorizes every
+// direct DAO mutation by exact policy identity and fails closed on
+// unresolved scopes.  Subsumption proof:
+// scripts/test_lifecycle_scanner_subsumption.py and
+// docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md (inline lifecycle scanner row).
 
-// Wire both new guards into the check lifecycle
-// VERIFIED (PR-E24): Both checkRawMoneyAggregates and checkDirectTimeCalls are
-// registered (above) AND wired to the "check" lifecycle via dependsOn.
+// Wire the registered-runner guard bridges into the check lifecycle.
+// checkRawMoneyAggregates and checkDirectTimeCalls are thin wrappers over
+// scripts/ci/run_registered_guard.py (registry-owned commands); the inline
+// lifecycle scanners they formerly accompanied are retired (see above).
 tasks.named("check") {
     dependsOn("checkRawMoneyAggregates")
     dependsOn("checkDirectTimeCalls")
-    dependsOn("checkLifecycleBypass")
 }
 
-// checkDirectTimeCalls wraps scripts/verify_time_boundaries.py and is
-// fail-closed: any missing/unreadable input or direct wall-clock call
-// outside the exact exceptions in config/guards/time_boundary_exceptions.yml
-// produces a hard GradleException.  No TODO remains — the guard is fully
-// wired into the "check" lifecycle (see dependsOn block above).
+// checkDirectTimeCalls runs the registered ``time_boundaries`` guard through
+// the runner bridge and is fail-closed: any missing/malformed registry,
+// policy, or guard input is rejected by the plan compiler before child
+// execution, and any direct wall-clock call outside the exact exceptions in
+// config/guards/time_boundary_exceptions.yml produces a hard GradleException.
+// The guard is fully wired into the "check" lifecycle (see dependsOn block
+// above).
 
-// PR-GR-01 — DB access boundary guard via ratchet wrapper (fail closed).
-// The ratchet accepts baselined findings (exit 0 if no new violations)
-// and fails on new violations (exit 1) or infrastructure errors (exit 2).
+// PR-GR-01 / PR-GR-10A Slice 3: DB access boundary guard as a THIN WRAPPER
+// around the registered runner bridge (guard id ``db_access``, ratchet-
+// enforced, fail closed).  The ratchet child command, the tokenized
+// --command-arg argv, the baseline/policy/structural-manifest paths, the
+// explicit --finding-protocol=2 intent, and the D4 timeout profile are owned
+// by the registry execution schema and compiled by
+// scripts/ci/guard_execution_plan.py — Gradle no longer rebuilds any of them.
 //
-// Required inputs are validated BEFORE execution:
-//   scripts/ci/guard_ratchet.py
-//   scripts/verify_db_access_boundaries.py
-//   config/baselines/db_access_v2.json
-//   config/guards/db_ownership_policy.yml
-//   config/guards/db_structural_exceptions.yml
-//   config/guards/db_structural_exceptions_expected_methods.yml
-//   config/guards/production_source_roots.yml
-// A missing / non-regular / unreadable / outside-root input is a hard
-// GradleException — never a warning or a silent skip.
-//
-// Test-only path overrides (production CI must use the defaults):
-//   -PdbGuardRatchetPath=...                 scripts/ci/guard_ratchet.py
-//   -PdbGuardScriptPath=...                  scripts/verify_db_access_boundaries.py
-//   -PdbGuardBaselinePath=...                config/baselines/db_access_v2.json
-//   -PdbGuardOwnershipPolicyPath=...         config/guards/db_ownership_policy.yml
-//   -PdbGuardStructuralExceptionsPath=...    config/guards/db_structural_exceptions.yml
-//   -PdbGuardStructuralManifestPath=...      config/guards/db_structural_exceptions_expected_methods.yml
-//   -PdbGuardSourceRootsManifestPath=...     config/guards/production_source_roots.yml
-//
-// Relative overrides resolve against the repository root (rootDir) so they
-// are consistent with the canonical defaults; absolute overrides are used
-// as-is.
-//
-// The inner ratchet command ALWAYS receives all six resolved canonical paths
-// explicitly — the policy/manifest inputs are never gated on the test-only
-// overrides, so production CI uses the exact canonical defaults below.
-// config/guards/production_source_roots.yml (PR-GR-03) is validated as a
-// required input but is not a child argument: the guard loads it from its
-// canonical repository-relative path via scripts/db_guard/source_roots.py.
+// Test-only typed input overrides (plan Step 6): the four policy/manifest
+// inputs are the only declared requiredInputs of the db_access guard, so
+// they are the only overridable keys.  The ratchet script, guard entrypoint,
+// and baseline are compiler-owned ratchet metadata and are deliberately NOT
+// overridable (an override must never change guard ID, mode, baseline mode,
+// or protocol).  Overrides require the dedicated test-mode property
+// -PdbGuardTestOverrides=true and are rejected outright by the runner in
+// --ci-mode production enforcement; relative override paths resolve against
+// the repository root (rootDir), absolute paths are used as-is.
 //
 // Python interpreter (defaults to python3):
 //   -PpythonExecutable=/path/to/python3
 tasks.register("verifyDbAccessBoundaries") {
     group = "verification"
-    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer policy (ratchet-enforced, fail closed)"
+    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer policy (canonical registry plan via run_registered_guard.py; ratchet-enforced, fail closed)"
     doLast {
-        val rootCanonical = rootDir.canonicalFile
-        fun resolveDbGuardPath(defaultRel: String, overrideProp: String): File {
-            val override = findProperty(overrideProp)?.toString()?.takeIf { it.isNotBlank() }
-            val path = if (override != null) {
-                // Relative overrides are resolved against the repository root
-                // (rootDir), consistent with the canonical defaults; absolute
-                // overrides are used as-is.
-                val overrideFile = File(override)
-                if (overrideFile.isAbsolute) file(override) else file("$rootDir/$override")
-            } else {
-                file("$rootDir/$defaultRel")
-            }
-            val canonical = path.canonicalFile
-            if (!canonical.path.startsWith(rootCanonical.path + File.separator, ignoreCase = true)) {
-                throw GradleException(
-                    "verifyDbAccessBoundaries: required input for '$defaultRel' points outside the repository root: " +
-                    path.absolutePath
-                )
-            }
-            return canonical
-        }
-
-        val ratchetFile = resolveDbGuardPath("scripts/ci/guard_ratchet.py", "dbGuardRatchetPath")
-        val guardFile = resolveDbGuardPath("scripts/verify_db_access_boundaries.py", "dbGuardScriptPath")
-        val baselineFile = resolveDbGuardPath("config/baselines/db_access_v2.json", "dbGuardBaselinePath")
-        val ownershipPolicyFile = resolveDbGuardPath(
-            "config/guards/db_ownership_policy.yml", "dbGuardOwnershipPolicyPath"
-        )
-        val structuralExceptionsFile = resolveDbGuardPath(
-            "config/guards/db_structural_exceptions.yml", "dbGuardStructuralExceptionsPath"
-        )
-        val structuralManifestFile = resolveDbGuardPath(
-            "config/guards/db_structural_exceptions_expected_methods.yml", "dbGuardStructuralManifestPath"
-        )
-        val sourceRootsManifestFile = resolveDbGuardPath(
-            "config/guards/production_source_roots.yml", "dbGuardSourceRootsManifestPath"
-        )
-
-        val requiredInputs = listOf(
-            "scripts/ci/guard_ratchet.py" to ratchetFile,
-            "scripts/verify_db_access_boundaries.py" to guardFile,
-            "config/baselines/db_access_v2.json" to baselineFile,
-            "config/guards/db_ownership_policy.yml" to ownershipPolicyFile,
-            "config/guards/db_structural_exceptions.yml" to structuralExceptionsFile,
-            "config/guards/db_structural_exceptions_expected_methods.yml" to structuralManifestFile,
-            "config/guards/production_source_roots.yml" to sourceRootsManifestFile
-        )
-        for ((rel, candidate) in requiredInputs) {
-            if (!candidate.exists()) {
-                throw GradleException(
-                    "verifyDbAccessBoundaries: required input not found: ${candidate.absolutePath} ($rel)"
-                )
-            }
-            if (!candidate.isFile) {
-                throw GradleException(
-                    "verifyDbAccessBoundaries: required input is not a regular file: ${candidate.absolutePath} ($rel)"
-                )
-            }
-            if (!candidate.canRead()) {
-                throw GradleException(
-                    "verifyDbAccessBoundaries: required input is not readable: ${candidate.absolutePath} ($rel)"
-                )
-            }
-        }
-
+        val taskName = "verifyDbAccessBoundaries"
+        val runnerFile = file("$rootDir/scripts/ci/run_registered_guard.py")
+        validateRegisteredRunnerInput(taskName, runnerFile)
         val pythonExecutable = pythonInterpreter()
+        pythonPreflightOrThrow(taskName, pythonExecutable)
 
-        // Preflight: launch the interpreter with --version.  Failure to launch
-        // Python is an infrastructure error, not a policy violation.
-        val preflightExit: Int = try {
-            exec {
-                workingDir = rootDir
-                commandLine(pythonExecutable, "--version")
-                isIgnoreExitValue = true
-            }.exitValue
-        } catch (_: Exception) {
-            throw GradleException(
-                "verifyDbAccessBoundaries: Python preflight failed — could not launch '$pythonExecutable' " +
-                "(infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
-            )
+        val dbGuardOverrideInputs = listOf(
+            "dbGuardOwnershipPolicyPath" to "config/guards/db_ownership_policy.yml",
+            "dbGuardStructuralExceptionsPath" to "config/guards/db_structural_exceptions.yml",
+            "dbGuardStructuralManifestPath" to "config/guards/db_structural_exceptions_expected_methods.yml",
+            "dbGuardSourceRootsManifestPath" to "config/guards/production_source_roots.yml"
+        )
+        val testOverridesEnabled = findProperty("dbGuardTestOverrides")?.toString() == "true"
+        val overrideArgs = mutableListOf<String>()
+        for ((overrideProp, inputKey) in dbGuardOverrideInputs) {
+            val raw = findProperty(overrideProp)?.toString()?.takeIf { it.isNotBlank() } ?: continue
+            if (!testOverridesEnabled) {
+                throw GradleException(
+                    "$taskName: override property '$overrideProp' requires " +
+                    "-PdbGuardTestOverrides=true (dedicated test-only mode; " +
+                    "overrides are rejected in production CI)."
+                )
+            }
+            val overrideFile = File(raw)
+            val resolved = if (overrideFile.isAbsolute) overrideFile else file("$rootDir/$raw")
+            overrideArgs += "--input-override"
+            overrideArgs += "$inputKey=${resolved.absolutePath}"
         }
-        if (preflightExit != 0) {
-            throw GradleException(
-                "verifyDbAccessBoundaries: Python preflight failed — '$pythonExecutable --version' exited " +
-                "$preflightExit (infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
-            )
-        }
+        // Production CI enforcement (--ci-mode) unless dedicated test-only
+        // overrides are active; the runner rejects the combination fail-closed.
+        val ciArgs = if (overrideArgs.isEmpty()) listOf("--ci-mode") else emptyList()
 
-        // Execute the ratchet with an argument list (shell=False), never a shell
-        // string with embedded paths.  The inner guard command is passed as
-        // repeatable single-token --command-arg=<value> arguments to eliminate
-        // shell-string ambiguity and to keep option-like child values
-        // (--fail-on-violation, --ownership-policy, --structural-exceptions,
-        // --structural-manifest) inside the child command: a separate
-        // "--command-arg <value>" pair would let argparse re-parse those
-        // values as the ratchet's own flags and abort with "expected one
-        // argument".  --command is kept only as a ratchet compatibility path.
-        //
-        // All six child-command inputs are passed EXPLICITLY with their resolved
-        // canonical paths — including the three policy/manifest inputs, which
-        // are never gated on override properties.  In production CI the
-        // defaults are explicit and identical to the canonical config paths:
-        //   config/guards/db_ownership_policy.yml
-        //   config/guards/db_structural_exceptions.yml
-        //   config/guards/db_structural_exceptions_expected_methods.yml
-        // so the inner guard can never silently fall back to a different file.
-        // The source-root manifest (config/guards/production_source_roots.yml)
-        // is validated above but read by the guard from its canonical path.
-        val commandArgs = mutableListOf<String>()
-        commandArgs += pythonExecutable
-        commandArgs += ratchetFile.absolutePath
-        commandArgs += "--guard-name"
-        commandArgs += "db_access"
-        // Every ratchet child argument is encoded as a single
-        // --command-arg=<value> list token, including option-like values.
-        commandArgs += "--command-arg=$pythonExecutable"
-        commandArgs += "--command-arg=${guardFile.absolutePath}"
-        commandArgs += "--command-arg=--fail-on-violation"
-        commandArgs += "--command-arg=--ownership-policy"
-        commandArgs += "--command-arg=${ownershipPolicyFile.absolutePath}"
-        commandArgs += "--command-arg=--structural-exceptions"
-        commandArgs += "--command-arg=${structuralExceptionsFile.absolutePath}"
-        commandArgs += "--command-arg=--structural-manifest"
-        commandArgs += "--command-arg=${structuralManifestFile.absolutePath}"
-        commandArgs += "--baseline"
-        commandArgs += baselineFile.absolutePath
-        commandArgs += "--fail-on-violation"
-        commandArgs += "--ci-mode"
-
-        val result = exec {
-            workingDir = rootDir
-            commandLine(commandArgs)
-            isIgnoreExitValue = true
-        }
-        when (result.exitValue) {
-            0 -> { /* pass: no new violations */ }
-            1 -> throw GradleException(
-                "New DB access boundary violations found. " +
-                "Add an exact entry to config/guards/db_ownership_policy.yml with a reason, " +
-                "or a structural exception to config/guards/db_structural_exceptions.yml, " +
-                "or route the write through the approved lifecycle coordinator. " +
-                "See docs/DB_WRITE_OWNERSHIP.md."
-            )
-            2 -> throw GradleException(
-                "verifyDbAccessBoundaries: infrastructure error (missing baseline, malformed config, or ratchet failure). " +
-                "Check that config/baselines/db_access_v2.json exists and is valid, and that the DB guard scripts " +
-                "and policy files under config/guards/ are present and valid."
-            )
-            else -> throw GradleException("verifyDbAccessBoundaries: unexpected exit code ${result.exitValue}")
-        }
+        runRegisteredGuardFromGradle(
+            taskName = taskName,
+            guardId = "db_access",
+            pythonExecutable = pythonExecutable,
+            runnerFile = runnerFile,
+            extraArgs = ciArgs + overrideArgs,
+            onViolation = {
+                throw GradleException(
+                    "New DB access boundary violations found. " +
+                    "Add an exact entry to config/guards/db_ownership_policy.yml with a reason, " +
+                    "or a structural exception to config/guards/db_structural_exceptions.yml, " +
+                    "or route the write through the approved lifecycle coordinator. " +
+                    "See docs/DB_WRITE_OWNERSHIP.md."
+                )
+            },
+            onInfra = {
+                throw GradleException(
+                    "verifyDbAccessBoundaries: infrastructure error (missing baseline, malformed config, " +
+                    "registry/plan-compiler failure, or ratchet failure). The plan compiler validates every " +
+                    "required input (config/baselines/db_access_v2.json, the config/guards/ policy and " +
+                    "manifest files, and the guard scripts) fail-closed before child execution."
+                )
+            },
+        )
     }
 }
 

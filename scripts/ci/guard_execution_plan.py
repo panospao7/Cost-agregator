@@ -181,6 +181,11 @@ E_BASELINE_UNRESOLVED = "E_BASELINE_UNRESOLVED"
 E_TEST_OVERRIDE_IN_CI = "E_TEST_OVERRIDE_IN_CI"
 E_OVERRIDE_OUTSIDE_ROOT = "E_OVERRIDE_OUTSIDE_ROOT"
 E_OVERRIDE_UNKNOWN_KEY = "E_OVERRIDE_UNKNOWN_KEY"
+# Warning-severity code (never fails a run): a declared-external engine
+# entry is registry-declared but excluded from the canonical suite plan
+# (plan Step 5: "every active registry guard appears once in canonical
+# suite plan unless declared external").
+E_ENGINE_EXTERNAL_SKIPPED = "E_ENGINE_EXTERNAL_SKIPPED"
 
 
 # ── Typed models (frozen) ────────────────────────────────────────────────────────
@@ -953,6 +958,15 @@ def compile_static_suite_plan(
     error diagnostics; callers (Slice 2 runners) must treat any error-severity
     diagnostic as an infrastructure failure (exit 2) and never fall back to a
     hand-maintained command list.
+
+    Declared-external engines (``external`` / ``gradle-native``) are
+    registry-declared but NOT compiled into the suite plan (plan Step 5:
+    "every active registry guard appears once in canonical suite plan unless
+    declared external").  Each skipped entry emits a WARNING-severity
+    E_ENGINE_EXTERNAL_SKIPPED diagnostic — never an error — so the exclusion
+    stays auditable without failing the suite derivation.  Single-guard
+    compilation (compile_guard_plan) still rejects non-Python engines with
+    E_ENGINE_NOT_COMPILABLE: the Python runner bridge cannot execute them.
     """
     diags: list = []
     if specs is None:
@@ -962,6 +976,12 @@ def compile_static_suite_plan(
 
     plans: list = []
     for spec in specs:
+        if spec.engine not in _PYTHON_ENGINES:
+            diags.append(_diag(
+                E_ENGINE_EXTERNAL_SKIPPED, spec.guard_id,
+                f"engine {spec.engine!r} is declared external; excluded from "
+                f"the canonical suite plan", severity="warning"))
+            continue
         plan, compile_diags = compile_guard_plan(spec.guard_id, context,
                                                  specs=specs)
         diags.extend(compile_diags)

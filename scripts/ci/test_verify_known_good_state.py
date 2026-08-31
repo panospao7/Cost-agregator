@@ -1271,4 +1271,14 @@ class TestGuardWiring:
             for name, _command, _mode in _runner.GUARD_MANIFEST
             if name not in infra_names
         }
-        assert manifest_names == set(_guard_registry.GUARD_REGISTRY)
+        # PR-GR-10A Slice 3: declared-external registry entries (engine not
+        # python-direct/python-ratchet) are excluded from the canonical suite
+        # plan by design (plan Step 5 "unless declared external").
+        external = {
+            guard_id
+            for guard_id, entry in _guard_registry.GUARD_REGISTRY.items()
+            if isinstance(entry, dict)
+            and (entry.get("execution") or {}).get("engine")
+            not in ("python-direct", "python-ratchet")
+        }
+        assert manifest_names == set(_guard_registry.GUARD_REGISTRY) - external

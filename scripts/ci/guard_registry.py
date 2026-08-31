@@ -625,12 +625,106 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
             "documentationAnchor": "docs/ci/guard-policy.md",
         },
     },
-}
 
-# ── Infrastructure entry (not a guard, but tracked for completeness) ────────────
-# "release_artifact" guard runs in a separate CI job (release-check) after
-# assembleRelease. It is NOT included in the static guard suite.
-# "guard_tests" is the pytest runner for guard test files, also not a guard.
+    # PR-GR-10A Slice 3 — EXTRACTED_AND_REGISTERED: the retired Gradle KTS
+    # inline scanner checkRawMoneyAggregates, extracted 1:1 (no rule widened,
+    # narrowed, added, or removed) into a standalone canonical guard with
+    # stable rule IDs G-MONEY-RAW-01..07.  Disposition evidence:
+    # docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md (inline money scanner row).
+    "raw_money_aggregates": {
+        "script": "scripts/verify_raw_money_aggregates.py",
+        "tests": "scripts/test_verify_raw_money_aggregates.py",
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": None,
+        "description": "Raw money aggregate boundary (G-MONEY-RAW-01..07) — "
+                       "flags raw Double financial aggregates "
+                       "(sumOf { it.amount/effectiveAmount/normalizedAmount }, "
+                       "sumBy { it.amount.toInt() }, `total: Double`, "
+                       "`var total = 0.0` sum accumulators) outside the "
+                       "MoneyAggregate primitive surface; extracted 1:1 from "
+                       "the retired Gradle KTS inline scanner "
+                       "checkRawMoneyAggregates (PR-E23)",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/verify_raw_money_aggregates.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "ruleIds": (
+                "G-MONEY-RAW-01", "G-MONEY-RAW-02", "G-MONEY-RAW-03",
+                "G-MONEY-RAW-04", "G-MONEY-RAW-05", "G-MONEY-RAW-06",
+                "G-MONEY-RAW-07",
+            ),
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/test_verify_raw_money_aggregates.py",),
+            "documentationAnchor": "docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md",
+        },
+    },
+
+    # ── Declared-external enforcement entries (PR-GR-10A Slice 3) ───────────────
+    # REGISTERED_EXTERNAL_ENGINE dispositions: genuinely non-Python / non-suite
+    # proof surfaces.  They are registry-declared (owner, command, scope,
+    # artifacts, CI job) so no enforcement path stays invisible, but they are
+    # NOT compiled into the canonical suite plan and are never executed by the
+    # Python runner bridge (compile_static_suite_plan skips declared-external
+    # engines; run_registered_guard rejects them with exit 2).  Disposition
+    # evidence: docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md.
+
+    "currency_guardrails_ps": {
+        "script": "scripts/currency_guardrails.ps1",
+        "tests": None,  # PowerShell proof surface; no pytest harness (documented absence)
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": None,
+        "description": "Currency guardrails (PowerShell, CI unit-tests job) — "
+                       "check 1 (blocking): raw sumOf { ... effectiveAmount } "
+                       "occurrences without a preceding // SAFE: marker; "
+                       "checks 2-3 (advisory report only): deprecated single-arg "
+                       "CurrencyFormatter.format(amount) calls and \"EUR\" "
+                       "hardcodes.  Genuinely non-Python proof surface; the "
+                       "blocking check-1 family overlaps the registered "
+                       "raw_money_aggregates guard (G-MONEY-RAW-02)",
+        "execution": {
+            "engine": "external",
+            "entrypoint": "scripts/currency_guardrails.ps1",
+            "arguments": ("-SourceDir", "app/src/main/java"),
+            "mode": "blocking",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human-report;exit:0=pass,1=check1-violation,2=infra",
+            "testManifest": "none",
+            "documentationAnchor": "docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md",
+        },
+    },
+
+    "release_artifact": {
+        "script": "scripts/verify_release_artifact.py",
+        "tests": None,  # No dedicated test file (documented absence)
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": None,
+        "description": "Release artifact verifier — validates the assembled "
+                       "release APK (signing, package, version) after "
+                       "assembleRelease in the separate release-check CI job; "
+                       "explicitly outside the static guard suite",
+        "execution": {
+            "engine": "external",
+            "entrypoint": "scripts/verify_release_artifact.py",
+            "arguments": ("--fail-on-violation",),
+            "mode": "blocking",
+            "requiredInputs": (),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": "none",
+            "documentationAnchor": "docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md",
+        },
+    },
+}
 
 # ── Registry validation ─────────────────────────────────────────────────────────
 

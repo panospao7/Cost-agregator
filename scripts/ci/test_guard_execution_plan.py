@@ -555,9 +555,23 @@ def test_suite_plan_covers_all_active_guards_in_order():
     plans, diags = gep.compile_static_suite_plan(_ctx(WORKTREE_ROOT))
     errors = [d for d in diags if d.severity == "error"]
     assert not errors, [d.context for d in errors]
-    expected_ids = list(guard_registry.GUARD_REGISTRY.keys())
+    # PR-GR-10A Slice 3: declared-external engines (e.g. the PowerShell
+    # currency guard, the release artifact verifier) are registry-declared
+    # but excluded from the canonical suite plan by design (plan Step 5:
+    # "unless declared external"); each exclusion is a warning diagnostic.
+    external = {
+        guard_id
+        for guard_id, entry in guard_registry.GUARD_REGISTRY.items()
+        if isinstance(entry, dict)
+        and (entry.get("execution") or {}).get("engine")
+        not in ("python-direct", "python-ratchet")
+    }
+    expected_ids = [
+        guard_id for guard_id in guard_registry.GUARD_REGISTRY
+        if guard_id not in external
+    ]
     assert [p.guard_id for p in plans] == expected_ids
-    assert len(plans) == len(guard_registry.GUARD_REGISTRY)
+    assert len(plans) == len(expected_ids)
 
 
 def test_suite_plans_no_bare_python_or_shell_tokens():
