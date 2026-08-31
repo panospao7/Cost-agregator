@@ -83,6 +83,27 @@ TRACKED_FILES = [
     "scripts/db_guard/sql_classifier.py",
 ]
 
+# The .py test modules referenced by the default matrix's focused-python-tests
+# row.  They are created on disk so ``collect_infrastructure_warnings`` finds
+# them and the happy-path bundle stays warning-free like the run-01/run-02
+# oracle bundles (``infrastructure_warnings: []``).  They are deliberately NOT
+# part of TRACKED_FILES: the fake git runner's tracked universe models the
+# hashed DB-guard input set, not every referenced test module, so adding them
+# here does not perturb the input-manifest assertions.
+FOCUSED_TEST_FILES = [
+    "scripts/ci/test_guard_findings.py",
+    "scripts/ci/test_guard_ratchet.py",
+    "scripts/ci/test_guard_ratchet_v2.py",
+    "scripts/test_kotlin_callable_parser.py",
+    "scripts/test_migrate_db_policy_signatures.py",
+    "scripts/test_db_guard_room_inventory.py",
+    "scripts/test_db_guard_sql_classifier.py",
+    "scripts/test_db_guard_declaration_scanner.py",
+    "scripts/test_db_guard_scanner_d4.py",
+    "scripts/test_verify_db_access_v2.py",
+    "scripts/test_verify_db_access_boundaries.py",
+]
+
 # Cross-platform absolute-path / backslash detector for stored (repo-relative)
 # paths.  A repository-relative path uses POSIX separators and must never be an
 # absolute path on either platform: no leading "/", no backslash, and no Windows
@@ -279,6 +300,13 @@ class ConfigurableFakeRunner:
             if self.write_reports:
                 _write_fake_outputs(argv, cwd)
             return FakeOutcome(self.command_returncodes.get("static", 0), "static ok")
+        if _matches(argv, "verify_time_boundaries.py"):
+            # GATE-00R time-direct row: the direct time-boundary guard
+            # observation (exit 0 in both run-01/run-02 oracle bundles).  A
+            # registered branch — not a fallthrough — so the happy-path
+            # fallthrough pin stays strict (only the version probes fall
+            # through).
+            return FakeOutcome(self.command_returncodes.get("time", 0), "time ok")
         if _matches(argv, "verify_db_access_boundaries.py", "--inventory-only"):
             rc = self.command_returncodes.get("inventory", 0)
             if self.write_reports:
@@ -370,6 +398,11 @@ def _make_root(tmp_path):
         p = root / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
+    # Referenced focused-test modules (on disk only; see FOCUSED_TEST_FILES).
+    for rel in FOCUSED_TEST_FILES:
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("def test_x(): pass\n", encoding="utf-8")
     return root
 
 
@@ -579,13 +612,76 @@ def test_hash_artifact_rejects_symlink_root(tmp_path):
 # __APPEND_TESTS__
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
+# The 12-row command-matrix shape, derived from the GREEN run-01/run-02 oracle
+# bundles (build/guard-debug/gate-00r/<sha>/run-0{1,2}/): row ids and order,
+# per-row log/report/artifact layout, and the semantic-summary field set.  The
+# per-row EXIT CODES below are the fixture runner's own consistent child
+# observations (the oracle's real-repo exit codes are policy/environment
+# observations — e.g. the blocked DB gate — not capture-tool contract); every
+# structural field is pinned to the oracle shape exactly.
+_ORACLE_ROW_IDS = [
+    "registry-validation", "focused-python-tests", "room-inventory",
+    "db-cli", "db-ratchet", "static-suite", "gradle-db",
+    "gradle-task-graph",
+    # GATE-00R extension rows (declared order):
+    "time-direct", "time-tests", "db-inventory", "gradle-compile",
+]
+_ORACLE_LOG_NAMES = {
+    "registry-validation": "00-registry.log",
+    "focused-python-tests": "01-focused-python-tests.log",
+    "room-inventory": "02-room-inventory.log",
+    "db-cli": "03-db-cli.log",
+    "db-ratchet": "04-db-ratchet.log",
+    "static-suite": "05-static-suite.log",
+    "gradle-db": "06-gradle-db.log",
+    "gradle-task-graph": "07-gradle-task-graph.log",
+    "time-direct": "08-time-direct.log",
+    "time-tests": "09-time-tests.log",
+    "db-inventory": "10-db-inventory.log",
+    "gradle-compile": "11-gradle-compile.log",
+}
+# The exact required-artifact hash key set of the oracle bundles.
+_ORACLE_ARTIFACT_HASH_KEYS = {
+    "02-room-inventory.findings.json", "02-room-mutators.json",
+    "03-db-cli.findings.json", "04-db-ratchet.summary.json",
+    "05-static-suite", "05-static-suite/summary.json",
+    "reports/db-inventory.json", "reports/room-mutators.json",
+}
+_EVIDENCE_ROW_FIELDS = {
+    "id", "argv", "cwd", "start_utc", "end_utc", "elapsed_ms", "exit_code",
+    "log_path", "log_sha256", "report_path", "report_sha256",
+    "report_schema_version", "report_trusted", "report_diagnostic_codes",
+    "report_finding_count", "parser_error", "launch_error", "log_bytes",
+    "log_complete", "log_failure_code",
+}
+_SEMANTIC_ROW_FIELDS = {
+    "id", "argv", "exit_code", "launch_error", "report_schema_version",
+    "report_trusted", "report_diagnostic_codes", "report_finding_count",
+    "parser_error",
+}
+# Fixture runner observations for the full default matrix (mirrors the pins in
+# test_default_matrix_gate_00r_rows_execute_with_semantic_summary).
+_FIXTURE_ROW_EXITS = {
+    "registry-validation": 0, "focused-python-tests": 0, "room-inventory": 0,
+    "db-cli": 2, "db-ratchet": 2, "static-suite": 0, "gradle-db": 1,
+    "gradle-task-graph": 1, "time-direct": 0, "time-tests": 0,
+    "db-inventory": 0, "gradle-compile": 1,
+}
+
+
 def test_clean_checkout_succeeds(tmp_path):
+    """Main happy path: a clean pinned capture of the FULL default matrix
+    succeeds and the bundle asserts the complete 12-row oracle shape
+    (run-01/run-02 ground truth): row ids/order, COMPLETE hashed logs for all
+    12 rows, the oracle report-path layout (02-*/03-* at the bundle root, the
+    db-inventory reports under ``reports/``, no report parse for the ratchet
+    summary), the exact required-artifact hash key set, the semantic-summary
+    schema/identity/versions/row-field shape with run-id-free normalized argv,
+    and the recorded run/base pin identity."""
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
-    runner = ConfigurableFakeRunner(dirty=False)
-    rc = _capture(str(root), str(out), runner=runner,
-                             command_matrix=_fake_matrix(str(root), str(out)),
-                             )
+    runner = _DefaultMatrixFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner)
     assert rc == 0
     assert (out / "evidence.json").is_file()
     assert (out / "summary.md").is_file()
@@ -594,6 +690,125 @@ def test_clean_checkout_succeeds(tmp_path):
     # Every guard-tool command matched a registered runner branch; the only
     # intentional fallthroughs are the interpreter/version probes.
     assert all(argv[1] in ("--version", "-version") for argv in runner.fallthroughs)
+
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+
+    # ── Top-level evidence identity (oracle evidence.json shape) ──────────────
+    assert evidence["schema"] == "db-guard-evidence/v1"
+    assert evidence["tool"] == "capture_db_guard_evidence.py"
+    assert evidence["root"] == "out/run-1"
+    assert evidence["requested_sha"] == TEST_SHA
+    assert evidence["observed_sha"] == TEST_SHA
+    assert evidence["tree_sha"] == TEST_TREE
+    assert evidence["base_ref"] == BASE_REF_SHA
+    assert evidence["base_sha"] == BASE_REF_SHA
+    assert evidence["merge_base_sha"] == MERGE_BASE_SHA
+    assert evidence["trusted"] is True
+    assert evidence["dirty"] is False
+    assert evidence["preservation"]["ok"] is True
+    # Oracle preflight identity: the base/merge-base/branch probes are recorded.
+    preflight_argvs = [rec["argv"]
+                       for rec in evidence["git_state"]["preflight_commands"]]
+    assert ["git", "rev-parse", BASE_REF_SHA] in preflight_argvs
+    assert ["git", "merge-base", "HEAD", BASE_REF_SHA] in preflight_argvs
+    assert ["git", "branch", "--show-current"] in preflight_argvs
+    # Oracle bundle shape: no infrastructure warnings on a clean capture.
+    assert evidence["infrastructure_warnings"] == []
+
+    # ── The full 12-row matrix, in the declared oracle order ──────────────────
+    assert [c["id"] for c in evidence["commands"]] == _ORACLE_ROW_IDS
+    assert [c["id"] for c in semantic["commands"]] == _ORACLE_ROW_IDS
+
+    # Per-row evidence records: exact oracle field set, COMPLETE hashed logs,
+    # no launch failures, repository-relative paths.
+    by_id = {c["id"]: c for c in evidence["commands"]}
+    for row in evidence["commands"]:
+        assert set(row) == _EVIDENCE_ROW_FIELDS
+        assert row["log_complete"] is True
+        assert row["log_failure_code"] is None
+        assert row["log_sha256"] != ""
+        assert row["log_bytes"] > 0
+        assert row["launch_error"] is None
+        assert row["cwd"] == "."
+        expected_log = "/".join(
+            [evidence["root"], "commands", _ORACLE_LOG_NAMES[row["id"]]])
+        assert row["log_path"] == expected_log
+        _assert_repo_relative(row["log_path"])
+        assert (out / "commands" / _ORACLE_LOG_NAMES[row["id"]]).is_file()
+    assert {c["id"]: c["exit_code"] for c in evidence["commands"]} == \
+        _FIXTURE_ROW_EXITS
+
+    # Report-path layout (oracle): the two inventory rows and the db-cli row
+    # declare reports; the db-inventory pair lives under ``reports/``; the
+    # ratchet summary is a hashed artifact, never a parsed report.
+    assert by_id["room-inventory"]["report_path"] == \
+        "out/run-1/02-room-inventory.findings.json"
+    assert by_id["db-cli"]["report_path"] == "out/run-1/03-db-cli.findings.json"
+    assert by_id["db-inventory"]["report_path"] == \
+        "out/run-1/reports/db-inventory.json"
+    for row_id in ("registry-validation", "focused-python-tests", "db-ratchet",
+                   "static-suite", "gradle-db", "gradle-task-graph",
+                   "time-direct", "time-tests", "gradle-compile"):
+        assert by_id[row_id]["report_path"] is None, row_id
+    for row_id in ("room-inventory", "db-cli", "db-inventory"):
+        assert by_id[row_id]["report_schema_version"] == 2, row_id
+        assert by_id[row_id]["parser_error"] is None, row_id
+        assert by_id[row_id]["report_sha256"] != ""
+    # The db-ratchet row records NO v2 report parse (oracle row shape).
+    assert by_id["db-ratchet"]["parser_error"] is None
+    assert by_id["db-ratchet"]["report_schema_version"] is None
+    assert by_id["db-ratchet"]["report_finding_count"] is None
+
+    # Required-artifact hash coverage: exactly the oracle key set, and the
+    # reports/ artifacts exist on disk.
+    assert set(evidence["required_artifact_hashes"]) == _ORACLE_ARTIFACT_HASH_KEYS
+    for art in _ORACLE_ARTIFACT_HASH_KEYS:
+        assert len(evidence["required_artifact_hashes"][art]) == 64, art
+    assert (out / "reports" / "db-inventory.json").is_file()
+    assert (out / "reports" / "room-mutators.json").is_file()
+
+    # ── Semantic summary (oracle semantic-summary.json shape) ─────────────────
+    assert semantic["schema"] == "db-guard-evidence.semantic/v1"
+    assert semantic["commit"] == TEST_SHA
+    assert semantic["tree"] == TEST_TREE
+    assert semantic["requested_sha"] == TEST_SHA
+    assert semantic["base_sha"] == BASE_REF_SHA
+    assert semantic["merge_base_sha"] == MERGE_BASE_SHA
+    assert semantic["trusted"] is True
+    assert semantic["preservation_ok"] is True
+    assert set(semantic["versions"]) == {
+        "python_version", "python3_version", "java_version",
+        "gradle_version", "os", "ostype",
+    }
+    assert isinstance(semantic["input_manifest_sha256"], str)
+    assert len(semantic["input_manifest_sha256"]) == 64
+    for row in semantic["commands"]:
+        assert set(row) == _SEMANTIC_ROW_FIELDS
+    assert {c["id"]: c["exit_code"] for c in semantic["commands"]} == \
+        _FIXTURE_ROW_EXITS
+    sem_by_id = {c["id"]: c for c in semantic["commands"]}
+    # Run-specific bundle paths are normalized to the stable ``<bundle>`` marker
+    # so two clean runs at the same SHA stay byte-identical (oracle property).
+    assert "<bundle>/reports/db-inventory.json" in sem_by_id["db-inventory"]["argv"]
+    assert "<bundle>/04-db-ratchet.summary.json" in sem_by_id["db-ratchet"]["argv"]
+    assert "<bundle>/02-room-inventory.findings.json" in \
+        sem_by_id["room-inventory"]["argv"]
+    for row in semantic["commands"]:
+        for tok in row["argv"]:
+            assert "run-1" not in tok, (row["id"], tok)
+
+    # ── output-sha256.txt: the fixed seven top-level outputs (oracle) ─────────
+    out_sha_rels = {
+        ln.split("  ", 1)[1]
+        for ln in (out / "output-sha256.txt").read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    }
+    assert out_sha_rels == {
+        "git-state.json", "environment.json", "input-manifest.json",
+        "input-sha256.txt", "evidence.json", "summary.md",
+        "semantic-summary.json",
+    }
 
 
 def test_dirty_checkout_fails_by_default(tmp_path):
@@ -1884,7 +2099,11 @@ def test_actual_symlink_log_name_rejected(tmp_path):
     rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
     assert rc == 2
     evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
-    assert any("invalid-bundle-path:bad:commands/evil.log" in w
+    # The warning payload is the DECLARED log_name (``evil.log``), the same
+    # convention as the report_path/required-artifact sibling pins — the
+    # derived ``commands/`` prefix is containment plumbing, not the persisted
+    # payload.  The escape itself is still prevented (assertions below).
+    assert any("invalid-bundle-path:bad:evil.log" in w
                for w in evidence["infrastructure_warnings"])
     # Stop-before-run: no child command executed, no log written through the symlink.
     assert evidence["commands"] == []
@@ -4605,7 +4824,9 @@ def test_validate_command_matrix_rejects_invalid_output_limit(tmp_path):
             argv=["python3", "scripts/ci/verify_guard_registry.py"],
             output_limit=bad)
         violations = cap.validate_command_matrix([spec], str(root))
-        assert any(v.startswith("invalid-output-limit:c:") for v in violations), bad
+        # make_warning("invalid-output-limit", <id>) carries exactly one payload
+        # part (the sanitized command id) and no trailing segment.
+        assert any(v == "invalid-output-limit:c" for v in violations), bad
     # Valid overrides (including the finite maximum) pass cleanly.
     for good in (None, 0, cap.CHILD_OUTPUT_LIMIT, cap.MAX_ROW_OUTPUT_LIMIT):
         spec = cap.CommandSpec(
