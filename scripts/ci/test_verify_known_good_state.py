@@ -26,6 +26,7 @@ Run:
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -35,9 +36,27 @@ _REPO_ROOT = _SCRIPT_DIR.parent.parent
 
 
 def _load_module(name: str, relpath: str):
+    """Load a sibling module by file path.
+
+    The module is registered in ``sys.modules`` for the duration of its
+    execution (and the previous entry, if any, is restored afterwards).
+    Without registration, Python 3.13's dataclass processing resolves
+    ``cls.__module__`` through ``sys.modules`` while constructing each
+    module-level ``@dataclass``; ``sys.modules.get(...)`` then returns None
+    and collection dies with ``AttributeError: 'NoneType' object has no
+    attribute '__dict__'`` (R16-3c).
+    """
     spec = importlib.util.spec_from_file_location(name, _SCRIPT_DIR / relpath)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    previous = sys.modules.get(name)
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = previous
     return module
 
 

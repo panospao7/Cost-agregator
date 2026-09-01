@@ -305,15 +305,53 @@ def test_compile_ratchet_child_argv_single_token_form():
         WORKTREE_ROOT, "scripts/verify_cancellation_boundaries.py"))
     baseline_abs = os.path.normpath(os.path.join(
         WORKTREE_ROOT, "config/baselines/cancellation.json"))
+    # Pre-migration equivalence contract: interpreter, script ONCE, then
+    # template tokens.  The template's leading {entrypoint} placeholder owns
+    # the script path; the compiler must not prepend it a second time.
     assert plan.child_argv == (sys.executable, entrypoint_abs)
+    assert plan.child_argv.count(entrypoint_abs) == 1, (
+        "the guard script must appear exactly once in the ratchet child argv"
+    )
+    entrypoint_args = [
+        tok for tok in plan.outer_argv
+        if tok == f"{gep.COMMAND_ARG_PREFIX}{entrypoint_abs}"
+    ]
+    assert entrypoint_args == [f"{gep.COMMAND_ARG_PREFIX}{entrypoint_abs}"], (
+        "exactly one --command-arg token may carry the guard script"
+    )
     assert f"{gep.COMMAND_ARG_PREFIX}{sys.executable}" in plan.outer_argv
-    assert f"{gep.COMMAND_ARG_PREFIX}{entrypoint_abs}" in plan.outer_argv
     assert "--command" not in plan.outer_argv, \
         "legacy --command shell-string flag must never appear"
     assert "--ci-mode" in plan.outer_argv
     assert "--fail-on-violation" in plan.outer_argv
     assert plan.outer_argv[plan.outer_argv.index("--baseline") + 1] == baseline_abs
     assert plan.protocol == 1
+
+
+def test_validate_rejects_ratchet_template_without_leading_entrypoint(tmp_path):
+    """The child template owns the script path via its leading {entrypoint}
+    placeholder; a template without it would compile a child argv that never
+    names the guard script — fail closed at validation."""
+    registry = _write_registry(tmp_path / "registry.py", {
+        "bad_lead": _mini_entry(
+            mode="ratchet", engine="python-ratchet",
+            ratchet={
+                "baselinePath": "config/baselines/mini.json",
+                "findingProtocol": 1,
+                "fingerprintSchema": 1,
+                "childArgumentTemplate": ("--fail-on-violation",),
+                "ciRestrictions": ("no-update-baseline",),
+            }),
+    })
+    specs, _ = gep.load_guard_specs(registry)
+    diags = gep.validate_guard_specs(specs)
+    assert _has_code(diags, gep.E_RATCHET_TEMPLATE_ENTRYPOINT_REQUIRED)
+    root = tmp_path / "root"
+    _make_tree(root)
+    plan, compile_diags = gep.compile_guard_plan("bad_lead", _ctx(root),
+                                                 specs=specs)
+    assert plan is None
+    assert _has_code(compile_diags, gep.E_RATCHET_TEMPLATE_ENTRYPOINT_REQUIRED)
 
 
 def test_compile_db_plan_protocol2_explicit_intent():
@@ -340,9 +378,19 @@ def test_compile_db_plan_protocol2_explicit_intent():
     resolved = tuple(os.path.normpath(os.path.join(WORKTREE_ROOT, p))
                      for p in config_inputs)
     assert plan.resolved_required_inputs == resolved
-    for path in resolved:
+    # Adjudicated (R16-2b): production_source_roots.yml is a required INPUT
+    # only.  verify_db_access_boundaries.py has no --production-source-roots
+    # flag — the guard resolves the manifest itself through
+    # scripts/db_guard/source_roots.py (SOURCE_ROOT_MANIFEST_RELPATH) — and
+    # the pre-migration manifest fixture's db leg carries no such argv
+    # token.  The three policy inputs ARE argv-carried; the source-root
+    # manifest is existence-checked and hash-evidenced instead.
+    for path in resolved[:3]:
         assert path in plan.child_argv
         assert f"{gep.COMMAND_ARG_PREFIX}{path}" in plan.outer_argv
+    source_roots_abs = resolved[3]
+    assert source_roots_abs not in plan.child_argv
+    assert f"{gep.COMMAND_ARG_PREFIX}{source_roots_abs}" not in plan.outer_argv
     assert plan.outer_argv[1] == os.path.normpath(os.path.join(
         WORKTREE_ROOT, "scripts/ci/guard_ratchet.py"))
 

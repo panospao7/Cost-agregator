@@ -48,7 +48,7 @@ ADAPTER_SCRIPT = CI_DIR / "run_registered_guard.py"
 SUMMARY_KEYS = {
     "schemaVersion", "guardId", "context", "ciMode", "exitCode",
     "childExitCode", "outcome", "durationSeconds", "failureCodes",
-    "timestamp",
+    "stderrPreview", "timestamp",
 }
 
 
@@ -424,8 +424,11 @@ class TestFailClosedConfiguration:
             output_summary=str(summary_path), registry_path=registry,
         )
         assert code == 2
+        # Adjudicated (R16-2c): the registry override is a test-only
+        # override, so the rejection carries the plan's canonical rule-7
+        # code — the same code the compiler emits for input overrides.
         assert _read_summary(summary_path)["failureCodes"] == [
-            "E_ADAPTER_REGISTRY_IN_CI"
+            "E_TEST_OVERRIDE_IN_CI"
         ]
 
     def test_duplicate_override_key_exit2(self, tmp_path):
@@ -540,6 +543,83 @@ class TestSummaryContract:
         assert code == 2
 
 
+class TestInfraStderrPreview:
+    """Infra-error summaries carry a bounded, path-redacted stderr preview.
+
+    ``stderrPreview`` is the summary's only child-output field: populated on
+    infrastructure-error outcomes, empty otherwise, redacted (absolute path
+    spellings become ``<path>``) and bounded to 500 chars.
+    """
+
+    def test_infra_summary_carries_redacted_stderr_preview(self, tmp_path):
+        root, registry = _make_direct_fixture(
+            tmp_path,
+            "import sys\n"
+            "sys.stderr.write('boom-marker: ' + __file__ + '\\n')\n"
+            "sys.exit(2)\n",
+        )
+        summary_path = tmp_path / "summary.json"
+        code = rgr.run_registered_guard(
+            "mini", "direct", str(root),
+            output_summary=str(summary_path), registry_path=registry,
+        )
+        assert code == 2
+        summary = _read_summary(summary_path)
+        assert summary["outcome"] == "infra_error"
+        preview = summary["stderrPreview"]
+        assert "boom-marker" in preview
+        assert "<path>" in preview, preview
+        assert str(root) not in preview
+        assert "verify_mini.py" not in preview
+        assert len(preview) <= 500
+
+    def test_unexpected_exit_preview_is_bounded(self, tmp_path):
+        root, registry = _make_direct_fixture(
+            tmp_path,
+            "import sys\n"
+            "sys.stderr.write('x' * 2000 + '\\n')\n"
+            "sys.exit(3)\n",
+        )
+        summary_path = tmp_path / "summary.json"
+        code = rgr.run_registered_guard(
+            "mini", "direct", str(root),
+            output_summary=str(summary_path), registry_path=registry,
+        )
+        assert code == 2  # universal mapping: unexpected exit -> infra
+        preview = _read_summary(summary_path)["stderrPreview"]
+        assert preview
+        assert len(preview) <= 500
+
+    def test_pass_and_violation_summaries_have_empty_preview(self, tmp_path):
+        root, registry = _make_direct_fixture(
+            tmp_path,
+            "import sys\n"
+            "sys.stderr.write('noisy but passing\\n')\n"
+            "sys.exit(0)\n",
+        )
+        summary_path = tmp_path / "summary.json"
+        code = rgr.run_registered_guard(
+            "mini", "direct", str(root),
+            output_summary=str(summary_path), registry_path=registry,
+        )
+        assert code == 0
+        assert _read_summary(summary_path)["stderrPreview"] == ""
+
+        root_v, registry_v = _make_direct_fixture(
+            tmp_path,
+            "import sys\n"
+            "sys.stderr.write('noisy violation\\n')\n"
+            "sys.exit(1)\n",
+        )
+        summary_path_v = tmp_path / "summary-violation.json"
+        code_v = rgr.run_registered_guard(
+            "mini", "direct", str(root_v),
+            output_summary=str(summary_path_v), registry_path=registry_v,
+        )
+        assert code_v == 1
+        assert _read_summary(summary_path_v)["stderrPreview"] == ""
+
+
 # ── 4. CLI adapter ──────────────────────────────────────────────────────────────
 
 
@@ -599,7 +679,9 @@ class TestCliAdapter:
             timeout=120,
         )
         assert result.returncode == 2
-        assert "E_ADAPTER_REGISTRY_IN_CI" in result.stderr
+        # Adjudicated (R16-2c): canonical rule-7 code for the test-only
+        # registry override rejected in production CI mode.
+        assert "E_TEST_OVERRIDE_IN_CI" in result.stderr
 
 
 if __name__ == "__main__":

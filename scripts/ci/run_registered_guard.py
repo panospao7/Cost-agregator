@@ -31,10 +31,13 @@ Exit codes (universal mapping):
 
 Summary contract (safe machine-readable, bounded):
   {schemaVersion, guardId, context, ciMode, exitCode, childExitCode,
-   outcome, durationSeconds, failureCodes, timestamp}
-  ``failureCodes`` contains controlled diagnostic constants only.  The
-  summary never contains argv, file paths, stdout/stderr content,
-  environment dumps, or secrets.
+   outcome, durationSeconds, failureCodes, stderrPreview, timestamp}
+  ``failureCodes`` contains controlled diagnostic constants only.
+  ``stderrPreview`` is the ONLY child-output field: a bounded (500-char)
+  path-redacted stderr preview, populated on infrastructure-error outcomes
+  (child exit 2 / unexpected exit) and empty otherwise.  The summary never
+  contains argv, file paths, raw stdout/stderr dumps, environment dumps, or
+  secrets.
 
 Timeout policy: the adapter imposes NO process timeout.  Callers own
 timeouts (the suite's GUARD_TIMEOUT_SECONDS, Gradle timeouts); the plan's
@@ -45,7 +48,8 @@ Test-only overrides (plan rule 7): ``--input-override KEY=PATH`` replaces a
 declared required input for local testing.  Overrides are typed (declared
 input key only), must be root-contained, and are rejected outright in
 --ci-mode by the compiler.  ``--registry`` (a test-only registry module
-override) is rejected together with --ci-mode.
+override) is rejected together with --ci-mode; both rejections carry the
+plan's canonical ``E_TEST_OVERRIDE_IN_CI`` code.
 
 Purity contract: library functions never call ``sys.exit`` — they return
 exit codes.  Only the CLI adapter (``main``) exits.
@@ -73,12 +77,14 @@ if _SCRIPT_DIR not in sys.path:
 
 from guard_execution_plan import (  # noqa: E402
     DEFAULT_REGISTRY_PATH,
+    E_TEST_OVERRIDE_IN_CI,
     ExecutionContext,
     ExecutionPlan,
     PlanDiagnostic,
     compile_guard_plan,
     load_guard_specs,
     normalize_test_overrides,
+    redact_bounded_preview,
     validate_guard_specs,
 )
 
@@ -118,7 +124,9 @@ E_ADAPTER_UNSUPPORTED_CONTEXT = "E_ADAPTER_UNSUPPORTED_CONTEXT"
 E_ADAPTER_INVALID_ROOT = "E_ADAPTER_INVALID_ROOT"
 E_ADAPTER_BAD_OVERRIDE = "E_ADAPTER_BAD_OVERRIDE"
 E_ADAPTER_DUPLICATE_OVERRIDE = "E_ADAPTER_DUPLICATE_OVERRIDE"
-E_ADAPTER_REGISTRY_IN_CI = "E_ADAPTER_REGISTRY_IN_CI"
+# The registry override is a test-only override, so the registry+CI-mode
+# rejection carries the plan's canonical rule-7 code (imported below as
+# E_TEST_OVERRIDE_IN_CI) — not an adapter-specific spelling.
 E_ADAPTER_SUMMARY_WRITE_FAILED = "E_ADAPTER_SUMMARY_WRITE_FAILED"
 E_ADAPTER_LAUNCH_FAILED = "E_ADAPTER_LAUNCH_FAILED"
 
@@ -211,36 +219,56 @@ def execute_plan(
     plan: ExecutionPlan,
     root: str,
     runner: Optional[Runner] = None,
-) -> Tuple[int, Optional[int], float]:
+) -> Tuple[int, Optional[int], float, str]:
     """Execute the plan's outer argv with ``shell=False``.
 
-    Returns ``(exit_code, child_exit_code_or_None, duration_seconds)``.
-    Child exits 0/1/2 are preserved exactly; any other child exit maps to
-    EXIT_INFRA (universal mapping) with the raw code recorded for the
-    summary.  No timeout is imposed (callers own timeouts).
+    Returns ``(exit_code, child_exit_code_or_None, duration_seconds,
+    stderr_preview)``.  Child exits 0/1/2 are preserved exactly; any other
+    child exit maps to EXIT_INFRA (universal mapping) with the raw code
+    recorded for the summary.  No timeout is imposed (callers own timeouts).
+
+    The child's output is captured so an infrastructure-error outcome can
+    carry a bounded, path-redacted ``stderr_preview``; the captured output is
+    re-emitted to the adapter's own streams afterwards, so console visibility
+    is unchanged.  With an injected ``runner`` no output is available and the
+    preview is empty.
     """
     start = time.monotonic()
     argv = list(plan.outer_argv)
     if runner is not None:
         child_exit = int(runner(argv, root))
         duration = time.monotonic() - start
+        stderr_preview = ""
     else:
         try:
             completed = subprocess.run(
                 argv,
                 shell=False,
                 cwd=str(root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
             )
         except (FileNotFoundError, PermissionError, OSError):
             # Bounded diagnostic only — never the exception message (it may
             # carry filesystem paths).
             _print_adapter_error(E_ADAPTER_LAUNCH_FAILED)
-            return EXIT_INFRA, None, time.monotonic() - start
+            return EXIT_INFRA, None, time.monotonic() - start, ""
         duration = time.monotonic() - start
         child_exit = completed.returncode
+        # Capture is for the bounded infra preview, not for suppression:
+        # re-emit the child's output so callers keep console visibility.
+        if completed.stdout:
+            sys.stdout.write(completed.stdout)
+            sys.stdout.flush()
+        if completed.stderr:
+            sys.stderr.write(completed.stderr)
+            sys.stderr.flush()
+        stderr_preview = redact_bounded_preview(completed.stderr)
     if child_exit in (EXIT_PASS, EXIT_VIOLATION, EXIT_INFRA):
-        return child_exit, child_exit, duration
-    return EXIT_INFRA, child_exit, duration
+        return child_exit, child_exit, duration, stderr_preview
+    return EXIT_INFRA, child_exit, duration, stderr_preview
 
 
 # ── Summary ─────────────────────────────────────────────────────────────────────
@@ -300,9 +328,10 @@ def run_registered_guard(
 
     if registry_path and ci_mode:
         # Fail closed: a registry override must never be combinable with
-        # production CI enforcement.
-        failure_codes.append(E_ADAPTER_REGISTRY_IN_CI)
-        _print_adapter_error(E_ADAPTER_REGISTRY_IN_CI)
+        # production CI enforcement.  The registry override is a test-only
+        # override, so the plan's canonical rule-7 code applies.
+        failure_codes.append(E_TEST_OVERRIDE_IN_CI)
+        _print_adapter_error(E_TEST_OVERRIDE_IN_CI)
 
     overrides: Dict[str, str] = {}
     for key, value in dict(input_overrides or {}).items():
@@ -314,6 +343,7 @@ def run_registered_guard(
     exit_code = EXIT_INFRA
     child_exit: Optional[int] = None
     duration = 0.0
+    stderr_preview = ""
     diags: Tuple[PlanDiagnostic, ...] = ()
 
     if not failure_codes:
@@ -329,8 +359,11 @@ def run_registered_guard(
             failure_codes.extend(codes)
             _print_diagnostics(diags)
         else:
-            exit_code, child_exit, duration = execute_plan(plan, root_abs, runner=runner)
+            exit_code, child_exit, duration, stderr_preview = execute_plan(
+                plan, root_abs, runner=runner
+            )
 
+    outcome = _outcome_for_exit(exit_code)
     summary = {
         "schemaVersion": SUMMARY_SCHEMA_VERSION,
         "guardId": guard_id,
@@ -338,9 +371,12 @@ def run_registered_guard(
         "ciMode": bool(ci_mode),
         "exitCode": exit_code,
         "childExitCode": child_exit,
-        "outcome": _outcome_for_exit(exit_code),
+        "outcome": outcome,
         "durationSeconds": round(duration, 3),
         "failureCodes": sorted(set(failure_codes)),
+        # Bounded, path-redacted child stderr — populated on infra-error
+        # outcomes only (observability without path/secret leakage).
+        "stderrPreview": stderr_preview if outcome == OUTCOME_INFRA else "",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     if output_summary:

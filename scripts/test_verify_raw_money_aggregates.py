@@ -238,7 +238,11 @@ def test_from_buckets_triggering_line_is_skipped(tmp_path):
 def test_cli_exit_zero_on_clean_tree(tmp_path):
     root = _source_root(tmp_path)
     _write(root, "Clean.kt", "package probe\nval ok = items.sumOf { it.count }\n")
-    result = _run_cli(root)
+    # The CLI --root is the REPOSITORY root (the guard derives
+    # <root>/app/src/main/java itself); passing the source root here made
+    # the guard look for app/src/main/java below it and exit 2 with
+    # E_RAW_MONEY_SOURCE_ROOT_MISSING (R16-3a).
+    result = _run_cli(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PASS" in result.stdout
 
@@ -246,7 +250,7 @@ def test_cli_exit_zero_on_clean_tree(tmp_path):
 def test_cli_exit_one_on_violation(tmp_path):
     root = _source_root(tmp_path)
     _write(root, "Probe.kt", "val total = items.sumOf { it.amount }\n")
-    result = _run_cli(root)
+    result = _run_cli(tmp_path)
     assert result.returncode == 1
     assert "G-MONEY-RAW-01" in result.stdout
     assert "FAIL" in result.stdout
@@ -263,8 +267,9 @@ def test_cli_exit_two_on_missing_source_root(tmp_path):
 def test_cli_accepts_canonical_fail_on_violation_flag(tmp_path):
     root = _source_root(tmp_path)
     _write(root, "Clean.kt", "package probe\nval ok = 1\n")
+    # --root is the repository root (see test_cli_exit_zero_on_clean_tree).
     result = subprocess.run(
-        [sys.executable, str(_SCRIPT), "--root", str(root), "--fail-on-violation"],
+        [sys.executable, str(_SCRIPT), "--root", str(tmp_path), "--fail-on-violation"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
         timeout=60,
     )

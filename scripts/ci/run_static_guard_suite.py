@@ -164,6 +164,7 @@ from guard_execution_plan import (  # noqa: E402
     ExecutionPlan,
     canonicalize_plan_for_comparison,
     compile_static_suite_plan,
+    redact_bounded_preview,
 )
 
 # Suite-owned infrastructure legs (not registry guards — they are suite
@@ -482,6 +483,11 @@ def _write_plan_evidence(plans: List[ExecutionPlan], output_dir: Path) -> None:
 # Maximum length of stdout preview stored in summary JSON
 STDOUT_PREVIEW_MAX_CHARS = 500
 
+# Maximum length of the path-redacted stderr preview stored in summary JSON
+# on infrastructure errors (redaction/bound shared with the registered-guard
+# adapter via guard_execution_plan.redact_bounded_preview).
+STDERR_PREVIEW_MAX_CHARS = 500
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
@@ -620,6 +626,7 @@ def run_guard(
     exit_code = -1
     outcome = "infra_error"
     stdout_preview = ""
+    stderr_preview = ""
 
     try:
         # Resolve Python interpreter for cross-platform compatibility
@@ -664,6 +671,11 @@ def run_guard(
             outcome = "infra_error"
 
         stdout_preview = (result.stdout or '')[:STDOUT_PREVIEW_MAX_CHARS]
+        if outcome == "infra_error":
+            # Observability on infra errors: bounded, path-redacted stderr
+            # preview (redaction runs before truncation so a path can never
+            # straddle the bound and leak partially).
+            stderr_preview = redact_bounded_preview(result.stderr)
 
     except FileNotFoundError:
         duration = time.monotonic() - start
@@ -675,11 +687,15 @@ def run_guard(
             encoding='utf-8',
         )
 
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as exc:
         duration = time.monotonic() - start
         exit_code = -1
         outcome = "infra_error"
         stdout_preview = f"Timeout after {GUARD_TIMEOUT_SECONDS}s"
+        raw_stderr = exc.stderr
+        if isinstance(raw_stderr, bytes):
+            raw_stderr = raw_stderr.decode("utf-8", errors="replace")
+        stderr_preview = redact_bounded_preview(raw_stderr)
         log_path.write_text(
             f"TIMEOUT: {' '.join(command)}\n",
             encoding='utf-8',
@@ -708,6 +724,7 @@ def run_guard(
         ),
         "log_path": str(log_path),
         "stdout_preview": stdout_preview,
+        "stderr_preview": stderr_preview,
     }
 
 

@@ -139,7 +139,17 @@ def _scan(tmp_path: Path):
 
 def test_every_retired_rule_is_a_discovered_room_mutator(tmp_path):
     """The D4 Room inventory discovers every method the retired scanners
-    matched textually — the rule surfaces are the same surface."""
+    matched textually — the rule surfaces are the same surface.
+
+    Adjudicated (R16-3b): D4 mutator identities are FULL callable
+    signatures (``<path>::<Fqcn>#<name>(<params>)``), so the proof compares
+    the callable-name projection of the identity set against the retired
+    bare-name rule surface.  The previous bare-name-vs-signature comparison
+    reported every retired rule as "missing" even though D4 discovers all
+    of them (each fixture method carries a Room @Insert/@Update/@Delete
+    annotation, which is the discovery contract) — the SUBSUMED disposition
+    stands; the fixture mapping was not incomplete.
+    """
     from scripts.db_guard.room_inventory import build_room_inventory
 
     root = _source_root(tmp_path)
@@ -147,10 +157,13 @@ def test_every_retired_rule_is_a_discovered_room_mutator(tmp_path):
 
     inventory = build_room_inventory(root, _EMPTY_RAW_QUERY_POLICY)
     assert inventory.diagnostics == (), inventory.diagnostics
-    mutator_methods = {mutator.method for mutator in inventory.mutators}
-    assert set(RETIRED_RULE_SURFACE) <= mutator_methods, (
+    mutator_names = {
+        item.method.split("#", 1)[1].split("(", 1)[0]
+        for item in inventory.mutators
+    }
+    assert set(RETIRED_RULE_SURFACE) <= mutator_names, (
         "Retired textual rules without a discovered D4 mutator identity: "
-        f"{set(RETIRED_RULE_SURFACE) - mutator_methods}"
+        f"{set(RETIRED_RULE_SURFACE) - mutator_names}"
     )
 
 

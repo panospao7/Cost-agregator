@@ -1094,3 +1094,60 @@ HEAD `c10c41d4af9b0eb32a127ed5ed0a812b80ae401b`; checkout clean.
 Shim PATH + ANDROID_HOME were supplied for the capture invocations only; environment.json
 records redacted variables. Checkout untouched; both bundles remain on disk under
 build/guard-debug/gate-00r/ for loop inspection.
+
+---
+
+## Round 16 (2026-08-31) - reviewer battery at `7bdf90ec` (GR-10A execution-plan compiler + registry schema)
+
+HEAD `7bdf90ecd059e448e4fa5c0f1f82a1591bad3284`; checkout clean.
+
+### Battery results
+
+1. `git push origin gr-00-local` -> OK (`d796e54b..7bdf90ec`).
+2. Targeted battery (7 files): **13 failed / 221 passed / 5 skipped in 18.7s**;
+   retry reproduced identically (deterministic).
+3. `verify_guard_registry.py --root .` -> **exit 0**: "VALID and consistent with its
+   compiled suite plan" (24 registered guards; suite owns no hard-coded command list).
+4. `run_static_guard_suite.py --output-dir build/guard-debug/gr10a/static-suite` ->
+   **exit 2**: 15 pass / 2 violations / 7 infra-errors of 24 legs.
+
+### ROOT CAUSE for 7 suite infra-errors + 3 plan-compiler test failures (one defect)
+
+The GR-10A plan compiler emits the ratchet child argv with the guard script path
+DUPLICATED: `--command-arg=<python> --command-arg=scripts/verify_X.py
+--command-arg=scripts/verify_X.py`. The duplicate token becomes a bogus positional
+argument -> ratchet fails closed exit 2 with swallowed stderr -> infra_error for ALL
+python-ratchet legs (cancellation, privacy, db_access, event_writers, money,
+migration_matrix). Pinned by `test_compile_ratchet_child_argv_single_token_form`
+("Left contains one more item: ...verify_cancellation_boundaries.py"). Related compiler
+defects in the same wave: `E_INVALID_CONTEXT` emitted instead of `E_BARE_PYTHON`
+(context-validation ordering) and the db plan argv missing the
+`config/guards/production_source_roots.yml` token.
+
+### Other battery clusters
+
+- Fail-closed code misattribution (2): adapter reports `E_ADAPTER_REGISTRY_IN_CI`
+  where pins expect `E_TEST_OVERRIDE_IN_CI`.
+- Path-free evidence pin VIOLATED (1): `test_evidence_is_path_free` - absolute
+  Windows paths (`\\Users`) present in suite evidence JSON (compiler embeds absolute
+  interpreter/script paths).
+- raw-money CLI (3): fixtures get `E_RAW_MONEY_SOURCE_ROOT_MISSING` exit 2 (source-root
+  resolution requires explicit arg / fails in fixture layouts).
+- Lifecycle subsumption (1): retired textual rules (`updateLocation`, `updateOwnerName`,
+  `updateSharedWithName`, `update`, `updateTransferAccountName`, ...) have no discovered
+  D4 mutator identity.
+- guard_tests leg: pytest COLLECTION error - `AttributeError: NoneType` in
+  `scripts/ci/test_verify_known_good_state.py`.
+
+### Real (non-infra) violations - guards working as designed
+
+- raw_money_aggregates: **88 violations** (G-MONEY-RAW-01..07) - raw sumOf/Double totals
+  across ui/screens (AnalyticsViewModel:964, CashFlowCalendarScreen:376, BillReminders:91, ...).
+- ui_dao: G-UI-DAO-01 violations (40 UI/ViewModel files scanned).
+
+### Observability gap
+
+The suite runner and the registered-runner adapter both swallow child stderr on infra
+errors ("Guard exited with infrastructure error (code 2)" with no reason) - diagnosis
+required manual argv reconstruction. Recommend GR-10A follow-up: include child stderr
+preview in summary.json legs.

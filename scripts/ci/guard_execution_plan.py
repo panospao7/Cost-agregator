@@ -73,6 +73,8 @@ __all__ = [
     "canonicalize_plan_for_comparison",
     "write_plan_json",
     "normalize_test_overrides",
+    "STDERR_PREVIEW_MAX_CHARS",
+    "redact_bounded_preview",
 ]
 
 
@@ -160,6 +162,7 @@ E_INVALID_MODE = "E_INVALID_MODE"
 E_ENGINE_MODE_MISMATCH = "E_ENGINE_MODE_MISMATCH"
 E_RATCHET_SPEC_REQUIRED = "E_RATCHET_SPEC_REQUIRED"
 E_RATCHET_FIELD_FORBIDDEN = "E_RATCHET_FIELD_FORBIDDEN"
+E_RATCHET_TEMPLATE_ENTRYPOINT_REQUIRED = "E_RATCHET_TEMPLATE_ENTRYPOINT_REQUIRED"
 E_NOT_REPO_RELATIVE = "E_NOT_REPO_RELATIVE"
 E_UNSAFE_TOKEN = "E_UNSAFE_TOKEN"
 E_TEMPLATE_MALFORMED = "E_TEMPLATE_MALFORMED"
@@ -208,7 +211,11 @@ class RatchetSpec:
     baseline_path: str  # repo-relative
     finding_protocol: int  # 1 (legacy stdout) or 2 (structured report)
     fingerprint_schema: int
-    child_argument_template: Tuple[str, ...]  # tokens after the entrypoint
+    # Full child token template.  The FIRST token must be the ``{entrypoint}``
+    # placeholder: the compiler contributes the interpreter exactly once and
+    # the template owns the child script path (pre-migration equivalence
+    # contract — emitting the entrypoint twice is a bogus child positional).
+    child_argument_template: Tuple[str, ...]
     ci_restrictions: Tuple[str, ...]
 
 
@@ -401,6 +408,45 @@ def normalize_test_overrides(
 ) -> Tuple[Tuple[str, str], ...]:
     """Convert an override mapping into the frozen sorted pair form."""
     return tuple(sorted(mapping.items()))
+
+
+# ── Bounded preview redaction (shared runner hygiene) ───────────────────────────
+#
+# Both runners (the static suite and the registered-guard adapter) record a
+# bounded stderr preview on infrastructure errors.  Previews are
+# observability evidence, never a channel for machine-specific filesystem
+# spellings: absolute path forms are replaced with a ``<path>`` placeholder
+# before the bound is applied (GR-10A path-free contract; privacy: no user
+# home, no exception paths).
+
+STDERR_PREVIEW_MAX_CHARS = 500
+
+# Windows drive-letter paths (spaces allowed inside segments so a repo root
+# like "cost agregator" is fully covered) and UNC spellings.
+_WINDOWS_PATH_RE = re.compile(
+    r"[A-Za-z]:[\\/](?:[^\r\n\\/:*?\"<>|]*[\\/])*[^\r\n\\/:*?\"<>|]*"
+)
+_UNC_PATH_RE = re.compile(r"\\\\[^\r\n\"'|<>]*")
+# Common POSIX absolute prefixes (user homes, system trees, temp dirs).
+_POSIX_PATH_RE = re.compile(
+    r"(?<![\w])/(?:Users|home|root|tmp|var|opt|usr|etc|private|mnt|srv)"
+    r"(?:/[^\r\n\s\"':|<>]*)?"
+)
+
+
+def redact_bounded_preview(text: Optional[str]) -> str:
+    """Redact absolute path spellings and bound to STDERR_PREVIEW_MAX_CHARS.
+
+    Pure helper shared by the suite runner and the registered-guard adapter.
+    Redaction runs BEFORE truncation so a path can never straddle the bound
+    and leak partially.
+    """
+    if not text:
+        return ""
+    redacted = _WINDOWS_PATH_RE.sub("<path>", text)
+    redacted = _UNC_PATH_RE.sub("<path>", redacted)
+    redacted = _POSIX_PATH_RE.sub("<path>", redacted)
+    return redacted[:STDERR_PREVIEW_MAX_CHARS]
 
 
 # ── Model builders ───────────────────────────────────────────────────────────────
@@ -696,6 +742,14 @@ def validate_guard_specs(
             for token in ratchet.child_argument_template:
                 _check_template_token(token, gid,
                                       "ratchet.childArgumentTemplate", diags)
+            if (ratchet.child_argument_template
+                    and ratchet.child_argument_template[0] != "{entrypoint}"):
+                diags.append(_diag(
+                    E_RATCHET_TEMPLATE_ENTRYPOINT_REQUIRED, gid,
+                    "ratchet childArgumentTemplate must lead with the "
+                    "{entrypoint} placeholder: the compiler emits the "
+                    "interpreter once and the template owns the child "
+                    "script path"))
             for restriction in ratchet.ci_restrictions:
                 if restriction not in CI_RESTRICTION_VOCABULARY:
                     diags.append(_diag(E_INVALID_CI_RESTRICTION, gid,
@@ -755,16 +809,23 @@ def _validate_context(context: ExecutionContext) -> Tuple[PlanDiagnostic, ...]:
                            "repo_root does not exist or is not a directory"))
         return tuple(diags)
     interpreter = context.interpreter_path
-    if (not isinstance(interpreter, str) or not interpreter
-            or not os.path.isabs(interpreter)):
+    if not isinstance(interpreter, str) or not interpreter:
         diags.append(_diag(E_INVALID_CONTEXT, None,
                            "interpreter_path must be an absolute resolved "
                            "path"))
         return tuple(diags)
+    # Bare-python is checked BEFORE absoluteness: a bare interpreter name is
+    # the specific rule-2 violation (E_BARE_PYTHON), and the pinned contract
+    # is that code — not the generic E_INVALID_CONTEXT.
     if interpreter in _BARE_PYTHON_NAMES:
         diags.append(_diag(E_BARE_PYTHON, None,
                            "interpreter_path must be the resolved runtime "
                            "interpreter, never bare python/python3 (rule 2)"))
+        return tuple(diags)
+    if not os.path.isabs(interpreter):
+        diags.append(_diag(E_INVALID_CONTEXT, None,
+                           "interpreter_path must be an absolute resolved "
+                           "path"))
         return tuple(diags)
     if context.output_dir is not None:
         if (not isinstance(context.output_dir, str)
@@ -894,7 +955,12 @@ def compile_guard_plan(
 
     child_argv: Optional[Tuple[str, ...]] = None
     if spec.engine == ENGINE_PYTHON_RATCHET:
-        child_tokens = [context.interpreter_path, entrypoint_abs]
+        # The child template owns the script path via its leading
+        # {entrypoint} placeholder (structurally validated); the compiler
+        # contributes the interpreter exactly once.  Prepending the
+        # entrypoint here AND expanding {entrypoint} emitted the script
+        # twice — a bogus child positional that made the ratchet exit 2.
+        child_tokens = [context.interpreter_path]
         for token in spec.ratchet.child_argument_template:
             resolved = _resolve_template_token(
                 token, placeholders, input_resolution, guard_id,
@@ -997,9 +1063,10 @@ def canonicalize_plan_for_comparison(plan: ExecutionPlan) -> Dict[str, Any]:
     """Semantic equality form of a plan.
 
     Normalizes machine-specific spellings: the resolved interpreter becomes a
-    placeholder (rule 2 guarantees token identity), and absolute paths under
-    the plan's repo root become repo-relative.  Two plans are semantically
-    equal iff their canonical forms are equal.
+    placeholder (rule 2 guarantees token identity) — both as a bare argv
+    token and inside ratchet ``--command-arg=<value>`` spellings — and
+    absolute paths under the plan's repo root become repo-relative.  Two
+    plans are semantically equal iff their canonical forms are equal.
     """
     root = plan.repo_root
 
@@ -1014,11 +1081,24 @@ def canonicalize_plan_for_comparison(plan: ExecutionPlan) -> Dict[str, Any]:
 
     outer = list(plan.outer_argv)
     child = list(plan.child_argv) if plan.child_argv is not None else None
-    if plan.engine in _PYTHON_ENGINES:
-        if outer:
-            outer[0] = INTERPRETER_PLACEHOLDER
-        if child:
-            child[0] = INTERPRETER_PLACEHOLDER
+    if plan.engine in _PYTHON_ENGINES and (outer or child):
+        # The interpreter is never a canonical token: replace the bare token
+        # (outer[0]/child[0]) AND the ratchet outer argv's repeated
+        # ``--command-arg=<interpreter>`` spelling, which would otherwise
+        # leak the machine-specific interpreter path into canonical plans
+        # and evidence JSON (GR-10A path-free contract).
+        interpreter_token = outer[0] if outer else child[0]
+
+        def _norm_interpreter(token: str) -> str:
+            if token == interpreter_token:
+                return INTERPRETER_PLACEHOLDER
+            if token == f"{COMMAND_ARG_PREFIX}{interpreter_token}":
+                return f"{COMMAND_ARG_PREFIX}{INTERPRETER_PLACEHOLDER}"
+            return token
+
+        outer = [_norm_interpreter(token) for token in outer]
+        if child is not None:
+            child = [_norm_interpreter(token) for token in child]
 
     return {
         "guardId": plan.guard_id,

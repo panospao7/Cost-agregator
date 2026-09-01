@@ -420,6 +420,7 @@ class TestSummaryJsonValidAndOrdered:
                 assert "duration_seconds" in r
                 assert "log_path" in r
                 assert "stdout_preview" in r
+                assert "stderr_preview" in r
 
             # Summary counts
             assert summary["summary"]["total"] == 2
@@ -1346,6 +1347,96 @@ class TestGuardTimeBudgets:
         assert result["duration_seconds"] == 0.0
 
 
+# ── Infra-error stderr preview (bounded, redacted) ────────────────────────────
+
+
+class TestInfraStderrPreview:
+    """Infra-error legs carry a bounded, path-redacted stderr preview.
+
+    ``stderr_preview`` is populated only on infra_error outcomes, is
+    redacted (absolute path spellings become ``<path>``) and bounded to
+    500 chars — observability without path/secret leakage.
+    """
+
+    def _run_guard(self, script_body: str, tmp_path: Path) -> dict:
+        out_dir = tmp_path / "output"
+        out_dir.mkdir()
+        script = tmp_path / "probe_guard.py"
+        _write_script(script, script_body)
+        return _runner.run_guard(
+            "probe_guard", [sys.executable, str(script)], "blocking",
+            out_dir, tmp_path,
+        )
+
+    def test_infra_error_carries_redacted_stderr_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            result = self._run_guard(
+                "import sys\n"
+                "sys.stderr.write('boom-marker: ' + __file__ + chr(10))\n"
+                "sys.exit(2)\n",
+                tmp_path,
+            )
+            assert result["outcome"] == "infra_error"
+            preview = result["stderr_preview"]
+            assert "boom-marker" in preview
+            assert "<path>" in preview, preview
+            assert str(tmp_path) not in preview
+            assert "probe_guard.py" not in preview
+            assert len(preview) <= 500
+
+    def test_stderr_preview_is_bounded_to_500_chars(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = self._run_guard(
+                "import sys\n"
+                "sys.stderr.write('y' * 2000 + chr(10))\n"
+                "sys.exit(2)\n",
+                Path(tmp),
+            )
+            assert result["outcome"] == "infra_error"
+            preview = result["stderr_preview"]
+            assert preview
+            assert len(preview) <= 500
+
+    def test_pass_and_violation_legs_have_empty_stderr_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            passing = self._run_guard(
+                "import sys\n"
+                "sys.stderr.write('noisy but passing\\n')\n"
+                "sys.exit(0)\n",
+                tmp_path,
+            )
+            assert passing["outcome"] == "pass"
+            assert passing["stderr_preview"] == ""
+            violating = self._run_guard(
+                "import sys\n"
+                "sys.stderr.write('noisy violation\\n')\n"
+                "sys.exit(1)\n",
+                tmp_path,
+            )
+            assert violating["outcome"] == "violation"
+            assert violating["stderr_preview"] == ""
+
+    def test_timeout_leg_carries_redacted_stderr_preview(self, monkeypatch):
+        # run_guard reads the module-level budget resolved at import time.
+        monkeypatch.setattr(_runner, "GUARD_TIMEOUT_SECONDS", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            out_dir = tmp_path / "output"
+            out_dir.mkdir()
+            script = tmp_path / "slow_guard.py"
+            _write_script(script, "import time\ntime.sleep(5)\n")
+            result = _runner.run_guard(
+                "slow_guard", [sys.executable, str(script)], "blocking",
+                out_dir, tmp_path,
+            )
+            assert result["outcome"] == "infra_error"
+            # A timed-out child may have produced no stderr yet; the field
+            # must exist and stay bounded either way.
+            assert len(result["stderr_preview"]) <= 500
+
+
 # ── PR-GR-10b: db_artifact_sync guard wiring ──────────────────────────────────
 
 
@@ -1893,12 +1984,33 @@ class TestSuitePlanEvidence:
         assert "execution-plan.json" in sidecar
 
     def test_evidence_is_path_free(self, tmp_path):
-        """No machine-specific absolute spellings (privacy: no user home)."""
+        """No machine-specific absolute spellings (privacy: no user home).
+
+        Covers BOTH evidence files: execution-plan.json (whose ratchet outer
+        argv repeats the interpreter as --command-arg values — the R16-2d
+        leak) and effective-inputs.json.
+        """
         plan_bytes, _plan_doc, _inputs_doc = self._evidence(tmp_path)
-        text = plan_bytes.decode("utf-8")
-        assert str(REPO_ROOT) not in text
-        assert sys.executable not in text
-        assert "\\Users" not in text
+        plan_text = plan_bytes.decode("utf-8")
+        inputs_text = (tmp_path / "effective-inputs.json").read_text(
+            encoding="utf-8"
+        )
+        for text in (plan_text, inputs_text):
+            assert str(REPO_ROOT) not in text
+            assert sys.executable not in text
+            assert "\\Users" not in text
+        # The ratchet interpreter repetition is normalized to the placeholder:
+        # every --command-arg value is either the interpreter placeholder or
+        # a repo-relative spelling — never another absolute path.
+        plan_doc = json.loads(plan_text)
+        for guard in plan_doc["guards"]:
+            for token in guard["resolvedOuterArgv"]:
+                if token.startswith("--command-arg="):
+                    value = token.split("=", 1)[1]
+                    assert (
+                        value == "<resolved-interpreter>"
+                        or not os.path.isabs(value)
+                    ), token
 
     def test_per_guard_record_carries_deliverable_four_fields(self, tmp_path):
         _plan_bytes, plan_doc, _inputs_doc = self._evidence(tmp_path)
