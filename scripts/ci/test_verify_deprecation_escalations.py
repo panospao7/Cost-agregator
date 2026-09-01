@@ -148,6 +148,23 @@ def _make_repo(tmp_path, sources, rows=(), changelog_text=None):
     if changelog_text is None:
         changelog_text = _ledger(rows)
     _write(tmp_path, CHANGELOG_REL, changelog_text)
+    # PR-GR-10B: repository-level scans resolve the production source scope
+    # ONLY from the checked-in manifest — every synthetic repo declares the
+    # conventional root.
+    _write_manifest(tmp_path)
+
+
+def _write_manifest(tmp_path, root_rel=SRC):
+    """Write the checked-in-style production source-root manifest."""
+    _write(
+        tmp_path,
+        "config/guards/production_source_roots.yml",
+        "schemaVersion: 1\n"
+        "roots:\n"
+        "  - module: ':app'\n"
+        "    sourceSet: main\n"
+        f"    path: {root_rel}\n",
+    )
 
 
 def _run(root, capsys, changelog=CHANGELOG_REL, source=SRC):
@@ -387,20 +404,68 @@ def test_missing_changelog_file_exits_two(tmp_path, capsys):
 
 
 def test_missing_source_tree_exits_two(tmp_path, capsys):
+    _write_manifest(tmp_path)
     _write(tmp_path, CHANGELOG_REL, _ledger([]))
     code, out, err = _run(tmp_path, capsys)
     assert code == 2
     assert out == ""
-    assert "source tree not found" in err
+    # PR-GR-10B: the declared root's absence is a fail-closed topology
+    # diagnostic from the production source-scope authority.
+    assert "production source scope unresolved" in err
 
 
 def test_empty_source_tree_exits_two(tmp_path, capsys):
+    _write_manifest(tmp_path)
     _write(tmp_path, _src_path(".keep"), "")
     _write(tmp_path, CHANGELOG_REL, _ledger([]))
     code, out, err = _run(tmp_path, capsys)
     assert code == 2
     assert out == ""
     assert "no Kotlin/Java source files" in err
+
+
+def test_missing_manifest_fails_closed(tmp_path, capsys):
+    """PR-GR-10B: no checked-in production source-root manifest -> exit 2
+    (no conventional-root fallback)."""
+    _write(tmp_path, _src_path("A.kt"), KOTLIN_SINGLE)
+    _write(tmp_path, CHANGELOG_REL, _ledger([]))
+    code, out, err = _run(tmp_path, capsys)
+    assert code == 2
+    assert out == ""
+    assert "production source scope unresolved" in err
+
+
+def test_undeclared_source_argument_exits_two(tmp_path, capsys):
+    """--source must name a declared manifest root; anything else fails
+    closed (exit 2)."""
+    _make_repo(tmp_path, {_src_path("A.kt"): KOTLIN_SINGLE})
+    code, out, err = _run(
+        tmp_path, capsys, source="feature/src/main/kotlin"
+    )
+    assert code == 2
+    assert out == ""
+    assert "not declared" in err
+
+
+def test_undeclared_root_files_are_never_scanned(tmp_path, capsys):
+    """Kotlin files outside the declared production roots are invisible to
+    the guard: an ERROR-deprecation site under an undeclared tree produces
+    no finding (and a changelog entry for it is stale)."""
+    _make_repo(
+        tmp_path,
+        {
+            _src_path("A.kt"): KOTLIN_SINGLE,
+            # Undeclared sibling tree: NOT part of the declared scope.
+            "other/src/main/java/com/example/B.kt": KOTLIN_SINGLE.replace(
+                "oldApi", "otherApi"
+            ),
+        },
+        rows=[(_src_path("A.kt"), "oldApi")],
+    )
+    code, out, err = _run(tmp_path, capsys)
+    assert code == 0, f"expected clean pass, got {code}: {out} {err}"
+    assert "otherApi" not in out
+    assert "1 DeprecationLevel.ERROR fingerprint(s) verified" in out
 
 
 def test_unreadable_source_file_exits_two(tmp_path, capsys, monkeypatch):

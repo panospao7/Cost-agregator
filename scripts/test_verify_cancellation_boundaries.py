@@ -7,6 +7,7 @@ Run with: python -m pytest scripts/test_verify_cancellation_boundaries.py -v
 import os
 import sys
 import tempfile
+import pytest
 from pathlib import Path
 
 # Import the module under test directly
@@ -599,3 +600,116 @@ def test_malformed_yaml_is_fatal(tmp_path):
         capture_output=True, text=True, timeout=10
     )
     assert result.returncode == 2, f"Expected exit 2 for malformed YAML, got {result.returncode}"
+
+
+# ── PR-GR-10B source-scope contract ─────────────────────────────────────────
+# The guard's scan scope is the checked-in production source-root manifest
+# (config/guards/production_source_roots.yml), resolved via
+# scripts/guardrails/production_source_scope.py — fail closed with exit 2
+# when it is missing/malformed/undeclared; cancellation relevance is a
+# semantic filter applied AFTER enumerating every declared production file.
+# The fixture passes --allowlist because the guard resolves its allowlist
+# relative to --root (the default repo-relative allowlist does not exist in
+# a fixture).
+
+def _write_scope_manifest(root, root_rel="app/src/main/java"):
+    manifest = root / "config" / "guards" / "production_source_roots.yml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "schemaVersion: 1\n"
+        "roots:\n"
+        "  - module: ':app'\n"
+        "    sourceSet: main\n"
+        f"    path: {root_rel}\n",
+        encoding="utf-8",
+    )
+
+
+_CANCEL_VIOLATION_KT = (
+    "package com.example\n"
+    "\n"
+    "class BadRunner {\n"
+    "    suspend fun process(): Int {\n"
+    "        val result = runCatching { fetchData() }\n"
+    "        return result.getOrDefault(0)\n"
+    "    }\n"
+    "}\n"
+)
+
+_CLEAN_KT = "package com.example\nclass Clean { fun f() = 1 }\n"
+
+_SCOPE_ALLOWLIST_REL = "cancellation_scope_allowlist.yml"
+
+
+def _write_scope_allowlist(root):
+    target = root / _SCOPE_ALLOWLIST_REL
+    target.write_text("# empty allowlist\n", encoding="utf-8")
+
+
+def _scope_run_main(root, monkeypatch, capsys, extra=()):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["verify_cancellation_boundaries.py", "--root", str(root)]
+        + ["--allowlist", _SCOPE_ALLOWLIST_REL] + list(extra),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _mod.main()
+    return excinfo.value.code, capsys.readouterr()
+
+
+def _write_declared(root, rel, content):
+    target = root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
+def test_manifest_declared_root_finding_matches_hardcoded_era(tmp_path, monkeypatch, capsys):
+    """With the single-root manifest declaring app/src/main/java, findings
+    are identical to the pre-GR-10B hard-coded-root era: runCatching in a
+    suspend function under the declared root is flagged."""
+    _write_scope_manifest(tmp_path)
+    _write_scope_allowlist(tmp_path)
+    _write_declared(
+        tmp_path,
+        "app/src/main/java/com/example/BadRunner.kt",
+        _CANCEL_VIOLATION_KT,
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 1
+    assert "BadRunner.kt" in out.out
+    assert "runCatching" in out.out
+
+
+def test_missing_manifest_fails_closed(tmp_path, monkeypatch, capsys):
+    """No checked-in manifest -> exit 2 (no conventional-root fallback)."""
+    _write_scope_allowlist(tmp_path)
+    _write_declared(
+        tmp_path,
+        "app/src/main/java/com/example/BadRunner.kt",
+        _CANCEL_VIOLATION_KT,
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 2
+    assert "production source scope unresolved" in out.err
+
+
+def test_undeclared_root_file_is_never_scanned(tmp_path, monkeypatch, capsys):
+    """Kotlin files outside the declared production roots are invisible."""
+    _write_scope_manifest(tmp_path)
+    _write_scope_allowlist(tmp_path)
+    _write_declared(tmp_path, "app/src/main/java/com/example/Clean.kt", _CLEAN_KT)
+    undeclared = (
+        tmp_path / "other" / "src" / "main" / "java" / "com" / "example"
+        / "BadRunner.kt"
+    )
+    undeclared.parent.mkdir(parents=True)
+    undeclared.write_text(_CANCEL_VIOLATION_KT, encoding="utf-8")
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 0
+    assert "BadRunner" not in out.out

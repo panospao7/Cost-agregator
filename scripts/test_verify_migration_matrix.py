@@ -44,6 +44,25 @@ def _make_app_database(tmp_path, version):
     )
 
 
+def _write_manifest(tmp_path, root_rel="app/src/main/java"):
+    """Write a checked-in-style production source-root manifest (PR-GR-10B).
+
+    Repository-level ``main()`` invocations resolve the production source
+    scope ONLY from this manifest; synthetic fixtures drive main() through
+    a manifest declaring the conventional root.
+    """
+    manifest_dir = tmp_path / "config" / "guards"
+    manifest_dir.mkdir(parents=True, exist_ok=True)
+    (manifest_dir / "production_source_roots.yml").write_text(
+        "schemaVersion: 1\n"
+        "roots:\n"
+        "  - module: ':app'\n"
+        "    sourceSet: main\n"
+        f"    path: {root_rel}\n",
+        encoding="utf-8",
+    )
+
+
 def _make_schema_policy(tmp_path, baseline=145,
                         current_version_line=(
                             "const val CURRENT_VERSION = "
@@ -440,6 +459,7 @@ def test_main_resolves_real_sources_despite_build_strays(tmp_path, monkeypatch, 
     )
     _make_schema_policy(tmp_path, baseline=145)
     _write_stray_build_sources(tmp_path)
+    _write_manifest(tmp_path)
 
     monkeypatch.setattr(sys, 'argv', [
         'verify_migration_matrix.py',
@@ -462,16 +482,36 @@ def test_main_resolves_real_sources_despite_build_strays(tmp_path, monkeypatch, 
     )
 
 
+def test_missing_manifest_fails_closed(tmp_path, monkeypatch, capsys):
+    """PR-GR-10B: a repository-level invocation without the checked-in
+    production source-root manifest fails closed (exit 2) — no
+    conventional-root fallback."""
+    _write_stray_build_sources(tmp_path, app_db_version=148)
+
+    monkeypatch.setattr(sys, 'argv', [
+        'verify_migration_matrix.py',
+        '--root', str(tmp_path),
+    ])
+
+    with pytest.raises(SystemExit) as exc_info:
+        mm.main()
+
+    assert exc_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "production source scope unresolved" in err
+
+
 def test_missing_real_source_fails_controlled_despite_build_strays(
     tmp_path, monkeypatch, capsys
 ):
-    """No production source under app/src/main/java -> controlled FATAL
+    """No production source under the DECLARED root -> controlled FATAL
     (exit 2), even when plausible-looking copies exist under build/.
 
     Fails before the fix: the whole-tree rglob resolved the stray copies,
     the guard parsed them happily and exited 0 instead of failing closed.
     """
     _write_stray_build_sources(tmp_path, app_db_version=148)
+    _write_manifest(tmp_path)
 
     monkeypatch.setattr(sys, 'argv', [
         'verify_migration_matrix.py',
@@ -592,6 +632,7 @@ def test_main_uses_unqualified_policy_as_authoritative(tmp_path, monkeypatch, ca
         baseline_text="v145 is the baseline"
     )
     _make_schema_policy(tmp_path, baseline=145)
+    _write_manifest(tmp_path)
 
     monkeypatch.setattr(sys, 'argv', [
         'verify_migration_matrix.py',

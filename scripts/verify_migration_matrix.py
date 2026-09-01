@@ -12,12 +12,15 @@ Fallback: AppDatabase.kt (APP_DATABASE_SCHEMA_VERSION) and DatabaseMigrations.kt
 Registered migrations are parsed from DatabaseMigrations.kt.
 Schema JSON files under app/schemas/ are used to verify version coverage.
 
-Kotlin sources are resolved ONLY under the declared production source root
-``<root>/app/src/main/java`` (exact known production paths first, then a
-scoped sorted search) — mirroring ``verify_time_boundaries`` and the
-approved-root contract in ``scripts/db_guard/source_roots.py``.  Stray
-copies of these file names under ``build/`` trees or test fixtures can
-never shadow the real production sources.
+Kotlin sources are resolved ONLY under the declared production source
+roots of the checked-in manifest ``config/guards/production_source_roots.yml``
+(via ``scripts/guardrails/production_source_scope.py``; currently
+``app/src/main/java``) — exact known production paths first, then a
+canonical-order scoped search.  A repository-level invocation
+(``main()``) requires the manifest and fails closed (exit 2) when it is
+missing, malformed, or undeclared — there is NO conventional-root
+fallback.  Stray copies of these file names under ``build/`` trees or
+test fixtures can never shadow the real production sources.
 
 Exit codes: 0 = all migrations present, 1 = missing migrations (with --fail-on-violation)
 
@@ -31,15 +34,28 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_kotlin_file,
+    resolve_production_source_scope,
+    resolve_source_root_set_for_test_fixtures,
+)
+
 
 RULE_ID = "G-MIG-01"
 DESCRIPTION = "Validates Room database migration coverage from baseline to latest"
 
-# Declared production source root (repository-relative POSIX).  Kotlin
-# sources are resolved ONLY under this root — never across the whole
-# repository, where stray fixture copies under ``build/**`` can shadow the
-# real sources.  Mirrors ``SOURCE_SUBDIR`` in ``verify_time_boundaries.py``
-# and the approved-root contract in ``scripts/db_guard/source_roots.py``.
+# Historical production source root (repository-relative POSIX).  Kept as
+# documentation and for test assertions: it is the manifest's currently
+# declared single root.  The LIVE authority is the checked-in manifest
+# ``config/guards/production_source_roots.yml`` resolved via
+# ``scripts/guardrails/production_source_scope.py`` (PR-GR-10B) — this
+# constant no longer drives any scan.
 SOURCE_SUBDIR = "app/src/main/java"
 
 # Exact known production paths (repository-relative POSIX), preferred before
@@ -67,31 +83,52 @@ def find_file(root: Path, filename: str) -> Optional[Path]:
     return None
 
 
-def find_kotlin_source(root: Path, simple_name: str) -> Optional[Path]:
+def find_kotlin_source(root: Path, simple_name: str, root_set=None) -> Optional[Path]:
     """Find a production Kotlin source file by its simple name.
 
-    Resolution is root-aware and deterministic — only the declared
-    production source root ``<root>/app/src/main/java`` is searched, never
-    ``build/`` output trees, test fixtures, or any other part of the
-    repository:
+    Resolution is root-aware and deterministic — only the DECLARED
+    production source roots are searched, never ``build/`` output trees,
+    test fixtures, or any other part of the repository (PR-GR-10B):
 
       1. the exact known production path for ``simple_name``, when one is
-         declared and exists on disk;
-      2. otherwise the first match in sorted order of a search scoped to
-         ``<root>/app/src/main/java`` (covers fixture layouts and package
-         moves without widening the scope).
+         declared and resolves under a declared production root;
+      2. otherwise the first match in canonical order over the declared
+         production Kotlin files (covers fixture layouts and package moves
+         without widening the scope).
+
+    ``root_set`` is an already-resolved ``SourceRootSet``.  Repository-level
+    callers (``main()``) MUST pass the manifest-resolved scope — the
+    manifest is required and there is no fallback.  When ``root_set`` is
+    omitted (direct/fixture-level calls only), the scope is resolved via
+    the explicitly named test-fixture seam, whose conventional-root
+    fallback is isolated to synthetic repositories without a manifest.
     """
-    known_rel = _KNOWN_SOURCE_PATHS.get(simple_name)
-    if known_rel is not None:
-        candidate = root.joinpath(*known_rel.split("/"))
-        if candidate.is_file():
-            return candidate
-    src_dir = root.joinpath(*SOURCE_SUBDIR.split("/"))
-    if not src_dir.is_dir():
+    if root_set is None:
+        root_set, _diagnostics = resolve_source_root_set_for_test_fixtures(
+            str(root)
+        )
+        if root_set is None:
+            return None
+        known_rel = _KNOWN_SOURCE_PATHS.get(simple_name)
+        if known_rel is not None:
+            candidate = root.joinpath(*known_rel.split("/"))
+            if candidate.is_file():
+                return candidate
+    else:
+        known_rel = _KNOWN_SOURCE_PATHS.get(simple_name)
+        if known_rel is not None:
+            source_file, _code = resolve_production_kotlin_file(
+                str(root), root_set, known_rel
+            )
+            if source_file is not None:
+                return Path(source_file.absolute_path)
+            # UNDECLARED / UNREADABLE / LAYOUT_UNSUPPORTED -> scoped search.
+    try:
+        for source_file in iter_production_kotlin_files(str(root), root_set):
+            if Path(source_file.absolute_path).name == simple_name:
+                return Path(source_file.absolute_path)
+    except ProductionSourceScopeError:
         return None
-    for path in sorted(src_dir.rglob(simple_name)):
-        if path.is_file():
-            return path
     return None
 
 
@@ -294,20 +331,32 @@ def main():
 
     root = Path(args.root).resolve()
 
+    # PR-GR-10B: repository-level invocation requires the checked-in
+    # production source-root manifest (fail closed — no conventional-root
+    # fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"FATAL ({RULE_ID}): production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     # ── Locate source files ──────────────────────────────────────────
-    app_db_path = find_kotlin_source(root, "AppDatabase.kt")
+    app_db_path = find_kotlin_source(root, "AppDatabase.kt", root_set)
     if app_db_path is None:
         print(f"FATAL ({RULE_ID}): Could not find AppDatabase.kt under {root}",
               file=sys.stderr)
         sys.exit(2)
 
-    mig_path = find_kotlin_source(root, "DatabaseMigrations.kt")
+    mig_path = find_kotlin_source(root, "DatabaseMigrations.kt", root_set)
     if mig_path is None:
         print(f"FATAL ({RULE_ID}): Could not find DatabaseMigrations.kt under {root}",
               file=sys.stderr)
         sys.exit(2)
 
-    policy_path = find_kotlin_source(root, "DatabaseSchemaPolicy.kt")
+    policy_path = find_kotlin_source(root, "DatabaseSchemaPolicy.kt", root_set)
 
     # ── Parse versions ───────────────────────────────────────────────
     # Prefer DatabaseSchemaPolicy.kt as the authoritative source.

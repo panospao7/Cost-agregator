@@ -3,7 +3,11 @@
 verify_ui_dao_boundaries.py
 G-UI-DAO-01 — UI/ViewModel DAO Boundary Guard
 
-Scans app/src/main/java for:
+Scans the declared production Kotlin source scope (the roots of the
+checked-in manifest ``config/guards/production_source_roots.yml`` via
+``scripts/guardrails/production_source_scope.py`` — currently
+``app/src/main/java``), enumerating EVERY declared production file first
+and then applying the guard-specific UI/ViewModel semantic filter, for:
   1. ViewModels or UI code directly injecting/calling mutating DAOs.
   2. Files in ui/** paths containing @Inject ...Dao or dao.var calls with
      insert/update/delete.
@@ -13,7 +17,8 @@ Scans app/src/main/java for:
 Exit codes:
   0 — no violations (or warning mode without --fail-on-violation)
   1 — violations found AND --fail-on-violation flag is set
-  2 — script error (e.g. source directory not found)
+  2 — script error (e.g. production source scope unresolved, source
+      directory not found)
 
 Usage:
   python3 scripts/verify_ui_dao_boundaries.py
@@ -36,7 +41,15 @@ DESCRIPTION = "UI/ViewModel DAO Boundary Guard"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-SOURCE_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java")
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
+
 ALLOWLIST_PATH = os.path.join(SCRIPT_DIR, "allowlists", "ui_dao_allowlist.yml")
 
 SKIP_DIRS = {"test", "androidTest", "migration", "generated", "build"}
@@ -348,10 +361,18 @@ def main():
     args = parser.parse_args()
 
     root = args.root
-    source_dir = os.path.join(root, "app", "src", "main", "java")
 
-    if not os.path.isdir(source_dir):
-        print(f"ERROR: source directory not found: {source_dir}", file=sys.stderr)
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).  ALL declared
+    # roots are enumerated first; the UI/ViewModel relevance check below is
+    # a semantic filter, not a root filter.
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"ERROR: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     # Fail-closed: missing configured allowlist is fatal
@@ -364,23 +385,30 @@ def main():
     all_violations: List[str] = []
     files_scanned = 0
 
-    for dirpath, dirnames, filenames in os.walk(source_dir):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for filename in filenames:
-            if not filename.endswith(".kt"):
-                continue
-            filepath = os.path.join(dirpath, filename)
-            rel_path = os.path.relpath(filepath, root)
+    try:
+        source_files = list(iter_production_kotlin_files(str(root), root_set))
+    except ProductionSourceScopeError as exc:
+        print(
+            f"ERROR: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
-            # Skip non-UI and non-ViewModel files quickly
-            is_ui = "ui" in rel_path.replace("\\", "/").split(os.sep)
-            is_vm = filename.endswith("ViewModel.kt")
-            if not is_ui and not is_vm:
-                continue
+    for source_file in source_files:
+        filepath = source_file.absolute_path
+        rel_path = source_file.repository_relative_path
+        filename = os.path.basename(filepath)
 
-            files_scanned += 1
-            file_violations = scan_file(filepath, rel_path, allowlist)
-            all_violations.extend(file_violations)
+        # Skip non-UI and non-ViewModel files quickly (pre-filter preserved
+        # verbatim from the pre-GR-10B implementation).
+        is_ui = "ui" in rel_path.replace("\\", "/").split(os.sep)
+        is_vm = filename.endswith("ViewModel.kt")
+        if not is_ui and not is_vm:
+            continue
+
+        files_scanned += 1
+        file_violations = scan_file(filepath, rel_path, allowlist)
+        all_violations.extend(file_violations)
 
     print(f"Scanned {files_scanned} UI/ViewModel files for G-UI-DAO-01 violations.")
 

@@ -117,9 +117,36 @@ def _write_kt(root: Path, rel: str, content: str) -> Path:
     return p
 
 
+def _write_manifest(root: Path) -> None:
+    """Write the checked-in-style production source-root manifest (PR-GR-10B).
+
+    Repository-level guard runs resolve the production source scope ONLY
+    from this manifest; synthetic fixtures declare the conventional root so
+    the scanned file set matches the pre-GR-10B hard-coded era.
+    """
+    manifest = root / "config" / "guards" / "production_source_roots.yml"
+    if not manifest.exists():
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(
+            "schemaVersion: 1\n"
+            "roots:\n"
+            "  - module: ':app'\n"
+            "    sourceSet: main\n"
+            "    path: app/src/main/java\n",
+            encoding="utf-8",
+        )
+
+
 def _run_guard(root: Path, allowlist: Path = None, fail_on_violation: bool = False,
-               extra_args=None):
-    """Run the guard as a subprocess and return CompletedProcess."""
+               extra_args=None, write_manifest: bool = True):
+    """Run the guard as a subprocess and return CompletedProcess.
+
+    ``write_manifest=False`` runs WITHOUT the checked-in production
+    source-root manifest — used only by the manifest-absent fail-closed test
+    (PR-GR-10B); every other run declares the conventional root.
+    """
+    if write_manifest:
+        _write_manifest(root)
     cmd = [sys.executable, str(GUARD_SCRIPT), "--root", str(root)]
     if allowlist is not None:
         cmd += ["--allowlist", str(allowlist)]
@@ -882,6 +909,7 @@ class TestSourceTreeFailClosed:
     def test_missing_source_tree_exit_2(self, tmp_path):
         root = tmp_path
         allowlist = _empty_allowlist(root)
+        _write_manifest(root)
         result = _run_guard(root, allowlist=allowlist, fail_on_violation=True)
         assert result.returncode == 2
         assert "FATAL" in result.stderr
@@ -893,6 +921,40 @@ class TestSourceTreeFailClosed:
         result = _run_guard(root, allowlist=allowlist, fail_on_violation=True)
         assert result.returncode == 2
         assert "FATAL" in result.stderr
+
+    def test_missing_manifest_exit_2(self, tmp_path):
+        """PR-GR-10B: no checked-in production source-root manifest -> exit 2
+        (no conventional-root fallback)."""
+        root = tmp_path
+        # The declared root exists with a clean source file, so manifest
+        # absence is the ONLY possible failure cause.
+        _write_kt(root, "Example.kt", "package com.example\nclass A { fun f() = 1 }\n")
+        allowlist = _empty_allowlist(root)
+        result = _run_guard(root, allowlist=allowlist, fail_on_violation=True,
+                            write_manifest=False)
+        assert result.returncode == 2
+        assert "production source scope unresolved" in result.stderr
+
+    def test_undeclared_root_file_is_never_scanned(self, tmp_path):
+        """A wall-clock violation under an UNDECLARED tree is invisible: the
+        declared production roots own the scan scope."""
+        root = tmp_path
+        allowlist = _empty_allowlist(root)
+        _write_manifest(root)
+        # Declared root must exist (and stay clean) so the scope resolves.
+        _write_kt(root, "Clean.kt", "package com.example\nclass Clean { fun f() = 1 }\n")
+        undeclared = root / "other" / "src" / "main" / "java" / "Rogue.kt"
+        undeclared.parent.mkdir(parents=True)
+        undeclared.write_text(
+            "package other\n"
+            "class Rogue {\n"
+            "    fun now() = System.currentTimeMillis()\n"
+            "}\n",
+            encoding="utf-8",
+        )
+        result = _run_guard(root, allowlist=allowlist, fail_on_violation=True)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Rogue" not in result.stdout
 
 
 # ── 8. Stale exception -> exit 2 ────────────────────────────────────────────────

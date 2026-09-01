@@ -60,6 +60,30 @@ COMPILER_MODULE_NAME = "guard_execution_plan"
 COMPILER_SUITE_ENTRY = "compile_static_suite_plan"
 
 
+def _validate_source_scopes() -> list:
+    """Validate PR-GR-10B sourceScope metadata on every registry entry.
+
+    Every active entry must declare exactly one classification from the
+    registry's closed SOURCE_SCOPE_VALUES vocabulary (plan §"Scope
+    classifications": "No active guard may have an implicit/unknown scope").
+    Returns a list of bounded error strings (empty when valid).
+    """
+    errors = []
+    for name, guard in GUARD_REGISTRY.items():
+        scope = guard.get("sourceScope")
+        if scope is None:
+            errors.append(
+                f"{name}: missing sourceScope — every entry must declare "
+                f"exactly one classification from SOURCE_SCOPE_VALUES"
+            )
+        elif scope not in SOURCE_SCOPE_VALUES:
+            errors.append(
+                f"{name}: unrecognized sourceScope '{scope}' — allowed "
+                f"values: {', '.join(sorted(SOURCE_SCOPE_VALUES))}"
+            )
+    return errors
+
+
 def _validate_registry_self_consistency() -> list:
     """Validate internal consistency of the registry (not file existence).
 
@@ -282,6 +306,10 @@ def main() -> None:
     print()
     print("--- Self-consistency check ---")
     consistency_errors = _validate_registry_self_consistency()
+    # PR-GR-10B Slice 2: sourceScope presence/vocabulary is part of registry
+    # self-consistency (additive; every entry must declare exactly one
+    # classification from the closed vocabulary).
+    consistency_errors.extend(_validate_source_scopes())
     if consistency_errors:
         for e in consistency_errors:
             print(f"REGISTRY ERROR: {e}")

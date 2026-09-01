@@ -16,8 +16,14 @@ new ERROR-deprecation call-site breakage visible at the source level: an
 unannounced escalation is a CI finding even before compilation runs.
 
 Scope:
-    Production Kotlin/Java under ``app/src/main/java`` (recursive; test,
-    androidTest, generated, build, migration segments are skipped).
+    The declared production roots of the checked-in manifest
+    ``config/guards/production_source_roots.yml`` (via
+    ``scripts/guardrails/production_source_scope.py`` — currently
+    ``app/src/main/java``; recursive; test, androidTest, generated, build,
+    migration segments are skipped by the legacy .java enumeration leg).
+    ``--source`` must name a declared root; there is NO conventional-root
+    fallback: a missing, malformed, or undeclared manifest fails closed
+    with exit 2.
 
 Detection:
     The source is masked (line/block comments, KDoc, string and char literals
@@ -95,6 +101,16 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from shared_guard_engine import find_source_files, safe_read_file  # noqa: E402
+
+_SCRIPT_PARENT = os.path.dirname(_SCRIPT_DIR)
+if _SCRIPT_PARENT not in sys.path:
+    sys.path.insert(0, _SCRIPT_PARENT)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
 
 # ── Controlled constants ────────────────────────────────────────────────────────
 
@@ -426,15 +442,52 @@ def _extract_declaration_name(masked: str, pos: int) -> str:
 def scan_error_deprecation_sites(root: str, source_rel: str) -> dict:
     """Scan the source tree for ERROR-deprecation fingerprints.
 
+    PR-GR-10B: the scanned production source scope is the declared roots of
+    the checked-in manifest ``config/guards/production_source_roots.yml``
+    (fail closed — no conventional-root fallback).  ``source_rel`` must be
+    one of the declared manifest roots.  Kotlin files are enumerated via
+    the neutral production source-scope module (deterministic declared-root
+    order, then canonical path order); the historical ``.java`` extension is
+    still enumerated within the declared roots with the legacy skip-directory
+    pruning, and the merged file list is sorted exactly as before.
+
     Returns ``{(rel_posix_path, symbol): first_line}`` (first occurrence wins,
     so overloads collapse to one fingerprint deterministically). Raises
     ``GuardFatalError`` on any fail-closed condition.
     """
-    source_dir = os.path.join(root, *source_rel.split("/"))
-    if not os.path.isdir(source_dir):
-        raise GuardFatalError(f"source tree not found: {source_rel}")
+    root_set, scope_diagnostics = resolve_production_source_scope(root)
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        raise GuardFatalError(
+            f"production source scope unresolved: {codes}"
+        )
+    if source_rel.replace("\\", "/") not in set(root_set.paths):
+        raise GuardFatalError(
+            f"source tree not declared in the production source-root "
+            f"manifest: {source_rel}"
+        )
 
-    files = find_source_files(root, subdir=source_rel)
+    files: list = []
+    seen: set = set()
+    try:
+        for source_file in iter_production_kotlin_files(root, root_set):
+            if source_file.absolute_path not in seen:
+                seen.add(source_file.absolute_path)
+                files.append(source_file.absolute_path)
+    except ProductionSourceScopeError as exc:
+        raise GuardFatalError(
+            f"production source enumeration failed: {exc.code}"
+        )
+    for declared_root in root_set.paths:
+        # Historical .java extension coverage within the declared roots;
+        # the root authority remains the manifest-declared root set.
+        for java_path in find_source_files(
+            root, subdir=declared_root, patterns=["*.java"]
+        ):
+            if java_path not in seen:
+                seen.add(java_path)
+                files.append(java_path)
+    files.sort()
     if not files:
         raise GuardFatalError(f"no Kotlin/Java source files under {source_rel}")
 

@@ -42,9 +42,27 @@ import argparse
 from dataclasses import dataclass, field
 from typing import List
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    is_declared_production_path,
+    resolve_production_source_scope,
+)
+
 MAIN_SRC = "app/src/main/java/com/yourname/expensetracker"
 AI_PROVIDER_PKG = f"{MAIN_SRC}/data/ai"
 CLOUD_BACKUP_PKG = f"{MAIN_SRC}/data/backup"
+
+# PR-GR-10B: MAIN_SRC is the guard's package-level semantic scope (a
+# subtree of the declared production roots), not a root filter.  The root
+# authority is the checked-in manifest
+# ``config/guards/production_source_roots.yml`` resolved via
+# ``scripts/guardrails/production_source_scope.py``: the repository-level
+# guard fails closed (exit 2) when the manifest is missing/malformed or
+# when MAIN_SRC is not a declared production path.  There is NO
+# conventional-root fallback.
 
 
 @dataclass
@@ -484,6 +502,25 @@ def main():
 
     root = os.path.abspath(args.root)
     print(f"Scanning privacy boundaries in: {root}")
+
+    # PR-GR-10B: fail closed when the production source-root manifest is
+    # missing/malformed or when the package-level scan scope is not a
+    # declared production path (no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(root)
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"ERROR: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if not is_declared_production_path(root_set, MAIN_SRC):
+        print(
+            "ERROR: privacy scan scope is not a declared production path: "
+            f"{MAIN_SRC}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     violations = run(root)
     if not violations:

@@ -5,7 +5,12 @@ Static architecture guard for import lifecycle boundaries.
 
 Rule: G-IMPORT-01
 
-Detects import paths (CSV, JSON, backup/restore) bypassing lifecycle
+Scans the declared production Kotlin source scope (the roots of the
+checked-in manifest ``config/guards/production_source_roots.yml`` via
+``scripts/guardrails/production_source_scope.py`` — currently
+``app/src/main/java``), enumerating EVERY declared production file and then
+applying the guard-specific import-relevance/test semantic filter. Detects
+import paths (CSV, JSON, backup/restore) bypassing lifecycle
 coordinators by calling expenseDao/categoryDao directly, and import
 util files missing provenance field writes (importRunId, importBatchId).
 
@@ -35,11 +40,28 @@ from typing import List, Set, Tuple, Optional
 # ── Configuration ──────────────────────────────────────────────────────────
 RULE_ID = "G-IMPORT-01"
 DESCRIPTION = "Import lifecycle guard — detects import paths bypassing lifecycle coordinators"
-SCOPE_DIR = "app/src/main/java"
 FILE_PATTERN = "*.kt"
 DEFAULT_ALLOWLIST = "scripts/allowlists/import_lifecycle_allowlist.yml"
 
 SKIP_DIRS = {"test", "androidTest", "migration", "generated", "build"}
+
+# PR-GR-10B: the scanned production source scope is declared by the
+# checked-in manifest ``config/guards/production_source_roots.yml`` (resolved
+# via scripts/guardrails/production_source_scope.py).  There is NO
+# conventional-root fallback: a missing, malformed, or undeclared manifest
+# fails closed with exit 2.  The historical hard-coded root
+# (``app/src/main/java``) is the manifest's currently declared single root,
+# so the scanned file set is unchanged.
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
 
 # Files always allowed because they define the DAO interfaces themselves
 BASE_APPROVED_FILES = {
@@ -311,12 +333,19 @@ def main():
         args.root = Path(__file__).resolve().parent.parent
 
     root = args.root.resolve()
-    scope_dir = root / SCOPE_DIR
-    allowlist_path = root / (args.allowlist or DEFAULT_ALLOWLIST)
 
-    if not scope_dir.exists():
-        print(f"FATAL: Source directory not found: {scope_dir}", file=sys.stderr)
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"FATAL: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
         sys.exit(2)
+
+    allowlist_path = root / (args.allowlist or DEFAULT_ALLOWLIST)
 
     approved_files = load_allowlist(allowlist_path)
     if not approved_files:
@@ -324,13 +353,22 @@ def main():
 
     all_violations: List[Tuple[str, int, str, str]] = []
 
-    for filepath in scope_dir.rglob(FILE_PATTERN):
-        rel_path = str(filepath.relative_to(root)).replace("\\", "/")
+    try:
+        source_files = list(iter_production_kotlin_files(str(root), root_set))
+    except ProductionSourceScopeError as exc:
+        print(
+            f"FATAL: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    for source_file in source_files:
+        rel_path = source_file.repository_relative_path
 
         if is_test_file(rel_path):
             continue
 
-        violations = scan_file(filepath, rel_path, approved_files)
+        violations = scan_file(source_file.absolute_path, rel_path, approved_files)
         all_violations.extend(violations)
 
     if not all_violations:

@@ -11,6 +11,7 @@ Run with:
 import os
 import sys
 import tempfile
+import pytest
 from pathlib import Path
 
 # Import the module under test
@@ -254,3 +255,121 @@ def test_production_codebase_has_no_violations():
         f"Production codebase has {len(all_violations)} receipt link violation(s):\n"
         + "\n".join(f"  {f}:{l}  [{r}]  {t}" for f, l, t, r in all_violations[:20])
     )
+
+
+# ── PR-GR-10B source-scope contract ─────────────────────────────────────────
+# The guard's scan scope is the checked-in production source-root manifest
+# (config/guards/production_source_roots.yml), resolved via
+# scripts/guardrails/production_source_scope.py — fail closed with exit 2
+# when it is missing/malformed/undeclared; approved-path relevance is a
+# semantic filter applied AFTER enumerating every declared production file.
+# The fixture allowlist must be a NON-EMPTY YAML list: load_allowlist exits 2
+# on a missing file AND on a document that is not a list (an empty file loads
+# as None), so a placeholder list entry keeps the fixture self-contained.
+
+def _write_scope_manifest(root, root_rel="app/src/main/java"):
+    manifest = root / "config" / "guards" / "production_source_roots.yml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "schemaVersion: 1\n"
+        "roots:\n"
+        "  - module: ':app'\n"
+        "    sourceSet: main\n"
+        f"    path: {root_rel}\n",
+        encoding="utf-8",
+    )
+
+
+_RECEIPT_VIOLATION_KT = (
+    "package com.example\n"
+    "\n"
+    "class ReceiptLinkViolator {\n"
+    "    fun link(receipt: ScannedReceipt, expenseId: Long): ScannedReceipt {\n"
+    "        return receipt.copy(expenseId = expenseId)\n"
+    "    }\n"
+    "}\n"
+)
+
+_CLEAN_KT = "package com.example\nclass Clean { fun f() = 1 }\n"
+
+_SCOPE_ALLOWLIST_REL = "receipt_link_scope_allowlist.yml"
+
+
+def _write_scope_allowlist(root):
+    """Write a NON-EMPTY YAML list allowlist (empty file -> 'not a list' exit 2)."""
+    target = root / _SCOPE_ALLOWLIST_REL
+    target.write_text(
+        "- path: Placeholder\n"
+        "  reason: \"scope-contract fixture placeholder\"\n",
+        encoding="utf-8",
+    )
+
+
+def _scope_run_main(root, monkeypatch, capsys, extra=()):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["verify_receipt_link_boundaries.py", "--root", str(root)]
+        + ["--allowlist", _SCOPE_ALLOWLIST_REL] + list(extra),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _mod.main()
+    return excinfo.value.code, capsys.readouterr()
+
+
+def _write_declared(root, rel, content):
+    target = root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
+def test_manifest_declared_root_finding_matches_hardcoded_era(tmp_path, monkeypatch, capsys):
+    """With the single-root manifest declaring app/src/main/java, findings
+    are identical to the pre-GR-10B hard-coded-root era: a receipt
+    .copy(expenseId = ...) outside approved paths under the declared root is
+    flagged."""
+    _write_scope_manifest(tmp_path)
+    _write_scope_allowlist(tmp_path)
+    _write_declared(
+        tmp_path,
+        "app/src/main/java/com/example/ReceiptLinkViolator.kt",
+        _RECEIPT_VIOLATION_KT,
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 1
+    assert "ReceiptLinkViolator.kt" in out.out
+    assert "DIRECT_EXPENSEID_COPY" in out.out
+
+
+def test_missing_manifest_fails_closed(tmp_path, monkeypatch, capsys):
+    """No checked-in manifest -> exit 2 (no conventional-root fallback)."""
+    _write_scope_allowlist(tmp_path)
+    _write_declared(
+        tmp_path,
+        "app/src/main/java/com/example/ReceiptLinkViolator.kt",
+        _RECEIPT_VIOLATION_KT,
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 2
+    assert "production source scope unresolved" in out.err
+
+
+def test_undeclared_root_file_is_never_scanned(tmp_path, monkeypatch, capsys):
+    """Kotlin files outside the declared production roots are invisible."""
+    _write_scope_manifest(tmp_path)
+    _write_scope_allowlist(tmp_path)
+    _write_declared(tmp_path, "app/src/main/java/com/example/Clean.kt", _CLEAN_KT)
+    undeclared = (
+        tmp_path / "other" / "src" / "main" / "java" / "com" / "example"
+        / "ReceiptLinkViolator.kt"
+    )
+    undeclared.parent.mkdir(parents=True)
+    undeclared.write_text(_RECEIPT_VIOLATION_KT, encoding="utf-8")
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 0
+    assert "ReceiptLinkViolator" not in out.out

@@ -20,7 +20,11 @@ removed, widened, or narrowed by this extraction:
   G-MONEY-RAW-07   var total = 0.0 ... sum
 
 Scanning semantics preserved from the KTS scanner:
-  - scan root ``<root>/app/src/main/java``, ``*.kt`` files only;
+  - scan scope = the declared production roots of the checked-in manifest
+    ``config/guards/production_source_roots.yml`` (via
+    ``scripts/guardrails/production_source_scope.py``; currently
+    ``app/src/main/java``), ``*.kt`` files only; findings keep their
+    scan-root-relative path spelling;
   - exact file-name allowlist (7 files);
   - test trees are skipped (the KTS scanner lower-cased the walked path and
     skipped any path containing ``test``/``androidtest``; this port applies
@@ -33,7 +37,9 @@ Scanning semantics preserved from the KTS scanner:
     regex ``\\w`` behaviour the KTS scanner relied on).
 
 Exit codes (universal mapping): 0 pass, 1 violation, 2 infrastructure
-(missing/unreadable source root or source file).  Never creates or updates
+(missing/unreadable production source scope or source file — including a
+missing, malformed, or undeclared source-root manifest; there is NO
+conventional-root fallback at repository level).  Never creates or updates
 a baseline.  ``--fail-on-violation`` is accepted (and is the only mode): a
 violation always fails.
 
@@ -42,6 +48,7 @@ exit codes; only the CLI adapter exits.
 """
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -52,7 +59,16 @@ EXIT_PASS = 0
 EXIT_VIOLATION = 1
 EXIT_INFRA = 2
 
-SCAN_ROOT_SEGMENTS = ("app", "src", "main", "java")
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+    resolve_source_root_set_for_test_fixtures,
+)
 
 # Exact file-name allowlist, transcribed from the KTS scanner.
 ALLOWLIST_FILES = frozenset({
@@ -180,33 +196,59 @@ def _scan_lines(
     return violations
 
 
+def _scan_declared_roots(repo_root: Path, root_set) -> Tuple[List[Violation], Optional[str]]:
+    """Scan the declared production source roots for raw money aggregates.
+
+    Enumerates every declared production Kotlin file (deterministic
+    root-order then canonical path-order) and keeps the historical
+    scan-root-relative finding-path spelling.  Returns
+    ``(violations, infra_error)``.  ``infra_error`` is a bounded controlled
+    string (never an exception message or filesystem path) when the run is
+    an infrastructure failure (exit 2).
+    """
+    violations: List[Violation] = []
+    try:
+        for source_file in iter_production_kotlin_files(str(repo_root), root_set):
+            relative = (
+                Path(source_file.absolute_path)
+                .relative_to(Path(source_file.root_path))
+                .as_posix()
+            )
+            if Path(source_file.absolute_path).name in ALLOWLIST_FILES:
+                continue
+            if _is_test_path(relative):
+                continue
+            try:
+                text = Path(source_file.absolute_path).read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                return [], "E_RAW_MONEY_SOURCE_UNREADABLE"
+            violations.extend(_scan_lines(relative, text.splitlines()))
+    except ProductionSourceScopeError:
+        return [], "E_RAW_MONEY_SOURCE_UNREADABLE"
+    return violations, None
+
+
 def scan_source_root(source_root: Path) -> Tuple[List[Violation], Optional[str]]:
-    """Scan ``<source_root>`` for raw money aggregates.
+    """Scan ``<source_root>`` for raw money aggregates (fixture-level API).
+
+    PR-GR-10B: repository-level invocations go through ``main()`` (manifest
+    required, fail closed).  This direct entry point resolves the scope via
+    the explicitly named TEST-FIXTURE seam so synthetic repositories without
+    a manifest keep working; the conventional-root fallback must never be
+    reached by a repository-level guard, suite, ratchet, or Gradle task.
 
     Returns ``(violations, infra_error)``.  ``infra_error`` is a bounded
     controlled string (never an exception message or filesystem path) when
     the run is an infrastructure failure (exit 2).
     """
-    if not source_root.is_dir():
+    if not Path(source_root).is_dir():
         return [], "E_RAW_MONEY_SOURCE_ROOT_MISSING"
-    violations: List[Violation] = []
-    for file_path in sorted(source_root.rglob("*.kt")):
-        relative = file_path.relative_to(source_root).as_posix()
-        if file_path.name in ALLOWLIST_FILES:
-            continue
-        if _is_test_path(relative):
-            continue
-        try:
-            text = file_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError):
-            return [], "E_RAW_MONEY_SOURCE_UNREADABLE"
-        violations.extend(_scan_lines(relative, text.splitlines()))
-    return violations, None
-
-
-def resolve_scan_root(root: Path) -> Path:
-    """Scan root for a repository root (mirrors verify_money_boundaries)."""
-    return root.joinpath(*SCAN_ROOT_SEGMENTS)
+    root_set, _diagnostics = resolve_source_root_set_for_test_fixtures(
+        str(source_root)
+    )
+    if root_set is None:
+        return [], "E_RAW_MONEY_SOURCE_ROOT_MISSING"
+    return _scan_declared_roots(Path(source_root), root_set)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -226,7 +268,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    violations, infra_error = scan_source_root(resolve_scan_root(args.root))
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(args.root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"RAW MONEY AGGREGATE: infrastructure error "
+            f"(E_RAW_MONEY_SOURCE_SCOPE_UNRESOLVED: {codes})",
+            file=sys.stderr,
+        )
+        return EXIT_INFRA
+
+    violations, infra_error = _scan_declared_roots(args.root, root_set)
     if infra_error is not None:
         print(f"RAW MONEY AGGREGATE: infrastructure error ({infra_error})", file=sys.stderr)
         return EXIT_INFRA

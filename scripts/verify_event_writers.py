@@ -16,9 +16,16 @@ Rules enforced:
   10. No direct transactionEventDao.insert outside TransactionLifecycleEventWriter/Coordinator or allowlist.
   11. No direct receiptEventDao.insert outside ReceiptLifecycleEventWriter/Coordinator/SideEffectDispatcher or allowlist.
 
+Scan scope (PR-GR-10B): the declared production Kotlin roots of the
+checked-in manifest ``config/guards/production_source_roots.yml`` (via
+``scripts/guardrails/production_source_scope.py``; currently
+``app/src/main/java``).  A missing, malformed, or undeclared manifest fails
+closed with exit 2 — there is NO conventional-root fallback.
+
 Exit codes:
   0 — no violations
   1 — violations found AND --fail-on-violation flag is set
+  2 — infrastructure error (production source scope unresolved)
 
 Usage:
   python3 scripts/verify_event_writers.py
@@ -28,6 +35,14 @@ Usage:
 import os
 import re
 import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    resolve_production_source_scope,
+)
 import argparse
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -187,16 +202,29 @@ def main():
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = args.root or os.path.dirname(script_dir)
-    scan_root = os.path.join(project_root, "app", "src", "main", "java")
 
-    if not os.path.isdir(scan_root):
-        print(f"[verify_event_writers] Scan root not found: {scan_root}", file=sys.stderr)
-        sys.exit(1)
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).  Every
+    # declared root is scanned; the writer/allowlist relevance rules are a
+    # semantic filter, not a root filter.
+    root_set, scope_diagnostics = resolve_production_source_scope(str(project_root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"[verify_event_writers] production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
     allowlist = load_allowlist(script_dir)
-    print(f"[verify_event_writers] Scanning: {scan_root}")
+    violations = []
+    for declared_root in root_set.paths:
+        scan_root = os.path.join(
+            os.path.abspath(project_root), *declared_root.split("/")
+        )
+        print(f"[verify_event_writers] Scanning: {scan_root}")
+        violations.extend(scan(scan_root, allowlist))
     print(f"[verify_event_writers] Allowlist: {len(allowlist)} file(s)")
-    violations = scan(scan_root, allowlist)
 
     if not violations:
         print("[verify_event_writers] ✅ No violations found.")

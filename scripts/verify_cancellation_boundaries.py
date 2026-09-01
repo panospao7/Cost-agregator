@@ -24,10 +24,21 @@ Exit codes:
 """
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
 
 # ── Configuration ──────────────────────────────────────────
 RULE_ID = "G-CANCEL-01"
@@ -35,9 +46,17 @@ DESCRIPTION = (
     "Cancellation Boundary Guard — detects unsafe CancellationException "
     "handling (broad catch without rethrow, runCatching, unsafe .onFailure)"
 )
-SCOPE_DIRS = ["app/src/main/java"]
 FILE_PATTERNS = ["*.kt"]
 ALLOWLIST_PATH = "scripts/allowlists/cancellation_allowlist.yml"
+
+# PR-GR-10B: the scanned production source scope is declared by the
+# checked-in manifest ``config/guards/production_source_roots.yml`` (resolved
+# via scripts/guardrails/production_source_scope.py).  There is NO
+# conventional-root fallback: a missing, malformed, or undeclared manifest
+# fails closed with exit 2.  The historical hard-coded root
+# (``app/src/main/java``) is the manifest's currently declared single root,
+# so the scanned file set is unchanged (the previous silent skip of a
+# missing scope directory is now a fail-closed topology diagnostic).
 
 # ── Pattern constants ──────────────────────────────────────
 BROAD_CATCH_NAMES = {"Exception", "Throwable", "RuntimeException"}
@@ -414,24 +433,40 @@ def main() -> None:
 
     allowlist = load_allowlist(root / args.allowlist) if args.allowlist else []
 
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"ERROR: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     all_violations: List[str] = []
     fatal_errors: List[str] = []
 
-    for scope_dir in SCOPE_DIRS:
-        scan_dir = root / scope_dir
-        if not scan_dir.exists():
+    try:
+        source_files = list(iter_production_kotlin_files(str(root), root_set))
+    except ProductionSourceScopeError as exc:
+        print(
+            f"ERROR: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    for source_file in source_files:
+        filepath = Path(source_file.absolute_path)
+        # Skip test files (semantic filter, preserved verbatim)
+        if "src/test" in str(filepath).replace("\\", "/"):
             continue
-        for pattern in FILE_PATTERNS:
-            for filepath in scan_dir.rglob(pattern):
-                # Skip test files
-                if "src/test" in str(filepath).replace("\\", "/"):
-                    continue
-                if "src/androidTest" in str(filepath).replace("\\", "/"):
-                    continue
-                violations, had_fatal = scan_file(filepath, allowlist)
-                if had_fatal:
-                    fatal_errors.append(str(filepath))
-                all_violations.extend(violations)
+        if "src/androidTest" in str(filepath).replace("\\", "/"):
+            continue
+        violations, had_fatal = scan_file(filepath, allowlist)
+        if had_fatal:
+            fatal_errors.append(str(filepath))
+        all_violations.extend(violations)
 
     if fatal_errors:
         for fp in fatal_errors:

@@ -17,14 +17,31 @@ Rules enforced:
   G-MONEY-18  No RateBasis.LATEST_AVAILABLE with StaleRatePolicy.None (allowlistable)
   G-MONEY-19  Latest aggregate code must use StaleRatePolicy.forBasis (allowlistable)
   G-MONEY-21  No emptyList() fallback for unavailable forecast/runway synthesis (NON-ALLOWLISTABLE)
+
+Scan scope (PR-GR-10B): the declared production Kotlin roots of the
+checked-in manifest ``config/guards/production_source_roots.yml`` (via
+``scripts/guardrails/production_source_scope.py``; currently
+``app/src/main/java``).  A missing, malformed, or undeclared manifest fails
+closed with exit 2 — there is NO conventional-root fallback.
 """
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
 
 @dataclass
 class Rule:
@@ -369,23 +386,44 @@ def main():
                         help='Project root directory')
     args = parser.parse_args()
 
-    src_dir = args.root / 'app' / 'src' / 'main' / 'java'
-    if not src_dir.exists():
-        print(f"Error: Source directory not found: {src_dir}", file=sys.stderr)
-        sys.exit(1)
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(args.root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"Error: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
-    kotlin_files = [f for f in src_dir.rglob('*.kt') if not is_excluded(f)]
+    try:
+        source_files = list(iter_production_kotlin_files(str(args.root), root_set))
+    except ProductionSourceScopeError as exc:
+        print(
+            f"Error: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    kotlin_files = [
+        Path(s.absolute_path)
+        for s in source_files
+        if not is_excluded(Path(s.absolute_path))
+    ]
     print(f"Scanning {len(kotlin_files)} Kotlin files for money boundary violations...")
 
     total_violations = 0
     files_with_violations = 0
 
-    for kt_file in sorted(kotlin_files):
+    # Manifest enumeration is already in deterministic canonical order
+    # (root order, then repository-relative POSIX path per root).
+    for kt_file in kotlin_files:
         violations = check_file(kt_file)
         if violations:
             files_with_violations += 1
             total_violations += len(violations)
-            rel_path = kt_file.relative_to(args.root)
+            rel_path = os.path.relpath(kt_file, args.root)
             print(f"\nFAIL {rel_path}:")
             for v in violations:
                 print(f"  L{v.line_num} [{v.rule}] {v.description}")

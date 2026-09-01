@@ -25,22 +25,46 @@ Execution schema (PR-GR-10A Slice 1 — additive):
   requiredInputs, timeoutProfile (named semantics from the suite's time
   budgets), outputContract, ratchet metadata (ratchet guards only),
   testManifest (test files or the literal "none" for documented absence),
-  and a documentationAnchor.  Paths are repository-relative and resolved only
-  by the execution context (scripts/ci/guard_execution_plan.py).  The
-  per-guard argv/timeout/baseline values are transcribed from the static
-  suite's GUARD_MANIFEST / GUARD_TIME_BUDGETS — migration of truth, not
-  invention.  Existing fields above are kept intact.
+   and a documentationAnchor.  Paths are repository-relative and resolved only
+   by the execution context (scripts/ci/guard_execution_plan.py).  The
+   per-guard argv/timeout/baseline values are transcribed from the static
+   suite's GUARD_MANIFEST / GUARD_TIME_BUDGETS — migration of truth, not
+   invention.  Existing fields above are kept intact.
+
+Source-scope schema (PR-GR-10B Slice 2 — additive):
+   Every active entry carries a "sourceScope" field declaring exactly one
+   classification from SOURCE_SCOPE_VALUES, grounded in what the guard
+   actually scans (see docs/guardrails/
+   PR-GR-10B_unified_production_source_scope_plan.md, "Scope
+   classifications").  Production-Kotlin scopes are owned by the checked-in
+   manifest config/guards/production_source_roots.yml via
+   scripts/guardrails/production_source_scope.py; no guard may retain an
+   implicit or hard-coded production root.  scripts/ci/
+   verify_guard_registry.py enforces presence and vocabulary.
 """
 
 import os
 from typing import Any, Dict
+
+#: Closed vocabulary of allowed "sourceScope" classifications (PR-GR-10B
+#: plan §"Scope classifications").  Exactly one per registry entry.
+SOURCE_SCOPE_VALUES = frozenset({
+    "production-kotlin-all",       # scans every Kotlin file under every declared production root
+    "production-kotlin-filtered",  # enumerates declared production files, then applies a guard-specific semantic filter
+    "production-kotlin-targeted",  # resolves exact declared source targets; zero or multiple matches fail closed
+    "test-source",                 # intentionally scans test trees; does not use the production root manifest
+    "repository-config",           # scans YAML/Gradle/schema/allowlist/docs/repository metadata only
+    "artifact",                    # inspects built APK/AAB/output only
+    "external-tool",               # registered external tool with separately declared input scope/artifact contract
+})
 
 GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
     # ── Blocking guards (direct execution) ──────────────────────────────────────
 
     "source_provenance": {
         "script": "scripts/verify_source_provenance_boundaries.py",
-        "tests": None,  # No dedicated test file yet
+        "sourceScope": "production-kotlin-filtered",
+        "tests": "scripts/test_verify_source_provenance_boundaries.py",
         "mode": "blocking",
         "baseline": None,
         "allowlist": None,
@@ -55,13 +79,14 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
             "requiredInputs": (),
             "timeoutProfile": "standard",
             "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
-            "testManifest": "none",
+            "testManifest": ("scripts/test_verify_source_provenance_boundaries.py",),
             "documentationAnchor": "docs/ci/guard-framework.md",
         },
     },
 
     "ui_dao": {
         "script": "scripts/verify_ui_dao_boundaries.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_ui_dao_boundaries.py",
         "mode": "blocking",
         "baseline": None,
@@ -84,6 +109,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "worker": {
         "script": "scripts/verify_worker_boundaries.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_worker_boundaries.py",
         "mode": "blocking",
         "baseline": None,
@@ -106,6 +132,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "receipt_link": {
         "script": "scripts/verify_receipt_link_boundaries.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_receipt_link_boundaries.py",
         "mode": "blocking",
         "baseline": None,
@@ -128,6 +155,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "import_lifecycle": {
         "script": "scripts/verify_import_lifecycle_boundaries.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_import_lifecycle_boundaries.py",
         "mode": "blocking",
         "baseline": None,
@@ -150,6 +178,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "cloud_payload": {
         "script": "scripts/verify_cloud_payload_boundaries.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_cloud_payload_boundaries.py",
         "mode": "blocking",
         "baseline": None,
@@ -172,6 +201,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "pii_logging": {
         "script": "scripts/verify_pii_logging_boundaries.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_pii_logging_boundaries.py",
         "mode": "blocking",
         "baseline": None,  # PII is strict-zero, no ratchet needed
@@ -194,6 +224,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "di_release": {
         "script": "scripts/verify_di_release_boundaries.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_di_release_boundaries.py",
         "mode": "blocking",
         "baseline": None,
@@ -216,6 +247,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "allowlist_compliance": {
         "script": "scripts/verify_allowlist_compliance.py",
+        "sourceScope": "repository-config",
         "tests": "scripts/test_verify_allowlist_compliance.py",
         "mode": "blocking",
         "baseline": None,
@@ -238,6 +270,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "migration_matrix": {
         "script": "scripts/verify_migration_matrix.py",
+        "sourceScope": "production-kotlin-targeted",
         "tests": "scripts/test_verify_migration_matrix.py",
         "mode": "ratchet",
         "baseline": "config/baselines/migration_matrix.json",
@@ -268,6 +301,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "ignored_test_budget": {
         "script": "scripts/verify_ignored_test_budget.py",
+        "sourceScope": "test-source",
         "tests": "scripts/test_verify_ignored_test_budget.py",
         "mode": "blocking",
         "baseline": None,
@@ -290,6 +324,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "lint_baseline_policy": {
         "script": "scripts/verify_lint_baseline_policy.py",
+        "sourceScope": "repository-config",
         "tests": None,  # No dedicated test file
         "mode": "blocking",
         "baseline": None,
@@ -312,6 +347,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "time_boundaries": {
         "script": "scripts/verify_time_boundaries.py",
+        "sourceScope": "production-kotlin-all",
         "tests": "scripts/test_verify_time_boundaries.py",
         "mode": "blocking",
         "baseline": None,  # No baseline for time violations — strict zero
@@ -346,6 +382,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "deprecation_escalations": {
         "script": "scripts/ci/verify_deprecation_escalations.py",
+        "sourceScope": "production-kotlin-all",
         "tests": "scripts/ci/test_verify_deprecation_escalations.py",
         "mode": "blocking",
         "baseline": None,
@@ -372,6 +409,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "db_artifact_sync": {
         "script": "scripts/migrate_db_policy_signatures.py",
+        "sourceScope": "repository-config",
         "tests": "scripts/test_migrate_db_policy_signatures.py",
         "mode": "blocking",
         "baseline": None,
@@ -415,6 +453,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "known_good_state": {
         "script": "scripts/ci/verify_known_good_state.py",
+        "sourceScope": "repository-config",
         "tests": "scripts/ci/test_verify_known_good_state.py",
         "mode": "blocking",
         "baseline": None,
@@ -454,6 +493,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "cancellation": {
         "script": "scripts/verify_cancellation_boundaries.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_cancellation_boundaries.py",
         "mode": "ratchet",
         "baseline": "config/baselines/cancellation.json",
@@ -483,7 +523,8 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "privacy": {
         "script": "scripts/verify_privacy_boundaries.py",
-        "tests": None,  # No dedicated test file
+        "sourceScope": "production-kotlin-filtered",
+        "tests": "scripts/test_verify_privacy_boundaries.py",
         "mode": "ratchet",
         "baseline": "config/baselines/privacy.json",
         "allowlist": None,
@@ -505,13 +546,14 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                 "childArgumentTemplate": ("{entrypoint}", "--root", "."),
                 "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
             },
-            "testManifest": "none",
+            "testManifest": ("scripts/test_verify_privacy_boundaries.py",),
             "documentationAnchor": "docs/ci/guard-policy.md",
         },
     },
 
     "db_access": {
         "script": "scripts/verify_db_access_boundaries.py",
+        "sourceScope": "production-kotlin-all",
         "tests": "scripts/test_verify_db_access_boundaries.py",
         "mode": "ratchet",
         "baseline": "config/baselines/db_access_v2.json",
@@ -570,7 +612,8 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "event_writers": {
         "script": "scripts/verify_event_writers.py",
-        "tests": None,  # No dedicated test file
+        "sourceScope": "production-kotlin-filtered",
+        "tests": "scripts/test_verify_event_writers.py",
         "mode": "ratchet",
         "baseline": "config/baselines/event_writers.json",
         "allowlist": None,
@@ -592,14 +635,15 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                 "childArgumentTemplate": ("{entrypoint}", "--fail-on-violation"),
                 "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
             },
-            "testManifest": "none",
+            "testManifest": ("scripts/test_verify_event_writers.py",),
             "documentationAnchor": "docs/ci/guard-framework.md",
         },
     },
 
     "money": {
         "script": "scripts/verify_money_boundaries.py",
-        "tests": None,  # No dedicated test file
+        "sourceScope": "production-kotlin-filtered",
+        "tests": "scripts/test_verify_money_boundaries.py",
         "mode": "ratchet",
         "baseline": "config/baselines/money.json",
         "allowlist": None,
@@ -621,7 +665,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
                 "childArgumentTemplate": ("{entrypoint}", "--root", "."),
                 "ciRestrictions": ("no-update-baseline", "no-propose-baseline"),
             },
-            "testManifest": "none",
+            "testManifest": ("scripts/test_verify_money_boundaries.py",),
             "documentationAnchor": "docs/ci/guard-policy.md",
         },
     },
@@ -633,6 +677,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
     # docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md (inline money scanner row).
     "raw_money_aggregates": {
         "script": "scripts/verify_raw_money_aggregates.py",
+        "sourceScope": "production-kotlin-filtered",
         "tests": "scripts/test_verify_raw_money_aggregates.py",
         "mode": "blocking",
         "baseline": None,
@@ -675,6 +720,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "currency_guardrails_ps": {
         "script": "scripts/currency_guardrails.ps1",
+        "sourceScope": "external-tool",
         "tests": None,  # PowerShell proof surface; no pytest harness (documented absence)
         "mode": "blocking",
         "baseline": None,
@@ -703,6 +749,7 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
 
     "release_artifact": {
         "script": "scripts/verify_release_artifact.py",
+        "sourceScope": "artifact",
         "tests": None,  # No dedicated test file (documented absence)
         "mode": "blocking",
         "baseline": None,
