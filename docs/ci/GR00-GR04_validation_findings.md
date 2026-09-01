@@ -1188,3 +1188,24 @@ HEAD `066505364e578a612c01de9e50d958a068f4df95`; checkout clean.
       the legacy-manifest pin expects `migration_matrix` (Slice-3 additions inserted
       mid-sequence vs appended at end). Either the compiler must append Slice-3 additions
       after the legacy sequence or the fixture pin must accept the new canonical order.
+
+---
+
+## Round 18 (2026-08-31) - re-battery at `e066bbf8` "R17 - 5 mechanical battery fixes + equivalence fixture gains raw_money_aggregates leg at registry-order position"
+
+HEAD `e066bbf80494afaae58e05f2287bec2ee0c0e9aa`; checkout clean.
+
+Re-battery (4 files): **1 failed / 226 passed in 17.8s**. All five R17 mechanical fixes
+verified landed (mkdir exist_ok, _derived() arity, list-vs-tuple pin, equivalence fixture
+now includes raw_money_aggregates at the registry-order position per the orchestrator
+decision).
+
+### Sole straggler
+
+scripts/ci/test_run_registered_guard.py::TestRatchetEngineHappyPath::test_ratchet_pass_exit0_end_to_end
+
+The fixture builds a synthetic root and copies ONLY guard_ratchet.py + guard_findings.py
+(test_run_registered_guard.py:140-141), but guard_findings.py:83 imports
+`finding_rule_catalog` (scripts/ci/finding_rule_catalog.py) -> ModuleNotFoundError in the
+child -> exit 1 vs pinned 0. Fix: add finding_rule_catalog.py (and any further transitive
+deps of guard_findings) to the fixture copy list.

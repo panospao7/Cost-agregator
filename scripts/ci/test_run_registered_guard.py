@@ -136,9 +136,20 @@ def _make_tree(root: Path) -> Path:
         "# guard framework\n", encoding="utf-8"
     )
     # The compiled ratchet plan resolves guard_ratchet.py against the context
-    # repo root, so the fixture tree carries a copy of the real ratchet.
+    # repo root, so the fixture tree carries a copy of the real ratchet plus
+    # its full transitive import closure -- the child imports only these:
+    #   guard_ratchet.py -> guard_findings.py -> finding_rule_catalog.py
+    # guard_findings.py and finding_rule_catalog.py are stdlib-only apart
+    # from that edge.  guard_ratchet.py's one other local import
+    # (guard_registry, deferred) is soft: it is wrapped in try/except and
+    # degrades to legacy protocol 1 when absent, and the fixture's compiled
+    # argv pins --finding-protocol=1 explicitly, so it is not needed here.
     shutil.copy2(CI_DIR / "guard_ratchet.py", root / "scripts" / "ci" / "guard_ratchet.py")
     shutil.copy2(CI_DIR / "guard_findings.py", root / "scripts" / "ci" / "guard_findings.py")
+    shutil.copy2(
+        CI_DIR / "finding_rule_catalog.py",
+        root / "scripts" / "ci" / "finding_rule_catalog.py",
+    )
     return root
 
 
