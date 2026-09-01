@@ -9,6 +9,13 @@ Contract under test:
   2. A missing manifest fails closed with exit 2 (no conventional-root
      fallback).
   3. Kotlin files outside the declared production roots are never scanned.
+  4. An unreadable subdirectory inside a declared root fails closed with
+     exit 2 — never a partial scan reported as a pass.
+  5. A symlinked .kt entry inside a declared root fails closed with
+     exit 2 (skipped where symlink creation is not permitted).
+  6. Violation reporting is deterministic (canonical path order) and all
+     violating files under a declared root are flagged regardless of
+     directory-creation order (scan-surface identity).
 
 Run with: python -m pytest scripts/test_verify_event_writers.py -v
 """
@@ -73,6 +80,15 @@ def _scope_run_main(root, monkeypatch, capsys, extra=()):
     return excinfo.value.code, capsys.readouterr()
 
 
+def _make_file_symlink(link_abs, target_abs):
+    """Create a file symlink; return False when unsupported."""
+    try:
+        os.symlink(target_abs, link_abs)
+    except (OSError, NotImplementedError):
+        return False
+    return True
+
+
 # ── Test 1: declared root -> finding identical to hardcoded era ─────────────
 
 def test_manifest_declared_root_finding_matches_hardcoded_era(tmp_path, monkeypatch, capsys):
@@ -129,3 +145,88 @@ def test_undeclared_root_file_is_never_scanned(tmp_path, monkeypatch, capsys):
     assert code == 0
     assert "EventViolator" not in out.out
     assert "No violations found." in out.out
+
+
+# ── Test 4: unreadable subdir inside a declared root -> exit 2 ───────────────
+
+def test_unreadable_subdir_fails_closed_exit_2(tmp_path, monkeypatch, capsys):
+    """A declared production root containing an unlistable subdirectory must
+    exit 2 (infrastructure error).  The pre-fix per-root
+    os.walk(onerror=None) silently skipped unreadable subdirs and reported
+    the partial scan as a pass (exit 0)."""
+    _write_scope_manifest(tmp_path)
+    _write_declared(tmp_path, "app/src/main/java/com/example/Clean.kt", _CLEAN_KT)
+    sealed_dir = (
+        tmp_path / "app" / "src" / "main" / "java" / "com" / "example" / "sealed"
+    )
+    sealed_dir.mkdir(parents=True, exist_ok=True)
+
+    real_listdir = os.listdir
+
+    def fake_listdir(path):
+        if os.path.abspath(str(path)) == os.path.abspath(str(sealed_dir)):
+            raise PermissionError(13, "denied")
+        return real_listdir(path)
+
+    monkeypatch.setattr(os, "listdir", fake_listdir)
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 2
+    assert "production source enumeration failed" in out.err
+    assert "DB_SOURCE_ROOT_UNREADABLE" in out.err
+
+
+# ── Test 5: symlinked .kt entry inside a declared root -> exit 2 ─────────────
+
+def test_symlinked_kt_entry_fails_closed_exit_2(tmp_path, monkeypatch, capsys):
+    """A symlinked .kt file inside a declared production root must exit 2
+    (fail closed): the neutral enumerator refuses symlinked entries rather
+    than traversing them non-deterministically."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    escaped = outside / "Escaped.kt"
+    escaped.write_text("// kt\n", encoding="utf-8")
+
+    repo = tmp_path / "repo"
+    _write_scope_manifest(repo)
+    _write_declared(repo, "app/src/main/java/com/example/Clean.kt", _CLEAN_KT)
+    java_dir = repo / "app" / "src" / "main" / "java"
+    if not _make_file_symlink(str(java_dir / "Escape.kt"), str(escaped)):
+        pytest.skip("symlink creation not permitted on this platform")
+
+    code, out = _scope_run_main(repo, monkeypatch, capsys)
+
+    assert code == 2
+    assert "production source enumeration failed" in out.err
+    assert "DB_SOURCE_ROOT_SYMLINK_OUTSIDE" in out.err
+
+
+# ── Test 6: deterministic canonical-order identity on the fixture tree ──────
+
+def test_violation_reporting_is_deterministic_canonical_order(tmp_path, monkeypatch, capsys):
+    """Scan-surface identity: every violating file under the declared root
+    is flagged regardless of directory-creation order, and the report order
+    is the neutral module's canonical path order (stable across runs)."""
+    _write_scope_manifest(tmp_path)
+    # Create the z-prefixed directory first so filesystem creation order
+    # differs from canonical path order.
+    _write_declared(
+        tmp_path, "app/src/main/java/com/example/zeta/LateViolator.kt",
+        _EVENT_VIOLATION_KT,
+    )
+    _write_declared(
+        tmp_path, "app/src/main/java/com/example/alpha/EarlyViolator.kt",
+        _EVENT_VIOLATION_KT,
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 1
+    assert "EarlyViolator.kt" in out.out
+    assert "LateViolator.kt" in out.out
+    assert out.out.index("EarlyViolator.kt") < out.out.index("LateViolator.kt")
+
+    code2, out2 = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+    assert code2 == 1
+    assert out2.out == out.out
