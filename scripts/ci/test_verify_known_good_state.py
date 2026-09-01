@@ -293,7 +293,7 @@ class TestAllPass:
         assert [row.outcome for row in rows] == (
             [vkgs.OUTCOME_PASS] * 6 + [vkgs.OUTCOME_SKIP]
         )
-        assert [row.row for row in rows] == (
+        assert [row.row for row in rows] == [
             vkgs.ROW_ACTIVE_DB_GATE,
             vkgs.ROW_INVENTORY_ONLY,
             vkgs.ROW_MIGRATION_FOLD,
@@ -301,7 +301,7 @@ class TestAllPass:
             vkgs.ROW_CANDIDATE_REPRODUCIBLE,
             vkgs.ROW_STRUCTURAL_MANIFEST,
             vkgs.ROW_TEST_RESULT_FRESHNESS,
-        )
+        ]
 
     def test_all_seven_rows_pass_with_fresh_stamp(self, scorecard_env):
         repo, scratch = scorecard_env

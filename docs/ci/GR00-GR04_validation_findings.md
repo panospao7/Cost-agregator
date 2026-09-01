@@ -1151,3 +1151,40 @@ The suite runner and the registered-runner adapter both swallow child stderr on 
 errors ("Guard exited with infrastructure error (code 2)" with no reason) - diagnosis
 required manual argv reconstruction. Recommend GR-10A follow-up: include child stderr
 preview in summary.json legs.
+
+---
+
+## Round 17 (2026-08-31) - re-battery at `06650536` "R16 - ratchet child argv duplication, validation order, canonical override code, path-free evidence, sys.modules collection fix, bounded stderr preview"
+
+HEAD `066505364e578a612c01de9e50d958a068f4df95`; checkout clean.
+
+### Headline: R16 root cause VERIFIED fixed
+
+- Targeted battery: **6 failed / 250 passed** (was 13/221).
+- `verify_guard_registry --root .` -> exit 0, VALID.
+- `run_static_guard_suite` -> **exit 1: 21 pass / 3 violations / 0 INFRA-ERRORS** - all six
+  python-ratchet legs unblocked (cancellation, privacy, db_access, event_writers, money,
+  migration_matrix). The duplicate `--command-arg` token is gone.
+- Suite exit 1 = pure blocking violations: raw_money_aggregates (88 inherited
+  G-MONEY-RAW findings - visible debt, working as designed), ui_dao (G-UI-DAO-01), and
+  guard_tests (mirrors the battery's own reds). Bounded stderr preview present in legs
+  (empty for pass/violation legs as designed).
+
+### The 6 remaining failures - all mechanical, one needs a decision
+
+1.-2. `TestRatchetEngineHappyPath.test_ratchet_pass_exit0_end_to_end` +
+      `TestInfraStderrPreview.test_pass_and_violation_legs_have_empty_stderr_preview` -
+      fixture helper `_run_guard` calls `out_dir.mkdir()` WITHOUT exist_ok ->
+      `FileExistsError: [WinError 183]` on reused tmp dirs. Fix: mkdir(exist_ok=True).
+3.-4. `TestSlice3SuiteAdditions...::test_raw_money_aggregates_leg_is_blocking_with_canonical_command`
+      + `::test_declared_external_guards_are_excluded_from_derived_legs` -
+      `ValueError: not enough values to unpack (expected 4, got 3)`: the R16 wave changed
+      `_derived()` return arity (3 values) but these two call sites still unpack 4.
+5.    `TestAllPass.test_pinned_rows_pass_and_freshness_skips_without_stamp` -
+      LIST == TUPLE comparison (`[...] == (...)`) in test_verify_known_good_state.py:296 -
+      the round-1 classic returns. One-line fix (wrap in tuple() or compare to list).
+6.    `TestDerivedPlanEqualsLegacyManifest.test_every_guard_semantically_equal_to_pre_migration_manifest` -
+      REAL DECISION NEEDED: derived legs insert `raw_money_aggregates` at index 21 where
+      the legacy-manifest pin expects `migration_matrix` (Slice-3 additions inserted
+      mid-sequence vs appended at end). Either the compiler must append Slice-3 additions
+      after the legacy sequence or the fixture pin must accept the new canonical order.

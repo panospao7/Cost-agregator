@@ -1360,7 +1360,10 @@ class TestInfraStderrPreview:
 
     def _run_guard(self, script_body: str, tmp_path: Path) -> dict:
         out_dir = tmp_path / "output"
-        out_dir.mkdir()
+        # exist_ok=True: this fixture is invoked multiple times per test on
+        # the same tmp_path (pass leg + violation leg); a bare mkdir()
+        # raises FileExistsError [WinError 183] on the second invocation.
+        out_dir.mkdir(exist_ok=True)
         script = tmp_path / "probe_guard.py"
         _write_script(script, script_body)
         return _runner.run_guard(
@@ -1553,6 +1556,12 @@ _INFRA_LEGS = frozenset({"guard_registry", "guard_tests"})
 # default suite budget: max(1500 - 60, 600) = 1440.  The comparison test
 # freezes GUARD_TIMEOUT_SECONDS to the default so the derived token matches.
 # The guard_tests interpreter token was SUITE_PYTHON (== sys.executable).
+#
+# Slice-3 addition: raw_money_aggregates is a PR-GR-10A Slice 3 NEW guard,
+# absent from the verbatim pre-migration manifest.  It is pinned inline
+# below at its registry-order position — directly after money, per the
+# GUARD_REGISTRY execution order mirrored by SUITE_GUARD_ORDER — and is
+# clearly marked so the verbatim pre-migration entries stay identifiable.
 LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
     ("guard_registry", ["python3", "scripts/ci/verify_guard_registry.py"], "blocking"),
     ("source_provenance", ["python3", "scripts/verify_source_provenance_boundaries.py", "--root", "."], "blocking"),
@@ -1656,6 +1665,19 @@ LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
         ],
         "blocking",
     ),
+    # ── Slice-3 addition (NOT verbatim pre-migration) ─────────────────────────
+    # raw_money_aggregates is a PR-GR-10A Slice 3 NEW guard absent from the
+    # pre-migration manifest.  It joins the canonical suite at its
+    # registry-order position (directly after money), so the derived leg
+    # sequence matches.  Semantics pinned from the raw_money_aggregates
+    # registry execution section: engine python-direct, entrypoint
+    # scripts/verify_raw_money_aggregates.py, arguments
+    # ("--fail-on-violation",), mode blocking, no baseline (a direct guard).
+    (
+        "raw_money_aggregates",
+        ["python3", "scripts/verify_raw_money_aggregates.py", "--fail-on-violation"],
+        "blocking",
+    ),
     (
         "migration_matrix",
         [
@@ -1699,20 +1721,15 @@ LEGACY_GUARD_TIME_BUDGETS_FIXTURE = {
     "guard_tests": 1800.0,
 }
 
-# PR-GR-10A Slice 3 suite additions: registry entries that legitimately join
-# the canonical suite AFTER the recorded pre-migration fixture.  Each entry
-# is pinned with its semantic command so post-migration additions stay under
-# the same equivalence discipline as the fixture.  Declared-external registry
-# entries (currency_guardrails_ps, release_artifact) are deliberately NOT
-# here: they are excluded from the canonical suite plan by design (plan
-# Step 5: "unless declared external").
-POST_SLICE2_SUITE_ADDITIONS: List[Tuple[str, List[str], str]] = [
-    (
-        "raw_money_aggregates",
-        ["python3", "scripts/verify_raw_money_aggregates.py", "--fail-on-violation"],
-        "blocking",
-    ),
-]
+# PR-GR-10A Slice 3 budget addition: the raw_money_aggregates leg itself is
+# pinned inline in LEGACY_GUARD_MANIFEST_FIXTURE at its registry-order
+# position (see the Slice-3 addition marker there), so the derived leg
+# sequence compares equal without a separate command list.  Its standard
+# timeout profile budget (300s) is recorded here so the derived budget
+# table — which must cover every canonical guard — compares equal.
+# Declared-external registry entries (currency_guardrails_ps,
+# release_artifact) are deliberately NOT in the canonical suite plan by
+# design (plan Step 5: "unless declared external").
 POST_SLICE2_SUITE_BUDGET_ADDITIONS: Dict[str, float] = {
     "raw_money_aggregates": 300.0,
 }
@@ -1810,16 +1827,15 @@ class TestDerivedPlanEqualsLegacyManifest:
         legs, _budgets, _plans, errors = fresh._derive_default_suite_plan(REPO_ROOT)
         assert not errors, errors
 
-        expected_manifest = (
-            list(LEGACY_GUARD_MANIFEST_FIXTURE) + list(POST_SLICE2_SUITE_ADDITIONS)
-        )
+        expected_manifest = list(LEGACY_GUARD_MANIFEST_FIXTURE)
         fixture_names = [
             name for name, _command, _mode in expected_manifest
         ]
         derived_names = [name for name, _command, _mode in legs]
         assert derived_names == fixture_names, (
-            "derived suite legs must execute exactly the pre-migration "
-            "guard sequence plus the pinned Slice 3 additions, in order"
+            "derived suite legs must execute exactly the recorded guard "
+            "sequence (the pre-migration manifest plus the pinned inline "
+            "Slice-3 addition at its registry-order position), in order"
         )
 
         for (d_name, d_argv, d_mode), (f_name, f_argv, f_mode) in zip(
@@ -1886,8 +1902,8 @@ class TestSlice3SuiteAdditionsAndExternalExclusion:
     suite plan by design and rejected by single-guard compilation."""
 
     def test_raw_money_aggregates_leg_is_blocking_with_canonical_command(self):
-        legs, budgets, _plans, errors = _derived()
-        assert not errors, errors
+        # _derived() returns (legs, budgets, plans) and asserts no errors.
+        legs, budgets, _plans = _derived()
         matching = [
             (name, command, mode) for name, command, mode in legs
             if name == "raw_money_aggregates"
@@ -1904,8 +1920,8 @@ class TestSlice3SuiteAdditionsAndExternalExclusion:
         assert budgets["raw_money_aggregates"] == 300.0
 
     def test_declared_external_guards_are_excluded_from_derived_legs(self):
-        legs, _budgets, plans, errors = _derived()
-        assert not errors, errors
+        # _derived() returns (legs, budgets, plans) and asserts no errors.
+        legs, _budgets, plans = _derived()
         leg_names = {name for name, _command, _mode in legs}
         plan_ids = {plan.guard_id for plan in plans}
         for external in ("currency_guardrails_ps", "release_artifact"):
