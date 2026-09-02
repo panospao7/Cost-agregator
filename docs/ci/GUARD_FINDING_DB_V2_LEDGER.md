@@ -1,5 +1,7 @@
 # Guard Finding DB V2 Migration Ledger
 
+> **Historical record** — this ledger is a frozen PR-D migration snapshot, not current-state authority. as-of: start SHA `bb2a6f18f12300af60ce1db475fb0c8d73f6b774` (branch `guard-finding-db-discovery-v2`); scope: P0-1..P0-5 migration bookkeeping only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml and docs/ci/DB_ACCESS_V2_RATCHET_DEBT.md.
+
 **Plan:** `GUARDRAIL_FINDINGS_AND_DB_DISCOVERY_PLAN.md`
 **Branch:** `guard-finding-db-discovery-v2`
 **Start SHA:** `bb2a6f18f12300af60ce1db475fb0c8d73f6b774`

@@ -1,8 +1,8 @@
 # DB Finding Triage Procedure
 
 **Scope:** PR-D5 -- Classify findings and migrate DB baseline  
-**Status:** PENDING -- triage tools created, awaiting final inventory  
-**Ledger:** `docs/ci/GUARD_FINDING_DB_V2_LEDGER.md`  
+**Status:** procedure current; the GR-08 batch triage it describes is COMPLETE at zero trusted findings — the reviewed debt state is the empty v2 baseline recorded in docs/ci/DB_ACCESS_V2_RATCHET_DEBT.md, verified at SHA 565018c5eed61fae4351cb59342dc5c274eb27e7 (docs/ci/GUARD_EVIDENCE_INDEX.yml, record gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7)  
+**Ledger:** `docs/ci/GUARD_FINDING_DB_V2_LEDGER.md` (historical record)  
 **Plan:** `GUARDRAIL_FINDINGS_AND_DB_DISCOVERY_PLAN.md` §12
 
 ---

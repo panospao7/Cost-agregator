@@ -91,7 +91,7 @@ guessed at). Only `.kts` build files are inspected.
   (repository-config, test-source, artifact, or external-tool scope), so
   the production manifest does not apply.
 
-## Matrix (24 rows — one per registry guard; no implicit scope)
+## Matrix (25 rows — one per registry guard; no implicit scope)
 
 | Guard ID | Scope classification | Scan surface | Source authority | Migration status | Fail-closed contract |
 |---|---|---|---|---|---|
@@ -111,6 +111,7 @@ guessed at). Only `.kts` build files are inspected.
 | deprecation_escalations | production-kotlin-all | Every declared production Kotlin file for DeprecationLevel.ERROR sites against the tracked changelog | guardrails.production_source_scope (checked-in manifest) | S2-MIGRATED | Scope failure exits 2. Missing or stale changelog rows exit 1. |
 | db_artifact_sync | repository-config | Regenerates tracked DB policy signature artifacts in memory and byte-compares them (never scans Kotlin) | Explicit tracked artifact paths from the registry | N/A | Drift exits 1. Missing or unreadable inputs exit 2. Never writes tracked artifacts. |
 | known_good_state | repository-config | Executes the documented known-good checklist sections against the live repository (delegates to registered guards) | docs/ci checklist plus the underlying registered guards | N/A | Drift exits 1. Infrastructure failures exit 2. |
+| guard_docs_truth | repository-config | Guard documentation/evidence index, generated reference docs, and registry/doc claim contract only (never scans Kotlin) | docs/ci/GUARD_DOCUMENT_INDEX.yml plus docs/ci/GUARD_EVIDENCE_INDEX.yml and the registry execution schema | N/A | Violations exit 1. Missing/malformed index inputs exit 2. |
 | cancellation | production-kotlin-filtered | All declared production Kotlin enumerated, then suspend and worker cancellation relevance filter | guardrails.production_source_scope (checked-in manifest) | S2-MIGRATED | Scope diagnostic exits 2. Ratchet baseline v1 blocks growth (exit 1). |
 | privacy | production-kotlin-filtered | All declared production Kotlin enumerated, then privacy-relevance filter (cloud redaction, privacy gate, pseudonym, export) | guardrails.production_source_scope (checked-in manifest) | S2-MIGRATED | Scope diagnostic exits 2. Ratchet baseline v1 blocks growth (exit 1). |
 | db_access | production-kotlin-all | Room mutator inventory over every declared production Kotlin file (write, read, restore barrier, ownership policy) | scripts.db_guard.source_roots compatibility seam re-exporting guardrails.production_source_scope | DB-SEAM-DEFERRED | Any root or scope diagnostic exits 2 with no partial scan. Protocol v2 findings plus baseline v2 ratchet (exit 1). |

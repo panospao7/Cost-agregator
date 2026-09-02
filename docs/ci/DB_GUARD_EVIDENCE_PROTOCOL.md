@@ -6,8 +6,13 @@ caller-pinned exact Git SHA (`--expected-sha`). This protocol is defined by
 It never mutates policy, baseline, config/guards, production Kotlin, Gradle,
 workflow, scanner, or ratchet files.
 
-The DB gate is expected to remain **blocked** at the tested SHA. Capturing that
-state truthfully is the deliverable. This tool must not edit policy to change it.
+The capture records whatever state exists at the pinned SHA — it never edits
+policy to change it. At the latest trusted double capture the DB gate was
+observed exit 0 / trusted with 0 findings and 20 advisory diagnostics (SHA
+565018c5eed61fae4351cb59342dc5c274eb27e7, record
+`gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7` in
+docs/ci/GUARD_EVIDENCE_INDEX.yml); earlier captures observed a blocked gate
+and recorded that truthfully.
 
 ## No trusted evidence bundle without two human clean captures
 
@@ -316,12 +321,12 @@ Executed in this order (plan sections A–H). Preflight (A) is recorded into
 | --- | --- | --- |
 | registry-validation | `python3 scripts/ci/verify_guard_registry.py` | observation |
 | focused-python-tests | `python3 -m pytest scripts/ci/test_guard_findings.py ... -v --tb=short -p no:cacheprovider` | observation |
-| room-inventory | `verify_db_access_boundaries.py --inventory-only` | exit 0, trusted report |
-| db-cli | `verify_db_access_boundaries.py --fail-on-violation ...` | exit 2, untrusted, policy diagnostic |
-| db-ratchet | `guard_ratchet.py --guard-name=db_access --command-arg=... --baseline=config/baselines/db_access.json --ci-mode --finding-protocol=2` | observation (tokenized child args) |
+| room-inventory | `verify_db_access_boundaries.py --inventory-only` | exit 2, untrusted (`INVENTORY_DURABILITY_UNCONFIRMED` platform durability branch — never DB findings) |
+| db-cli | `verify_db_access_boundaries.py --fail-on-violation ...` | exit 0, trusted at the verified SHA `565018c5eed61fae4351cb59342dc5c274eb27e7` (0 findings, 20 advisory — docs/ci/GUARD_EVIDENCE_INDEX.yml); an untrusted scan exits 2 with findings withheld |
+| db-ratchet | `guard_ratchet.py --guard-name=db_access --command-arg=... --baseline=config/baselines/db_access_v2.json --ci-mode --finding-protocol=2` | observation (tokenized child args) |
 | static-suite | `run_static_guard_suite.py --output-dir ...` | observation |
-| gradle-db | `./gradlew :app:verifyDbAccessBoundaries --no-daemon --stacktrace` | expected failure (blocked) |
-| gradle-task-graph | `./gradlew :app:check --dry-run --no-daemon` | task-graph capture |
+| gradle-db | `gradlew.bat :app:verifyDbAccessBoundaries --no-daemon --stacktrace` | observation (at the verified SHA: exit 1 on a Gradle configuration-cache storage failure; the embedded ratchet row printed PASS with 0/0 findings) |
+| gradle-task-graph | `gradlew.bat :app:check --dry-run --no-daemon` | task-graph capture |
 | time-direct | `python scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation` | observation (GATE-00R) |
 | time-tests | `python -m pytest scripts/test_verify_time_boundaries.py -v --tb=short -p no:cacheprovider` | observation (GATE-00R) |
 | db-inventory | `python scripts/verify_db_access_boundaries.py --inventory-only --findings-output <bundle>/reports/db-inventory.json --dump-room-mutators <bundle>/reports/room-mutators.json` | exit 0, trusted report (GATE-00R) |

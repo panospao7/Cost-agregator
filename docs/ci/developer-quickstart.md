@@ -11,25 +11,24 @@ actionlint                                          # Validate CI workflows
 ```
 
 ### Static guard scripts
+
+Canonical guard commands are **generated, never pasted**: every guard's
+command identity, mode, inputs, and source scope live in
+`docs/ci/GUARD_COMMANDS.generated.md` (renderer-owned from the registry
+execution schema), and current per-guard evidence state lives in
+`docs/ci/GUARD_STATUS.generated.md`. Run the whole canonical suite rather
+than hand-typed per-guard commands:
+
 ```bash
-python3 scripts/verify_privacy_boundaries.py --root .
-python3 scripts/verify_db_access_boundaries.py --fail-on-violation
-python3 scripts/verify_event_writers.py --fail-on-violation
-python3 scripts/verify_money_boundaries.py --root .
-python3 scripts/verify_source_provenance_boundaries.py --root .
-python3 scripts/verify_cancellation_boundaries.py
-python3 scripts/verify_ui_dao_boundaries.py --fail-on-violation
-python3 scripts/verify_worker_boundaries.py --fail-on-violation
-python3 scripts/verify_receipt_link_boundaries.py --fail-on-violation
-python3 scripts/verify_import_lifecycle_boundaries.py --fail-on-violation
-python3 scripts/verify_cloud_payload_boundaries.py --fail-on-violation
-python3 scripts/verify_pii_logging_boundaries.py
-python3 scripts/verify_di_release_boundaries.py
-python3 scripts/verify_migration_matrix.py --fail-on-violation
-python3 scripts/verify_ignored_test_budget.py
-python3 scripts/verify_allowlist_compliance.py --fail-on-violation
-python3 scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation
-python -m pytest scripts/test_*.py -v
+python3 scripts/ci/run_static_guard_suite.py --output-dir build/ci/static-guards
+python3 scripts/ci/verify_guard_registry.py --root .
+```
+
+Individual guards run through the registered runner (example for the DB
+guard; substitute the guard id from the generated reference):
+
+```bash
+python3 scripts/ci/run_registered_guard.py --guard-id db_access --context direct --root .
 ```
 
 ### If you add a new guard

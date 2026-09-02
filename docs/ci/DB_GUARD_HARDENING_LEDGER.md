@@ -1,5 +1,7 @@
 # DB Guard Hardening Ledger
 
+> **Historical record** — this ledger is a frozen amendment log from the DB-guard hardening and GR-01..GR-08 transition era, not current-state authority. as-of: the amendment entries it records (last entries predate the GATE-00R double capture at `565018c5eed61fae4351cb59342dc5c274eb27e7`); scope: those amendments only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml, docs/ci/DB_WRITE_OWNERSHIP.md, and docs/ci/GUARD_STATUS.generated.md.
+
 Durable index of DB guard evidence bundles produced by
 `scripts/ci/capture_db_guard_evidence.py`. This ledger is **not** a substitute
 for raw artifacts and must never assert that a later, untested SHA is green or

@@ -1,5 +1,7 @@
 # GR-00..GR-04 Validation Findings
 
+> **Historical record** — this file is a frozen validation-session log, not current-state authority. as-of: the sessions it records (first session HEAD `247b21c4618690f4a48ccdc0eecc0cfc7450ef32`, last recorded round `e066bbf80494afaae58e05f2287bec2ee0c0e9aa`, 2026-08-31); scope: those battery sessions only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml and docs/ci/GUARD_STATUS.generated.md.
+
 Status: pending fixes (do NOT mark DONE/GREEN anywhere; several gates below are FAIL or BLOCKED).
 
 Validation executed: 2026-08-23, workstation Windows / PowerShell 5.1, Python 3.13.2, pytest 9.0.2.

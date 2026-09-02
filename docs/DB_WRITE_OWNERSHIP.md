@@ -2,6 +2,68 @@
 
 Part of: Global Write/Read/Restore Barrier — PR 5
 
+## Current state (authoritative — PR-GR-10D truth sync)
+
+The **active DB ownership policy is schema v2 only** (`policyMode:
+authoritative-v2`). The v1 policy is archived; the schema-v2 signatures
+candidate (`config/guards/db_ownership_policy.signatures.candidate.yml`,
+472 entries, byte-reproducible under the `db_artifact_sync` tripwire) is the
+activated policy input; and the v2 ratchet baseline
+(`config/baselines/db_access_v2.json`) is empty — recorded debt is never
+authorization.
+
+- **GR-07 activation has landed.** The DB gate was verified exit-0 / trusted
+  with 0 findings, 20 advisory diagnostics, and 0 blocking diagnostics at
+  SHA 565018c5eed61fae4351cb59342dc5c274eb27e7 — evidence record
+  `gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7` in
+  docs/ci/GUARD_EVIDENCE_INDEX.yml (two capture runs, byte-identical semantic
+  summaries).
+- **GR-08 triage is complete at zero trusted findings** (same evidence
+  record, gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7); the reviewed
+  debt state is tracked in docs/ci/DB_ACCESS_V2_RATCHET_DEBT.md (approved
+  temporary debt: 0).
+- **GR-10A/GR-10B control-plane ownership is landed:** canonical commands
+  compile from the registry execution schema (see
+  docs/ci/GUARD_COMMANDS.generated.md, guard `db_access`) and every guard
+  carries one unified source-scope classification
+  (docs/ci/GR-10B_SOURCE_SCOPE_MATRIX.md).
+- **Advisory diagnostics are reported, never authorization,** and never
+  baseline-able debt. The current count comes only from the evidence index
+  (20 × `DB_SIGNATURE_UNRESOLVED` at the verified SHA). GR-10C advisory-debt
+  closure is PARTIAL: no closure evidence is recorded in
+  docs/ci/GUARD_EVIDENCE_INDEX.yml.
+- **`barrierMode` is metadata, not proof.** `direct` / `helper` /
+  `workerMediated` describe policy metadata only; dominance or call-graph
+  proof of write-barrier mediation is future work (GR-12/GR-13/GR-15).
+
+<!-- GUARD_STATUS:BEGIN db_access -->
+Status: VERIFIED_AT_SHA
+Evidence: gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7
+Verified SHA: 565018c5eed61fae4351cb59342dc5c274eb27e7
+Outcome: PASS (exit 0, trusted, 0 findings, 20 advisory diagnostics, 0 blocking diagnostics — advisory diagnostics are reported, never authorization; ratchet exit 0 (baseline config/baselines/db_access_v2.json: 0 new, 0 resolved, 0 expired))
+Debt: 0 unchanged ratchet findings (baseline 0) — recorded debt is never authorization
+Gradle leg: INFRASTRUCTURE
+Canonical command reference: GUARD_COMMANDS.generated.md#db_access
+Scope: production-kotlin-all
+Owner: @panospao7 (doc anchor: docs/ci/GUARD_FINDING_PROTOCOL.md)
+<!-- GUARD_STATUS:END db_access -->
+
+The block above is renderer-owned (`scripts/ci/generate_guard_docs.py`);
+manual edits inside its markers fail
+`scripts/ci/verify_guard_docs_truth.py`. Canonical commands are generated,
+never pasted: docs/ci/GUARD_COMMANDS.generated.md is the only command
+reference. Distinctions that must never be blurred: the DB ownership policy
+≠ the DB ratchet baseline ≠ the Room schema/migration baseline; implemented
+≠ verified at the current SHA; a historical finding count ≠ the current
+finding count.
+
+> **HISTORICAL_RECORD** — the transitional-state notes below describe the
+> pre-activation era (PR-01 through GR-07). They document states that no
+> longer hold and are retained verbatim as history; the current truth is the
+> section above plus docs/ci/GUARD_EVIDENCE_INDEX.yml.
+
+<!-- HISTORICAL_RECORD:BEGIN (as-of: pre-GR-07 activation era; scope: v1/transition states only; superseded by the Current state section above) -->
+>
 > **Transitional state (PR-01):** The v1 policy (`config/guards/db_ownership_policy.yml` + structural exceptions) remains the **ACTIVE gate**, and its current blocked state is expected until v2 activation. A new authoritative v2 policy model now exists under `scripts/db_guard/` (`policy_model.py`, `policy_v2_loader.py`, `policy_v2_evidence.py`) but is **NOT wired into enforcement**. Candidate generation is GR-02; activation is GR-07. No policy/baseline files were changed by PR-01.
 >
 > **Transitional state (GR-02):** The checked-in candidate `config/guards/db_ownership_policy.signatures.candidate.yml` is **MACHINE-GENERATED** by `scripts/migrate_db_policy_signatures.py` — regenerate it only via that tool, never hand-edit. It is **NOT active policy** and remains explicitly non-authoritative. Unresolved migration rows visible in the migration report are **NOT authorization**; `barrierMode: direct` is metadata only until proven (GR-05/GR-11 own mediated-path classification/proof). GR-05 owns complete policy coverage; GR-07 owns activation.
@@ -15,8 +77,9 @@ Part of: Global Write/Read/Restore Barrier — PR 5
 > **Transitional state (GR-06, Slice 3 — shadow evidence CLI):** `scripts/ci/verify_db_policy_v2_evidence.py` verifies the **v2 signatures candidate** against exact production source evidence (`policy_v2_evidence.verify_v2_policy_source_evidence` over the declared source-root manifest, with the Room-inventory-backed `daoFqcn` cross-check ACTIVE) and writes one deterministic JSON report. It is **shadow-only**: read-only over every input, it never writes or activates policy, never touches the ratchet, and its exit code (0 trusted / 2 untrusted-or-infrastructure) never depends on the optional legacy shadow comparison. With `--legacy-shadow-report`, differences vs a legacy `verify_db_access_boundaries` findings report are classified report-only against the GR-05 accounting artifact into exactly five closed classes (`EXPECTED_LEGACY_OVERLOAD_UNION`, `LEGACY_STALE_ENTRY`, `PARSER_OR_RESOLVER_DEFECT`, `CANDIDATE_GAP`, `UNREVIEWED_DIFFERENCE`); the section ships `reviewed: false`, and `CANDIDATE_GAP`, `PARSER_OR_RESOLVER_DEFECT`, and `UNREVIEWED_DIFFERENCE` deltas **block GR-07 activation** until human-reviewed. **Status: pending human validation** — no DONE/GREEN/complete claim is made for GR-06 in this document.
 >
 > **Transitional state (GR-07 Option-B amendment — scanner trust contract):** Scanner-family per-callable diagnostics (`scripts/db_guard/scanner.py`) are now split into **BLOCKING vs ADVISORY** by the DB relevance of the enclosing callable. A diagnostic on a callable whose declaration range shows DB-surface evidence — a `_METHOD_CALL` against a known DAO accessor/operation name from the Room inventory, or any structural operation/handle token (`execSQL`, `openDatabase`, `getDatabasePath`, `deleteRecursively`, `writableDatabase`) — stays **BLOCKING**: the scan is untrusted (exit 2) and findings are withheld. A diagnostic on a callable with **no DB-relevant content** (Compose/UI/service code that never touches a DAO or DB handle) is reported verbatim with the bounded `controlled_context["advisory"] = true` marker and **never breaks trust**. Trust is computed over blocking diagnostics only (`statistics.trusted`); with zero blocking diagnostics, discovered findings survive as a trusted exit 1 (real GR-08/ratchet input), and `statistics.advisoryDiagnosticCount` reports the advisory load. **Pre-scan stage failures (source roots, inventory, loader, evidence) are NEVER advisory** and remain always blocking; an unknown operation on a VERIFIED database handle is likewise always blocking even without name evidence. Rationale: honest unresolved-signature debt on pure UI callables must not permanently block downstream consumption of real DB findings. Status: implemented with targeted tests in `scripts/test_db_guard_scanner_d4.py` and `scripts/test_verify_db_access_v2.py`; **test run pending**.
+<!-- HISTORICAL_RECORD:END -->
 
-Every table family has exactly one approved write owner — an architectural objective, enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations.
+Every table family has exactly one approved write owner — enforced by the active schema-v2 ownership policy (GR-07 activation); the gate was verified exit-0/trusted at SHA 565018c5eed61fae4351cb59342dc5c274eb27e7 (docs/ci/GUARD_EVIDENCE_INDEX.yml, record gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7).
 Direct DAO mutation outside the canonical DB ownership policy is a violation caught by the static guard (PR 6/10).
 
 The **canonical sources of truth** for all DB write authorization are:
@@ -24,13 +87,14 @@ The **canonical sources of truth** for all DB write authorization are:
 - `config/guards/db_ownership_policy.yml` — enumerates every approved writer class, method, DAOs, and operation.
 - `config/guards/db_structural_exceptions.yml` — grants approval for intrinsically low-level DB infrastructure operations (migrations, rescue, backup/restore, diagnostics, privacy export).
 
-All ownership authorization is decided by exactly those two files — an architectural objective, enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations. In addition,
+All ownership authorization is decided by exactly those two files — enforced by the active schema-v2 ownership policy (GR-07 activation; verified exit-0 at SHA 565018c5eed61fae4351cb59342dc5c274eb27e7, docs/ci/GUARD_EVIDENCE_INDEX.yml). In addition,
 `config/guards/db_structural_exceptions_expected_methods.yml` is a **mandatory
 integrity/classification manifest**: it pins the exact `expected`/`fixtures`
 tuple classification of the structural exceptions file against immutable
 checked-in contracts and enforces the structural entry-count audit pin
-(`counts.structural_entries: 62`) — ownership cardinality is not pinned and is
-an observational migration metric only (see the GR-04 transitional note above).
+(`counts.structural_entries: 64`) — ownership cardinality is not pinned and is
+an observational migration metric only (the pre-activation GR-04 note below
+records the historical 62-entry pin; the live manifest now pins 64).
 **The manifest
 grants NO authorization** — only an exact ownership-policy entry or a structural
 exception entry authorizes a write. Ratchet baselines likewise never authorize
@@ -108,9 +172,9 @@ The legacy `config/db_access_allowlist.yml` is **superseded** by the files above
 - **Runtime:** `DatabaseWriteBarrier.checkWritesAllowed()` throws `DatabaseAccessBlockedException` in all non-NORMAL modes.
 - **Static (warning):** `scripts/verify_db_access_boundaries.py` reports violations (PR 6).
 - **Static (CI failure):** Same script exits non-zero on new violations (PR 10).
-- **Transitional guard state:** The static guard currently reports `SIGNATURE_MISSING` / `DB_POLICY_SOURCE_EVIDENCE_INVALID` for entries lacking signatures; this blocked state is intentional pre-v2 and is expected until v2 activation (GR-07).
+- **Active guard state:** The static DB gate runs the schema-v2 ownership policy with the D4 scanner. At the verified SHA 565018c5eed61fae4351cb59342dc5c274eb27e7 it exited 0 / trusted with 0 findings and 20 advisory `DB_SIGNATURE_UNRESOLVED` diagnostics (docs/ci/GUARD_EVIDENCE_INDEX.yml, record gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7). Pre-scan stage failures remain always blocking; an untrusted scan exits 2 with findings withheld.
 - **Option-B advisory diagnostics:** Scanner diagnostics on callables that never touch a DAO or DB handle are advisory (`controlled_context.advisory = true`): reported, but non-blocking — they never produce exit 2 and never withhold findings. Only blocking diagnostics (DB-relevant callables and every pre-scan stage failure) take the exit-2 path (see the GR-07 Option-B transitional note above).
-- **Canonical policy:** `config/guards/db_ownership_policy.yml` is the source of truth for approved write owners — an architectural objective, enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations. Each entry enumerates an exact class + method + DAOs + operation. Wildcard `"*"` method entries are not supported — every writer method must be individually listed.
+- **Canonical policy:** `config/guards/db_ownership_policy.yml` is the source of truth for approved write owners, enforced through the active schema-v2 policy (GR-07 activation; verified exit-0 at SHA 565018c5eed61fae4351cb59342dc5c274eb27e7 — docs/ci/GUARD_EVIDENCE_INDEX.yml). Each entry enumerates an exact class + method + DAOs + operation. Wildcard `"*"` method entries are not supported — every writer method must be individually listed.
 - **Structural exceptions:** `config/guards/db_structural_exceptions.yml` grants approval for DB file operations (Room migrations, maintenance rescue, backup/restore, diagnostics, privacy export, etc.) via exact method_pattern + operation matching.
 - **Structural manifest:** `config/guards/db_structural_exceptions_expected_methods.yml` is a mandatory integrity/classification manifest enforced by `verify_db_access_boundaries.py`. It requires the current structural-exception tuple set to EXACTLY equal the manifest's `expected` + `fixtures` tuple set, the `expected` set to exactly equal the immutable expected contract, and the `fixtures` set to exactly equal the immutable fixture contract (a moved or invented tuple fails with `MANIFEST_CLASSIFICATION_MISMATCH`, exit 2). **The manifest grants NO authorization** — it only verifies that the structural exceptions file matches its recorded classification.
 - **Ratchet baselines:** The ratchet baseline records unresolved debt (writers that exist in code but are not yet listed in the ownership policy). Baselines do **not** authorize new ownership; they document existing debt that must be resolved. Baselines never authorize writes — only an exact canonical ownership-policy entry or a structural exception entry authorizes a DAO mutation. New writers must be added to `db_ownership_policy.yml` — never to the baseline alone.
@@ -131,7 +195,7 @@ The legacy `config/db_access_allowlist.yml` is **superseded** by the files above
 
 ### Canonical sources of truth
 
-All DB write authorization is decided by exactly two files (an architectural objective — enforced exactly only after v2 activation (GR-07); until then the legacy v1 gate applies with known overload-union limitations):
+All DB write authorization is decided by exactly two files, enforced through the active schema-v2 policy (GR-07 activation; verified exit-0 at SHA 565018c5eed61fae4351cb59342dc5c274eb27e7, docs/ci/GUARD_EVIDENCE_INDEX.yml):
 
 - **`config/guards/db_ownership_policy.yml`** — the canonical ownership policy.
   It enumerates every approved writer as an exact `(class, method, daos,
@@ -147,9 +211,9 @@ All DB write authorization is decided by exactly two files (an architectural obj
 integrity/classification manifest (not an authorization file): it pins the exact
 `expected`/`fixtures` tuple classification of the structural exceptions file
 against immutable checked-in contracts and enforces the structural entry-count
-audit pin (`counts.structural_entries: 62`); ownership cardinality is not
-pinned and remains an observational migration metric only (see the GR-04
-transitional note above). **The
+audit pin (`counts.structural_entries: 64`; the pre-activation GR-04 note
+records the historical 62-entry pin); ownership cardinality is not
+pinned and remains an observational migration metric only. **The
 manifest grants no authorization** — only an exact
 ownership-policy entry or a structural exception entry authorizes a write.
 Baselines never authorize writes either (see below).
@@ -159,18 +223,35 @@ above and is not a source of authorization.
 
 ### Ratchet baseline: debt tracking only, not authorization
 
-`config/baselines/db_access.json` (driven by `scripts/ci/guard_ratchet.py`)
-records the DB access guard's current findings so CI can enforce no-growth.
-Recording a writer there **does not authorize** any DAO write — it only documents
-existing uncovered debt. Only an exact canonical ownership policy entry or a
-structural exception entry authorizes a DAO mutation; the ratchet baseline is
-never an authorization path. New writers must be added to
-`db_ownership_policy.yml` — never to the baseline alone.
+`config/baselines/db_access_v2.json` (driven by `scripts/ci/guard_ratchet.py`
+with finding protocol 2) records the DB access guard's reviewed debt so CI
+can enforce no-growth. At the verified SHA 565018c5eed61fae4351cb59342dc5c274eb27e7
+the v2 baseline is empty — 0 entries, 0 new, 0 resolved, 0 expired
+(docs/ci/GUARD_EVIDENCE_INDEX.yml, record
+gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7). The legacy v1 baseline
+`config/baselines/db_access.json` is archived history, not an input of the
+active gate. Recording a writer in a baseline **does not authorize** any DAO
+write — it only documents existing uncovered debt. Only an exact canonical
+ownership policy entry or a structural exception entry authorizes a DAO
+mutation; the ratchet baseline is never an authorization path. New writers
+must be added to `db_ownership_policy.yml` — never to the baseline alone.
 
-### Unresolved categories (not authorized)
+### Historical v1-era uncovered writers (HISTORICAL_RECORD — not current)
 
-The following write paths remain outside the ownership policy and must NOT be
-treated as approved:
+> **HISTORICAL_RECORD** — the list below is the v1-era uncovered-writer
+> snapshot from before GR-07 activation. Under the active schema-v2 policy
+> the GATE-00R scan at SHA 565018c5eed61fae4351cb59342dc5c274eb27e7 found
+> zero unauthorized mutations (0 findings, trusted — see
+> docs/ci/GUARD_EVIDENCE_INDEX.yml, record
+> gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7). The v1 ratchet debt
+> rows were dispositioned by the GR-08 triage batches into the empty v2
+> baseline; the rows below are history only — neither current findings nor
+> authorization.
+
+<!-- HISTORICAL_RECORD:BEGIN (as-of: v1 era, pre-GR-07; scope: legacy uncovered-writer snapshot; superseded by the v2 gate evidence) -->
+
+The following write paths remained outside the then-active v1 ownership
+policy and had to NOT be treated as approved:
 
 - **`merchantCategoryDao`** — `CategoryRepository` seed/normalization writes
   (`insertAll`, `updateNormalizedCanonicalName` in
@@ -192,8 +273,11 @@ treated as approved:
   (`insertOrIgnore`, `claimForProcessing`, `markTerminal`, `markFinalFailure`,
   `markRetryableFailure`, `purgeVisiblePayload`, `releaseStaleProcessing`, etc.)
   without an ownership-policy entry.
-- **Current DB ratchet debt** — `config/baselines/db_access.json` lists the
-  currently uncovered writers (`UNALLOWLISTED_CLASS` / `UNALLOWLISTED_CLASS_DIRECT_CHAIN` /
-  `FORBIDDEN_FILE_OP` findings). These are debt, not authorization; resolving them
-  means adding entries to the ownership policy / structural exceptions, never
-  deleting the baseline record.
+- **v1-era DB ratchet debt** — the legacy `config/baselines/db_access.json`
+  listed the then-uncovered writers (`UNALLOWLISTED_CLASS` /
+  `UNALLOWLISTED_CLASS_DIRECT_CHAIN` / `FORBIDDEN_FILE_OP` findings). Those
+  were debt, never authorization; they were resolved/dispositioned through
+  the GR-08 triage batches and the empty v2 baseline
+  (`config/baselines/db_access_v2.json`), never by deleting baseline records.
+
+<!-- HISTORICAL_RECORD:END -->

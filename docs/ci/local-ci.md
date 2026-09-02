@@ -49,27 +49,23 @@ actionlint
 
 ## Python guard scripts
 
+Canonical guard commands are **generated, never pasted**: every guard's
+command identity, mode, inputs, and source scope live in
+`docs/ci/GUARD_COMMANDS.generated.md` (renderer-owned from the registry
+execution schema; there are no warning-mode guards in the canonical suite —
+ratchet guards are wrapped by `scripts/ci/guard_ratchet.py`). Run the
+canonical suite:
+
 ```bash
-python3 scripts/verify_event_writers.py --fail-on-violation
-python3 scripts/verify_privacy_boundaries.py --root .
-python3 scripts/verify_money_boundaries.py --root .
-python3 scripts/verify_source_provenance_boundaries.py --root .
-python3 scripts/verify_db_access_boundaries.py --fail-on-violation
-python3 scripts/verify_cancellation_boundaries.py
-python3 scripts/verify_ui_dao_boundaries.py --fail-on-violation
-python3 scripts/verify_worker_boundaries.py --fail-on-violation
-python3 scripts/verify_receipt_link_boundaries.py --fail-on-violation
-python3 scripts/verify_import_lifecycle_boundaries.py --fail-on-violation
-python3 scripts/verify_cloud_payload_boundaries.py --fail-on-violation
-# WARNING MODE — no --fail-on-violation (52 pre-existing violations):
-python3 scripts/verify_pii_logging_boundaries.py
-python3 scripts/verify_di_release_boundaries.py --fail-on-violation
-python3 scripts/verify_allowlist_compliance.py --fail-on-violation
-python3 scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation
-python3 scripts/verify_migration_matrix.py --fail-on-violation
-# WARNING MODE — no --fail-on-violation (31 pre-existing @Ignore annotations):
-python3 scripts/verify_ignored_test_budget.py
-python -m pytest scripts/test_*.py -v
+python3 scripts/ci/run_static_guard_suite.py --output-dir build/ci/static-guards
+python3 scripts/ci/verify_guard_registry.py --root .
+python3 scripts/ci/verify_guard_docs_truth.py --root .
+```
+
+Individual guards run through the registered runner, e.g.:
+
+```bash
+python3 scripts/ci/run_registered_guard.py --guard-id db_access --context direct --root .
 ```
 
 ---
@@ -181,7 +177,7 @@ or a silent skip.
 |---|---|
 | Ratchet wrapper | `scripts/ci/guard_ratchet.py` |
 | DB guard scanner | `scripts/verify_db_access_boundaries.py` |
-| Ratchet baseline | `config/baselines/db_access.json` |
+| Ratchet baseline | `config/baselines/db_access_v2.json` |
 | Ownership policy | `config/guards/db_ownership_policy.yml` |
 | Structural exceptions | `config/guards/db_structural_exceptions.yml` |
 | Structural manifest | `config/guards/db_structural_exceptions_expected_methods.yml` |
@@ -291,7 +287,7 @@ python3 -m pytest scripts/ci/test_gradle_db_guard_contract.py -v
 ## Troubleshooting
 
 ### `kotlin: command not found`
-The `.kts` guard scripts invoked via Gradle tasks (`checkLifecycleBypasses`, `checkRawMoneyAggregates`, `checkDirectTimeCalls`) require `kotlin` on `PATH`. Install the Kotlin compiler:
+The Gradle guard tasks run Python guard scripts through the registered runner bridge (PR-GR-10A); the retired inline `.kts` scanners (`checkLifecycleBypasses`, retired as subsumed by the canonical DB guard, and `checkRawMoneyAggregates`, extracted 1:1 into the registered `raw_money_aggregates` guard) no longer exist. `checkDirectTimeCalls` remains as a thin wrapper over the registered `time_boundaries` guard and does not require a Kotlin compiler. If a task still reports Kotlin tooling problems, install the Kotlin compiler:
 ```bash
 # macOS
 brew install kotlin

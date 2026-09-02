@@ -1596,6 +1596,18 @@ LEGACY_GUARD_MANIFEST_FIXTURE: List[Tuple[str, List[str], str]] = [
         "blocking",
     ),
     ("known_good_state", ["python3", "scripts/ci/verify_known_good_state.py"], "blocking"),
+    # ── PR-GR-10D addition (NOT verbatim pre-migration) ────────────────────────
+    # guard_docs_truth is a PR-GR-10D NEW guard absent from the pre-migration
+    # manifest.  It joins the canonical suite at its registry-order position
+    # (directly after known_good_state), so the derived leg sequence matches.
+    # Semantics pinned from the registry execution section: engine
+    # python-direct, entrypoint scripts/ci/verify_guard_docs_truth.py,
+    # arguments ("--root", "."), mode blocking, no baseline (a direct guard).
+    (
+        "guard_docs_truth",
+        ["python3", "scripts/ci/verify_guard_docs_truth.py", "--root", "."],
+        "blocking",
+    ),
     (
         "cancellation",
         [
@@ -1730,8 +1742,12 @@ LEGACY_GUARD_TIME_BUDGETS_FIXTURE = {
 # Declared-external registry entries (currency_guardrails_ps,
 # release_artifact) are deliberately NOT in the canonical suite plan by
 # design (plan Step 5: "unless declared external").
+# PR-GR-10D budget addition: the guard_docs_truth leg is pinned inline in
+# LEGACY_GUARD_MANIFEST_FIXTURE the same way (registry-order position after
+# known_good_state) with its standard-profile 300s budget.
 POST_SLICE2_SUITE_BUDGET_ADDITIONS: Dict[str, float] = {
     "raw_money_aggregates": 300.0,
+    "guard_docs_truth": 300.0,
 }
 
 

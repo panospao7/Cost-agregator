@@ -1,0 +1,170 @@
+# GUARD_EVIDENCE_INDEX — tracked exact-SHA evidence records (PR-GR-10D).
+#
+# Compact index of evidence bundles; NOT a copy of raw logs. Rules:
+# - No raw source, absolute local paths, user data, tokens, logs, or secrets.
+# - A record is "current" only by qualifying content, never by position.
+# - A record may support VERIFIED_AT_SHA only when (a) two capture runs
+#   recorded matching semanticDigestSha256 values, (b) reproducible: true,
+#   and (c) all required command results are recorded.
+# - Field provenance for capture records:
+#     semanticDigestSha256  = SHA-256 of the run's semantic-summary.json
+#                             (recorded in the bundle's output-sha256.txt).
+#     artifactManifestSha256 = the capture's input-manifest digest
+#                             (input_manifest_sha256 recorded inside
+#                             semantic-summary.json; run-invariant).
+# - status vocabulary: COMPLETE | INCOMPLETE | HISTORICAL.
+# - HISTORICAL records never support current-state claims; single-capture
+#   records are never VERIFIED_AT_SHA evidence.
+schemaVersion: 1
+records:
+  # ── Current truth: GATE-00R double capture at the exact pinned SHA ──────────
+  - evidenceId: gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7
+    targetSha: 565018c5eed61fae4351cb59342dc5c274eb27e7
+    targetTreeSha: 175cf284725557e06136352b4616f7fb941fe92e
+    baseSha: 34a8d54631b8e4841ebba95ca600847f6effaaf1
+    mergeBaseSha: 34a8d54631b8e4841ebba95ca600847f6effaaf1
+    workingTreeClean: true
+    captureRuns:
+      - runId: run-01
+        semanticDigestSha256: 3a72934601c6ce2e3ffc46929378481196b75a7e3cbfc58a3b1a277e75987d5e
+        artifactManifestSha256: 902e5c1e9e2baa32e3fbca5239f89ca17e64a2735974fc05deea1e33f16c3da9
+      - runId: run-02
+        semanticDigestSha256: 3a72934601c6ce2e3ffc46929378481196b75a7e3cbfc58a3b1a277e75987d5e
+        artifactManifestSha256: 902e5c1e9e2baa32e3fbca5239f89ca17e64a2735974fc05deea1e33f16c3da9
+    reproducible: true
+    guardResults:
+      db_access:
+        directExit: 0
+        trusted: true
+        findingCount: 0
+        blockingDiagnosticCount: 0
+        advisoryDiagnosticCount: 20
+        advisoryDiagnosticCode: DB_SIGNATURE_UNRESOLVED
+        ratchetExit: 0
+        ratchetBaselinePath: config/baselines/db_access_v2.json
+        staticSuiteOutcome: PASS
+        gradleOutcome: INFRASTRUCTURE
+      time_boundaries:
+        exit: 0
+        findingCount: 0
+        staticSuiteOutcome: PASS
+      ui_dao:
+        exit: 1
+        findingCount: 1
+        violationRuleId: G-UI-DAO-01
+        staticSuiteOutcome: VIOLATION
+    staticSuite:
+      exit: 2
+      legsTotal: 23
+      passed: 21
+      violations: 1
+      infraErrors: 1
+      violationLeg: ui_dao
+      violationRuleId: G-UI-DAO-01
+      violationFindingCount: 1
+      infraErrorLeg: guard_tests
+      legOutcomes:
+        guard_registry: PASS
+        source_provenance: PASS
+        ui_dao: VIOLATION
+        worker: PASS
+        receipt_link: PASS
+        import_lifecycle: PASS
+        cloud_payload: PASS
+        pii_logging: PASS
+        di_release: PASS
+        allowlist_compliance: PASS
+        ignored_test_budget: PASS
+        lint_baseline_policy: PASS
+        time_boundaries: PASS
+        deprecation_escalations: PASS
+        db_artifact_sync: PASS
+        known_good_state: PASS
+        cancellation: PASS
+        privacy: PASS
+        db_access: PASS
+        event_writers: PASS
+        money: PASS
+        migration_matrix: PASS
+        guard_tests: INFRASTRUCTURE
+      ratchetDebtObservations:
+        db_access:
+          baselineFindings: 0
+          currentFindings: 0
+        cancellation:
+          baselineFindings: 86
+          currentFindings: 86
+        privacy:
+          baselineFindings: 1
+          currentFindings: 1
+        event_writers:
+          baselineFindings: 16
+          currentFindings: 16
+        money:
+          baselineFindings: 0
+          currentFindings: 0
+        migration_matrix:
+          baselineFindings: 0
+          currentFindings: 0
+    gradleObservations:
+      verifyDbAccessBoundaries: INFRASTRUCTURE
+      checkDryRun: INFRASTRUCTURE
+      compileDebugKotlin: PASS
+      note: >-
+        :app:verifyDbAccessBoundaries exited 1 on a Gradle
+        configuration-cache storage failure; the embedded ratchet row inside
+        the task printed PASS with 0 baseline and 0 current findings. The
+        :app:check dry-run row failed on the same configuration-cache class.
+    inventoryRows:
+      exit: 2
+      trusted: false
+      diagnosticCode: INVENTORY_DURABILITY_UNCONFIRMED
+      note: >-
+        inventory-only rows report the platform durability branch (no
+        confirmable directory durability barrier on this host); accepted as
+        the known-good scorecard inventory row, never treated as DB findings.
+    status: COMPLETE
+  # ── GR-09-era reviewed state (historical; single frozen capture) ────────────
+  - evidenceId: gr09-frozen-db-report-ce1918c9
+    targetSha: ce1918c9ee7b3c53f2842d62fa030db37fa7fdcd
+    targetTreeSha: 9005e9584fd8dc46fa554dddcb00051592be1df6
+    baseSha: null
+    mergeBaseSha: null
+    workingTreeClean: null
+    captureRuns:
+      - runId: gr09-frozen-report
+        semanticDigestSha256: 3d452c7f2d7a993ebb187d39b8c319d559f42abe7e2685b1d16934c7a695c588
+        artifactManifestSha256: null
+    reproducible: false
+    guardResults:
+      db_access:
+        trusted: true
+        findingCount: 0
+        advisoryDiagnosticCount: 20
+    status: HISTORICAL
+    note: >-
+      Single frozen capture tracked by docs/ci/DB_ACCESS_V2_RATCHET_DEBT.md
+      (approval date 2026-08-29). One capture run: cannot support
+      VERIFIED_AT_SHA. Historical only; the current record is
+      gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7.
+  # ── Failed GATE-00R attempt (historical; capture untrusted) ─────────────────
+  - evidenceId: gate-00r-attempt-c10c41d4
+    targetSha: c10c41d4af9b0eb32a127ed5ed0a812b80ae401b
+    targetTreeSha: 5a08745454a7a21b9550152d34b3294a1a71297e
+    baseSha: 34a8d54631b8e4841ebba95ca600847f6effaaf1
+    mergeBaseSha: 34a8d54631b8e4841ebba95ca600847f6effaaf1
+    workingTreeClean: true
+    captureRuns:
+      - runId: run-01
+        semanticDigestSha256: f469886b262d1d8c98a09a737bb6ff6aec953e24582ee6ceaaf5a2f91ae92946
+        artifactManifestSha256: 902e5c1e9e2baa32e3fbca5239f89ca17e64a2735974fc05deea1e33f16c3da9
+      - runId: run-02
+        semanticDigestSha256: f469886b262d1d8c98a09a737bb6ff6aec953e24582ee6ceaaf5a2f91ae92946
+        artifactManifestSha256: 902e5c1e9e2baa32e3fbca5239f89ca17e64a2735974fc05deea1e33f16c3da9
+    reproducible: false
+    status: HISTORICAL
+    note: >-
+      Both capture runs exited 2 (untrusted): Windows launcher defects and a
+      v1-baseline ratchet row, fixed in the 565018c5 commit wave. The
+      byte-identical failure path proves determinism of the failure, not a
+      passing guard state; never presentable as current evidence.

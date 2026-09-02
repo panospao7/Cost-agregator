@@ -186,13 +186,14 @@ def test_expected_migration_split_is_pinned():
         "allowlist_compliance",
         "currency_guardrails_ps",
         "db_artifact_sync",
+        "guard_docs_truth",
         "ignored_test_budget",
         "known_good_state",
         "lint_baseline_policy",
         "release_artifact",
     ]
     assert len(migrated) == 16
-    assert len(statuses) == len(GUARD_REGISTRY) == 24
+    assert len(statuses) == len(GUARD_REGISTRY) == 25
 
 
 if __name__ == "__main__":

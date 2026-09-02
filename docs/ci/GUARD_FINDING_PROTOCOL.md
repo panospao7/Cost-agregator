@@ -605,6 +605,16 @@ The Gradle task (`verifyDbAccessBoundaries` or equivalent) must produce the same
 
 ## 14. Migration status
 
+> **Current truth:** the protocol-v2 contract described by this document is
+> the ACTIVE db_access finding protocol — verified exit-0/trusted at SHA
+> 565018c5eed61fae4351cb59342dc5c274eb27e7 with 0 findings and 20 advisory
+> diagnostics (docs/ci/GUARD_EVIDENCE_INDEX.yml, record
+> gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7). The work-status table
+> below is a **HISTORICAL_RECORD** snapshot from the PR-F1/F2 recovery era
+> and no longer describes the present state.
+
+<!-- HISTORICAL_RECORD:BEGIN (as-of: PR-F1/F2 recovery era, pre-GR-07; scope: migration-status snapshot only; superseded by the activated protocol-v2 gate) -->
+
 This protocol document is **PARTIAL / PENDING REVIEW**. The following work status is accurate as of this update:
 
 | Item | Status |
@@ -624,6 +634,8 @@ This protocol document is **PARTIAL / PENDING REVIEW**. The following work statu
 **PR-F2 status (ratchet v2 / DB scanner integration):** PARTIAL — v1 baseline migration is intentionally blocked with `RATCHET_V1_BASELINE_INCOMPATIBLE`; registry protocol auto-resolution, structured v2 child transport, and suite command integration are implemented. Count-aware comparison exists, but active DB baseline migration and runtime validation remain pending.
 
 The current migration remains in Phase 0 (freeze evidence). No baseline, policy, or structural-exceptions changes have been made.
+
+<!-- HISTORICAL_RECORD:END -->
 
 ---
 
@@ -669,4 +681,4 @@ Protocol tests must cover:
 
 ---
 
-*This document describes the target protocol contract. PR-F1 implementation (model, catalog, tests) is authored but pending strict review and runtime validation. No claims of final completion should be made until code, tests, and review gates pass on the `guard-finding-db-discovery-v2` branch.*
+*This document describes the target protocol contract. The historical PR-F1 implementation note (authored but pending review on the `guard-finding-db-discovery-v2` branch) is superseded: protocol v2 is the active db_access protocol, verified at SHA 565018c5eed61fae4351cb59342dc5c274eb27e7 per docs/ci/GUARD_EVIDENCE_INDEX.yml.*

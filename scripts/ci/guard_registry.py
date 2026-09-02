@@ -489,6 +489,48 @@ GUARD_REGISTRY: Dict[str, Dict[str, Any]] = {
         },
     },
 
+    # PR-GR-10D — documentation/evidence truth sync: validates the closed
+    # structured claim contract between GUARD_DOCUMENT_INDEX.yml,
+    # GUARD_EVIDENCE_INDEX.yml, the registry/execution plan, and the two
+    # generated reference documents (GUARD_COMMANDS.generated.md,
+    # GUARD_STATUS.generated.md).  Reads repository docs/metadata only.
+    "guard_docs_truth": {
+        "script": "scripts/ci/verify_guard_docs_truth.py",
+        "sourceScope": "repository-config",
+        "tests": "scripts/ci/test_verify_guard_docs_truth.py",
+        "mode": "blocking",
+        "baseline": None,
+        "allowlist": None,
+        "policies": None,
+        "description": "Documentation/evidence truth sync (PR-GR-10D) — "
+                       "validates the closed structured claim contract: "
+                       "indexed guard docs exist and are classified, every "
+                       "active guard has one current doc anchor/owner, "
+                       "current docs carry no unsupported completion claims, "
+                       "generated reference docs are byte-reproducible from "
+                       "the canonical registry plan + GR-10B source scope + "
+                       "evidence index, evidence claims resolve to exact-SHA "
+                       "records, historical docs are visibly marked, and "
+                       "unknown baseline/policy/source-root references are "
+                       "rejected",
+        "execution": {
+            "engine": "python-direct",
+            "entrypoint": "scripts/ci/verify_guard_docs_truth.py",
+            "arguments": ("--root", "."),
+            "mode": "blocking",
+            "requiredInputs": (
+                "docs/ci/GUARD_DOCUMENT_INDEX.yml",
+                "docs/ci/GUARD_EVIDENCE_INDEX.yml",
+                "docs/ci/GUARD_COMMANDS.generated.md",
+                "docs/ci/GUARD_STATUS.generated.md",
+            ),
+            "timeoutProfile": "standard",
+            "outputContract": "stdout-human;exit:0=pass,1=violation,2=infra",
+            "testManifest": ("scripts/ci/test_verify_guard_docs_truth.py",),
+            "documentationAnchor": "docs/ci/GUARD_DOCUMENT_INDEX.yml",
+        },
+    },
+
     # ── Ratchet-wrapped guards (growth-enforcing baseline via guard_ratchet.py) ──
 
     "cancellation": {

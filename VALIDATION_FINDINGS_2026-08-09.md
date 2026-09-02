@@ -1,5 +1,7 @@
 # Validation Findings — atomicity-pr21-enforcement-final (2026-08-09)
 
+> **Historical record** — this report is a frozen validation snapshot, not current-state authority. as-of SHA `065a54387bdcb9e8040e21462b0d2d0321918cf7` (2026-08-09); scope: that validation pass only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml and docs/ci/GUARD_STATUS.generated.md.
+
 Status: **PARTIAL / RED** — Python gate (step 1) not green; Gradle steps not yet run pending resolution.
 
 ## 0. Branch / commit
