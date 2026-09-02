@@ -49,7 +49,11 @@ from guard_execution_plan import (  # noqa: E402
     load_guard_specs,
     validate_guard_specs,
 )
-from guard_registry import GUARD_REGISTRY, validate_registry  # type: ignore
+from guard_registry import (  # type: ignore
+    GUARD_REGISTRY,
+    SOURCE_SCOPE_VALUES,
+    validate_registry,
+)
 
 # Legacy hard-coded suite command lists whose assignment in production suite
 # code is forbidden (the registry-derived plan is the only command authority).

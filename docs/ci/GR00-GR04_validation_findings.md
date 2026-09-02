@@ -1211,3 +1211,33 @@ The fixture builds a synthetic root and copies ONLY guard_ratchet.py + guard_fin
 `finding_rule_catalog` (scripts/ci/finding_rule_catalog.py) -> ModuleNotFoundError in the
 child -> exit 1 vs pinned 0. Fix: add finding_rule_catalog.py (and any further transitive
 deps of guard_findings) to the fixture copy list.
+
+---
+
+## Round 19 (2026-08-31) - GR-10B/GR-10D gates at `4375cf4a` (docs/evidence truth sync, source-scope matrix)
+
+HEAD `4375cf4a4af41f0e324ca686194f49b7032c5db8`; checkout clean.
+
+1. `git push origin gr-00-local` -> OK (`7bdf90ec..4375cf4a`).
+2. `pytest scripts/ci/test_verify_guard_docs_truth.py` -> **3 failed / 22 passed**:
+   - test_status_block_drift_fails + test_live_validator_passes:
+     TEST BUG `NameError: name 'texts' is not defined` in the fixture, PLUS a
+     generated-doc byte mismatch (expected vs rendered header/body diff).
+   - test_live_generated_docs_byte_reproducible_twice: rendered docs differ from pinned
+     expected content (same mismatch family).
+3. `verify_guard_docs_truth.py --root .` -> **CRASH**:
+   `NameError: name 'texts' is not defined. Did you mean: 'text'?` at
+   verify_guard_docs_truth.py:717 in _check_generated_docs - variable renamed to
+   singular upstream, line 717 left behind (refactor slip in GR-10D).
+4. `verify_guard_registry.py --root .` -> **CRASH (REGRESSION vs round 17 exit 0)**:
+   `NameError: name 'SOURCE_SCOPE_VALUES' is not defined` - the GR-10B sourceScope work
+   references a constant that no longer exists / was never imported in the verifier.
+
+### Loop items
+
+1. Fix verify_guard_docs_truth.py:717 (`texts` -> the renamed variable).
+2. Restore/import SOURCE_SCOPE_VALUES in verify_guard_registry.py (registry verifier was
+   green in rounds 16-17; this is a GR-10B-introduced regression).
+3. Reconcile the generated-docs byte mismatch: either regenerate the pinned expected
+   content via generate_guard_docs.py or fix the renderer; the two reproducibility tests
+   depend on the same fixture texts where the `texts` NameError also fires.

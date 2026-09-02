@@ -626,6 +626,7 @@ def _check_generated_docs(
     registry: Dict[str, Dict[str, Any]],
     status_text: str,
     commands_text: str,
+    texts: Dict[str, str],
 ) -> List[Tuple[str, str, str]]:
     violations: List[Tuple[str, str, str]] = []
     try:
@@ -833,7 +834,7 @@ def run_validator(root: str) -> Tuple[List[Tuple[str, str, str]], int]:
         _check_evidence_references(document_index, evidence_index, texts)
     )
     violations.extend(
-        _check_generated_docs(root, registry, status_text, commands_text)
+        _check_generated_docs(root, registry, status_text, commands_text, texts)
     )
     violations.extend(_check_path_references(document_index, root, texts))
     return violations, 0
