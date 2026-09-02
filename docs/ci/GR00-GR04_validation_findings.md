@@ -1241,3 +1241,29 @@ HEAD `4375cf4a4af41f0e324ca686194f49b7032c5db8`; checkout clean.
 3. Reconcile the generated-docs byte mismatch: either regenerate the pinned expected
    content via generate_guard_docs.py or fix the renderer; the two reproducibility tests
    depend on the same fixture texts where the `texts` NameError also fires.
+
+---
+
+## Round 20 (2026-09-01) - R19 fix verification at `e4ee9bad`
+
+HEAD `e4ee9bad9f2c5dad5f23843f50406efb2171e90b`; checkout clean.
+
+1. `pytest scripts/ci/test_verify_guard_docs_truth.py` -> **2 failed / 23 passed**
+   (was 3/22). FIXED: the `texts` NameError (test fixture + validator line 717) and
+   test_status_block_drift_fails is green. REMAINING: both failures are the SAME root -
+   `E_GENERATED_NOT_REPRODUCIBLE` for docs/ci/GUARD_COMMANDS.generated.md and
+   docs/ci/GUARD_STATUS.generated.md (tracked bytes differ from renderer output).
+2. `verify_guard_docs_truth.py --root .` -> exit 1: "GUARD DOCS TRUTH: FAIL (2 violation(s))" -
+   the same two E_GENERATED_NOT_REPRODUCIBLE rows.
+3. `verify_guard_registry.py --root .` -> **exit 0 - REGRESSION CLEARED**
+   ("VALID and consistent with its compiled suite plan").
+4. `generate_guard_docs.py --root . --check` -> exit 1: "GUARD DOCS STALE:
+   docs\ci\GUARD_COMMANDS.generated.md" (+ GUARD_STATUS).
+
+### Disposition
+
+Single remaining action for the loop: run
+`python scripts/ci/generate_guard_docs.py --root .` (WITHOUT --check) and COMMIT the two
+regenerated files. The tracked docs were evidently committed before the GR-10B sourceScope
+registry fields landed and were never regenerated. No code defect remains in the
+validator/verifier/renderer per current evidence.

@@ -94,14 +94,14 @@ argv as repeated single-token `--command-arg=<value>` entries.
 ## pii_logging
 
 - mode: blocking
-- owner: @panospao7 (doc anchor: docs/ci/guard-framework.md)
+- owner: @panospao7 (doc anchor: docs/ci/guard-policy.md)
 - source-scope: production-kotlin-filtered
 - engine: python-direct
 - timeout-profile: standard (300s)
 - required-inputs: scripts/allowlists/pii_logging_allowlist.yml
 - output-contract: stdout-human;exit:0=pass,1=violation,2=infra
 - command-identity: <resolved-interpreter> scripts/verify_pii_logging_boundaries.py --fail-on-violation
-- documentation-anchor: docs/ci/guard-framework.md
+- documentation-anchor: docs/ci/guard-policy.md
 
 ## di_release
 

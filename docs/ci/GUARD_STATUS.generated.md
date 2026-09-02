@@ -90,7 +90,7 @@ Verified SHA: 565018c5eed61fae4351cb59342dc5c274eb27e7
 Outcome: PASS
 Canonical command reference: GUARD_COMMANDS.generated.md#pii_logging
 Scope: production-kotlin-filtered
-Owner: @panospao7 (doc anchor: docs/ci/guard-framework.md)
+Owner: @panospao7 (doc anchor: docs/ci/guard-policy.md)
 <!-- GUARD_STATUS:END pii_logging -->
 
 <!-- GUARD_STATUS:BEGIN di_release -->
