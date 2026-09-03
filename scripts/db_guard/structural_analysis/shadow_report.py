@@ -32,6 +32,19 @@ def _infra_result(callable_key: str, path: str, line: int, code: str) -> Structu
     )
 
 
+def _default_opacity_predicate(masked_text: str, body_span, mutation_sites):
+    from .barrier_markers import (  # local import keeps module decoupled by default
+        barrier_like_call_spans,
+        lambda_opacity_predicate,
+    )
+
+    return lambda_opacity_predicate(
+        masked_text,
+        tuple(mutation_sites),
+        barrier_like_call_spans(masked_text, body_span.start, body_span.end),
+    )
+
+
 def analyze_callable_structurally(
     masked_text: str,
     body_span,
@@ -39,14 +52,23 @@ def analyze_callable_structurally(
     callable_key: str,
     mutation_sites=(),
     barrier_marker_fn=None,
+    opacity_predicate_fn=None,
 ) -> StructuralAnalysisResult:
     """Run parse -> markers -> CFG for one callable and return the result.
 
     ``barrier_marker_fn(parse, masked_text) -> tuple[BarrierMarker, ...]`` is
     injected so this module stays decoupled from marker extraction.
+    ``opacity_predicate_fn`` overrides the opaque-lambda soundness gate; by
+    default the gate is active only when mutation sites are supplied (the
+    analyzer knows what must never hide inside a lambda body).
     """
+    opacity = opacity_predicate_fn
+    if opacity is None and mutation_sites:
+        opacity = _default_opacity_predicate(masked_text, body_span, mutation_sites)
     try:
-        parse: CallableBodyParse = parse_callable_body(masked_text, body_span)
+        parse: CallableBodyParse = parse_callable_body(
+            masked_text, body_span, lambda_opacity_predicate=opacity
+        )
     except (TypeError, ValueError):
         return _infra_result(
             callable_key,

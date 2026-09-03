@@ -13,9 +13,19 @@ from __future__ import annotations
 import re
 
 from .model import BarrierMarker, BarrierMarkerKind, SourceSpan
-from .tokenizer import CallableBodyParse, RegionKind
+from .tokenizer import (
+    CallableBodyParse,
+    RegionKind,
+    _match_forward,
+    _RE_LIKE_BARRIER,
+    _RE_WORKER_GUARD,
+)
 
-__all__ = ["collect_barrier_markers"]
+__all__ = [
+    "collect_barrier_markers",
+    "barrier_like_call_spans",
+    "lambda_opacity_predicate",
+]
 
 _WORKER_GUARD_RE = re.compile(
     r"\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*"
@@ -117,3 +127,71 @@ def _line_start(text: str, offset: int) -> int:
 
 def _line_at(text: str, offset: int) -> int:
     return text.count("\n", 0, offset) + 1
+
+
+def barrier_like_call_spans(
+    masked_text: str, start: int, end: int
+) -> tuple[tuple[int, int], ...]:
+    """Spans of any barrier-shaped call site inside ``[start, end)``.
+
+    Parse-independent (regex over masked text): canonical
+    ``writeBarrier.runWrite {`` / ``writeBarrier.checkWritesAllowed(``
+    receivers, any-receiver ``runWrite`` / ``checkWritesAllowed`` shapes, and
+    worker-guard scopes.  Used by the opaque-lambda soundness gate so a
+    lambda body is never modeled opaque when it hides a barrier call.
+    """
+    spans: set[tuple[int, int]] = set()
+    for pattern in (_RE_LIKE_BARRIER, _RE_WORKER_GUARD):
+        for match in pattern.finditer(masked_text, start, end):
+            spans.add((match.start(), match.end()))
+    return tuple(sorted(spans))
+
+
+def _brace_groups(
+    text: str, start: int, end: int
+) -> tuple[tuple[int, int], ...] | None:
+    """Matched ``{ ... }`` groups inside ``[start, end)``, or None when a
+    brace never closes."""
+    groups: list[tuple[int, int]] = []
+    i = start
+    while i < end:
+        if text[i] == "{":
+            close = _match_forward(text, i, end)
+            if close < 0:
+                return None
+            groups.append((i, close))
+            i = close
+        else:
+            i += 1
+    return tuple(groups)
+
+
+def lambda_opacity_predicate(
+    masked_text: str,
+    mutation_sites,
+    barrier_like_spans: tuple[tuple[int, int], ...],
+):
+    """Build the soundness gate for opaque-lambda modeling.
+
+    A brace-containing statement may be modeled as one opaque STATEMENT only
+    when every brace group inside it contains no mutation-site start offset
+    and no barrier-shaped call overlapping the group.  Anything else keeps
+    the strict lambda-escape failure (fail closed).
+    """
+    site_starts = tuple(sorted(site.span.start for site in mutation_sites))
+
+    def predicate(start: int, end: int) -> bool:
+        groups = _brace_groups(masked_text, start, end)
+        if groups is None:
+            return False
+        for group_start, group_end in groups:
+            if any(group_start <= s < group_end for s in site_starts):
+                return False
+            if any(
+                marker_start < group_end and marker_end > group_start
+                for marker_start, marker_end in barrier_like_spans
+            ):
+                return False
+        return True
+
+    return predicate

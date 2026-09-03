@@ -62,6 +62,9 @@ _RE_DO = re.compile(r"do\s*\{")
 _RE_ELSE = re.compile(r"else\b")
 _RE_ACCESSOR = re.compile(r"(?:^|[^\w])(?:get|set)\s*\(")
 _RE_JUMP = re.compile(r"^(return|throw|break|continue)(?![\w])")
+_RE_VAL_CONSTRUCT = re.compile(
+    r"^(?:val|var)\s+[^=\n]*?=\s*(?P<construct>try|if|when)(?![\w])"
+)
 
 _CONT_END = set("+-*/%,:?.&|<>!(`[")
 _WS = " \t\r\n\x0b\x0c"
@@ -170,6 +173,12 @@ class _Cursor:
         self.text = text
         self.starts = _line_starts(text)
         self.findings: list[UnsupportedFinding] = []
+        # Optional soundness gate for opaque-lambda modeling: when set, a
+        # brace-containing leaf statement may be modeled as an opaque
+        # STATEMENT only if the predicate returns True for its span (no
+        # mutation site start and no barrier-like call inside any brace
+        # group).  None preserves the strict lambda-escape failure.
+        self.opacity_predicate = None
 
     def span(self, start: int, end: int) -> SourceSpan:
         import bisect
@@ -289,6 +298,28 @@ def _leading_kw(stmt: str, word: str) -> bool:
         return False
     rest = stmt[len(word) :]
     return not rest or not (rest[0].isalnum() or rest[0] == "_")
+
+
+def _find_top_level_else(text: str, start: int, end: int) -> int | None:
+    """Absolute offset of a depth-0 ``else`` keyword in ``[start, end)``, or
+    None.  Nesting depth counts ``( )``, ``[ ]`` and ``{ }``; masked text
+    contains no comments or strings."""
+    depth = 0
+    i = start
+    while i < end:
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif depth == 0 and ch == "e" and text.startswith("else", i):
+            before_ok = i == start or not (text[i - 1].isalnum() or text[i - 1] == "_")
+            after = i + 4
+            after_ok = after >= end or not (text[after].isalnum() or text[after] == "_")
+            if before_ok and after_ok:
+                return i
+        i += 1
+    return None
 
 
 def _parse_block(
@@ -465,6 +496,59 @@ def _parse_sequence(
                 )
                 idx += 1
                 continue
+            if word == "return":
+                rest_s = rest.lstrip(_WS)
+                construct = None
+                if _leading_kw(rest_s, "try"):
+                    construct = "try"
+                elif _leading_kw(rest_s, "if"):
+                    construct = "if"
+                elif _leading_kw(rest_s, "when"):
+                    construct = "when"
+                if construct is not None:
+                    cons_base = stmt_e - len(rest_s)
+                    findings_before = len(cur.findings)
+                    if construct == "try":
+                        region, consumed = _parse_try(
+                            cur, cons_base, stmt_e, parts, idx, in_lambda
+                        )
+                    elif construct == "if":
+                        region, consumed = _parse_if(
+                            cur, cons_base, stmt_e, parts, idx, in_lambda
+                        )
+                    else:
+                        region = _parse_when(cur, cons_base, stmt_e, in_lambda)
+                        consumed = idx + 1
+                    if region is not None:
+                        out.append(
+                            ParsedRegion(
+                                kind=RegionKind.RETURN,
+                                span=cur.span(base, region.span.end),
+                                children=(region,),
+                            )
+                        )
+                        idx = consumed
+                        continue
+                    # Construct parse failed.  When an opacity gate proves the
+                    # statement hides no mutation site and no barrier-like
+                    # call, roll the findings back and keep the historical
+                    # leaf-RETURN model (sound: nothing is hidden).  With no
+                    # gate, keep the historical leaf too.  Otherwise fail
+                    # closed on the construct findings.
+                    construct_findings = cur.findings[findings_before:]
+                    del cur.findings[findings_before:]
+                    if (
+                        cur.opacity_predicate is not None
+                        and not cur.opacity_predicate(base, stmt_e)
+                    ):
+                        cur.findings.extend(construct_findings)
+                        idx = consumed
+                        continue
+                    out.append(
+                        ParsedRegion(kind=RegionKind.RETURN, span=cur.span(base, stmt_e))
+                    )
+                    idx = consumed
+                    continue
             kind = {
                 "return": RegionKind.RETURN,
                 "throw": RegionKind.THROW,
@@ -624,6 +708,50 @@ def _parse_sequence(
             idx += 1
             continue
 
+        m_val = _RE_VAL_CONSTRUCT.match(stripped)
+        if m_val is not None:
+            cons_base = base + m_val.start("construct")
+            cons_kw = m_val.group("construct")
+            findings_before = len(cur.findings)
+            if cons_kw == "try":
+                region, consumed = _parse_try(
+                    cur, cons_base, stmt_e, parts, idx, in_lambda
+                )
+            elif cons_kw == "if":
+                region, consumed = _parse_if(
+                    cur, cons_base, stmt_e, parts, idx, in_lambda
+                )
+            else:
+                region = _parse_when(cur, cons_base, stmt_e, in_lambda)
+                consumed = idx + 1
+            if region is not None:
+                out.append(
+                    ParsedRegion(
+                        kind=RegionKind.STATEMENT,
+                        span=cur.span(base, region.span.end),
+                        children=(region,),
+                    )
+                )
+                idx = consumed
+                continue
+            # Construct parse failed: opaque fallback when the opacity gate
+            # proves nothing is hidden inside; else fail closed (construct
+            # findings restored).
+            construct_findings = cur.findings[findings_before:]
+            del cur.findings[findings_before:]
+            if (
+                cur.opacity_predicate is not None
+                and not cur.opacity_predicate(base, stmt_e)
+            ):
+                cur.findings.extend(construct_findings)
+                idx = consumed
+                continue
+            out.append(
+                ParsedRegion(kind=RegionKind.STATEMENT, span=cur.span(base, stmt_e))
+            )
+            idx = consumed
+            continue
+
         if "{?:" in stripped.replace(" ", "").replace("\t", "") and "{" in stripped:
             pass
 
@@ -641,6 +769,19 @@ def _parse_sequence(
                 continue
 
         if "{" in stripped or "}" in stripped:
+            if (
+                cur.opacity_predicate is not None
+                and cur.opacity_predicate(base, stmt_e)
+            ):
+                # Every brace group in this statement is provably free of
+                # mutation sites and barrier-like calls, so the lambdas are
+                # observationally opaque for the dominance proof: model the
+                # whole statement as one plain sequential STATEMENT.
+                out.append(
+                    ParsedRegion(kind=RegionKind.STATEMENT, span=cur.span(base, stmt_e))
+                )
+                idx += 1
+                continue
             cur.fail(
                 "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
                 base,
@@ -693,30 +834,113 @@ def _parse_if(
             "unbalanced-paren",
         )
         return None, idx + 1
-    rest = text[cond_end:stmt_e].strip(_WS)
-    if not rest.startswith("{"):
-        cur.fail(
-            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
-            base,
-            stmt_e,
-            "unbraced-if-body",
-        )
-        return None, idx + 1
-    brace_abs = stmt_e - len(text[cond_end:stmt_e]) + (len(text[cond_end:stmt_e]) - len(text[cond_end:stmt_e].lstrip(_WS)))
-    brace_abs = cond_end + (len(text[cond_end:stmt_e]) - len(text[cond_end:stmt_e].lstrip(_WS)))
-    close = _match_forward(text, brace_abs, stmt_e)
-    tail = text[close:stmt_e].strip(_WS) if close > 0 else ""
-    if close < 0 or tail:
-        cur.fail(
-            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
-            base,
-            stmt_e,
-            "if-body-not-closed",
-        )
-        return None, idx + 1
-    children = _parse_sequence(cur, brace_abs + 1, close - 1, in_lambda)
-    span_end = close
+    rest_raw = text[cond_end:stmt_e]
+    rest = rest_raw.strip(_WS)
+    children: list[ParsedRegion] = []
+    span_end: int
     nxt = idx + 1
+    if rest.startswith("{"):
+        brace_abs = cond_end + (len(rest_raw) - len(rest_raw.lstrip(_WS)))
+        close = _match_forward(text, brace_abs, stmt_e)
+        tail = text[close:stmt_e].strip(_WS) if close > 0 else ""
+        if close < 0 or tail:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                base,
+                stmt_e,
+                "if-body-not-closed",
+            )
+            return None, nxt
+        children = [
+            ParsedRegion(
+                kind=RegionKind.BLOCK,
+                span=cur.span(brace_abs, close),
+                children=tuple(_parse_sequence(cur, brace_abs + 1, close - 1, in_lambda)),
+            )
+        ]
+        span_end = close
+    elif rest:
+        else_abs = _find_top_level_else(text, cond_end, stmt_e)
+        body_start = cond_end + (len(rest_raw) - len(rest_raw.lstrip(_WS)))
+        body_end = else_abs if else_abs is not None else stmt_e
+        body_regions = _parse_sequence(cur, body_start, body_end, in_lambda)
+        if len(body_regions) != 1:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                body_start,
+                body_end,
+                "unbraced-if-body",
+            )
+            return None, nxt
+        if else_abs is not None and body_regions[0].kind == RegionKind.IF:
+            # Kotlin binds a trailing else to the NEAREST if, so
+            # `if (a) if (b) x() else y()` must not bind here.
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                body_start,
+                else_abs,
+                "ambiguous-dangling-else",
+            )
+            return None, nxt
+        children = [
+            ParsedRegion(
+                kind=RegionKind.BLOCK,
+                span=cur.span(body_start, body_end),
+                children=tuple(body_regions),
+            )
+        ]
+        span_end = body_end
+        if else_abs is not None:
+            e_body_start = else_abs + 4
+            e_regions = _parse_sequence(cur, e_body_start, stmt_e, in_lambda)
+            if len(e_regions) != 1:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    e_body_start,
+                    stmt_e,
+                    "unbraced-else-body",
+                )
+                return None, nxt
+            children.append(e_regions[0])
+            span_end = e_regions[0].span.end
+    else:
+        if nxt < len(parts):
+            ns, ne = parts[nxt]
+            nstr = _strip(text[ns:ne])
+            if _leading_kw(nstr, "else"):
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    ns,
+                    ne,
+                    "if-without-body",
+                )
+                return None, nxt + 1
+            body_regions = _parse_sequence(cur, ns, ne, in_lambda)
+            if not body_regions:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    ns,
+                    ne,
+                    "unbraced-if-body",
+                )
+                return None, nxt + 1
+            children = [
+                ParsedRegion(
+                    kind=RegionKind.BLOCK,
+                    span=cur.span(ns, ne),
+                    children=tuple(body_regions),
+                )
+            ]
+            span_end = ne
+            nxt += 1
+        else:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                base,
+                stmt_e,
+                "if-without-body",
+            )
+            return None, nxt
     while nxt < len(parts):
         ns, ne = parts[nxt]
         nstr = _strip(text[ns:ne])
@@ -736,15 +960,63 @@ def _parse_if(
                 nxt += 1
                 continue
             e_rest = after.strip(_WS)
-            if not e_rest.startswith("{"):
+            if not e_rest:
+                # `else` alone: the body is the next statement part.
+                if nxt + 1 < len(parts):
+                    bs, be = parts[nxt + 1]
+                    bstr = _strip(text[bs:be])
+                    if _leading_kw(bstr, "else"):
+                        cur.fail(
+                            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                            bs,
+                            be,
+                            "else-without-body",
+                        )
+                        return None, nxt + 1
+                    b_regions = _parse_sequence(cur, bs, be, in_lambda)
+                    if not b_regions:
+                        cur.fail(
+                            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                            bs,
+                            be,
+                            "unbraced-else-body",
+                        )
+                        return None, nxt + 1
+                    children = list(children) + [
+                        ParsedRegion(
+                            kind=RegionKind.BLOCK,
+                            span=cur.span(bs, be),
+                            children=tuple(b_regions),
+                        )
+                    ]
+                    span_end = be
+                    nxt += 2
+                    continue
                 cur.fail(
                     "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
                     nbase,
                     ne,
-                    "unbraced-else-body",
+                    "else-without-body",
                 )
                 return None, nxt + 1
-            e_brace = nbase + (len(text[nbase:ne]) - len(text[nbase:ne].lstrip(_WS)) + 4)
+            if not e_rest.startswith("{"):
+                # Unbraced same-part else body: exactly one statement.
+                e_body_start = nbase + 4 + (
+                    len(text[nbase + 4 : ne]) - len(text[nbase + 4 : ne].lstrip(_WS))
+                )
+                e_regions = _parse_sequence(cur, e_body_start, ne, in_lambda)
+                if len(e_regions) != 1:
+                    cur.fail(
+                        "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                        e_body_start,
+                        ne,
+                        "unbraced-else-body",
+                    )
+                    return None, nxt + 1
+                children = list(children) + [e_regions[0]]
+                span_end = e_regions[0].span.end
+                nxt += 1
+                continue
             e_brace = nbase + (nstr.find("{"))
             e_close = _match_forward(text, e_brace, ne)
             e_tail = text[e_close:ne].strip(_WS) if e_close > 0 else ""
@@ -782,7 +1054,12 @@ def _parse_when(
     text = cur.text
     stripped = text[base:stmt_e]
     paren_rel = stripped.find("(")
-    if paren_rel < 0:
+    kw_end = base + 4
+    after_kw = text[kw_end:stmt_e].lstrip(_WS)
+    if after_kw.startswith("{"):
+        # Subject-less `when { ... }`: the brace IS the subject position.
+        subj_end = kw_end + (len(text[kw_end:stmt_e]) - len(after_kw))
+    elif paren_rel < 0:
         cur.fail(
             "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
             base,
@@ -790,16 +1067,17 @@ def _parse_when(
             "when-without-subject",
         )
         return None
-    paren_abs = base + paren_rel
-    subj_end = _match_forward(text, paren_abs, stmt_e)
-    if subj_end < 0:
-        cur.fail(
-            "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
-            paren_abs,
-            stmt_e,
-            "unbalanced-paren",
-        )
-        return None
+    else:
+        paren_abs = base + paren_rel
+        subj_end = _match_forward(text, paren_abs, stmt_e)
+        if subj_end < 0:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                paren_abs,
+                stmt_e,
+                "unbalanced-paren",
+            )
+            return None
     rest = text[subj_end:stmt_e]
     brace_off = rest.find("{")
     if brace_off < 0:
@@ -1254,12 +1532,18 @@ def _parse_accessor(
     )
 
 
-def parse_callable_body(masked_text: str, body_span: SourceSpan) -> CallableBodyParse:
+def parse_callable_body(
+    masked_text: str,
+    body_span: SourceSpan,
+    *,
+    lambda_opacity_predicate=None,
+) -> CallableBodyParse:
     if not isinstance(masked_text, str):
         raise TypeError("masked_text must be a string")
     if not isinstance(body_span, SourceSpan):
         raise TypeError("body_span must be a SourceSpan")
     cur = _Cursor(masked_text)
+    cur.opacity_predicate = lambda_opacity_predicate
     if '"' in masked_text or "'" in masked_text:
         cur.fail(
             "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",

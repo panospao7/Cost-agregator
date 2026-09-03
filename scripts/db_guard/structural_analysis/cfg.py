@@ -283,6 +283,18 @@ def _build_region(
         return _build_regions(builder, list(region.children), in_lambda, loop_ctx)
 
     if region.kind == RegionKind.RETURN:
+        if region.children:
+            # `return try/if/when ...`: the wrapped construct carries the
+            # flow; its normal completion is the return.
+            child_firsts, child_lasts, child_dangling = _build_regions(
+                builder, list(region.children), in_lambda, loop_ctx
+            )
+            return (
+                child_firsts,
+                [],
+                [(EdgeKind.RETURN_EXIT, last) for last in child_lasts]
+                + list(child_dangling),
+            )
         node = builder.add(kind, region.span)
         builder.edge(EdgeKind.RETURN_EXIT, node, builder.ensure_exit_normal())
         return ([node], [], [])
@@ -305,6 +317,11 @@ def _build_region(
         if loop_ctx is not None and "header" in loop_ctx:
             builder.edge(EdgeKind.NORMAL, node, loop_ctx["header"])
         return ([node], [], [])
+
+    if region.kind == RegionKind.STATEMENT and region.children:
+        # A construct-valued local declaration (`val x = when { ... }`):
+        # the wrapped construct carries the flow.
+        return _build_regions(builder, list(region.children), in_lambda, loop_ctx)
 
     node = builder.add(kind, region.span)
     return ([node], [node], [])

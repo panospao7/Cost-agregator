@@ -1,0 +1,303 @@
+# GR-12 direct-barrier proof inventory (evidence artifact, NOT policy,
+# NOT a baseline, NOT an allowlist). One row per active-policy mutation
+# with barrierMode: direct. PROVEN rows carry the GR-12 dominance proof
+# evidence; UNSUPPORTED rows carry reasonCodes and route to GR-14
+# remediation slices (they block GR-12 activation per plan).
+# proofStatus recorded from
+# build/guard-debug/gr12/direct-proof-before.json.after.json (exit 2:
+# activation stays blocked until every row is PROVEN).
+schemaVersion: 1
+startSha: 384905f62facb126b91fdccc321abe53c51f9082
+activePolicySha256: 5744afb7f4e817f9b61848a83d293b61e3d1547d75582da6045b2fb84824248b
+sourceRootManifestSha256: 02ec3e28c9451cecb31ca90dc8f665837b7857d979c20b3a400f898f8d1c2c95
+structuralShadowSha256: e27b9e0dbf63760cb539c1e0eb4a8032588877361b0baf31bde37dbd36f5df3f
+canonicalBarrierContractVersion: 1
+entries:
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|deleteOldRates|null|Long|exchangeRateDao|com.yourname.expensetracker.data.database.dao.ExchangeRateDao|deleteOldRates
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|deleteOldRates|null|Long
+  path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0003
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|insertOrUpdateAll|null|List<com.yourname.expensetracker.domain.currency.DomainExchangeRate>|exchangeRateDao|com.yourname.expensetracker.data.database.dao.ExchangeRateDao|insertOrUpdateAll
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|insertOrUpdateAll|null|List<com.yourname.expensetracker.domain.currency.DomainExchangeRate>
+  path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0004
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|insertOrUpdate|null|com.yourname.expensetracker.domain.currency.DomainExchangeRate|exchangeRateDao|com.yourname.expensetracker.data.database.dao.ExchangeRateDao|insertOrUpdate
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|insertOrUpdate|null|com.yourname.expensetracker.domain.currency.DomainExchangeRate
+  path: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0005
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|addExpenseToGroupAtomic|null|com.yourname.expensetracker.data.database.entity.GroupExpense|groupExpenseDao|com.yourname.expensetracker.data.database.dao.GroupExpenseDao|insert
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|addExpenseToGroupAtomic|null|com.yourname.expensetracker.data.database.entity.GroupExpense
+  path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0006
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/AnomalyAlertRepositoryImpl.kt|com.yourname.expensetracker.data.repository.AnomalyAlertRepositoryImpl|function|insert|null|com.yourname.expensetracker.domain.alerts.NewAnomalyAlert|anomalyAlertDao|com.yourname.expensetracker.data.database.dao.AnomalyAlertDao|insert
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/AnomalyAlertRepositoryImpl.kt|com.yourname.expensetracker.data.repository.AnomalyAlertRepositoryImpl|function|insert|null|com.yourname.expensetracker.domain.alerts.NewAnomalyAlert
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AnomalyAlertRepositoryImpl.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0029
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|addBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|insert
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|addBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0030
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|addBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|insertAndActivateCategory
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|addBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes:
+  - DB_SIGNATURE_UNRESOLVED
+  reason: DAO_DEFAULT_METHOD_NOT_INDEXED (D4 emits no resolved mutation observation; scanner.py mutator gate skips unindexed default @Transaction DAO methods)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - build/guard-debug/gr12-prestate/db-cli-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|addBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|insertAndActivateOverall
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|addBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes:
+  - DB_SIGNATURE_UNRESOLVED
+  reason: DAO_DEFAULT_METHOD_NOT_INDEXED (D4 emits no resolved mutation observation; scanner.py mutator gate skips unindexed default @Transaction DAO methods)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - build/guard-debug/gr12-prestate/db-cli-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|delete
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes: &id001
+  - DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+  reason: callable not structurally modelable (GR-14 remediation candidate)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0032
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetForecastDao|com.yourname.expensetracker.data.database.dao.BudgetForecastDao|deleteForecastsForBudget
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes: *id001
+  reason: callable not structurally modelable (GR-14 remediation candidate)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0032
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|updateBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|updateAndEnforceActiveScope
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|updateBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes:
+  - DB_SIGNATURE_UNRESOLVED
+  reason: DAO_DEFAULT_METHOD_NOT_INDEXED (D4 emits no resolved mutation observation; scanner.py mutator gate skips unindexed default @Transaction DAO methods)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - build/guard-debug/gr12-prestate/db-cli-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|addCategory|null|String,String,String|categoryDao|com.yourname.expensetracker.data.database.dao.CategoryDao|getOrInsertByNameNoCase
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|addCategory|null|String,String,String
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes:
+  - DB_SIGNATURE_UNRESOLVED
+  reason: DAO_DEFAULT_METHOD_NOT_INDEXED (D4 emits no resolved mutation observation; scanner.py mutator gate skips unindexed default @Transaction DAO methods)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - build/guard-debug/gr12-prestate/db-cli-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|deleteCategory|null|Long|categoryDao|com.yourname.expensetracker.data.database.dao.CategoryDao|delete
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|deleteCategory|null|Long
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes:
+  - DB_SIGNATURE_UNRESOLVED
+  reason: DAO_DEFAULT_METHOD_NOT_INDEXED (D4 emits no resolved mutation observation; scanner.py mutator gate skips unindexed default @Transaction DAO methods)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - build/guard-debug/gr12-prestate/db-cli-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|addPlannedExpense|null|com.yourname.expensetracker.data.database.entity.PlannedExpense|plannedExpenseDao|com.yourname.expensetracker.data.database.dao.PlannedExpenseDao|insertPlannedExpense
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|addPlannedExpense|null|com.yourname.expensetracker.data.database.entity.PlannedExpense
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0076
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|deletePlannedExpenseById|null|Long|plannedExpenseDao|com.yourname.expensetracker.data.database.dao.PlannedExpenseDao|deletePlannedExpenseById
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|deletePlannedExpenseById|null|Long
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0077
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|deletePlannedExpense|null|com.yourname.expensetracker.data.database.entity.PlannedExpense|plannedExpenseDao|com.yourname.expensetracker.data.database.dao.PlannedExpenseDao|deletePlannedExpense
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|deletePlannedExpense|null|com.yourname.expensetracker.data.database.entity.PlannedExpense
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0078
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt|com.yourname.expensetracker.data.repository.PromptStateRepository|function|cleanupOldRecords|null||promptStateDao|com.yourname.expensetracker.data.database.dao.PromptStateDao|deleteOldPrompts
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt|com.yourname.expensetracker.data.repository.PromptStateRepository|function|cleanupOldRecords|null|
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0079
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt|com.yourname.expensetracker.data.repository.PromptStateRepository|function|recordAcknowledgment|null|String,String,String?|promptStateDao|com.yourname.expensetracker.data.database.dao.PromptStateDao|insertPromptState
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt|com.yourname.expensetracker.data.repository.PromptStateRepository|function|recordAcknowledgment|null|String,String,String?
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0080
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt|com.yourname.expensetracker.data.repository.PromptStateRepository|function|recordPrompt|null|String|promptStateDao|com.yourname.expensetracker.data.database.dao.PromptStateDao|insertPromptState
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt|com.yourname.expensetracker.data.repository.PromptStateRepository|function|recordPrompt|null|String
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/PromptStateRepository.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0081
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|receiptEventDao|com.yourname.expensetracker.data.database.dao.ReceiptEventDao|insert
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes: &id002
+  - DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+  reason: callable not structurally modelable (GR-14 remediation candidate)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0193
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|receiptExpenseLinkDao|com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|deleteAllLinksForReceipt
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes: *id002
+  reason: callable not structurally modelable (GR-14 remediation candidate)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0193
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|scannedReceiptDao|com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|delete
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: UNSUPPORTED
+  reasonCodes: *id002
+  reason: callable not structurally modelable (GR-14 remediation candidate)
+  proofStatus: UNSUPPORTED
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0193
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt|com.yourname.expensetracker.domain.workers.WorkerExecutionGuard|function|recoverStaleRunningJobs|null|Long|backgroundJobRunDao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|staleAbortIfStillRunning
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt|com.yourname.expensetracker.domain.workers.WorkerExecutionGuard|function|recoverStaleRunningJobs|null|Long
+  path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: MIT-003
+  evidence:
+  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0265
+  - build/guard-debug/gr12/capability-shadow-run-01.json
+  - build/guard-debug/gr12/direct-proof-before.json.after.json

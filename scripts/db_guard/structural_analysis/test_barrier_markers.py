@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from scripts.db_guard.structural_analysis.barrier_markers import (
+    barrier_like_call_spans,
     collect_barrier_markers,
+    lambda_opacity_predicate,
 )
-from scripts.db_guard.structural_analysis.model import BarrierMarkerKind
+from scripts.db_guard.structural_analysis.model import BarrierMarkerKind, SourceSpan
 from scripts.db_guard.structural_analysis.test_tokenizer import parse
 
 
@@ -109,3 +111,52 @@ class TestDeterminism:
         assert first == second
         starts = [marker.span.start for marker in first]
         assert starts == sorted(starts)
+
+
+class TestOpaqueLambdaGate:
+    """GR-12: the soundness gate for opaque-lambda modeling."""
+
+    def test_barrier_like_call_spans_finds_canonical_and_like_shapes(self):
+        source = (
+            "writeBarrier.checkWritesAllowed(op)\n"
+            "writeBarrier.runWrite {\n  val a = 1\n}\n"
+            "foo.runWrite(x)\n"
+            "workerGuard.runGuarded {\n  val b = 2\n}\n"
+        )
+        spans = barrier_like_call_spans(source, 0, len(source))
+        assert spans
+        joined = " | ".join(source[s:e] for s, e in spans)
+        assert "checkWritesAllowed(" in joined
+        assert "runWrite" in joined
+        assert "runGuarded" in joined
+
+    def test_gate_refuses_site_inside_brace_group(self):
+        source = "require(x) {\n  dao.insert(y)\n}\n"
+        site_start = source.index("dao.insert")
+        predicate = lambda_opacity_predicate(
+            source, (type("S", (), {"span": SourceSpan(site_start, site_start + 1, 1, 1)})(),),
+            (),
+        )
+        assert predicate(0, len(source)) is False
+
+    def test_gate_refuses_marker_overlapping_group(self):
+        source = "require(x) {\n  foo.runWrite(y)\n}\n"
+        marker_start = source.index("foo.runWrite")
+        predicate = lambda_opacity_predicate(source, (), ((marker_start, marker_start + 12),))
+        assert predicate(0, len(source)) is False
+
+    def test_gate_allows_clean_lambda_groups(self):
+        source = "require(x.isNotEmpty()) {\n  val m = 1\n}\n"
+        predicate = lambda_opacity_predicate(source, (), ())
+        assert predicate(0, len(source)) is True
+
+    def test_gate_refuses_unbalanced_braces(self):
+        source = "require(x) {\n  val m = 1\n"
+        predicate = lambda_opacity_predicate(source, (), ())
+        assert predicate(0, len(source)) is False
+
+    def test_gate_is_deterministic(self):
+        source = "require(x) {\n  val m = 1\n}\n"
+        first = lambda_opacity_predicate(source, (), ())
+        second = lambda_opacity_predicate(source, (), ())
+        assert first(0, len(source)) == second(0, len(source))

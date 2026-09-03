@@ -147,18 +147,46 @@ parsing all Kotlin):
 braced functions
 sequential statements
 nested blocks
-if / else
-when with explicit branches
+if / else (braced or single-statement unbraced bodies)
+when with explicit branches (with or without subject)
 while / for / do-while
 try / catch / finally
-return
+return (plain, and `return try/if/when ...` construct returns)
 throw
 break
 continue
 property getters/setters with braced bodies
+`val`/`var` declarations whose initializer is an if/when/try construct
 simple direct barrier calls
 simple DAO mutation sites supplied by D4
 ```
+
+### GR-12 capability extension (soundness rules)
+
+PR-GR-12 extended the GR-11 tokenizer/CFG without changing the closed
+vocabularies. Three conservative rejections were relaxed under the following
+fail-closed rules (enforced by tests in
+`scripts/db_guard/structural_analysis/`):
+
+1. **`return try/if/when ...` and `val/var x = if/when/try ...`** — the
+   wrapped construct is parsed as the region's child and carries the flow
+   (`RETURN` with children exits via its construct's normal completion).
+   When the construct parse fails, the statement may fall back to the
+   historical leaf model ONLY when the opaque-lambda gate (below) proves the
+   statement hides no mutation site and no barrier-like call; otherwise the
+   construct's conservative failure stands.
+2. **Unbraced single-statement if/else bodies** — the body is exactly one
+   parsed statement (or the next statement part when the header ends the
+   line). A trailing `else` after a nested unbraced `if` fails closed
+   (`ambiguous-dangling-else`: Kotlin binds it to the nearest `if`, and
+   misplacing branch flow would be unsound).
+3. **Opaque argument lambdas** — a brace-containing leaf statement may be
+   modeled as one plain `STATEMENT` only when every brace group inside it
+   contains no mutation-site start offset and no barrier-like call span
+   (`barrier_markers.lambda_opacity_predicate`). A mutation or barrier call
+   hidden in a lambda body keeps the strict
+   `DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE` failure. The gate is active only when
+   mutation sites are supplied (the analyzer must know what must never hide).
 
 ## Unsupported constructs
 
@@ -197,6 +225,12 @@ syntax is never silently flattened into sequential statements.
   `LAMBDA_DEFERRED` or `UNKNOWN` edge.
 - A barrier inside a sibling lambda or local function is **not** attached to
   the mutation's path.
+- GR-12 opaque-lambda modeling: a lambda body that provably contains no
+  mutation site and no barrier-like call may be collapsed into its enclosing
+  statement node (nothing relevant is hidden, so no synchronicity assumption
+  is needed). Any lambda that hides a mutation site or barrier-shaped call
+  keeps the strict conservative failure — see the GR-12 capability extension
+  rules above.
 
 ## Exception-flow treatment
 

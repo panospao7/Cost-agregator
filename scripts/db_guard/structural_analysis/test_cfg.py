@@ -1,6 +1,8 @@
 """CFG construction tests (shadow-only, no dominance verdicts)."""
 from __future__ import annotations
 
+import pytest
+
 from scripts.db_guard.structural_analysis.cfg import build_callable_cfg
 from scripts.db_guard.structural_analysis.model import (
     BarrierMarker,
@@ -379,3 +381,155 @@ class TestDeterminism:
         first = build(source, [site_at(source, "dao.insert")])
         second = build(source, [site_at(source, "dao.insert")])
         assert first == second
+
+
+def build_gated(source: str, sites=()):
+    """Build a CFG with the opaque-lambda gate active over ``sites``."""
+    import pytest
+    from scripts.db_guard.structural_analysis.barrier_markers import (
+        barrier_like_call_spans,
+        lambda_opacity_predicate,
+    )
+    from scripts.db_guard.structural_analysis.tokenizer import (
+        parse_callable_body,
+    )
+    from scripts.kotlin_callable_parser import mask_kotlin_source
+
+    masked = mask_kotlin_source(source)
+    predicate = lambda_opacity_predicate(
+        masked, tuple(sites), barrier_like_call_spans(masked, 0, len(masked))
+    )
+    parse_result = parse_callable_body(
+        masked,
+        SourceSpan(0, len(masked), 1, 1),
+        lambda_opacity_predicate=predicate,
+    )
+    return build_callable_cfg(
+        parse_result,
+        tuple(sites),
+        (),
+        path="app/src/main/java/A.kt",
+        callable_key="p|o|function|m|null|",
+    )
+
+
+class TestReturnConstructFlow:
+    """GR-12 extension 1: `return try/if/when ...` carries real flow."""
+
+    def test_return_try_catch_exception_edges(self):
+        source = (
+            "return try {\n  dao.insert(x)\n} catch (e: E) {\n  val y = 1\n}\n"
+        )
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        try_node = nodes_of(graph, NodeKind.TRY)[0]
+        catch_node = nodes_of(graph, NodeKind.CATCH)[0]
+        assert (try_node.id, catch_node.id, EdgeKind.EXCEPTION) in edge_pairs(graph)
+        mutation = nodes_of(graph, NodeKind.MUTATION)[0]
+        entry = nodes_of(graph, NodeKind.ENTRY)[0]
+
+        def reachable(start_id):
+            seen = {start_id}
+            frontier = [start_id]
+            while frontier:
+                for target, _ in successors(graph, frontier.pop()):
+                    if target not in seen:
+                        seen.add(target)
+                        frontier.append(target)
+            return seen
+
+        assert mutation.id in reachable(entry.id)
+
+    def test_return_try_mutation_in_catch_reachable_via_exception(self):
+        source = (
+            "return try {\n  val a = 1\n} catch (e: E) {\n  dao.insert(y)\n}\n"
+        )
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        try_node = nodes_of(graph, NodeKind.TRY)[0]
+        catch_node = nodes_of(graph, NodeKind.CATCH)[0]
+        assert (try_node.id, catch_node.id, EdgeKind.EXCEPTION) in edge_pairs(graph)
+        mutation = nodes_of(graph, NodeKind.MUTATION)[0]
+        assert mutation.span.start > catch_node.span.start
+
+    def test_return_if_unbraced_branch_flow(self):
+        source = "return if (a) dao.insert(x) else val y = 2\n"
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        branch = nodes_of(graph, NodeKind.BRANCH)[0]
+        kinds = [kind for _, kind in successors(graph, branch.id)]
+        assert EdgeKind.TRUE_BRANCH in kinds
+        assert EdgeKind.FALSE_BRANCH in kinds
+
+    def test_val_when_branch_flow(self):
+        source = "val id = when {\n  a -> dao.insert(x)\n  else -> val y = 2\n}\n"
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        when_node = nodes_of(graph, NodeKind.WHEN)[0]
+        kinds = [kind for _, kind in successors(graph, when_node.id)]
+        assert EdgeKind.WHEN_BRANCH in kinds
+        assert len(nodes_of(graph, NodeKind.MUTATION)) == 1
+
+    def test_unbraced_if_mutation_maps_to_statement(self):
+        source = "if (affected == 1) dao.insert(x)\nval z = 1\n"
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        branch = nodes_of(graph, NodeKind.BRANCH)[0]
+        mutation = nodes_of(graph, NodeKind.MUTATION)[0]
+        # The mutation node hangs off its innermost owning statement inside
+        # the branch subtree.
+        incoming = [
+            edge.source_node_id
+            for edge in graph.edges
+            if edge.target_node_id == mutation.id
+        ]
+        assert incoming
+
+        def reachable(start_id):
+            seen = {start_id}
+            frontier = [start_id]
+            while frontier:
+                for target, _ in successors(graph, frontier.pop()):
+                    if target not in seen:
+                        seen.add(target)
+                        frontier.append(target)
+            return seen
+
+        for source_id in incoming:
+            if source_id in reachable(branch.id):
+                break
+        else:
+            raise AssertionError("mutation owner not reachable from branch")
+
+
+class TestOpaqueLambdaGateFlow:
+    """GR-12 extension 3: opaque statement flow with the gate active."""
+
+    def test_mutation_call_with_lambda_argument_maps(self):
+        source = "exchangeRateDao.insertOrUpdateAll(rates.map { it.toEntity() })\nval z = 1\n"
+        site = site_at(source, "exchangeRateDao")
+        graph, diagnostics = build_gated(source, [site])
+        assert diagnostics == ()
+        assert len(nodes_of(graph, NodeKind.MUTATION)) == 1
+        entry = nodes_of(graph, NodeKind.ENTRY)[0]
+        assert successors(graph, entry.id)
+
+    def test_site_inside_lambda_raises_invariant(self):
+        source = "require(x.isNotEmpty()) {\n  dao.insert(y)\n}\n"
+        site = site_at(source, "dao.insert")
+        with pytest.raises(ValueError):
+            build_gated(source, [site])
+
+    def test_free_lambda_statement_keeps_sequential_flow(self):
+        source = (
+            "require(x.isNotEmpty()) {\n  val m = 1\n}\ndao.insert(y)\n"
+        )
+        site = site_at(source, "dao.insert")
+        graph, diagnostics = build_gated(source, [site])
+        assert diagnostics == ()
+        assert len(nodes_of(graph, NodeKind.MUTATION)) == 1
+        statements = [
+            node for node in graph.nodes
+            if node.kind is NodeKind.STATEMENT and node.span.start < site.span.start
+        ]
+        assert statements  # the require(...) statement is modeled
