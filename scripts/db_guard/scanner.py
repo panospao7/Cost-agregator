@@ -62,6 +62,10 @@ from .declaration_scanner import (
     declared_root_pairs,
     scan_production_declarations,
 )
+# PR-GR-11 Slice 1: the shared resolved-mutation observation seam.  The
+# scanner CONSTRUCTS observations through this module at its existing D4
+# resolution point; the seam scans nothing and authorizes nothing.
+from .mutation_observation import build_mutation_observation
 from .policy_model import BarrierMode, CallableKind, PolicyEntry, match_mutation
 from .room_inventory import build_room_inventory
 from .source_roots import resolve_source_root_set
@@ -2665,7 +2669,7 @@ def _dao_maps(inventory) -> tuple[dict[str, set[str]], dict[tuple[str, str], lis
     return by_simple, methods
 
 
-def scan_db_access(source_root, ownership_policy=None, structural_policy=None, raw_query_policy=None):
+def scan_db_access(source_root, ownership_policy=None, structural_policy=None, raw_query_policy=None, mutation_observation_sink=None):
     """Return a deterministic protocol-v2 report for one DB discovery run.
 
     ``source_root`` accepts the same project/source-root forms as the D2
@@ -2679,6 +2683,14 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
     paths.  The scanner is deliberately conservative: unresolved callable,
     receiver, or operation signatures become diagnostics rather than guessed
     findings.
+
+    ``mutation_observation_sink`` (PR-GR-11 Slice 1, optional, default
+    ``None``) collects one
+    :class:`~scripts.db_guard.mutation_observation.MutationObservation` per
+    fully resolved DAO mutation through the shared seam.  It never alters the
+    report: when ``None`` (the production default) the scan behaves exactly
+    as before, and when supplied it only appends observations built from the
+    same resolution values the findings below consume.
     """
     # Typed v2 authorization input only.  A non-PolicyEntry item can never be
     # matched, so it fails closed as DB_POLICY_SOURCE_EVIDENCE_INVALID instead
@@ -3280,8 +3292,6 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             mutator = next((item for item in inventory.mutators if item.method == f"{method.dao.canonical_path}::{dao}#{operation}({', '.join(method.parameters)})"), None)
             if mutator is None:
                 continue
-            line = _line(source, call.start())
-            location = SourceLocation(line=line, end_line=line)
             # Typed v2 authorization (PR-GR-07 Slice 2): EXACT full-identity
             # equality against PolicyEntry objects.  The discovered mutation's
             # kind must be a real CallableKind; an unknown kind is unresolved
@@ -3292,13 +3302,42 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             try:
                 callable_kind = CallableKind(call_symbol.kind)
             except ValueError:
+                # Unresolved kind keeps the ORIGINAL diagnostic coordinate:
+                # the bounded line of the unresolved call (never an
+                # observation, which requires full resolution).
                 diagnostics.append(_line_diagnostic(
-                    "DB_SIGNATURE_UNRESOLVED", declaration.path, line,
+                    "DB_SIGNATURE_UNRESOLVED", declaration.path,
+                    _line(source, call.start()),
                 ))
                 continue
+            # PR-GR-11 Slice 1: the resolved-mutation observation is built
+            # HERE, from the same values this path just resolved and the same
+            # values the match_mutation call below consumes.  The seam is a
+            # constructor, not a detector: nothing is re-scanned, no policy
+            # state is recorded, and the sink (optional) only observes.
+            observation = build_mutation_observation(
+                path=declaration.path,
+                owner_fqcn=declaration.owner_fqcn,
+                kind=callable_kind,
+                method=call_symbol.name,
+                receiver=call_symbol.receiver,
+                parameter_types=tuple(call_symbol.parameters),
+                source=source,
+                call_start=call.start(),
+                call_end=call.end(),
+                dao_accessor=receiver,
+                dao_fqcn=dao,
+                operation=operation,
+                mutation_kind=mutator.mutation_kind,
+                source_identity=mutator.method,
+            )
+            if mutation_observation_sink is not None:
+                mutation_observation_sink.append(observation)
+            line = observation.line
+            location = SourceLocation(line=line, end_line=line)
             matched_entries = [
                 item for item in policy_by_path_operation.get(
-                    (declaration.path, operation), ())
+                    (declaration.path, observation.operation), ())
                 if match_mutation(
                     item,
                     path=declaration.path,
@@ -3307,17 +3346,18 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                     method=call_symbol.name,
                     receiver=call_symbol.receiver,
                     parameter_types=tuple(call_symbol.parameters),
-                    dao_accessor=receiver,
-                    dao_fqcn=dao,
-                    operation=operation,
+                    dao_accessor=observation.dao_accessor,
+                    dao_fqcn=observation.dao_fqcn,
+                    operation=observation.operation,
                 )
             ]
             if not matched_entries:
                 findings.append(GuardFinding(
                     "DB_UNAUTHORIZED_MUTATION", "error", declaration.path,
                      location, call_symbol,
-                     {"dao": dao, "accessor": receiver, "operation": operation,
-                      "mutation_kind": mutator.mutation_kind, "call_form": "receiver"},
+                     {"dao": observation.dao_fqcn, "accessor": observation.dao_accessor,
+                      "operation": observation.operation,
+                      "mutation_kind": observation.mutation_kind, "call_form": "receiver"},
                     "Database mutation is not owned by an exact policy entry",
                 ))
             elif any(item.barrier_mode is BarrierMode.DIRECT
@@ -3326,7 +3366,8 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 if not re.search(r"\bwriteBarrier\s*\.\s*(?:checkWritesAllowed|runWrite)\s*\(", before):
                     findings.append(GuardFinding(
                         "DB_MISSING_WRITE_BARRIER", "error", declaration.path,
-                        location, call_symbol, {"dao": dao, "operation": operation},
+                        location, call_symbol,
+                        {"dao": observation.dao_fqcn, "operation": observation.operation},
                         "Database write lacks required barrier evidence",
                     ))
 
