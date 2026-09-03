@@ -1,15 +1,19 @@
 # DB Structural Analysis Model (PR-GR-11)
 
-> **Status: PARTIAL — Slice 1 in progress.**
-> Implemented so far: the shared mutation-observation seam only —
-> `scripts/db_guard/mutation_observation.py` plus the optional
-> `mutation_observation_sink` parameter on `scan_db_access`.
-> Planned, **not yet implemented**: the structural model, tokenizer, parser,
-> CFG, barrier-marker module, shadow report, shadow CLI
-> (`scripts/ci/inspect_db_structural_model.py`), corpus inventory
-> (`docs/ci/db-structural/GR-11_CORPUS.yml`), and structural-debt manifest.
-> Sections marked *Planned* describe contracts those artifacts must satisfy;
-> they are not claims that the artifacts exist.
+> **Status: IMPLEMENTED (shadow-only) — enforcement claims: none.**
+> Implemented: the shared mutation-observation seam
+> (`scripts/db_guard/mutation_observation.py` plus the optional
+> `mutation_observation_sink` on `scan_db_access`); the structural model,
+> tokenizer, parser, CFG, barrier-marker module, and shadow report under
+> `scripts/db_guard/structural_analysis/`; the shadow CLI
+> (`scripts/ci/inspect_db_structural_model.py`); the corpus inventory
+> (`docs/ci/db-structural/GR-11_CORPUS.yml`) and the structural-debt manifest
+> (`docs/ci/db-structural/GR-11_STRUCTURAL_DEBT.yml`).
+> Real-tree state at generation: 276 policy callables observed — 114
+> SUPPORTED, 162 UNSUPPORTED_CONSERVATIVELY (structural debt rows), 0
+> infrastructure failures; two shadow runs byte-identical.  GR-11 makes no
+> dominance, mediation, or safety claim: everything below describes the
+> shadow evidence GR-12 will consume.
 
 > GR-11 does not prove a write barrier. It creates the evidence structure
 > that GR-12 will use to prove or reject direct barrier dominance.

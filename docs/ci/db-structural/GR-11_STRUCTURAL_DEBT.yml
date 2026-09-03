@@ -1,0 +1,1046 @@
+# GR-11 structural debt (review artifact, NOT a baseline or suppression).
+# One row per conservatively-unsupported callable; each needs a
+# tokenizer/model capability or a GR-14 remediation decision.
+schemaVersion: 1
+startSha: 4b298ec6c4ee7db29e68fbc10c063e779f59a75c
+rows:
+  - debtId: GR11-DEBT-0001
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt|com.yourname.expensetracker.data.backup.RestoreJournalImporter|function|importLastFailureJournalIfPresent|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0002
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt|com.yourname.expensetracker.data.backup.RestoreJournalImporter|function|importLastFailureJournalIfPresent|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0003
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt|com.yourname.expensetracker.data.backup.RestoreJournalImporter|function|importLastSuccessJournalIfPresent|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0004
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt|com.yourname.expensetracker.data.backup.RestoreJournalImporter|function|importLastSuccessJournalIfPresent|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0005
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|insertOrUpdateAll|null|List<com.yourname.expensetracker.domain.currency.DomainExchangeRate>
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0006
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|addExpenseToGroup|null|Long,String,Double,Long,String?,com.yourname.expensetracker.data.database.entity.SplitType,String?,Long,String?,(Long) -> Unit
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0007
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|addExpenseWithLink|null|Long,Long,String,Double,Long,String?,com.yourname.expensetracker.data.database.entity.SplitType,String?,Long,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0008
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|addMemberToGroup|null|Long,String,String?,Boolean,(Long) -> Unit
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0009
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|archiveGroup|null|Long,() -> Unit
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0010
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|createGroupWithMembers|null|String,String?,String,List<com.yourname.expensetracker.data.database.entity.GroupMember>,(Long) -> Unit
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0011
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|createSystemExpenseAndLinkToGroup|null|Long,String,Double,Long,String,com.yourname.expensetracker.data.database.entity.SplitType,String?,Long,com.yourname.expensetracker.data.database.entity.TransactionType,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0012
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|deleteGroupAtomic|null|Long,() -> Unit
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0013
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt|com.yourname.expensetracker.data.database.GroupTransactionCoordinator|function|deleteGroup|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0014
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseGroupDao.kt|com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|function|insertGroupWithMembers|null|com.yourname.expensetracker.data.database.entity.ExpenseGroup,com.yourname.expensetracker.data.database.dao.GroupMemberDao,List<com.yourname.expensetracker.data.database.entity.GroupMember>
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0015
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt|com.yourname.expensetracker.data.privacy.DataRetentionWorker|function|doWork|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0016
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacyAuditLoggerImpl.kt|com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl|function|logDecision|null|com.yourname.expensetracker.domain.privacy.PrivacyCapability,com.yourname.expensetracker.domain.privacy.PrivacyDecision,Map<String, String>
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0017
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt|com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|function|appendMessage|null|Long,com.yourname.expensetracker.domain.ai.model.AssistantMessageRole,com.yourname.expensetracker.domain.ai.model.AssistantMessageKind,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0018
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt|com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|function|appendMessage|null|Long,com.yourname.expensetracker.domain.ai.model.AssistantMessageRole,com.yourname.expensetracker.domain.ai.model.AssistantMessageKind,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0019
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt|com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|function|createSession|null|String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0020
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|addBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0021
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteAll|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0022
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0023
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|restoreDebugSnapshot|null|com.yourname.expensetracker.data.repository.BudgetRepository.DebugBudgetSnapshot
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0024
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|ensureDefaultCategories|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0025
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt|com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl|function|restoreReceiptAssets|null|java.io.File,com.yourname.expensetracker.data.backup.CostbackupBundle.BackupManifest,com.yourname.expensetracker.data.database.AppDatabase,com.yourname.expensetracker.data.backup.RestoreJournal.JournalEntry?,com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0026
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt|com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl|function|restoreReceiptAssets|null|java.io.File,com.yourname.expensetracker.data.backup.CostbackupBundle.BackupManifest,com.yourname.expensetracker.data.database.AppDatabase,com.yourname.expensetracker.data.backup.RestoreJournal.JournalEntry?,com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0027
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt|com.yourname.expensetracker.data.repository.ExpenseRepository|function|conditionallySetLocation|null|Long,Double,Double,String,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0028
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt|com.yourname.expensetracker.data.repository.ExpenseRepository|function|deleteAllExpenses|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0029
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt|com.yourname.expensetracker.data.repository.ExpenseRepository|function|restoreDebugSnapshot|null|com.yourname.expensetracker.data.repository.ExpenseRepository.DebugExpenseSnapshot
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0030
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ExpenseRepository.kt|com.yourname.expensetracker.data.repository.ExpenseRepository|function|updateExpenseCategoryBulk|null|String,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0031
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/GroupsRepositoryImpl.kt|com.yourname.expensetracker.data.repository.GroupsRepositoryImpl|function|deleteMember|null|Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0032
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ManualRecurringExpenseRepository.kt|com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository|function|writeLifecycleEvent|null|Long,String,Long,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0033
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt|com.yourname.expensetracker.data.repository.MerchantCategoryRepository|function|insert|null|com.yourname.expensetracker.data.database.entity.MerchantCategory
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0034
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt|com.yourname.expensetracker.data.repository.MerchantLocationRepository|function|saveCorrection|null|com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0035
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt|com.yourname.expensetracker.data.repository.MerchantNormalizationRepository|function|insertAlias|null|com.yourname.expensetracker.data.database.entity.MerchantAlias
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0036
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt|com.yourname.expensetracker.data.repository.MerchantNormalizationRepository|function|insertAlias|null|com.yourname.expensetracker.data.database.entity.MerchantAlias
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0037
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt|com.yourname.expensetracker.data.repository.MerchantNormalizationRepository|function|insertAlias|null|com.yourname.expensetracker.data.database.entity.MerchantAlias
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0038
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt|com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|function|detectAndSaveSubscriptionCandidate|null|String,Long?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0039
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt|com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|function|detectAndSaveSubscriptionCandidate|null|String,Long?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0040
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt|com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|function|detectAndSaveSubscriptionCandidate|null|String,Long?
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0041
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt|com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|function|handleNeedsReviewInTransaction|null|com.yourname.expensetracker.data.database.entity.RawNotification,Long,com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext,Long,String?,MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0042
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt|com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|function|insertRawNotificationIfNotDuplicate|null|com.yourname.expensetracker.data.database.entity.RawNotification,com.yourname.expensetracker.data.database.entity.RawNotification
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0043
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt|com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|function|processInternal|null|com.yourname.expensetracker.data.database.entity.RawNotification,com.yourname.expensetracker.data.database.entity.RawNotification,Boolean,String?,com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0044
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt|com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|function|processInternal|null|com.yourname.expensetracker.data.database.entity.RawNotification,com.yourname.expensetracker.data.database.entity.RawNotification,Boolean,String?,com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0045
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt|com.yourname.expensetracker.data.repository.NotificationRepository|function|deleteAllNotifications|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0046
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt|com.yourname.expensetracker.data.repository.NotificationRepository|function|deleteAll|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0047
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt|com.yourname.expensetracker.data.repository.NotificationRepository|function|delete|null|com.yourname.expensetracker.data.database.entity.RawNotification
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0048
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt|com.yourname.expensetracker.data.repository.NotificationRepository|function|restoreDebugSnapshot|null|com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0049
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt|com.yourname.expensetracker.data.repository.NotificationRepository|function|restoreSourceStatsSnapshot|null|List<com.yourname.expensetracker.data.database.entity.SourceStats>
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0050
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|addPlannedExpense|null|com.yourname.expensetracker.data.database.entity.PlannedExpense
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0051
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|deletePlannedExpenseById|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0052
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/PlannedExpenseRepository.kt|com.yourname.expensetracker.data.repository.PlannedExpenseRepository|function|deletePlannedExpense|null|com.yourname.expensetracker.data.database.entity.PlannedExpense
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0053
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptInsertResolver.kt|com.yourname.expensetracker.data.repository.ReceiptInsertResolver|function|insertOrResolve|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0054
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptInsertResolver.kt|com.yourname.expensetracker.data.repository.ReceiptInsertResolver|function|insertOrResolve|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0055
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptItemCategorizationRepository.kt|com.yourname.expensetracker.data.repository.ReceiptItemCategorizationRepository|function|saveCategorizationResult|null|Long,com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationResult,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0056
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt|com.yourname.expensetracker.data.repository.ReceiptRepository|function|clearAllScannedReceipts|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0057
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt|com.yourname.expensetracker.data.repository.ReceiptRepository|function|deleteReceipt|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0058
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|clearForUser|null|String
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0059
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|dismiss|null|String
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0060
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireAll|null|String,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0061
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireOld|null|String,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0062
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|saveAll|null|List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0063
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|save|null|com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0064
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecurringExpenseRepository.kt|com.yourname.expensetracker.data.repository.RecurringExpenseRepository|function|writeLifecycleEvent|null|Long,String,Long,String?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0065
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|approveReview|null|Long,Double?,String?,String?,Long?,Long?,com.yourname.expensetracker.data.database.entity.TransactionType?,com.yourname.expensetracker.data.database.entity.TransferDirection?,String?,Boolean,Double?,Double?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0066
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|approveReview|null|Long,Double?,String?,String?,Long?,Long?,com.yourname.expensetracker.data.database.entity.TransactionType?,com.yourname.expensetracker.data.database.entity.TransferDirection?,String?,Boolean,Double?,Double?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0067
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|approveReview|null|Long,Double?,String?,String?,Long?,Long?,com.yourname.expensetracker.data.database.entity.TransactionType?,com.yourname.expensetracker.data.database.entity.TransferDirection?,String?,Boolean,Double?,Double?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0068
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|approveReview|null|Long,Double?,String?,String?,Long?,Long?,com.yourname.expensetracker.data.database.entity.TransactionType?,com.yourname.expensetracker.data.database.entity.TransferDirection?,String?,Boolean,Double?,Double?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0069
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|markAsRelevant|null|Long,Boolean
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0070
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|markAsRelevant|null|Long,Boolean
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0071
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|markAsRelevant|null|Long,Boolean
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0072
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|recoverStuckReviews|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0073
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|rejectReview|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0074
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt|com.yourname.expensetracker.data.repository.ReviewQueueRepository|function|rejectReview|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0075
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/SpendingChallengeRepository.kt|com.yourname.expensetracker.data.repository.SpendingChallengeRepository|function|deactivateChallenges|null|List<Long>,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0076
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/SpendingChallengeRepository.kt|com.yourname.expensetracker.data.repository.SpendingChallengeRepository|function|saveChallenge|null|com.yourname.expensetracker.domain.challenge.SpendingChallenge
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0077
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|deleteWarranty|null|com.yourname.expensetracker.data.database.entity.Warranty
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0078
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|markAsReturned|null|Long,Double?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0079
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|markWarrantyAsClaimed|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0080
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|reconcileExpiredItems|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0081
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|rejectAutoDetectedWarranty|null|com.yourname.expensetracker.data.database.entity.Warranty
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0082
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|toWarrantyEntityOrNull|com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult|com.yourname.expensetracker.data.database.entity.ScannedReceipt
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0083
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|updateWarranty|null|com.yourname.expensetracker.data.database.entity.Warranty
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0084
+    callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|upsertReturnWindowForReceipt|null|Long,com.yourname.expensetracker.data.database.entity.Warranty?
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0085
+    callableKey: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt|com.yourname.expensetracker.di.RetentionModule|function|provideRetentionTargets|null|com.yourname.expensetracker.data.database.AppDatabase,com.yourname.expensetracker.domain.util.TimeProvider
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0086
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt|com.yourname.expensetracker.domain.bank.BankApiIntegration|function|completeConnection|null|String,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0087
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt|com.yourname.expensetracker.domain.bank.BankApiIntegration|function|syncTransactions|null|com.yourname.expensetracker.data.database.entity.BankConnection,Long?
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0088
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/bank/BankConnectionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.bank.BankConnectionLifecycleCoordinator|function|disconnectConnection|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0089
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt|com.yourname.expensetracker.domain.budget.BudgetForecastingEngine|function|updateForecastAccuracy|null|Long,Double
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0090
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|function|event|null|String,com.yourname.expensetracker.domain.diagnostics.EventOutcome,com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?,com.yourname.expensetracker.domain.diagnostics.EventSeverity,com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata,String?,Long?,Throwable?,Boolean
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0091
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|function|finalizeNonCancellable|null|String,String?,Throwable?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0092
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|function|increment|null|Int,Int,Int,Int,Int,Int
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0093
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|function|recoverStaleRunningOperationRuns|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0094
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|function|recoverStaleRunningOperationRuns|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0095
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|function|start|null|String,String?,com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0096
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|addExpense|null|Long,String,Double,Long,String?,com.yourname.expensetracker.data.database.entity.SplitType,String?,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0097
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|addMember|null|Long,String,String?,Boolean
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0098
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|archiveGroup|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0099
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|createGroup|null|String,String?,String,List<com.yourname.expensetracker.data.database.entity.GroupMember>
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0100
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|deleteGroupPermanently|null|Long,Boolean
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0101
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|emitLifecycleEvent|null|Long,String,Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0102
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|emitLifecycleEvent|null|Long,String,Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0103
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|recordSettlement|null|Long,Long,Long,Double,String,String?,Long?
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0104
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt|com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|function|removeMember|null|Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0105
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/groups/SettlementCalculator.kt|com.yourname.expensetracker.domain.groups.SettlementCalculator|function|recordSettlement|null|Long,Long,Long,Double,String,com.yourname.expensetracker.data.database.dao.GroupSettlementDao,com.yourname.expensetracker.domain.util.TimeProvider
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0106
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt|com.yourname.expensetracker.domain.investment.InvestmentTracker|function|addHolding|null|com.yourname.expensetracker.data.database.entity.Investment
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0107
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt|com.yourname.expensetracker.domain.investment.InvestmentTracker|function|updatePrice|null|Long,Double
+    unsupportedCode: DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0108
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/negotiation/SmartBillNegotiationEngine.kt|com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine|function|recordNegotiationOutcome|null|Long,com.yourname.expensetracker.domain.negotiation.SmartBillNegotiationEngine.NegotiationOutcome,Double?,Double?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0109
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakePayloadRepairer.kt|com.yourname.expensetracker.domain.notification.capture.NotificationIntakePayloadRepairer|function|repairLegacyPlaintextTransientRows|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0110
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakeRecoveryScheduler.kt|com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler|function|recoverPending|null|Int
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0111
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkBackfillWorker.kt|com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker|function|backfillLegacySource|null|com.yourname.expensetracker.data.database.entity.Expense,List<com.yourname.expensetracker.data.database.entity.EntitySourceLink>
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0112
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkBackfillWorker.kt|com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker|function|backfillNotificationLinks|null|com.yourname.expensetracker.data.database.entity.Expense,List<com.yourname.expensetracker.data.database.entity.EntitySourceLink>
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0113
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkBackfillWorker.kt|com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker|function|backfillReceiptLinks|null|com.yourname.expensetracker.data.database.entity.Expense,List<com.yourname.expensetracker.data.database.entity.EntitySourceLink>
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0114
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkWriterImpl.kt|com.yourname.expensetracker.domain.provenance.SourceLinkWriterImpl|function|linkTarget|null|com.yourname.expensetracker.domain.provenance.TargetEntityType,Long,com.yourname.expensetracker.domain.provenance.SourceLinkPayload,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0115
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkWriterImpl.kt|com.yourname.expensetracker.domain.provenance.SourceLinkWriterImpl|function|linkTarget|null|com.yourname.expensetracker.domain.provenance.TargetEntityType,Long,com.yourname.expensetracker.domain.provenance.SourceLinkPayload,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0116
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt|com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|function|processBankStatement|null|android.net.Uri
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0117
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt|com.yourname.expensetracker.domain.receipt.lifecycle.BankStatementLifecycleProcessor|function|processBankStatement|null|android.net.Uri
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0118
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0119
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|processEmailReceipt|null|com.yourname.expensetracker.domain.receipt.EmailReceiptData,String,String,String,String,String,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0120
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|processEmailReceipt|null|com.yourname.expensetracker.domain.receipt.EmailReceiptData,String,String,String,String,String,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0121
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|processEmailReceipt|null|com.yourname.expensetracker.domain.receipt.EmailReceiptData,String,String,String,String,String,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0122
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|processEmailReceipt|null|com.yourname.expensetracker.domain.receipt.EmailReceiptData,String,String,String,String,String,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0123
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|processReceiptInput|null|android.net.Uri,com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0124
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|processReceiptInput|null|android.net.Uri,com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0125
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|linkReceiptToExpense|null|Long,Long,String,String,String?,Float?,Boolean,com.yourname.expensetracker.data.database.entity.MatchStatus?,Boolean,Boolean
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0126
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|linkReceiptToExpense|null|Long,Long,String,String,String?,Float?,Boolean,com.yourname.expensetracker.data.database.entity.MatchStatus?,Boolean,Boolean
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0127
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|unlinkReceiptFromExpense|null|Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0128
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|unlinkReceiptFromExpense|null|Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0129
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|approveMatchSuggestion|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0130
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|clearMatchForReceipt|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0131
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|recordAutoMatchLinkFailed|null|Long,Long?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0132
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|recordMatchAttempted|null|Long,Int
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0133
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|recordMatchNotFound|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0134
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|recordMatchSkippedDocumentType|null|Long,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0135
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|recordNotificationSuppressed|null|Long,Long?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0136
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|rejectAllSuggestions|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0137
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService|function|saveMatchSuggestion|null|Long,Long,Double
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0138
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptSideEffectPlanner|function|writeMatchEvent|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt,String,String,Long?,Float?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0139
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/RecurringPlanProjectionService.kt|com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService|function|projectFromOccurrencesInCurrentTransaction|null|Long,Long,Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0140
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/RecurringPlanProjectionService.kt|com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService|function|projectFromOccurrencesInCurrentTransaction|null|Long,Long,Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0141
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/RecurringPlanProjectionService.kt|com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService|function|projectFromRule|null|Long,Int
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0142
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/RecurringPlanProjectionService.kt|com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService|function|projectFromRule|null|Long,Int
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0143
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|cancelClaimedReminderDelivery|null|Long,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0144
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|dismissReminderDelivery|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0145
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|linkExpenseToOccurrence|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0146
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|markReminderFailed|null|Long,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0147
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|markReminderSent|null|Long,Int
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0148
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|reconcileExpenseLinkAfterUpdate|null|Long,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0149
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|regenerateReminderDeliveriesForOccurrence|null|com.yourname.expensetracker.data.database.entity.RecurringOccurrence,Long,List<String>
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0150
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|regenerateReminderDeliveriesForOccurrence|null|com.yourname.expensetracker.data.database.entity.RecurringOccurrence,Long,List<String>
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0151
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|snoozeReminderDelivery|null|Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0152
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|unlinkExpenseFromOccurrenceDetailed|null|Long,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0153
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|updateOccurrenceStatus|null|Long,com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus,com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0154
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter|function|writeDiagnostic|null|Long?,String,String?,String?,String?,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0155
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer|function|materializeInCurrentTransaction|null|List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>,com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0156
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer|function|materializeInCurrentTransaction|null|List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>,com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0157
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|activateRule|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0158
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|advanceNextDate|null|Long,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0159
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|deactivateRule|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0160
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|deleteRule|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0161
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|updateRule|null|com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0162
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt|com.yourname.expensetracker.domain.split.EnhancedSplitManager|function|assignItemsToParticipants|null|Long,List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0163
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt|com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine|function|acceptCandidate|null|com.yourname.expensetracker.data.database.entity.SubscriptionCandidate,com.yourname.expensetracker.domain.model.RecurrenceFrequency,Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0164
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt|com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine|function|recordPriceChange|null|Long,Double,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0165
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt|com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine|function|validateAndCreate|null|com.yourname.expensetracker.domain.subscription.CreateSubscriptionRequest
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0166
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/DefaultExpenseCategoryAssignmentService.kt|com.yourname.expensetracker.domain.transaction.DefaultExpenseCategoryAssignmentService|function|assignCategoryIfUnset|null|Long,Long,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0167
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/DefaultExpenseCategoryAssignmentService.kt|com.yourname.expensetracker.domain.transaction.DefaultExpenseCategoryAssignmentService|function|assignCategoryIfUnset|null|Long,Long,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0168
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|bulkUpdateCategory|null|Long,Long,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0169
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|bulkUpdateCategory|null|String,Long,String,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0170
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|bulkUpdateMerchant|null|String,String,String,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0171
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|bulkUpdateMerchant|null|String,String,String,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0172
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|createExpenseMutation|null|com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0173
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|createExpenseMutation|null|com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0174
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|createExpenseMutation|null|com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0175
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|createExpenseMutation|null|com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0176
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|deleteExpense|null|Long,String,String?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0177
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|deleteExpense|null|Long,String,String?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0178
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|deleteExpense|null|com.yourname.expensetracker.data.database.entity.Expense,String,String?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0179
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|deleteExpense|null|com.yourname.expensetracker.data.database.entity.Expense,String,String?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0180
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessExpensePatch|null|Long,com.yourname.expensetracker.domain.transaction.BusinessExpensePatch,String,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0181
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessExpensePatch|null|Long,com.yourname.expensetracker.domain.transaction.BusinessExpensePatch,String,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0182
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateCategory|null|Long,Long?,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0183
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateExpense|null|com.yourname.expensetracker.data.database.entity.Expense,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0184
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateExpense|null|com.yourname.expensetracker.data.database.entity.Expense,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0185
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateExpense|null|com.yourname.expensetracker.data.database.entity.Expense,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0186
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateExpense|null|com.yourname.expensetracker.data.database.entity.Expense,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0187
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateLocation|null|Long,Double,Double,String,String?,String?,String?,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0188
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateMerchant|null|Long,String,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0189
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateOwnershipDbOnlyV2|null|Long,Boolean,String?,Boolean,String?,Int?,Double?,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0190
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateOwnershipDbOnlyV2|null|Long,Boolean,String?,Boolean,String?,Int?,Double?,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0191
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateTransferDetails|null|Long,com.yourname.expensetracker.data.database.entity.TransferDirection?,String?,String?,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0192
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateTypeAndTransferDetails|null|Long,com.yourname.expensetracker.data.database.entity.TransactionType,com.yourname.expensetracker.data.database.entity.TransferDirection?,String?,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0193
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateType|null|Long,com.yourname.expensetracker.data.database.entity.TransactionType,String?,String,String?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0194
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|writeDuplicateEvent|null|com.yourname.expensetracker.data.database.entity.Expense,com.yourname.expensetracker.domain.transaction.CreateExpenseRequest,Long,Long?,String,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0195
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|writeUpdateValidationFailedEventBestEffort|null|Long,String,String?,String?,List<com.yourname.expensetracker.domain.transaction.validation.TransactionValidationError>
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0196
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt|com.yourname.expensetracker.domain.workers.WorkerExecutionGuard|function|recoverStaleRunningJobs|null|Long
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0197
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle|function|terminal|null|String,com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle.TerminalArgs
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0198
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle|function|terminal|null|String,com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle.TerminalArgs
+    unsupportedCode: DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0199
+    callableKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle|function|terminal|null|String,com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle.TerminalArgs
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0200
+    callableKey: app/src/main/java/com/yourname/expensetracker/service/debug/LegacyDataMigrationService.kt|com.yourname.expensetracker.service.debug.LegacyDataMigrationService|function|migrateCategories|null|android.database.sqlite.SQLiteDatabase
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0201
+    callableKey: app/src/main/java/com/yourname/expensetracker/service/debug/LegacyDataMigrationService.kt|com.yourname.expensetracker.service.debug.LegacyDataMigrationService|function|migrateCategories|null|android.database.sqlite.SQLiteDatabase
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0202
+    callableKey: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt|com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|function|deliverReminder|null|com.yourname.expensetracker.data.database.entity.Warranty,Int,Long,String,String
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0203
+    callableKey: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt|com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|function|doWork|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0204
+    callableKey: app/src/main/java/com/yourname/expensetracker/util/JsonExpenseImporter.kt|com.yourname.expensetracker.util.JsonExpenseImporter|function|parseV1Row|null|org.json.JSONObject,Int,Long?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0205
+    callableKey: app/src/main/java/com/yourname/expensetracker/util/JsonExpenseImporter.kt|com.yourname.expensetracker.util.JsonExpenseImporter|function|parseV2Row|null|org.json.JSONObject,Int,Long?
+    unsupportedCode: DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0206
+    callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0207
+    callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
+    unsupportedCode: DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
+  - debtId: GR11-DEBT-0208
+    callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|purgePayloadBestEffort|null|Long,Long,com.yourname.expensetracker.domain.workers.WorkerRunContext?
+    unsupportedCode: DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED
+    owner: "@panospao7"
+    nextIntendedPr: GR-12 (capability decision) or GR-14 (source remediation)
