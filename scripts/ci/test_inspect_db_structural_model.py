@@ -178,6 +178,42 @@ class TestExitContract:
             "DB_POLICY_SOURCE_EVIDENCE_INVALID"
         ]
 
+    def test_duplicate_observations_collapse_to_one_entry(self, monkeypatch, tmp_path):
+        # Multiple DAO mutations in one callable are expected; the CLI must
+        # collapse them to exactly one report entry per callable key.
+        _patch_happy_path(monkeypatch, tmp_path, _SUPPORTED_SOURCE)
+
+        original = shadow_cli.scan_db_access
+
+        def _double_scan(root, policy, structural, raw_query, mutation_observation_sink=None):
+            original(root, policy, structural, raw_query, mutation_observation_sink)
+            if mutation_observation_sink is not None:
+                # A second, identical-key observation of the same callable.
+                second = _observation(_SUPPORTED_SOURCE)
+                mutation_observation_sink.append(
+                    type(second)(
+                        path=second.path,
+                        callable_key=second.callable_key,
+                        source_start=second.source_start,
+                        source_end=second.source_end,
+                        line=second.line,
+                        column=second.column,
+                        dao_accessor=second.dao_accessor,
+                        dao_fqcn=second.dao_fqcn,
+                        operation=second.operation,
+                        mutation_kind=second.mutation_kind,
+                        source_identity=second.source_identity,
+                    )
+                )
+            return types.SimpleNamespace(trusted=True)
+
+        monkeypatch.setattr(shadow_cli, "scan_db_access", _double_scan)
+        report, exit_code = shadow_cli.build_structural_shadow(str(tmp_path), None)
+        assert exit_code == 0
+        assert report["summary"]["callableCount"] == 1
+        keys = [entry["callableKey"] for entry in report["callables"]]
+        assert len(keys) == len(set(keys))
+
     def test_root_failure_exits_two(self, monkeypatch, tmp_path):
         _write_project(tmp_path, _SUPPORTED_SOURCE)
         monkeypatch.setattr(
@@ -241,6 +277,24 @@ class TestCliMain:
         exit_code = shadow_cli.main(["--root", str(tmp_path), "--output", str(output)])
         assert exit_code == 2
         report = json.loads(output.read_text(encoding="utf-8"))
+        assert report["infrastructure"]["failureReasons"] == [
+            "DB_STRUCTURAL_MODEL_REPORT_INVALID"
+        ]
+
+    def test_main_maps_any_crash_to_exit_two(self, monkeypatch, tmp_path):
+        # ISSUE-4: an unexpected exception type must take the exit-2
+        # infrastructure route, never alias the exit-1 unsupported contract.
+        _write_project(tmp_path, _SUPPORTED_SOURCE)
+        monkeypatch.setattr(
+            shadow_cli,
+            "resolve_source_root_set",
+            lambda root: (_ for _ in ()).throw(KeyError("unexpected")),
+        )
+        output = tmp_path / "build" / "shadow-crash.json"
+        exit_code = shadow_cli.main(["--root", str(tmp_path), "--output", str(output)])
+        assert exit_code == 2
+        report = json.loads(output.read_text(encoding="utf-8"))
+        assert report["reportOnly"] is True
         assert report["infrastructure"]["failureReasons"] == [
             "DB_STRUCTURAL_MODEL_REPORT_INVALID"
         ]

@@ -82,6 +82,27 @@ class TestSequentialFlow:
                     frontier.append(target)
         assert mutation.id in reachable
 
+    def test_multiple_mutations_get_distinct_attached_nodes(self):
+        source = "dao.insert(a)\nval x = 1\ndao.insert(b)\n"
+        sites = [site_at(source, "dao.insert(a)"), site_at(source, "dao.insert(b)")]
+        graph, diagnostics = build(source, sites)
+        assert diagnostics == ()
+        mutations = nodes_of(graph, NodeKind.MUTATION)
+        assert len(mutations) == 2
+        assert mutations[0].span != mutations[1].span
+        for site, mutation in zip(sites, mutations):
+            owners = [
+                node
+                for node in graph.nodes
+                if node.kind is NodeKind.STATEMENT
+                and node.span.start <= site.span.start < node.span.end
+            ]
+            assert owners, "mutation site must sit inside its statement"
+            assert any(
+                target == mutation.id
+                for target, _ in successors(graph, owners[0].id)
+            )
+
     def test_mutation_outside_body_is_unresolved_and_attached_to_entry(self):
         source = "val a = 1\n"
         outside = MutationSite(
@@ -190,6 +211,123 @@ class TestBarrierScope:
         assert outgoing
         assert all(kind is EdgeKind.UNKNOWN for _, kind in outgoing)
         assert not any(kind is EdgeKind.NORMAL for _, kind in outgoing)
+
+
+class TestBarrierPlacementAdversarial:
+    """Barrier/mutation in DIFFERENT model regions — the shapes where a CFG
+    construction bug could fabricate or destroy the distinction GR-12's
+    dominance decision depends on.  Model-content assertions only."""
+
+    def test_barrier_in_else_mutation_after_join(self):
+        source = (
+            "if (a) {\n  val x = 1\n} else {\n  writeBarrier.runWrite {\n"
+            "    val y = 2\n  }\n}\ndao.insert(z)\n"
+        )
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        scope = nodes_of(graph, NodeKind.BARRIER_SCOPE)[0]
+        mutation = nodes_of(graph, NodeKind.MUTATION)[0]
+        # The scope lives in the else subtree; the mutation is after the join.
+        assert scope.span.end <= mutation.span.start
+        branch = nodes_of(graph, NodeKind.BRANCH)[0]
+        kinds = [kind for _, kind in successors(graph, branch.id)]
+        assert EdgeKind.TRUE_BRANCH in kinds and EdgeKind.FALSE_BRANCH in kinds
+
+    def test_barrier_in_then_mutation_after_join(self):
+        source = (
+            "if (a) {\n  writeBarrier.runWrite {\n    val y = 1\n  }\n"
+            "} else {\n  val x = 2\n}\ndao.insert(z)\n"
+        )
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        scope = nodes_of(graph, NodeKind.BARRIER_SCOPE)[0]
+        mutation = nodes_of(graph, NodeKind.MUTATION)[0]
+        assert scope.span.end <= mutation.span.start
+        branch = nodes_of(graph, NodeKind.BRANCH)[0]
+
+        def reachable(start_id):
+            seen = {start_id}
+            frontier = [start_id]
+            while frontier:
+                for target, _ in successors(graph, frontier.pop()):
+                    if target not in seen:
+                        seen.add(target)
+                        frontier.append(target)
+            return seen
+
+        true_reach = set()
+        for target, kind in successors(graph, branch.id):
+            if kind is EdgeKind.TRUE_BRANCH:
+                true_reach |= reachable(target)
+        false_reach = set()
+        for target, kind in successors(graph, branch.id):
+            if kind is EdgeKind.FALSE_BRANCH:
+                false_reach |= reachable(target)
+        # The scope is on the true path only; the mutation after the join is
+        # reachable from BOTH paths — the distinction GR-12 must decide on.
+        assert scope.id in true_reach
+        assert scope.id not in false_reach
+        assert mutation.id in true_reach
+        assert mutation.id in false_reach
+
+    def test_barrier_in_loop_body_mutation_after_loop(self):
+        source = (
+            "while (a) {\n  writeBarrier.runWrite {\n    val y = 1\n  }\n}\ndao.insert(z)\n"
+        )
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        header = nodes_of(graph, NodeKind.LOOP_HEADER)[0]
+        scope = nodes_of(graph, NodeKind.BARRIER_SCOPE)[0]
+        mutation = nodes_of(graph, NodeKind.MUTATION)[0]
+        # The scope is inside the loop body; the mutation is after the loop.
+        assert header.span.start <= scope.span.start < header.span.end
+        assert mutation.span.start >= header.span.end
+
+    def test_barrier_in_catch_mutation_in_try(self):
+        source = (
+            "try {\n  dao.insert(x)\n} catch (e: E) {\n  writeBarrier.runWrite {\n"
+            "    val y = 1\n  }\n}\n"
+        )
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        try_nodes = nodes_of(graph, NodeKind.TRY)
+        catch_node = nodes_of(graph, NodeKind.CATCH)[0]
+        scope = nodes_of(graph, NodeKind.BARRIER_SCOPE)[0]
+        mutation = nodes_of(graph, NodeKind.MUTATION)[0]
+        # Mutation inside the try body region, scope inside the catch region.
+        assert try_nodes[0].span.start <= mutation.span.start < try_nodes[0].span.end
+        assert catch_node.span.start <= scope.span.start < catch_node.span.end
+        assert (try_nodes[0].id, catch_node.id, EdgeKind.EXCEPTION) in edge_pairs(graph)
+
+    def test_barrier_in_finally_mutation_in_try(self):
+        source = (
+            "try {\n  dao.insert(x)\n} finally {\n  writeBarrier.runWrite {\n"
+            "    val y = 1\n  }\n}\n"
+        )
+        graph, diagnostics = build(source, [site_at(source, "dao.insert")])
+        assert diagnostics == ()
+        try_nodes = nodes_of(graph, NodeKind.TRY)
+        finally_node = nodes_of(graph, NodeKind.FINALLY)[0]
+        scope = nodes_of(graph, NodeKind.BARRIER_SCOPE)[0]
+        mutation = nodes_of(graph, NodeKind.MUTATION)[0]
+        assert try_nodes[0].span.start <= mutation.span.start < try_nodes[0].span.end
+        assert finally_node.span.start <= scope.span.start < finally_node.span.end
+
+    def test_barrier_in_uncalled_local_function_yields_no_model_content(self):
+        from scripts.db_guard.structural_analysis.barrier_markers import (
+            collect_barrier_markers,
+        )
+        from scripts.kotlin_callable_parser import mask_kotlin_source
+
+        source = (
+            "fun unused() {\n  writeBarrier.runWrite {\n    val z = 1\n  }\n}\n"
+            "dao.insert(x)\n"
+        )
+        result = parse(source)
+        assert not result.is_supported
+        assert result.unsupported[0].reason == "local-function"
+        masked = mask_kotlin_source(source)
+        assert collect_barrier_markers(result, masked) == ()
 
 
 class TestMarkerAttachment:

@@ -368,7 +368,9 @@ def main(argv=None) -> int:
             target_sha=args.target_sha,
             include_graphs=args.include_graphs,
         )
-    except (OSError, TypeError, ValueError):
+    except Exception:
+        # Any infrastructure crash must take the exit-2 route, never alias
+        # the exit-1 "valid analysis with unsupported callables" contract.
         report = {
             "schemaVersion": 1,
             "reportOnly": True,
