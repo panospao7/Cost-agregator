@@ -207,20 +207,18 @@ def test_enum_closed_membership():
         AnalysisStatus("NOPE")
 
 
-def test_barrier_marker_direct_check_requires_receiver():
+def test_barrier_marker_receiver_fqcn_rules():
+    # GR-11 resolves no receiver types: None is the honest unresolved value
+    # for every marker kind; empty strings are rejected.
+    for kind in BarrierMarkerKind:
+        marker = BarrierMarker(kind=kind, span=_span(), receiver_fqcn=None, method="m")
+        assert marker.receiver_fqcn is None
     with pytest.raises((TypeError, ValueError)):
         BarrierMarker(
             kind=BarrierMarkerKind.DIRECT_CHECK,
             span=_span(),
-            receiver_fqcn=None,
+            receiver_fqcn="",
             method="check",
-        )
-    with pytest.raises((TypeError, ValueError)):
-        BarrierMarker(
-            kind=BarrierMarkerKind.DIRECT_SCOPE,
-            span=_span(),
-            receiver_fqcn=None,
-            method="scope",
         )
 
 

@@ -42,6 +42,10 @@ _RE_BARRIER_SCOPE = re.compile(
 _RE_BARRIER_CHECK = re.compile(
     r"\bwriteBarrier\s*\.\s*checkWritesAllowed\s*\("
 )
+_RE_WORKER_GUARD = re.compile(
+    r"\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*"
+    r"(?P<method>runGuardedWithContext|runGuarded)\s*(?:\([^()]*\))?\s*\{"
+)
 _RE_LIKE_BARRIER = re.compile(
     r"\b\w+\s*\.\s*(?:runWrite|checkWritesAllowed)\s*[\(\{]"
 )
@@ -519,6 +523,37 @@ def _parse_sequence(
             idx += 1
             continue
 
+        if _RE_WORKER_GUARD.search(stripped):
+            # Canonical worker-guard-shaped scope: a syntactic CANDIDATE only,
+            # with no synchronicity or mediation assumption (GR-13 owns any
+            # proof).  Same conservatism as the writeBarrier scope branch.
+            m = _RE_WORKER_GUARD.search(stripped)
+            assert m is not None
+            brace_rel = stripped.find("{", m.start())
+            brace_abs = base + brace_rel
+            close = _match_forward(cur.text, brace_abs, stmt_e)
+            tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+            if close < 0 or tail:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                    base,
+                    stmt_e,
+                    "unknown-construct",
+                )
+                idx += 1
+                continue
+            inner = _parse_sequence(cur, brace_abs + 1, close - 1, True)
+            out.append(
+                ParsedRegion(
+                    kind=RegionKind.BARRIER_SCOPE,
+                    span=cur.span(base, close),
+                    children=tuple(inner),
+                    barrier=BarrierMarkerKind.WORKER_GUARD_CANDIDATE,
+                )
+            )
+            idx += 1
+            continue
+
         if _RE_BARRIER_CHECK.search(stripped):
             m = _RE_BARRIER_CHECK.search(stripped)
             assert m is not None
@@ -852,8 +887,15 @@ def _parse_when(
                 )
             )
         else:
+            # Arrow body: parse the RHS so mutations inside it stay
+            # contained in the branch (a lambda there fails conservatively).
+            inner = _parse_sequence(cur, rhs_base, ee, in_lambda)
             branches.append(
-                ParsedRegion(kind=RegionKind.WHEN_BRANCH, span=cur.span(es, ee))
+                ParsedRegion(
+                    kind=RegionKind.WHEN_BRANCH,
+                    span=cur.span(es, ee),
+                    children=tuple(inner),
+                )
             )
     return ParsedRegion(
         kind=RegionKind.WHEN, span=cur.span(base, close), children=tuple(branches)

@@ -156,17 +156,13 @@ class BarrierMarker:
             raise TypeError("BarrierMarker.kind must be a BarrierMarkerKind")
         if not isinstance(self.span, SourceSpan):
             raise TypeError("BarrierMarker.span must be a SourceSpan")
-        if self.kind in (BarrierMarkerKind.DIRECT_CHECK, BarrierMarkerKind.DIRECT_SCOPE):
+        # GR-11 resolves no receiver types: None is the honest "unresolved"
+        # receiver for every marker kind; a resolved name is optional.
+        if self.receiver_fqcn is not None:
             if not isinstance(self.receiver_fqcn, str):
-                raise TypeError("BarrierMarker.receiver_fqcn must be a non-empty string")
+                raise TypeError("BarrierMarker.receiver_fqcn must be a non-empty string or None")
             if not self.receiver_fqcn:
-                raise ValueError("BarrierMarker.receiver_fqcn must be a non-empty string")
-        else:
-            if self.receiver_fqcn is not None:
-                if not isinstance(self.receiver_fqcn, str):
-                    raise TypeError("BarrierMarker.receiver_fqcn must be a non-empty string or None")
-                if not self.receiver_fqcn:
-                    raise ValueError("BarrierMarker.receiver_fqcn must be a non-empty string or None")
+                raise ValueError("BarrierMarker.receiver_fqcn must be a non-empty string or None")
         _require_non_empty_str(self.method, "BarrierMarker.method")
 
 
