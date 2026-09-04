@@ -1,0 +1,194 @@
+# GR-14b remediation manifest (PR-GR-14 batch).
+#
+# This batch changes source architecture to satisfy proof requirements.
+# It is not a baseline, exception, or authorization document.
+#
+# Batch scope: the "lambda wall" family of GR-12 UNSUPPORTED rows
+# (deleteBudget x2, deleteReceipt x3, deleteCategory). Closed with two
+# mechanisms:
+#   1. Contract v2 — synchronous transparent scopes
+#      (database.withTransaction, DomainTransactionRunner
+#      .runInTransaction, kotlinx.coroutines.withContext) admitted in the
+#      typed code contract; the CFG wires admitted scopes' bodies into the
+#      caller's flow so the caller's canonical checkWritesAllowed dominance
+#      extends into the lambda body. Admission is exact-resolution,
+#      fail-closed (see docs/ci/db-structural/GR-12_CANONICAL_BARRIER_API.md
+#      contract version 2 section).
+#   2. GR-14 Pattern A — one production refactor: the ASSET_DELETE_FAILED
+#      audit insert moved out of deleteReceipt's generic post-commit
+#      `?.let { }` callback into a private direct owner with its own
+#      canonical check (EXACT_IDENTITY_MOVE, count-neutral 1:1 policy row
+#      replacement). Approved in-batch by the repo owner after the let-wall
+#      was discovered mid-batch (the approved plan said zero production
+#      changes; the deviation was surfaced and approved).
+#
+# Schema notes (documented, intentional):
+# - policyImpact uses EXACT_IDENTITY_MOVE (plan enum value) for the moved
+#   audit-write row, and NONE for the five scope-proven rows (no policy
+#   change for them; Contract v2 is proof-engine authority, not policy).
+# - mediationReportSha256: GR-13 mediation proof has not been run; this
+#   batch was selected and closed from the GR-12 direct proof report only.
+schemaVersion: 1
+batchId: GR-14b
+startSha: 0076e0fd9d75c28cb2fff69f3891d13de37ebd0e
+# GATE-00R not yet captured at the post-batch SHA. The latest COMPLETE
+# GATE-00R evidence remains gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7
+# (docs/ci/GUARD_EVIDENCE_INDEX.yml). A fresh double capture at the
+# post-GR-14b SHA is owed before GR-12 Step 7 (activation) / Step 8
+# (control-plane agreement) completes.
+gateEvidenceSha256: null
+# build/guard-debug/gr14b/direct-proof.json.after.json (GR-12 dominance
+# proof engine, contractVersion 2, targetSha 0076e0fd, 28 entries /
+# 28 PROVEN / 0 COUNTEREXAMPLE / 0 UNSUPPORTED / 0 infrastructure
+# failures; byte-identical across two runs).
+directProofReportSha256: 60b28a41d42cf4e7d694a5183074190edc1d87d36dcadfac0116bfb44a8fa3f7
+# GR-13 mediation proof has not been run.
+mediationReportSha256: null
+# config/guards/db_ownership_policy.yml (post-batch, EXACT_IDENTITY_MOVE applied).
+activePolicySha256: 859643ec13e6c17f9b6ce8d054e708d06cbb135701a5721009a7e78216438c42
+# config/baselines/db_access_v2.json (unchanged by this batch).
+baselineSha256: 44421412c890b60d17db9a4157c497cf44ec836753d195eeb95783ff8ccebfec
+
+selectedMutationKeys:
+- app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|delete
+- app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetForecastDao|com.yourname.expensetracker.data.database.dao.BudgetForecastDao|deleteForecastsForBudget
+- app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|receiptExpenseLinkDao|com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|deleteAllLinksForReceipt
+- app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|scannedReceiptDao|com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|delete
+- app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|deleteCategory|null|Long|categoryDao|com.yourname.expensetracker.data.database.dao.CategoryDao|delete
+- app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|writeAssetDeleteFailedEvent|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt,Long,String?|receiptEventDao|com.yourname.expensetracker.data.database.dao.ReceiptEventDao|insert
+
+entries:
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|delete
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+  priorProofStatus: UNSUPPORTED (DB_DIRECT_BARRIER_PROOF_UNSUPPORTED — database.withTransaction lambda wall)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.data.repository.BudgetRepository.deleteBudget
+  targetLegalOwner: com.yourname.expensetracker.data.repository.BudgetRepository.deleteBudget
+  behaviorPreservation:
+    transaction: unchanged — database.withTransaction still opens the Room transaction; only the proof engine now sees through it
+    cancellation: unchanged — no production change for this row
+    retry: N/A (not worker-owned)
+    lifecycle: unchanged — canonical checkWritesAllowed already lexically precedes the scope; dominance now extends into the wired body
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NONE
+  tests:
+  - scripts/db_guard/structural_analysis/test_transparent_scopes.py
+  owner: '@panospao7'
+  linkedIssue: GR-14b
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetForecastDao|com.yourname.expensetracker.data.database.dao.BudgetForecastDao|deleteForecastsForBudget
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget
+  priorProofStatus: UNSUPPORTED (database.withTransaction lambda wall)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.data.repository.BudgetRepository.deleteBudget
+  targetLegalOwner: com.yourname.expensetracker.data.repository.BudgetRepository.deleteBudget
+  behaviorPreservation:
+    transaction: unchanged — same transaction scope
+    cancellation: unchanged
+    retry: N/A
+    lifecycle: unchanged — same admitted-scope dominance as the sibling row
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NONE
+  tests:
+  - scripts/db_guard/structural_analysis/test_transparent_scopes.py
+  owner: '@panospao7'
+  linkedIssue: GR-14b
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|receiptExpenseLinkDao|com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|deleteAllLinksForReceipt
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
+  priorProofStatus: UNSUPPORTED (transactionRunner.runInTransaction lambda wall)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.deleteReceipt
+  targetLegalOwner: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.deleteReceipt
+  behaviorPreservation:
+    transaction: unchanged — runInTransaction still wraps the atomic state+event writes; contract source verification proves block runs exactly once inside database.withTransaction
+    cancellation: unchanged — DomainTransactionRunner rethrows CancellationException unaltered (source-verified)
+    retry: N/A (not worker-owned)
+    lifecycle: unchanged — canonical checkWritesAllowed inside the entry try/catch dominates the admitted scope
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NONE
+  tests:
+  - scripts/db_guard/structural_analysis/test_transparent_scopes.py
+  owner: '@panospao7'
+  linkedIssue: GR-14b
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|scannedReceiptDao|com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|delete
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
+  priorProofStatus: UNSUPPORTED (transactionRunner.runInTransaction lambda wall)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.deleteReceipt
+  targetLegalOwner: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.deleteReceipt
+  behaviorPreservation:
+    transaction: unchanged — same admitted runInTransaction scope as the sibling row
+    cancellation: unchanged
+    retry: N/A
+    lifecycle: unchanged
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NONE
+  tests:
+  - scripts/db_guard/structural_analysis/test_transparent_scopes.py
+  owner: '@panospao7'
+  linkedIssue: GR-14b
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|deleteCategory|null|Long|categoryDao|com.yourname.expensetracker.data.database.dao.CategoryDao|delete
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|deleteCategory|null|Long
+  priorProofStatus: UNSUPPORTED (withContext coroutine-builder failure + labelled return@withContext statements)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.data.repository.CategoryRepository.deleteCategory
+  targetLegalOwner: com.yourname.expensetracker.data.repository.CategoryRepository.deleteCategory
+  behaviorPreservation:
+    transaction: unchanged — no production change; withContext(IO) body now parsed as an explicit RETURN(TRANSPARENT_SCOPE) with lambda-local return@withContext edges
+    cancellation: unchanged
+    retry: N/A
+    lifecycle: unchanged — canonical checkWritesAllowed dominates the admitted scope
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NONE
+  tests:
+  - scripts/db_guard/structural_analysis/test_transparent_scopes.py
+  owner: '@panospao7'
+  linkedIssue: GR-14b
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|writeAssetDeleteFailedEvent|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt,Long,String?|receiptEventDao|com.yourname.expensetracker.data.database.dao.ReceiptEventDao|insert
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|writeAssetDeleteFailedEvent|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt,Long,String?
+  priorProofStatus: UNSUPPORTED as deleteReceipt|receiptEventDao|insert (generic post-commit ?.let callback carrying DB work — GR-14 Pattern D forbids admitting generic callbacks; repo owner approved the Pattern A refactor in-batch)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent
+  targetLegalOwner: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent
+  behaviorPreservation:
+    transaction: unchanged — same ReceiptEvent payload, same single insert outside any transaction (post-commit audit write)
+    cancellation: unchanged — CancellationException rethrow stays in the caller's catch before dispatch; the suspend insert propagates cancellation naturally
+    retry: N/A (not worker-owned)
+    lifecycle: the helper now enters its own canonical writeBarrier.checkWritesAllowed before the insert; the only caller runs after deleteReceipt's canonical check, so the added check is an unreachable no-op on every current path
+    workerResult: N/A
+    privacy: unchanged — errorDetails stays e.message?.take(500) (redacted at the call site, passed as a parameter)
+  policyImpact: EXACT_IDENTITY_MOVE
+  tests:
+  - scripts/db_guard/structural_analysis/test_transparent_scopes.py
+  - scripts/test_verify_db_access_boundaries.py
+  owner: '@panospao7'
+  linkedIssue: GR-14b
+
+# ── Batch-level notes ────────────────────────────────────────────────────────
+# - Unselected but in-delta: addCategory and mergeCategories keep PROVEN
+#   status; their proofs switched from accidental v1 return-leaf inlining to
+#   contract-backed RETURN(TRANSPARENT_SCOPE) dominance (see proof-delta).
+# - Postconditions: GR-12 dominance proof 28/28 PROVEN, 0 COUNTEREXAMPLE,
+#   0 UNSUPPORTED, byte-identical across two runs at contractVersion 2;
+#   policy loads cleanly (477 entries, no loader errors); advisory set
+#   unchanged at 20; baseline unchanged (sha256 44421412...); D4 observes
+#   the moved mutation exactly once; :app:compileDebugKotlin BUILD
+#   SUCCESSFUL.
+# - PR-GR-14 series completion state: GR-12 direct counterexamples = 0,
+#   direct unsupported = 0. GR-13 (helper/worker mediation proof) has NOT
+#   run; the series DoD additionally requires GR-13 unproven/counterexample
+#   counts at 0 before GR-15.
+# - Owed before GR-12 Step 7/8 completion: GATE-00R double capture at the
+#   post-GR-14b SHA (also owed from GR-14a), static suite + Gradle DB task
+#   per PR-GR-14 Step 7, and the full Kotlin unit battery on the touched
+#   coordinator.

@@ -4,21 +4,25 @@
 # evidence; UNSUPPORTED rows carry reasonCodes and route to GR-14
 # remediation slices (they block GR-12 activation per plan).
 # proofStatus recorded from
-# build/guard-debug/gr14a/direct-proof.json.after.json (GR-14a truth sync:
-# 28 rows / 22 PROVEN / 6 UNSUPPORTED; DB CLI exit 0, trusted, 0 findings;
-# advisory set unchanged at 20). Activation stays blocked until every row
-# is PROVEN — the 6 remaining UNSUPPORTED rows (deleteBudget x2,
-# deleteReceipt x3, deleteCategory) are the lambda wall and route to the
-# GR-14 Contract v2 remediation slice (synchronous transparent scopes).
-# Prior state (GR-12 freeze at 384905f6: 23 rows / 13 PROVEN / 10
-# UNSUPPORTED) recorded from
+# build/guard-debug/gr14b/direct-proof.json.after.json (GR-14b truth sync:
+# 28 rows / 28 PROVEN / 0 COUNTEREXAMPLE / 0 UNSUPPORTED; DB CLI exit 0,
+# trusted, 0 findings; advisory set unchanged at 20; byte-identical across
+# two runs). The lambda wall is closed: Contract v2 (synchronous
+# transparent scopes — database.withTransaction, DomainTransactionRunner
+# .runInTransaction, kotlinx.coroutines.withContext) plus the GR-14b
+# Pattern A identity move (deleteReceipt|receiptEventDao|insert replaced
+# by the writeAssetDeleteFailedEvent direct owner). GR-12 Step 7
+# (activation) is unblocked. Prior states: GR-14a freeze at 540e427b
+# (28 rows / 22 PROVEN / 6 UNSUPPORTED) recorded from
+# build/guard-debug/gr14a/direct-proof.json.after.json; GR-12 freeze at
+# 384905f6 (23 rows / 13 PROVEN / 10 UNSUPPORTED) recorded from
 # build/guard-debug/gr12/direct-proof-before.json.after.json.
 schemaVersion: 1
-startSha: 540e427b5040188c95b219f28f599f198ceb5b28
-activePolicySha256: dac82e2d8f75ba1536f593793bfe23c87059ed6d8c6e1ce87cea3ca857cf148c
+startSha: 0076e0fd9d75c28cb2fff69f3891d13de37ebd0e
+activePolicySha256: 859643ec13e6c17f9b6ce8d054e708d06cbb135701a5721009a7e78216438c42
 sourceRootManifestSha256: 02ec3e28c9451cecb31ca90dc8f665837b7857d979c20b3a400f898f8d1c2c95
-structuralShadowSha256: 0be20d53c6312ffaa2c1f7bac4e8f9ccc06cac72998e59cff7a42d1bac9c791b
-canonicalBarrierContractVersion: 1
+structuralShadowSha256: 2516335d474f535e3ad79cec69e283dd9cf58dd92c8ab6bc8f32e0cfaa6ece84
+canonicalBarrierContractVersion: 2
 entries:
 - mutationKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|deleteOldRates|null|Long|exchangeRateDao|com.yourname.expensetracker.data.database.dao.ExchangeRateDao|deleteOldRates
   callableKey: app/src/main/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapter.kt|com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter|function|deleteOldRates|null|Long
@@ -118,31 +122,30 @@ entries:
   callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget
   path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
   expectedBarrierForm: DIRECT_CHECK
-  structuralStatus: UNSUPPORTED
-  reasonCodes: &id001
-  - DB_DIRECT_BARRIER_PROOF_UNSUPPORTED
-  reason: database.withTransaction lambda wall — canonical barrier check outside a synchronous transparent scope (GR-14 Contract v2 remediation candidate)
-  proofStatus: UNSUPPORTED
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
   owner: '@panospao7'
   linkedIssue: MIT-003
   evidence:
   - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0032
   - build/guard-debug/gr12/capability-shadow-run-01.json
   - build/guard-debug/gr14a/direct-proof.json.after.json
+  - build/guard-debug/gr14b/direct-proof.json.after.json
+  - docs/ci/db-mediation/GR-14b.yml
 - mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetForecastDao|com.yourname.expensetracker.data.database.dao.BudgetForecastDao|deleteForecastsForBudget
   callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|deleteBudget|null|com.yourname.expensetracker.data.database.entity.Budget
   path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
   expectedBarrierForm: DIRECT_CHECK
-  structuralStatus: UNSUPPORTED
-  reasonCodes: *id001
-  reason: database.withTransaction lambda wall — canonical barrier check outside a synchronous transparent scope (GR-14 Contract v2 remediation candidate)
-  proofStatus: UNSUPPORTED
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
   owner: '@panospao7'
   linkedIssue: MIT-003
   evidence:
   - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0032
   - build/guard-debug/gr12/capability-shadow-run-01.json
   - build/guard-debug/gr14a/direct-proof.json.after.json
+  - build/guard-debug/gr14b/direct-proof.json.after.json
+  - docs/ci/db-mediation/GR-14b.yml
 - mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|updateBudget|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|updateAndEnforceActiveScope
   callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|updateBudget|null|com.yourname.expensetracker.data.database.entity.Budget
   path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
@@ -182,7 +185,7 @@ entries:
   expectedBarrierForm: DIRECT_CHECK
   structuralStatus: SUPPORTED
   proofStatus: PROVEN
-  proofNote: proof is sound but has no contract backing — the `return withContext {…}` shape parses as a return-leaf with the body inlined; GR-14 Contract v2 should make this proof explicit
+  proofNote: proof is contract-backed since GR-14b — `return withContext {…}` parses as an explicit RETURN wrapping an admitted TRANSPARENT_SCOPE (no longer the accidental v1 return-leaf inlining)
   owner: '@panospao7'
   linkedIssue: MIT-003
   evidence:
@@ -192,16 +195,15 @@ entries:
   callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|deleteCategory|null|Long
   path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
   expectedBarrierForm: DIRECT_CHECK
-  structuralStatus: UNSUPPORTED
-  reasonCodes:
-  - DB_DIRECT_BARRIER_PROOF_UNSUPPORTED
-  reason: mutation now indexed (GR-14a default @Transaction mutator rule); the labelled return@withContext statements in the body block structural dominance proof (GR-14 Contract v2 remediation candidate)
-  proofStatus: UNSUPPORTED
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
   owner: '@panospao7'
   linkedIssue: MIT-003
   evidence:
   - build/guard-debug/gr12-prestate/db-cli-run-01.json
   - build/guard-debug/gr14a/direct-proof.json.after.json
+  - build/guard-debug/gr14b/direct-proof.json.after.json
+  - docs/ci/db-mediation/GR-14b.yml
 - mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|mergeCategories|null|Long,Long|categoryDao|com.yourname.expensetracker.data.database.dao.CategoryDao|mergeCategories
   callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|mergeCategories|null|Long,Long
   path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
@@ -307,49 +309,45 @@ entries:
   evidence:
   - build/guard-debug/gr14a/direct-proof.json.after.json
   - docs/ci/db-mediation/GR-14a.yml
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|receiptEventDao|com.yourname.expensetracker.data.database.dao.ReceiptEventDao|insert
-  callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
-  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
-  expectedBarrierForm: DIRECT_CHECK
-  structuralStatus: UNSUPPORTED
-  reasonCodes: &id002
-  - DB_DIRECT_BARRIER_PROOF_UNSUPPORTED
-  reason: transactionRunner.runInTransaction lambda wall — canonical barrier check outside a synchronous transparent scope (GR-14 Contract v2 remediation candidate)
-  proofStatus: UNSUPPORTED
-  owner: '@panospao7'
-  linkedIssue: MIT-003
-  evidence:
-  - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0193
-  - build/guard-debug/gr12/capability-shadow-run-01.json
-  - build/guard-debug/gr14a/direct-proof.json.after.json
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|receiptExpenseLinkDao|com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|deleteAllLinksForReceipt
   callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
   path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
   expectedBarrierForm: DIRECT_CHECK
-  structuralStatus: UNSUPPORTED
-  reasonCodes: *id002
-  reason: transactionRunner.runInTransaction lambda wall — canonical barrier check outside a synchronous transparent scope (GR-14 Contract v2 remediation candidate)
-  proofStatus: UNSUPPORTED
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
   owner: '@panospao7'
   linkedIssue: MIT-003
   evidence:
   - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0193
   - build/guard-debug/gr12/capability-shadow-run-01.json
   - build/guard-debug/gr14a/direct-proof.json.after.json
+  - build/guard-debug/gr14b/direct-proof.json.after.json
+  - docs/ci/db-mediation/GR-14b.yml
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long|scannedReceiptDao|com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|delete
   callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|deleteReceipt|null|Long
   path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
   expectedBarrierForm: DIRECT_CHECK
-  structuralStatus: UNSUPPORTED
-  reasonCodes: *id002
-  reason: transactionRunner.runInTransaction lambda wall — canonical barrier check outside a synchronous transparent scope (GR-14 Contract v2 remediation candidate)
-  proofStatus: UNSUPPORTED
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
   owner: '@panospao7'
   linkedIssue: MIT-003
   evidence:
   - docs/ci/db-structural/GR-11_CORPUS.yml#gr11-0193
   - build/guard-debug/gr12/capability-shadow-run-01.json
   - build/guard-debug/gr14a/direct-proof.json.after.json
+  - build/guard-debug/gr14b/direct-proof.json.after.json
+  - docs/ci/db-mediation/GR-14b.yml
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|writeAssetDeleteFailedEvent|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt,Long,String?|receiptEventDao|com.yourname.expensetracker.data.database.dao.ReceiptEventDao|insert
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|function|writeAssetDeleteFailedEvent|null|com.yourname.expensetracker.data.database.entity.ScannedReceipt,Long,String?
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  expectedBarrierForm: DIRECT_CHECK
+  structuralStatus: SUPPORTED
+  proofStatus: PROVEN
+  owner: '@panospao7'
+  linkedIssue: GR-14b
+  evidence:
+  - build/guard-debug/gr14b/direct-proof.json.after.json
+  - docs/ci/db-mediation/GR-14b.yml
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt|com.yourname.expensetracker.domain.workers.WorkerExecutionGuard|function|recoverStaleRunningJobs|null|Long|backgroundJobRunDao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|staleAbortIfStillRunning
   callableKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt|com.yourname.expensetracker.domain.workers.WorkerExecutionGuard|function|recoverStaleRunningJobs|null|Long
   path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerExecutionGuard.kt
