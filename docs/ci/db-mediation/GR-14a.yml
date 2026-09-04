@@ -1,0 +1,172 @@
+# GR-14a remediation manifest (PR-GR-14 batch).
+#
+# This batch changes source architecture to satisfy proof requirements.
+# It is not a baseline, exception, or authorization document.
+#
+# Batch scope: the "DAO default-method" family of GR-12 UNSUPPORTED rows.
+# The Room inventory only indexed annotation-backed DAO methods, so default
+# @Transaction DAO methods (methods with bodies) were invisible to D4 — the
+# blind spot the GR-08 policy comments had documented. GR-14a adds a
+# fail-closed collector for default @Transaction DAO mutators and closes the
+# resulting proof gap with 5 exact policy rows plus one Pattern A barrier
+# addition.
+#
+# Schema deviation from PR-GR-14 plan (documented, intentional):
+# policyImpact uses the additional value NEW_IDENTITY_AUTHORIZED. The plan's
+# enum (NONE | EXACT_IDENTITY_MOVE | HELPER_TO_DIRECT | REMOVE_DEAD_ENTRY)
+# assumed remediation of existing writer shapes; GR-14a's root cause was
+# indexer blindness, so the exact rows authorize newly observed mutation
+# identities rather than moving/converting/removing existing ones.
+schemaVersion: 1
+batchId: GR-14a
+startSha: 540e427b5040188c95b219f28f599f198ceb5b28
+# GATE-00R not yet captured at startSha 540e427b. The latest COMPLETE
+# GATE-00R evidence is gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7
+# (docs/ci/GUARD_EVIDENCE_INDEX.yml), which predates the GR-10B-GR-12 wave.
+# A fresh GATE-00R double capture at the post-GR-14a SHA is owed before
+# GR-12 Step 7 (activation) / Step 8 (control-plane agreement).
+gateEvidenceSha256: null
+# build/guard-debug/gr14a/direct-proof.json.after.json (GR-12 dominance
+# proof engine, targetSha 540e427b, 28 entries / 22 PROVEN / 0
+# COUNTEREXAMPLE / 6 UNSUPPORTED / 0 infrastructure failures).
+directProofReportSha256: 7cdaf23c710f43a77a4be1a0ff82e68462a5489c6823f9ae8d858147f02f49bd
+# GR-13 mediation proof has not been run; this batch was selected and
+# closed from the GR-12 direct proof report only.
+mediationReportSha256: null
+# config/guards/db_ownership_policy.yml (post-batch, 5 GR-14a rows appended).
+activePolicySha256: dac82e2d8f75ba1536f593793bfe23c87059ed6d8c6e1ce87cea3ca857cf148c
+# config/baselines/db_access_v2.json (unchanged by this batch).
+baselineSha256: 44421412c890b60d17db9a4157c497cf44ec836753d195eeb95783ff8ccebfec
+
+selectedMutationKeys:
+- app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|toggleBudget|null|Long,Boolean|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|setActiveAndEnforceScope
+- app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|updateBudgetOrThrow|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|updateAndEnforceActiveScope
+- app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|mergeCategories|null|Long,Long|categoryDao|com.yourname.expensetracker.data.database.dao.CategoryDao|mergeCategories
+- app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt|com.yourname.expensetracker.data.repository.MerchantLocationRepository|function|saveLocation|null|String,com.yourname.expensetracker.domain.location.LocationResolutionResult.Resolved,String|dao|com.yourname.expensetracker.data.database.dao.MerchantLocationDao|upsertLocation
+- app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt|com.yourname.expensetracker.domain.budget.BudgetForecastingEngine|function|insertForecast|null|com.yourname.expensetracker.data.database.entity.BudgetForecast|budgetForecastDao|com.yourname.expensetracker.data.database.dao.BudgetForecastDao|insertWithDeactivation
+
+entries:
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|toggleBudget|null|Long,Boolean|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|setActiveAndEnforceScope
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|toggleBudget|null|Long,Boolean
+  priorProofStatus: UNSUPPORTED_SOURCE (mutation identity unindexed; default @Transaction DAO method invisible to inventory)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.data.repository.BudgetRepository.toggleBudget
+  targetLegalOwner: com.yourname.expensetracker.data.repository.BudgetRepository.toggleBudget
+  behaviorPreservation:
+    transaction: unchanged — Room default @Transaction DAO method semantics preserved; only indexing and policy authorization added
+    cancellation: unchanged — suspend path and coroutine context untouched
+    retry: N/A (not worker-owned)
+    lifecycle: unchanged — canonical write barrier lexically precedes the setActive call in toggleBudget
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NEW_IDENTITY_AUTHORIZED
+  tests:
+  - scripts/test_db_guard_room_inventory.py
+  - scripts/test_db_guard_scanner_d4.py
+  - scripts/test_verify_db_access_boundaries.py
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|updateBudgetOrThrow|null|com.yourname.expensetracker.data.database.entity.Budget|budgetDao|com.yourname.expensetracker.data.database.dao.BudgetDao|updateAndEnforceActiveScope
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt|com.yourname.expensetracker.data.repository.BudgetRepository|function|updateBudgetOrThrow|null|com.yourname.expensetracker.data.database.entity.Budget
+  priorProofStatus: UNSUPPORTED_SOURCE (mutation identity unindexed; default @Transaction DAO method invisible to inventory)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.data.repository.BudgetRepository.updateBudgetOrThrow
+  targetLegalOwner: com.yourname.expensetracker.data.repository.BudgetRepository.updateBudgetOrThrow
+  behaviorPreservation:
+    transaction: unchanged — Room default @Transaction DAO method semantics preserved
+    cancellation: unchanged — suspend path untouched
+    retry: N/A (not worker-owned)
+    lifecycle: unchanged — canonical write barrier lexically precedes the update call; active-scope enforcement inside the DAO method preserved
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NEW_IDENTITY_AUTHORIZED
+  tests:
+  - scripts/test_db_guard_room_inventory.py
+  - scripts/test_db_guard_scanner_d4.py
+  - scripts/test_verify_db_access_boundaries.py
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|mergeCategories|null|Long,Long|categoryDao|com.yourname.expensetracker.data.database.dao.CategoryDao|mergeCategories
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt|com.yourname.expensetracker.data.repository.CategoryRepository|function|mergeCategories|null|Long,Long
+  priorProofStatus: UNSUPPORTED_SOURCE (mutation identity unindexed; default @Transaction multi-table merge invisible to inventory)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.data.repository.CategoryRepository.mergeCategories
+  targetLegalOwner: com.yourname.expensetracker.data.repository.CategoryRepository.mergeCategories
+  behaviorPreservation:
+    transaction: unchanged — Room default @Transaction multi-table merge semantics preserved
+    cancellation: unchanged — withContext(IO) body untouched
+    retry: N/A (not worker-owned)
+    lifecycle: unchanged — canonical write barrier lexically precedes the withContext(IO) body that performs the merge
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NEW_IDENTITY_AUTHORIZED
+  tests:
+  - scripts/test_db_guard_room_inventory.py
+  - scripts/test_db_guard_scanner_d4.py
+  - scripts/test_verify_db_access_boundaries.py
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt|com.yourname.expensetracker.data.repository.MerchantLocationRepository|function|saveLocation|null|String,com.yourname.expensetracker.domain.location.LocationResolutionResult.Resolved,String|dao|com.yourname.expensetracker.data.database.dao.MerchantLocationDao|upsertLocation
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt|com.yourname.expensetracker.data.repository.MerchantLocationRepository|function|saveLocation|null|String,com.yourname.expensetracker.domain.location.LocationResolutionResult.Resolved,String
+  priorProofStatus: UNSUPPORTED_SOURCE (mutation identity unindexed; default @Transaction upsert invisible to inventory)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.data.repository.MerchantLocationRepository.saveLocation
+  targetLegalOwner: com.yourname.expensetracker.data.repository.MerchantLocationRepository.saveLocation
+  behaviorPreservation:
+    transaction: unchanged — Room default @Transaction upsert semantics preserved
+    cancellation: unchanged — suspend path untouched
+    retry: N/A (not worker-owned)
+    lifecycle: unchanged — canonical write barrier lexically precedes the upsert call
+    workerResult: N/A
+    privacy: N/A — location payload handling unchanged
+  policyImpact: NEW_IDENTITY_AUTHORIZED
+  tests:
+  - scripts/test_db_guard_room_inventory.py
+  - scripts/test_db_guard_scanner_d4.py
+  - scripts/test_verify_db_access_boundaries.py
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt|com.yourname.expensetracker.domain.budget.BudgetForecastingEngine|function|insertForecast|null|com.yourname.expensetracker.data.database.entity.BudgetForecast|budgetForecastDao|com.yourname.expensetracker.data.database.dao.BudgetForecastDao|insertWithDeactivation
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt|com.yourname.expensetracker.domain.budget.BudgetForecastingEngine|function|insertForecast|null|com.yourname.expensetracker.data.database.entity.BudgetForecast
+  priorProofStatus: UNSUPPORTED_SOURCE (mutation identity unindexed; default @Transaction insert invisible to inventory)
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: A
+  currentLegalOwner: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine.insertForecast
+  targetLegalOwner: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine.insertForecast
+  behaviorPreservation:
+    transaction: unchanged — Room default @Transaction insertWithDeactivation semantics preserved
+    cancellation: unchanged — writeBarrier.checkWritesAllowed is a synchronous no-op check; coroutine scope untouched
+    retry: N/A (not worker-owned)
+    lifecycle: canonical write barrier check added to insertForecast itself (GR-14a Pattern A). The only production caller (generateForecastResult) already checks before dispatching, so the added check is an unreachable no-op on every current path; it makes the callable self-contained as a legal direct owner.
+    workerResult: N/A
+    privacy: N/A
+  policyImpact: NEW_IDENTITY_AUTHORIZED
+  tests:
+  - scripts/test_db_guard_room_inventory.py
+  - scripts/test_db_guard_scanner_d4.py
+  - scripts/test_verify_db_access_boundaries.py
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+
+# ── Batch-level notes ────────────────────────────────────────────────────────
+# - ~13 additional mutators newly indexed by the GR-14a mutator rule already
+#   had exact rows from the GR-08 batches; no new rows were needed for them.
+# - Postconditions: DB CLI exit 0, trusted, 0 findings (5 temporary findings
+#   observed during development were resolved by the 5 exact rows before the
+#   final run); advisory diagnostic set unchanged at 20
+#   (DB_SIGNATURE_UNRESOLVED). GR-12 direct proof: 28 rows, 22 PROVEN,
+#   0 COUNTEREXAMPLE, 6 UNSUPPORTED (deleteBudget x2, deleteReceipt x3,
+#   deleteCategory — the lambda wall; route to Contract v2 work).
+# - addCategory and mergeCategories note: mergeCategories is selected above;
+#   addCategory (unselected) now proves via its `return withContext {…}`
+#   return-leaf shape (body inlined) — sound, but without contract backing;
+#   GR-14 Contract v2 should make that proof explicit.
+# - Owed artifacts: build/guard-debug/gr14a/proof-delta.json; truth sync of
+#   docs/ci/db-structural/GR-12_DIRECT_BARRIER_INVENTORY.yml (23 -> 28 rows).
+# - Owed validation: GATE-00R double capture at post-GR-14a SHA (see
+#   gateEvidenceSha256 note above), static suite + Gradle DB task + GATE-00R
+#   per PR-GR-14 Step 7 before GR-12 activation.
