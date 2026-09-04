@@ -3079,3 +3079,174 @@ def test_anchor_degenerate_inputs_fail_closed():
     """Relative and exactly-root-tail inputs return None without raising."""
     assert _absolute_root_anchor(os.sep.join(("src", "main", "java"))) is None
     assert _absolute_root_anchor(os.sep.join(("x", "src", "main", "java"))) is None
+
+
+# ── GR-14a: default (body-bearing) @Transaction mutator indexing ─────────────
+#
+# A default @Transaction method whose body invokes an abstract mutator of the
+# SAME DAO is a mutator (Room runs the body inside one transaction).  Everything
+# else stays unindexed exactly as before GR-14a: read-only bodies, cross-DAO
+# callees, ambiguous callee names, expression bodies, and declarations that
+# already carry an operation annotation.
+
+
+def test_default_transaction_calling_same_dao_mutator_is_indexed(tmp_path):
+    """Body calls the same-DAO abstract @Insert: the method is a
+    ROOM_TRANSACTION mutator with its exact callable identity, and the
+    inventory stays diagnostic-free."""
+    source = """package example
+
+class Item(val id: Long)
+
+@Dao
+interface ProbeDao {
+    @Insert
+    suspend fun insert(item: Item): Long
+
+    @Query("SELECT * FROM items WHERE id = :id")
+    suspend fun getById(id: Long): Item?
+
+    @Transaction
+    suspend fun insertAndTouch(item: Item): Long {
+        val existing = getById(item.id)
+        return insert(item)
+    }
+}
+"""
+    inventory = _inventory(tmp_path, source, policy={"version": 1, "methods": []})
+    transaction = [m for m in inventory.mutators if m.annotation == "Transaction"]
+    assert len(transaction) == 1
+    assert transaction[0].mutation_kind == "ROOM_TRANSACTION"
+    assert transaction[0].method.endswith("#insertAndTouch(Item)")
+    assert inventory.diagnostics == ()
+
+
+def test_read_only_default_transaction_is_not_indexed(tmp_path):
+    """A body that only calls @Query reads indexes nothing: reading inside a
+    transaction is not a write, and the method keeps its pre-GR-14a status."""
+    source = """package example
+
+class Item(val id: Long)
+
+@Dao
+interface ProbeDao {
+    @Insert
+    suspend fun insert(item: Item): Long
+
+    @Query("SELECT * FROM items WHERE id = :id")
+    suspend fun getById(id: Long): Item?
+
+    @Query("SELECT * FROM items")
+    suspend fun getAll(): List<Item>
+
+    @Transaction
+    suspend fun findOrFirst(id: Long): Item? {
+        getById(id)?.let { return it }
+        return getAll().firstOrNull()
+    }
+}
+"""
+    inventory = _inventory(tmp_path, source, policy={"version": 1, "methods": []})
+    assert not [m for m in inventory.mutators if m.annotation == "Transaction"]
+    assert inventory.diagnostics == ()
+
+
+def test_default_transaction_calling_only_other_dao_mutator_is_not_indexed(tmp_path):
+    """A same-NAMED abstract mutator of a DIFFERENT DAO never justifies this
+    DAO's default method: the body-callee rule is same-DAO exact."""
+    source = """package example
+
+class Item(val id: Long)
+
+@Dao
+interface OtherProbeDao {
+    @Insert
+    suspend fun insert(item: Item): Long
+}
+
+@Dao
+interface ProbeDao {
+    @Query("SELECT * FROM items WHERE id = :id")
+    suspend fun getById(id: Long): Item?
+
+    @Transaction
+    suspend fun copyIntoOther(other: OtherProbeDao, item: Item) {
+        other.insert(item)
+    }
+}
+"""
+    inventory = _inventory(tmp_path, source, policy={"version": 1, "methods": []})
+    assert not [m for m in inventory.mutators if m.annotation == "Transaction"]
+    assert inventory.diagnostics == ()
+
+
+def test_ambiguous_default_transaction_callee_stays_unindexed(tmp_path):
+    """A callee name declared as BOTH a mutator and a read of the same DAO
+    cannot be resolved by name: the method stays unindexed instead of
+    gaining a claim from ambiguous syntax."""
+    source = """package example
+
+class Item(val id: Long, val note: String)
+
+@Dao
+interface ProbeDao {
+    @Query("UPDATE items SET note = :note WHERE id = :id")
+    suspend fun apply(id: Long, note: String)
+
+    @Query("SELECT * FROM items WHERE id = :id AND note = :note")
+    suspend fun apply(item: Item, note: String): Item?
+
+    @Transaction
+    suspend fun applyAndTouch(item: Item, note: String) {
+        apply(item, note)
+        apply(item.id, note)
+    }
+}
+"""
+    inventory = _inventory(tmp_path, source, policy={"version": 1, "methods": []})
+    assert not [m for m in inventory.mutators if m.annotation == "Transaction"]
+    assert inventory.diagnostics == ()
+
+
+def test_transaction_with_operation_annotation_is_not_double_indexed(tmp_path):
+    """``@Insert @Transaction`` stays owned by the operation-annotation path:
+    one ROOM_INSERT mutator, no Transaction entry, no annotation-conflict
+    diagnostic."""
+    source = """package example
+
+class Item(val id: Long)
+
+@Dao
+interface ProbeDao {
+    @Insert
+    @Transaction
+    suspend fun save(item: Item): Long
+}
+"""
+    inventory = _inventory(tmp_path, source, policy={"version": 1, "methods": []})
+    assert len(inventory.mutators) == 1
+    assert inventory.mutators[0].mutation_kind == "ROOM_INSERT"
+    assert not [m for m in inventory.mutators if m.annotation == "Transaction"]
+    assert inventory.diagnostics == ()
+
+
+def test_expression_body_default_transaction_is_not_indexed(tmp_path):
+    """An expression-bodied default @Transaction has no analyzable braced
+    body: it stays unindexed (its exact pre-GR-14a status) instead of being
+    indexed from a guessed callee."""
+    source = """package example
+
+class Item(val id: Long)
+
+@Dao
+interface ProbeDao {
+    @Insert
+    suspend fun insert(item: Item): Long
+
+    @Transaction
+    suspend fun save(item: Item): Long = insert(item)
+}
+"""
+    inventory = _inventory(tmp_path, source, policy={"version": 1, "methods": []})
+    assert not [m for m in inventory.mutators if m.annotation == "Transaction"]
+    assert inventory.diagnostics == ()

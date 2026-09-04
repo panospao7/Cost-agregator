@@ -273,6 +273,11 @@ class BudgetForecastingEngine @Inject constructor(
      */
     @VisibleForTesting
     internal suspend fun insertForecast(forecast: BudgetForecast): ForecastInsertResult {
+        // GR-14a: the mutation is owned by THIS callable, so the write barrier
+        // check must lexically precede the DAO write here.  The only production
+        // caller (generateForecastResult) already checks before dispatching, so
+        // this double-check is unreachable-no-op in every current path.
+        writeBarrier.checkWritesAllowed("BudgetForecastingEngine.insertForecast")
         return try {
             ForecastInsertResult.Inserted(budgetForecastDao.insertWithDeactivation(forecast))
         } catch (e: SQLiteConstraintException) {

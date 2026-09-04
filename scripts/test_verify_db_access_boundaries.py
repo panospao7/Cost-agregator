@@ -5090,21 +5090,23 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
 
     Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
     promoted schemaVersion-2 document.  It loads cleanly through the
-    production v2 loader into exactly 472 immutable typed entries — a v1
+    production v2 loader into exactly 477 immutable typed entries — a v1
     document can never occupy the active path again, so there is no
     not-v2 rejection left to pin here.
 
-    Derivation of the 472 pin: the checked-in active document
-    ``config/guards/db_ownership_policy.yml`` carries 472 schemaVersion-2
+    Derivation of the 477 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 477 schemaVersion-2
     entry rows (each with exactly one ``ownerFqcn``/``daoAccessor``/
     ``operation`` mutation identity; the v2 loader performs no dedupe), as
-    of the GR-08m1 exact-policy wave that grew the document from the
-    48 GR-07-era rows.  Re-derive this pin after every policy promotion.
+    of the GR-14a exact-policy wave (5 rows for the default-@Transaction
+    mutators newly indexed by the GR-14a inventory rule) that grew the
+    document from the 472 GR-08m1-era rows.  Re-derive this pin after every
+    policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 472
+    assert len(entries) == 477
     # Every loaded row is an immutable typed v2 entry: no legacy dict rows.
     for entry in entries:
         assert hasattr(entry, "owner_fqcn")
@@ -5407,15 +5409,15 @@ def test_no_executable_ownership_pin_references():
 def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeypatch):
     """Activated truth (PR-GR-07 wave 2, GR-08m1 end state): invoking the CLI
     in-process with the REAL config paths runs the FULL activated pipeline —
-    the active schemaVersion-2 policy loads (472 typed entries), the v2
+    the active schemaVersion-2 policy loads (477 typed entries), the v2
     evidence stage runs over the real tree with NO loader/evidence failure,
     and the structural-manifest gate IS consulted and stays clean.
 
-    Derivation of the 472 pin: the checked-in active document
-    ``config/guards/db_ownership_policy.yml`` carries 472 schemaVersion-2
+    Derivation of the 477 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 477 schemaVersion-2
     entry rows (one exact mutation identity each; the v2 loader performs no
-    dedupe), as of the GR-08m1 exact-policy wave.  Re-derive after every
-    policy promotion.
+    dedupe), as of the GR-14a exact-policy wave (5 rows for the newly indexed
+    default-@Transaction mutators).  Re-derive after every policy promotion.
 
     The run exits 0 as a TRUSTED scan: the exact policy covers every
     discovered mutation (no finding) and no BLOCKING diagnostic remains.
@@ -5474,7 +5476,7 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
         _mod.OWNERSHIP_POLICY_PATH
     )
     assert loaded
-    assert len(entries) == 472
+    assert len(entries) == 477
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

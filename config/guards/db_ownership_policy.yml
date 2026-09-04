@@ -8303,3 +8303,91 @@ entries:
     can always run to delete raw data (never gated on the capability it enforces)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: toggleBudget
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: setActiveAndEnforceScope
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetDao convenience method
+    (body calls setActive to enforce the single-active-scope invariant) newly
+    indexed by the GR-14a mutator rule; canonical write barrier lexically
+    precedes the call in this callable'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateBudgetOrThrow
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateAndEnforceActiveScope
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetDao convenience method
+    newly indexed by the GR-14a mutator rule (the sibling updateBudget row
+    already existed); canonical write barrier lexically precedes the call in
+    this callable'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: mergeCategories
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: mergeCategories
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction CategoryDao multi-table
+    merge newly indexed by the GR-14a mutator rule; canonical write barrier
+    lexically precedes the withContext(IO) body that performs the call'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: saveLocation
+  receiver: null
+  parameterTypes:
+  - String
+  - com.yourname.expensetracker.domain.location.LocationResolutionResult.Resolved
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: upsertLocation
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction MerchantLocationDao upsert
+    newly indexed by the GR-14a mutator rule (the sibling saveCorrection row
+    already existed); canonical write barrier lexically precedes the call'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
+  kind: function
+  method: insertForecast
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.BudgetForecast
+  daoAccessor: budgetForecastDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+  operation: insertWithDeactivation
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetForecastDao insert
+    newly indexed by the GR-14a mutator rule; write barrier check added to
+    insertForecast itself (GR-14a Pattern A -- the only production caller
+    generateForecastResult already checks before dispatching, so the added
+    check is unreachable no-op in every current path)'
+  owner: '@panospao7'
+  linkedIssue: GR-14a

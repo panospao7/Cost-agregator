@@ -3217,20 +3217,25 @@ class FlagCaller(private val dao: FlagProbeDao) {
 
 
 def test_unindexed_transaction_default_method_delete_is_not_ambiguity(tmp_path):
-    """GR-07 final close-out adjudication, the CategoryRepository.kt:225
-    shape: ``categoryDao.delete(category)`` names the ``@Transaction``
-    DEFAULT method ``delete`` -- deliberately unindexed by the Room
-    inventory (only annotation-backed methods are discovered; the real
-    mutator is ``deleteInternal``).  The call still reached the ambiguity
-    emission because sixteen UNRELATED DAOs carry indexed ``delete``
-    mutators, so the operation gate let it through, and the RESOLVED
-    argument binding (``Category?``) fell past the read-only escape whose
-    guard required a non-empty candidate set.  Zero candidates is not
-    ambiguity: the pinned honest contract is 2+ EQUAL matches, and with no
-    inventory mutator the mutator gate could never reach an authorization
-    decision anyway.  The call now ends silently -- exactly the treatment
-    the unresolved-argument path and the absent-operation gate already
-    give the same shape."""
+    """GR-14a contract update of the GR-07 final close-out adjudication
+    (the CategoryRepository.kt:225 shape): ``categoryDao.delete(category)``
+    names the ``@Transaction`` DEFAULT method ``delete``.  GR-07 left such
+    methods unindexed, so the call ended silently — which is exactly the
+    blind spot GR-12 later proved: the direct policy rows for
+    ``BudgetRepository.addBudget``/``updateBudget`` and
+    ``CategoryRepository.addCategory``/``deleteCategory`` could never gain a
+    D4-resolved mutation observation, and the GR-12 dominance proof reported
+    them UNSUPPORTED (DAO_DEFAULT_METHOD_NOT_INDEXED).
+
+    GR-14a indexes a default ``@Transaction`` method whose body invokes an
+    abstract mutator of the SAME DAO, so ``delete`` is now a real
+    ``ROOM_TRANSACTION`` mutator.  The call resolves to exactly one
+    candidate (never ambiguity — 2+ EQUAL matches is still the pinned
+    honest contract), reaches an authorization decision, and with no
+    ownership policy the unauthorized write is an ERROR finding on a
+    trusted report.  The companion test
+    ``test_transaction_default_method_authorized_by_exact_policy_row``
+    pins the positive shape."""
     root = _source_root(tmp_path)
     source = """package example
 
@@ -3269,6 +3274,83 @@ class CategoryRepository(private val categoryDao: CategoryProbeDao) {
     (root / "CategoryRepository.kt").write_text(source, encoding="utf-8")
 
     report = scan_db_access(root, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
+
+    assert report.diagnostics == ()
+    assert len(report.findings) == 1
+    assert report.findings[0].rule == "DB_UNAUTHORIZED_MUTATION"
+    assert report.findings[0].identity["operation"] == "delete"
+    assert report.findings[0].identity["mutation_kind"] == "ROOM_TRANSACTION"
+    assert report.findings[0].identity["dao"] == "example.CategoryProbeDao"
+    assert report.statistics["trusted"] is True
+
+
+def test_transaction_default_method_authorized_by_exact_policy_row(tmp_path):
+    """GR-14a positive contract: the same ``categoryDao.delete(category)``
+    call is fully authorized when an exact v2 policy row names the
+    (callable, default ``@Transaction`` method) mutation identity, and the
+    canonical write barrier precedes it in the callable.  Zero findings,
+    trusted report — the mutator participates in normal v2 authorization
+    exactly like annotation-backed mutators."""
+    root = _source_root(tmp_path)
+    source = """package example
+
+class CategoryEntity(val id: Long, val name: String)
+
+@androidx.room.Dao
+interface CategoryProbeDao {
+    @androidx.room.Query("SELECT * FROM categories WHERE id = :id")
+    suspend fun getById(id: Long): CategoryEntity?
+
+    @androidx.room.Delete
+    suspend fun deleteInternal(category: CategoryEntity)
+
+    @androidx.room.Transaction
+    suspend fun delete(category: CategoryEntity) {
+        deleteInternal(category)
+    }
+}
+
+class WriteBarrier {
+    fun checkWritesAllowed(operation: String) {}
+}
+
+class CategoryRepository(private val categoryDao: CategoryProbeDao, private val writeBarrier: WriteBarrier) {
+    suspend fun deleteCategory(categoryId: Long) {
+        val category = categoryDao.getById(categoryId)
+            ?: return
+        writeBarrier.checkWritesAllowed("CategoryRepository.deleteCategory")
+        categoryDao.delete(category)
+    }
+}
+"""
+    (root / "CategoryRepository.kt").write_text(source, encoding="utf-8")
+
+    from scripts.db_guard.policy_v2_loader import load_policy_v2
+
+    policy_yaml = """\
+schemaVersion: 2
+entries:
+- path: app/src/main/java/CategoryRepository.kt
+  ownerFqcn: example.CategoryRepository
+  kind: function
+  method: deleteCategory
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: categoryDao
+  daoFqcn: example.CategoryProbeDao
+  operation: delete
+  barrierMode: direct
+  reason: "GR-14a fixture: default @Transaction mutator authorized exactly"
+  owner: '@test'
+  linkedIssue: GR-14a
+"""
+    policy_path = root / "policy.yml"
+    policy_path.write_text(policy_yaml, encoding="utf-8")
+    entries, errors = load_policy_v2(str(policy_path))
+    assert entries is not None, errors
+
+    report = scan_db_access(root, entries, raw_query_policy=_EMPTY_RAW_QUERY_POLICY)
 
     assert report.diagnostics == ()
     assert report.findings == ()

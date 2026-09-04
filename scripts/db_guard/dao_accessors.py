@@ -84,15 +84,33 @@ class DaoMethodAnnotation:
     function_start: int = -1
 
 
+@dataclass(frozen=True)
+class DaoTransactionMethod:
+    """One default (body-bearing) ``@Transaction`` method declared directly
+    in a DAO, with the exact span of its masked body.
+
+    Declarations carrying any direct Room operation annotation belong to the
+    annotation path (:func:`find_dao_method_annotations`) and never appear
+    here.  ``body_end`` is the offset of the closing brace, inclusive.
+    """
+
+    method: DaoMethodId
+    function_start: int
+    body_start: int
+    body_end: int
+
+
 __all__ = [
     "AccessorError",
     "DaoId",
     "DaoMethodId",
     "DaoMethodAnnotation",
+    "DaoTransactionMethod",
     "canonical_dao_path",
     "find_dao_declarations",
     "find_dao_methods",
     "find_dao_method_annotations",
+    "find_dao_transaction_methods",
 ]
 
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
@@ -103,6 +121,9 @@ _OWNER_DECLARATION = re.compile(r"\b(?:class|interface|object)\s+(%s)\b" % _IDEN
 _FUN = re.compile(r"\bfun\s+(?:(%s)\s*\.\s*)?(%s)\s*\(" % (_IDENT, _IDENT))
 _ROOM_ANNOTATION = re.compile(
     r"@(?:[A-Za-z_][A-Za-z0-9_]*\.)*(Insert|Update|Delete|Upsert|Query|RawQuery)\b"
+)
+_TRANSACTION_ANNOTATION = re.compile(
+    r"@(?:[A-Za-z_][A-Za-z0-9_]*\.)*Transaction\b"
 )
 _ANY_ANNOTATION = re.compile(r"@(?:[A-Za-z_][A-Za-z0-9_]*\.)*[A-Za-z_][A-Za-z0-9_]*\b")
 # Keywords which can start a sibling declaration at the top level of a scope.
@@ -520,3 +541,118 @@ def find_dao_method_annotations(masked_source: Any, dao_decl: DaoId) -> tuple[Da
 
 def find_dao_methods(masked_source: Any, dao_decl: DaoId) -> tuple[DaoMethodId, ...]:
     return tuple(record.method for record in find_dao_method_annotations(masked_source, dao_decl))
+
+
+def find_dao_transaction_methods(
+    masked_source: Any, dao_decl: DaoId
+) -> tuple[DaoTransactionMethod, ...]:
+    """Collect default (body-bearing) ``@Transaction`` methods of one DAO.
+
+    A record is returned only when the declaration carries ``@Transaction``
+    and NO direct Room operation annotation, declares a braced body, and has
+    an exactly parseable header.  Everything else stays unindexed exactly as
+    before this collector existed — expression bodies, ``@Transaction`` on an
+    abstract method, and duplicate ``@Transaction`` spellings are silently
+    omitted, so a caller can never gain a mutator claim from malformed or
+    unanalyzable syntax.  The body span is over the masked source, so the
+    text carries no comments or strings.
+    """
+    original = _check_source(masked_source)
+    source = _mask(original)
+    path = canonical_dao_path(dao_decl.canonical_path)
+    declarations = [d for d in _declarations(source, path) if d.dao == dao_decl]
+    if not declarations:
+        raise AccessorError(ERROR_MISSING_DECLARATION)
+    if len(declarations) != 1:
+        raise AccessorError(ERROR_AMBIGUOUS_DECLARATION)
+    declaration = declarations[0]
+    if declaration.bodyless:
+        # A bodyless DAO has no default methods.  Never scan past the header
+        # into a following sibling declaration.
+        return ()
+    depths = _brace_depths(source)
+    records: dict[int, DaoTransactionMethod] = {}
+    for annotation in _TRANSACTION_ANNOTATION.finditer(
+        source, declaration.body_start, declaration.body_end
+    ):
+        if depths[annotation.start()] != depths[declaration.body_start]:
+            continue
+        end = _any_annotation_end(source, annotation.start())
+        function = _FUN.search(source, end, declaration.body_end)
+        if (function is None
+                or depths[function.start()] != depths[declaration.body_start]
+                or not _adjacent_to_declaration(source, end, function.start())):
+            raise AccessorError(ERROR_UNSUPPORTED_METHOD)
+        if function.start() in records:
+            # One declaration carrying several @Transaction spellings cannot
+            # compile; keep the first exact parse and never double-index.
+            continue
+        # The full annotation block of this declaration: every annotation at
+        # DAO-body depth whose tail connects to ``fun`` through only
+        # whitespace/annotations/modifiers.  The ``@Transaction`` anchor is
+        # itself adjacent, so the list is never empty.
+        adjacent_starts = [
+            other.start()
+            for other in _ANY_ANNOTATION.finditer(
+                source, declaration.body_start, function.start()
+            )
+            if depths[other.start()] == depths[declaration.body_start]
+            and _adjacent_to_declaration(source, other.end(), function.start())
+        ]
+        block_start = min(adjacent_starts)
+        if _ROOM_ANNOTATION.search(source, block_start, function.start()):
+            # Owned by the operation-annotation path; never a default method.
+            continue
+        opening = source.find("(", function.start(), declaration.body_end)
+        if opening < 0:
+            raise AccessorError(ERROR_UNSUPPORTED_METHOD)
+        closing = _balanced_delimiter(source, opening, "(", ")")
+        if closing >= declaration.body_end:
+            raise AccessorError(ERROR_UNSUPPORTED_METHOD)
+        body_start = _transaction_body_start(source, closing, declaration.body_end)
+        if body_start is None:
+            # Expression body or abstract declaration: stays unindexed.
+            continue
+        body_end = _balanced_delimiter(source, body_start, "{", "}")
+        if body_end >= declaration.body_end:
+            raise AccessorError(ERROR_UNSUPPORTED_METHOD)
+        params = _split_parameters(source[opening + 1 : closing])
+        records[function.start()] = DaoTransactionMethod(
+            method=DaoMethodId(
+                dao_decl,
+                function.group(2),
+                function.group(1).strip() if function.group(1) else None,
+                params,
+            ),
+            function_start=function.start(),
+            body_start=body_start,
+            body_end=body_end,
+        )
+    return tuple(records[line_start] for line_start in sorted(records))
+
+
+def _transaction_body_start(source: str, params_close: int, limit: int) -> int | None:
+    """Offset of the body ``{`` after a parameter list, or None.
+
+    ``None`` covers an abstract declaration (next code is ``;`` or a sibling)
+    and an expression body (next code is ``=``): neither yields an analyzable
+    braced body, so the method must stay unindexed.
+    """
+    cursor = params_close + 1
+    depth = 0
+    while cursor < limit:
+        char = source[cursor]
+        if char == "=" and depth == 0:
+            return None
+        if char == ";" and depth == 0:
+            return None
+        if char == "{":
+            if depth == 0:
+                return cursor
+            return None
+        if char in "([":
+            depth += 1
+        elif char in ")]":
+            depth -= 1
+        cursor += 1
+    return None

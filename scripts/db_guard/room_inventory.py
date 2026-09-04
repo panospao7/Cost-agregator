@@ -23,7 +23,8 @@ except ImportError:  # pragma: no cover - the policy path requires PyYAML
 
 from .dao_accessors import (
     AccessorError, DaoId, DaoMethodAnnotation, DaoMethodId,
-    find_dao_declarations, find_dao_method_annotations,
+    DaoTransactionMethod, find_dao_declarations, find_dao_method_annotations,
+    find_dao_transaction_methods,
 )
 from ..db_policy_signature import SignatureError, normalize_type_text
 from ..kotlin_callable_parser import ParserError, mask_kotlin_source
@@ -1434,6 +1435,7 @@ def build_room_inventory(
         diagnostics.append(_diag("DB_ROOM_SOURCE_EMPTY"))
     daos: list[DaoId] = []
     methods: list[DaoMethodId] = []
+    transaction_methods: list[DaoTransactionMethod] = []
     method_annotations: dict[tuple[str, str, str, str | None, tuple[str, ...]], list[DaoMethodAnnotation]] = {}
     # One callable DECLARATION can carry several Room annotation records
     # (``@Insert @Query(...) fun save``): those records share one declaration
@@ -1458,6 +1460,13 @@ def build_room_inventory(
                     methods.append(record.method)
                     method = record.method
                     method_annotations.setdefault((method.dao.canonical_path, method.dao.fqcn, method.name, method.receiver, method.parameters), []).append(record)
+                    declaration_sites.setdefault(
+                        (method.dao.fqcn, method.name, method.receiver, method.parameters),
+                        set(),
+                    ).add((method.dao.canonical_path, record.function_start))
+                for record in find_dao_transaction_methods(source, dao):
+                    transaction_methods.append(record)
+                    method = record.method
                     declaration_sites.setdefault(
                         (method.dao.fqcn, method.name, method.receiver, method.parameters),
                         set(),
@@ -1499,11 +1508,16 @@ def build_room_inventory(
 
     mutators: dict[str, RoomMutator] = {}
     method_map: dict[tuple[str, str, str, str | None, tuple[str, ...]], DaoMethodId] = {}
-    for method in methods:
+    for method in list(methods) + [record.method for record in transaction_methods]:
         key = (method.dao.canonical_path, method.dao.fqcn, method.name, method.receiver, method.parameters)
         if key in method_map:
             diagnostics.append(_diag("DB_ROOM_DUPLICATE_METHOD", method.dao.canonical_path))
         method_map[key] = method
+    transaction_identities = {
+        (record.method.dao.canonical_path, record.method.dao.fqcn, record.method.name,
+         record.method.receiver, record.method.parameters)
+        for record in transaction_methods
+    }
 
     def direct_mutator(method: DaoMethodId) -> RoomMutator | None:
         source = sources.get(method.dao.canonical_path, "")
@@ -1558,9 +1572,18 @@ def build_room_inventory(
         diagnostics.append(_diag("DB_ROOM_MUTATOR_IDENTITY_AMBIGUOUS", identity[0]))
 
     direct_by_dao: dict[str, dict[str, RoomMutator]] = {dao.fqcn: {} for dao in daos}
+    # Default ``@Transaction`` methods join the declared-method surface (the
+    # scanner resolves their call sites from this list) but never the
+    # operation-annotation pass: their mutator claim is decided by the
+    # body-callee rule below, not by an annotation record.
+    methods.extend(record.method for record in transaction_methods)
     for method in methods:
         identity_key = (method.dao.fqcn, method.name, method.receiver, method.parameters)
         if identity_key in ambiguous_callables or method.dao.fqcn in duplicate_daos_pre:
+            continue
+        method_key = (method.dao.canonical_path, method.dao.fqcn, method.name,
+                      method.receiver, method.parameters)
+        if method_key in transaction_identities:
             continue
         item = direct_mutator(method)
         if item:
@@ -1570,6 +1593,71 @@ def build_room_inventory(
             # may contain several DAOs (including nested DAOs).
             identity = item.method.split("#", 1)[1]
             direct_by_dao.setdefault(method.dao.fqcn, {})[identity] = item
+
+    # GR-14a: a default (body-bearing) ``@Transaction`` method is a mutator
+    # exactly when its body invokes at least one abstract mutator of the SAME
+    # DAO — Room runs that body inside one transaction, so the call writes.
+    # Read-only transaction bodies index nothing.  Any ambiguity (a callee
+    # name that is also declared as a non-mutator method of the same DAO)
+    # stays unindexed: the method then keeps its pre-GR-14a status instead of
+    # gaining a claim from unresolvable syntax.  Justification uses the
+    # ABSTRACT mutator set only, computed before this pass, so a default
+    # method calling another default method is never order-dependently
+    # indexed.  Body text comes from the masked source: comments and strings
+    # can never name a callee.
+    abstract_mutator_identities: dict[str, set[str]] = {
+        fqcn: set(identities) for fqcn, identities in direct_by_dao.items()
+    }
+    abstract_mutator_names: dict[str, set[str]] = {
+        fqcn: {identity.split("(", 1)[0] for identity in identities}
+        for fqcn, identities in abstract_mutator_identities.items()
+    }
+    transaction_declared: dict[str, set[tuple[str, str | None, tuple[str, ...]]]] = {}
+    for record in transaction_methods:
+        method = record.method
+        transaction_declared.setdefault(method.dao.fqcn, set()).add(
+            (method.name, method.receiver, method.parameters)
+        )
+    masked_sources: dict[str, str] = {}
+    for record in transaction_methods:
+        method = record.method
+        canonical = method.dao.canonical_path
+        masked = masked_sources.get(canonical)
+        if masked is None:
+            masked = mask_kotlin_source(sources.get(canonical, ""))
+            masked_sources[canonical] = masked
+        identity_key = (method.dao.fqcn, method.name, method.receiver, method.parameters)
+        if identity_key in ambiguous_callables or method.dao.fqcn in duplicate_daos_pre:
+            continue
+        non_mutator_declared_names: set[str] = set()
+        for key, candidate in method_map.items():
+            if key[1] != method.dao.fqcn:
+                continue
+            identity = candidate.name
+            if candidate.receiver:
+                identity += "(%s)" % candidate.receiver
+            identity += "(%s)" % ", ".join(candidate.parameters)
+            if identity in abstract_mutator_identities.get(method.dao.fqcn, ()):
+                continue
+            if (candidate.name, candidate.receiver, candidate.parameters) in transaction_declared.get(method.dao.fqcn, ()):
+                continue
+            non_mutator_declared_names.add(candidate.name)
+        body = masked[record.body_start + 1 : record.body_end]
+        called = sorted(
+            name for name in abstract_mutator_names.get(method.dao.fqcn, ())
+            if re.search(r"\b%s\s*\(" % re.escape(name), body)
+        )
+        if not called:
+            continue
+        if any(name in non_mutator_declared_names for name in called):
+            continue
+        location = "%s:%d" % (method.dao.canonical_path, _line(masked, record.function_start))
+        item = RoomMutator(
+            _method_signature(method), "ROOM_TRANSACTION", "Transaction",
+            None, None, location,
+        )
+        mutators[item.method] = item
+        direct_by_dao.setdefault(method.dao.fqcn, {})[item.method.split("#", 1)[1]] = item
 
     # Resolve inheritance as a graph fixed point.  Source order is deliberately
     # irrelevant: a child may occur before its parent, and inherited methods
