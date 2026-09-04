@@ -5167,21 +5167,6 @@ entries:
   receiver: null
   parameterTypes:
   - Long
-  daoAccessor: receiptEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
-  operation: insert
-  barrierMode: direct
-  reason: "Canonical receipt deletion \u2014 ASSET_DELETE_FAILED fallback event insert\
-    \ when asset cleanup fails"
-  owner: '@panospao7'
-  linkedIssue: MIT-003
-- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
-  kind: function
-  method: deleteReceipt
-  receiver: null
-  parameterTypes:
-  - Long
   daoAccessor: receiptExpenseLinkDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
   operation: deleteAllLinksForReceipt

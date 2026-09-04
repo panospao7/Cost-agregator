@@ -115,7 +115,7 @@ def _write_min_repo(root: Path) -> None:
     (baselines / "db_access_v2.json").write_text(
         json.dumps({"entries": []}), encoding="utf-8"
     )
-    candidate_entries = "".join(f"  - id: e{i}\n" for i in range(472))
+    candidate_entries = "".join(f"  - id: e{i}\n" for i in range(471))
     (guards / "db_ownership_policy.signatures.candidate.yml").write_text(
         "schemaVersion: 2\nentries:\n" + candidate_entries, encoding="utf-8"
     )
@@ -193,8 +193,8 @@ def _inventory_handler(exit_code=None, trusted=None, codes=None, dump=True, repo
     return handler
 
 
-def _migrate_check_handler(exit_code=1, input_count=99, resolved=57,
-                           unresolved=42, duplicates=0, seeds=0):
+def _migrate_check_handler(exit_code=1, input_count=99, resolved=56,
+                           unresolved=43, duplicates=0, seeds=0):
     stdout = (
         f"db-policy migration: input={input_count} resolved={resolved} "
         f"unresolved={unresolved} duplicateMutationKeys={duplicates} "
@@ -331,8 +331,8 @@ class TestAllPass:
 
     def test_expected_strings_pin_documented_contract(self):
         assert "20xDB_SIGNATURE_UNRESOLVED" in vkgs._EXPECTED_GATE
-        assert "input=99 resolved=57 unresolved=42" in vkgs._EXPECTED_MIGRATION
-        assert "entries=472" in vkgs._EXPECTED_CANDIDATE
+        assert "input=99 resolved=56 unresolved=43" in vkgs._EXPECTED_MIGRATION
+        assert "entries=471" in vkgs._EXPECTED_CANDIDATE
         assert "structural_entries=64" in vkgs._EXPECTED_STRUCTURAL
         assert vkgs._EXPECTED_META == "exit=0 silent"
         assert vkgs._EXPECTED_FRESHNESS == (
@@ -538,7 +538,7 @@ class TestMigrationFailBranches:
         runner = _router(
             gate=_gate_handler(),
             inventory=_inventory_handler(),
-            migrate_check=_migrate_check_handler(resolved=56),
+            migrate_check=_migrate_check_handler(resolved=57),
             meta=_meta_handler(),
             verify=_verify_handler(),
         )
@@ -546,7 +546,7 @@ class TestMigrationFailBranches:
         assert exit_code == 1
         migration = _row(rows, vkgs.ROW_MIGRATION_FOLD)
         assert migration.outcome == vkgs.OUTCOME_FAIL
-        assert "resolved=56" in migration.observed
+        assert "resolved=57" in migration.observed
 
     def test_fail_on_clean_exit(self, scorecard_env):
         repo, scratch = scorecard_env
@@ -643,7 +643,7 @@ class TestCandidateFailBranches:
     def test_fail_on_entry_count_drift(self, scorecard_env):
         repo, scratch = scorecard_env
         candidate = repo / "config" / "guards" / "db_ownership_policy.signatures.candidate.yml"
-        entries = "".join(f"  - id: e{i}\n" for i in range(471))
+        entries = "".join(f"  - id: e{i}\n" for i in range(472))
         candidate.write_text(
             "schemaVersion: 2\nentries:\n" + entries, encoding="utf-8"
         )
@@ -651,7 +651,7 @@ class TestCandidateFailBranches:
         assert exit_code == 1
         row = _row(rows, vkgs.ROW_CANDIDATE_REPRODUCIBLE)
         assert row.outcome == vkgs.OUTCOME_FAIL
-        assert "entries=471" in row.observed
+        assert "entries=472" in row.observed
 
     def test_fail_on_v1_schema(self, scorecard_env):
         repo, scratch = scorecard_env
@@ -845,7 +845,7 @@ class TestInfraBranches:
         runner = _router(
             gate=_gate_handler(exit_code=2),
             inventory=_inventory_handler(),
-            migrate_check=_migrate_check_handler(resolved=56),
+            migrate_check=_migrate_check_handler(resolved=57),
             meta=_meta_handler(),
             verify=_verify_handler(),
         )

@@ -235,3 +235,9 @@ No baseline changes have been made. No ownership-policy changes have been made. 
 | Ledger complete with exit codes | **NO** (pending manual execution) |
 
 **Overall:** PARTIAL / PENDING REVIEW — PR-F1 implementation (`guard_findings.py`, `finding_rule_catalog.py`, `test_guard_findings.py`) is authored (v2 envelope, deep immutability/FrozenDict, privacy/sanitized errors, multiplicity/fingerprint fixes, unknown-symbol diagnostics, declared-order fingerprint exact string, unknown-guard/schema/version read-path precedence) but has **not been reviewed or executed** in this recovery worktree. PR-D1 (exact callable signature model, parser, migration CLI, candidate artifact) and PR-D2 (Room-derived mutator inventory) are implemented but pending tests, runtime validation, and review. PR-D4 (suite integration) is partial — db_access guard now uses protocol-v2 `--command-arg` tokens with canonical policy paths. PR-F2 is partial — v1 baseline F2 migration-blocker (`RATCHET_V1_BASELINE_INCOMPATIBLE`), registry protocol auto-resolve for `db_access`, and protocol-v2 suite command integration. The candidate artifact contains **9 resolved findings and 90 unresolved findings** and is **non-authorizing** (it does not gate CI or alter baseline enforcement). Phase 0 freeze commands remain defined but not yet executed. The DB baseline (`config/baselines/db_access.json`) and ownership policy (`config/guards/db_ownership_policy.yml`) remain **unchanged** (v1 format, causes controlled F2 migration-blocker exit 2 until v2 baseline migration).
+
+---
+
+## 9. Post-GR-14b reconciliation (appended)
+
+2026-09-04 post-GR-14b reconciliation: EXACT_IDENTITY_MOVE (writeAssetDeleteFailedEvent) removed one emitting legacy key; tracked candidate regenerated 472 -> 471 entries (--verify seed-row match true).
