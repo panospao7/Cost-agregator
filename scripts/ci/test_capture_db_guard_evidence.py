@@ -50,7 +50,7 @@ RETIRED_TARGET_SHA = "9b97e7979130de605d164386bbf719cf20579475"
 # exactly like the run pin.  The fake git runner resolves it to itself.
 BASE_REF_SHA = "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a0"
 # The merge-base the fake git runner reports for ``git merge-base HEAD <base>``.
-MERGE_BASE_SHA = "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5"
+MERGE_BASE_SHA = "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
 # 40-hex detector for fake git branches that must match a bare SHA argument.
 _SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 
