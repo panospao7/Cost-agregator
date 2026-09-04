@@ -2227,6 +2227,14 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
                 "--baseline=config/baselines/db_access_v2.json",
                 "--ci-mode",
                 "--finding-protocol=2",
+                # Pin the ratchet child budget to 1380s, mirroring
+                # run_static_guard_suite.py's derived child budget
+                # (DEFAULT_GUARD_TIMEOUT_SECONDS 1500 minus 120s headroom = 1380);
+                # the bare default 300s killed a healthy ~330s scan in the
+                # add474fc run-02 bundle (04-db-ratchet.log: "could not execute
+                # the guard command (timeout...)"), leaving the required
+                # summary artifact missing.
+                "--timeout", "1380",
                 "--output-summary", rop("04-db-ratchet.summary.json"),
             ],
             # No ``report_path``: the ratchet's ``--output-summary`` artifact is
@@ -2256,6 +2264,12 @@ def default_command_matrix(root: str, out_dir: str) -> List[CommandSpec]:
             id="gradle-db",
             log_name="06-gradle-db.log",
             argv=[_suite_gradlew(), ":app:verifyDbAccessBoundaries", "--no-daemon", "--stacktrace"],
+            # The Gradle DB task failure log varies run-to-run (10.7KB in run-01
+            # vs 20.0KB in run-02 of the add474fc bundle — the 20,000-char
+            # default cap tripped in run-02 and made the log incomplete);
+            # MAX_ROW_OUTPUT_LIMIT guarantees the complete log is persistable,
+            # same contract as the focused-python-tests row.
+            output_limit=MAX_ROW_OUTPUT_LIMIT,
         ),
         CommandSpec(
             id="gradle-task-graph",

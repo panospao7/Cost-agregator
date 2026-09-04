@@ -1901,6 +1901,9 @@ def test_ratchet_argv_complete(tmp_path):
     required ratchet summary artifact permanently missing.  The nested
     ``--command-arg=python3`` token is unchanged: the ratchet resolves it to
     ``sys.executable`` itself (Windows-safe per its own resolution contract).
+    The ``--timeout 1380`` pin mirrors the suite-derived child budget (1380s,
+    from run_static_guard_suite.py's DEFAULT_GUARD_TIMEOUT_SECONDS 1500 minus
+    120s headroom) so a healthy scan is never killed by the bare 300s default.
     """
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
@@ -1922,6 +1925,7 @@ def test_ratchet_argv_complete(tmp_path):
         "--baseline=config/baselines/db_access_v2.json",
         "--ci-mode",
         "--finding-protocol=2",
+        "--timeout", "1380",
         "--output-summary", "/".join([bundle_rel, "04-db-ratchet.summary.json"]),
     ]
     assert ratchet.argv == expected
@@ -4754,15 +4758,20 @@ def test_default_matrix_focused_tests_row_has_raised_output_cap(tmp_path):
     """The focused-python-tests row carries the per-row persisted-output cap
     override (its verbose pytest stream measured ≈200K chars — the 20,000-char
     global cap tripped at ≈10% progress in the run-01 gate bundle, and a
-    COMPLETE log must be persistable); every other row keeps the global cap."""
+    COMPLETE log must be persistable); the gradle-db row also carries the
+    override because its failure-log size varies run-to-run (10.7KB in run-01
+    vs 20.0KB in run-02 of the add474fc bundle — the default cap tripped in
+    run-02 and left the log incomplete); every other row keeps the global cap."""
     root = _make_root(tmp_path)
     out = root / "out" / "run-1"
     matrix = cap.default_command_matrix(str(root), str(out))
     by_id = {s.id: s for s in matrix}
     assert cap.MAX_ROW_OUTPUT_LIMIT > cap.CHILD_OUTPUT_LIMIT
     assert by_id["focused-python-tests"].output_limit == cap.MAX_ROW_OUTPUT_LIMIT
+    assert by_id["gradle-db"].output_limit == cap.MAX_ROW_OUTPUT_LIMIT
+    raised = {"focused-python-tests", "gradle-db"}
     for spec in matrix:
-        if spec.id != "focused-python-tests":
+        if spec.id not in raised:
             assert spec.output_limit is None, spec.id
 
 
