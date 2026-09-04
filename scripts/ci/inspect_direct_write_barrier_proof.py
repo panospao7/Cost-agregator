@@ -33,8 +33,9 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from scripts.db_guard.structural_analysis.barrier_proof import (  # noqa: E402
-    CANONICAL_BARRIER_CONTRACT_V1,
+    CANONICAL_BARRIER_CONTRACT_V2,
     ReceiverTypeResolver,
+    admit_transparent_scope_candidates,
     prove_direct_barrier,
 )
 from scripts.db_guard.structural_analysis.barrier_markers import (  # noqa: E402
@@ -324,7 +325,10 @@ def build_direct_proof_shadow(
         )
         opacity = _default_opacity_predicate(masked, body_span, callable_sites)
         parse_result = parse_callable_body(
-            masked, body_span, lambda_opacity_predicate=opacity
+            masked,
+            body_span,
+            lambda_opacity_predicate=opacity,
+            transparent_scope_methods=CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_methods,
         )
         if parse_result.unsupported:
             after_rows.append(
@@ -342,6 +346,14 @@ def build_direct_proof_shadow(
             item for item in callable_sites if item.span.start == observation.source_start
         )
         markers = collect_barrier_markers(parse_result, masked)
+        # Exact-resolution admission of transparent-scope candidates happens
+        # HERE (proof layer), before the CFG is built: a candidate whose
+        # receiver/import does not resolve against the contract is never
+        # wired, so its mutations stay UNSUPPORTED (fail closed).
+        resolver = ReceiverTypeResolver(masked)
+        admitted = admit_transparent_scope_candidates(
+            parse_result, CANONICAL_BARRIER_CONTRACT_V2, resolver
+        )
         from scripts.db_guard.structural_analysis.cfg import build_callable_cfg
 
         try:
@@ -351,6 +363,7 @@ def build_direct_proof_shadow(
                 markers,
                 path=entry.path,
                 callable_key=observation.callable_key,
+                admitted_transparent_spans=admitted,
             )
         except (TypeError, ValueError):
             after_rows.append(
@@ -363,13 +376,12 @@ def build_direct_proof_shadow(
                 }
             )
             continue
-        resolver = ReceiverTypeResolver(masked)
         results, proof_diagnostics = prove_direct_barrier(
             masked,
             body_span,
             cfg,
             (mutation_site,),
-            CANONICAL_BARRIER_CONTRACT_V1,
+            CANONICAL_BARRIER_CONTRACT_V2,
             resolver,
             path=entry.path,
             callable_key=observation.callable_key,
@@ -393,7 +405,7 @@ def build_direct_proof_shadow(
 
     before_rows.sort(key=lambda row: row["mutationKey"])
     after_rows.sort(key=lambda row: row["mutationKey"])
-    contract_version = CANONICAL_BARRIER_CONTRACT_V1.contract_version
+    contract_version = CANONICAL_BARRIER_CONTRACT_V2.contract_version
     before_report = {
         "schemaVersion": 1,
         "reportOnly": True,

@@ -61,6 +61,9 @@ class _Builder:
         self.exit_normal: str | None = None
         self.exit_exceptional: str | None = None
         self._counter = 0
+        # GR-14b: (start, end) spans of contract-admitted transparent-scope
+        # regions.  Non-admitted candidates build as disconnected scopes.
+        self.admitted_transparent: frozenset = frozenset()
 
     def add(self, kind: NodeKind, span: SourceSpan) -> str:
         self._counter += 1
@@ -137,16 +140,20 @@ def _build_regions(
     regions,
     in_lambda: bool,
     loop_ctx: dict | None,
+    in_transparent: bool = False,
 ) -> tuple[list[str], list[str], list[tuple[EdgeKind, str]]]:
     """Build a statement sequence.
 
     Returns (first_node_ids, last_normal_node_ids, dangling) where dangling
     holds (edge_kind, source_node_id) pairs that must connect to the sequence
     join (the next sibling's entry, the enclosing join, or the exit).
+    ``in_transparent`` marks a sequence directly/structurally inside an
+    admitted transparent scope: RETURN and LAMBDA_RETURN are lambda-local
+    there and hand their exit to the continuation via dangling edges.
     """
     entries: list[tuple[list[str], list[str], list[tuple[EdgeKind, str]]]] = []
     for region in regions:
-        entries.append(_build_region(builder, region, in_lambda, loop_ctx))
+        entries.append(_build_region(builder, region, in_lambda, loop_ctx, in_transparent))
     non_empty = [
         item for item in entries if item[0] or item[2]
     ]
@@ -175,13 +182,49 @@ def _build_region(
     region,
     in_lambda: bool,
     loop_ctx: dict | None,
+    in_transparent: bool = False,
 ) -> tuple[list[str], list[str], list[tuple[EdgeKind, str]]]:
+    # GR-14b: lambda-local return inside an admitted transparent scope.  The
+    # wrapper lambda completes, so the return hands control to the
+    # continuation after the scope statement (a dangling RETURN_EXIT edge).
+    if region.kind == RegionKind.LAMBDA_RETURN:
+        node = builder.add(NodeKind.RETURN, region.span)
+        if in_transparent:
+            return ([node], [], [(EdgeKind.RETURN_EXIT, node)])
+        builder.edge(EdgeKind.RETURN_EXIT, node, builder.ensure_exit_normal())
+        return ([node], [], [])
+
+    # GR-14b: contract-admitted synchronous transparent scope.  The body is
+    # WIRED into the caller's flow (scope -> children -> continuation) so a
+    # canonical check dominating the scope call site also dominates every
+    # mutation inside the lambda body.  Non-admitted candidates build exactly
+    # like a v1 BARRIER_SCOPE: children stay disconnected from the scope
+    # entry (fail closed).
+    if region.kind == RegionKind.TRANSPARENT_SCOPE:
+        scope = builder.add(NodeKind.BARRIER_SCOPE, region.span)
+        admitted = (region.span.start, region.span.end) in builder.admitted_transparent
+        scope_firsts, scope_lasts, scope_dangling = _build_regions(
+            builder, list(region.children), True, loop_ctx, admitted
+        )
+        _ = scope_firsts
+        if not admitted:
+            for last in scope_lasts:
+                builder.edge(EdgeKind.UNKNOWN, last, scope)
+            return ([scope], [], [(EdgeKind.UNKNOWN, scope)] + scope_dangling)
+        for first in scope_firsts:
+            builder.edge(EdgeKind.NORMAL, scope, first)
+        return (
+            [scope],
+            [],
+            [(EdgeKind.NORMAL, last) for last in scope_lasts] + scope_dangling,
+        )
+
     kind = _REGION_NODE_KIND.get(region.kind)
     if kind is None:
         if region.kind in (RegionKind.BLOCK, RegionKind.WHEN_BRANCH):
             # Structural wrappers: the children carry the flow.
             return _build_regions(
-                builder, list(region.children), in_lambda, loop_ctx
+                builder, list(region.children), in_lambda, loop_ctx, in_transparent
             )
         return ([], [], [])
 
@@ -191,7 +234,7 @@ def _build_region(
         lasts: list[str] = []
         for child_index, child in enumerate(region.children):
             child_firsts, child_lasts, child_dangling = _build_regions(
-                builder, [child], in_lambda, loop_ctx
+                builder, [child], in_lambda, loop_ctx, in_transparent
             )
             edge_kind = EdgeKind.TRUE_BRANCH if child_index == 0 else EdgeKind.FALSE_BRANCH
             for first in child_firsts:
@@ -208,7 +251,7 @@ def _build_region(
         lasts = []
         for child in region.children:
             child_firsts, child_lasts, child_dangling = _build_regions(
-                builder, [child], in_lambda, loop_ctx
+                builder, [child], in_lambda, loop_ctx, in_transparent
             )
             for first in child_firsts:
                 builder.edge(EdgeKind.WHEN_BRANCH, when_node, first)
@@ -220,7 +263,7 @@ def _build_region(
         header = builder.add(kind, region.span)
         inner_ctx = {"header": header}
         body_firsts, body_lasts, body_dangling = _build_regions(
-            builder, list(region.children), in_lambda, inner_ctx
+            builder, list(region.children), in_lambda, inner_ctx, in_transparent
         )
         for first in body_firsts:
             builder.edge(EdgeKind.LOOP_BODY, header, first)
@@ -238,7 +281,7 @@ def _build_region(
         for child in region.children:
             if child.kind == RegionKind.TRY:
                 body_firsts, body_lasts, body_dangling = _build_regions(
-                    builder, list(child.children), in_lambda, loop_ctx
+                    builder, list(child.children), in_lambda, loop_ctx, in_transparent
                 )
                 for first in body_firsts:
                     builder.edge(EdgeKind.NORMAL, try_node, first)
@@ -249,7 +292,7 @@ def _build_region(
                 catch_nodes.append(catch_node)
                 builder.edge(EdgeKind.EXCEPTION, try_node, catch_node)
                 catch_firsts, catch_lasts, catch_dangling = _build_regions(
-                    builder, list(child.children), in_lambda, loop_ctx
+                    builder, list(child.children), in_lambda, loop_ctx, in_transparent
                 )
                 for first in catch_firsts:
                     builder.edge(EdgeKind.NORMAL, catch_node, first)
@@ -258,7 +301,7 @@ def _build_region(
             elif child.kind == RegionKind.FINALLY:
                 finally_node = builder.add(NodeKind.FINALLY, child.span)
                 fin_firsts, fin_lasts, fin_dangling = _build_regions(
-                    builder, list(child.children), in_lambda, loop_ctx
+                    builder, list(child.children), in_lambda, loop_ctx, in_transparent
                 )
                 for first in fin_firsts:
                     builder.edge(EdgeKind.NORMAL, finally_node, first)
@@ -272,7 +315,7 @@ def _build_region(
     if region.kind == RegionKind.BARRIER_SCOPE:
         scope = builder.add(kind, region.span)
         scope_firsts, scope_lasts, scope_dangling = _build_regions(
-            builder, list(region.children), True, loop_ctx
+            builder, list(region.children), True, loop_ctx, False
         )
         _ = scope_firsts
         for last in scope_lasts:
@@ -280,14 +323,14 @@ def _build_region(
         return ([scope], [], [(EdgeKind.UNKNOWN, scope)] + scope_dangling)
 
     if region.kind == RegionKind.BLOCK:
-        return _build_regions(builder, list(region.children), in_lambda, loop_ctx)
+        return _build_regions(builder, list(region.children), in_lambda, loop_ctx, in_transparent)
 
     if region.kind == RegionKind.RETURN:
         if region.children:
             # `return try/if/when ...`: the wrapped construct carries the
             # flow; its normal completion is the return.
             child_firsts, child_lasts, child_dangling = _build_regions(
-                builder, list(region.children), in_lambda, loop_ctx
+                builder, list(region.children), in_lambda, loop_ctx, in_transparent
             )
             return (
                 child_firsts,
@@ -296,6 +339,10 @@ def _build_region(
                 + list(child_dangling),
             )
         node = builder.add(kind, region.span)
+        if in_transparent:
+            # A bare `return` inside an admitted transparent scope is
+            # lambda-local: hand the exit to the scope continuation.
+            return ([node], [], [(EdgeKind.RETURN_EXIT, node)])
         builder.edge(EdgeKind.RETURN_EXIT, node, builder.ensure_exit_normal())
         return ([node], [], [])
 
@@ -321,7 +368,7 @@ def _build_region(
     if region.kind == RegionKind.STATEMENT and region.children:
         # A construct-valued local declaration (`val x = when { ... }`):
         # the wrapped construct carries the flow.
-        return _build_regions(builder, list(region.children), in_lambda, loop_ctx)
+        return _build_regions(builder, list(region.children), in_lambda, loop_ctx, in_transparent)
 
     node = builder.add(kind, region.span)
     return ([node], [node], [])
@@ -334,8 +381,14 @@ def build_callable_cfg(
     *,
     path: str,
     callable_key: str,
+    admitted_transparent_spans: frozenset = frozenset(),
 ) -> tuple[ControlFlowGraph, tuple[StructuralDiagnostic, ...]]:
     """Build the CFG for one SUPPORTED parsed callable body.
+
+    ``admitted_transparent_spans`` holds the (start, end) spans of
+    contract-admitted TRANSPARENT_SCOPE regions (exact receiver/import
+    resolution happens in the proof layer, never here).  Non-admitted
+    candidates build as disconnected scopes — fail closed.
 
     Returns (graph, diagnostics).  Raises ValueError when an internal graph
     invariant fails — the caller classifies that as INFRASTRUCTURE_FAILURE,
@@ -343,7 +396,10 @@ def build_callable_cfg(
     """
     if parse.unsupported:
         raise ValueError("cannot build a CFG for an unsupported callable body")
+    if not isinstance(admitted_transparent_spans, frozenset):
+        raise TypeError("admitted_transparent_spans must be a frozenset")
     builder = _Builder(0, parse.body_span)
+    builder.admitted_transparent = admitted_transparent_spans
     diagnostics: list[StructuralDiagnostic] = []
     entry = builder.add(
         NodeKind.ENTRY,

@@ -29,11 +29,14 @@ from .model import ControlFlowGraph, EdgeKind, NodeKind, SourceSpan
 __all__ = [
     "CanonicalBarrierContract",
     "CANONICAL_BARRIER_CONTRACT_V1",
+    "CANONICAL_BARRIER_CONTRACT_V2",
+    "TransparentScopeWrapper",
     "ProofStatus",
     "DirectBarrierProofResult",
     "ReceiverTypeResolver",
     "BarrierCallSite",
     "canonical_barrier_call_sites",
+    "admit_transparent_scope_candidates",
     "prove_direct_barrier",
 ]
 
@@ -51,6 +54,51 @@ _IMPORT_RE = re.compile(r"\bimport\s+([\w.]+)")
 _PACKAGE_RE = re.compile(r"\bpackage\s+([\w.]+)")
 
 
+class TransparentScopeWrapper:
+    """One contract-approved synchronous transparent scope wrapper (v2).
+
+    A wrapper whose lambda body is guaranteed (by this code-owned contract,
+    never by a YAML allowlist) to execute exactly once, sequentially, before
+    the wrapper returns — no launch/async, no storage, no escape, no
+    deferred invocation.  The wrapper does NOT check the write barrier
+    itself; the dominance proof composes instead: the caller's canonical
+    check must dominate the wrapper call site, and the wired body therefore
+    inherits that dominance.
+
+    ``receiver_fqcns`` empty means a receiverless top-level function that is
+    only admitted when the file carries the exact ``import_fqcn``.
+    """
+
+    __slots__ = ("method", "receiver_fqcns", "import_fqcn")
+
+    def __init__(self, method: str, receiver_fqcns: tuple[str, ...], import_fqcn: str | None) -> None:
+        if not isinstance(method, str) or not method.isidentifier():
+            raise ValueError("wrapper method must be a plain identifier")
+        if not isinstance(receiver_fqcns, tuple):
+            raise TypeError("receiver_fqcns must be a tuple")
+        for fqcn in receiver_fqcns:
+            if not isinstance(fqcn, str) or "." not in fqcn:
+                raise ValueError("wrapper receiver FQCNs must be dotted FQCNs")
+        if not receiver_fqcns:
+            if not isinstance(import_fqcn, str) or "." not in import_fqcn:
+                raise ValueError("a receiverless wrapper requires a dotted import_fqcn")
+        elif import_fqcn is not None:
+            raise ValueError("a receiverful wrapper must not also require an import")
+        object.__setattr__(self, "method", method)
+        object.__setattr__(self, "receiver_fqcns", tuple(receiver_fqcns))
+        object.__setattr__(self, "import_fqcn", import_fqcn)
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, TransparentScopeWrapper) and (
+            self.method == other.method
+            and self.receiver_fqcns == other.receiver_fqcns
+            and self.import_fqcn == other.import_fqcn
+        )
+
+    def __hash__(self) -> int:
+        return hash((self.method, self.receiver_fqcns, self.import_fqcn))
+
+
 class CanonicalBarrierContract:
     """Typed, code-owned barrier API contract (no YAML allowlist).
 
@@ -58,7 +106,14 @@ class CanonicalBarrierContract:
     and docs/ci/db-structural/GR-12_CANONICAL_BARRIER_API.md.
     """
 
-    __slots__ = ("contract_version", "receiver_fqcn", "direct_check_methods", "guarded_scope_methods")
+    __slots__ = (
+        "contract_version",
+        "receiver_fqcn",
+        "direct_check_methods",
+        "guarded_scope_methods",
+        "transparent_scope_wrappers",
+        "transparent_scope_by_method",
+    )
 
     def __init__(
         self,
@@ -67,6 +122,7 @@ class CanonicalBarrierContract:
         receiver_fqcn: str,
         direct_check_methods: tuple[str, ...],
         guarded_scope_methods: tuple[str, ...],
+        transparent_scope_wrappers: tuple[TransparentScopeWrapper, ...] = (),
     ) -> None:
         if not isinstance(contract_version, int) or isinstance(contract_version, bool):
             raise TypeError("contract_version must be an int")
@@ -84,10 +140,33 @@ class CanonicalBarrierContract:
         for name in direct_check_methods:
             if name in guarded_scope_methods:
                 raise ValueError("a method cannot be both a check and a scope")
+        if not isinstance(transparent_scope_wrappers, tuple):
+            raise TypeError("transparent_scope_wrappers must be a tuple of TransparentScopeWrapper")
+        for wrapper in transparent_scope_wrappers:
+            if not isinstance(wrapper, TransparentScopeWrapper):
+                raise TypeError(
+                    "transparent_scope_wrappers entries must be TransparentScopeWrapper"
+                )
+            if (
+                wrapper.method in direct_check_methods
+                or wrapper.method in guarded_scope_methods
+            ):
+                raise ValueError("a wrapper method cannot double as a check or guarded scope")
+        by_method: dict[str, TransparentScopeWrapper] = {}
+        for wrapper in transparent_scope_wrappers:
+            if wrapper.method in by_method:
+                raise ValueError("duplicate wrapper method: %s" % (wrapper.method,))
+            by_method[wrapper.method] = wrapper
         object.__setattr__(self, "contract_version", contract_version)
         object.__setattr__(self, "receiver_fqcn", receiver_fqcn)
         object.__setattr__(self, "direct_check_methods", tuple(direct_check_methods))
         object.__setattr__(self, "guarded_scope_methods", tuple(guarded_scope_methods))
+        object.__setattr__(self, "transparent_scope_wrappers", tuple(transparent_scope_wrappers))
+        object.__setattr__(self, "transparent_scope_by_method", by_method)
+
+    @property
+    def transparent_scope_methods(self) -> tuple[str, ...]:
+        return tuple(wrapper.method for wrapper in self.transparent_scope_wrappers)
 
     def __eq__(self, other) -> bool:
         return isinstance(other, CanonicalBarrierContract) and (
@@ -95,6 +174,7 @@ class CanonicalBarrierContract:
             and self.receiver_fqcn == other.receiver_fqcn
             and self.direct_check_methods == other.direct_check_methods
             and self.guarded_scope_methods == other.guarded_scope_methods
+            and self.transparent_scope_wrappers == other.transparent_scope_wrappers
         )
 
     def __hash__(self) -> int:
@@ -104,6 +184,7 @@ class CanonicalBarrierContract:
                 self.receiver_fqcn,
                 self.direct_check_methods,
                 self.guarded_scope_methods,
+                self.transparent_scope_wrappers,
             )
         )
 
@@ -113,6 +194,35 @@ CANONICAL_BARRIER_CONTRACT_V1 = CanonicalBarrierContract(
     receiver_fqcn="com.yourname.expensetracker.data.backup.DatabaseWriteBarrier",
     direct_check_methods=("checkWritesAllowed",),
     guarded_scope_methods=("runWrite",),
+)
+
+CANONICAL_BARRIER_CONTRACT_V2 = CanonicalBarrierContract(
+    contract_version=2,
+    receiver_fqcn="com.yourname.expensetracker.data.backup.DatabaseWriteBarrier",
+    direct_check_methods=("checkWritesAllowed",),
+    guarded_scope_methods=("runWrite",),
+    transparent_scope_wrappers=(
+        TransparentScopeWrapper(
+            method="withTransaction",
+            receiver_fqcns=(
+                "androidx.room.RoomDatabase",
+                "com.yourname.expensetracker.data.database.AppDatabase",
+            ),
+            import_fqcn=None,
+        ),
+        TransparentScopeWrapper(
+            method="runInTransaction",
+            receiver_fqcns=(
+                "com.yourname.expensetracker.domain.transaction.DomainTransactionRunner",
+            ),
+            import_fqcn=None,
+        ),
+        TransparentScopeWrapper(
+            method="withContext",
+            receiver_fqcns=(),
+            import_fqcn="kotlinx.coroutines.withContext",
+        ),
+    ),
 )
 
 
@@ -200,6 +310,12 @@ class ReceiverTypeResolver:
             return self._package + "." + simple, _RECEIVER_RESOLVED
         return None, _RECEIVER_UNRESOLVED
 
+    def has_exact_import(self, fqcn: str) -> bool:
+        """True when the file's import table contains exactly ``fqcn``."""
+        if not isinstance(fqcn, str) or "." not in fqcn:
+            return False
+        return fqcn in self._imports.get(fqcn.rsplit(".", 1)[-1], ())
+
 
 def canonical_barrier_call_sites(
     masked_text: str,
@@ -241,6 +357,40 @@ def canonical_barrier_call_sites(
         )
     sites.sort(key=lambda item: (item.span.start, item.span.end))
     return tuple(sites)
+
+
+def admit_transparent_scope_candidates(
+    parse,
+    contract: CanonicalBarrierContract,
+    resolver: ReceiverTypeResolver,
+) -> frozenset[tuple[int, int]]:
+    """Exact-resolution admission of tokenizer transparent-scope candidates.
+
+    A candidate region is admitted only when its method is in the contract
+    AND the syntactic receiver resolves to one of the wrapper's exact
+    receiver FQCNs (or, for a receiverless wrapper, the file carries the
+    wrapper's exact import).  Non-admitted candidates are simply excluded:
+    the CFG then builds them as disconnected scopes and their mutations stay
+    UNSUPPORTED — fail closed, never silently "proven".
+    """
+    admitted: set[tuple[int, int]] = set()
+
+    def walk(regions) -> None:
+        for region in regions:
+            if region.kind.value == "TRANSPARENT_SCOPE":
+                wrapper = contract.transparent_scope_by_method.get(region.scope_method or "")
+                if wrapper is not None:
+                    if not wrapper.receiver_fqcns:
+                        if wrapper.import_fqcn and resolver.has_exact_import(wrapper.import_fqcn):
+                            admitted.add((region.span.start, region.span.end))
+                    elif region.scope_receiver is not None:
+                        fqcn, resolution = resolver.resolve(region.scope_receiver)
+                        if resolution == _RECEIVER_RESOLVED and fqcn in wrapper.receiver_fqcns:
+                            admitted.add((region.span.start, region.span.end))
+            walk(region.children)
+
+    walk(parse.regions)
+    return frozenset(admitted)
 
 
 def _resolve_fqcn_or_fail(resolver: ReceiverTypeResolver, receiver_name: str):

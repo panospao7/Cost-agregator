@@ -65,6 +65,15 @@ _RE_JUMP = re.compile(r"^(return|throw|break|continue)(?![\w])")
 _RE_VAL_CONSTRUCT = re.compile(
     r"^(?:val|var)\s+[^=\n]*?=\s*(?P<construct>try|if|when)(?![\w])"
 )
+_RE_LABEL_NAME = re.compile(r"^@([A-Za-z_][A-Za-z0-9_]*)")
+_RE_LAMBDA_PARAMS = re.compile(
+    r"\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*\s*->"
+)
+_RE_TS_SCOPE = re.compile(
+    r"^(?:(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?"
+    r"(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{"
+)
 
 _CONT_END = set("+-*/%,:?.&|<>!(`[")
 _WS = " \t\r\n\x0b\x0c"
@@ -86,6 +95,8 @@ class RegionKind(str, Enum):
     CONTINUE = "CONTINUE"
     ACCESSOR = "ACCESSOR"
     BARRIER_SCOPE = "BARRIER_SCOPE"
+    TRANSPARENT_SCOPE = "TRANSPARENT_SCOPE"
+    LAMBDA_RETURN = "LAMBDA_RETURN"
     DIRECT_CHECK = "DIRECT_CHECK"
 
 
@@ -95,6 +106,12 @@ class ParsedRegion:
     span: SourceSpan
     children: tuple[ParsedRegion, ...] = ()
     barrier: BarrierMarkerKind | None = None
+    # TRANSPARENT_SCOPE candidates only: the wrapper method name and the
+    # syntactic receiver (None for receiverless calls).  Admission (exact
+    # receiver/import resolution against the contract) happens in the proof
+    # layer, never here.
+    scope_method: str | None = None
+    scope_receiver: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, RegionKind):
@@ -108,6 +125,11 @@ class ParsedRegion:
                 raise TypeError("ParsedRegion.children must be a tuple of ParsedRegion")
         if self.barrier is not None and not isinstance(self.barrier, BarrierMarkerKind):
             raise TypeError("ParsedRegion.barrier must be a BarrierMarkerKind or None")
+        if self.kind is RegionKind.TRANSPARENT_SCOPE:
+            if not self.scope_method:
+                raise ValueError("TRANSPARENT_SCOPE requires scope_method")
+        elif self.scope_method is not None or self.scope_receiver is not None:
+            raise ValueError("scope_method/scope_receiver are TRANSPARENT_SCOPE-only")
         object.__setattr__(self, "children", tuple(self.children))
 
 
@@ -179,6 +201,14 @@ class _Cursor:
         # mutation site start and no barrier-like call inside any brace
         # group).  None preserves the strict lambda-escape failure.
         self.opacity_predicate = None
+        # GR-14b Contract v2: wrapper method names eligible for
+        # transparent-scope candidacy.  Empty (default) preserves exact v1
+        # behavior; admission happens in the proof layer.
+        self.transparent_scope_methods: tuple[str, ...] = ()
+        # While parsing the direct child sequence of a transparent-scope
+        # candidate, holds the wrapper method name (the implicit label for
+        # `return@label`); None inside any nested lambda.
+        self.scope_label: str | None = None
 
     def span(self, start: int, end: int) -> SourceSpan:
         import bisect
@@ -322,6 +352,75 @@ def _find_top_level_else(text: str, start: int, end: int) -> int | None:
     return None
 
 
+def _match_transparent_scope(stripped: str, methods: tuple[str, ...]):
+    """Syntactic trailing-lambda candidate match, or None.
+
+    Returns the regex match for ``receiver.method(args?) {`` /
+    ``method(args?) {`` where ``method`` is one of the enabled wrapper
+    names.  Purely syntactic: admission happens in the proof layer.
+    """
+    if not methods:
+        return None
+    match = _RE_TS_SCOPE.match(stripped)
+    if match is None or match.group("method") not in methods:
+        return None
+    return match
+
+
+def _parse_transparent_scope(cur: _Cursor, base: int, stmt_e: int, match) -> ParsedRegion | None:
+    """Build the TRANSPARENT_SCOPE region for a matched candidate statement.
+
+    Returns None (after recording a finding) on any shape that is not a
+    cleanly closed trailing lambda ending the statement — fail closed.
+    """
+    receiver = match.group("receiver")
+    method = match.group("method")
+    brace_abs = base + match.end() - 1
+    prefix = cur.text[base : brace_abs]
+    if "{" in prefix:
+        # A lambda opened earlier in the statement escapes before the
+        # wrapper — never a transparent-scope candidate.
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            base,
+            stmt_e,
+            "lambda-before-transparent-scope",
+        )
+        return None
+    close = _match_forward(cur.text, brace_abs, stmt_e)
+    tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unknown-construct",
+        )
+        return None
+    saved = cur.scope_label
+    cur.scope_label = method
+    try:
+        # A trailing lambda may open with a parameter header
+        # (`{ context ->`, `{ a, b ->`).  Parameters introduce no control
+        # flow; skip the header so it never merges with the first body
+        # statement (masked comment lines between them would otherwise glue
+        # the header onto a brace-containing statement).
+        body_start = brace_abs + 1
+        param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+        if param_match is not None:
+            body_start += param_match.end()
+        inner = _parse_sequence(cur, body_start, close - 1, True)
+    finally:
+        cur.scope_label = saved
+    return ParsedRegion(
+        kind=RegionKind.TRANSPARENT_SCOPE,
+        span=cur.span(base, close),
+        children=tuple(inner),
+        scope_method=method,
+        scope_receiver=receiver,
+    )
+
+
 def _parse_block(
     cur: _Cursor, abs_start: int, rel_open: int, abs_end: int, in_lambda: bool
 ) -> tuple[ParsedRegion | None, list[ParsedRegion]]:
@@ -380,7 +479,10 @@ def _parse_sequence(
                 )
                 idx += 1
                 continue
+            saved_label = cur.scope_label
+            cur.scope_label = None
             inner = _parse_sequence(cur, base + 1, close - 1, in_lambda)
+            cur.scope_label = saved_label
             kind_region = ParsedRegion(
                 kind=RegionKind.BLOCK,
                 span=cur.span(base, close),
@@ -469,7 +571,60 @@ def _parse_sequence(
         if jump:
             word = jump.group(1)
             rest = stripped[jump.end() :]
-            if "@" in rest.split("//")[0] if False else "@" in rest:
+            rest_s = rest.lstrip(_WS)
+            if word == "return" and cur.transparent_scope_methods:
+                # `return withContext(...) { … }` and siblings: handled BEFORE
+                # the labelled-return gate because the wrapper body may
+                # legitimately contain `return@label`.  The wrapper construct
+                # carries the flow; the RETURN wraps it explicitly so the
+                # proof is contract-backed (no more accidental return-leaf
+                # inlining).
+                ts_match = _RE_TS_SCOPE.match(rest_s)
+                if ts_match is not None and ts_match.group("method") in cur.transparent_scope_methods:
+                    cons_base = stmt_e - len(rest_s)
+                    scope_region = _parse_transparent_scope(cur, cons_base, stmt_e, ts_match)
+                    if scope_region is not None:
+                        out.append(
+                            ParsedRegion(
+                                kind=RegionKind.RETURN,
+                                span=cur.span(base, scope_region.span.end),
+                                children=(scope_region,),
+                            )
+                        )
+                        idx += 1
+                        continue
+                    # Scope parse failed and recorded a finding: fail closed
+                    # (the callable stays unmodelable).
+                    idx += 1
+                    continue
+            if "@" in rest:
+                label_match = _RE_LABEL_NAME.match(rest_s)
+                label = label_match.group(1) if label_match else None
+                if (
+                    word == "return"
+                    and label is not None
+                    and cur.scope_label == label
+                    and cur.transparent_scope_methods
+                ):
+                    if "{" in rest:
+                        cur.fail(
+                            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+                            base,
+                            stmt_e,
+                            "lambda-in-labelled-return",
+                        )
+                        idx += 1
+                        continue
+                    # Lambda-local return from the enclosing transparent
+                    # scope's lambda: the wrapper completes and the caller
+                    # continues after the statement (wired by the CFG).
+                    out.append(
+                        ParsedRegion(
+                            kind=RegionKind.LAMBDA_RETURN, span=cur.span(base, stmt_e)
+                        )
+                    )
+                    idx += 1
+                    continue
                 code = (
                     "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
                     if word == "return"
@@ -497,7 +652,6 @@ def _parse_sequence(
                 idx += 1
                 continue
             if word == "return":
-                rest_s = rest.lstrip(_WS)
                 construct = None
                 if _leading_kw(rest_s, "try"):
                     construct = "try"
@@ -595,7 +749,10 @@ def _parse_sequence(
                 )
                 idx += 1
                 continue
+            saved_label = cur.scope_label
+            cur.scope_label = None
             inner = _parse_sequence(cur, brace_abs + 1, close - 1, True)
+            cur.scope_label = saved_label
             out.append(
                 ParsedRegion(
                     kind=RegionKind.BARRIER_SCOPE,
@@ -626,7 +783,10 @@ def _parse_sequence(
                 )
                 idx += 1
                 continue
+            saved_label = cur.scope_label
+            cur.scope_label = None
             inner = _parse_sequence(cur, brace_abs + 1, close - 1, True)
+            cur.scope_label = saved_label
             out.append(
                 ParsedRegion(
                     kind=RegionKind.BARRIER_SCOPE,
@@ -690,6 +850,14 @@ def _parse_sequence(
                 stmt_e,
                 "barrier-form-unrecognized",
             )
+            idx += 1
+            continue
+
+        ts_match = _match_transparent_scope(stripped, cur.transparent_scope_methods)
+        if ts_match is not None:
+            region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
+            if region is not None:
+                out.append(region)
             idx += 1
             continue
 
@@ -1537,13 +1705,22 @@ def parse_callable_body(
     body_span: SourceSpan,
     *,
     lambda_opacity_predicate=None,
+    transparent_scope_methods: tuple[str, ...] = (),
 ) -> CallableBodyParse:
     if not isinstance(masked_text, str):
         raise TypeError("masked_text must be a string")
     if not isinstance(body_span, SourceSpan):
         raise TypeError("body_span must be a SourceSpan")
+    if not isinstance(transparent_scope_methods, tuple) or not all(
+        isinstance(item, str) and item.isidentifier()
+        for item in transparent_scope_methods
+    ):
+        raise TypeError(
+            "transparent_scope_methods must be a tuple of plain identifiers"
+        )
     cur = _Cursor(masked_text)
     cur.opacity_predicate = lambda_opacity_predicate
+    cur.transparent_scope_methods = tuple(transparent_scope_methods)
     if '"' in masked_text or "'" in masked_text:
         cur.fail(
             "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
@@ -1634,7 +1811,12 @@ def _splice_dowhile(
         if isinstance(region, _DoWhile):
             skip_next_statement = True
             plain = ParsedRegion(
-                kind=region.kind, span=region.span, children=region.children
+                kind=region.kind,
+                span=region.span,
+                children=region.children,
+                barrier=region.barrier,
+                scope_method=region.scope_method,
+                scope_receiver=region.scope_receiver,
             )
             out.append(plain)
             continue
@@ -1647,6 +1829,8 @@ def _splice_dowhile(
                         span=region.span,
                         children=tuple(fixed_children),
                         barrier=region.barrier,
+                        scope_method=region.scope_method,
+                        scope_receiver=region.scope_receiver,
                     )
                 )
                 continue
