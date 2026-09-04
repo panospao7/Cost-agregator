@@ -1240,21 +1240,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     if (e is CancellationException) throw e
                     // P3-CUR-08: Write durable event when asset deletion fails
                     Timber.e(e, "Failed to delete asset for receipt %d: [REDACTED]", receiptId)
-                    receiptEventDao.insert(
-                        ReceiptEvent(
-                            receiptId = receiptId,
-                            sourceType = receipt.sourceType,
-                            documentType = receipt.documentType,
-                            eventType = "ASSET_DELETE_FAILED",
-                            occurredAt = timeProvider.now(),
-                            oldStatus = "DELETED",
-                            newStatus = null,
-                            actor = "system:coordinator",
-                            message = "Failed to delete asset file: [REDACTED]",
-                            metadata = null,
-                            errorDetails = e.message?.take(500)
-                        )
-                    )
+                    writeAssetDeleteFailedEvent(receipt, receiptId, e.message?.take(500))
                 }
             }
 
@@ -1266,6 +1252,37 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             Timber.e(e, "Failed to delete receipt: id=%d", receiptId)
             Result.failure(e)
         }
+    }
+
+    /**
+     * Post-commit audit write for a failed asset-file deletion
+     * (GR-14b Pattern A: the DB write moves out of the generic [let]
+     * callback into an exact canonical direct barrier path owned by this
+     * coordinator; the only caller already runs after
+     * [deleteReceipt]'s canonical check, so the added check is an
+     * unreachable no-op on every current path).
+     */
+    private suspend fun writeAssetDeleteFailedEvent(
+        receipt: ScannedReceipt,
+        receiptId: Long,
+        errorDetails: String?
+    ) {
+        writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent")
+        receiptEventDao.insert(
+            ReceiptEvent(
+                receiptId = receiptId,
+                sourceType = receipt.sourceType,
+                documentType = receipt.documentType,
+                eventType = "ASSET_DELETE_FAILED",
+                occurredAt = timeProvider.now(),
+                oldStatus = "DELETED",
+                newStatus = null,
+                actor = "system:coordinator",
+                message = "Failed to delete asset file: [REDACTED]",
+                metadata = null,
+                errorDetails = errorDetails
+            )
+        )
     }
 
     /**

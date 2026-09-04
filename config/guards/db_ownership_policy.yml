@@ -5163,18 +5163,25 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
   kind: function
-  method: deleteReceipt
+  method: writeAssetDeleteFailedEvent
   receiver: null
   parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
   - Long
+  - String?
   daoAccessor: receiptEventDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
   operation: insert
   barrierMode: direct
-  reason: "Canonical receipt deletion \u2014 ASSET_DELETE_FAILED fallback event insert\
-    \ when asset cleanup fails"
+  reason: 'GR-14b EXACT_IDENTITY_MOVE: the ASSET_DELETE_FAILED fallback event
+    insert moved out of deleteReceipt''s generic post-commit let callback
+    into this private direct owner (GR-14 Pattern A) with its own canonical
+    write barrier check; the only caller already checks first, so the added
+    check is an unreachable no-op on every current path. Replaces the
+    removed deleteReceipt|receiptEventDao|insert row (the mutation no longer
+    occurs in deleteReceipt)'
   owner: '@panospao7'
-  linkedIssue: MIT-003
+  linkedIssue: GR-14b
 - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
   kind: function

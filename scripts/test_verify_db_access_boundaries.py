@@ -5100,8 +5100,10 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     ``operation`` mutation identity; the v2 loader performs no dedupe), as
     of the GR-14a exact-policy wave (5 rows for the default-@Transaction
     mutators newly indexed by the GR-14a inventory rule) that grew the
-    document from the 472 GR-08m1-era rows.  Re-derive this pin after every
-    policy promotion.
+    document from the 472 GR-08m1-era rows, unchanged in count by the
+    GR-14b EXACT_IDENTITY_MOVE (the deleteReceipt|receiptEventDao|insert
+    row replaced 1:1 by the writeAssetDeleteFailedEvent direct owner row).
+    Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
@@ -5417,7 +5419,10 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
     ``config/guards/db_ownership_policy.yml`` carries 477 schemaVersion-2
     entry rows (one exact mutation identity each; the v2 loader performs no
     dedupe), as of the GR-14a exact-policy wave (5 rows for the newly indexed
-    default-@Transaction mutators).  Re-derive after every policy promotion.
+    default-@Transaction mutators), unchanged in count by the GR-14b
+    EXACT_IDENTITY_MOVE (deleteReceipt|receiptEventDao|insert replaced 1:1
+    by the writeAssetDeleteFailedEvent direct owner row).  Re-derive after
+    every policy promotion.
 
     The run exits 0 as a TRUSTED scan: the exact policy covers every
     discovered mutation (no finding) and no BLOCKING diagnostic remains.
