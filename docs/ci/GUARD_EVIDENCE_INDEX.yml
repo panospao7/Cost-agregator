@@ -17,7 +17,131 @@
 #   records are never VERIFIED_AT_SHA evidence.
 schemaVersion: 1
 records:
-  # ── Current truth: GATE-00R double capture at the exact pinned SHA ──────────
+  # ── Current truth: GATE-00R double capture post-GR-14a/14b wave ─────────────
+  - evidenceId: gate-00r-473f8c4674c864825f4fc25f222ffbcd8871f842
+    targetSha: 473f8c4674c864825f4fc25f222ffbcd8871f842
+    targetTreeSha: 6578e898842dd2d17b862ca3c24bb7b944bdb108
+    baseSha: 34a8d54631b8e4841ebba95ca600847f6effaaf1
+    mergeBaseSha: 34a8d54631b8e4841ebba95ca600847f6effaaf1
+    workingTreeClean: true
+    captureRuns:
+      - runId: run-01
+        semanticDigestSha256: b19da4f742cb715ad811dc1f776d2d22c572d90777dff40c252f76f144637544
+        artifactManifestSha256: a46f1a8babf187cd7eac25a6a03c12c4b01408a9be38976835b16de68af6152a
+      - runId: run-02
+        semanticDigestSha256: b19da4f742cb715ad811dc1f776d2d22c572d90777dff40c252f76f144637544
+        artifactManifestSha256: a46f1a8babf187cd7eac25a6a03c12c4b01408a9be38976835b16de68af6152a
+    reproducible: true
+    guardResults:
+      db_access:
+        directExit: 0
+        trusted: true
+        findingCount: 0
+        blockingDiagnosticCount: 0
+        advisoryDiagnosticCount: 20
+        advisoryDiagnosticCode: DB_SIGNATURE_UNRESOLVED
+        ratchetExit: 0
+        ratchetBaselinePath: config/baselines/db_access_v2.json
+        staticSuiteOutcome: PASS
+        gradleOutcome: INFRASTRUCTURE
+      time_boundaries:
+        exit: 0
+        findingCount: 0
+        staticSuiteOutcome: PASS
+      ui_dao:
+        exit: 1
+        findingCount: 1
+        violationRuleId: G-UI-DAO-01
+        staticSuiteOutcome: VIOLATION
+    staticSuite:
+      exit: 1
+      legsTotal: 25
+      passed: 18
+      violations: 7
+      infraErrors: 0
+      violationLegs: [ui_dao, receipt_link, import_lifecycle, db_artifact_sync, known_good_state, raw_money_aggregates, guard_tests]
+      legOutcomes:
+        guard_registry: PASS
+        source_provenance: PASS
+        ui_dao: VIOLATION
+        worker: PASS
+        receipt_link: VIOLATION
+        import_lifecycle: VIOLATION
+        cloud_payload: PASS
+        pii_logging: PASS
+        di_release: PASS
+        allowlist_compliance: PASS
+        ignored_test_budget: PASS
+        lint_baseline_policy: PASS
+        time_boundaries: PASS
+        deprecation_escalations: PASS
+        db_artifact_sync: VIOLATION
+        known_good_state: VIOLATION
+        guard_docs_truth: PASS
+        cancellation: PASS
+        privacy: PASS
+        db_access: PASS
+        event_writers: PASS
+        money: PASS
+        raw_money_aggregates: VIOLATION
+        migration_matrix: PASS
+        guard_tests: VIOLATION
+      ratchetDebtObservations:
+        db_access:
+          baselineFindings: 0
+          currentFindings: 0
+        cancellation:
+          baselineFindings: 86
+          currentFindings: 86
+        privacy:
+          baselineFindings: 1
+          currentFindings: 1
+        event_writers:
+          baselineFindings: 16
+          currentFindings: 16
+        money:
+          baselineFindings: 0
+          currentFindings: 0
+        migration_matrix:
+          baselineFindings: 0
+          currentFindings: 0
+    gradleObservations:
+      verifyDbAccessBoundaries: INFRASTRUCTURE
+      checkDryRun: INFRASTRUCTURE
+      compileDebugKotlin: PASS
+      note: >-
+        :app:verifyDbAccessBoundaries exited 1 on the Gradle
+        configuration-cache storage failure class (unchanged from the prior
+        capture); the embedded ratchet row printed PASS with 0 baseline and
+        0 current findings. :app:check dry-run failed on the same class.
+    inventoryRows:
+      exit: 2
+      trusted: false
+      diagnosticCode: INVENTORY_DURABILITY_UNCONFIRMED
+      note: >-
+        inventory-only rows report the platform durability branch (no
+        confirmable directory durability barrier on this host); accepted as
+        the known-good scorecard inventory row, never treated as DB findings.
+    focusedPythonTests:
+      exit: 1
+      failingModule: scripts/test_migrate_db_policy_signatures.py
+      failingTests: 6
+      note: >-
+        Tracked candidate policy artifact
+        config/guards/db_ownership_policy.signatures.candidate.yml drifted
+        from regeneration output (56 vs 57 entries): the GR-14a batch left
+        the tracked artifact unregenerated. Recorded as GR-14a owed-debt
+        truth sync, not fixed in GATE-00R (evidence PR must not repair).
+    status: COMPLETE
+    note: >-
+      Captured on branch gr-00-local. Production/policy/baseline content
+      byte-identical to 31f5721b (post-GR-14b): the only two commits above
+      it are capture-tool fixture and matrix-margin repairs (MERGE_BASE_SHA
+      fixture 41-to-40 hex; db-ratchet child timeout 1380s mirroring the
+      suite-derived budget; gradle-db row raised to MAX_ROW_OUTPUT_LIMIT).
+      Bundle: build/guard-debug/gate-00r/473f8c46.../run-01 and run-02
+      (untracked, retained externally with the exact SHA in the path).
+  # ── GATE-00R double capture predating the GR-10B-GR-14 wave ──────────
   - evidenceId: gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7
     targetSha: 565018c5eed61fae4351cb59342dc5c274eb27e7
     targetTreeSha: 175cf284725557e06136352b4616f7fb941fe92e
@@ -123,7 +247,8 @@ records:
         inventory-only rows report the platform durability branch (no
         confirmable directory durability barrier on this host); accepted as
         the known-good scorecard inventory row, never treated as DB findings.
-    status: COMPLETE
+    supersededBy: gate-00r-473f8c4674c864825f4fc25f222ffbcd8871f842
+    status: HISTORICAL
   # ── GR-09-era reviewed state (historical; single frozen capture) ────────────
   - evidenceId: gr09-frozen-db-report-ce1918c9
     targetSha: ce1918c9ee7b3c53f2842d62fa030db37fa7fdcd

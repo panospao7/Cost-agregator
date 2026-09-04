@@ -20,12 +20,13 @@
 schemaVersion: 1
 batchId: GR-14a
 startSha: 540e427b5040188c95b219f28f599f198ceb5b28
-# GATE-00R not yet captured at startSha 540e427b. The latest COMPLETE
-# GATE-00R evidence is gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7
-# (docs/ci/GUARD_EVIDENCE_INDEX.yml), which predates the GR-10B-GR-12 wave.
-# A fresh GATE-00R double capture at the post-GR-14a SHA is owed before
-# GR-12 Step 7 (activation) / Step 8 (control-plane agreement).
-gateEvidenceSha256: null
+# GATE-00R double capture COMPLETE at capture SHA 473f8c46 (branch
+# gr-00-local; see docs/ci/GUARD_EVIDENCE_INDEX.yml
+# gate-00r-473f8c4674c864825f4fc25f222ffbcd8871f842). app/src/main and
+# config/guards + config/baselines content is byte-identical to the
+# post-GR-14b tree; only scripts/ci capture-tool repairs differ.
+# semanticDigestSha256 (byte-identical run-01/run-02).
+gateEvidenceSha256: b19da4f742cb715ad811dc1f776d2d22c572d90777dff40c252f76f144637544
 # build/guard-debug/gr14a/direct-proof.json.after.json (GR-12 dominance
 # proof engine, targetSha 540e427b, 28 entries / 22 PROVEN / 0
 # COUNTEREXAMPLE / 6 UNSUPPORTED / 0 infrastructure failures).
@@ -167,6 +168,6 @@ entries:
 #   GR-14 Contract v2 should make that proof explicit.
 # - Owed artifacts: build/guard-debug/gr14a/proof-delta.json; truth sync of
 #   docs/ci/db-structural/GR-12_DIRECT_BARRIER_INVENTORY.yml (23 -> 28 rows).
-# - Owed validation: GATE-00R double capture at post-GR-14a SHA (see
+# - Validation: GATE-00R double capture complete at capture SHA 473f8c46 (see
 #   gateEvidenceSha256 note above), static suite + Gradle DB task + GATE-00R
 #   per PR-GR-14 Step 7 before GR-12 activation.

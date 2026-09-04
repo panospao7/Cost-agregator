@@ -31,12 +31,14 @@
 schemaVersion: 1
 batchId: GR-14b
 startSha: 0076e0fd9d75c28cb2fff69f3891d13de37ebd0e
-# GATE-00R not yet captured at the post-batch SHA. The latest COMPLETE
-# GATE-00R evidence remains gate-00r-565018c5eed61fae4351cb59342dc5c274eb27e7
-# (docs/ci/GUARD_EVIDENCE_INDEX.yml). A fresh double capture at the
-# post-GR-14b SHA is owed before GR-12 Step 7 (activation) / Step 8
-# (control-plane agreement) completes.
-gateEvidenceSha256: null
+# GATE-00R double capture COMPLETE at capture SHA 473f8c46 (branch
+# gr-00-local), whose app/src/main + config/guards + config/baselines
+# content is byte-identical to this batch's post-batch tree (the two
+# commits above 31f5721b touch only scripts/ci capture-tool fixture and
+# matrix-margin repairs). Evidence record:
+# docs/ci/GUARD_EVIDENCE_INDEX.yml gate-00r-473f8c4674c864825f4fc25f222ffbcd8871f842.
+# semanticDigestSha256 (byte-identical run-01/run-02).
+gateEvidenceSha256: b19da4f742cb715ad811dc1f776d2d22c572d90777dff40c252f76f144637544
 # build/guard-debug/gr14b/direct-proof.json.after.json (GR-12 dominance
 # proof engine, contractVersion 2, targetSha 0076e0fd, 28 entries /
 # 28 PROVEN / 0 COUNTEREXAMPLE / 0 UNSUPPORTED / 0 infrastructure
