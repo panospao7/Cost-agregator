@@ -34,12 +34,14 @@ if _PROJECT_ROOT not in sys.path:
 
 from scripts.db_guard.structural_analysis.barrier_proof import (  # noqa: E402
     CANONICAL_BARRIER_CONTRACT_V2,
-    ReceiverTypeResolver,
-    admit_transparent_scope_candidates,
-    prove_direct_barrier,
 )
-from scripts.db_guard.structural_analysis.barrier_markers import (  # noqa: E402
-    collect_barrier_markers,
+# GR-12 Step 7: the "after" report is produced by the SAME shared bridge the
+# active D4 scanner authorizes with — one proof pipeline, no drift.
+from scripts.db_guard.direct_barrier_bridge import (  # noqa: E402
+    CallableDirectBarrierProof,
+    callable_body_span,
+    mutation_sites_from_observations,
+    prove_callable_direct_barriers,
 )
 from scripts.db_guard.declaration_scanner import (  # noqa: E402
     scan_production_declarations,
@@ -47,13 +49,9 @@ from scripts.db_guard.declaration_scanner import (  # noqa: E402
 from scripts.db_guard.mutation_observation import MutationObservation  # noqa: E402
 from scripts.db_guard.policy_v2_loader import load_policy_v2  # noqa: E402
 from scripts.db_guard.source_roots import resolve_source_root_set  # noqa: E402
-from scripts.db_guard.structural_analysis.model import (  # noqa: E402
-    MutationSite,
-    SourceSpan,
-)
+from scripts.db_guard.structural_analysis.model import SourceSpan  # noqa: E402
 from scripts.db_guard.scanner import scan_db_access  # noqa: E402
 from scripts.ci.inspect_db_structural_model import (  # noqa: E402
-    _expression_body_start,
     _project_root_of,
     _split_callable_key,
     _span_of,
@@ -82,21 +80,8 @@ def _legacy_guarded(masked: str, declaration_start: int, call_start: int) -> boo
 
 
 def _fun_body_span(masked: str, declaration) -> SourceSpan | None:
-    if declaration.body_start is not None and declaration.body_end is not None:
-        body_start, body_end = declaration.body_start, declaration.body_end
-    else:
-        expression_start = _expression_body_start(
-            masked, declaration.source_start, declaration.source_end
-        )
-        if expression_start is None:
-            return None
-        body_start, body_end = expression_start, declaration.source_end
-    return SourceSpan(
-        start=body_start,
-        end=body_end,
-        line=masked.count("\n", 0, body_start) + 1,
-        column=1,
-    )
+    # GR-12 Step 7: single shared body-span derivation (the bridge owns it).
+    return callable_body_span(masked, declaration)
 
 
 def build_direct_proof_shadow(
@@ -191,6 +176,10 @@ def build_direct_proof_shadow(
     before_rows: list[dict] = []
     after_rows: list[dict] = []
     uncorrelated: list[str] = []
+    # GR-12 Step 7: one shared-proof outcome per callable, keyed by the
+    # canonical callable key — the shadow and the active D4 gate consume the
+    # exact same bridge pipeline.
+    proof_by_callable: dict[str, CallableDirectBarrierProof] = {}
     for entry in direct_entries:
         mutation_key = entry.mutation_key().canonical_key()
         callable_key = entry.callable_key().canonical_key()
@@ -305,88 +294,22 @@ def build_direct_proof_shadow(
                 }
             )
             continue
-        from scripts.db_guard.structural_analysis.tokenizer import (
-            parse_callable_body,
-        )
-        from scripts.db_guard.structural_analysis.shadow_report import (
-            _default_opacity_predicate,
-        )
-
-        # The parse must use the SAME opacity gate and the SAME site set the
-        # structural shadow pipeline uses: ALL resolved mutations of the
-        # callable (a lambda hiding any other row's mutation must never be
-        # modeled opaque).
-        callable_sites = tuple(
-            MutationSite.from_observation(item)
-            for item in sorted(
-                obs_by_callable.get(observation.callable_key, ()),
-                key=lambda item: (item.source_start, item.source_end),
-            )
-        )
-        opacity = _default_opacity_predicate(masked, body_span, callable_sites)
-        parse_result = parse_callable_body(
-            masked,
-            body_span,
-            lambda_opacity_predicate=opacity,
-            transparent_scope_methods=CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_methods,
-        )
-        if parse_result.unsupported:
-            after_rows.append(
-                {
-                    "mutationKey": mutation_key,
-                    "callableKey": callable_key,
-                    "path": entry.path,
-                    "proofStatus": "UNSUPPORTED",
-                    "diagnosticCode": "DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",
-                    "reason": "callable not conservatively modelable",
-                }
-            )
-            continue
-        mutation_site = next(
-            item for item in callable_sites if item.span.start == observation.source_start
-        )
-        markers = collect_barrier_markers(parse_result, masked)
-        # Exact-resolution admission of transparent-scope candidates happens
-        # HERE (proof layer), before the CFG is built: a candidate whose
-        # receiver/import does not resolve against the contract is never
-        # wired, so its mutations stay UNSUPPORTED (fail closed).
-        resolver = ReceiverTypeResolver(masked)
-        admitted = admit_transparent_scope_candidates(
-            parse_result, CANONICAL_BARRIER_CONTRACT_V2, resolver
-        )
-        from scripts.db_guard.structural_analysis.cfg import build_callable_cfg
-
-        try:
-            cfg, cfg_diagnostics = build_callable_cfg(
-                parse_result,
-                callable_sites,
-                markers,
+        outcome = proof_by_callable.get(observation.callable_key)
+        if outcome is None:
+            # The proof consumes ALL resolved mutations of the callable (a
+            # lambda hiding any other row's mutation must never be modeled
+            # opaque) — the same site set the active D4 gate proves with.
+            outcome = prove_callable_direct_barriers(
+                masked,
+                body_span,
+                mutation_sites_from_observations(
+                    obs_by_callable.get(observation.callable_key, ())
+                ),
                 path=entry.path,
                 callable_key=observation.callable_key,
-                admitted_transparent_spans=admitted,
             )
-        except (TypeError, ValueError):
-            after_rows.append(
-                {
-                    "mutationKey": mutation_key,
-                    "callableKey": callable_key,
-                    "path": entry.path,
-                    "proofStatus": "INFRASTRUCTURE_FAILURE",
-                    "diagnosticCode": "DB_DIRECT_BARRIER_CONTRACT_INVALID",
-                }
-            )
-            continue
-        results, proof_diagnostics = prove_direct_barrier(
-            masked,
-            body_span,
-            cfg,
-            (mutation_site,),
-            CANONICAL_BARRIER_CONTRACT_V2,
-            resolver,
-            path=entry.path,
-            callable_key=observation.callable_key,
-        )
-        result = results[0]
+            proof_by_callable[observation.callable_key] = outcome
+        result = outcome.result_for_site_start(observation.source_start)
         after_rows.append(
             {
                 "mutationKey": mutation_key,
@@ -399,7 +322,7 @@ def build_direct_proof_shadow(
                 "counterexampleNodeKinds": list(result.counterexample_node_kinds),
                 "counterexampleLineSequence": list(result.counterexample_line_sequence),
                 "diagnosticCode": result.diagnostic_code,
-                "proofDiagnostics": list(proof_diagnostics),
+                "proofDiagnostics": list(outcome.diagnostics),
             }
         )
 

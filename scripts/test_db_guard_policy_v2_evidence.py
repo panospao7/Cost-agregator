@@ -199,9 +199,11 @@ REPO_KT = "app/src/main/java/com/example/Repo.kt"
 HAPPY_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -292,9 +294,11 @@ data class Group(val id: Int)
 TWO_MUTATIONS_FULL_BARRIER_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -308,9 +312,11 @@ data class Group(val id: Int)
 TWO_METHODS_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -328,9 +334,11 @@ data class Group(val id: Int)
 DUPLICATE_OWNER_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -350,9 +358,11 @@ data class Group(val id: Int)
 OVERLOAD_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -370,9 +380,11 @@ data class Group(val id: Int)
 TWO_PARAM_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group, options: Options) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -399,12 +411,15 @@ data class Group(val id: Int)
 OTHER_ACCESSOR_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.AuditDao
 import com.example.data.GroupDao
 
 class Repo(
     private val groupDao: GroupDao,
     private val auditDao: AuditDao,
+    private val writeBarrier: DatabaseWriteBarrier,
 ) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
@@ -418,9 +433,11 @@ data class Group(val id: Int)
 WRONG_OP_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.delete(group)
@@ -433,9 +450,11 @@ data class Group(val id: Int)
 EXTRA_MUTATION_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -449,9 +468,11 @@ data class Group(val id: Int)
 SIBLING_OVERLOAD_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         logInsert(group)
     }
@@ -513,9 +534,12 @@ data class Item(val id: Int)
 NESTED_CLASS_ALIAS_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.ExpenseDao
 
 class Repo {
+    private val writeBarrier: DatabaseWriteBarrier
     private val dao: ExpenseDao
 
     fun removeItem(item: Item) {
@@ -541,9 +565,11 @@ data class Item(val id: Int)
 SIBLING_TYPE_UNRESOLVED_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -558,9 +584,11 @@ data class Group(val id: Int)
 TARGET_TYPE_UNRESOLVED_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: ProjectType) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)
@@ -1421,9 +1449,10 @@ STEP1_NESTED_OWNER_SOURCE = """\
 package com.example
 
 import com.example.data.GroupDao
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 
 class Outer {
-    class Repo(private val groupDao: GroupDao) {
+    class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
         fun insertGroup(group: Group) {
             writeBarrier.checkWritesAllowed()
             groupDao.insert(group)
@@ -1472,9 +1501,11 @@ data class Group(val id: Int)
 MATRIX_MASKED_MUTATION_TEXT_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         // legacyDao.delete(group.id)
@@ -1489,11 +1520,14 @@ data class Group(val id: Int)
 MATRIX_SAFE_RECEIVER_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 import com.example.data.GroupDao
 
 class Repo(
     private val groupDao: GroupDao,
     private val auditSink: AuditSink,
+    private val writeBarrier: DatabaseWriteBarrier,
 ) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
@@ -2942,7 +2976,11 @@ data class GroupMember(val groupId: Int)
 GR08P2_CALCULATOR_SOURCE = """\
 package com.example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 class SettlementCalculator {
+    private val writeBarrier: DatabaseWriteBarrier
+
     suspend fun recordSettlement(
         groupId: Long,
         fromMemberId: Long,

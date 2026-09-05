@@ -66,7 +66,17 @@ from .declaration_scanner import (
 # scanner CONSTRUCTS observations through this module at its existing D4
 # resolution point; the seam scans nothing and authorizes nothing.
 from .mutation_observation import build_mutation_observation
+# PR-GR-12 Step 7: direct-mode authorization is the SHARED CFG dominance
+# proof (the bridge is the single proof source for D4, v2 source evidence,
+# and every downstream control plane).  The legacy lexical
+# barrier-text-earlier-in-the-callable rule is removed.
+from .direct_barrier_bridge import (
+    callable_body_span as _proof_callable_body_span,
+    mutation_sites_from_observations as _proof_mutation_sites,
+    prove_callable_direct_barriers as _prove_callable_direct_barriers,
+)
 from .policy_model import BarrierMode, CallableKind, PolicyEntry, match_mutation
+from .structural_analysis.barrier_proof import ProofStatus
 from .room_inventory import build_room_inventory
 from .source_roots import resolve_source_root_set
 from .policy_legacy import (
@@ -3001,6 +3011,11 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
         ):
             env_callable_end = end
         calls = list(_METHOD_CALL.finditer(masked, start, end))
+        # GR-12 Step 7: direct-mode gates defer to the shared dominance
+        # proof, which needs the callable's FULL resolved mutation set —
+        # collected across the whole call loop below before any proof runs.
+        deferred_direct_gates: list = []
+        declaration_mutation_observations: list = []
         same_file_properties = same_file_property_cache.get(declaration.path)
         if same_file_properties is None:
             same_file_properties = _same_file_property_types(source)
@@ -3333,6 +3348,7 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
             )
             if mutation_observation_sink is not None:
                 mutation_observation_sink.append(observation)
+            declaration_mutation_observations.append(observation)
             line = observation.line
             location = SourceLocation(line=line, end_line=line)
             matched_entries = [
@@ -3362,13 +3378,72 @@ def scan_db_access(source_root, ownership_policy=None, structural_policy=None, r
                 ))
             elif any(item.barrier_mode is BarrierMode.DIRECT
                      for item in matched_entries):
-                before = masked[start:call.start()]
-                if not re.search(r"\bwriteBarrier\s*\.\s*(?:checkWritesAllowed|runWrite)\s*\(", before):
-                    findings.append(GuardFinding(
-                        "DB_MISSING_WRITE_BARRIER", "error", declaration.path,
-                        location, call_symbol,
-                        {"dao": observation.dao_fqcn, "operation": observation.operation},
-                        "Database write lacks required barrier evidence",
+                # GR-12 Step 7: the lexical "barrier text earlier in the
+                # callable" rule is GONE.  Authorization defers to the shared
+                # CFG dominance proof, processed after the call loop.
+                deferred_direct_gates.append(
+                    (observation, location, call_symbol)
+                )
+
+        # GR-12 Step 7: authorize every deferred direct-mode mutation through
+        # the shared CFG dominance proof.  Proof inputs are the callable's
+        # FULL resolved mutation set — a lambda hiding another row's mutation
+        # must never be modeled opaque.  Outcomes: PROVEN -> silent;
+        # COUNTEREXAMPLE -> exact finding (DB_MISSING_WRITE_BARRIER when the
+        # callable holds no canonical barrier call at all,
+        # DB_WRITE_BARRIER_NOT_DOMINATING otherwise); UNSUPPORTED or
+        # infrastructure failure -> blocking diagnostics (exit 2), never a
+        # silent pass and never a downgraded finding.
+        if deferred_direct_gates:
+            if declaration.kind != "function" or len(
+                {gate_observation.callable_key
+                 for gate_observation, _, _ in deferred_direct_gates}
+            ) != 1:
+                # Property accessors and split callable identities have no
+                # single modelable callable body: fail closed (the GR-12
+                # shadow treats non-function callables as uncorrelatable).
+                for _, gate_location, _ in deferred_direct_gates:
+                    diagnostics.append(_line_diagnostic(
+                        "DB_DIRECT_BARRIER_PROOF_UNSUPPORTED", declaration.path,
+                        gate_location.line,
+                    ))
+                deferred_direct_gates = []
+        if deferred_direct_gates:
+            proof_outcome = _prove_callable_direct_barriers(
+                masked,
+                _proof_callable_body_span(masked, declaration),
+                _proof_mutation_sites(declaration_mutation_observations),
+                path=declaration.path,
+                callable_key=deferred_direct_gates[0][0].callable_key,
+            )
+            for gate_observation, gate_location, gate_symbol in deferred_direct_gates:
+                gate_result = proof_outcome.result_for_site_start(
+                    gate_observation.source_start
+                )
+                if gate_result.status is ProofStatus.PROVEN:
+                    continue
+                if gate_result.status is ProofStatus.COUNTEREXAMPLE:
+                    if proof_outcome.has_canonical_barrier:
+                        findings.append(GuardFinding(
+                            "DB_WRITE_BARRIER_NOT_DOMINATING", "error", declaration.path,
+                            gate_location, gate_symbol,
+                            {"dao": gate_observation.dao_fqcn,
+                             "operation": gate_observation.operation},
+                            "Canonical write barrier exists but does not dominate the mutation",
+                        ))
+                    else:
+                        findings.append(GuardFinding(
+                            "DB_MISSING_WRITE_BARRIER", "error", declaration.path,
+                            gate_location, gate_symbol,
+                            {"dao": gate_observation.dao_fqcn,
+                             "operation": gate_observation.operation},
+                            "Database write lacks required barrier evidence",
+                        ))
+                else:
+                    diagnostics.append(_line_diagnostic(
+                        gate_result.diagnostic_code or "DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",
+                        declaration.path,
+                        gate_observation.line,
                     ))
 
         for operation, pattern in _STRUCTURAL.items():

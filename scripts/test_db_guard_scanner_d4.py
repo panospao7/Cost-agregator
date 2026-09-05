@@ -599,10 +599,27 @@ def test_typed_parameter_order_is_exact(tmp_path):
 
 
 def test_typed_direct_barrier_mode_requires_local_barrier_evidence(tmp_path):
-    """barrierMode direct keeps the local-barrier contract: without exact
-    writeBarrier evidence before the mutation the authorization becomes a
-    DB_MISSING_WRITE_BARRIER finding; with it the scan is clean."""
+    """barrierMode direct keeps the write-barrier contract via the GR-12
+    shared dominance proof: without a canonical DatabaseWriteBarrier call
+    dominating the mutation the authorization becomes a
+    DB_MISSING_WRITE_BARRIER finding; with an exact-contract canonical
+    check (receiver resolves to the contract FQCN through the import
+    table) the scan is clean.  A bare ``writeBarrier`` spelling with no
+    resolvable canonical receiver is never enough: it fails closed with
+    DB_DIRECT_BARRIER_RECEIVER_UNRESOLVED (exit-2 diagnostic, findings
+    discarded), matching the GR-12 plan's "bare spelling is never
+    sufficient" contract."""
     barrier_source = _TYPED_SOURCE.replace(
+        "package example\n",
+        "package example\n\n"
+        "import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier\n",
+    ).replace(
+        "class Repository(private val expenseDao: ExpenseDao,\n"
+        "                 private val otherDao: ExpenseDao) {",
+        "class Repository(private val expenseDao: ExpenseDao,\n"
+        "                 private val otherDao: ExpenseDao,\n"
+        "                 private val writeBarrier: DatabaseWriteBarrier) {",
+    ).replace(
         "    fun save(item: Item) {\n        expenseDao.insert(item)\n    }",
         "    fun save(item: Item) {\n"
         "        writeBarrier.checkWritesAllowed()\n"
@@ -634,6 +651,107 @@ def test_typed_direct_barrier_mode_requires_local_barrier_evidence(tmp_path):
                        "inventory_daos": 2, "inventory_mutators": 4,
                        "trusted": True, "advisoryDiagnosticCount": 0},
     }
+
+
+def test_direct_barrier_unresolvable_receiver_fails_closed(tmp_path):
+    """GR-12 Step 7: a direct-mode mutation whose barrier-shaped call sits
+    on a receiver that resolves to NO declared type takes the exit-2 route
+    (DB_DIRECT_BARRIER_RECEIVER_UNRESOLVED blocking diagnostic), never a
+    finding-based pass and never a guessed authorization."""
+    unresolved_source = _TYPED_SOURCE.replace(
+        "    fun save(item: Item) {\n        expenseDao.insert(item)\n    }",
+        "    fun save(item: Item) {\n"
+        "        writeBarrier.checkWritesAllowed()\n"
+        "        expenseDao.insert(item)\n"
+        "    }",
+    )
+    root = _typed_root(tmp_path, unresolved_source)
+
+    report = scan_db_access(
+        root, [_typed_entry(barrier_mode=BarrierMode.DIRECT)],
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    payload = report.to_dict()
+    assert payload["findings"] == []
+    assert [item["code"] for item in payload["diagnostics"]] == [
+        "DB_DIRECT_BARRIER_RECEIVER_UNRESOLVED"
+    ]
+    assert payload["statistics"]["trusted"] is False
+
+
+def test_direct_barrier_fake_same_name_receiver_is_a_counterexample(tmp_path):
+    """GR-12 plan canonical-scope matrix #9: the same method name on a fake
+    same-package barrier type is NOT a barrier.  The lexical pre-GR-12 gate
+    accepted this fixture; the dominance proof counterexamples it (no
+    canonical barrier call exists in the callable) as an exact
+    DB_MISSING_WRITE_BARRIER finding."""
+    fake_source = _TYPED_SOURCE.replace(
+        "class Repository(private val expenseDao: ExpenseDao,\n"
+        "                 private val otherDao: ExpenseDao) {",
+        "class FakeWriteBarrier {\n"
+        "    fun checkWritesAllowed(operation: String) {}\n"
+        "}\n"
+        "\n"
+        "class Repository(private val expenseDao: ExpenseDao,\n"
+        "                 private val otherDao: ExpenseDao,\n"
+        "                 private val writeBarrier: FakeWriteBarrier) {",
+    ).replace(
+        "    fun save(item: Item) {\n        expenseDao.insert(item)\n    }",
+        "    fun save(item: Item) {\n"
+        "        writeBarrier.checkWritesAllowed(\"Repository.save\")\n"
+        "        expenseDao.insert(item)\n"
+        "    }",
+    )
+    root = _typed_root(tmp_path, fake_source)
+
+    report = scan_db_access(
+        root, [_typed_entry(barrier_mode=BarrierMode.DIRECT)],
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    assert [finding.rule for finding in report.findings] == [
+        "DB_MISSING_WRITE_BARRIER",
+    ]
+    assert report.diagnostics == ()
+    assert report.statistics["trusted"] is True
+
+
+def test_direct_barrier_nondominating_branch_is_not_dominating_finding(tmp_path):
+    """GR-12 plan dominance matrix #3: a canonical check in an unrelated
+    true-branch does NOT dominate a mutation after the join.  The lexical
+    pre-GR-12 gate passed this shape; activation turns it into the exact
+    DB_WRITE_BARRIER_NOT_DOMINATING finding."""
+    branch_source = _TYPED_SOURCE.replace(
+        "package example\n",
+        "package example\n\n"
+        "import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier\n",
+    ).replace(
+        "class Repository(private val expenseDao: ExpenseDao,\n"
+        "                 private val otherDao: ExpenseDao) {",
+        "class Repository(private val expenseDao: ExpenseDao,\n"
+        "                 private val otherDao: ExpenseDao,\n"
+        "                 private val writeBarrier: DatabaseWriteBarrier) {",
+    ).replace(
+        "    fun save(item: Item) {\n        expenseDao.insert(item)\n    }",
+        "    fun save(item: Item) {\n"
+        "        if (item.id > 0) {\n"
+        "            writeBarrier.checkWritesAllowed()\n"
+        "        }\n"
+        "        expenseDao.insert(item)\n"
+        "    }",
+    )
+    root = _typed_root(tmp_path, branch_source)
+
+    report = scan_db_access(
+        root, [_typed_entry(barrier_mode=BarrierMode.DIRECT)],
+        raw_query_policy=_EMPTY_RAW_QUERY_POLICY,
+    )
+
+    assert [finding.rule for finding in report.findings] == [
+        "DB_WRITE_BARRIER_NOT_DOMINATING",
+    ]
+    assert report.diagnostics == ()
 
 
 # â”€â”€ GR-07 hardening step A: project-wide type index â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -3294,6 +3412,8 @@ def test_transaction_default_method_authorized_by_exact_policy_row(tmp_path):
     root = _source_root(tmp_path)
     source = """package example
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+
 class CategoryEntity(val id: Long, val name: String)
 
 @androidx.room.Dao
@@ -3310,11 +3430,7 @@ interface CategoryProbeDao {
     }
 }
 
-class WriteBarrier {
-    fun checkWritesAllowed(operation: String) {}
-}
-
-class CategoryRepository(private val categoryDao: CategoryProbeDao, private val writeBarrier: WriteBarrier) {
+class CategoryRepository(private val categoryDao: CategoryProbeDao, private val writeBarrier: DatabaseWriteBarrier) {
     suspend fun deleteCategory(categoryId: Long) {
         val category = categoryDao.getById(categoryId)
             ?: return
@@ -3323,6 +3439,7 @@ class CategoryRepository(private val categoryDao: CategoryProbeDao, private val 
     }
 }
 """
+
     (root / "CategoryRepository.kt").write_text(source, encoding="utf-8")
 
     from scripts.db_guard.policy_v2_loader import load_policy_v2

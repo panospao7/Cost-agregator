@@ -72,8 +72,9 @@ HAPPY_SOURCE = """\
 package com.example
 
 import com.example.data.GroupDao
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 
-class Repo(private val groupDao: GroupDao) {
+class Repo(private val groupDao: GroupDao, private val writeBarrier: DatabaseWriteBarrier) {
     fun insertGroup(group: Group) {
         writeBarrier.checkWritesAllowed()
         groupDao.insert(group)

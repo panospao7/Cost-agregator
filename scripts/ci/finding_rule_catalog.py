@@ -195,6 +195,21 @@ _RULE_ENTRIES: Dict[str, RuleProfile] = {
         multiplicity=MULTIPLICITY_COUNT,
         description="DB write is missing its required write-barrier guard",
     ),
+    "DB_WRITE_BARRIER_NOT_DOMINATING": RuleProfile(
+        code="DB_WRITE_BARRIER_NOT_DOMINATING",
+        guard=GUARD_DB_ACCESS,
+        identity_fields=(
+            "path",
+            "symbol.owner",
+            "symbol.name",
+            "symbol.receiver",
+            "symbol.parameters",
+            "identity.dao",
+            "identity.operation",
+        ),
+        multiplicity=MULTIPLICITY_COUNT,
+        description="Canonical write barrier exists but does not dominate the DB mutation",
+    ),
     "DB_FORBIDDEN_STRUCTURAL_OPERATION": RuleProfile(
         code="DB_FORBIDDEN_STRUCTURAL_OPERATION",
         guard=GUARD_DB_ACCESS,
@@ -372,6 +387,21 @@ _DIAGNOSTIC_ENTRIES: Dict[str, DiagnosticProfile] = {
         code="DB_SIGNATURE_UNRESOLVED",
         guard=GUARD_DB_ACCESS,
         description="Exact callable signature cannot be resolved",
+    ),
+    "DB_DIRECT_BARRIER_PROOF_UNSUPPORTED": DiagnosticProfile(
+        code="DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",
+        guard=GUARD_DB_ACCESS,
+        description="Direct write-barrier dominance proof cannot conservatively model the callable",
+    ),
+    "DB_DIRECT_BARRIER_RECEIVER_UNRESOLVED": DiagnosticProfile(
+        code="DB_DIRECT_BARRIER_RECEIVER_UNRESOLVED",
+        guard=GUARD_DB_ACCESS,
+        description="Barrier-shaped receiver cannot be resolved exactly to the canonical contract",
+    ),
+    "DB_DIRECT_BARRIER_CONTRACT_INVALID": DiagnosticProfile(
+        code="DB_DIRECT_BARRIER_CONTRACT_INVALID",
+        guard=GUARD_DB_ACCESS,
+        description="Canonical barrier contract or proof graph invariant failed",
     ),
     "DB_DAO_INHERITANCE_UNRESOLVED": DiagnosticProfile(
         code="DB_DAO_INHERITANCE_UNRESOLVED",

@@ -949,12 +949,15 @@ def _extract_mutation_matches(body, var_map=None, out_of_scope_aliases=None,
         out_of_scope_alias_identities = {}
     matches = []
 
-    def _record(receiver, dao, op, start, out_of_scope):
+    def _record(receiver, dao, op, start, out_of_scope, end=None):
+        # GR-12 Step 7: ``end`` carries the match end offset (additive) so
+        # the shared dominance-proof bridge can build exact site spans.
         matches.append({
             "receiver": receiver,
             "dao": dao,
             "op": op,
             "start": start,
+            "end": end if end is not None else start,
             "lineno": _line_of_offset(body, start),
             "out_of_scope": bool(out_of_scope),
         })
@@ -967,7 +970,7 @@ def _extract_mutation_matches(body, var_map=None, out_of_scope_aliases=None,
         receiver = m.group("receiver")
         op = m.group("method")
         if receiver in var_map:
-            _record(receiver, var_map[receiver], op, m.start(), False)
+            _record(receiver, var_map[receiver], op, m.start(), False, m.end())
         elif receiver in out_of_scope_aliases:
             _record(
                 receiver,
@@ -975,14 +978,15 @@ def _extract_mutation_matches(body, var_map=None, out_of_scope_aliases=None,
                 op,
                 m.start(),
                 True,
+                m.end(),
             )
         else:
             dao = _resolve_dao_identity(receiver, var_map)
             if dao is not None:
-                _record(receiver, dao, op, m.start(), False)
+                _record(receiver, dao, op, m.start(), False, m.end())
 
     for m in _DIRECT_CHAIN_MUTATION_RE.finditer(masked_body):
-        _record(m.group("dao"), m.group("dao"), m.group("method"), m.start(), False)
+        _record(m.group("dao"), m.group("dao"), m.group("method"), m.start(), False, m.end())
 
     return matches
 

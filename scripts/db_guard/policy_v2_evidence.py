@@ -32,10 +32,11 @@ mutations exist in the verified callables:
   so missing it silently dropped every real ``dao.*`` mutation from the
   evidence);
 * ``barrierMode`` metadata is locally consistency-checked (PR-GR-06
-  Slice 1): a ``direct`` entry must show exact local direct-barrier syntax
-  before EVERY mutation in its own callable body; ``helper`` and
-  ``workerMediated`` entries carry no local requirement here.  No
-  dominance/reachability claims are made and mediation is never inferred;
+  Slice 1, GR-12 Step 7): a ``direct`` entry's callable body must be PROVEN
+  by the SHARED CFG dominance proof (the same engine the active D4 scanner
+  authorizes with) for EVERY mutation in that body; ``helper`` and
+  ``workerMediated`` entries carry no local requirement here.  Mediation is
+  never inferred;
 * DAO-typed METHOD PARAMETERS of the verified callable bind their names to
   the declared DAO's Room accessor identity (GR-08p2) — the same semantics
   as a method-local ``val x = ...Dao()`` alias — so a @Transaction DAO
@@ -149,13 +150,17 @@ from .policy_errors import (
     DB_V2_POLICY_SIGNATURE_UNRESOLVED,
 )
 from .policy_parsing import (
-    _barrier_before_line,
     build_class_scope_dao_var_map,
     build_dao_var_map,
     _extract_mutation_matches,
     _interface_name_to_room_accessor,
     _resolve_dao_identity,
 )
+# GR-12 Step 7: the barrierMode consistency gate consumes the SAME shared
+# CFG dominance proof the active D4 scanner authorizes with — never a
+# second barrier matcher.
+from .direct_barrier_bridge import prove_evidence_callable
+from .structural_analysis.barrier_proof import ProofStatus
 from .source_roots import (
     DB_SOURCE_ROOT_UNDECLARED,
     SourceRoot,
@@ -585,13 +590,14 @@ def verify_v2_policy_source_evidence(
     so an accessor backed by several same-simple-name DAOs still reports
     ``DB_V2_POLICY_DAO_AMBIGUOUS`` rather than a guessed identity.
 
-    Stage 3 — barrierMode metadata local consistency (PR-GR-06 Slice 1):
-    for an otherwise-clean group whose entries declare ``barrierMode:
-    direct``, every mutation line in the verified body must be preceded by
-    exact local direct-barrier syntax (shared ``_barrier_before_line``
-    machinery); otherwise one ``DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT``
-    diagnostic marks the group untrusted.  ``helper``/``workerMediated``
-    groups carry no local requirement.  No dominance/reachability claims.
+    Stage 3 — barrierMode metadata consistency (PR-GR-06 Slice 1, GR-12
+    Step 7): for an otherwise-clean group whose entries declare
+    ``barrierMode: direct``, every mutation of the verified body must be
+    PROVEN by the shared CFG dominance proof (the same bridge the active D4
+    scanner consumes); otherwise one
+    ``DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT`` diagnostic marks the
+    group untrusted.  ``helper``/``workerMediated`` groups carry no local
+    requirement.
 
     Per-group processing never raises: any unexpected exception between
     path validation and mutation checking is converted into one
@@ -1058,59 +1064,54 @@ def _callable_body_slice_line_indices(masked, owner, callables, line_count,
     return excluded
 
 
-def _callable_direct_barrier_evidence(text, decl, relative_mutation_linenos):
-    """Direct-barrier verdict for one verified callable (GR-05 approach).
+def _callable_direct_barrier_evidence(text, decl, mutation_matches, callable_key, path):
+    """Direct-barrier verdict for one verified callable (GR-12 Step 7).
 
-    Reuses :func:`policy_parsing._barrier_before_line` — the exact machinery
-    behind the legacy scanner's MISSING_WRITE_BARRIER gate and PR-GR-05's
-    ``_callable_direct_barrier_evidence`` — so v2 evidence never invents a
-    second barrier matcher.  For EVERY distinct extracted mutation line, the
-    callable must show a real unqualified
-    ``writeBarrier.checkWritesAllowed(...)`` / ``writeBarrier.runWrite(...)``
-    call strictly between the fun declaration line and that mutation line
-    (statefully comment/string-masked, receiver-aware).  Returns ``True``
-    only when every mutation is so preceded; any disproof — or an empty
-    position set, or a bodyless declaration — returns ``False`` so a
+    Consumes the SHARED CFG dominance proof
+    (:mod:`db_guard.direct_barrier_bridge`) — the exact engine the active D4
+    scanner authorizes with since PR-GR-12 Step 7 — replacing the legacy
+    line-before-mutation lexical rule.  EVERY extracted mutation of the
+    callable must be PROVEN by the dominance engine; any COUNTEREXAMPLE,
+    UNSUPPORTED, or infrastructure result — or an empty match set, or a
+    bodyless declaration — fails closed (returns ``False``) so a
     ``barrierMode: direct`` claim can never pass without full per-mutation
     proof.
 
     ``text`` is the source text the declaration offsets refer to (masking
-    preserves offsets and newline positions, so raw and masked texts yield
-    identical line numbers); ``relative_mutation_linenos`` are 0-based line
-    indices within ``decl.body`` as reported by
-    :func:`policy_parsing._extract_mutation_matches`.
+    preserves offsets and newline positions); ``mutation_matches`` are the
+    ``_extract_mutation_matches`` dicts (body-relative ``start``/``end``
+    offsets with resolved ``dao``/``op`` identity).
     """
     body = decl.body if isinstance(decl.body, str) else ""
-    relative = tuple(sorted(set(relative_mutation_linenos)))
-    if not body or not relative:
+    if not body or not mutation_matches:
         return False
-    lines = text.split("\n")
-    fun_start = text.count("\n", 0, decl.start_offset)
-    # ``decl.body`` is the tail slice of the declaration span, so the body
-    # starts exactly at ``end_offset - len(body)``.
-    body_base_line = text.count("\n", 0, decl.end_offset - len(body))
-    for relative_lineno in relative:
-        if not _barrier_before_line(
-            lines, fun_start, body_base_line + relative_lineno + 1
-        ):
-            return False
-    return True
+    outcome = prove_evidence_callable(
+        text, decl, mutation_matches, path=path, callable_key=callable_key,
+    )
+    return bool(outcome.results) and all(
+        result.status is ProofStatus.PROVEN for result in outcome.results
+    )
 
 
-def _barrier_metadata_consistent(group, ck, text, decl, mutation_linenos):
+def _barrier_metadata_consistent(group, ck, text, decl, mutation_matches):
     """Local-consistency check of the group's ``barrierMode`` metadata.
 
-    Plan rule (PR-GR-06 Slice 1): a ``direct`` claim requires exact local
-    direct-barrier syntax before EVERY mutation in the callable body;
-    ``helper`` / ``workerMediated`` carry no local requirement here (their
-    mediation proof is a later slice — nothing is asserted beyond "direct
-    is not falsely claimed").  If ANY group member claims ``direct``, full
-    per-mutation proof is required (fail closed on mixed-mode groups).
-    No dominance/reachability claims are made.
+    Plan rule (PR-GR-12 Step 7): a ``direct`` claim requires the shared CFG
+    dominance proof to PROVE every mutation of the callable; ``helper`` /
+    ``workerMediated`` carry no local requirement here (their mediation proof
+    is GR-13+ — nothing is asserted beyond "direct is not falsely claimed").
+    If ANY group member claims ``direct``, full per-mutation proof is
+    required (fail closed on mixed-mode groups).
     """
     if not any(m.barrier_mode is BarrierMode.DIRECT for m in group):
         return True
-    return _callable_direct_barrier_evidence(text, decl, mutation_linenos)
+    return _callable_direct_barrier_evidence(
+        text, decl, mutation_matches,
+        callable_key=(
+            ck.canonical_key() if hasattr(ck, "canonical_key") else str(ck)
+        ),
+        path=getattr(ck, "path", "") or "",
+    )
 
 
 def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
@@ -1329,11 +1330,12 @@ def _check_mutations(group, ck, owner, masked, text, decl, callables, errors,
         ))
         return actual_keys
 
-    # Stage 3 (PR-GR-06 Slice 1): barrierMode metadata local consistency —
-    # evaluated only for an otherwise-clean group so a failing group keeps
-    # exactly one controlled diagnostic at its furthest stage reached.
+    # Stage 3 (PR-GR-06 Slice 1, GR-12 Step 7): barrierMode metadata
+    # consistency via the shared dominance proof — evaluated only for an
+    # otherwise-clean group so a failing group keeps exactly one controlled
+    # diagnostic at its furthest stage reached.
     if not errors and not _barrier_metadata_consistent(
-        group, ck, text, decl, mutation_linenos
+        group, ck, text, decl, matches
     ):
         errors.append(PolicyError(
             DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT,
