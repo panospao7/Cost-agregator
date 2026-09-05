@@ -1,0 +1,46 @@
+# GR-13 call-binding resolution fixtures (shadow slice S2a).
+# One row per fixture file; expectedResolution uses the controlled
+# resolution-state vocabulary only.
+fixtures:
+  - id: CB-01
+    file: call_binding/cb01_overloads_diff_params.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-02
+    file: call_binding/cb02_nested_owners.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-03
+    file: call_binding/cb03_same_simple_class_name_two_packages.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-04
+    file: call_binding/cb04_member_vs_extension.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-05
+    file: call_binding/cb05_wrong_receiver_fqcn.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-06
+    file: call_binding/cb06_interface_dispatch.kt
+    expectedResolution: INTERFACE_DISPATCH
+  - id: CB-07
+    file: call_binding/cb07_overridden_open_method.kt
+    expectedResolution: VIRTUAL_DISPATCH
+  - id: CB-08
+    file: call_binding/cb08_ambiguous_import.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-09
+    file: call_binding/cb09_unresolved_param_type.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-10
+    file: call_binding/cb10_generic_ambiguity.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-11
+    file: call_binding/cb11_exact_top_level_import.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-12
+    file: call_binding/cb12_same_owner_unqualified.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-13
+    file: call_binding/cb13_private_unique_helper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-14
+    file: call_binding/cb14_qualified_top_level_call.kt
+    expectedResolution: EXACT_SYNCHRONOUS

@@ -1,0 +1,211 @@
+# GR-13 consolidated expected manifest (shadow corpus).
+# Copies all rows from the per-group manifests: 14 call-binding (CB),
+# 12 helper-proof (HP), 18 worker-proof (WP; WP-15a/WP-15b separate),
+# and 8 protocol (PR) rows = 52 rows total.
+# CB/HP/WP rows use expectedResolution/expectedProof(/expectedRoot);
+# PR rows use expectation. All values use closed vocabularies only.
+fixtures:
+  - id: CB-01
+    file: call_binding/cb01_overloads_diff_params.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-02
+    file: call_binding/cb02_nested_owners.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-03
+    file: call_binding/cb03_same_simple_class_name_two_packages.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-04
+    file: call_binding/cb04_member_vs_extension.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-05
+    file: call_binding/cb05_wrong_receiver_fqcn.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-06
+    file: call_binding/cb06_interface_dispatch.kt
+    expectedResolution: INTERFACE_DISPATCH
+  - id: CB-07
+    file: call_binding/cb07_overridden_open_method.kt
+    expectedResolution: VIRTUAL_DISPATCH
+  - id: CB-08
+    file: call_binding/cb08_ambiguous_import.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-09
+    file: call_binding/cb09_unresolved_param_type.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-10
+    file: call_binding/cb10_generic_ambiguity.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-11
+    file: call_binding/cb11_exact_top_level_import.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-12
+    file: call_binding/cb12_same_owner_unqualified.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-13
+    file: call_binding/cb13_private_unique_helper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-14
+    file: call_binding/cb14_qualified_top_level_call.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: HP-01
+    file: helper_proof/hp01_guarded_only_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-02
+    file: helper_proof/hp02_mixed_guarded_unguarded.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-03
+    file: helper_proof/hp03_zero_call_sites_private_helper.kt
+    expectedResolution: EXTERNAL_ENTRY
+    expectedProof: UNPROVEN_EXTERNAL_ENTRY
+  - id: HP-04
+    file: helper_proof/hp04_function_reference.kt
+    expectedResolution: FUNCTION_REFERENCE
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+  - id: HP-05
+    file: helper_proof/hp05_coroutine_launch.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-06
+    file: helper_proof/hp06_escaping_callback_field.kt
+    expectedResolution: ESCAPING_LAMBDA
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-07
+    file: helper_proof/hp07_recursive_pair.kt
+    expectedResolution: RECURSIVE_UNSUPPORTED
+    expectedProof: UNPROVEN_RECURSION
+  - id: HP-08
+    file: helper_proof/hp08_barrier_unrelated_branch.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-09
+    file: helper_proof/hp09_scope_exit_before_call.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-10
+    file: helper_proof/hp10_local_barrier_direct_insert.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-11
+    file: helper_proof/hp11_canonical_direct_barrier_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-12
+    file: helper_proof/hp12_helper_chain_both_guarded.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: WP-01
+    file: worker_proof/wp01_direct_worker_guard_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-02
+    file: worker_proof/wp02_fqcn_base_worker_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-03
+    file: worker_proof/wp03_alias_import_worker_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-04
+    file: worker_proof/wp04_intermediate_abstract_base_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-05
+    file: worker_proof/wp05_nested_worker_class_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-06
+    file: worker_proof/wp06_mutation_inside_guard_lambda_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-07
+    file: worker_proof/wp07_mutation_before_guard.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-08
+    file: worker_proof/wp08_mutation_after_scope_exit.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-09
+    file: worker_proof/wp09_guard_in_dead_helper.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-10
+    file: worker_proof/wp10_helper_inside_guard_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-11
+    file: worker_proof/wp11_shared_helper_non_worker_caller.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_NON_WORKER_ROOT
+    expectedRoot: PUBLIC_OR_PROTECTED_EXTERNAL
+  - id: WP-12
+    file: worker_proof/wp12_wrong_receiver_guard.kt
+    expectedResolution: UNRESOLVED_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-13
+    file: worker_proof/wp13_launch_escape_callback.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-14
+    file: worker_proof/wp14_unregistered_worker.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_NON_WORKER_ROOT
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-15a
+    file: worker_proof/wp15_duplicate_worker_a.kt
+    expectedResolution: AMBIGUOUS_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: UNKNOWN_EXTERNAL
+  - id: WP-15b
+    file: worker_proof/wp15_duplicate_worker_b.kt
+    expectedResolution: AMBIGUOUS_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: UNKNOWN_EXTERNAL
+  - id: WP-16
+    file: worker_proof/wp16_cancellation_path_outside_scope.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-17
+    file: worker_proof/wp17_checkpoint_not_scope.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: PR-01
+    file: protocol/pr01_no_raw_source.md
+    expectation: REPORT_HAS_NO_SOURCE_SNIPPETS
+  - id: PR-02
+    file: protocol/pr02_two_run_stability.md
+    expectation: DETERMINISTIC
+  - id: PR-03
+    file: protocol/pr03_unknown_code_rejected.md
+    expectation: EXIT_2
+  - id: PR-04
+    file: protocol/pr04_malformed_policy.md
+    expectation: EXIT_2
+  - id: PR-05
+    file: protocol/pr05_unproven_exit1.md
+    expectation: EXIT_1
+  - id: PR-06
+    file: protocol/pr06_unsupported_exit2.md
+    expectation: EXIT_2
+  - id: PR-07
+    file: protocol/pr07_normal_db_untouched.md
+    expectation: DB_CLI_UNCHANGED
+  - id: PR-08
+    file: protocol/pr08_ratchet_untouched.md
+    expectation: RATCHET_UNCHANGED

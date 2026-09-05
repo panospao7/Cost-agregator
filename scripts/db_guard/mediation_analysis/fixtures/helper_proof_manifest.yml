@@ -1,0 +1,53 @@
+# GR-13 helper-proof fixtures (shadow slice S2b).
+# One row per fixture file; expectedResolution uses the controlled
+# resolution-state vocabulary and expectedProof uses the controlled
+# proof-state vocabulary only.
+fixtures:
+  - id: HP-01
+    file: helper_proof/hp01_guarded_only_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-02
+    file: helper_proof/hp02_mixed_guarded_unguarded.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-03
+    file: helper_proof/hp03_zero_call_sites_private_helper.kt
+    expectedResolution: EXTERNAL_ENTRY
+    expectedProof: UNPROVEN_EXTERNAL_ENTRY
+  - id: HP-04
+    file: helper_proof/hp04_function_reference.kt
+    expectedResolution: FUNCTION_REFERENCE
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+  - id: HP-05
+    file: helper_proof/hp05_coroutine_launch.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-06
+    file: helper_proof/hp06_escaping_callback_field.kt
+    expectedResolution: ESCAPING_LAMBDA
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-07
+    file: helper_proof/hp07_recursive_pair.kt
+    expectedResolution: RECURSIVE_UNSUPPORTED
+    expectedProof: UNPROVEN_RECURSION
+  - id: HP-08
+    file: helper_proof/hp08_barrier_unrelated_branch.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-09
+    file: helper_proof/hp09_scope_exit_before_call.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-10
+    file: helper_proof/hp10_local_barrier_direct_insert.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-11
+    file: helper_proof/hp11_canonical_direct_barrier_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-12
+    file: helper_proof/hp12_helper_chain_both_guarded.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
