@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.data.database.entity.EmailReceiptSource
+import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.repository.ReceiptInsertResolver
 import com.yourname.expensetracker.data.repository.ReceiptInsertResult
@@ -34,6 +35,7 @@ import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -41,6 +43,8 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.slot
+import io.mockk.verify
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -48,14 +52,22 @@ import kotlin.test.assertFailsWith
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
 /**
- * Tests for [ReceiptLifecycleCoordinator.processReceiptInput].
+ * Tests for [ReceiptLifecycleCoordinator.processReceiptInput] and [ReceiptLifecycleCoordinator.deleteReceipt].
  *
- * Validates: input validation → OCR/parse → dedupe → save → event logging.
+ * Validates: input validation → OCR/parse → dedupe → save → event logging;
+ * deletion: barrier check → transactional event/link/row delete → post-commit asset cleanup →
+ * GR-14b ASSET_DELETE_FAILED audit write via writeAssetDeleteFailedEvent on asset-delete failure.
+ *
+ * Since the f1758149 DomainTransactionRunner migration, ingest and delete paths run
+ * inside transactionRunner.runInTransaction blocks; setup installs a default stub
+ * ([stubTransactionRunnerExecutesBlocks]) so every block actually executes — a relaxed
+ * runner mock would silently skip them.
  */
 class ReceiptLifecycleCoordinatorTest {
 
@@ -80,6 +92,8 @@ class ReceiptLifecycleCoordinatorTest {
     private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private lateinit var privacySettingsRepository: PrivacySettingsRepository
     private lateinit var transactionLifecycleCoordinator: TransactionLifecycleCoordinator
+    private lateinit var transactionRunner: DomainTransactionRunner
+    private lateinit var receiptLifecycleEventWriter: ReceiptLifecycleEventWriter
     private lateinit var coordinator: ReceiptLifecycleCoordinator
 
     private val now = 1_712_000_000_000L
@@ -107,6 +121,10 @@ class ReceiptLifecycleCoordinatorTest {
         diagnosticEventWriter = mockk(relaxed = true)
         privacySettingsRepository = mockk(relaxed = true)
         transactionLifecycleCoordinator = mockk(relaxed = true)
+        transactionRunner = mockk(relaxed = true)
+        receiptLifecycleEventWriter = mockk(relaxed = true)
+        // Ingest/delete paths run inside transactionRunner blocks — execute them by default.
+        stubTransactionRunnerExecutesBlocks()
 
         every { timeProvider.now() } returns now
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
@@ -143,8 +161,8 @@ class ReceiptLifecycleCoordinatorTest {
             pendingReviewDao = mockk(relaxed = true),
             pendingReviewSourceLinkService = mockk(relaxed = true),
             receiptInsertResolver = receiptInsertResolver,
-            transactionRunner = mockk(relaxed = true),
-            receiptLifecycleEventWriter = mockk(relaxed = true),
+            transactionRunner = transactionRunner,
+            receiptLifecycleEventWriter = receiptLifecycleEventWriter,
             effectiveCloudAiPolicyResolver = mockk(relaxed = true)
         )
     }
@@ -485,6 +503,9 @@ class ReceiptLifecycleCoordinatorTest {
         )
         coEvery { scannedReceiptDao.insert(any()) } returns 2L
         coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        // Production persists via receiptInsertResolver (the scannedReceiptDao.insert
+        // stub above is vestigial) — align the resolver with this test's id=2L pin.
+        coEvery { receiptInsertResolver.insertOrResolve(any()) } returns ReceiptInsertResult.Inserted(2L)
         coEvery { scannedReceiptDao.getById(2L) } returns ScannedReceipt(
             id = 2L, imagePath = null, rawOcrText = "Your order",
             parsedTotal = 49.99, parsedMerchant = "Amazon", parsedDate = now,
@@ -675,5 +696,154 @@ class ReceiptLifecycleCoordinatorTest {
         assertTrue("Expected Duplicate for messageId conflict, got $result", result is EmailReceiptProcessResult.Duplicate)
         val duplicate = result as EmailReceiptProcessResult.Duplicate
         assertEquals(5L, duplicate.existingReceiptId)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // GR-14b: deleteReceipt — transactional delete + post-commit asset cleanup +
+    //         writeAssetDeleteFailedEvent (canonical direct barrier check + audit write)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Setup-default stub: executes every [DomainTransactionRunner.runInTransaction]
+     * block with a [TransactionContext], mirroring what a real runner does — the
+     * production contract requires the block to run inside a real transaction.
+     * Since the f1758149 migration the coordinator's DB work lives inside these
+     * blocks, so a relaxed mock that silently skips them would let every
+     * DB-dependent assertion pass vacuously or fail with ClassCastException.
+     * The block parameter is positional arg 5 (after correlationId, causationId,
+     * operationId, source, metadata). The ctx fields are inert for assertions —
+     * no production code in these tests asserts on the correlationId/operationId
+     * values passed to the runner.
+     */
+    private fun stubTransactionRunnerExecutesBlocks() {
+        val ctx = TransactionContext(
+            correlationId = "test-correlation",
+            operationId = "test",
+            source = "ReceiptLifecycleCoordinator",
+            occurredAt = now
+        )
+        coEvery { transactionRunner.runInTransaction<Any>(any(), any(), any(), any(), any(), any()) } coAnswers {
+            @Suppress("UNCHECKED_CAST")
+            (arg<suspend (TransactionContext) -> Any>(5))(ctx)
+        }
+    }
+
+    private fun deletedReceiptFixture(): ScannedReceipt = ScannedReceipt(
+        id = 1L,
+        imagePath = "/tmp/receipt.jpg",
+        rawOcrText = "OCR text",
+        parsedTotal = 25.0,
+        parsedMerchant = "Test Shop",
+        parsedDate = now,
+        parsedItems = "[]",
+        parsedTaxAmount = null,
+        confidence = 0.95f,
+        processingStatus = "CAPTURED"
+    )
+
+    @Test
+    fun `deleteReceipt_happy_path_writes_event_deletes_links_row_and_asset`() = runTest {
+        val receipt = deletedReceiptFixture()
+        coEvery { scannedReceiptDao.getById(1L) } returns receipt
+        // scannedReceiptDao.delete / deleteAllLinksForReceipt are suspend Unit on
+        // relaxed mocks — no explicit stub needed.
+        every { assetStore.deleteAsset("/tmp/receipt.jpg") } returns true
+
+        val eventSlot = slot<ReceiptLifecycleEvent>()
+        val result = coordinator.deleteReceipt(1L)
+
+        assertTrue("Expected success, got $result", result.isSuccess)
+        coVerify(exactly = 1) { receiptLifecycleEventWriter.write(any(), capture(eventSlot)) }
+        val event = eventSlot.captured
+        assertEquals(1L, event.receiptId)
+        assertEquals("RECEIPT_DELETED", event.eventType)
+        assertEquals("DELETED", event.newStatus)
+        assertEquals(receipt.processingStatus, event.oldStatus)
+        assertEquals("system:coordinator", event.actor)
+        assertEquals("Receipt deleted with asset cleanup", event.message)
+        assertNull(event.errorDetails)
+        coVerify(exactly = 1) { receiptExpenseLinkDao.deleteAllLinksForReceipt(1L) }
+        coVerify(exactly = 1) { scannedReceiptDao.delete(receipt) }
+        verify(exactly = 1) { assetStore.deleteAsset("/tmp/receipt.jpg") }
+        coVerify(exactly = 1) { writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.deleteReceipt") }
+        // No audit write without an asset-delete failure.
+        coVerify(exactly = 0) { receiptEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `deleteReceipt_returns_failure_when_receipt_missing`() = runTest {
+        coEvery { scannedReceiptDao.getById(1L) } returns null
+
+        val result = coordinator.deleteReceipt(1L)
+
+        assertTrue("Expected failure, got $result", result.isFailure)
+        coVerify(exactly = 0) { receiptLifecycleEventWriter.write(any(), any()) }
+        coVerify(exactly = 0) { scannedReceiptDao.delete(any()) }
+        coVerify(exactly = 0) { receiptExpenseLinkDao.deleteAllLinksForReceipt(any()) }
+        verify(exactly = 0) { assetStore.deleteAsset(any()) }
+        // Barrier is still checked first, before the existence lookup.
+        coVerify(exactly = 1) { writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.deleteReceipt") }
+    }
+
+    // GR-14b pin: after the transaction has committed, a failed physical asset
+    // delete must not fail the already-committed delete — instead the coordinator
+    // writes a durable ASSET_DELETE_FAILED audit row via its own private
+    // writeAssetDeleteFailedEvent, which performs its own canonical
+    // writeBarrier.checkWritesAllowed under the direct-owner target name.
+    @Test
+    fun `deleteReceipt_asset_delete_failure_writes_ASSET_DELETE_FAILED_audit_event`() = runTest {
+        val receipt = deletedReceiptFixture()
+        coEvery { scannedReceiptDao.getById(1L) } returns receipt
+        val assetFailureMessage = "x".repeat(600)
+        every { assetStore.deleteAsset(any()) } throws RuntimeException(assetFailureMessage)
+
+        val eventSlot2 = slot<ReceiptEvent>()
+        val result = coordinator.deleteReceipt(1L)
+
+        assertTrue("Expected success (audit write must not fail committed delete), got $result", result.isSuccess)
+        coVerify(exactly = 1) { receiptEventDao.insert(capture(eventSlot2)) }
+        val auditEvent = eventSlot2.captured
+        assertEquals("ASSET_DELETE_FAILED", auditEvent.eventType)
+        assertEquals(1L, auditEvent.receiptId)
+        assertEquals("DELETED", auditEvent.oldStatus)
+        assertNull(auditEvent.newStatus)
+        assertEquals("system:coordinator", auditEvent.actor)
+        assertEquals("Failed to delete asset file: [REDACTED]", auditEvent.message)
+        // take(500) truncation contract for the bounded error-details field.
+        assertEquals("x".repeat(500), auditEvent.errorDetails)
+        assertEquals(now, auditEvent.occurredAt)
+        // The GR-14b direct-owner canonical barrier check.
+        coVerify(exactly = 1) { writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent") }
+        // The committed RECEIPT_DELETED lifecycle event is still written exactly once.
+        coVerify(exactly = 1) { receiptLifecycleEventWriter.write(any(), any()) }
+    }
+
+    @Test
+    fun `deleteReceipt_cancellation_from_asset_delete_rethrows`() = runTest {
+        val receipt = deletedReceiptFixture()
+        coEvery { scannedReceiptDao.getById(1L) } returns receipt
+        every { assetStore.deleteAsset(any()) } throws CancellationException("job cancelled")
+
+        assertFailsWith<CancellationException> {
+            coordinator.deleteReceipt(1L)
+        }
+        // No audit write on cancellation — cancellation must propagate, not be swallowed.
+        coVerify(exactly = 0) { receiptEventDao.insert(any()) }
+    }
+
+    @Test
+    fun `transactionRunner_block_is_executed_by_setup_default_stub`() = runTest {
+        // Regression pin for the f1758149 migration debt: the ingest paths run
+        // inside transactionRunner.runInTransaction blocks, so a relaxed mock that
+        // silently skips the block would let every DB-dependent assertion pass
+        // vacuously or fail with ClassCastException. The setup default stub must
+        // execute the block.
+        val receipt = deletedReceiptFixture()
+        coEvery { scannedReceiptDao.getById(1L) } returns receipt
+        every { assetStore.deleteAsset("/tmp/receipt.jpg") } returns true
+        val result = coordinator.deleteReceipt(1L)
+        assertTrue("Expected success, got $result", result.isSuccess)
+        // Proof the block ran: the row delete happens INSIDE the transaction block.
+        coVerify(exactly = 1) { scannedReceiptDao.delete(receipt) }
     }
 }
