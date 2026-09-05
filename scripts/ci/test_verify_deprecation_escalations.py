@@ -397,6 +397,10 @@ def test_missing_and_stale_reported_together_missing_first(tmp_path, capsys):
 
 def test_missing_changelog_file_exits_two(tmp_path, capsys):
     _write(tmp_path, _src_path("A.kt"), KOTLIN_SINGLE)
+    # GR-10B: the verifier resolves declared production source roots before
+    # the changelog check — without the manifest the run fails earlier with
+    # DB_SOURCE_ROOT_UNDECLARED and never reaches the changelog error.
+    _write_manifest(tmp_path)
     code, out, err = _run(tmp_path, capsys, changelog="docs/ci/absent.md")
     assert code == 2
     assert out == ""

@@ -408,6 +408,8 @@ def test_live_generated_docs_byte_reproducible_twice():
 
 
 def test_live_gate_00r_record_supports_verified_at_sha():
+    import re
+
     import yaml
 
     with open(os.path.join(REPO_ROOT, "docs", "ci",
@@ -418,9 +420,21 @@ def test_live_gate_00r_record_supports_verified_at_sha():
                if r.get("status") == "COMPLETE" and r.get("reproducible")]
     assert len(current) == 1
     record = current[0]
-    assert record["targetSha"] == (
-        "565018c5eed61fae4351cb59342dc5c274eb27e7"
+    # The pinned SHA must be the index's current-truth record — the one the
+    # generated status doc renders.  Deriving it from the doc (instead of a
+    # frozen constant) keeps index and generated doc from silently diverging
+    # when a future capture supersedes the current record.
+    with open(os.path.join(REPO_ROOT, "docs", "ci",
+                           "GUARD_STATUS.generated.md"),
+              "r", encoding="utf-8") as handle:
+        status_text = handle.read()
+    match = re.search(
+        r"^## Current evidence record: (gate-00r-[0-9a-f]{40})$",
+        status_text,
+        re.M,
     )
+    assert match is not None, status_text[:400]
+    assert record["evidenceId"] == match.group(1)
     runs = record["captureRuns"]
     assert len(runs) == 2
     digests = {r["semanticDigestSha256"] for r in runs}

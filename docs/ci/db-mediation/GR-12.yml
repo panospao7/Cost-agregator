@@ -1,0 +1,126 @@
+# GR-12 remediation/activation manifest (PR-GR-12 Steps 7 + 8).
+#
+# This batch ACTIVATES the shared CFG dominance proof as the D4 scanner's
+# direct-mode authorization gate (Step 7) and records the control-plane
+# agreement evidence (Step 8). It is not a baseline, exception, or
+# authorization document.
+#
+# Status: CONDITIONAL — every Python-reachable control plane agrees (direct
+# DB CLI, ratchet child, static suite incl. the db_access leg); the Gradle
+# DB task and the GATE-00R double capture at the post-activation SHA are
+# OWED (human-run / delegated Gradle) before GR-12 can be marked COMPLETE.
+#
+# Proof engine (single shared source — scripts/db_guard/direct_barrier_bridge.py):
+#   engine: gr12-dominance-proof (prove_direct_barrier, GR-11 CFG)
+#   canonicalBarrierContractVersion: 2
+#   proofVersion: 1
+#   consumers: D4 scanner active gate, v2 policy source-evidence barrierMode
+#   gate, shadow CLI (scripts/ci/inspect_direct_write_barrier_proof.py), and
+#   transitively the normal DB CLI, ratchet child, static suite, and Gradle DB task.
+schemaVersion: 1
+batchId: GR-12
+# Working-tree HEAD during the batch; endSha is the commit containing this
+# manifest and is pinned in evidence by the owed GATE-00R capture.
+startSha: 9d145697ae6d77da9d782ee6e529a876a723920d
+endSha: null
+# config/guards/db_ownership_policy.yml — unchanged by this batch
+# (matches the GR-14a/GR-14b manifests' post-batch active policy).
+activePolicySha256: 859643ec13e6c17f9b6ce8d054e708d06cbb135701a5721009a7e78216438c42
+# config/baselines/db_access_v2.json — unchanged by this batch.
+baselineSha256: 44421412c890b60d17db9a4157c497cf44ec836753d195eeb95783ff8ccebfec
+# config/guards/production_source_roots.yml — unchanged by this batch.
+sourceRootManifestSha256: 02ec3e28c9451cecb31ca90dc8f665837b7857d979c20b3a400f898f8d1c2c95
+
+step7Activation:
+  lexicalEnforcementRemoved: true
+  # scripts/db_guard/scanner.py: the lexical "writeBarrier text appears
+  # earlier in the callable" regex is GONE; direct-mode gates defer to the
+  # shared dominance proof computed over the callable's full resolved
+  # mutation set (deferral keeps lambda-opacity decisions sound).
+  # scripts/db_guard/policy_v2_evidence.py: the "line before mutation"
+  # source-evidence check is replaced by the same shared proof (gate:
+  # every extracted mutation PROVEN; any non-PROVEN outcome fails the
+  # group with the existing DB_V2_POLICY_BARRIER_METADATA_INCONSISTENT).
+  # New exact rules (registered in scripts/ci/finding_rule_catalog.py):
+  newFindingRules:
+    - DB_MISSING_WRITE_BARRIER   # pre-existing code, now dominance-backed (no canonical barrier call in callable)
+    - DB_WRITE_BARRIER_NOT_DOMINATING
+  newBlockingDiagnostics:
+    - DB_DIRECT_BARRIER_PROOF_UNSUPPORTED
+    - DB_DIRECT_BARRIER_RECEIVER_UNRESOLVED
+    - DB_DIRECT_BARRIER_CONTRACT_INVALID
+  # Inventory: docs/ci/db-structural/GR-12_DIRECT_BARRIER_INVENTORY.yml
+  directEntryCount: 28
+  directProven: 28
+  directCounterexamples: 0
+  directUnsupported: 0
+
+step8ControlPlaneAgreement:
+  # Every plane below ran against the SAME policy / source-root / baseline
+  # hashes recorded above, in one working tree.
+  directDbCli:
+    runs: 2
+    exitCodes: [0, 0]
+    reportsByteIdentical: true
+    trusted: true
+    findingCount: 0
+    advisoryDiagnosticCount: 20
+    blockingDiagnosticCount: 0
+  ratchetChild:
+    runs: 2
+    argv: >-
+      scripts/verify_db_access_boundaries.py --fail-on-violation
+      --structural-manifest config/guards/db_structural_exceptions_expected_methods.yml
+      --ownership-policy config/guards/db_ownership_policy.yml
+      --structural-exceptions config/guards/db_structural_exceptions.yml
+    exitCodes: [0, 0]
+  staticSuite:
+    command: scripts/ci/run_static_guard_suite.py
+    legsTotal: 25
+    passed: 20
+    violations: 5
+    infraErrors: 0
+    exit: 1
+    dbAccessLeg: PASS
+    violationLegs: [ui_dao, receipt_link, import_lifecycle, raw_money_aggregates, guard_tests]
+    note: >-
+      All five violation legs are the known pre-existing finding batches
+      (routed as separate finding-batch PRs); none touch db_access.
+      db_artifact_sync and known_good_state are green again after the
+      9d145697 post-GR-14b truth sync (they were red at the GATE-00R
+      473f8c46 capture).
+  gradleDbTask:
+    state: OWED
+    command: ./gradlew :app:verifyDbAccessBoundaries
+    note: Gradle execution is human-run/delegated per the session convention.
+  gate00rDoubleCapture:
+    state: OWED
+    note: >-
+      A fresh GATE-00R double capture at the post-activation commit is owed
+      (the current evidence-index current-truth record still pins the
+      pre-activation capture SHA 473f8c46).
+
+shadowProofReport:
+  # build/guard-debug/gr12/direct-proof-before.json(.after.json) — untracked
+  # artifacts retained on this machine (GATE-00R bundle convention).
+  afterReportSha256: c0b4f46bb2ea6cd0d31c8307e26b5e84a281ead867772f3071b106a1429afb50
+  runs: 2
+  byteIdentical: true
+  directEntryCount: 28
+  provenCount: 28
+  counterexampleCount: 0
+  unsupportedCount: 0
+  infrastructureFailureCount: 0
+
+# Required-completion-report deltas (PR-GR-12 plan template), honest state:
+#   LEXICAL-TO-CFG DIFFERENCES: none on the real tree (legacy pass == PROVEN
+#     for all 28 rows; suite/CLI findings identical to the pre-activation
+#     capture profile)
+#   SOURCE REMEDIATION REQUIRED: no (GR-14a/14b closed the earlier counterexamples)
+#   ACTIVE ENFORCEMENT SWITCHED: yes (Step 7)
+#   PRODUCTION KOTLIN CHANGED: no
+#   POLICY CHANGED: no
+#   BASELINE CHANGED: no
+#   GATE-00R REPRODUCIBLE: pending fresh capture (previous capture reproducible: true)
+owner: '@panospao7'
+linkedIssue: GR-12

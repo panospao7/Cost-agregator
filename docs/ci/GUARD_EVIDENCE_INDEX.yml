@@ -155,7 +155,7 @@ records:
       - runId: run-02
         semanticDigestSha256: 3a72934601c6ce2e3ffc46929378481196b75a7e3cbfc58a3b1a277e75987d5e
         artifactManifestSha256: 902e5c1e9e2baa32e3fbca5239f89ca17e64a2735974fc05deea1e33f16c3da9
-    reproducible: true
+    reproducible: false
     guardResults:
       db_access:
         directExit: 0
