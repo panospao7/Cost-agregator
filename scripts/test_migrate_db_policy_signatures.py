@@ -1515,25 +1515,31 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     The checked-in tracked candidate
     (``config/guards/db_ownership_policy.signatures.candidate.yml``) is the
     CURRENT artifact, regenerated through ``--generate`` WITH the combined
-    seed document (471 entries = 56 legacy-resolved + 415 seed rows);
+    seed document (475 entries = 54 legacy-resolved + 421 seed rows);
     byte/section equality between a fresh run and the tracked artifacts is
     pinned by the dedicated regression tests in the tracked-artifact
     section below.  Pinned here — re-derived statically from checked-in
-    evidence (the 99 legacy entries in the archived
-    ``db_ownership_policy.legacy.yml``, this no-seed run's 56-entry
+    evidence (the 97 legacy entries in the archived
+    ``db_ownership_policy.legacy.yml``, this no-seed run's 54-entry
     candidate, and the ledger's closed-status debt breakdown
     CALLABLE_AMBIGUOUS=5 + CALLABLE_MISSING=16 + DAO_IDENTITY_UNRESOLVED=20
     + MUTATION_PAIR_MISSING=2 = 43; PARSER_UNCERTAIN=0 and
     PARSER_UNSUPPORTED=0) — and pinned as exact observable CLI numbers:
 
-    * 99 inputs; 43 unresolved indices -> 56 resolving indices.  Versus
+    * 97 inputs; 43 unresolved indices -> 54 resolving indices.  Versus
       the post-GR-07-wave-3 truth (55/44), the 16 former PARSER_UNCERTAIN
       rows are gone: the GR-06 tolerant callable discovery and the GR-07
       project-wide type-index wiring reclassified them — 2 now fully
       resolve (55 -> 56 after the GR-14b one-key loss; it was 57 before
       the EXACT_IDENTITY_MOVE), 8 moved to CALLABLE_MISSING (8 -> 16) and
       6 to DAO_IDENTITY_UNRESOLVED (14 -> 20) — the ledger stays closed
-      over controlled constants only;
+      over controlled constants only.  Post-GR-14c truth sync
+      (2026-09-06): the 2 dead legacy keys GR-14c removed from the active
+      policy (DataRetentionWorker.doWork | privacyAuditDao.insert,
+      WorkerRunLoggerImpl.start | backgroundJobRunDao.insert — each a
+      single-carried emitter whose write stays authorized by its surviving
+      GR-08p1 exact row) were removed from the migration input, moving the
+      fold truth 99/56/46 -> 97/54/44 with the unresolved debt unchanged;
 
     * keeper-index recount.  Fold semantics: emissions sharing a canonical
       mutation key fold only when their authorization metadata
@@ -1576,11 +1582,12 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
       29-31, deleteExpense 34-35, plus every GroupTransactionCoordinator /
       GroupLifecycleCoordinator / AiChat / WarrantyExpirationWorker row)
       emit nothing and therefore form no fold groups;
-    * pre-dedupe the run emits 100 resolved rows (40 single-carried keys —
-      the prior 38 plus the 2 newly-resolving rows' keys — plus group
+    * pre-dedupe the run emits 98 resolved rows (38 single-carried keys —
+      the 40 of the 2026-09-04 pin minus the 2 post-GR-14c-removed dead
+      keys — plus group
       emissions (a) 3*3, (b) 6*6, (c) 2*2+1 and (d) 3*3+1); Slice 5
       folding removes every redundant emission — 3*(3-1) + 6*(6-1) +
-      2*(2-1) + 3*(3-1) = 44 — leaving EXACTLY 56 unique keys.
+      2*(2-1) + 3*(3-1) = 44 — leaving EXACTLY 54 unique keys.
       (A naive subtraction miscounts a key carried by n rows as one
       redundant row instead of n-1.)  Post-GR-14b reconciliation
       (2026-09-04): the approved EXACT_IDENTITY_MOVE relocated the
@@ -1590,9 +1597,9 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
       MUTATION_PAIR_MISSING rises 1 -> 2; the tracked artifacts were
       regenerated via the sanctioned --generate path.;
     * duplicates=0 and exit 1 (visible debt, candidate writing allowed);
-    * the accounting records partition range(99) into 56 RESOLVED (kept
+    * the accounting records partition range(97) into 54 RESOLVED (kept
       emitters plus folded same-key indices) and 43 UNRESOLVED;
-    * the report keeps 46 distinct resolved indexes: all 56 emitting
+    * the report keeps 44 distinct resolved indexes: all 54 emitting
       indices minus the 10 folded-only ones (41, 42 from group (a); 23-27
       from group (b); 16 from group (c); 19, 20 from group (d));
     * byte-for-byte reproducibility of a second run (both runs share
@@ -1627,8 +1634,8 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     assert completed.returncode == 1
     payload = json.loads(report.read_text(encoding="utf-8"))
     counts = payload["counts"]
-    assert counts["input"] == 99
-    assert counts["resolved"] == 56
+    assert counts["input"] == 97
+    assert counts["resolved"] == 54
     assert counts["unresolved"] == 43
     assert payload["duplicateMutationKeys"] == []
     document, errors = load_policy_v2(candidate)
@@ -1639,13 +1646,13 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
     candidate_keys = {
         entry.mutation_key().canonical_key() for entry in document
     }
-    assert len(candidate_keys) == len(document) == 56
+    assert len(candidate_keys) == len(document) == 54
     assert counts["resolved"] == len(document)
     # Folded same-key indices keep NO resolved report row: only the
-    # lowest-index keeper of each fold group remains (40 single-carried
+    # lowest-index keeper of each fold group remains (38 single-carried
     # keys plus one keeper index for group (a)'s 3 keys, one for group
     # (b)'s 6 keys, two for group (c) — indices 15 and 17 — and two for
-    # group (d) — indices 18 and 21 -> 46 distinct report indexes).
+    # group (d) — indices 18 and 21 -> 44 distinct report indexes).
     report_resolved_indexes = {
         row["index"] for row in payload["resolved"]
     }
@@ -1653,10 +1660,10 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
         row["index"] for row in payload["unresolved"]
     }
     assert not (report_resolved_indexes & report_unresolved_indexes)
-    assert len(report_resolved_indexes) == 46
+    assert len(report_resolved_indexes) == 44
     # The accounting records tie EVERY legacy index to exactly one outcome.
     records = payload["accounting"]["records"]
-    assert len(records) == 99
+    assert len(records) == 97
     resolved_indexes = {
         record["index"]
         for record in records
@@ -1668,8 +1675,8 @@ def test_real_run_distribution_pinned_and_reproducible(tmp_path):
         if record["outcome"] == "UNRESOLVED"
     }
     assert not (resolved_indexes & unresolved_indexes)
-    assert resolved_indexes | unresolved_indexes == set(range(99))
-    assert len(resolved_indexes) == 56
+    assert resolved_indexes | unresolved_indexes == set(range(97))
+    assert len(resolved_indexes) == 54
     assert report_resolved_indexes <= resolved_indexes
     # Every folded index's RESOLVED record carries the shared key of its
     # keeper's candidate entry.
@@ -1920,7 +1927,9 @@ def test_default_policy_input_is_the_archived_legacy_document(tmp_path):
 
     Post-activation the report's policy identifier names
     ``db_ownership_policy.legacy.yml`` — never the activated v2 document —
-    and the archived batch still carries the historical 99 legacy entries.
+    and the archived batch still carries the 97 legacy entries (the
+    post-GR-14c truth sync removed the 2 dead duplicate-authorization
+    rows; see docs/ci/db-mediation/GR-14c.yml).
     """
     report = tmp_path / "default-report.json"
     completed = _run_cli("--check", "--report", str(report))
@@ -1929,7 +1938,7 @@ def test_default_policy_input_is_the_archived_legacy_document(tmp_path):
     assert payload["policy"] == (
         "config/guards/db_ownership_policy.legacy.yml"
     )
-    assert payload["counts"]["input"] == 99
+    assert payload["counts"]["input"] == 97
 
 
 # ── Appended: class-body property + method-local DAO accessors ────────────────
@@ -2483,8 +2492,8 @@ def test_generate_writes_paired_artifacts_from_one_run(tmp_path):
     }
     assert record_keys == candidate_keys
     assert len(candidate_keys) == len(document)
-    assert payload["inputCount"] == 99
-    assert len(payload["records"]) == 99
+    assert payload["inputCount"] == 97
+    assert len(payload["records"]) == 97
     resolved_indexes = {
         record["index"]
         for record in payload["records"]
@@ -2496,7 +2505,7 @@ def test_generate_writes_paired_artifacts_from_one_run(tmp_path):
         if record["outcome"] == "UNRESOLVED"
     }
     assert not (resolved_indexes & unresolved_indexes)
-    assert resolved_indexes | unresolved_indexes == set(range(99))
+    assert resolved_indexes | unresolved_indexes == set(range(97))
 
 
 def test_generate_is_byte_deterministic(tmp_path):
@@ -2695,7 +2704,7 @@ def test_write_accounting_alias_flag_writes_accounting(tmp_path):
     assert accounting.exists()
     payload = json.loads(accounting.read_text(encoding="utf-8"))
     assert payload["schema"] == "db-policy-migration-accounting"
-    assert payload["inputCount"] == 99
+    assert payload["inputCount"] == 97
 
 
 # ── Appended (PR-GR-05): tracked-artifact byte equality + coverage ───────────
@@ -2751,14 +2760,16 @@ def tracked_regeneration(tmp_path_factory):
     candidate/accounting pair is generated WITH the combined reviewed seed
     document (``--seed-rows docs/ci/db-findings/GR-08-seeds.yml`` -- the
     single ``--seed-rows`` value every generation run consumes since
-    GR-08a; the tracked candidate is 471 entries = 56 legacy-resolved +
-    415 seed rows, and the tracked accounting's ``seedRecords`` crosswalk
-    carries the same 415 rows), so the regeneration here MUST pass the
-    same seed input or the comparison could never match.  Post-GR-14b
-    reconciliation (2026-09-04): the approved EXACT_IDENTITY_MOVE
-    (writeAssetDeleteFailedEvent) removed one emitting legacy key; the
-    tracked candidate was regenerated 472 -> 471 entries via the
-    sanctioned --generate path.
+    GR-08a; the tracked candidate is 475 entries = 54 legacy-resolved +
+    421 seed rows (post-GR-14c truth sync, 2026-09-06), and the tracked
+    accounting's ``seedRecords`` crosswalk carries the same 421 rows), so
+    the regeneration here MUST pass the
+    same seed input or the comparison could never match.  History: the
+    post-GR-14b reconciliation (2026-09-04) regenerated the tracked
+    candidate 472 -> 471 entries via the sanctioned --generate path
+    (the approved EXACT_IDENTITY_MOVE removed one emitting legacy key);
+    the post-GR-14c truth sync closed the 8-key candidate/active drift
+    (legacy input 99 -> 97, seeds 415 -> 421, candidate 471 -> 475).
     """
     out_dir = tmp_path_factory.mktemp("tracked-regen")
     candidate = out_dir / "candidate.yml"
@@ -3334,18 +3345,22 @@ def test_verify_report_distribution_matches_accounting_records(
     fold-derived numbers equal it — the machine-checkable layer the R12
     literal pins lacked.
 
-    Literal cross-check (kept deliberately, with its derivation): 56
-    resolved indices = 99 legacy inputs minus the 43 closed-status debt
+    Literal cross-check (kept deliberately, with its derivation): 54
+    resolved indices = 97 legacy inputs minus the 43 closed-status debt
     rows (CALLABLE_AMBIGUOUS=5 + CALLABLE_MISSING=16 +
-    DAO_IDENTITY_UNRESOLVED=20 + MUTATION_PAIR_MISSING=2); keeper=46 =
-    the 56 emitting indices minus the 10 folded-only ones (41, 42 from
+    DAO_IDENTITY_UNRESOLVED=20 + MUTATION_PAIR_MISSING=2); keeper=44 =
+    the 54 emitting indices minus the 10 folded-only ones (41, 42 from
     fold group (a); 23-27 from group (b); 16 from group (c); 19, 20 from
     group (d)) — the full fold derivation is documented on
     ``test_real_run_distribution_pinned_and_reproducible``.  The
     post-GR-14b EXACT_IDENTITY_MOVE (writeAssetDeleteFailedEvent)
     removed one emitting legacy key, so MUTATION_PAIR_MISSING rose
     1 -> 2 and the tracked artifacts were regenerated (56/43/46, 471
-    candidate entries).
+    candidate entries).  The post-GR-14c truth sync (2026-09-06)
+    removed the 2 dead legacy keys from the input (both single-carried
+    emitters located AFTER every fold-group index, so the folded-only
+    index set is unchanged): 99/56/46 -> 97/54/44 over a 475-entry
+    candidate.
     """
     completed = tracked_verify["completed"]
     assert completed.returncode == 0, completed.stderr
@@ -3362,9 +3377,9 @@ def test_verify_report_distribution_matches_accounting_records(
         == records_distribution
     )
     assert records_distribution == {
-        "resolved": 56,
+        "resolved": 54,
         "unresolved": 43,
-        "keeper": 46,
+        "keeper": 44,
     }
 
 
@@ -3415,9 +3430,9 @@ def test_verify_detects_hand_edited_candidate(tmp_path):
 def test_verify_detects_seedless_regeneration(tmp_path):
     """A seed-less regeneration can never match the seeded artifacts.
 
-    The R12 lesson pinned: the tracked candidate is 471 entries = 56
-    legacy-resolved + 415 seed rows, and the tracked accounting's
-    ``seedRecords`` crosswalk carries the same 415 rows.  Running
+    The R12 lesson pinned: the tracked candidate is 475 entries = 54
+    legacy-resolved + 421 seed rows, and the tracked accounting's
+    ``seedRecords`` crosswalk carries the same 421 rows.  Running
     ``--verify`` WITHOUT the reviewed ``--seed-rows`` input must report
     drift on exactly the seed-carrying sections (candidate entries +
     accounting seedRecords) while the seed-independent sections

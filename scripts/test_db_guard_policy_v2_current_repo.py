@@ -14,8 +14,8 @@ them — there is no silent upgrade path from v1.
 
 The signatures candidate
 ``config/guards/db_ownership_policy.signatures.candidate.yml`` is a valid
-v2 document (``schemaVersion: 2``).  Post-GR-08 (and post-GR-14b
-regeneration, 2026-09-04) it carries the 471 entries
+v2 document (``schemaVersion: 2``).  Post-GR-08 (and post-GR-14c truth
+sync, 2026-09-06) it carries the 475 entries
 of the activated v2 policy (one entry per canonical mutation key); the v2
 loader must accept it with zero errors.
 
@@ -86,26 +86,31 @@ def test_archived_v1_policy_rejected_by_v2_loader():
 
 
 def test_candidate_signatures_accepted_by_v2_loader():
-    """The tracked signatures candidate is a valid v2 document with 471 entries.
+    """The tracked signatures candidate is a valid v2 document with 475 entries.
 
-    Derivation of the 471 pin: the candidate is the activation artifact that
+    Derivation of the 475 pin: the candidate is the activation artifact that
     was promoted over the active path (scripts/ci/promote_db_policy_v2.py),
     so it carries the same entries as the activated v2 policy document
-    ``config/guards/db_ownership_policy.yml`` — 471 entries post-GR-08,
-    one per canonical mutation key (the GR-14b EXACT_IDENTITY_MOVE removed
-    one emitting legacy key; the tracked candidate was regenerated 472 ->
-    471 via the sanctioned --generate path).  The earlier PR-GR-05 truth
-    (55 unique keys folded from the 99 legacy v1 inputs) is superseded by
-    the GR-08 policy growth; that 55 remains pinned as migration
-    accounting over the ARCHIVED v1 input by
+    ``config/guards/db_ownership_policy.yml`` — 475 entries post-GR-08,
+    one per canonical mutation key.  Drift history: the GR-14b
+    EXACT_IDENTITY_MOVE regenerated the candidate 472 -> 471 (sanctioned
+    --generate path); the post-GR-14c truth sync (2026-09-06) closed the
+    8-key candidate/active drift — the 2 dead legacy keys GR-14c removed
+    from the active policy were removed from the migration input (fold
+    56/43/46 -> 54/43/44 over 97 inputs) and the 6 post-activation rows
+    entered as reviewed GR-14 seeds — bringing the candidate back to
+    exactly the active policy key set (475).  The earlier PR-GR-05 truth
+    (55 unique keys folded from the pre-sync legacy v1 inputs) is
+    superseded by the GR-08 policy growth; that 55 remains pinned as
+    migration accounting over the ARCHIVED v1 input by
     ``test_migrate_db_policy_signatures.py``.
     """
     document, errors = _load_or_skip(CANDIDATE_SIGNATURES_PATH)
     assert document is not None, (
         "tracked signatures candidate must be accepted by the v2 loader"
     )
-    assert len(document) == 471, (
-        "candidate must carry exactly the 471 current signature entries"
+    assert len(document) == 475, (
+        "candidate must carry exactly the 475 current signature entries"
     )
     assert not errors, "acceptance must report zero errors"
 

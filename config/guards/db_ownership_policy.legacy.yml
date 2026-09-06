@@ -836,21 +836,10 @@ entries:
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  # ── Data Retention / Privacy Audit ───────────────────────────────
-  # Source: data/privacy/DataRetentionWorker.kt
-  # doWork writes privacy-audit events via appDatabase.privacyAuditDao().
-  # Barrier: WorkerExecutionGuard.runGuardedWithContext mediates write protection;
-  # no direct writeBarrier.checkWritesAllowed() call within doWork.
-  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
-    class: DataRetentionWorker
-    method: "doWork"
-    daos: [privacyAuditDao]
-    operation: "insert"
-    barrier_required: false
-    barrier_via: WorkerExecutionGuard
-    reason: "WorkerExecutionGuard-mediated write protection; direct barrier not claimed. Worker writes privacy audit events for retention purges."
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
+  # (The DataRetentionWorker.doWork | privacyAuditDao.insert row was removed
+  # by the post-GR-14c candidate truth sync: GR-14c proved it a dead
+  # duplicate authorization whose write stays covered by the GR-08p1 exact
+  # row (auditDao alias) — see docs/ci/db-mediation/GR-14c.yml.)
 
   # ── AI Chat ──────────────────────────────────────────────────────
   # Source: data/repository/AiChatRepositoryImpl.kt
@@ -1084,27 +1073,16 @@ entries:
 
   # ── Background Job Runs (worker ledger) ───────────────────────────
   # Source: domain/workers/WorkerRunLogger.kt + WorkerExecutionGuard.kt
-  # WorkerRunLoggerImpl.start is guard-mediated: WorkerExecutionGuard.startRunSafely
-  # calls writeBarrier.checkWritesAllowed(...) before WorkerRunLoggerImpl.start()
-  # inserts the RUNNING row; barrier_via documents that indirection and a direct
-  # barrier is NOT claimed there (verified by DbGuardPolicyFixtureTest).
+  # (The WorkerRunLoggerImpl.start | backgroundJobRunDao.insert row was
+  # removed by the post-GR-14c candidate truth sync: GR-14c proved it a
+  # dead duplicate authorization whose write stays covered by the GR-08p1
+  # exact row (dao accessor) — see docs/ci/db-mediation/GR-14c.yml.)
   # Handle.terminal is the exact terminal-writer: the private nested Handle
   # writes dao.completeTerminal(...) under WorkerExecutionGuard.guardTerminal's
   # bounded terminal-write wrapper, so it is also guard-mediated.
   # WorkerExecutionGuard.recoverStaleRunningJobs is invoked directly at startup
   # (outside runGuarded), so it performs its own writeBarrier.checkWritesAllowed(...)
   # before staleAbortIfStillRunning and claims a direct barrier.
-  - path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
-    class: WorkerRunLoggerImpl
-    method: "start"
-    daos: [backgroundJobRunDao]
-    operation: "insert"
-    barrier_required: false
-    barrier_via: WorkerExecutionGuard
-    reason: "WorkerExecutionGuard-mediated insert of RUNNING job-run row via startRunSafely writeBarrier check; direct barrier not claimed."
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
   - path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
     class: Handle
     method: "terminal"

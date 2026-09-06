@@ -1496,8 +1496,8 @@ class TestDbArtifactSyncGuardWiring:
         """The verify argv passes the combined reviewed seed document.
 
         The R12 lesson: a seed-less regeneration can never match the
-        seeded tracked artifacts (471 entries = 56 legacy-resolved + 415
-        seed rows; post-GR-14b regeneration), so the tripwire MUST
+        seeded tracked artifacts (475 entries = 54 legacy-resolved + 421
+        seed rows; post-GR-14c truth sync), so the tripwire MUST
         consume the same --seed-rows input as generation or it would
         report permanent drift.
         """

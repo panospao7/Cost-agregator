@@ -7133,21 +7133,22 @@ def test_real_tracked_gr08l2_seed_file_loads_with_exactly_twenty_three_rows():
     assert len(set(keys)) == len(keys)
 
 
-def test_combined_seed_file_concatenates_all_twenty_six_batch_seed_files():
+def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
     """Drift guard: generation input == GR-08a + GR-08b + GR-08c1 + GR-08c2
     + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1
     + GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1
     + GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 + GR-08o + GR-08p1
-    + GR-08p2.
+    + GR-08p2 + GR-14.
 
-    Supersedes the GR-08p1-era twenty-five-file concatenation test (which
-    pinned the combined document at 400 rows): the GR-08p2 batch -- the
-    FINAL GR-08 triage batch -- extends the combined generation input to
-    415 rows (15 GR-08p2 rows = 15 findings-derived; each of the fifteen
-    files carries exactly 1 finding and each finding is its own distinct
-    tuple), and the drift guard must cover ALL TWENTY-SIX reviewed batch
-    seed files.  The combined document is what
-    --seed-rows actually consumes; if it ever drifts from the twenty-six
+    Supersedes the GR-08p2-era twenty-six-file concatenation test (which
+    pinned the combined document at 415 rows): the post-GR-14c candidate
+    truth-sync batch extends the combined generation input to 421 rows
+    (6 post-activation GR-14 rows = the exact rows the tracked candidate
+    was missing versus the active policy -- the 5 GR-14a mutator-rule rows
+    plus the GR-14b EXACT_IDENTITY_MOVE target writeAssetDeleteFailedEvent),
+    and the drift guard must cover ALL TWENTY-SEVEN reviewed batch seed
+    files.  The combined document is what
+    --seed-rows actually consumes; if it ever drifts from the twenty-seven
     reviewed batch seed files (a dropped earlier-batch row would silently
     re-unauthorize that batch's mutations at promotion time), this fails
     closed.
@@ -7179,6 +7180,7 @@ def test_combined_seed_file_concatenates_all_twenty_six_batch_seed_files():
     gr08o = _load_seed_entries(GR08O_SEED_FILE)
     gr08p1 = _load_seed_entries(GR08P1_SEED_FILE)
     gr08p2 = _load_seed_entries(GR08P2_SEED_FILE)
+    gr14 = _load_seed_entries(GR14_SEED_FILE)
     assert len(gr08a) == 5
     assert len(gr08b) == 13
     assert len(gr08c1) == 10
@@ -7205,7 +7207,8 @@ def test_combined_seed_file_concatenates_all_twenty_six_batch_seed_files():
     assert len(gr08o) == 24
     assert len(gr08p1) == 23
     assert len(gr08p2) == 15
-    assert len(combined) == 415
+    assert len(gr14) == 6
+    assert len(combined) == 421
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_fields = sorted(
         _entry_fields(entry)
@@ -7215,7 +7218,7 @@ def test_combined_seed_file_concatenates_all_twenty_six_batch_seed_files():
         + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
         + list(gr08k2) + list(gr08l1) + list(gr08l2) + list(gr08m1)
         + list(gr08m2) + list(gr08n1) + list(gr08n2) + list(gr08o)
-        + list(gr08p1) + list(gr08p2)
+        + list(gr08p1) + list(gr08p2) + list(gr14)
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]
@@ -10668,6 +10671,8 @@ def test_gr08p1_shared_operation_distinct_callables_near_misses(tmp_path):
 # chain-form receivers, ZERO accessor normalization; every row is `helper`.
 
 GR08P2_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-08p2-seed.yml"
+
+GR14_SEED_FILE = _ROOT / "docs" / "ci" / "db-findings" / "GR-14-seed.yml"
 
 EXPENSE_GROUP_DAO_KT = (
     "app/src/main/java/com/yourname/expensetracker/data/database/dao/"

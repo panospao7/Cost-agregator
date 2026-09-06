@@ -2,7 +2,7 @@
 # (MIT-DB-08A + MIT-DB-08B + MIT-DB-08C + MIT-DB-08D + MIT-DB-08E
 # + MIT-DB-08F + MIT-DB-08G + MIT-DB-08H + MIT-DB-08I + MIT-DB-08J
 # + MIT-DB-08K + MIT-DB-08L + MIT-DB-08M + MIT-DB-08N + MIT-DB-08O
-# + MIT-DB-08P1 + MIT-DB-08P2).
+# + MIT-DB-08P1 + MIT-DB-08P2 + the post-activation GR-14 truth-sync rows).
 #
 # Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
 # The migration CLI accepts a SINGLE --seed-rows value, so every generation
@@ -31,12 +31,13 @@
 # (docs/ci/db-findings/GR-08n1-seed.yml), the GR-08n2 rows
 # (docs/ci/db-findings/GR-08n2-seed.yml), the GR-08o rows
 # (docs/ci/db-findings/GR-08o-seed.yml), the GR-08p1 rows
-# (docs/ci/db-findings/GR-08p1-seed.yml), and the GR-08p2 rows
-# (docs/ci/db-findings/GR-08p2-seed.yml) VERBATIM.  The
+# (docs/ci/db-findings/GR-08p1-seed.yml), the GR-08p2 rows
+# (docs/ci/db-findings/GR-08p2-seed.yml), and the post-activation GR-14
+# truth-sync rows (docs/ci/db-findings/GR-14-seed.yml) VERBATIM.  The
 # per-batch seed files remain the reviewed batch-scope records; this file is
 # the generation input.  scripts/test_migrate_db_policy_seed_rows.py guards
 # the concatenation so the combined document can never drift from the
-# twenty-six batch files.
+# twenty-seven batch files.
 #
 # Loaded through `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact
 # field set, type/enum/signature validation, canonical path syntax,
@@ -6602,3 +6603,115 @@ entries:
   reason: "GR-08p2 EXACT_POLICY: CSV import get-or-create category convenience -- getByName first, default icon + hash-derived color insert only when the named category does not exist; ALL expense mutations of the import route through TransactionLifecycleCoordinator.createExpense (the authoritative expense path) -- the exact GR-08p1 JsonExpenseImporter parseV1Row/parseV2Row pattern"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08P2
+
+# ── GR-14 post-activation truth-sync rows (verbatim from GR-14-seed.yml) ─
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: toggleBudget
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: setActiveAndEnforceScope
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetDao convenience method
+    (body calls setActive to enforce the single-active-scope invariant) newly
+    indexed by the GR-14a mutator rule; canonical write barrier lexically
+    precedes the call in this callable'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateBudgetOrThrow
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateAndEnforceActiveScope
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetDao convenience method
+    newly indexed by the GR-14a mutator rule (the sibling updateBudget row
+    already existed); canonical write barrier lexically precedes the call in
+    this callable'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: mergeCategories
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: mergeCategories
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction CategoryDao multi-table
+    merge newly indexed by the GR-14a mutator rule; canonical write barrier
+    lexically precedes the withContext(IO) body that performs the call'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: saveLocation
+  receiver: null
+  parameterTypes:
+  - String
+  - com.yourname.expensetracker.domain.location.LocationResolutionResult.Resolved
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: upsertLocation
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction MerchantLocationDao upsert
+    newly indexed by the GR-14a mutator rule (the sibling saveCorrection row
+    already existed); canonical write barrier lexically precedes the call'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
+  kind: function
+  method: insertForecast
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.BudgetForecast
+  daoAccessor: budgetForecastDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+  operation: insertWithDeactivation
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetForecastDao insert
+    newly indexed by the GR-14a mutator rule; write barrier check added to
+    insertForecast itself (GR-14a Pattern A -- the only production caller
+    generateForecastResult already checks before dispatching, so the added
+    check is unreachable no-op in every current path)'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+  kind: function
+  method: writeAssetDeleteFailedEvent
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+  - Long
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: direct
+  reason: 'GR-14b EXACT_IDENTITY_MOVE: the ASSET_DELETE_FAILED fallback event
+    insert moved out of deleteReceipt''s generic post-commit let callback
+    into this private direct owner (GR-14 Pattern A) with its own canonical
+    write barrier check; the only caller already checks first, so the added
+    check is an unreachable no-op on every current path. Replaces the
+    removed deleteReceipt|receiptEventDao|insert row (the mutation no longer
+    occurs in deleteReceipt)'
+  owner: '@panospao7'
+  linkedIssue: GR-14b
