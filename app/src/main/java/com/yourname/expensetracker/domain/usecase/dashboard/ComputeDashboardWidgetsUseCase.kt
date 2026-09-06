@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.usecase.dashboard
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
@@ -242,6 +243,7 @@ data class CompiledDashboardData(
 
 @Singleton
 class ComputeDashboardWidgetsUseCase @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val insightsEngine: InsightsEngine,
     private val synthesisEngine: SynthesisEngine,
     private val monteCarloSimulator: MonteCarloSpendingSimulator,
@@ -900,6 +902,9 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         ctx: ComputeContext
     ): FinancialHealthResult? {
         return try {
+            writeBarrier.checkWritesAllowed(
+                "ComputeDashboardWidgetsUseCase.computeHealthScoreV2"
+            )
             healthScoreV2.calculateHealthScore(
                 periodStart = ctx.monthStart,
                 periodEnd = TimePeriodUtils.getEndOfMonth(ctx.now)
