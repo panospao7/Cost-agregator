@@ -38,8 +38,8 @@ authorization.
 
 <!-- GUARD_STATUS:BEGIN db_access -->
 Status: VERIFIED_AT_SHA
-Evidence: gate-00r-473f8c4674c864825f4fc25f222ffbcd8871f842
-Verified SHA: 473f8c4674c864825f4fc25f222ffbcd8871f842
+Evidence: gate-00r-d255657db26015afb3d75a39bf8dd7b645c4e05c
+Verified SHA: d255657db26015afb3d75a39bf8dd7b645c4e05c
 Outcome: PASS (exit 0, trusted, 0 findings, 20 advisory diagnostics, 0 blocking diagnostics — advisory diagnostics are reported, never authorization; ratchet exit 0 (baseline config/baselines/db_access_v2.json: 0 new, 0 resolved, 0 expired))
 Debt: 0 unchanged ratchet findings (baseline 0) — recorded debt is never authorization
 Gradle leg: INFRASTRUCTURE

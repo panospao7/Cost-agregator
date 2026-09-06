@@ -17,7 +17,137 @@
 #   records are never VERIFIED_AT_SHA evidence.
 schemaVersion: 1
 records:
-  # ── Current truth: GATE-00R double capture post-GR-14a/14b wave ─────────────
+  # ── Current truth: GATE-00R double capture at the GR-13 completion SHA ─────
+  # (GR-14c start pin; captured before the GR-14c policy-row removal.)
+  - evidenceId: gate-00r-d255657db26015afb3d75a39bf8dd7b645c4e05c
+    targetSha: d255657db26015afb3d75a39bf8dd7b645c4e05c
+    targetTreeSha: ad9a07c96a5c4519424afac33c66e85b3c513ee3
+    baseSha: 473f8c4674c864825f4fc25f222ffbcd8871f842
+    mergeBaseSha: 473f8c4674c864825f4fc25f222ffbcd8871f842
+    workingTreeClean: true
+    captureRuns:
+      - runId: run-01
+        semanticDigestSha256: 0a6930121a7f56499693fb0ff864cfdf8177ac6e5e5770d1c4a0da5a8c6fba1b
+        artifactManifestSha256: 5de6a5070897b3ea32a2ecc640f6438e33e97a848dbda457423894c9b8f60210
+      - runId: run-02
+        semanticDigestSha256: 0a6930121a7f56499693fb0ff864cfdf8177ac6e5e5770d1c4a0da5a8c6fba1b
+        artifactManifestSha256: 5de6a5070897b3ea32a2ecc640f6438e33e97a848dbda457423894c9b8f60210
+    reproducible: true
+    guardResults:
+      db_access:
+        directExit: 0
+        trusted: true
+        findingCount: 0
+        blockingDiagnosticCount: 0
+        advisoryDiagnosticCount: 20
+        advisoryDiagnosticCode: DB_SIGNATURE_UNRESOLVED
+        ratchetExit: 0
+        ratchetBaselinePath: config/baselines/db_access_v2.json
+        staticSuiteOutcome: PASS
+        gradleOutcome: INFRASTRUCTURE
+      time_boundaries:
+        exit: 0
+        findingCount: 0
+        staticSuiteOutcome: PASS
+      ui_dao:
+        exit: 1
+        findingCount: 1
+        violationRuleId: G-UI-DAO-01
+        staticSuiteOutcome: VIOLATION
+    staticSuite:
+      exit: 1
+      legsTotal: 25
+      passed: 20
+      violations: 5
+      infraErrors: 0
+      violationLegs: [ui_dao, receipt_link, import_lifecycle, raw_money_aggregates, guard_tests]
+      legOutcomes:
+        guard_registry: PASS
+        source_provenance: PASS
+        ui_dao: VIOLATION
+        worker: PASS
+        receipt_link: VIOLATION
+        import_lifecycle: VIOLATION
+        cloud_payload: PASS
+        pii_logging: PASS
+        di_release: PASS
+        allowlist_compliance: PASS
+        ignored_test_budget: PASS
+        lint_baseline_policy: PASS
+        time_boundaries: PASS
+        deprecation_escalations: PASS
+        db_artifact_sync: PASS
+        known_good_state: PASS
+        guard_docs_truth: PASS
+        cancellation: PASS
+        privacy: PASS
+        db_access: PASS
+        event_writers: PASS
+        money: PASS
+        raw_money_aggregates: VIOLATION
+        migration_matrix: PASS
+        guard_tests: VIOLATION
+      ratchetDebtObservations:
+        db_access:
+          baselineFindings: 0
+          currentFindings: 0
+        cancellation:
+          baselineFindings: 86
+          currentFindings: 86
+        privacy:
+          baselineFindings: 1
+          currentFindings: 1
+        event_writers:
+          baselineFindings: 16
+          currentFindings: 16
+        money:
+          baselineFindings: 0
+          currentFindings: 0
+        migration_matrix:
+          baselineFindings: 0
+          currentFindings: 0
+    gradleObservations:
+      verifyDbAccessBoundaries: INFRASTRUCTURE
+      checkDryRun: INFRASTRUCTURE
+      compileDebugKotlin: PASS
+      note: >-
+        :app:verifyDbAccessBoundaries and the :app:check dry-run failed on
+        the same configuration-cache storage failure class recorded at the
+        473f8c46 capture (configuration cache entries discarded with
+        problems; the embedded ratchet row printed PASS with 0 baseline and
+        0 current findings).
+    inventoryRows:
+      exit: 2
+      trusted: false
+      diagnosticCode: INVENTORY_DURABILITY_UNCONFIRMED
+      note: >-
+        inventory-only rows report the platform durability branch (no
+        confirmable directory durability barrier on this host), identical
+        to the 473f8c46 capture; accepted as the known-good scorecard
+        inventory row, never treated as DB findings.
+    focusedPythonTests:
+      exit: 1
+      failingModule: scripts/test_verify_db_access_v2.py
+      failingTests: 1
+      note: >-
+        test_satisfied_barrier_requirement_authorizes_the_mutation fails
+        deterministically (reproduced standalone at HEAD and verified by
+        A/B at 338eb3c5, before the GR-13 session commits); it PASSED at
+        gate-00r-473f8c4674c864825f4fc25f222ffbcd8871f842, so the
+        regression window is ee4799f7..338eb3c5 and the repair is owed to
+        a dedicated batch outside GR-14c scope. The 6 baseline failures in
+        scripts/test_migrate_db_policy_signatures.py were repaired by the
+        9d145697 truth sync.
+    status: COMPLETE
+    note: >-
+      Captured on branch gr-00-local at the GR-13 completion SHA (the
+      GR-14c start pin). Static-suite violations are a strict subset of
+      the 473f8c46 set (db_artifact_sync and known_good_state were
+      repaired by the intermediate truth-sync commits); no new violation
+      leg, no new failure class. Bundle:
+      build/guard-debug/gate-00r/d255657d/run-01 and run-02 (untracked,
+      retained externally with the exact SHA in the path).
+  # ── GATE-00R double capture post-GR-14a/14b wave (pre-GR-13) ──────────────
   - evidenceId: gate-00r-473f8c4674c864825f4fc25f222ffbcd8871f842
     targetSha: 473f8c4674c864825f4fc25f222ffbcd8871f842
     targetTreeSha: 6578e898842dd2d17b862ca3c24bb7b944bdb108
@@ -31,7 +161,7 @@ records:
       - runId: run-02
         semanticDigestSha256: b19da4f742cb715ad811dc1f776d2d22c572d90777dff40c252f76f144637544
         artifactManifestSha256: a46f1a8babf187cd7eac25a6a03c12c4b01408a9be38976835b16de68af6152a
-    reproducible: true
+    reproducible: false
     guardResults:
       db_access:
         directExit: 0
@@ -132,7 +262,7 @@ records:
         from regeneration output (56 vs 57 entries): the GR-14a batch left
         the tracked artifact unregenerated. Recorded as GR-14a owed-debt
         truth sync, not fixed in GATE-00R (evidence PR must not repair).
-    status: COMPLETE
+    status: HISTORICAL
     note: >-
       Captured on branch gr-00-local. Production/policy/baseline content
       byte-identical to 31f5721b (post-GR-14b): the only two commits above

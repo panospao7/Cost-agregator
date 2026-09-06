@@ -2,25 +2,23 @@ schemaVersion: 1
 reportOnly: true
 generatedFrom:
   engine: gr13-mediation-proof
-  reportSha256: 984a19e0f03435b3c9ea6bb12d83126f9b359379f3b477f56003aeda79c73c0e
+  reportSha256: 631ea3f540575976fc5ce151a219a1a6d275a03867d8225ba923f193148f80ce
   targetSha: null
-  activePolicySha256: 859643ec13e6c17f9b6ce8d054e708d06cbb135701a5721009a7e78216438c42
+  activePolicySha256: 643b526fba22f98ea934d299031d73c18cbb448133eda63da75075c3e70df4bb
   sourceRootManifestSha256: 02ec3e28c9451cecb31ca90dc8f665837b7857d979c20b3a400f898f8d1c2c95
 status: OPEN
 summary:
-  policyRowCount: 449
+  policyRowCount: 447
   provenRowCount: 25
-  remediationRowCount: 424
+  remediationRowCount: 422
   riskCounts:
     DEFINITE_VIOLATION: 16
-    MISSING_EVIDENCE: 2
     UNPROVEN_PATH: 406
   familyCounts:
     GR14_BREAK_RECURSION_REGION: 38
     GR14_CLOSE_LAMBDA_ESCAPE: 40
     GR14_CLOSE_OR_DOCUMENT_ENTRY: 64
     GR14_GUARD_UNGUARDED_PATH: 11
-    GR14_POLICY_ROW_DEDUPLICATION: 2
     GR14_REGISTER_WORKER_ROOT: 5
     GR14_RESOLVE_DISPATCH: 5
     GR14_SYNCHRONIZE_OR_GUARD_ASYNC_PATH: 259
@@ -252,18 +250,6 @@ rows:
   boundedPathEvidence: []
   riskClassification: UNPROVEN_PATH
   recommendedRemediationFamily: GR14_CLOSE_OR_DOCUMENT_ENTRY
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt|com.yourname.expensetracker.data.privacy.DataRetentionWorker|function|doWork|null||privacyAuditDao|com.yourname.expensetracker.data.database.dao.PrivacyAuditDao|insert
-  callableKey: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt|com.yourname.expensetracker.data.privacy.DataRetentionWorker|function|doWork|null|
-  barrierMode: workerMediated
-  proofStatus: unsupported_source
-  reasonCode: GR13_NO_D4_OBSERVATION
-  decidingResolution: null
-  reachingRootKinds: []
-  boundedPathEvidence: []
-  riskClassification: MISSING_EVIDENCE
-  recommendedRemediationFamily: GR14_POLICY_ROW_DEDUPLICATION
   owner: '@panospao7'
   linkedIssue: GR-14
 - mutationKey: app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacyAuditLoggerImpl.kt|com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl|function|logDecision|null|com.yourname.expensetracker.domain.privacy.PrivacyCapability,com.yourname.expensetracker.domain.privacy.PrivacyDecision,Map<String, String>|dao|com.yourname.expensetracker.data.database.dao.PrivacyAuditDao|insert
@@ -5010,18 +4996,6 @@ rows:
   boundedPathEvidence: []
   riskClassification: UNPROVEN_PATH
   recommendedRemediationFamily: GR14_CLOSE_LAMBDA_ESCAPE
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl|function|start|null|String,String?,String?,Int?,Int?,String?|backgroundJobRunDao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|insert
-  callableKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl|function|start|null|String,String?,String?,Int?,Int?,String?
-  barrierMode: workerMediated
-  proofStatus: unsupported_source
-  reasonCode: GR13_NO_D4_OBSERVATION
-  decidingResolution: null
-  reachingRootKinds: []
-  boundedPathEvidence: []
-  riskClassification: MISSING_EVIDENCE
-  recommendedRemediationFamily: GR14_POLICY_ROW_DEDUPLICATION
   owner: '@panospao7'
   linkedIssue: GR-14
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl|function|start|null|String,String?,String?,Int?,Int?,String?|dao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|insert

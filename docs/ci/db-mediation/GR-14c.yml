@@ -1,0 +1,124 @@
+# GR-14c remediation manifest (PR-GR-14 batch).
+#
+# Batch scope: the GR14_POLICY_ROW_DEDUPLICATION family of the GR-13
+# unproven-writers seed (docs/ci/db-mediation/GR-13_UNPROVEN_WRITERS.yml) —
+# the two known uncorrelated rows recorded in GR-13_EVIDENCE_FREEZE.md.
+#
+# Root cause: both callables carry TWO active-policy rows for the same
+# underlying DAO write.  The GR-08p1 EXACT_POLICY row spells the accessor as
+# the source local alias (auditDao / dao) and matches the scanner's
+# resolution; the older legacy MIT-003 row spells a DERIVED identity
+# (privacyAuditDao = the DAO-acquisition property, backgroundJobRunDao = the
+# DAO getter) that the scanner's receiver text never produces.  The stale
+# rows matched zero D4 observations, which the GR-13 shadow reported as the
+# only two UNSUPPORTED_SOURCE / GR13_NO_D4_OBSERVATION rows of the run.
+#
+# This batch REMOVES those two dead policy rows.  It changes NO source
+# architecture, NO baseline, and authorizes NOTHING new: each write remains
+# authorized by its surviving exact row (DataRetentionWorker.doWork|auditDao
+# — PROVEN_WORKER_MEDIATED in the GR-13 shadow; WorkerRunLoggerImpl.start|dao
+# — unproven_async_or_escaping_callback, owed later GR-14 work).
+#
+# Schema deviations from the PR-GR-14 plan (documented, intentional):
+#   1. No production Kotlin changes — Pattern E removes dead POLICY entries
+#      whose zero-observation status is proven by the GR-13 shadow report;
+#      the plan's "prove no remaining caller or mutation observation exists"
+#      evidence is the shadow report's UNSUPPORTED_SOURCE classification
+#      itself (GR13_NO_D4_OBSERVATION), double-checked against a live
+#      scan_db_access observation sink on the start tree.
+#   2. behaviorPreservation is N/A per field: no behavior, transaction,
+#      cancellation, retry, lifecycle, worker-result, or privacy path is
+#      touched by removing authorization rows that never matched a
+#      resolution.
+#
+# Candidate-artifact note (inherited owed-debt, not repaired here):
+# db_ownership_policy.signatures.candidate.yml already trails the active
+# policy by the 6 post-GR-14b keys recorded in GUARD_EVIDENCE_INDEX.yml;
+# this batch widens that drift by 2 removed keys (active 477 -> 475).  The
+# sanctioned --generate path regenerates from the archived legacy inputs and
+# cannot represent post-activation rows, so the sync stays a dedicated
+# truth-sync commit, exactly as GR-14a's drift was handled by 9d145697.
+schemaVersion: 1
+batchId: GR-14c
+startSha: d255657db26015afb3d75a39bf8dd7b645c4e05c
+# GATE-00R double capture at the start SHA (build/guard-debug/gate-00r/
+# d255657d/), run-01/run-02 byte-identical; recorded in
+# docs/ci/GUARD_EVIDENCE_INDEX.yml.
+gateEvidenceSha256: 0a6930121a7f56499693fb0ff864cfdf8177ac6e5e5770d1c4a0da5a8c6fba1b
+# GR-13 mediation shadow report (build/g13_step6_final_a.json), the batch's
+# selection input together with the unproven-writers seed.
+mediationReportSha256: 984a19e0f03435b3c9ea6bb12d83126f9b359379f3b477f56003aeda79c73c0e
+directProofReportSha256: null
+# config/guards/db_ownership_policy.yml (post-batch, 2 dead rows removed,
+# 477 -> 475 entries; helper/worker rows 449 -> 447).
+activePolicySha256: 643b526fba22f98ea934d299031d73c18cbb448133eda63da75075c3e70df4bb
+# config/baselines/db_access_v2.json (unchanged by this batch).
+baselineSha256: 44421412c890b60d17db9a4157c497cf44ec836753d195eeb95783ff8ccebfec
+
+selectedMutationKeys:
+- app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt|com.yourname.expensetracker.data.privacy.DataRetentionWorker|function|doWork|null||privacyAuditDao|com.yourname.expensetracker.data.database.dao.PrivacyAuditDao|insert
+- app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl|function|start|null|String,String?,String?,Int?,Int?,String?|backgroundJobRunDao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|insert
+
+entries:
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt|com.yourname.expensetracker.data.privacy.DataRetentionWorker|function|doWork|null||privacyAuditDao|com.yourname.expensetracker.data.database.dao.PrivacyAuditDao|insert
+  callableKey: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt|com.yourname.expensetracker.data.privacy.DataRetentionWorker|function|doWork|null|
+  priorProofStatus: unsupported_source
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: E
+  currentLegalOwner: com.yourname.expensetracker.data.privacy.DataRetentionWorker.doWork
+  targetLegalOwner: com.yourname.expensetracker.data.privacy.DataRetentionWorker.doWork
+  survivingExactRow: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt|com.yourname.expensetracker.data.privacy.DataRetentionWorker|function|doWork|null||auditDao|com.yourname.expensetracker.data.database.dao.PrivacyAuditDao|insert
+  survivingExactRowProofStatus: proven_worker_mediated
+  behaviorPreservation:
+    transaction: N/A (policy-row removal only; no source path changed)
+    cancellation: N/A (policy-row removal only; no source path changed)
+    retry: N/A (policy-row removal only; no source path changed)
+    lifecycle: N/A (policy-row removal only; no source path changed)
+    workerResult: N/A (policy-row removal only; no source path changed)
+    privacy: N/A — the write stays authorized by the surviving exact row
+      (MIT-DB-08P1, GR-08p1), whose reason documents the auditDao alias
+      bridge explicitly.
+  policyImpact: REMOVE_DEAD_ENTRY
+  tests: []
+  owner: "@panospao7"
+  linkedIssue: GR-14c
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl|function|start|null|String,String?,String?,Int?,Int?,String?|backgroundJobRunDao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|insert
+  callableKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl|function|start|null|String,String?,String?,Int?,Int?,String?
+  priorProofStatus: unsupported_source
+  rootCause: UNSUPPORTED_STRUCTURE
+  selectedPattern: E
+  currentLegalOwner: com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.start
+  targetLegalOwner: com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.start
+  survivingExactRow: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl|function|start|null|String,String?,String?,Int?,Int?,String?|dao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|insert
+  survivingExactRowProofStatus: unproven_async_or_escaping_callback
+  behaviorPreservation:
+    transaction: N/A (policy-row removal only; no source path changed)
+    cancellation: N/A (policy-row removal only; no source path changed)
+    retry: N/A (policy-row removal only; no source path changed)
+    lifecycle: N/A (policy-row removal only; no source path changed)
+    workerResult: N/A (policy-row removal only; no source path changed)
+    privacy: N/A — the write stays authorized by the surviving exact row
+      (MIT-DB-08P1, GR-08p1), whose reason documents the dao alias spelling
+      explicitly; the async-edge proof gap is owed to a later GR-14 batch.
+  policyImpact: REMOVE_DEAD_ENTRY
+  tests: []
+  owner: "@panospao7"
+  linkedIssue: GR-14c
+
+postBatchValidation:
+  normalDbCli:
+    command: >-
+      python scripts/verify_db_access_boundaries.py --fail-on-violation
+      --structural-manifest
+      config/guards/db_structural_exceptions_expected_methods.yml
+      --ownership-policy config/guards/db_ownership_policy.yml
+      --structural-exceptions config/guards/db_structural_exceptions.yml
+    exitCode: 0
+    findingCount: 0
+    advisoryDiagnosticCount: 20
+  mediationShadow:
+    runs: 2
+    byteIdentical: true
+    exitCode: 1
+    unsupportedSourceCount: 0
+    entryCount: 447

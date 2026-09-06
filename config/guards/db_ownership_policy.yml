@@ -441,20 +441,6 @@ entries:
     spelled)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
-  ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
-  kind: function
-  method: doWork
-  receiver: null
-  parameterTypes: []
-  daoAccessor: privacyAuditDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
-  operation: insert
-  barrierMode: workerMediated
-  reason: WorkerExecutionGuard-mediated write protection; direct barrier not claimed.
-    Worker writes privacy audit events for retention purges.
-  owner: '@panospao7'
-  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacyAuditLoggerImpl.kt
   ownerFqcn: com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl
   kind: function
@@ -7942,26 +7928,6 @@ entries:
   reason: "Stale-run recovery invoked directly at startup outside runGuarded \u2014\
     \ direct writeBarrier.checkWritesAllowed before CAS staleAbortIfStillRunning mutation;\
     \ fail closed when writes blocked."
-  owner: '@panospao7'
-  linkedIssue: MIT-003
-- path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
-  ownerFqcn: com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl
-  kind: function
-  method: start
-  receiver: null
-  parameterTypes:
-  - String
-  - String?
-  - String?
-  - Int?
-  - Int?
-  - String?
-  daoAccessor: backgroundJobRunDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
-  operation: insert
-  barrierMode: workerMediated
-  reason: WorkerExecutionGuard-mediated insert of RUNNING job-run row via startRunSafely
-    writeBarrier check; direct barrier not claimed.
   owner: '@panospao7'
   linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt
