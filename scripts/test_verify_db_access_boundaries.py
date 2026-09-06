@@ -5102,13 +5102,17 @@ def test_checked_in_structural_only_manifest_contract_via_production_apis():
     mutators newly indexed by the GR-14a inventory rule) that grew the
     document from the 472 GR-08m1-era rows, unchanged in count by the
     GR-14b EXACT_IDENTITY_MOVE (the deleteReceipt|receiptEventDao|insert
-    row replaced 1:1 by the writeAssetDeleteFailedEvent direct owner row).
+    row replaced 1:1 by the writeAssetDeleteFailedEvent direct owner row),
+    reduced 477 -> 475 by the GR-14c Pattern E removal of the two dead
+    legacy MIT-003 rows (DataRetentionWorker.doWork|privacyAuditDao and
+    WorkerRunLoggerImpl.start|backgroundJobRunDao; each write stays
+    authorized by its surviving GR-08p1 exact row).
     Re-derive this pin after every policy promotion.
     """
     from scripts.db_guard.source_roots import load_source_root_manifest
 
     entries = load_db_ownership_policy()
-    assert len(entries) == 477
+    assert len(entries) == 475
     # Every loaded row is an immutable typed v2 entry: no legacy dict rows.
     for entry in entries:
         assert hasattr(entry, "owner_fqcn")
@@ -5481,7 +5485,9 @@ def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeyp
         _mod.OWNERSHIP_POLICY_PATH
     )
     assert loaded
-    assert len(entries) == 477
+    # 475 post-GR-14c (two dead legacy MIT-003 rows removed; re-derived
+    # per the checked-in-manifest contract pin above).
+    assert len(entries) == 475
 
     # The structural gate really ran (post-activation it is no longer
     # short-circuited by a loader block) and stayed clean.

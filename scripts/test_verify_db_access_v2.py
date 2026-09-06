@@ -1555,13 +1555,36 @@ def test_satisfied_barrier_requirement_authorizes_the_mutation(
     scan, exit 0.  Together with ``test_required_barrier_is_reported`` this
     pins both outcomes of the scanner's barrier branch (the branch is only
     reachable once the policy entry's exact resolved signature matches).
+
+    GR-12 Step 7 (shared dominance proof) made barrier evidence
+    receiver-exact: the call's receiver must be a declared property whose
+    type resolves through an exact import to the canonical
+    ``DatabaseWriteBarrier`` FQCN.  A bare undeclared ``writeBarrier``
+    spelling is a lexical shape the contract rejects fail-closed
+    (``DB_DIRECT_BARRIER_RECEIVER_UNRESOLVED``), so the fixture declares
+    the property exactly as production writers do.
     """
     source = SOURCE.replace(
-        "    fun save(item: Item) {\n        expenseDao.insert(item)\n    }",
+        "package example\n",
+        "package example\n\n"
+        "import com.yourname.expensetracker.data.backup"
+        ".DatabaseWriteBarrier\n",
+        1,
+    ).replace(
+        "class Repository(private val expenseDao: ExpenseDao) {\n"
+        "    fun save(item: Item) {\n"
+        "        expenseDao.insert(item)\n"
+        "    }\n"
+        "}",
+        "class Repository(\n"
+        "    private val expenseDao: ExpenseDao,\n"
+        "    private val writeBarrier: DatabaseWriteBarrier,\n"
+        ") {\n"
         "    fun save(item: Item) {\n"
         "        writeBarrier.checkWritesAllowed()\n"
         "        expenseDao.insert(item)\n"
-        "    }",
+        "    }\n"
+        "}",
     )
     root = _fixture(tmp_path, source=source)
     _policy(root, barrier=True)

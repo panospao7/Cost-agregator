@@ -127,14 +127,24 @@ records:
         inventory row, never treated as DB findings.
     focusedPythonTests:
       exit: 1
-      failingModule: scripts/test_verify_db_access_v2.py
-      failingTests: 1
+      failingTests: 3
+      failingModules:
+        - scripts/test_verify_db_access_v2.py
+        - scripts/test_verify_db_access_boundaries.py
       note: >-
-        test_satisfied_barrier_requirement_authorizes_the_mutation fails
-        deterministically (pre-session regression in the
-        ee4799f7..338eb3c5 window, verified by A/B at 338eb3c5; the
-        repair is owed to a dedicated batch outside GR-14 scope).  Same
-        single-failure profile as gate-00r-d255657d.
+        Three deterministic failures, not the single-failure profile of
+        gate-00r-d255657d (corrected in the Task-1 test-repair batch).
+        (1) test_satisfied_barrier_requirement_authorizes_the_mutation
+        (scripts/test_verify_db_access_v2.py) -- the pre-session
+        barrier-fixture regression in the ee4799f7..338eb3c5 window,
+        verified by A/B at 338eb3c5.  (2)+(3)
+        test_checked_in_structural_only_manifest_contract_via_production_apis
+        and test_current_db_gate_activated_policy_real_config_pipeline
+        (scripts/test_verify_db_access_boundaries.py) -- policy-count
+        pins still asserting 477 after the GR-14c 477-to-475
+        regeneration, a GR-14c omission.  All three are repaired by the
+        follow-up test-repair batch (fixture declares the barrier
+        property; pins updated to 475).
     status: COMPLETE
     note: >-
       Captured on branch gr-00-local at the GR-14c completion SHA (the
