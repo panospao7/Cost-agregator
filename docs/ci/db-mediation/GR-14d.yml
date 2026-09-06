@@ -1,0 +1,237 @@
+# GR-14d remediation manifest (PR-GR-14 batch).
+#
+# Batch scope: the GR14_REGISTER_WORKER_ROOT family of the GR-13
+# unproven-writers seed — the five counterexample_non_worker_root rows
+# (GR13_WORKER_ROOT_NOT_REGISTERED), all NotificationIntakeWorker doWork
+# intake mutations — plus the registry/source gap dispositions owed by
+# GR-13_EVIDENCE_FREEZE.md.
+#
+# Root cause: WorkerRegistry.kt is the SCHEDULING registry — every
+# Entry.schedule runs at startup/after restore-resume and every key pairs
+# with a WorkerSpec.DEFAULTS pause spec.  NotificationIntakeWorker is a
+# coordinator-driven one-shot (NotificationIntakeCoordinator /
+# NotificationIntakeRecoveryScheduler) whose absence from WorkerSpec.DEFAULTS
+# is documented as intentional in its own doWork source comment; all five
+# intake mutations already sit inside the canonical runGuardedWithContext
+# scope with requiresDatabaseWrite = true.  Registering it in the scheduling
+# registry would be a runtime behavior change (startup scheduling of a
+# one-shot with no input data) that the design explicitly rejects.
+#
+# Remediation (shadow-only tooling + tracked config, NO production Kotlin,
+# NO policy/baseline change): a tracked, fail-closed dispositions config
+# (config/guards/worker_root_dispositions.yml, closed vocabulary, corpus
+# membership + registry-conflict validation) explicitly dispositions the
+# worker classes that are intentionally not registry-scheduled.  A
+# dispositioned class's doWork root is RECOGNIZED for mediation proof only
+# and never changes scheduling, pause semantics, or any runtime behavior.
+# This is the freeze doc's required explicit justification of the
+# registry/source gap — never a silent pass; any undispositioned mismatch
+# still classifies as a counterexample.
+#
+# Schema deviations from the PR-GR-14 plan (documented, intentional):
+#   1. selectedPattern is C (canonical worker scope): the five callables
+#      ALREADY satisfy Pattern C structurally; the batch supplies the
+#      missing recognition authority (the tracked disposition), not a
+#      refactor.  No production Kotlin path changed.
+#   2. behaviorPreservation is N/A per field: no transaction, cancellation,
+#      retry, lifecycle, worker-result, or privacy path is touched.  The
+#      engine change is shadow-only (inspect_db_mediation_proof.py and
+#      scripts/db_guard/mediation_analysis/); the normal DB CLI is
+#      unchanged (exit 0 / 0 findings / 20 advisory).
+schemaVersion: 1
+batchId: GR-14d
+startSha: 1342e8601e8c488c3685f26a2b601029938aa422
+# GATE-00R double capture at the start SHA (build/guard-debug/gate-00r/
+# 1342e860/run-01 + run-02), byte-identical; recorded in
+# docs/ci/GUARD_EVIDENCE_INDEX.yml.
+gateEvidenceSha256: d7a0aee46234b3a713d788db8a0d888d3d0bbdc9a60cab993f57c989c6421049
+# GR-13 mediation shadow report post-batch (build/gr14d_hold/g14d-shadow-a.json
+# == -b.json, byte-identical, exit 1).
+mediationReportSha256: 2aac7eedcffcaed25b62470d6d6a8bad6c552b056759dbfe03bb360b9536eb26
+directProofReportSha256: null
+# config/guards/db_ownership_policy.yml (unchanged by this batch: 475
+# entries, sha identical to the GR-14c post-batch pin).
+activePolicySha256: 643b526fba22f98ea934d299031d73c18cbb448133eda63da75075c3e70df4bb
+# config/baselines/db_access_v2.json (unchanged by this batch).
+baselineSha256: 44421412c890b60d17db9a4157c497cf44ec836753d195eeb95783ff8ccebfec
+
+selectedMutationKeys:
+- app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|claimForProcessing
+- app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markFinalFailure
+- app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markPrivacyDeniedAndPurgeAllPayload
+- app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markRetryableFailure
+- app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markTerminal
+
+entries:
+- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|claimForProcessing
+  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
+  priorProofStatus: counterexample_non_worker_root
+  rootCause: DIRECT_COUNTEREXAMPLE
+  selectedPattern: C
+  currentLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  targetLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  disposition: COORDINATOR_DRIVEN_ONE_SHOT
+  behaviorPreservation:
+    transaction: N/A (recognition-only change; no source path changed)
+    cancellation: N/A (recognition-only change; no source path changed)
+    retry: N/A (recognition-only change; no source path changed)
+    lifecycle: N/A (recognition-only change; no source path changed)
+    workerResult: N/A (recognition-only change; no source path changed)
+    privacy: N/A — the mutation already sits inside the canonical
+      runGuardedWithContext scope (requiresDatabaseWrite = true) with
+      per-stage checkpoints; only the root recognition was missing.
+  policyImpact: NONE (no policy row added, removed, or changed)
+  tests:
+  - scripts/ci/test_inspect_db_mediation_proof.py::TestWorkerRootDispositions::test_dispositioned_worker_root_proves
+  owner: "@panospao7"
+  linkedIssue: GR-14d
+- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markFinalFailure
+  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
+  priorProofStatus: counterexample_non_worker_root
+  rootCause: DIRECT_COUNTEREXAMPLE
+  selectedPattern: C
+  currentLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  targetLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  disposition: COORDINATOR_DRIVEN_ONE_SHOT
+  behaviorPreservation:
+    transaction: N/A (recognition-only change; no source path changed)
+    cancellation: N/A (recognition-only change; no source path changed)
+    retry: N/A (recognition-only change; no source path changed)
+    lifecycle: N/A (recognition-only change; no source path changed)
+    workerResult: N/A (recognition-only change; no source path changed)
+    privacy: N/A — failureCode values are controlled constants
+      (MAX_ATTEMPTS_EXCEEDED / TIMEOUT / WORKER_EXCEPTION); no raw payload
+      is persisted by the mutation itself.
+  policyImpact: NONE (no policy row added, removed, or changed)
+  tests:
+  - scripts/ci/test_inspect_db_mediation_proof.py::TestWorkerRootDispositions::test_dispositioned_worker_root_proves
+  owner: "@panospao7"
+  linkedIssue: GR-14d
+- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markPrivacyDeniedAndPurgeAllPayload
+  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
+  priorProofStatus: counterexample_non_worker_root
+  rootCause: DIRECT_COUNTEREXAMPLE
+  selectedPattern: C
+  currentLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  targetLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  disposition: COORDINATOR_DRIVEN_ONE_SHOT
+  behaviorPreservation:
+    transaction: N/A (recognition-only change; no source path changed)
+    cancellation: N/A (recognition-only change; no source path changed)
+    retry: N/A (recognition-only change; no source path changed)
+    lifecycle: N/A (recognition-only change; no source path changed)
+    workerResult: N/A (recognition-only change; no source path changed)
+    privacy: N/A — this mutation IS the privacy purge (payload deletion on
+      privacy denial), invoked both in the main guarded scope and the
+      dedicated notification_intake_privacy_cleanup guarded scope.
+  policyImpact: NONE (no policy row added, removed, or changed)
+  tests:
+  - scripts/ci/test_inspect_db_mediation_proof.py::TestWorkerRootDispositions::test_dispositioned_worker_root_proves
+  owner: "@panospao7"
+  linkedIssue: GR-14d
+- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markRetryableFailure
+  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
+  priorProofStatus: counterexample_non_worker_root
+  rootCause: DIRECT_COUNTEREXAMPLE
+  selectedPattern: C
+  currentLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  targetLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  disposition: COORDINATOR_DRIVEN_ONE_SHOT
+  behaviorPreservation:
+    transaction: N/A (recognition-only change; no source path changed)
+    cancellation: N/A (recognition-only change; no source path changed)
+    retry: N/A (recognition-only change; no source path changed)
+    lifecycle: N/A (recognition-only change; no source path changed)
+    workerResult: N/A (recognition-only change; no source path changed)
+    privacy: N/A — failureCode values are controlled constants
+      (RETRYABLE_ERROR / TIMEOUT / WORKER_EXCEPTION); no raw payload is
+      persisted by the mutation itself.
+  policyImpact: NONE (no policy row added, removed, or changed)
+  tests:
+  - scripts/ci/test_inspect_db_mediation_proof.py::TestWorkerRootDispositions::test_dispositioned_worker_root_proves
+  owner: "@panospao7"
+  linkedIssue: GR-14d
+- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markTerminal
+  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
+  priorProofStatus: counterexample_non_worker_root
+  rootCause: DIRECT_COUNTEREXAMPLE
+  selectedPattern: C
+  currentLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  targetLegalOwner: com.yourname.expensetracker.worker.NotificationIntakeWorker.doWork
+  disposition: COORDINATOR_DRIVEN_ONE_SHOT
+  behaviorPreservation:
+    transaction: N/A (recognition-only change; no source path changed)
+    cancellation: N/A (recognition-only change; no source path changed)
+    retry: N/A (recognition-only change; no source path changed)
+    lifecycle: N/A (recognition-only change; no source path changed)
+    workerResult: N/A (recognition-only change; no source path changed)
+    privacy: N/A — status/finalOutcome values are controlled constants
+      (NotificationIntakeStatus enum names); payload purge accompanies the
+      terminal mark on every path.
+  policyImpact: NONE (no policy row added, removed, or changed)
+  tests:
+  - scripts/ci/test_inspect_db_mediation_proof.py::TestWorkerRootDispositions::test_dispositioned_worker_root_proves
+  owner: "@panospao7"
+  linkedIssue: GR-14d
+
+# Freeze-doc gap dispositions (GR-13_EVIDENCE_FREEZE.md "Registry vs source
+# worker gap"): no policy rows of their own; recorded here to close the
+# owed dispositions.
+gapDispositions:
+- workerFqcn: com.yourname.expensetracker.service.reminder.SnoozeReminderActionWorker
+  disposition: EVENT_ACTION_TRIGGERED_ONE_SHOT
+  policyMutationRows: 0
+  note: >-
+    guard-calling reminder snooze action handler; not startup-scheduled;
+    no DB mutations, so no mediation rows — the disposition only clears
+    the registry/source cross-check mismatch.
+- workerFqcn: com.yourname.expensetracker.service.reminder.DismissReminderActionWorker
+  disposition: EVENT_ACTION_TRIGGERED_ONE_SHOT
+  policyMutationRows: 0
+  note: >-
+    guard-calling reminder dismiss action handler; not startup-scheduled;
+    no DB mutations, so no mediation rows — the disposition only clears
+    the registry/source cross-check mismatch.
+- workerFqcn: com.yourname.expensetracker.domain.provenance.SourceLinkBackfillWorker
+  disposition: NOT_A_WORKER_ROOT_DOCUMENTED
+  policyMutationRows: 3
+  note: >-
+    not a CoroutineWorker at all — a @Singleton backfill callable whose
+    three helper-mode policy rows (backfillLegacySource /
+    backfillNotificationLinks / backfillReceiptLinks, each
+    sourceLinkDao.insert) are guarded by the GR-12 canonical direct
+    barrier (writeBarrier.checkWritesAllowed at the top of runBackfill);
+    it is outside the worker-guard surface BY DESIGN and is never a
+    worker-root candidate.  Documented here as the freeze doc's owed
+    disposition; not a worker_root_dispositions.yml entry because that
+    file governs CoroutineWorker classes only.
+
+postBatchValidation:
+  normalDbCli:
+    command: >-
+      python scripts/verify_db_access_boundaries.py --fail-on-violation
+      --structural-manifest
+      config/guards/db_structural_exceptions_expected_methods.yml
+      --ownership-policy config/guards/db_ownership_policy.yml
+      --structural-exceptions config/guards/db_structural_exceptions.yml
+    exitCode: 0
+    findingCount: 0
+    advisoryDiagnosticCount: 20
+  mediationShadow:
+    runs: 2
+    byteIdentical: true
+    exitCode: 1
+    unsupportedSourceCount: 0
+    counterexampleNonWorkerRootCount: 0
+    provenWorkerMediatedCount: 10
+    workerRegistryMismatchCount: 0
+    workerRootDispositionCount: 3
+    entryCount: 447
+  seed:
+    remediationRowCount: 417
+    registerWorkerRootFamilyCount: 0
+  testBatteries:
+    cliProtocol: "23/23 (19 prior + 4 TestWorkerRootDispositions)"
+    dispositionUnits: "14/14"
+    mediationLegacy: "13/13 (test_models, test_parser_spans)"
+    fixtureCorpus: "44/44"

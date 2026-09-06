@@ -122,6 +122,33 @@ _MULTISITE_PROVEN_SOURCE = (
     "}\n"
 )
 
+# Worker corpus (GR-14d): a doWork root of a CoroutineWorker subclass whose
+# only mutation sits inside the canonical worker-guard lambda.  The class is
+# intentionally absent from any registry; a tracked disposition is what
+# recognizes its root for mediation proof.
+_WORKER_PROJECT = "app/src/main/java/com/example/IntakeWorker.kt"
+
+_WORKER_SOURCE = (
+    "package com.example\n"
+    "\n"
+    "open class CoroutineWorker {\n"
+    "    abstract fun doWork(): Result\n"
+    "}\n"
+    "\n"
+    "class WorkerExecutionGuard {\n"
+    "    fun runGuarded(block: () -> Unit) = block()\n"
+    "}\n"
+    "\n"
+    "class IntakeWorker(private val dao: Dao) : CoroutineWorker() {\n"
+    "    private val guard = WorkerExecutionGuard()\n"
+    "\n"
+    "    override fun doWork(): Result {\n"
+    "        guard.runGuarded { dao.insert(1) }\n"
+    "        return Result.success()\n"
+    "    }\n"
+    "}\n"
+)
+
 _CONTRACT = AnalysisContract(
     worker_guard_receiver_fqcn="com.example.WorkerExecutionGuard",
     worker_guard_scope_methods=("runGuarded",),
@@ -159,6 +186,24 @@ def _policy_entry(method="writeRow", mode=BarrierMode.HELPER):
     )
 
 
+def _worker_policy_entry():
+    return PolicyEntry(
+        path=_WORKER_PROJECT,
+        owner_fqcn="com.example.IntakeWorker",
+        kind=CallableKind.FUNCTION,
+        method="doWork",
+        receiver=None,
+        parameter_types=(),
+        dao_accessor="dao",
+        dao_fqcn="com.example.Dao",
+        operation="insert",
+        barrier_mode=BarrierMode.WORKER_MEDIATED,
+        reason="test",
+        owner="@test",
+        linked_issue="GR-14d",
+    )
+
+
 def _observations(source: str):
     """One observation per dao.insert call site (same mutation key)."""
     results = []
@@ -189,8 +234,9 @@ def _observations(source: str):
     return results
 
 
-def _declaration(source: str, method: str = "writeRow"):
-    header = source.index("fun %s" % method)
+def _declaration(source: str, method: str = "writeRow", parameters=("Int",),
+                 path=None, owner_fqcn=None, header_text=None):
+    header = source.index(header_text or "fun %s" % method)
     body_open = source.index("{", header)
     depth = 0
     closing = None
@@ -204,8 +250,8 @@ def _declaration(source: str, method: str = "writeRow"):
                 break
     assert closing is not None
     return DeclarationRange(
-        path=_PROJECT,
-        owner_fqcn=_IDENTITY["owner_fqcn"],
+        path=path or _PROJECT,
+        owner_fqcn=owner_fqcn or _IDENTITY["owner_fqcn"],
         kind="function",
         start_line=source.count("\n", 0, header) + 1,
         end_line=source.count("\n", 0, closing) + 1,
@@ -214,7 +260,7 @@ def _declaration(source: str, method: str = "writeRow"):
         body_start=body_open + 1,
         body_end=closing,
         callable_name=method,
-        parameters=("Int",),
+        parameters=parameters,
         source_start=header,
         source_end=closing + 1,
     )
@@ -496,3 +542,155 @@ class TestSubjectIdentity:
         assert row["reachingRootKinds"] == ["public_or_protected_external"]
         assert row["localGuard"] == "none"
         assert row["boundedPath"]
+
+
+class TestWorkerRootDispositions:
+    """GR-14d: tracked dispositions recognize intentionally unscheduled
+    worker doWork roots for mediation proof (never a runtime change)."""
+
+    def _patch_worker(self, monkeypatch, tmp_path):
+        kotlin_file = tmp_path / _WORKER_PROJECT
+        kotlin_file.parent.mkdir(parents=True)
+        kotlin_file.write_text(_WORKER_SOURCE, encoding="utf-8")
+        baseline = tmp_path / "config" / "baselines"
+        baseline.mkdir(parents=True, exist_ok=True)
+        (baseline / "db_access_v2.json").write_text("{}\n", encoding="utf-8")
+        call_start = _WORKER_SOURCE.find("dao.insert")
+        observation = build_mutation_observation(
+            path=_WORKER_PROJECT,
+            owner_fqcn="com.example.IntakeWorker",
+            kind=CallableKind.FUNCTION,
+            method="doWork",
+            receiver=None,
+            parameter_types=(),
+            source=_WORKER_SOURCE,
+            call_start=call_start,
+            call_end=call_start + len("dao.insert(1)"),
+            dao_accessor="dao",
+            dao_fqcn="com.example.Dao",
+            operation="insert",
+            mutation_kind="ROOM_ABSTRACT_INSERT",
+            source_identity="com.example.Dao::dao#insert",
+        )
+        monkeypatch.setattr(
+            shadow_cli, "resolve_source_root_set", lambda root: (object(), [])
+        )
+        monkeypatch.setattr(
+            shadow_cli,
+            "load_policy_v2",
+            lambda policy: ([_worker_policy_entry()], None),
+        )
+        monkeypatch.setattr(
+            shadow_cli, "_production_contract", lambda: _CONTRACT
+        )
+
+        def _fake_scan(root, policy, structural, raw_query,
+                       mutation_observation_sink=None):
+            if mutation_observation_sink is not None:
+                mutation_observation_sink.append(observation)
+            return types.SimpleNamespace(findings=(), diagnostics=())
+
+        monkeypatch.setattr(shadow_cli, "scan_db_access", _fake_scan)
+
+        def _fake_declarations(root, root_set=None):
+            return types.SimpleNamespace(
+                helper_ranges=[_declaration(
+                    _WORKER_SOURCE, "doWork", parameters=(),
+                    path=_WORKER_PROJECT,
+                    owner_fqcn="com.example.IntakeWorker",
+                    header_text="override fun doWork",
+                )]
+            )
+
+        monkeypatch.setattr(
+            shadow_cli, "scan_production_declarations", _fake_declarations
+        )
+        monkeypatch.setattr(
+            shadow_cli,
+            "collect_production_kotlin_files",
+            lambda root, root_set: ([_WORKER_PROJECT], []),
+        )
+
+    def _write_dispositions(self, tmp_path, fqcn="com.example.IntakeWorker"):
+        path = tmp_path / "worker_root_dispositions.yml"
+        path.write_text(
+            "schemaVersion: 1\n"
+            "dispositions:\n"
+            "- workerFqcn: %s\n"
+            "  disposition: COORDINATOR_DRIVEN_ONE_SHOT\n"
+            "  reason: coordinator-driven one-shot; not startup-scheduled\n"
+            % fqcn,
+            encoding="utf-8",
+        )
+        return str(path)
+
+    def test_dispositioned_worker_root_proves(self, monkeypatch, tmp_path):
+        self._patch_worker(monkeypatch, tmp_path)
+        dispositions = self._write_dispositions(tmp_path)
+        report, exit_code = shadow_cli.build_mediation_shadow(
+            str(tmp_path), None,
+            worker_dispositions_path_value=dispositions,
+        )
+        assert exit_code == 0
+        assert report["summary"]["proofStates"] == {
+            "proven_worker_mediated": 1
+        }
+        row = report["entries"][0]
+        assert row["proofStatus"] == "proven_worker_mediated"
+        applied = report["workerRootDispositions"]["applied"]
+        assert [item["workerFqcn"] for item in applied] == [
+            "com.example.IntakeWorker"
+        ]
+        inventory_row = next(
+            item
+            for item in report["workerRootInventory"]
+            if item["workerFqcn"] == "com.example.IntakeWorker"
+        )
+        assert inventory_row["registered"] is False
+        assert inventory_row["dispositioned"] is True
+
+    def test_undispositioned_worker_root_is_counterexample(
+        self, monkeypatch, tmp_path
+    ):
+        self._patch_worker(monkeypatch, tmp_path)
+        report, exit_code = shadow_cli.build_mediation_shadow(
+            str(tmp_path), None
+        )
+        assert exit_code == 1
+        row = report["entries"][0]
+        assert row["proofStatus"] == "counterexample_non_worker_root"
+        assert row["reasonCode"] == "GR13_WORKER_ROOT_NOT_REGISTERED"
+        assert report["workerRootDispositions"]["applied"] == []
+
+    def test_unknown_disposition_worker_fails_closed(
+        self, monkeypatch, tmp_path
+    ):
+        self._patch_worker(monkeypatch, tmp_path)
+        dispositions = self._write_dispositions(
+            tmp_path, fqcn="com.example.NotAWorker"
+        )
+        report, exit_code = shadow_cli.build_mediation_shadow(
+            str(tmp_path), None,
+            worker_dispositions_path_value=dispositions,
+        )
+        assert exit_code == 2
+        assert (
+            "GR13_DISPOSITION_UNKNOWN_WORKER"
+            in report["infrastructure"]["failureReasons"]
+        )
+
+    def test_explicit_missing_dispositions_file_fails_closed(
+        self, monkeypatch, tmp_path
+    ):
+        self._patch_worker(monkeypatch, tmp_path)
+        report, exit_code = shadow_cli.build_mediation_shadow(
+            str(tmp_path), None,
+            worker_dispositions_path_value=str(
+                tmp_path / "does-not-exist.yml"
+            ),
+        )
+        assert exit_code == 2
+        assert (
+            "GR13_DISPOSITION_SOURCE_UNAVAILABLE"
+            in report["infrastructure"]["failureReasons"]
+        )

@@ -126,6 +126,7 @@ class WorkerRoot:
     workerFqcn: str
     doWorkKey: str
     registered: bool = False
+    dispositioned: bool = False
 
 
 @dataclass(frozen=True)

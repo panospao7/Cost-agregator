@@ -12,7 +12,12 @@ Shadow-only (PR-GR-13, plan Step 5).  Implements the recorded contract in
   * discovery is cross-checked against ``WorkerRegistry.kt`` (the registry's
     worker-class references resolved through its own imports); every
     mismatch is reported as a bounded diagnostic and marks the affected
-    root invalid — never a silent pass;
+    root invalid — never a silent pass.  A worker class may instead carry
+    a TRACKED, reviewed disposition
+    (``config/guards/worker_root_dispositions.yml``) stating it is
+    intentionally not registry-scheduled (the registry is a SCHEDULING
+    registry); a dispositioned class's ``doWork`` root is recognized for
+    mediation proof only and never changes runtime behavior;
   * a worker guard scope whose ``WorkerGuardRequest`` arguments explicitly
     declare the read-only-backup waiver (``allowDuringBackupExport = true``
     and ``requiresDatabaseWrite = false``) provides NO write context (the
@@ -33,12 +38,16 @@ from .models import WorkerRoot
 
 __all__ = [
     "WORKER_REGISTRY_RELATIVE_PATH",
+    "WORKER_ROOT_DISPOSITION_VALUES",
     "WorkerDiscovery",
     "WorkerDiscoveryResult",
     "WorkerGuardScopeRecord",
+    "WorkerRootDisposition",
     "discover_worker_roots",
     "enumerate_worker_guard_scopes",
     "extract_registry_worker_fqcns",
+    "parse_worker_root_dispositions",
+    "validate_worker_root_dispositions",
 ]
 
 WORKER_REGISTRY_RELATIVE_PATH = (
@@ -58,11 +67,120 @@ class WorkerDiscoveryResult:
     worker_classes: tuple[str, ...]          # discovered worker FQCNs (name-sorted)
     ambiguous_worker_classes: tuple[str, ...]  # duplicate-FQCN declarations
     unregistered_worker_classes: tuple[str, ...]
+    dispositioned_worker_classes: tuple[str, ...]
     registry_missing_worker_classes: tuple[str, ...]
     registry_unresolved_refs: tuple[str, ...]
     do_work_roots_registered: tuple[str, ...]
+    do_work_roots_dispositioned: tuple[str, ...]
     do_work_roots_unregistered: tuple[str, ...]
     diagnostics: tuple[str, ...]
+
+
+WORKER_ROOT_DISPOSITION_VALUES = (
+    "COORDINATOR_DRIVEN_ONE_SHOT",
+    "EVENT_ACTION_TRIGGERED_ONE_SHOT",
+)
+
+_DISPOSITION_FIELD_NAMES = frozenset(
+    {"workerFqcn", "disposition", "reason", "owner", "linkedIssue"}
+)
+_DISPOSITION_MAX_REASON_LENGTH = 600
+
+
+@dataclass(frozen=True)
+class WorkerRootDisposition:
+    """One tracked disposition of an intentionally unscheduled worker.
+
+    Bounded identity fields only — the authoritative prose lives in the
+    tracked config file, never in reports.
+    """
+
+    worker_fqcn: str
+    disposition: str
+
+
+def parse_worker_root_dispositions(
+    text: str,
+) -> tuple[tuple[WorkerRootDisposition, ...], tuple[str, ...]]:
+    """Parse and schema-validate the worker-root dispositions config.
+
+    Returns ``(records sorted by FQCN, error codes)``.  The vocabulary and
+    field set are closed; any malformed entry fails the whole file closed
+    (no partial acceptance).
+    """
+    try:
+        import yaml
+
+        document = yaml.safe_load(text)
+    except Exception:  # noqa: BLE001 - any parse failure is one code
+        return (), ("GR13_DISPOSITION_MALFORMED",)
+    if not isinstance(document, dict):
+        return (), ("GR13_DISPOSITION_MALFORMED",)
+    if set(document) - {"schemaVersion", "dispositions"}:
+        return (), ("GR13_DISPOSITION_MALFORMED",)
+    if document.get("schemaVersion") != 1:
+        return (), ("GR13_DISPOSITION_MALFORMED",)
+    entries = document.get("dispositions")
+    if not isinstance(entries, list):
+        return (), ("GR13_DISPOSITION_MALFORMED",)
+    records: list[WorkerRootDisposition] = []
+    seen: set[str] = set()
+    errors: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) - _DISPOSITION_FIELD_NAMES:
+            errors.add("GR13_DISPOSITION_MALFORMED")
+            continue
+        fqcn = entry.get("workerFqcn")
+        disposition = entry.get("disposition")
+        reason = entry.get("reason")
+        if not isinstance(fqcn, str) or not fqcn:
+            errors.add("GR13_DISPOSITION_MALFORMED")
+            continue
+        if disposition not in WORKER_ROOT_DISPOSITION_VALUES:
+            errors.add("GR13_DISPOSITION_UNKNOWN_VALUE")
+            continue
+        if (
+            not isinstance(reason, str)
+            or not reason.strip()
+            or len(reason) > _DISPOSITION_MAX_REASON_LENGTH
+        ):
+            errors.add("GR13_DISPOSITION_MALFORMED")
+            continue
+        if fqcn in seen:
+            errors.add("GR13_DISPOSITION_DUPLICATE")
+            continue
+        seen.add(fqcn)
+        records.append(
+            WorkerRootDisposition(worker_fqcn=fqcn, disposition=disposition)
+        )
+    if errors:
+        return (), tuple(sorted(errors))
+    records.sort(key=lambda record: record.worker_fqcn)
+    return tuple(records), ()
+
+
+def validate_worker_root_dispositions(
+    records: tuple[WorkerRootDisposition, ...],
+    worker_classes: tuple[str, ...],
+    registered_worker_fqcns: tuple[str, ...] | None,
+) -> tuple[str, ...]:
+    """Corpus/registry cross-validation of parsed disposition records.
+
+    Fail-closed codes: a dispositioned class must exist in the source-
+    enumerated worker classes, and must not also be registry-registered
+    (that would be a conflict between two recognition authorities).
+    """
+    known = set(worker_classes)
+    errors: set[str] = set()
+    for record in records:
+        if record.worker_fqcn not in known:
+            errors.add("GR13_DISPOSITION_UNKNOWN_WORKER")
+        if (
+            registered_worker_fqcns is not None
+            and record.worker_fqcn in set(registered_worker_fqcns)
+        ):
+            errors.add("GR13_DISPOSITION_REGISTRY_CONFLICT")
+    return tuple(sorted(errors))
 
 
 @dataclass(frozen=True)
@@ -81,12 +199,17 @@ class WorkerGuardScopeRecord:
 def discover_worker_roots(
     builder: CallGraphBuilder,
     registered_worker_fqcns: tuple[str, ...] | None,
+    dispositioned_worker_fqcns: tuple[str, ...] = (),
 ) -> WorkerDiscoveryResult:
     """Enumerate worker classes/doWork roots and cross-check the registry.
 
     ``registered_worker_fqcns`` is the registry-derived FQCN set (or None
     when no registry source is available — every discovered worker is then
     reported unregistered, never silently trusted).
+    ``dispositioned_worker_fqcns`` are worker classes with a tracked,
+    reviewed disposition of being intentionally not registry-scheduled;
+    their ``doWork`` roots are recognized for mediation proof (recorded
+    with ``dispositioned=True``, never as registry-registered).
     """
     contract = builder.contract
     worker_classes = builder.worker_classes()
@@ -103,10 +226,18 @@ def discover_worker_roots(
         registry_unresolved.append("WORKER_REGISTRY_SOURCE_UNAVAILABLE")
     else:
         resolved_registry = set(registered_worker_fqcns)
+    dispositioned_set = set(dispositioned_worker_fqcns)
 
     registered_set = resolved_registry
     unregistered = tuple(
-        sorted(fqcn for fqcn in worker_classes if fqcn not in registered_set)
+        sorted(
+            fqcn
+            for fqcn in worker_classes
+            if fqcn not in registered_set and fqcn not in dispositioned_set
+        )
+    )
+    dispositioned = tuple(
+        sorted(fqcn for fqcn in worker_classes if fqcn in dispositioned_set)
     )
     registry_missing = tuple(
         sorted(
@@ -128,6 +259,7 @@ def discover_worker_roots(
 
     roots: list[WorkerRoot] = []
     do_registered: list[str] = []
+    do_dispositioned: list[str] = []
     do_unregistered: list[str] = []
     for key in sorted(builder.callables):
         model = builder.callables[key]
@@ -137,15 +269,21 @@ def discover_worker_roots(
         registered = (
             model.owner_fqcn in registered_set and not ambiguous_root
         )
+        dispositioned_root = (
+            model.owner_fqcn in dispositioned_set and not ambiguous_root
+        )
         roots.append(
             WorkerRoot(
                 workerFqcn=model.owner_fqcn,
                 doWorkKey=key,
                 registered=registered,
+                dispositioned=dispositioned_root,
             )
         )
         if registered:
             do_registered.append(key)
+        elif dispositioned_root:
+            do_dispositioned.append(key)
         else:
             do_unregistered.append(key)
     return WorkerDiscoveryResult(
@@ -153,9 +291,11 @@ def discover_worker_roots(
         worker_classes=tuple(sorted(worker_classes)),
         ambiguous_worker_classes=ambiguous,
         unregistered_worker_classes=unregistered,
+        dispositioned_worker_classes=dispositioned,
         registry_missing_worker_classes=registry_missing,
         registry_unresolved_refs=tuple(sorted(set(registry_unresolved))),
         do_work_roots_registered=tuple(sorted(do_registered)),
+        do_work_roots_dispositioned=tuple(sorted(do_dispositioned)),
         do_work_roots_unregistered=tuple(sorted(do_unregistered)),
         diagnostics=tuple(sorted(set(diagnostics)),
         ),

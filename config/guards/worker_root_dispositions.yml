@@ -1,0 +1,49 @@
+# Worker-root dispositions for the GR-13/GR-14 mediation proof (GR-14d).
+#
+# WorkerRegistry.kt is the SCHEDULING registry: every Entry.schedule runs at
+# startup and after restore-resume, and every key pairs with a
+# WorkerSpec.DEFAULTS pause spec. The worker classes listed here are
+# intentionally NOT startup-scheduled, so they carry no registry Entry BY
+# DESIGN. This file is their explicit, reviewed disposition for the
+# worker-root cross-check (GR-13_EVIDENCE_FREEZE.md required explicit
+# justification of the registry/source gap, never a silent pass).
+#
+# Rules (enforced by scripts/db_guard/mediation_analysis/worker_recognition.py
+# and scripts/ci/inspect_db_mediation_proof.py, both fail closed):
+#   - disposition vocabulary is closed:
+#       COORDINATOR_DRIVEN_ONE_SHOT | EVENT_ACTION_TRIGGERED_ONE_SHOT
+#   - every workerFqcn must be a corpus worker class discovered from source
+#     (GR13_DISPOSITION_UNKNOWN_WORKER otherwise);
+#   - a class that is BOTH registry-registered and dispositioned is a
+#     conflict (GR13_DISPOSITION_REGISTRY_CONFLICT);
+#   - duplicate workerFqcn entries are rejected (GR13_DISPOSITION_DUPLICATE);
+#   - a disposition recognizes the doWork root for mediation proof only —
+#     it never adds scheduling, pause semantics, or any runtime behavior.
+schemaVersion: 1
+dispositions:
+- workerFqcn: com.yourname.expensetracker.worker.NotificationIntakeWorker
+  disposition: COORDINATOR_DRIVEN_ONE_SHOT
+  reason: >-
+    coordinator-driven one-shot enqueued by NotificationIntakeCoordinator
+    and NotificationIntakeRecoveryScheduler; no WorkerSpec.DEFAULTS entry
+    by design (specVersion resolves null; documented in the doWork source
+    comment); all five intake DAO mutations sit inside the canonical
+    runGuardedWithContext scope with requiresDatabaseWrite = true
+  owner: '@panospao7'
+  linkedIssue: GR-14d
+- workerFqcn: com.yourname.expensetracker.service.reminder.SnoozeReminderActionWorker
+  disposition: EVENT_ACTION_TRIGGERED_ONE_SHOT
+  reason: >-
+    reminder snooze action handler enqueued per user action; not
+    startup-scheduled; carries no policy DB mutations (action-only
+    handler)
+  owner: '@panospao7'
+  linkedIssue: GR-14d
+- workerFqcn: com.yourname.expensetracker.service.reminder.DismissReminderActionWorker
+  disposition: EVENT_ACTION_TRIGGERED_ONE_SHOT
+  reason: >-
+    reminder dismiss action handler enqueued per user action; not
+    startup-scheduled; carries no policy DB mutations (action-only
+    handler)
+  owner: '@panospao7'
+  linkedIssue: GR-14d

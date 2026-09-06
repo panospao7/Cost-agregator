@@ -589,9 +589,11 @@ class MediationProver:
         else:
             effective = set(entry_contexts)
         convertible = local == "direct" and mode == "helper" and "none" in entry_contexts
-        # 8. Unregistered doWork roots are definite non-worker roots (the
-        # registry cross-check fails; never silently trusted).  Ambiguous
-        # worker identity was already handled by the ambiguity tier.
+        # 8. doWork roots that are neither registry-registered nor
+        # explicitly dispositioned (tracked worker-root dispositions) are
+        # definite non-worker roots (the recognition cross-check fails;
+        # never silently trusted).  Ambiguous worker identity was already
+        # handled by the ambiguity tier.
         if (
             mode == "workerMediated"
             and model.method == "doWork"

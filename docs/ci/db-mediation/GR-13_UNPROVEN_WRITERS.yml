@@ -2,24 +2,23 @@ schemaVersion: 1
 reportOnly: true
 generatedFrom:
   engine: gr13-mediation-proof
-  reportSha256: 631ea3f540575976fc5ce151a219a1a6d275a03867d8225ba923f193148f80ce
+  reportSha256: 2aac7eedcffcaed25b62470d6d6a8bad6c552b056759dbfe03bb360b9536eb26
   targetSha: null
   activePolicySha256: 643b526fba22f98ea934d299031d73c18cbb448133eda63da75075c3e70df4bb
   sourceRootManifestSha256: 02ec3e28c9451cecb31ca90dc8f665837b7857d979c20b3a400f898f8d1c2c95
 status: OPEN
 summary:
   policyRowCount: 447
-  provenRowCount: 25
-  remediationRowCount: 422
+  provenRowCount: 30
+  remediationRowCount: 417
   riskCounts:
-    DEFINITE_VIOLATION: 16
+    DEFINITE_VIOLATION: 11
     UNPROVEN_PATH: 406
   familyCounts:
     GR14_BREAK_RECURSION_REGION: 38
     GR14_CLOSE_LAMBDA_ESCAPE: 40
     GR14_CLOSE_OR_DOCUMENT_ENTRY: 64
     GR14_GUARD_UNGUARDED_PATH: 11
-    GR14_REGISTER_WORKER_ROOT: 5
     GR14_RESOLVE_DISPATCH: 5
     GR14_SYNCHRONIZE_OR_GUARD_ASYNC_PATH: 259
 remediationNote: One disposition per non-proven helper/workerMediated policy row.  No expiry, baseline, or accepted-debt state is allowed (GR-13 plan hard rule); every row must close through its GR-14 remediation family.
@@ -5104,75 +5103,5 @@ rows:
   boundedPathEvidence: []
   riskClassification: UNPROVEN_PATH
   recommendedRemediationFamily: GR14_CLOSE_LAMBDA_ESCAPE
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|claimForProcessing
-  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  barrierMode: workerMediated
-  proofStatus: counterexample_non_worker_root
-  reasonCode: GR13_WORKER_ROOT_NOT_REGISTERED
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - worker_do_work
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_REGISTER_WORKER_ROOT
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markFinalFailure
-  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  barrierMode: workerMediated
-  proofStatus: counterexample_non_worker_root
-  reasonCode: GR13_WORKER_ROOT_NOT_REGISTERED
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - worker_do_work
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_REGISTER_WORKER_ROOT
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markPrivacyDeniedAndPurgeAllPayload
-  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  barrierMode: workerMediated
-  proofStatus: counterexample_non_worker_root
-  reasonCode: GR13_WORKER_ROOT_NOT_REGISTERED
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - worker_do_work
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_REGISTER_WORKER_ROOT
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markRetryableFailure
-  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  barrierMode: workerMediated
-  proofStatus: counterexample_non_worker_root
-  reasonCode: GR13_WORKER_ROOT_NOT_REGISTERED
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - worker_do_work
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_REGISTER_WORKER_ROOT
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null||intakeDao|com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|markTerminal
-  callableKey: app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  barrierMode: workerMediated
-  proofStatus: counterexample_non_worker_root
-  reasonCode: GR13_WORKER_ROOT_NOT_REGISTERED
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - worker_do_work
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/worker/NotificationIntakeWorker.kt|com.yourname.expensetracker.worker.NotificationIntakeWorker|function|doWork|null|
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_REGISTER_WORKER_ROOT
   owner: '@panospao7'
   linkedIssue: GR-14

@@ -77,6 +77,8 @@ from scripts.db_guard.mediation_analysis.worker_recognition import (  # noqa: E4
     WORKER_REGISTRY_RELATIVE_PATH,
     discover_worker_roots,
     extract_registry_worker_fqcns,
+    parse_worker_root_dispositions,
+    validate_worker_root_dispositions,
 )
 from scripts.kotlin_callable_parser import mask_kotlin_source  # noqa: E402
 
@@ -235,11 +237,17 @@ def build_mediation_shadow(
     root: str,
     policy_path_value: str | None,
     target_sha: str | None = None,
+    worker_dispositions_path_value: str | None = None,
 ) -> tuple[dict, int]:
     """Run the GR-13 shadow analysis; returns (report, exit_code).
 
     Raises nothing by contract: infrastructure failures are encoded in the
     report and the exit code.
+
+    ``worker_dispositions_path_value`` selects the tracked worker-root
+    dispositions config.  ``None`` uses the default path and tolerates its
+    absence (legacy behavior); an explicit path that does not exist fails
+    closed (GR13_DISPOSITION_SOURCE_UNAVAILABLE).
     """
     project_root = _project_root_of(root)
     policy_file = (
@@ -247,6 +255,17 @@ def build_mediation_shadow(
         if policy_path_value and os.path.isabs(policy_path_value)
         else os.path.join(project_root, policy_path_value or "config/guards/db_ownership_policy.yml")
     )
+    worker_dispositions_file = (
+        worker_dispositions_path_value
+        if worker_dispositions_path_value
+        and os.path.isabs(worker_dispositions_path_value)
+        else os.path.join(
+            project_root,
+            worker_dispositions_path_value
+            or "config/guards/worker_root_dispositions.yml",
+        )
+    )
+    worker_dispositions_explicit = worker_dispositions_path_value is not None
     failure_reasons: list[str] = []
 
     root_set, root_diagnostics = resolve_source_root_set(project_root)
@@ -353,8 +372,11 @@ def build_mediation_shadow(
 
     graph = builder.build() if builder is not None else None
 
-    # Worker discovery + registry cross-check.
+    # Worker discovery + registry cross-check + tracked dispositions.
     discovery = None
+    disposition_records = ()
+    disposition_error_codes: tuple[str, ...] = ()
+    disposition_path_recorded = None
     if graph is not None:
         registry_path = WORKER_REGISTRY_RELATIVE_PATH
         registry_text = builder_file_text_cache.get(registry_path)
@@ -363,7 +385,32 @@ def build_mediation_shadow(
             registered_fqcns, _unresolved_refs = extract_registry_worker_fqcns(
                 registry_text, registry_path, builder
             )
-        discovery = discover_worker_roots(builder, registered_fqcns)
+        if os.path.isfile(worker_dispositions_file):
+            with open(
+                worker_dispositions_file, "r", encoding="utf-8"
+            ) as handle:
+                disposition_records, disposition_error_codes = (
+                    parse_worker_root_dispositions(handle.read())
+                )
+            disposition_path_recorded = os.path.relpath(
+                worker_dispositions_file, project_root
+            ).replace(os.sep, "/")
+        elif worker_dispositions_explicit:
+            disposition_error_codes = ("GR13_DISPOSITION_SOURCE_UNAVAILABLE",)
+        if not disposition_error_codes and disposition_records:
+            disposition_error_codes = validate_worker_root_dispositions(
+                disposition_records,
+                builder.worker_classes(),
+                registered_fqcns,
+            )
+        if disposition_error_codes:
+            failure_reasons.extend(disposition_error_codes)
+            disposition_records = ()
+        discovery = discover_worker_roots(
+            builder,
+            registered_fqcns,
+            tuple(record.worker_fqcn for record in disposition_records),
+        )
 
     # Subjects: every helper/worker policy row, correlated to one callable.
     # A mutation key observed at several call sites (same callable, same
@@ -442,10 +489,14 @@ def build_mediation_shadow(
 
     prover = None
     if graph is not None and discovery is not None:
+        # recognized roots = registry-registered OR explicitly dispositioned
         prover = MediationProver(
             builder,
             graph,
-            registered_do_work_roots=frozenset(discovery.do_work_roots_registered),
+            registered_do_work_roots=(
+                frozenset(discovery.do_work_roots_registered)
+                | frozenset(discovery.do_work_roots_dispositioned)
+            ),
             ambiguous_worker_classes=frozenset(discovery.ambiguous_worker_classes),
             direct_site_prover=(
                 direct_prover.as_callback() if direct_prover is not None else None
@@ -507,6 +558,7 @@ def build_mediation_shadow(
                     "workerFqcn": worker_root.workerFqcn,
                     "doWorkKey": worker_root.doWorkKey,
                     "registered": worker_root.registered,
+                    "dispositioned": worker_root.dispositioned,
                 }
             )
         registry_mismatches = sorted(
@@ -549,12 +601,23 @@ def build_mediation_shadow(
             "proofStates": dict(sorted(summary_counts.items())),
             "callEdgeStates": dict(sorted(edge_counts.items())),
             "workerRootCount": len(worker_root_inventory),
+            "workerRootDispositionCount": len(disposition_records),
             "workerRegistryMismatches": registry_mismatches,
             "scanFindingCount": scan_finding_count,
             "scanDiagnosticCodes": scan_diagnostic_codes,
         },
         "entries": entry_rows,
         "workerRootInventory": worker_root_inventory,
+        "workerRootDispositions": {
+            "path": disposition_path_recorded,
+            "applied": [
+                {
+                    "workerFqcn": record.worker_fqcn,
+                    "disposition": record.disposition,
+                }
+                for record in disposition_records
+            ],
+        },
         "unprovenInventory": [
             {
                 "mutationKey": row["mutationKey"],
@@ -594,13 +657,17 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--root", default=_PROJECT_ROOT)
     parser.add_argument("--policy", default=None)
+    parser.add_argument("--worker-dispositions", default=None)
     parser.add_argument("--output", required=True)
     parser.add_argument("--target-sha", default=None)
     args = parser.parse_args(argv)
 
     try:
         report, exit_code = build_mediation_shadow(
-            args.root, args.policy, target_sha=args.target_sha
+            args.root,
+            args.policy,
+            target_sha=args.target_sha,
+            worker_dispositions_path_value=args.worker_dispositions,
         )
     except Exception:  # noqa: BLE001 - the exit-2 route is the contract
         report = {
