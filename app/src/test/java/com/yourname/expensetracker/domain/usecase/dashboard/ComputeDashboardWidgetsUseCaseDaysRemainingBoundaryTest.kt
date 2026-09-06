@@ -110,6 +110,7 @@ class ComputeDashboardWidgetsUseCaseDaysRemainingBoundaryTest {
             MoneyAggregate.empty(CurrencyCode("EUR"))
 
         computeUseCase = ComputeDashboardWidgetsUseCase(
+            writeBarrier = mockk(relaxed = true),
             insightsEngine = insightsEngine,
             synthesisEngine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true)),
             monteCarloSimulator = monteCarloSimulator,

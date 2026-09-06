@@ -2,23 +2,23 @@ schemaVersion: 1
 reportOnly: true
 generatedFrom:
   engine: gr13-mediation-proof
-  reportSha256: 2aac7eedcffcaed25b62470d6d6a8bad6c552b056759dbfe03bb360b9536eb26
+  reportSha256: 559f0c815ee83a8d76401919655cf4c9fa34d5227c2d232536507e1aec720f41
   targetSha: null
   activePolicySha256: 643b526fba22f98ea934d299031d73c18cbb448133eda63da75075c3e70df4bb
   sourceRootManifestSha256: 02ec3e28c9451cecb31ca90dc8f665837b7857d979c20b3a400f898f8d1c2c95
 status: OPEN
 summary:
   policyRowCount: 447
-  provenRowCount: 30
-  remediationRowCount: 417
+  provenRowCount: 39
+  remediationRowCount: 408
   riskCounts:
-    DEFINITE_VIOLATION: 11
-    UNPROVEN_PATH: 406
+    DEFINITE_VIOLATION: 1
+    UNPROVEN_PATH: 407
   familyCounts:
     GR14_BREAK_RECURSION_REGION: 38
-    GR14_CLOSE_LAMBDA_ESCAPE: 40
+    GR14_CLOSE_LAMBDA_ESCAPE: 41
     GR14_CLOSE_OR_DOCUMENT_ENTRY: 64
-    GR14_GUARD_UNGUARDED_PATH: 11
+    GR14_GUARD_UNGUARDED_PATH: 1
     GR14_RESOLVE_DISPATCH: 5
     GR14_SYNCHRONIZE_OR_GUARD_ASYNC_PATH: 259
 remediationNote: One disposition per non-proven helper/workerMediated policy row.  No expiry, baseline, or accepted-debt state is allowed (GR-13 plan hard rule); every row must close through its GR-14 remediation family.
@@ -1464,36 +1464,6 @@ rows:
   recommendedRemediationFamily: GR14_SYNCHRONIZE_OR_GUARD_ASYNC_PATH
   owner: '@panospao7'
   linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireAll|null|String,Long|dao|com.yourname.expensetracker.data.database.dao.RecommendationDao|expireAllActiveByUser
-  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireAll|null|String,Long = timeProvider.now()
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/service/RecommendationInvalidator.kt|com.yourname.expensetracker.service.RecommendationInvalidator|function|invalidateAllForUser|null|String
-  - app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireAll|null|String,Long = timeProvider.now()
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireAll|null|String,Long|dao|com.yourname.expensetracker.data.database.dao.RecommendationDao|expireOld
-  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireAll|null|String,Long = timeProvider.now()
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/service/RecommendationInvalidator.kt|com.yourname.expensetracker.service.RecommendationInvalidator|function|invalidateAllForUser|null|String
-  - app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireAll|null|String,Long = timeProvider.now()
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
-  owner: '@panospao7'
-  linkedIssue: GR-14
 - mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireOld|null|String,Long|dao|com.yourname.expensetracker.data.database.dao.RecommendationDao|expireOld
   callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt|com.yourname.expensetracker.data.repository.RecommendationRepository|function|expireOld|null|String,Long = timeProvider.now()
   barrierMode: helper
@@ -2045,21 +2015,6 @@ rows:
   boundedPathEvidence: []
   riskClassification: UNPROVEN_PATH
   recommendedRemediationFamily: GR14_CLOSE_OR_DOCUMENT_ENTRY
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt|com.yourname.expensetracker.data.repository.SourceStatsRepository|function|insertIfNotExists|null|com.yourname.expensetracker.data.database.entity.SourceStats|dao|com.yourname.expensetracker.data.database.dao.SourceStatsDao|insertIfNotExists
-  callableKey: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt|com.yourname.expensetracker.data.repository.SourceStatsRepository|function|insertIfNotExists|null|SourceStats
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/domain/intelligence/ConfidenceRouter.kt|com.yourname.expensetracker.domain.intelligence.ConfidenceRouter|function|ensureSourceStats|null|String
-  - app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt|com.yourname.expensetracker.data.repository.SourceStatsRepository|function|insertIfNotExists|null|SourceStats
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
   owner: '@panospao7'
   linkedIssue: GR-14
 - mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt|com.yourname.expensetracker.data.repository.SourceStatsRepository|function|resetAllPendingCounts|null||dao|com.yourname.expensetracker.data.database.dao.SourceStatsDao|resetAllPendingCounts
@@ -2981,57 +2936,6 @@ rows:
   recommendedRemediationFamily: GR14_CLOSE_OR_DOCUMENT_ENTRY
   owner: '@panospao7'
   linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,com.yourname.expensetracker.domain.health.HealthTrend,String?|healthScoreHistoryDao|com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao|deleteOlderThan
-  callableKey: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,HealthTrend,String
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt|com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase|function|compute|null|ProcessedDashboardData
-  - app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt|com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase|function|computeHealthScoreV2|null|ComputeContext
-  - app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|calculateHealthScore|null|Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
-  - app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,HealthTrend,String
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,com.yourname.expensetracker.domain.health.HealthTrend,String?|healthScoreHistoryDao|com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao|insert
-  callableKey: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,HealthTrend,String
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt|com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase|function|compute|null|ProcessedDashboardData
-  - app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt|com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase|function|computeHealthScoreV2|null|ComputeContext
-  - app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|calculateHealthScore|null|Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
-  - app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,HealthTrend,String
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,com.yourname.expensetracker.domain.health.HealthTrend,String?|healthScoreHistoryDao|com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao|update
-  callableKey: app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,HealthTrend,String
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt|com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase|function|compute|null|ProcessedDashboardData
-  - app/src/main/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt|com.yourname.expensetracker.domain.usecase.dashboard.ComputeDashboardWidgetsUseCase|function|computeHealthScoreV2|null|ComputeContext
-  - app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|calculateHealthScore|null|Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
-  - app/src/main/java/com/yourname/expensetracker/domain/health/FinancialHealthScoreV2.kt|com.yourname.expensetracker.domain.health.FinancialHealthScoreV2|function|saveToHistory|null|Int,Int,Int,Int,Int,Long,Long,HealthTrend,String
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
-  owner: '@panospao7'
-  linkedIssue: GR-14
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt|com.yourname.expensetracker.domain.investment.InvestmentTracker|function|addHolding|null|com.yourname.expensetracker.data.database.entity.Investment|investmentDao|com.yourname.expensetracker.data.database.dao.InvestmentDao|insert
   callableKey: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt|com.yourname.expensetracker.domain.investment.InvestmentTracker|function|addHolding|null|Investment
   barrierMode: helper
@@ -3881,36 +3785,6 @@ rows:
   recommendedRemediationFamily: GR14_SYNCHRONIZE_OR_GUARD_ASYNC_PATH
   owner: '@panospao7'
   linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|updateOccurrenceStatus|null|Long,com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus,com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason|lifecycleEventDao|com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|insert
-  callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|updateOccurrenceStatus|null|Long,RecurringOccurrenceStatus,RecurringOccurrenceTransitionReason
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|cancelOccurrence|null|Long
-  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|updateOccurrenceStatus|null|Long,RecurringOccurrenceStatus,RecurringOccurrenceTransitionReason
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
-  owner: '@panospao7'
-  linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|updateOccurrenceStatus|null|Long,com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus,com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason|occurrenceDao|com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao|updateStatus
-  callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|updateOccurrenceStatus|null|Long,RecurringOccurrenceStatus,RecurringOccurrenceTransitionReason
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|cancelOccurrence|null|Long
-  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|function|updateOccurrenceStatus|null|Long,RecurringOccurrenceStatus,RecurringOccurrenceTransitionReason
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
-  owner: '@panospao7'
-  linkedIssue: GR-14
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter|function|writeCritical|null|Long?,String,String?,String?,String?,Long|dao|com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|insert
   callableKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter|function|writeCritical|null|Long,String,String,String,String,Long
   barrierMode: helper
@@ -4621,34 +4495,17 @@ rows:
   recommendedRemediationFamily: GR14_SYNCHRONIZE_OR_GUARD_ASYNC_PATH
   owner: '@panospao7'
   linkedIssue: GR-14
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessExpensePatch|null|Long,com.yourname.expensetracker.domain.transaction.BusinessExpensePatch,String,String?,String?|expenseDao|com.yourname.expensetracker.data.database.dao.ExpenseDao|update
-  callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessExpensePatch|null|Long,BusinessExpensePatch,String =,String? = null,String? = null
-  barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
-  reachingRootKinds:
-  - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessFlags|null|Long,Boolean? = null,Double? = null,String? = null,Boolean? = null,Boolean? = null,String =
-  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessExpensePatch|null|Long,BusinessExpensePatch,String =,String? = null,String? = null
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
-  owner: '@panospao7'
-  linkedIssue: GR-14
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessExpensePatch|null|Long,com.yourname.expensetracker.domain.transaction.BusinessExpensePatch,String,String?,String?|transactionEventDao|com.yourname.expensetracker.data.database.dao.TransactionEventDao|insert
   callableKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessExpensePatch|null|Long,BusinessExpensePatch,String =,String? = null,String? = null
   barrierMode: helper
-  proofStatus: counterexample_unguarded_call_path
-  reasonCode: GR13_UNGUARDED_CALL_PATH
-  decidingResolution: exact_synchronous
+  proofStatus: unproven_async_or_escaping_callback
+  reasonCode: GR13_SITE_INSIDE_UNRESOLVED_LAMBDA
+  decidingResolution: async_dispatch
   reachingRootKinds:
   - public_or_protected_external
-  boundedPathEvidence:
-  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessFlags|null|Long,Boolean? = null,Double? = null,String? = null,Boolean? = null,Boolean? = null,String =
-  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateBusinessExpensePatch|null|Long,BusinessExpensePatch,String =,String? = null,String? = null
-  riskClassification: DEFINITE_VIOLATION
-  recommendedRemediationFamily: GR14_GUARD_UNGUARDED_PATH
+  boundedPathEvidence: []
+  riskClassification: UNPROVEN_PATH
+  recommendedRemediationFamily: GR14_CLOSE_LAMBDA_ESCAPE
   owner: '@panospao7'
   linkedIssue: GR-14
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|updateCategory|null|Long,Long?,String?,String,String?|expenseDao|com.yourname.expensetracker.data.database.dao.ExpenseDao|updateCategoryNullable

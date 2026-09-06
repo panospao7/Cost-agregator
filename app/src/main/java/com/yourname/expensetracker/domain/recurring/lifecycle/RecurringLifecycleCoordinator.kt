@@ -847,16 +847,22 @@ class RecurringLifecycleCoordinator @Inject constructor(
     }
 
     /** Convenience: skip an occurrence. */
-    suspend fun skipOccurrence(occurrenceId: Long) =
+    suspend fun skipOccurrence(occurrenceId: Long) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.skipOccurrence")
         updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.SKIPPED, RecurringOccurrenceTransitionReason.USER_SKIPPED)
+    }
 
     /** Convenience: cancel an occurrence. */
-    suspend fun cancelOccurrence(occurrenceId: Long) =
+    suspend fun cancelOccurrence(occurrenceId: Long) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.cancelOccurrence")
         updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.CANCELLED, RecurringOccurrenceTransitionReason.USER_CANCELLED)
+    }
 
     /** Convenience: mark an occurrence missed. */
-    suspend fun markOccurrenceMissed(occurrenceId: Long) =
+    suspend fun markOccurrenceMissed(occurrenceId: Long) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markOccurrenceMissed")
         updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.MISSED, RecurringOccurrenceTransitionReason.SYSTEM_MARKED_MISSED)
+    }
 
     /**
      * Returns all reminder deliveries whose scheduled time has passed and

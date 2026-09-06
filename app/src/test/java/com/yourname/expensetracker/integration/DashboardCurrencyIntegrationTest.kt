@@ -146,6 +146,7 @@ class DashboardCurrencyIntegrationTest {
         }
 
         computeUseCase = ComputeDashboardWidgetsUseCase(
+            writeBarrier = mockk(relaxed = true),
             insightsEngine = insightsEngine,
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = monteCarloSimulator,

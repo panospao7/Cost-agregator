@@ -1286,6 +1286,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         receiptRequired: Boolean? = null,
         source: String = "BUSINESS_TAX_UPDATE"
     ): BusinessExpenseUpdateResult {
+        writeBarrier.checkWritesAllowed(
+            "TransactionLifecycleCoordinator.updateBusinessFlags"
+        )
         return updateBusinessExpensePatch(
             expenseId = expenseId,
             patch = BusinessExpensePatch(

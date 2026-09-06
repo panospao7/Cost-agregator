@@ -450,6 +450,7 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
         )
 
         dashboardUseCase = ComputeDashboardWidgetsUseCase(
+            writeBarrier = mockk(relaxed = true),
             insightsEngine = insightsEngine,
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = monteCarloSimulator,

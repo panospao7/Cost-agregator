@@ -42,6 +42,7 @@ if _PROJECT_ROOT not in sys.path:
 
 from scripts.db_guard.structural_analysis.barrier_proof import (  # noqa: E402
     CANONICAL_BARRIER_CONTRACT_V2,
+    ProofStatus,
 )
 from scripts.db_guard.declaration_scanner import (  # noqa: E402
     scan_production_declarations,
@@ -175,7 +176,7 @@ class _DirectSiteProver:
         proven: dict[int, bool] = {}
         for offset in sorted(self._requested.get(callable_key, ())):
             result = outcome.result_for_site_start(offset)
-            proven[offset] = result.status.value == "proven"
+            proven[offset] = result.status == ProofStatus.PROVEN
         self._results[callable_key] = proven
 
     def proven_sites(self, callable_key: str) -> dict[int, bool]:
@@ -466,12 +467,18 @@ def build_mediation_shadow(
             ]
         )
 
-    # Pre-request every helper call site needing a GR-12 direct proof.
+    # Pre-request every call site needing a GR-12 direct proof.
     direct_prover = _DirectSiteProver(builder, obs_by_callable) if graph is not None else None
     if graph is not None and direct_prover is not None:
-        reverse_targets = set(subject_callables.values())
         # Bounded prefilter: only callables whose masked body mentions a
-        # canonical barrier method can ever gain direct context.
+        # canonical barrier method can ever gain direct context.  Every
+        # exact edge of such a callable is proven, not only edges whose
+        # direct target is a subject: guard context flows TRANSITIVELY
+        # (caller -> intermediate helper -> subject), so restricting the
+        # requests to subject-targeting edges silently under-proved the
+        # intermediate hops and leaked "none" into subjects whose barrier
+        # sat two or more hops upstream (GR-14e diagnosis; the
+        # per-callable lazy bridge keeps the added cost bounded).
         for key, model in builder.callables.items():
             masked = builder.file_models[model.file].masked
             if model.body_start < 0 or model.body_end < 0:
@@ -481,8 +488,7 @@ def build_mediation_shadow(
             for edge in graph.edges:
                 if edge.caller_key != key or edge.uncertain:
                     continue
-                if any(target in reverse_targets for target in edge.targets):
-                    direct_prover.request(key, edge.name_start)
+                direct_prover.request(key, edge.name_start)
     if direct_prover is not None:
         for key in list(direct_prover._requested):
             direct_prover.proven_sites(key)
