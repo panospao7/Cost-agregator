@@ -1,5 +1,5 @@
 # ExpenseTracker Frontend - Visual Navigation Map
-*Last refreshed: June 1, 2026*
+*Last refreshed: September 7, 2026*
 
 ## APPLICATION FLOW DIAGRAM
 
@@ -26,7 +26,7 @@
    │            │          │                    │
 ┌──▼──┐  ┌────▼───┐ ┌────▼───┐  ┌───────────────▼──────────┐
 │Tabs │  │Overlays│ │Features│  │NavigationDestination     │
-│0-5  │  │(Sheets)│ │(23)    │  │Sealed Class Router       │
+│0-5  │  │(Sheets)│ │(24 cfg)│  │Sealed Class Router       │
 └──┬──┘  └────┬───┘ └────┬───┘  └───────────────┬──────────┘
    │          │          │                      │
    │     ┌────┴──┐       │                      │
@@ -67,7 +67,12 @@
                                 ├─► SharedExpenseGroups
                                ├─► BackupRestore
                                ├─► AiSettings
+                               ├─► PrivacySettings
                                └─► CategoryManagement
+
+    (BudgetForecasting is not in the menu — it opens from
+     Budget via onNavigateToForecast; Debug opens only in
+     BuildConfig.DEBUG builds)
 ```
 
 ---
@@ -83,7 +88,7 @@
 │                                                                        │
 │  ┌───────────────────────────────────────────────────────────────┐  │
 │  │ When (selectedTab)                                            │  │
-│  │   0 → HomeScreen()          [Dashboard]                      │  │
+│  │   0 → HomeRoute()           [Dashboard]                      │  │
 │  │   1 → TransactionsScreen()  [Activity]                       │  │
 │  │   2 → ReviewScreen()        [Review]                         │  │
 │  │   3 → BudgetScreen()        [Plan]                           │  │
@@ -513,14 +518,16 @@ Modal Sheet (Bottom-up animation)
 │          NavigationDestination (Sealed Class)                   │
 │                                                                 │
 │  Represents ALL possible navigation targets in the app          │
+│  (40 destination types)                                         │
 │                                                                 │
-│  ├─ Main Tabs (6)                                              │
+│  ├─ Main Tabs (6 + 2 tab-3 variants)                           │
 │  │  ├─ Home                                                    │
-│  │  ├─ Transactions                                            │
+│  │  ├─ Transactions(initialExpenseId?)                         │
 │  │  ├─ Review                                                  │
-│  │  ├─ Budget                                                  │
-│  │  ├─ Analytics                                               │
-│  │  └─ SpendingMap                                             │
+│  │  ├─ Budget / BudgetCreate / BudgetDetail(categoryId?,       │
+│  │  │    categoryName?)   ← all map to tab index 3             │
+│  │  ├─ Analytics(initialPeriod?)                               │
+│  │  └─ SpendingMap(initialLocationQuery?)                      │
 │  │                                                              │
     │   ├─ Overlay Screens (6)                                        │
     │  │  ├─ AddExpense                                              │
@@ -528,9 +535,9 @@ Modal Sheet (Bottom-up animation)
     │  │  ├─ RecurringExpenses                                       │
     │  │  ├─ ManualRecurringExpense                                  │
     │  │  ├─ Assistant                                               │
-    │  │  └─ BudgetForecasting                                       │
+    │  │  └─ BudgetForecasting(budget?)                              │
     │  │                                                              │
-    │  ├─ Feature Screens (22 + 3 management)                       │
+    │  ├─ Feature Screens (22)                                      │
 │  │  ├─ SavingsGoals                                            │
 │  │  ├─ CarbonFootprint                                         │
 │  │  ├─ WarrantyTracker                                         │
@@ -541,28 +548,26 @@ Modal Sheet (Bottom-up animation)
 │  │  ├─ InvestmentPortfolio                                     │
 │  │  ├─ BankConnections                                         │
 │  │  ├─ BillReminders                                           │
-│  │  ├─ SpendingChallenges                                      │
+│  │  ├─ SpendingChallenges(showCreateDialog?)                   │
 │  │  ├─ AdvancedAnalytics                                       │
 │  │  ├─ CashFlowCalendar                                        │
 │  │  ├─ LifestyleInflation                                      │
 │  │  ├─ SplitTemplates                                          │
-│  │  ├─ VisualSplitEditor(expense, templateId)                  │
+│  │  ├─ VisualSplitEditor(templateId?, expenseId?, ...)         │
 │  │  ├─ CurrencyManagement                                      │
 │  │  ├─ SubscriptionManagement                                  │
 │  │  ├─ TaxConfiguration                                        │
 │  │  ├─ ExportOptions                                           │
 │  │  ├─ SharedExpenseGroups                                     │
-│  │  ├─ BackupRestore                                           │
-│  │  └─ BudgetForecasting                                       │
+│  │  └─ BackupRestore                                           │
 │  │                                                              │
 │  ├─ Management Screens (3)                                     │
 │  │  ├─ AiSettings                                              │
 │  │  ├─ CategoryManagement                                      │
-│  │  └─ PrivacySettings (no standalone route)                   │
+│  │  └─ PrivacySettings (routed; FeatureConfig id "privacy")    │
 │  │                                                              │
-│  └─ Parametric Destinations (sub-set of Features)              │
-│     ├─ BudgetForecasting(budget)                               │
-│     └─ VisualSplitEditor(expense, templateId)                  │
+│  └─ Debug (BuildConfig.DEBUG-gated at render time)             │
+│     └─ Debug                                                    │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 
@@ -705,7 +710,7 @@ ui/
 │   │   ├── AssistantSheet.kt
 │   │   └── AssistantViewModel.kt
 │   ├── recurring/
-│   │   └── RecurringExpensesScreen.kt
+│   │   └── RecurringExpensesScreen.kt   ← screen + inline @HiltViewModel RecurringExpensesViewModel
 │   ├── recurringmanual/
 │   │   ├── ManualRecurringExpenseScreen.kt
 │   │   └── ManualRecurringExpenseViewModel.kt
@@ -783,6 +788,9 @@ ui/
 │   │   ├── PrivacySettingsScreen.kt
 │   │   └── PrivacySettingsViewModel.kt
 │   │
+│   ├── settings/
+│   │   └── SourceLinkBackfillViewModel.kt   ← headless VM (no UI consumer found)
+│   │
 │   └── debug/
 │       ├── DebugScreen.kt
 │       ├── DebugViewModel.kt
@@ -791,8 +799,7 @@ ui/
 │       ├── CategorizationDebugViewModel.kt
 │       ├── SourceLinkDebugScreen.kt
 │       ├── SourceLinkDebugViewModel.kt
-│       ├── DebugIssueDetector.kt
-│       └── DebugDataStorage.kt
+│       └── DebugIssueDetector.kt
 │
 ├── components/
 │   ├── AppNavigationBar.kt
@@ -816,6 +823,7 @@ ui/
 │   ├── PeriodGridView.kt
 │   ├── PeriodNavigationBar.kt
 │   ├── PlaceInsightCard.kt
+│   ├── PrivacyBlockedCard.kt
 │   ├── PulseDot.kt
 │   ├── RecommendationCard.kt
 │   ├── RetroBudgetBlockPartyCard.kt
@@ -826,6 +834,7 @@ ui/
 │   ├── SpendingTrendChart.kt
 │   ├── TotalsDashboardCard.kt
 │   ├── TransferDirectionBadge.kt
+│   ├── UiTextExtensions.kt
 │   │
 │   ├── ai/
 │   │   ├── AiChatBubble.kt

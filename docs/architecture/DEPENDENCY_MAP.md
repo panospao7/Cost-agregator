@@ -369,7 +369,7 @@ ReceiptMatchLifecycleService              [domain/receipt/lifecycle/ReceiptMatch
 |----------|------|------------|
 | `ReceiptScanViewModel` | `ui/screens/receiptscan/ReceiptScanViewModel.kt` | `ReceiptLifecycleCoordinator`, `ReceiptRepository` |
 | `ReviewViewModel` | `ui/screens/review/ReviewViewModel.kt` | `ReceiptLifecycleCoordinator`, `ReceiptRepository` |
-| `ReceiptMatchingViewModel` | `ui/screens/receiptmatching/ReceiptMatchingViewModel.kt` | `ReceiptRepository`, `ExpenseRepository`, `ReceiptMatchLifecycleService` |
+| `ReceiptMatchingViewModel` | `ui/screens/receiptmatching/ReceiptMatchingViewModel.kt` | `ReceiptRepository`, `ReceiptTransactionMatcher`, `ReceiptLinkService`, `ReceiptMatchLifecycleService` |
 | `ReceiptRepository` | `data/repository/ReceiptRepository.kt` | `ReceiptLifecycleCoordinator`, `ReceiptLinkService`, `ReceiptMatchLifecycleService` |
 | `WarrantyTrackerRepository` | `data/repository/WarrantyTrackerRepository.kt` | `AutoCreateWarrantyFromReceiptUseCase` |
 | `DashboardContractsAdapter` | `data/repository/DashboardContractsAdapter.kt` | Receipt counts |
@@ -474,7 +474,7 @@ SnoozeReminderReceiver / DismissReminderReceiver
 | `CashFlowCalculator` | `domain/cashflow/CashFlowCalculator.kt` | `RecurringLifecycleCoordinator` |
 | `ForecastInputAssembler` | `domain/forecasting/ForecastInputAssembler.kt` | `RecurringLifecycleCoordinator` |
 | `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | `RecurringLifecycleCoordinator.getDueReminders()`, `BillReminderSettingsRepository` |
-| `BillRemindersViewModel` | `ui/screens/reminder/BillRemindersViewModel.kt` | `BillReminderManager`, `RecurringLifecycleCoordinator` |
+| `BillRemindersViewModel` | `ui/screens/reminder/BillRemindersViewModel.kt` | `BillReminderManager`, `CurrencySettingsRepository` |
 | `RecurringRuleLifecycleCoordinator` | `domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt` | Single writer for rule CRUD (consumed by ViewModel) |
 | `RecurringArchitectureGuardTest` | `test/.../RecurringArchitectureGuardTest.kt` | 19 static enforcements for single-writer + typed results |
 
@@ -761,7 +761,8 @@ DefaultSensitiveHashingService            [data/privacy/DefaultSensitiveHashingS
 
 RetentionRegistry                         [domain/privacy/RetentionRegistry.kt]
 RetentionTarget                           [domain/privacy/RetentionTarget.kt]
-  │  Registry of 5 data retention targets for DataRetentionWorker
+  │  Registry of 10 data retention targets for DataRetentionWorker
+  │  (registered via RetentionModule; see targets list in Section 9)
 
 Persistence Payloads (per-source-type privacy wrappers):
   ├── NotificationPersistencePayload       [domain/privacy/NotificationPersistencePayload.kt]
@@ -906,7 +907,7 @@ WorkerSpecScheduler                       [domain/workers/WorkerSpecScheduler.kt
 WorkerRunLogger                           [domain/workers/WorkerRunLogger.kt]
   └── Interface + WorkerRunLoggerImpl (@Singleton @Inject). Per-run lifecycle:
       start() returns WorkerRunHandle with success/skipped/retry/failure methods.
-      Writes BackgroundJobRun rows via BackgroundJobRunDao. Bound via WorkerModule.
+      Writes BackgroundJobRun rows via BackgroundJobRunDao. Bound via DiagnosticsModule.
 
 WorkerExecutionGuard                      [domain/workers/WorkerExecutionGuard.kt]
   └── Structured guarded execution for workers. Checks RestoreMaintenanceMode,
@@ -989,12 +990,12 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
-| `DatabaseModule` | `di/DatabaseModule.kt` | `AppDatabase`, `GroupTransactionCoordinator` | All DAOs, group operations |
-| `DaoModule` | `di/DaoModule.kt` | ~62 DAO singletons | All repositories |
+| `DatabaseModule` | `di/DatabaseModule.kt` | `AppDatabase`, `GroupTransactionCoordinator` (interface → `data/database/GroupTransactionCoordinator.kt`), `DomainTransactionRunner` → `RoomDomainTransactionRunner` | All DAOs, group operations, lifecycle coordinators (atomic state+event writes) |
+| `DaoModule` | `di/DaoModule.kt` | 64 DAO singletons | All repositories |
 | `DispatchersModule` | `di/DispatchersModule.kt` | `@IoDispatcher`, `@DefaultDispatcher`, `ApplicationScope` | 50+ classes |
-| `TimeModule` | `di/TimeModule.kt` | `TimeProvider` → `SystemTimeProvider` | 50+ classes |
-| `ServiceModule` | `di/ServiceModule.kt` | `Gson`, `NotificationService`, `GeocodingService`, `NearbyPoiService`, `ForegroundLocationProvider`, `NavigationTargetResolver`, `WidgetStyleRepository`, `SpeechInputGateway` | Services, geocoding, navigation |
-| `WorkerModule` | `di/WorkerModule.kt` | `WorkerRunLogger` → `WorkerRunLoggerImpl`, `NotificationPermissionChecker` → `AndroidNotificationPermissionChecker` | All 7 workers via `WorkerExecutionGuard` |
+| `TimeModule` | `di/TimeModule.kt` | `TimeProvider` → `SystemTimeProvider`, `MonotonicTimeProvider` → `SystemMonotonicTimeProvider` | 50+ classes |
+| `ServiceModule` | `di/ServiceModule.kt` | `Gson`, `NotificationService`, `GeocodingService`, `NearbyPoiService`, `ForegroundLocationProvider`, `NavigationTargetResolver`, `WidgetStyleRepository`, `SpeechInputGateway`, `StringDistanceUtils` | Services, geocoding, navigation |
+| `WorkerModule` | `di/WorkerModule.kt` | `WorkerLeaseRegistry` → `WorkerLeaseRegistryImpl`, `WorkerDrainController` → `WorkerLeaseRegistryImpl`, `NotificationPermissionChecker` → `AndroidNotificationPermissionChecker`, `WorkManager` | All 7 workers via `WorkerExecutionGuard` |
 
 #### AI Modules
 
@@ -1009,13 +1010,13 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
 | `CashFlowModule` | `di/CashFlowModule.kt` | `CashFlowCalculator` | CashFlowCalendarViewModel, SmartSavingsEngine |
-| `CurrencyModule` | `di/CurrencyModule.kt` | `CurrencySettingsRepository`, `CurrencyRatesRepository`, `ExchangeRateStore` | All currency-aware pipelines |
+| `CurrencyModule` | `di/CurrencyModule.kt` | `CurrencySettingsRepository`, `CurrencyRatesRepository`, `ExchangeRateStore`, `UserCurrencyProvider` → `AppConfigCurrencyProvider` | All currency-aware pipelines |
 | `DashboardContractsModule` | `di/DashboardContractsModule.kt` | 7 dashboard contract adapters | `ComputeDashboardWidgetsUseCase` |
 | `DashboardAnomalyModule` | `di/DashboardAnomalyModule.kt` | `AnomalyAlertRepository` (domain + dashboard) | Analytics, dashboard |
 | `SavingsModule` | `di/SavingsModule.kt` | `SmartSavingsEngine`, `AutomatedSavingsRuleStateRepository`, `SavingsContributionHistoryRepository`, `AutomatedSavingsRuleEngine`, `SavingsGamificationEngine` | Savings ViewModels |
 | `SavingsRepositoryBindingsModule` | `di/SavingsRepositoryBindingsModule.kt` | `DomainSavingsGoalRepository` binding | Savings engines |
 | `GroupsModule` | `di/GroupsModule.kt` | `GroupsRepository`, `SharedExpenseDataPort`, Use cases (3); auto-provided: `GroupLifecycleCoordinator`, `GroupBalanceCalculator` | Groups ViewModel |
-| `TaxModule` | `di/TaxModule.kt` | `TaxConfiguration` → `GreeceTaxConfiguration`, auto-provided: `DemoTaxRateProvider` | Tax ViewModel |
+| `TaxModule` | `di/TaxModule.kt` | `TaxConfiguration` → `GreeceTaxConfiguration`, `TaxRateProvider` → `DemoTaxRateProvider` | Tax ViewModel |
 | `ExportModule` | `di/ExportModule.kt` | `QuickBooksIIFExporter`, `XeroCSVExporter`, `FreshBooksExporter` | Export ViewModel |
 | `ReminderSettingsModule` | `di/ReminderSettingsModule.kt` | `BillReminderSettingsRepository` → impl (P4) | BillReminderWorker, BillRemindersViewModel |
 
@@ -1024,19 +1025,46 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
 | `NetworkModule` | `di/NetworkModule.kt` | `@LocationHttpClient`, `@CloudAiHttpClient` | Geocoding services, AI providers |
-| `SecurityModule` | `di/SecurityModule.kt` | `SecureKeyStorage` | AI providers, encryption |
-| `PrivacyModule` | `di/PrivacyModule.kt` | `CompositePrivacyGate`, `PrivacyAuditLogger`, `PrivacySettingsRepository` | Every gated capability, backup |
-| `BackupRepositoryModule` | `di/BackupRepositoryModule.kt` | `DatabaseBackupRepository` → impl | BackupRestoreViewModel |
+| `SecurityModule` | `di/SecurityModule.kt` | `SecureKeyStorage`, `NotificationTransientKeyProvider` → `AndroidKeystoreNotificationTransientKeyProvider` | AI providers, encryption, notification capture |
+| `PrivacyModule` | `di/PrivacyModule.kt` | `CompositePrivacyGate` (incl. `ExportPrivacyGate`), `PrivacyAuditLogger`, `PrivacySettingsRepository`, `CloudPayloadPolicy`, `CloudPayloadRedactor`, `SensitiveHashingService`, `RedactionSanitizer` | Every gated capability, backup |
+| `BackupRepositoryModule` | `di/BackupRepositoryModule.kt` | `DatabaseBackupRepository` → impl; binds `MaintenanceSafeDiagnosticSink`, `RestoreDatabaseOpener` | BackupRestoreViewModel |
 | `ParserModule` | `di/ParserModule.kt` | `GreekBankParser` | Notification parsing |
 | `ReceiptParsingModule` | `di/ReceiptParsingModule.kt` | `MerchantRulesPolicy` binding | Receipt parsing |
 | `EmptyStateModule` | `di/EmptyStateModule.kt` | `EmptyStateRegistryInitializer` multibind | Empty state UI |
 | `EmailIngestionModule` | `di/EmailIngestionModule.kt` | `AmazonReceiptParser`, `UberReceiptParser`, `AppleReceiptParser` | Email ingestion |
-| `LocationResolverPortsModule` | `di/LocationResolverPortsModule.kt` | `LocationCachePort`, `MerchantClusterPort` | Location enrichment |
-| `DiagnosticsModule` | `di/DiagnosticsModule.kt` | `DiagnosticEventWriter`, `TransactionLifecycleEventWriter`, `ReceiptLifecycleEventWriter`, `RecurringLifecycleEventWriter`, `OperationRunRecorder`, `WorkerRunLogger`, `DiagnosticsRepository` | Diagnostics pipeline |
-| `ProvenanceModule` | `di/ProvenanceModule.kt` | Provenance event recording | Provenance tracking |
-| `RetentionModule` | `di/RetentionModule.kt` | `RetentionRegistry` with 5 `RetentionTarget` entries | Data retention workers |
+| `LocationResolverPortsModule` | `di/LocationResolverPortsModule.kt` | `LocationCachePort`, `MerchantClusterPort`, `ExpenseCategoryAssignmentPort` → `DefaultExpenseCategoryAssignmentService` | Location enrichment, category assignment |
+| `DiagnosticsModule` | `di/DiagnosticsModule.kt` | `DiagnosticEventWriter`, `TransactionLifecycleEventWriter`, `ReceiptLifecycleEventWriter`, `RecurringLifecycleEventWriter`, `OperationRunRecorder`, `WorkerRunLogger`, `DiagnosticsRepository`, `PostCommitActionRunner`, `SideEffectEventWriter`, `TransactionDatePolicy`, `WorkerTerminalDiagnosticSink` | Diagnostics pipeline |
+| `ProvenanceModule` | `di/ProvenanceModule.kt` | `SourceLinkWriter`, `PendingReviewSourceLinkService`, `PendingReviewSourceLinkPromoter` | Provenance tracking |
+| `RetentionModule` | `di/RetentionModule.kt` | `RetentionRegistry` with 10 `RetentionTarget` entries | Data retention workers |
 | `NegotiationModule` | `di/NegotiationModule.kt` | `StaticMarketRateProvider` | BillNegotiationEngine, BillNegotiationViewModel |
 | `EmptyStatePresentationModule` | `ui/components/emptystate/EmptyStatePresentationModule.kt` | `EmptyStateRegistryInitializer` multibind (via `DefaultEmptyStateRegistryInitializer`) | Empty state UI |
+
+### Database Schema & Transaction Primitives (2026-09-07)
+
+```
+DatabaseSchemaPolicy                       [data/database/DatabaseSchemaPolicy.kt]
+  │  Kotlin object — single source of truth for migration configuration.
+  │  Production code AND tests reference this; no hardcoded versions.
+  │    CURRENT_VERSION = APP_DATABASE_SCHEMA_VERSION (v148, declared in AppDatabase.kt)
+  │    MIGRATION_BASELINE = 145 (below this → destructive migration)
+  │    ALL_MIGRATIONS = DatabaseMigrations.ALL
+
+DomainTransactionRunner                    [domain/transaction/DomainTransactionRunner.kt]
+  │  Interface for atomic state+event writes (wraps Room withTransaction).
+  │  Bound by DatabaseModule → RoomDomainTransactionRunner
+  │    [data/database/RoomDomainTransactionRunner.kt: AppDatabase + TimeProvider].
+  │  Consumers inject the interface: TransactionLifecycleCoordinator,
+  │  GroupTransactionCoordinator, ReceiptLifecycleCoordinator,
+  │  RecurringLifecycleCoordinator, ReceiptLinkService,
+  │  NotificationProcessingPipeline.
+
+TimeProvider / MonotonicTimeProvider       [domain/util/]
+  │  java.time-backed clock seams, bound by TimeModule:
+  │    TimeProvider          → SystemTimeProvider
+  │    MonotonicTimeProvider → SystemMonotonicTimeProvider
+  │  Inject these instead of calling Clock/system time directly so tests can
+  │  control time deterministically.
+```
 
 ---
 
@@ -1222,51 +1250,53 @@ All Hybrid services use:
 | ViewModel | Injected Dependencies |
 |-----------|----------------------|
 | `HomeViewModel` | Application, DashboardRepository, DashboardDataProvider, CategoryRepository, PlannedExpenseRepository, DashboardAnalyticsRepository, ExpenseRepository, ComputeDashboardWidgetsUseCase, AiSettingsRepository, AiArtifactRepository, AiEnvironmentMonitor, AiEngagementRepository, WidgetStyleRepository, TimeProvider, RecommendationStateManager, NavigationTargetResolver, RecommendationDismissalHandler, TotalsAggregationEngine, AdvancedAnalyticsEngine, CurrencySettingsRepository |
-| `TransactionsViewModel` | NotificationRepository, ExpenseRepository, CategoryRepository, RecurringExpenseRepository, MerchantLocationRepository, TimeProvider, GeocodingService, CurrencySettingsRepository |
+| `TransactionsViewModel` | NotificationRepository, ExpenseRepository, CategoryRepository, RecurringExpenseRepository, MerchantLocationRepository, TimeProvider, GeocodingService, CurrencySettingsRepository, SourceLinkQueryService |
 | `ReviewViewModel` | NotificationRepository, ReviewQueueRepository, CategoryRepository, ReceiptRepository, ExpenseRepository, DebugDataStorage, GeocodingService, PrivacyGate, ExplainPendingReviewUseCase, SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase, JudgePendingReviewDuplicateUseCase, AiArtifactRepository, AiSettingsRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptDebugExporter |
 | `BudgetViewModel` | BudgetRepository, CategoryRepository, SharedExpenseBudgetOffsetEngine, BudgetAutopilotEngine, TimeProvider, CurrencySettingsRepository, AppDatabase |
 | `AddExpenseViewModel` | ManualExpenseRepository, ExpenseRepository, CategoryRepository, TimeProvider, CurrencySettingsRepository |
 | `ReceiptScanViewModel` | ReceiptRepository, CategoryRepository, CurrencySettingsRepository, AiSettingsRepository, SavedStateHandle, TimeProvider, SuggestReceiptExtractionUseCase, SuggestCategoryFallbackUseCase, CategorizeReceiptItemsUseCase, ReceiptItemCategorizationRepository, AiArtifactRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptParser, TransactionLifecycleCoordinator, ReceiptLinkService, MerchantNormalizer, HybridExpenseClassifier |
 | `AnalyticsViewModel` | ExpenseRepository, CategoryRepository, BudgetRepository, InsightsEngine, RecurringExpenseEngine, AnalyticsRepository, AdvancedAnalyticsEngine, AnalyticsCurrencyNormalizer, LocationInsightsEngine, AreaSpendingEngine, TravelDetectionEngine, SpendingPersonalityClassifier, TimeProvider, AnalyticsInputAssembler, CurrencyConverter, CurrencySettingsRepository, BudgetVsActualEngine, DailyBucketEngine |
-| `AdvancedAnalyticsViewModel` | AnalyticsRepository, CategoryRepository |
-| `BackupRestoreViewModel` | DatabaseBackupRepository |
-| `SavingsGoalsViewModel` | SavingsGoalRepository, SmartSavingsEngine, AutomatedSavingsRuleEngine, SavingsGamificationEngine |
-| `SubscriptionManagementViewModel` | SubscriptionManagementRepository |
-| `CurrencyManagementViewModel` | CurrencySettingsRepository, CurrencyRatesRepository, MultiCurrencyRepository |
-| `CarbonFootprintViewModel` | ExpenseRepository, CategoryRepository |
+| `AdvancedAnalyticsViewModel` | AdvancedAnalyticsDashboard, CurrencySettingsRepository, TimeProvider |
+| `BackupRestoreViewModel` | @ApplicationContext Context, DatabaseBackupRepository, RestoreMaintenanceMode |
+| `SavingsGoalsViewModel` | SavingsGoalRepository, SavingsContributionHistoryRepository, SmartSavingsEngine, SavingsGamificationEngine, LifestyleSavingsPromptUseCase, MonthlySavingsSweepUseCase, TimeProvider, CurrencySettingsRepository |
+| `SubscriptionManagementViewModel` | SubscriptionManagementRepository, TimeProvider, SubscriptionManagerEngine, CurrencySettingsRepository, CurrencyConverter |
+| `CurrencyManagementViewModel` | CurrencyDataRepository, CurrencyConverter, CurrencyRatesRepository, CurrencySettingsRepository, HybridExpenseClassifier |
+| `CarbonFootprintViewModel` | CarbonFootprintCalculator, TimeProvider, CurrencySettingsRepository |
 | `CashFlowCalendarViewModel` | CashFlowCalculator, TimeProvider, CurrencySettingsRepository |
-| `DebugViewModel` | NotificationRepository, ExpenseRepository, BudgetRepository, CategoryRepository |
+| `DebugViewModel` | @ApplicationContext Context, NotificationRepository, ReviewQueueRepository, ExpenseRepository, BudgetRepository, CategoryRepository, NotificationSeeder, TimeProvider, ServiceDiagnostics, GetAiRuntimeStatusUseCase, AiSettingsRepository, AiEngagementRepository, AiRuntimeDiagnostics, DatabaseBackupRepository, CsvExpenseImporter, LegacyDataMigrationService |
 | `PrivacySettingsViewModel` | PrivacySettingsRepository |
-| `VisualSplitViewModel` | SplitTemplateDao, SplitItemAssignmentDao |
-| `WarrantyTrackerViewModel` | WarrantyTrackerRepository |
-| `SpendingMapViewModel` | ExpenseRepository, CategoryRepository, LocationResolver |
-| `InvestmentViewModel` | InvestmentDao, InvestmentValueDao |
-| `BankConnectionsViewModel` | BankConnectionDao |
-| `ReceiptMatchingViewModel` | ReceiptRepository, ExpenseRepository, ReceiptMatchLifecycleService |
-| `AiSettingsViewModel` | AiSettingsRepository |
-| `AssistantViewModel` | AiChatRepository, QueryInterpretationService |
-| `BillRemindersViewModel` | BillReminderManager, RecurringLifecycleCoordinator |
-| `RecurringExpensesViewModel` | RecurringExpenseRepository |
-| `ManualRecurringExpenseViewModel` | ManualRecurringExpenseRepository |
+| `VisualSplitViewModel` | EnhancedSplitManager, Gson |
+| `WarrantyTrackerViewModel` | WarrantyTrackerRepository, TimeProvider |
+| `SpendingMapViewModel` | ExpenseRepository, CategoryRepository, LocationResolver, ForegroundLocationProvider, MerchantLocationRepository, SpendingHeatmapEngine, LocationInsightsEngine, GeocodingService, CurrencySettingsRepository, CurrencyConverter, TimeProvider, PrivacyGate |
+| `InvestmentViewModel` | InvestmentTracker, CurrencySettingsRepository |
+| `BankConnectionsViewModel` | BankConnectionLifecycleCoordinator |
+| `ReceiptMatchingViewModel` | ReceiptRepository, ReceiptTransactionMatcher, ReceiptLinkService, ReceiptMatchLifecycleService |
+| `AiSettingsViewModel` | AiSettingsRepository, GetAiRuntimeStatusUseCase, AiRuntimeDiagnostics, SyncProactiveBriefingWorkUseCase, SecureKeyStorage, PrivacyGate, CloudProviderConnectionTester |
+| `AssistantViewModel` | Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, MapFinancialQueryToNavigationUseCase, PrivacySettingsRepository, MonotonicTimeProvider |
+| `BillRemindersViewModel` | BillReminderManager, CurrencySettingsRepository |
+| `RecurringExpensesViewModel` (inline in RecurringExpensesScreen.kt) | FinancialWeatherRepository, RecurringExpenseRepository, PlannedExpenseRepository, RecurringExpenseEngine, ExpenseRepository, CurrencySettingsRepository, TimeProvider |
+| `ManualRecurringExpenseViewModel` | ManualRecurringExpenseRepository, TimeProvider, CurrencySettingsRepository |
+| `SharedExpenseGroupsViewModel` | GroupsRepository, AddGroupMemberUseCase, AddGroupExpenseUseCase, DeleteGroupUseCase, ManualExpenseRepository, ExpenseRepository, CurrencySettingsRepository |
 | `SourceLinkDebugViewModel` | SourceLinkQueryService |
 | `SourceLinkBackfillViewModel` | SourceLinkBackfillWorker |
-| `BillNegotiationViewModel` | SmartBillNegotiationEngine, MarketRateProvider |
-| `BudgetForecastingViewModel` | BudgetForecastingEngine, BudgetForecastDao |
+| `BillNegotiationViewModel` | SmartBillNegotiationEngine, CurrencySettingsRepository |
+| `BudgetForecastingViewModel` | BudgetForecastingEngine, BudgetRecommendationEngine, CurrencySettingsRepository |
 | `CategoryViewModel` | CategoryRepository |
 | `CategorizationDebugViewModel` | CategorizationEngine |
-| `ExportOptionsViewModel` | AccountingExportPolicy, AccountingExporters |
-| `LifestyleInflationViewModel` | LifestyleInflationDetector, ExpenseRepository |
-| `MainViewModel` | (App-level state holder, no injected deps) |
-| `NaturalLanguageSearchViewModel` | NaturalLanguageSearchEngine, AiChatRepository |
-| `PriceProtectionViewModel` | PriceProtectionTracker |
-| `SpendingChallengesViewModel` | SpendingChallengeRepository |
-| `TaxConfigurationViewModel` | TaxConfiguration, TaxSettingsRepository |
+| `ExportOptionsViewModel` | ExportDataRepository, AccountingExportPolicy, TimeProvider, XeroCSVExporter, QuickBooksIIFExporter, FreshBooksExporter, DatabaseReadBarrier, PrivacyGate, @IoDispatcher CoroutineDispatcher |
+| `LifestyleInflationViewModel` | LifestyleInflationDetector, CurrencySettingsRepository |
+| `MainViewModel` | ReviewQueueRepository, RestoreMaintenanceMode |
+| `NaturalLanguageSearchViewModel` | NaturalLanguageSearchEngine, CurrencySettingsRepository, CurrencyConverter, SpeechInputGateway |
+| `PriceProtectionViewModel` | PriceProtectionTracker, CurrencySettingsRepository, @ApplicationContext Context |
+| `SpendingChallengesViewModel` | SpendingChallengeManager, CategoryRepository, CurrencySettingsRepository |
+| `TaxConfigurationViewModel` | TaxEstimator, TimeProvider |
 
 ---
 
 > **Generated:** Manual analysis of 1100+ source files across 3 layers (UI/Domain/Data),  
-> 33 Hilt @Module files (32 in `di/` + 1 `EmptyStatePresentationModule.kt`), 41 @HiltViewModel, 46+ repositories, ~68 DAOs, 70+ entities.  
-> DB schema version: v147  
+> 33 Hilt @Module files (32 in `di/` + 1 `EmptyStatePresentationModule.kt`), 41 @HiltViewModel (40 files + 1 inline), 46+ repositories, ~68 DAOs, 70 entities.  
+> DB schema version: v148 (via `DatabaseSchemaPolicy.CURRENT_VERSION`)  
+> **Last updated:** 2026-09-07  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
 
 ---

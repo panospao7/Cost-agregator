@@ -1,7 +1,7 @@
 # ExpenseTracker UI Component Library
 
-**Generated:** June 1, 2026  
-**Total Components:** 59 across 9 categories + root level  
+**Last Updated:** September 7, 2026  
+**Total Components:** 59 files in `ui/components/` across 9 categories + root level (plus 7 files in `ui/util/` and 1 in `ui/integration/`)  
 **Framework:** Jetpack Compose with Material 3
 
 ---
@@ -37,8 +37,8 @@
 | **MonteCarloForecastCard** | `components/MonteCarloForecastCard.kt` | Probabilistic forecast visualization | HomeScreen | Dashboard-only |
 | **HealthScoreWidget** | `components/health/HealthScoreWidget.kt` | Financial health V1 score | HomeScreen | Dashboard-only |
 | **FinancialHealthScoreV2Widget** | `components/health/FinancialHealthScoreV2Widget.kt` | Financial health V2 score | HomeScreen | Dashboard-only |
-| **RecommendationCard** | `components/RecommendationCard.kt` | AI recommendations display | HomeScreen | Dashboard-only |
-| **PlaceInsightCard** | `components/PlaceInsightCard.kt` | Location-based spending insights | HomeScreen, SpendingMapScreen | Dashboard + Map |
+| **RecommendationCard** | `components/RecommendationCard.kt` | AI recommendations display | HomeScreen, BudgetForecastingScreen, CarbonFootprintScreen, LifestyleInflationScreen | Cross-screen |
+| **PlaceInsightCard** | `components/PlaceInsightCard.kt` | Location-based spending insights | SpendingMapScreen, AnalyticsScreen | Dashboard + Map |
 | **NearbyShopSuggestionCard** | `components/NearbyShopSuggestionCard.kt` | Nearby store suggestions | SpendingMapScreen | Map-only |
 | **NoSpendStreakWidget** | `components/analytics/NoSpendStreakWidget.kt` | Spending streaks counter | HomeScreen | Dashboard-only |
 | **DataQualityWarningChip** | `components/DataQualityWarningChip.kt` | Data quality warning chip | HomeScreen, BudgetScreen | Cross-screen |
@@ -51,16 +51,16 @@
 
 | Component | File | Purpose | Consumers | Reusability |
 |-----------|------|---------|-----------|-------------|
-| **CategoryDonutChart** | `components/CategoryDonutChart.kt` | Pie/donut spending breakdown | AnalyticsScreen, HomeScreen | Cross-screen |
-| **SpendingTrendChart** | `components/SpendingTrendChart.kt` | Line chart of spending over time | AnalyticsScreen | Analytics-only |
-| **SpendingPaceGauge** | `components/SpendingPaceGauge.kt` | Gauge chart for budget burn rate | BudgetScreen, HomeScreen | Cross-screen |
-| **ChartMarker** | `components/ChartMarker.kt` | Data point marker for charts | AnalyticsScreen | Analytics-only |
-| **ForecastTimeline** | `components/ForecastTimeline.kt` | Timeline visualization of forecast | BudgetForecastingScreen | Forecasting-only |
+| **CategoryDonutChart** | `components/CategoryDonutChart.kt` | Pie/donut spending breakdown | AnalyticsScreen | Analytics-only |
+| **SpendingTrendChart** | `components/SpendingTrendChart.kt` | Line chart of spending over time | HomeScreen | Dashboard-only |
+| **SpendingPaceGauge** | `components/SpendingPaceGauge.kt` | Gauge chart for budget burn rate | HomeScreen | Dashboard-only |
+| **ChartMarker** | `components/ChartMarker.kt` | `rememberMarker()` — Vico chart marker (data-point label) | SpendingTrendChart, ForecastTimeline | Chart-internal |
+| **ForecastTimeline** | `components/ForecastTimeline.kt` | Timeline visualization of forecast | FinancialWeatherCard (HomeScreen) | Dashboard-only |
 | **MoneyRadarWidget** | `components/dashboard/MoneyRadarWidget.kt` | Radar/spider chart for spending dimensions | HomeScreen | Dashboard-only |
-| **PeriodGridView** | `components/PeriodGridView.kt` | Calendar grid for date periods | CashFlowCalendarScreen | Calendar-only |
-| **PeriodBlock** | `components/PeriodBlock.kt` | Individual period cell component | CashFlowCalendarScreen | Calendar-only |
-| **PeriodNavigationBar** | `components/PeriodNavigationBar.kt` | Period selector with arrows | HomeScreen, AnalyticsScreen | Cross-screen |
-| **StatisticalVisualizations** | `components/analytics/StatisticalVisualizations.kt` | Advanced statistical charts | AdvancedAnalyticsScreen | Analytics-only |
+| **PeriodGridView** | `components/PeriodGridView.kt` | Grid of period cells for date ranges | TotalsDashboardCard (HomeScreen) | Dashboard-only |
+| **PeriodBlock** | `components/PeriodBlock.kt` | Individual period cell component | PeriodGridView | Dashboard-only |
+| **PeriodNavigationBar** | `components/PeriodNavigationBar.kt` | Period selector with arrows | TotalsDashboardCard (HomeScreen) | Dashboard-only |
+| **StatisticalVisualizations** | `components/analytics/StatisticalVisualizations.kt` | Advanced statistical charts (PercentileGridCard, TransactionHistogramChart, CategoryPercentileBadge, RichMerchantCard) | AnalyticsScreen | Analytics-only |
 
 ---
 
@@ -71,12 +71,12 @@
 | Component | File | Purpose | Consumers | Reusability |
 |-----------|------|---------|-----------|-------------|
 | **AssistantResultCard** | `components/ai/AssistantResultCard.kt` | AI assistant response display | AssistantSheet | Assistant-only |
-| **CategoryAssistCard** | `components/ai/CategoryAssistCard.kt` | AI category suggestion card | ReviewScreen, AssistantSheet | Cross-screen |
+| **CategoryAssistCard** | `components/ai/CategoryAssistCard.kt` | AI category suggestion card | ReviewScreen, ReceiptScanScreen | Cross-screen |
 | **DedupeAssistCard** | `components/ai/DedupeAssistCard.kt` | Duplicate detection UI | ReviewScreen | Review-only |
-| **ReceiptAssistCard** | `components/ai/ReceiptAssistCard.kt` | Receipt scanning results | ReceiptScanScreen | Receipt-only |
+| **ReceiptAssistCard** | `components/ai/ReceiptAssistCard.kt` | Receipt scanning results | ReceiptScanScreen, ReviewScreen | Cross-screen |
 | **ReceiptItemBreakdownCard** | `components/ai/ReceiptItemBreakdownCard.kt` | Item-level receipt data | ReceiptScanScreen | Receipt-only |
 | **AiChatBubble** | `components/ai/AiChatBubble.kt` | Chat message bubble | AssistantSheet | Assistant-only |
-| **AiInsightsCard** | `components/ai/AiInsightsCard.kt` | AI-generated insights display | AssistantSheet, HomeScreen | Cross-screen |
+| **AiInsightsCard** | `components/ai/AiInsightsCard.kt` | AI-generated insights display | AssistantSheet | Assistant-only |
 | **AiRecommendationCard** | `components/ai/AiRecommendationCard.kt` | AI recommendation card | HomeScreen | Dashboard-only |
 | **AiTypingIndicator** | `components/ai/AiTypingIndicator.kt` | Typing indicator animation | AssistantSheet | Assistant-only |
 
@@ -88,10 +88,10 @@
 
 | Component | File | Purpose | Consumers | Reusability |
 |-----------|------|---------|-----------|-------------|
-| **EmptyState** | `components/common/EmptyState.kt` | Default empty state with icon + message | All screens | Global |
-| **EnhancedEmptyState** | `components/common/EnhancedEmptyState.kt` | Rich empty state with CTA button | All screens | Global |
-| **ErrorState** | `components/common/ErrorState.kt` | Error display with retry action | All screens | Global |
-| **LoadingSkeleton** | `components/common/LoadingSkeleton.kt` | Placeholder shimmer loading | All screens | Global |
+| **EmptyState** | `components/common/EmptyState.kt` | Default empty state with icon + message (delegates to EnhancedEmptyState; also `AnimatedEmptyState`) | Feature screens via `LoadableUiState.Empty` pattern | Global |
+| **EnhancedEmptyState** | `components/common/EnhancedEmptyState.kt` | Rich empty state with CTA button + contextual action chips (also `AnimatedEnhancedEmptyState`) | Feature screens via registry actions | Global |
+| **ErrorState** | `components/common/ErrorState.kt` | Error display with retry action (also `InlineErrorBanner`, `AnimatedErrorState`) | Feature screens via `LoadableUiState.Error` pattern | Global |
+| **LoadingSkeleton** | `components/common/LoadingSkeleton.kt` | Placeholder shimmer loading (7 skeleton variants) | Main tabs (Home, Transactions, Analytics, Budget, Map) | Global |
 | **ContextualActionRegistry** | `components/emptystate/ContextualActionRegistry.kt` | Registry for contextual empty state actions | All screens | Global |
 | **DefaultEmptyStateRegistryInitializer** | `components/emptystate/DefaultEmptyStateRegistryInitializer.kt` | Bootstrap for empty state registry | App startup | Global |
 | **EmptyStateAction** | `components/emptystate/EmptyStateAction.kt` | Action data class for empty state CTAs | All screens | Global |
@@ -107,10 +107,10 @@
 |-----------|------|---------|-----------|-------------|
 | **CategoryBreakdownSheet** | `components/CategoryBreakdownSheet.kt` | Modal category spending details | HomeScreen | Dashboard-only |
 | **RetroCategoryBreakdownSheet** | `components/RetroCategoryBreakdownSheet.kt` | Alternative category breakdown | HomeScreen | Dashboard-only |
-| **LocationCorrectionSheet** | `components/LocationCorrectionSheet.kt` | Fix location data modal | SpendingMapScreen, TransactionsScreen | Cross-screen |
+| **LocationCorrectionSheet** | `components/LocationCorrectionSheet.kt` | Fix location data modal | SpendingMapScreen | Map-only |
 | **LocationPermissionDialog** | `components/LocationPermissionDialog.kt` | Request location permission | SpendingMapScreen | Map-only |
-| **NotificationPermissionDialog** | `components/NotificationPermissionDialog.kt` | Request notification permission | App startup | Startup-only |
-| **LocationSearchPicker** | `components/LocationSearchPicker.kt` | Location search/selection | SpendingMapScreen | Map-only |
+| **NotificationPermissionDialog** | `components/NotificationPermissionDialog.kt` | Request notification permission | MainActivity | Startup-only |
+| **LocationSearchPicker** | `components/LocationSearchPicker.kt` | Location search/selection | SpendingMapScreen, TransactionsScreen (also used by LocationCorrectionSheet) | Cross-screen |
 
 ---
 
@@ -122,8 +122,8 @@
 |-----------|------|---------|-----------|-------------|
 | **AppNavigationBar** | `components/AppNavigationBar.kt` | Bottom navigation bar (6 tabs) | MainActivity | Global |
 | **PulseDot** | `components/PulseDot.kt` | Animated service status indicator | HomeScreen | Dashboard-only |
-| **TransferDirectionBadge** | `components/TransferDirectionBadge.kt` | Income/expense direction badge | TransactionsScreen | Transactions-only |
-| **BentoCard** | `components/BentoCard.kt` | Grid card layout wrapper | HomeScreen | Dashboard-only |
+| **TransferDirectionBadge** | `components/TransferDirectionBadge.kt` | Income/expense direction badge | TransactionsScreen, ReviewScreen | Cross-screen |
+| **BentoCard** | `components/BentoCard.kt` | Grid card layout wrapper | HomeScreen, AnalyticsScreen (+ internal use by dashboard/chart components) | Cross-screen |
 
 ---
 
@@ -133,11 +133,11 @@
 
 | Component | File | Purpose | Consumers | Reusability |
 |-----------|------|---------|-----------|-------------|
-| **FeatureComponents** | `components/feature/FeatureComponents.kt` | Reusable feature UI patterns | Multiple feature screens | Cross-feature |
-| **FormComponents** | `components/feature/FormComponents.kt` | Form inputs (text, dropdown, etc.) | AddExpenseSheet, multiple screens | Cross-screen |
-| **MetricComponents** | `components/feature/MetricComponents.kt` | Metric display components | AnalyticsScreen, BudgetScreen | Cross-screen |
-| **FeatureIntegration** | `integration/FeatureIntegration.kt` | Feature routing/integration | HomeScreen | Infrastructure |
-| **PersonalityProfileCard** | `components/analytics/PersonalityProfileCard.kt` | Spending personality display | AdvancedAnalyticsScreen | Analytics-only |
+| **FeatureComponents** | `components/feature/FeatureComponents.kt` | Feature scaffolding (FeatureScaffold, LoadingState, feature-level EmptyState/ErrorState, SectionHeader, FeatureCard) | SectionHeader used by AnalyticsScreen, PrivacySettingsScreen; other helpers currently unused | Cross-feature |
+| **FormComponents** | `components/feature/FormComponents.kt` | Form inputs (FormTextField, FormAmountField, FormDropdown, FormDateField, FormDialog, FormSection, FormActions) | Currently unused (reserved library code) | Reserved |
+| **MetricComponents** | `components/feature/MetricComponents.kt` | Metric display (MetricCard, MetricRow, SummaryTotalCard, AmountComparisonCard, StatusPill) | Currently unused (reserved library code) | Reserved |
+| **FeatureIntegration** | `integration/FeatureIntegration.kt` | Feature menu/quick-action integration composables | Currently unreferenced (no imports; cleanup candidate) | Infrastructure |
+| **PersonalityProfileCard** | `components/analytics/PersonalityProfileCard.kt` | Spending personality display | AnalyticsScreen | Analytics-only |
 | **RetroTopCategoriesCard** | `components/RetroTopCategoriesCard.kt` | Alternative top categories card | HomeScreen | Dashboard-only |
 
 ---
@@ -148,7 +148,7 @@
 
 | Component | File | Purpose | Consumers | Reusability |
 |-----------|------|---------|-----------|-------------|
-| **PrivacyBlockedCard** | `components/PrivacyBlockedCard.kt` | Typed privacy-blocked card with `PrivacyBlocked` sealed interface, semantics, testTag, optional settings button. Shows capability label + reason. | PrivacySettingsScreen | Cross-cutting (privacy UI) |
+| **PrivacyBlockedCard** | `components/PrivacyBlockedCard.kt` | Typed privacy-blocked card consuming domain `PrivacyBlocked` (capability + reason), semantics content description, `privacy_blocked_card` testTag, optional privacy-settings button with lock icon. | PrivacySettingsScreen, AssistantSheet | Cross-cutting (privacy UI) |
 
 ---
 
@@ -158,27 +158,32 @@
 
 | Component | File | Purpose | Consumers | Reusability |
 |-----------|------|---------|-----------|-------------|
+| **UiTextExtensions** | `components/UiTextExtensions.kt` | `UiText.asString()` resolution helpers for domain `UiText` | Currently unreferenced (no importers) | Cross-cutting |
 | **ColorExtensions** | `util/ColorExtensions.kt` | Color transformations/extensions | Multiple screens | Cross-cutting |
 | **HapticFeedback** | `util/HapticFeedback.kt` | Haptic feedback utilities | Multiple screens | Cross-cutting |
 | **ModifierExtensions** | `util/ModifierExtensions.kt` | Reusable Compose modifiers | Multiple screens | Cross-cutting |
 | **ClipboardAmountParser** | `util/ClipboardAmountParser.kt` | Clipboard amount parsing | AddExpenseSheet | Screen-specific |
+| **AmountInputSanitizer** | `util/AmountInputSanitizer.kt` | Money input sanitization (digits, single decimal separator, max 2 decimals) — S2-008 fix | Add/Edit expense amount fields | Cross-screen |
+| **OwnershipValidator** | `util/OwnershipValidator.kt` | Shared-expense ownership validation for Add/Edit expense paths | AddExpenseSheet and edit paths | Cross-screen |
+| **UiTimeUtils** | `util/UiTimeUtils.kt` | Time formatting/conversion helpers (uses `TimeProvider`) | Multiple screens | Cross-cutting |
 
 ---
 
 ## 10. Component Usage Heatmap
 
-| Component | # Screens Using | Risk Level |
+Usage counts below are direct call-site references verified against `app/src/main/java` (September 2026). Many feature screens reach these components indirectly through the `LoadableUiState` (Loading/Data/Empty/Error) contract in `ui/model/LoadableUiState.kt` — see `ui/model/RouteContentPattern.kt`.
+
+| Component | # Call Sites | Risk Level |
 |-----------|----------------|------------|
-| **EmptyState** | ALL (36+ packages) | 🔴 CRITICAL — breaking this breaks every screen |
-| **EnhancedEmptyState** | 15+ screens | 🔴 HIGH — widely adopted |
-| **ErrorState** | ALL (36+ packages) | 🔴 CRITICAL — every screen uses it |
-| **LoadingSkeleton** | ALL (36+ packages) | 🔴 CRITICAL — every screen uses it |
+| **EmptyState / EnhancedEmptyState** | 8 feature screens direct (+ via `LoadableUiState` pattern) | 🔴 CRITICAL — the standard empty-state contract |
+| **ErrorState** | 8 screen files (+ FeatureComponents wrapper) | 🔴 CRITICAL — the standard error contract |
+| **LoadingSkeleton** | 5 main-tab screens (Home, Transactions, Analytics, Budget, Map) | 🔴 HIGH — all primary tabs |
 | **AppNavigationBar** | 1 (MainActivity) | 🔴 HIGH — the entire app chrome |
-| **PeriodNavigationBar** | 3 (Home, Analytics, Budget) | 🟡 MEDIUM — cross-screen |
-| **CategoryDonutChart** | 2 (Analytics, Home) | 🟢 LOW — isolated |
-| **SpendingPaceGauge** | 2 (Budget, Home) | 🟢 LOW — isolated |
-| **CategoryAssistCard** | 2 (Review, Assistant) | 🟢 LOW — isolated |
-| **FormComponents** | 5+ screens | 🟡 MEDIUM — shared form patterns |
+| **BentoCard** | 2 screens + 8 dashboard/chart components | 🟡 MEDIUM — shared layout primitive |
+| **CategoryAssistCard** | 2 (Review, ReceiptScan) | 🟢 LOW — isolated |
+| **RecommendationCard** | 4 (Home, BudgetForecasting, CarbonFootprint, LifestyleInflation) | 🟡 MEDIUM — cross-screen |
+| **FormComponents** | 0 (currently unused) | 🟢 LOW — reserved library code |
+| **MetricComponents** | 0 (currently unused) | 🟢 LOW — reserved library code |
 | **All others** | 1-2 screens | 🟢 LOW — screen-specific |
 
 ---

@@ -1,5 +1,7 @@
 # Engine Interaction Map
 
+> **Last updated:** 2026-09-07 (verified against code: DB v148, guarded-worker set, guard suite)
+>
 > **Purpose:** Before fixing any engine, check this map to know which pipelines will be affected.  
 > **Rule:** Any engine change requires verifying ALL affected pipelines still work.
 
@@ -23,7 +25,7 @@
 | **NLP/AI Categorization** | 1 (Notification), 3 (Receipt), 11 (Email) | 🟡 HIGH |
 | **InvestmentTracker** | Investment portfolio only | 🟢 LOW |
 | **TaxEstimator** | Tax reports, Export | 🟢 LOW |
-| **GroupTransactionCoordinator** | Groups, shared expenses, budget offsets | 🟡 HIGH |
+| **GroupTransactionCoordinator** | Groups, shared expenses, budget offsets (domain interface; atomic writes executed by `data/database/GroupTransactionCoordinator.kt`) | 🟡 HIGH |
 | **DailyBucketEngine** | 5 (Dashboard), 6 (Budget), Analytics | 🟢 LOW |
 | **BudgetVsActualEngine** | 5 (Dashboard), 6 (Budget), Analytics | 🟢 LOW |
 | **AnalyticsInputAssembler** | 5 (Dashboard), 6 (Budget/Forecast), Analytics | 🟡 HIGH |
@@ -31,13 +33,20 @@
 | **RecurringRuleLifecycleCoordinator** | 4 (Recurring lifecycle), 2 (Transaction reconcile) | 🟡 HIGH |
 | **RecurringLifecycleEventWriter** | 4 (Recurring), 7 (Backup audit) | 🟢 LOW |
 | **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check | 🟢 LOW |
-| **WorkerExecutionGuard** | ALL workers (9-Notification), 7 (Backup restore gating) | 🟡 HIGH |
+| **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
 | **GroupLifecycleCoordinator** | Groups, Expenses, Budget offsets, Analytics | 🟡 HIGH |
 | **GroupBalanceCalculator** | Groups, Settlements | 🟢 LOW |
 | **HybridRouter** | 8 (AI cloud/on-device routing), 10 (Bank statement), 3 (Receipt) | 🟡 HIGH |
 | **AccountingExportPolicy** | 12 (Export), Tax reports | 🟢 LOW |
 | **NetCashflowBalanceProvider** | 6 (Budget/Forecast/Cashflow) | 🟢 LOW |
+| **AdvancedAnalyticsEngine** | 6 (Analytics views: category/merchant/pattern/statistical insights) — requires `NormalizedAnalyticsInput` | 🟡 HIGH |
+| **TotalsAggregationEngine** | 5 (Dashboard totals) — aggregation routes through `MultiCurrencyRepository` | 🟡 HIGH |
+| **MoneyNormalizationEngine** | Money pipelines (conversion outcomes, rate basis, bucket policy) via `domain/core/money/` | 🟡 HIGH |
+| **SubscriptionManagerEngine** | Subscriptions (validate/create, price history, usage, candidates, health, savings) | 🟡 HIGH |
+| **SynthesisEngine** | 6 (Month-end forecast, read-only) | 🟢 LOW |
+| **BudgetForecastingEngine** | 5/6 (Budget forecast generation + `BudgetForecastDao` persistence) | 🟢 LOW |
+| **NaturalLanguageSearchEngine** | NL query search (read-only; keyset `SearchCursor` pagination) | 🟢 LOW |
 
 ---
 
@@ -117,11 +126,12 @@ BillReminderWorker.doWork()
 
 ### WorkerExecutionGuard changes affect:
 ```
-WorkerExecutionGuard.runGuardedWithContext()
-  ├── All 7 workers (guard check at entry)
+WorkerExecutionGuard.runGuardedWithContext() / runGuarded()
+  ├── All 10 CoroutineWorkers (guard check at entry; allowlist is empty)
   │     ├── RestoreMaintenanceMode (block during restore)
   │     ├── WorkerRunLogger (start/success/skipped/retry/failure)
-  │     ├── RetryableWorkerException (retry contract)
+  │     ├── WorkerTimeoutPolicy (RETRY / PROPAGATE_CANCELLATION)
+  │     ├── RetryableWorkerException (retry contract; sanitized reasonCode — PR12J-1)
   │     └── NotificationPermissionChecker (permission gating)
   └── PrivacyRuntimeWorkerPolicy (privacy-toggle gating)
 ```
@@ -176,7 +186,9 @@ PrivacyGate.check(capability, context)
   ├── LocationBackfillWorker (background location)
   ├── DataRetentionWorker (data purging)
   └── DailyBriefingWorker (AI briefing)
-  ↑ PrivacyDecision.FailClosed: 39+ callers now use blocksExecution()
+  ↑ PrivacyDecision.FailClosed: 38 call sites across 26 files now use blocksExecution()
+    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 48 call sites
+    across 32 production files — different metric, both current)
     which returns true for both Denied and FailClosed variants,
     providing consistent fail-closed behavior across all pipelines.
 ```
@@ -200,17 +212,23 @@ PrivacyGate.check(capability, context)
 - GroupBalanceCalculator — isolated group balance computation
 - AccountingExportPolicy — isolated export validation
 - NetCashflowBalanceProvider — isolated forecast input
+- SynthesisEngine — read-only month-end forecast computation
+- NaturalLanguageSearchEngine — read-only NL query search
 
 ### DANGEROUS to change (shared engines):
 - CurrencyConverter — verify dashboard, budget, forecast, export, cashflow
 - MerchantNormalizer — verify dedupe, matching, analytics, recurring
 - CategorizationEngine — verify notification, receipt, email, budget
-- TimeProvider — verify ALL timestamp-dependent logic
+- TimeProvider — verify ALL timestamp-dependent logic (enforced by G-TIME-01 guard `scripts/verify_time_boundaries.py`)
 - PrivacyGate — verify ALL privacy-sensitive paths
 - RecurringRuleLifecycleCoordinator — verify recurring, transaction reconciliation, reminder dispatch, backup
-- WorkerExecutionGuard — verify ALL 7 workers, backup restore gating, notification permission checking
+- WorkerExecutionGuard — verify ALL 10 CoroutineWorkers, backup restore gating, notification permission checking
 - GroupLifecycleCoordinator — verify groups, expenses, budget offsets, analytics
 - HybridRouter — verify ALL AI hybrid services fed by the router
+- AdvancedAnalyticsEngine — verify analytics UI consumers; requires `NormalizedAnalyticsInput` (assemble via `AnalyticsInputAssembler`)
+- TotalsAggregationEngine — verify dashboard totals consumers
+- MoneyNormalizationEngine — verify all money conversion/bucket-policy consumers in `domain/core/money/`
+- SubscriptionManagerEngine — verify subscriptions, price history, usage, candidates, negotiation outcome writes
 
 ### VERY DANGEROUS to change (foundational):
 - MoneyAggregate model — verify every consumer of financial totals

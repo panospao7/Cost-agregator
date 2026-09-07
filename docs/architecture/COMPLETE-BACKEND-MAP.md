@@ -1,14 +1,14 @@
 # Complete Backend & Database Map - ExpenseTracker
 
-**Generated:** 2026-06-09  
-**Total Files Mapped:** 1050 (520 domain + 305 data + 167 UI + 35 di (32 @Module) + 17 service + 3 startup + 2 receiver + 1 worker + 3 util)  
-**Test Coverage:** 600+ unit test files + 27 instrumented tests
+**Generated:** 2026-06-09 · **Reconciled with code:** 2026-09-07  
+**Total Files Mapped:** 1073 production .kt files (535 domain + 307 data + 166 UI + 35 di (32 @Module) + 19 service + 3 startup + 2 receiver + 1 worker + 3 util + 1 diagnostics + 1 root)  
+**Test Coverage:** 626+ unit test files + 28 instrumented tests
 
 ---
 
 ## Table of Contents
 
-1. [Domain Package (520 files)](#domain-package)
+1. [Domain Package (535 files)](#domain-package)
    - [AI/ML Subsystem](#ai-subsystem)
    - [Alerts & Anomalies](#alerts--anomalies)
    - [Analytics & Insights](#analytics--insights)
@@ -49,7 +49,7 @@
    - [Utilities](#utilities)
    - [Widget](#widget)
    - [Workers](#workers)
-2. [Data Package (305 files)](#data-package)
+2. [Data Package (307 files)](#data-package)
    - [Database Layer](#database-layer)
    - [Repositories](#repositories)
    - [AI Providers](#ai-providers)
@@ -580,14 +580,13 @@
 | `privacy/SafePrivacyMetadata.kt` | SafePrivacyMetadata | Sanitized privacy metadata | Model | - | No |
 | `privacy/SensitiveHashingService.kt` | SensitiveHashingService | Hashing for sensitive fields | Service | - | No |
 
-### Receipt Lifecycle (18 files)
+### Receipt Lifecycle (19 files)
 
 **Location:** `com.yourname.expensetracker.domain.receipt.lifecycle`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific processing | Engine | - | No |
-| `receipt/lifecycle/BankStatementResult.kt` | BankStatementResult | Structured result | Model | - | No |
+| `receipt/lifecycle/BankStatementLifecycleProcessor.kt` | BankStatementLifecycleProcessor | Statement-specific processing; also defines the `BankStatementResult` data class | Engine | - | No |
 | `receipt/lifecycle/EmailReceiptProcessResult.kt` | EmailReceiptProcessResult | Email receipt processing result | Model | - | No |
 | `receipt/lifecycle/ReceiptAssetStore.kt` | ReceiptAssetStore | File persistence, hashing, backup | Service | - | No |
 | `debug/ReceiptDebugExporter.kt` | ReceiptDebugExporter | Debug export of receipt lifecycle data | Utility | - | No |
@@ -600,10 +599,12 @@
 | `receipt/lifecycle/ReceiptMatchLifecycleService.kt` | ReceiptMatchLifecycleService | Lifecycle-aware receipt match mutations + events (P3) | Service | AppDatabase, ScannedReceiptDao, ReceiptEventDao, DatabaseWriteBarrier, TimeProvider | No |
 | `receipt/lifecycle/ReceiptSideEffectDispatcher.kt` | ReceiptSideEffectDispatcher | Document-type-gated side effects | Engine | - | No |
 | `receipt/lifecycle/ReceiptSideEffectInput.kt` | ReceiptSideEffectInput | Input models for side effects | Model | - | No |
+| `receipt/lifecycle/ReceiptSideEffectPlanner.kt` | ReceiptSideEffectPlanner | Plans document-type-gated receipt side effects | Service | - | No |
+| `receipt/lifecycle/ReceiptTimestampPolicy.kt` | ReceiptTimestampPolicy | Policy for receipt capture/expense timestamps | Utility | - | No |
 | `receipt/EmailReceiptData.kt` | EmailReceiptData | Structured email receipt data | Model | - | No |
 | `receipt/ReceiptDocumentType.kt` | ReceiptDocumentType | Enum: 6 document types | Enum | - | No |
 | `receipt/ReceiptProcessingStatus.kt` | ReceiptProcessingStatus | Enum: 14 processing states | Enum | - | No |
-| `receipt/ReceiptReceiptSourceType.kt` | ReceiptSourceType | Enum: 9 receipt source types | Enum | - | No |
+| `receipt/ReceiptSourceType.kt` | ReceiptSourceType | Enum: 9 receipt source types | Enum | - | No |
 
 ### Recurring Expenses (10 files)
 
@@ -622,7 +623,7 @@
 | `recurring/lifecycle/RecurringOccurrenceStatus.kt` | RecurringOccurrenceStatus | Typed enum + transition policy (P4) | Enum | - | No |
 | `recurring/lifecycle/RecurringLifecycleEventWriter.kt` | RecurringLifecycleEventWriter | Writes recurring lifecycle audit events | Service | RecurringLifecycleEventDao, TimeProvider | No |
 
-### Reminder Management (4 files)
+### Reminder Management (3 files)
 
 **Location:** `com.yourname.expensetracker.domain.reminder`
 
@@ -631,7 +632,8 @@
 | `reminder/BillReminderManager.kt` | BillReminderManager | Bill reminder management (deprecated) | Engine | - | No |
 | `reminder/BillReminderSettings.kt` | BillReminderSettings | Runtime reminder dispatch config (P4) | Data | - | No |
 | `reminder/BillReminderSettingsRepository.kt` | BillReminderSettingsRepository | Interface for reminder settings (P4) | Interface | - | No |
-| `reminder/BillReminderWorker.kt` | BillReminderWorker | @HiltWorker — Periodic WorkManager worker (every 4h). Queries getDueReminders() and dispatches Android notifications. | Worker | RecurringLifecycleCoordinator, Context | No |
+
+> Note: `BillReminderWorker` now lives in `service/reminder/` (see App Services Package → Reminder & Matching & Warranty Workers).
 
 ### Savings (4 files)
 
@@ -662,7 +664,7 @@
 | `text/DashboardTextKeys.kt` | DashboardTextKeys | Dashboard text keys | Config | - | No |
 | `text/DomainTextKeys.kt` | DomainTextKeys | Domain text keys | Config | - | No |
 
-### Transaction Lifecycle (9 files)
+### Transaction Lifecycle (24 files)
 
 **Location:** `com.yourname.expensetracker.domain.transaction`
 
@@ -675,8 +677,23 @@
 | `transaction/CreateExpenseResult.kt` | CreateExpenseResult | Sealed result (Created, DuplicateSkipped, etc.) | Model | - | No |
 | `transaction/ExpenseUpdates.kt` | ExpenseUpdates | Patch-style update model | Model | - | No |
 | `transaction/SideEffectMode.kt` | SideEffectMode | IMMEDIATE/DEFER enum | Enum | - | No |
+| `transaction/TransactionContext.kt` | TransactionContext | Typed context handed to transactional blocks (correlation/causation/operation IDs) | Model | - | No |
+| `transaction/DomainTransactionRunner.kt` | DomainTransactionRunner | Port for running DB-atomic domain transactions (impl: `data/database/RoomDomainTransactionRunner`) | Interface | - | No |
+| `transaction/BusinessExpensePatch.kt` | BusinessExpensePatch | Patch model for business expense updates | Model | - | No |
+| `transaction/BusinessExpenseUpdateResult.kt` | BusinessExpenseUpdateResult | Result type for business expense updates | Model | - | No |
+| `transaction/DefaultExpenseCategoryAssignmentService.kt` | DefaultExpenseCategoryAssignmentService | Default category assignment for new expenses | Service | - | No |
+| `transaction/ExpenseCategoryAssignmentPort.kt` | ExpenseCategoryAssignmentPort | Port for category assignment | Interface | - | No |
+| `transaction/SourceLearningPolicy.kt` | SourceLearningPolicy | Policy for merchant/source learning | Policy | - | No |
 | `transaction/lifecycle/TransactionLifecycleCoordinator.kt` | TransactionLifecycleCoordinator | Single entry point for ALL expense CUD | Engine | - | No |
 | `transaction/lifecycle/TransactionSideEffectDispatcher.kt` | TransactionSideEffectDispatcher | Post-creation side effects | Engine | - | No |
+| `transaction/lifecycle/TransactionSideEffectPlanner.kt` | TransactionSideEffectPlanner | Plans which side effects to run for a mutation | Engine | - | No |
+| `transaction/lifecycle/TransactionLifecycleEventWriter.kt` | TransactionLifecycleEventWriter | Writes transaction lifecycle audit events | Service | - | No |
+| `transaction/lifecycle/BulkChangedField.kt` | BulkChangedField | Enum of fields changed by bulk operations | Enum | - | No |
+| `transaction/lifecycle/TransactionUpdateKind.kt` | TransactionUpdateKind | Typed update kinds for lifecycle mutations | Enum | - | No |
+| `transaction/lifecycle/DebugExpenseAuditWriter.kt` | DebugExpenseAuditWriter | Debug-only expense audit writer | Utility | - | No |
+| `transaction/validation/TransactionValidator.kt` | TransactionValidator | Transaction validation rules | Service | - | No |
+| `transaction/validation/TransactionDatePolicy.kt` | TransactionDatePolicy | Date validation policy for transactions | Policy | - | No |
+| `transaction/validation/TransactionValidationError.kt` | TransactionValidationError | Validation error models | Model | - | No |
 
 ### Use Cases (31 files)
 
@@ -733,7 +750,7 @@
 |------|-------|---------|------|--------------|-------|
 | `usecase/warranty/AutoCreateWarrantyFromReceiptUseCase.kt` | AutoCreateWarrantyFromReceiptUseCase | Creates warranty from receipt | UseCase | - | No |
 
-### Side Effect System (19 files)
+### Side Effect System (20 files)
 
 **Location:** `com.yourname.expensetracker.domain.sideeffect`
 
@@ -747,6 +764,7 @@
 | `sideeffect/PostCommitActionRunner.kt` | PostCommitActionRunner | Interface for running post-commit actions | Service | - | No |
 | `sideeffect/PostCommitActionRunnerExtensions.kt` | PostCommitActionRunnerExtensions | Extension functions for runner | Utility | - | No |
 | `sideeffect/PostCommitActionRunnerImpl.kt` | PostCommitActionRunnerImpl | Implementation of post-commit runner | Service | - | No |
+| `sideeffect/PostCommitSideEffectEvidenceService.kt` | PostCommitSideEffectEvidenceService | Records evidence of post-commit side-effect execution | Service | - | No |
 | `sideeffect/SideEffectActionResult.kt` | SideEffectActionResult | Result type for side effect actions | Model | - | No |
 | `sideeffect/SideEffectBatchResult.kt` | SideEffectBatchResult | Result type for batch execution | Model | - | No |
 | `sideeffect/SideEffectCategory.kt` | SideEffectCategory | Enum categorizing side effects | Enum | - | No |
@@ -783,7 +801,7 @@
 | `provenance/ReceiptSourceLinkPayloadFactory.kt` | ReceiptSourceLinkPayloadFactory | Factory for receipt source payloads | Factory | - | No |
 | `provenance/SafeProvenanceMetadata.kt` | SafeProvenanceMetadata | Sanitized metadata for provenance | Model | - | No |
 | `provenance/SourceIdentityKeyFactory.kt` | SourceIdentityKeyFactory | Factory for source identity keys | Utility | - | No |
-| `provenance/SourceLinkBackfillWorker.kt` | SourceLinkBackfillWorker | Worker for backfilling source links (non-registry) | Worker | - | No |
+| `provenance/SourceLinkBackfillWorker.kt` | SourceLinkBackfillWorker | PR8 backfill of legacy source data into `entity_source_links` (idempotent). Despite the name it is **not** a WorkManager worker — an `@Singleton` invoked from `SourceLinkBackfillViewModel` with progress callbacks; not registered in `WorkerRegistry` | Service | EntitySourceLinkDao, ExpenseDao, ScannedReceiptDao, ReceiptExpenseLinkDao, PendingReviewDao, RawNotificationDao, EmailReceiptDao, DatabaseWriteBarrier | No |
 | `provenance/SourceLinkEnums.kt` | SourceLinkEnums | Enums for source link types | Enum | - | No |
 | `provenance/SourceLinkEventMetadataBuilder.kt` | SourceLinkEventMetadataBuilder | Builder for event metadata | Utility | - | No |
 | `provenance/SourceLinkFallbackPolicy.kt` | SourceLinkFallbackPolicy | Fallback policy for missing links | Policy | - | No |
@@ -842,17 +860,17 @@
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `notification/capture/NotificationCaptureCrypto.kt` | NotificationCaptureCrypto | Cryptographic operations for capture | Security | - | No |
-| `notification/capture/NotificationCaptureDeduplicationGate.kt` | NotificationCaptureDeduplicationGate | Deduplication gate | Engine | - | No |
-| `notification/capture/NotificationCaptureRepair.kt` | NotificationCaptureRepair | Repair utilities for capture | Utility | - | No |
-| `notification/capture/NotificationCaptureVibrator.kt` | NotificationCaptureVibrator | Haptic feedback for capture | Service | - | No |
-| `notification/capture/NotificationIntakeEvent.kt` | NotificationIntakeEvent | Intake event models | Model | - | No |
-| `notification/capture/NotificationIntakeWorker.kt` | NotificationIntakeWorker | (domain-side spec) Intake worker spec | Model | - | No |
-| `notification/capture/NotificationRateLimiter.kt` | NotificationRateLimiter | Rate limiting for capture | Service | - | No |
-| `notification/capture/NotificationRawBackupPolicy.kt` | NotificationRawBackupPolicy | Raw backup policy | Service | - | No |
-| `notification/capture/PendingNotificationStatus.kt` | PendingNotificationStatus | Status enum for pending notifications | Enum | - | No |
-| `notification/capture/UploadedNotification.kt` | UploadedNotification | Uploaded notification models | Model | - | No |
-| `notification/capture/UploadedNotificationQueue.kt` | UploadedNotificationQueue | Queue for uploaded notifications | Service | - | No |
+| `notification/capture/CaptureSource.kt` | CaptureSource | Source of a capture (NotificationListenerService callback or manual refresh) | Model | - | No |
+| `notification/capture/NotificationCaptureDecision.kt` | NotificationCaptureDecision | Capture allow/deny decision made before any notification text/extras are extracted | Model | - | No |
+| `notification/capture/NotificationCaptureDeduper.kt` | NotificationCaptureDeduper | Atomic check-and-insert deduplication with TTL-based expiration | Engine | - | No |
+| `notification/capture/NotificationCaptureGate.kt` | NotificationCaptureGate | Privacy gate evaluated before ANY notification text/extras are extracted | Service | PrivacyGate | No |
+| `notification/capture/NotificationIntakeCaptureResult.kt` | NotificationIntakeCaptureResult | Capture result (duplicate fingerprint, DO_NOT_STORE outcomes, etc.) | Model | - | No |
+| `notification/capture/NotificationIntakeCoordinator.kt` | NotificationIntakeCoordinator | Coordinates intake; encrypts extracted text as a transient payload for worker-side decryption | Service | - | No |
+| `notification/capture/NotificationIntakePayloadRepairer.kt` | NotificationIntakePayloadRepairer | Repairs malformed intake payloads | Utility | - | No |
+| `notification/capture/NotificationIntakeRecoveryScheduler.kt` | NotificationIntakeRecoveryScheduler | Schedules intake recovery (app start, listener connected, restore complete) | Service | - | No |
+| `notification/capture/NotificationTextParts.kt` | NotificationTextParts | Single-pass text extraction struct consumed by all downstream parsers | Model | - | No |
+| `notification/capture/NotificationTransientKeyProvider.kt` | NotificationTransientKeyProvider | Hardware-backed keystore keys for transient notification payload encryption | Security | - | No |
+| `notification/capture/NotificationTransientPayloadCrypto.kt` | NotificationTransientPayloadCrypto | Android Keystore-backed transient payload encryption (per-encryption nonce) | Security | - | No |
 
 **Money signal subsystem — `notification/money/` (1 file):**
 
@@ -869,41 +887,53 @@
 | `widget/model/WidgetStyle.kt` | WidgetStyle | Widget style models | Model | - | No |
 | `widget/service/WidgetStyleRepository.kt` | WidgetStyleRepository | Widget style interface | Repository | - | No |
 
-### Workers (14 files)
+### Workers (19 files)
 
 **Location:** `com.yourname.expensetracker.domain.workers`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
+| `workers/FileWorkerTerminalDiagnosticSink.kt` | FileWorkerTerminalDiagnosticSink | Writes sanitized JSONL terminal worker diagnostics to a file sink | Service | - | No |
 | `workers/NoOpWorkerDrainController.kt` | NoOpWorkerDrainController | No-op drain controller (testing) | Service | - | No |
 | `workers/NotificationPermissionChecker.kt` | NotificationPermissionChecker | Checks Android notification permission before worker dispatch | Service | Context | No |
 | `workers/PrivacyRuntimeWorkerPolicy.kt` | PrivacyRuntimeWorkerPolicy | Privacy-gated worker execution policy | Service | PrivacyGate | No |
 | `workers/RetryableWorkerException.kt` | RetryableWorkerException | Typed exception for retryable worker failures | Model | - | No |
+| `workers/ScheduleResult.kt` | ScheduleResult | Result of worker scheduling (e.g. `WorkerSpecScheduler.scheduleAtMidnight`) so callers can emit diagnostics on failure | Model | - | No |
 | `workers/WorkerDrainController.kt` | WorkerDrainController | Interface for draining/pausing workers | Service | - | No |
 | `workers/WorkerExecutionGuard.kt` | WorkerExecutionGuard | Prevents concurrent worker execution with timeout-based locking | Service | - | No |
+| `workers/WorkerGuardVerifier.kt` | WorkerGuardVerifier | Verifies workers have a registered unique work name and are referenced in the guard system | Service | - | No |
 | `workers/WorkerLease.kt` | WorkerLease | Lease model for worker execution | Model | - | No |
 | `workers/WorkerLeaseRegistry.kt` | WorkerLeaseRegistry | Interface for lease registration | Service | - | No |
 | `workers/WorkerLeaseRegistryImpl.kt` | WorkerLeaseRegistryImpl | Implementation of lease registry | Service | - | No |
-| `workers/WorkerRegistry.kt` | WorkerRegistry | Central registry of all registered workers | Service | - | No |
+| `workers/WorkerReasonCodes.kt` | WorkerReasonCodes | Controlled worker reason/failure code constants (constrained, never raw exception messages) | Model | - | No |
+| `workers/WorkerRegistry.kt` | WorkerRegistry | Central registry of registered workers (7 entries: location_backfill, merchant_key_backfill, warranty_expiration_check, data_retention, bill_reminder_periodic, receipt_matching, ai_daily_briefing) | Service | - | No |
 | `workers/WorkerRunContext.kt` | WorkerRunContext | Context data class for worker execution runs | Model | - | No |
 | `workers/WorkerRunLogger.kt` | WorkerRunLogger | Interface for logging worker execution runs | Service | - | No |
 | `workers/WorkerSpec.kt` | WorkerSpec | Worker specification data class | Model | - | No |
 | `workers/WorkerSpecScheduler.kt` | WorkerSpecScheduler | Centralized worker scheduling | Service | - | No |
+| `workers/WorkerTerminalDiagnosticSink.kt` | WorkerTerminalDiagnosticSink | Durable fallback sink when a `WorkerRunHandle` terminal call cannot persist its status | Service | - | No |
+
+> CoroutineWorker implementations live outside this package: `data/ai/worker/DailyBriefingWorker`, `data/location/LocationBackfillWorker`, `data/location/MerchantKeyBackfillWorker`, `data/privacy/DataRetentionWorker`, `service/receiptmatching/ReceiptMatchingWorker`, `service/reminder/BillReminderWorker`, `service/reminder/DismissReminderActionWorker`, `service/reminder/SnoozeReminderActionWorker`, `service/warranty/WarrantyExpirationWorker`, `worker/NotificationIntakeWorker` (10 total; 7 of them registered in `WorkerRegistry`).
+
+> **Coverage note:** this map lists the principal classes per subsystem. Some smaller helper/model files added since 2026-06 are not individually row-listed (roughly 90 files across `domain/analytics`, `domain/bank`, `domain/budget`, `domain/core`, `domain/currency`, `domain/groups/lifecycle`, `domain/location`, `domain/parser/provenance`, `domain/util`, `domain/ai/util|validation|model`, `startup/`, `di/ApplicationScope.kt`, `di/NetworkQualifiers.kt`, and the top-level `diagnostics/` package). They exist and are counted in the header totals; consult the source tree for details.
 
 ---
 
 ## DATA PACKAGE
 
-### Database Layer (109 files)
+### Database Layer (151 files)
 
 **Location:** `com.yourname.expensetracker.data.database`
 
-#### Main Database & Coordinator (2 files)
+#### Main Database, Migrations & Coordinators (5 files)
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `database/AppDatabase.kt` | AppDatabase | Room database definition (v147) | Database | All entities, DAOs | No |
-| `database/GroupTransactionCoordinator.kt` | GroupTransactionCoordinator | Coordinates group transactions | Engine | GroupExpenseDao, GroupMemberDao | No |
+| `database/AppDatabase.kt` | AppDatabase | Room database definition (v148, `APP_DATABASE_SCHEMA_VERSION = 148`; 70 entities, 68 DAO accessors, baseline v145 with destructive fallback below it) | Database | All entities, DAOs | No |
+| `database/DatabaseMigrations.kt` | DatabaseMigrations | Registry of supported Room migrations `MIGRATION_145_146/146_147/147_148` + `ALL` array | Database | Migration | No |
+| `database/DatabaseSchemaPolicy.kt` | DatabaseSchemaPolicy | DB ownership policy v2 — single source of truth for `CURRENT_VERSION`, `MIGRATION_BASELINE = 145`, `UNSUPPORTED_VERSIONS`, `ALL_MIGRATIONS` (production, tests, and CI read this) | Policy | DatabaseMigrations | No |
+| `database/GroupTransactionCoordinator.kt` | GroupTransactionCoordinator | HIGH-06 single-coordinator pattern: atomic multi-DAO group transactions via `RoomDatabase.withTransaction` (data impl of the domain `GroupTransactionCoordinator` interface) | Engine | ExpenseDao, ExpenseGroupDao, GroupExpenseDao, GroupMemberDao, DatabaseWriteBarrier, TransactionLifecycleCoordinator | No |
+| `database/RoomDomainTransactionRunner.kt` | RoomDomainTransactionRunner | Room impl of `DomainTransactionRunner` (PR 3 / MIT-031): wraps `AppDatabase.withTransaction`, provides typed `TransactionContext`, guarantees CancellationException propagation | Service | AppDatabase, TimeProvider | No |
 
 #### Type Converters (1 file)
 
@@ -911,7 +941,7 @@
 |------|-------|---------|------|--------------|-------|
 | `database/converter/Converters.kt` | Converters | Room type converters | Converter | - | No |
 
-#### DAOs (69 files)
+#### DAOs (69 files — 68 `@Dao` interfaces + 1 annotation)
 
 **Location:** `com.yourname.expensetracker.data.database.dao`
 
@@ -966,7 +996,7 @@
 | `dao/RecurringExpenseDao.kt` | RecurringExpenseDao | Recurring expenses DAO | DAO | - | No |
 | `dao/RecurringOccurrenceDao.kt` | RecurringOccurrenceDao | Recurring occurrences DAO | DAO | - | No |
 | `dao/RecurringReminderDeliveryDao.kt` | RecurringReminderDeliveryDao | Recurring reminder delivery DAO | DAO | - | No |
-| `dao/RestrictedExpenseDaoMutation.kt` | RestrictedExpenseDaoMutation | Restricted DAO mutation wrapper | DAO | - | No |
+| `dao/RestrictedExpenseDaoMutation.kt` | RestrictedExpenseDaoMutation | `@RequiresOptIn` annotation restricting direct `ExpenseDao` mutations (CI-enforced via `ExpenseDaoMutationAccessTest`) | Annotation | - | No |
 | `dao/ReturnWindowDao.kt` | ReturnWindowDao | Return windows DAO | DAO | - | No |
 | `dao/SavingsGoalDao.kt` | SavingsGoalDao | Savings goals DAO | DAO | - | No |
 | `dao/SavingsSweepPlanDao.kt` | SavingsSweepPlanDao | Savings sweep plans DAO | DAO | - | No |
@@ -1029,6 +1059,7 @@
 | `entity/MileageTracking.kt` | MileageTracking | Mileage tracking entity | Entity | - | No |
 | `entity/NegotiationOutcomeEntity.kt` | NegotiationOutcomeEntity | Negotiation outcome entity | Entity | - | No |
 | `entity/NotificationIntakeEntity.kt` | NotificationIntakeEntity | Notification intake entity | Entity | - | No |
+| `entity/NotificationIntakeStatus.kt` | NotificationIntakeStatus | Intake status enum (lives in `entity/` but is not a Room entity) | Enum | - | No |
 | `entity/OperationRun.kt` | OperationRun | Operation run entity | Entity | - | No |
 | `entity/OperationRunEvent.kt` | OperationRunEvent | Operation run event entity | Entity | - | No |
 | `entity/PendingReview.kt` | PendingReview | Pending review entity | Entity | - | No |
@@ -1077,7 +1108,7 @@
 | `model/ExpenseWithCategory_Extensions.kt` | ExpenseWithCategory_Extensions | Extension functions | Utility | - | No |
 | `model/PendingReviewWithReceipt.kt` | PendingReviewWithReceipt | Review with receipt | Model | - | No |
 
-### Repositories (65 files)
+### Repositories (54 files)
 
 **Location:** `com.yourname.expensetracker.data.repository`
 
@@ -1121,6 +1152,8 @@
 | `repository/PlannedExpenseRepository.kt` | PlannedExpenseRepository | Planned expenses | Repository | PlannedExpenseDao | No |
 | `repository/PromptStateRepository.kt` | PromptStateRepository | Prompt state persistence | Repository | PromptStateDao | No |
 | `repository/ReceiptItemCategorizationRepository.kt` | ReceiptItemCategorizationRepository | Receipt items | Repository | ReceiptItemCategorizationDao | No |
+| `repository/ReceiptInsertResolver.kt` | ReceiptInsertResolver | Resolves insert-vs-duplicate decisions for receipt processing | Repository | - | No |
+| `repository/ReceiptRecordWriter.kt` | ReceiptRecordWriter | Writes receipt records through the receipt lifecycle path | Repository | - | No |
 | `repository/ReceiptRepository.kt` | ReceiptRepository | Receipt data access | Repository | ScannedReceiptDao, EmailReceiptDao | No |
 | `repository/RecommendationRepository.kt` | RecommendationRepository | Recommendations | Repository | RecommendationDao | No |
 | `repository/RecurringExpenseRepository.kt` | RecurringExpenseRepository | Recurring expenses | Repository | RecurringExpenseDao | No |
@@ -1136,7 +1169,7 @@
 | `repository/WidgetStyleRepositoryImpl.kt` | WidgetStyleRepositoryImpl | Widget styles | Repository | - | No |
 | `repository/TaxSettingsRepository.kt` | TaxSettingsRepository | Tax settings repository | Repository | - | No |
 
-### AI Providers (44 files)
+### AI Providers (43 files)
 
 **Location:** `com.yourname.expensetracker.data.ai`
 
@@ -1177,6 +1210,7 @@
 | `ai/provider/OnDeviceReviewPriorityScorer.kt` | OnDeviceReviewPriorityScorer | On-device scorer | Service | - | No |
 | `ai/provider/OnDeviceSemanticDuplicateDetector.kt` | OnDeviceSemanticDuplicateDetector | On-device duplicate | Service | - | No |
 | `ai/provider/SmartReceiptAssistService.kt` | SmartReceiptAssistService | Smart receipt assist | Service | - | No |
+| `ai/OkHttpCloudProviderConnectionTester.kt` | OkHttpCloudProviderConnectionTester | Tests cloud AI provider connectivity over OkHttp | Service | OkHttpClient | No |
 
 #### Provider Internals (7 files)
 
@@ -1186,9 +1220,9 @@
 | `ai/provider/internal/CloudJsonParser.kt` | CloudJsonParser | Cloud JSON parsing | Parser | - | No |
 | `ai/provider/internal/CloudPiiSanitizer.kt` | CloudPiiSanitizer | PII sanitization | Security | - | No |
 | `ai/provider/internal/CloudRetryPolicy.kt` | CloudRetryPolicy | Retry policy | Utility | - | No |
-| `ai/provider/internal/DashboardBriefingPromptFormatter.kt` | DashboardBriefingPromptFormatter | Formats briefing prompts | Utility | - | No |
-| `ai/provider/internal/DashboardBriefingResponseParser.kt` | DashboardBriefingResponseParser | Parses briefing responses | Parser | - | No |
-| `ai/provider/internal/StrictAiJsonParsing.kt` | StrictAiJsonParsing | Strict JSON parsing for AI | Parser | - | No |
+| `ai/provider/DashboardBriefingPromptFormatter.kt` | DashboardBriefingPromptFormatter | Formats briefing prompts | Utility | - | No |
+| `ai/provider/DashboardBriefingResponseParser.kt` | DashboardBriefingResponseParser | Parses briefing responses | Parser | - | No |
+| `ai/provider/StrictAiJsonParsing.kt` | StrictAiJsonParsing | Strict JSON parsing for AI | Parser | - | No |
 
 #### AI Worker (2 files)
 
@@ -1197,7 +1231,7 @@
 | `ai/worker/AiWorkSchedulerImpl.kt` | AiWorkSchedulerImpl | Work scheduler implementation | Service | - | No |
 | `ai/worker/DailyBriefingWorker.kt` | DailyBriefingWorker | Daily briefing worker | Worker | DashboardBriefingService | No |
 
-### Backup Services (4 files)
+### Backup Services (18 files)
 
 **Location:** `com.yourname.expensetracker.data.backup`
 
@@ -1207,14 +1241,29 @@
 | `backup/CostbackupBundle.kt` | CostbackupBundle | Bundled backup data model | Model | - | No |
 | `backup/RestoreJournal.kt` | RestoreJournal | Restore operation journal | Service | - | No |
 | `backup/RestoreMaintenanceMode.kt` | RestoreMaintenanceMode | Maintenance mode for restore | Service | - | No |
+| `backup/AppOperationalState.kt` | AppOperationalState | App operational state model (normal/restore/maintenance) | Model | - | No |
+| `backup/DataStoreMaintenanceSafeDiagnosticSink.kt` | DataStoreMaintenanceSafeDiagnosticSink | DataStore-backed diagnostic sink safe for maintenance mode | Service | - | No |
+| `backup/DatabaseAccessModels.kt` | DatabaseAccessModels | Models for barrier-guarded DB access | Model | - | No |
+| `backup/DatabaseReadBarrier.kt` | DatabaseReadBarrier | Blocks DB reads during restore/maintenance mode | Service | - | No |
+| `backup/DatabaseReadBarrierFlowExt.kt` | DatabaseReadBarrierFlowExt | Flow extensions for the read barrier | Utility | - | No |
+| `backup/DatabaseWriteBarrier.kt` | DatabaseWriteBarrier | Blocks DB writes during restore/maintenance mode | Service | - | No |
+| `backup/MaintenanceOperationRunner.kt` | MaintenanceOperationRunner | Runs maintenance operations under barrier protection | Service | - | No |
+| `backup/MaintenanceSafeDiagnosticSink.kt` | MaintenanceSafeDiagnosticSink | Interface for maintenance-safe diagnostic sinks | Service | - | No |
+| `backup/RestoreDatabaseOpener.kt` | RestoreDatabaseOpener | Opens the database safely during restore | Service | - | No |
+| `backup/RestoreDiagnosticsSink.kt` | RestoreDiagnosticsSink | Diagnostics sink for restore operations | Service | - | No |
+| `backup/RestoreInternalWriteScope.kt` | RestoreInternalWriteScope | Scoped write access for restore internals | Service | - | No |
+| `backup/RestoreJournalImporter.kt` | RestoreJournalImporter | Imports data from a restore journal | Service | - | No |
+| `backup/SqliteSnapshotCreator.kt` | SqliteSnapshotCreator | Creates consistent SQLite snapshots for backup | Service | - | No |
+| `backup/TimberMaintenanceSafeDiagnosticSink.kt` | TimberMaintenanceSafeDiagnosticSink | Timber-backed maintenance-safe diagnostic sink | Service | - | No |
 
-### Currency Services (1 file)
+### Currency Services (2 files)
 
 **Location:** `com.yourname.expensetracker.data.currency`
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
 | `currency/ExchangeRateStoreAdapter.kt` | ExchangeRateStoreAdapter | Exchange rate adapter | Repository | ExchangeRateDao | No |
+| `currency/AppConfigCurrencyProvider.kt` | AppConfigCurrencyProvider | Provides home-currency config from AppConfig | Service | AppConfig | No |
 
 ### Email Ingestion (5 files)
 
@@ -1246,7 +1295,7 @@
 | `location/internal/CancellableHttpCall.kt` | CancellableHttpCall | Cancellable HTTP call utility | Utility | - | No |
 | `location/internal/LogSanitizer.kt` | LogSanitizer | Log sanitization | Security | - | No |
 
-### Privacy Services (7 files)
+### Privacy Services (9 files)
 
 **Location:** `com.yourname.expensetracker.data.privacy`
 
@@ -1255,7 +1304,9 @@
 | `privacy/AtRestEncryptionService.kt` | AtRestEncryptionService | At-rest data encryption | Security | - | No |
 | `privacy/BackupEncryptionService.kt` | BackupEncryptionService | Backup encryption/decryption | Security | - | No |
 | `privacy/DataRetentionWorker.kt` | DataRetentionWorker | Data retention policy worker | Worker | - | No |
+| `privacy/DefaultCloudPayloadPolicy.kt` | DefaultCloudPayloadPolicy | Data impl of the domain `CloudPayloadPolicy` | Service | CloudPayloadPolicy | No |
 | `privacy/DefaultCloudPayloadRedactor.kt` | DefaultCloudPayloadRedactor | Cloud payload redaction | Security | - | No |
+| `privacy/DefaultSensitiveHashingService.kt` | DefaultSensitiveHashingService | Data impl of `SensitiveHashingService` | Security | SensitiveHashingService | No |
 | `privacy/ExportAnonymizer.kt` | ExportAnonymizer | Anonymizes exported data | Security | - | No |
 | `privacy/PrivacyAuditLoggerImpl.kt` | PrivacyAuditLoggerImpl | Privacy audit logging impl | Repository | PrivacyAuditDao | No |
 | `privacy/PrivacySettingsRepositoryImpl.kt` | PrivacySettingsRepositoryImpl | Privacy settings persistence | Repository | - | No |
@@ -1277,7 +1328,7 @@
 |------|-------|---------|------|--------------|-------|
 | `speech/AndroidSpeechInputGateway.kt` | AndroidSpeechInputGateway | Android speech input | Service | - | No |
 
-### Other Data Services (3 files)
+### Other Data Services (7 files)
 
 **Location:** Various data subsystems
 
@@ -1285,6 +1336,24 @@
 |------|-------|---------|------|--------------|-------|
 | `provider/MerchantCategoryProvider.kt` | MerchantCategoryProvider | Merchant category provider | Provider | - | No |
 | `service/AndroidNotificationService.kt` | AndroidNotificationService | Android notifications | Service | - | No |
+| `service/AndroidNotificationPermissionChecker.kt` | AndroidNotificationPermissionChecker | Data-side Android notification permission checks | Service | Context | No |
+| `negotiation/StaticMarketRateProvider.kt` | StaticMarketRateProvider | Data impl of `MarketRateProvider` (static rates) | Service | MarketRateProvider | No |
+| `tax/DemoTaxRateProvider.kt` | DemoTaxRateProvider | Data impl of `TaxRateProvider` (demo rates) | Service | TaxRateProvider | No |
+| `store/ExpenseReadStore.kt` | ExpenseReadStore | Read-side store for expense data | Repository | - | No |
+| `store/ExpenseWriteStore.kt` | ExpenseWriteStore | Write-side store for expense data | Repository | - | No |
+
+### Rescue Services (4 files)
+
+**Location:** `com.yourname.expensetracker.data.rescue`
+
+Financial rescue path — raw SQLite import bypassing the Room migration chain (for DBs below the v145 baseline).
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `rescue/FinancialRescueCoordinator.kt` | FinancialRescueCoordinator | Coordinates the financial rescue import; defines `RescueResult` | Service | Context | No |
+| `rescue/FinancialRescueSnapshot.kt` | RescueCategory, RescueExpense | Rescue snapshot data models | Model | - | No |
+| `rescue/RescueActivity.kt` | RescueActivity | Entry activity for the rescue flow | Activity | - | No |
+| `rescue/RescueConfig.kt` | RescueConfig | Rescue path configuration | Config | - | No |
 
 ---
 
@@ -1298,10 +1367,10 @@
 | `BackupRepositoryModule.kt` | BackupRepositoryModule | Backup binding | Module | DatabaseBackupRepository | No |
 | `CashFlowModule.kt` | CashFlowModule | Cash flow binding | Module | CashFlowCalculator | No |
 | `CurrencyModule.kt` | CurrencyModule | Currency binding | Module | CurrencySettingsRepository, CurrencyRatesRepository, ExchangeRateStore | No |
-| `DaoModule.kt` | DaoModule | DAO injection (68 DAOs) | Module | All DAOs except AiModule-provided | No |
+| `DaoModule.kt` | DaoModule | DAO injection (64 DAOs) | Module | All DAOs except the 3 AiModule-provided AI DAOs (`SourceStatsEventDao` is registered in AppDatabase but not Hilt-bound) | No |
 | `DashboardAnomalyModule.kt` | DashboardAnomalyModule | Anomaly alert binding | Module | AnomalyAlertRepository (domain + dashboard) | No |
 | `DashboardContractsModule.kt` | DashboardContractsModule | Dashboard contracts (7 adapters) | Module | DashboardRepositoryContracts | No |
-| `DatabaseModule.kt` | DatabaseModule | Database initialization | Module | AppDatabase, GroupTransactionCoordinator | No |
+| `DatabaseModule.kt` | DatabaseModule | Database initialization | Module | AppDatabase, GroupTransactionCoordinator, DomainTransactionRunner → RoomDomainTransactionRunner | No |
 | `DiagnosticsModule.kt` | DiagnosticsModule | Diagnostic writers binding | Module | DiagnosticEventWriter, Lifecycle event writers, OperationRunRecorder, DiagnosticsRepository | No |
 | `DispatchersModule.kt` | DispatchersModule | Coroutine dispatchers | Module | IO, Default, Main dispatchers, ApplicationScope | No |
 | `EmailIngestionModule.kt` | EmailIngestionModule | Email parsing | Module | Amazon, Uber, Apple receipt parsers | No |
@@ -1334,9 +1403,9 @@
 
 ## APP SERVICES PACKAGE
 
-**Location:** `com.yourname.expensetracker.service` — 17 files
+**Location:** `com.yourname.expensetracker.service` — 19 files
 
-### Recommendation System (7 files)
+### Recommendation System (6 files)
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
@@ -1347,12 +1416,25 @@
 | `RecommendationLifecycleManager.kt` | RecommendationLifecycleManager | Manages lifecycle: expiration, cleanup, threshold refresh | Service | RecommendationRepository, RecommendationStateManager, RecommendationCacheService, SpendingThresholdCalculator | No |
 | `RecommendationStateManager.kt` | RecommendationStateManager | Reactive StateFlow for UI, max 5 limit, user-specific | Service | RecommendationRepository, TimeProvider | No |
 
-### Notification Capture (2 files)
+### Notification Capture (3 files)
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
 | `NotificationCaptureService.kt` | NotificationCaptureService | Android NotificationListenerService | Service | PrivacyGate, NotificationFilter | No |
 | `NotificationFilter.kt` | NotificationFilter | Filters notifications by package/type | Service | - | No |
+| `NotificationFilterDecision.kt` | NotificationFilterDecision | Filter decision + reason models | Model | - | No |
+
+### Reminder / Matching / Warranty Workers (5 files)
+
+CoroutineWorker implementations (not in `domain/workers/`; 4 of the 7 `WorkerRegistry` entries live here).
+
+| File | Class | Purpose | Type | Dependencies | Tests |
+|------|-------|---------|------|--------------|-------|
+| `receiptmatching/ReceiptMatchingWorker.kt` | ReceiptMatchingWorker | @HiltWorker — background receipt-to-transaction matching (registered as `receipt_matching`) | Worker | ReceiptRepository, ReceiptTransactionMatcher, ReceiptLinkService, ReceiptMatchLifecycleService, WorkerExecutionGuard | No |
+| `reminder/BillReminderWorker.kt` | BillReminderWorker | @HiltWorker — periodic bill reminder delivery, every 4h; queries due occurrences and dispatches Android notifications (registered as `bill_reminder_periodic`) | Worker | RecurringLifecycleCoordinator, BillReminderSettingsRepository, WorkerExecutionGuard | No |
+| `reminder/DismissReminderActionWorker.kt` | DismissReminderActionWorker | @HiltWorker — durable dismiss action for reminder notifications | Worker | RecurringLifecycleCoordinator, WorkerExecutionGuard | No |
+| `reminder/SnoozeReminderActionWorker.kt` | SnoozeReminderActionWorker | @HiltWorker — durable snooze action for reminder notifications | Worker | RecurringLifecycleCoordinator, WorkerExecutionGuard | No |
+| `warranty/WarrantyExpirationWorker.kt` | WarrantyExpirationWorker | @HiltWorker — warranty expiry checks + claim-before-notify via `WarrantyReminderDeliveryDao` (registered as `warranty_expiration_check`) | Worker | WarrantyTrackerRepository, WarrantyReminderDeliveryDao, WorkerExecutionGuard | No |
 
 ### Utilities (2 files)
 
@@ -1361,12 +1443,14 @@
 | `NavigationTargetResolver.kt` | NavigationTargetResolver | Resolves navigation targets from recommendations | Service | - | No |
 | `TransactionFilterSerializer.kt` | TransactionFilterSerializer | Serializes transaction filters for dedup signatures | Service | - | No |
 
-### Receivers (2 files — `receiver/` package)
+### Receivers (4 files)
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
 | `receiver/BootReceiver.kt` | BootReceiver | BOOT_COMPLETED / MY_PACKAGE_REPLACED receiver | Receiver | - | No |
 | `receiver/ServiceRestartReceiver.kt` | ServiceRestartReceiver | Service keep-alive receiver | Receiver | - | No |
+| `reminder/DismissReminderReceiver.kt` | DismissReminderReceiver | Hilt @AndroidEntryPoint broadcast receiver for reminder dismiss | Receiver | - | No |
+| `reminder/SnoozeReminderReceiver.kt` | SnoozeReminderReceiver | Hilt @AndroidEntryPoint broadcast receiver for reminder snooze | Receiver | - | No |
 
 ### Root Utilities (1 file)
 
@@ -1378,7 +1462,7 @@
 
 | File | Class | Purpose | Type | Dependencies | Tests |
 |------|-------|---------|------|--------------|-------|
-| `service/LegacyDataMigrationService.kt` | LegacyDataMigrationService | One-time data migration from older app versions | Service | - | No |
+| `service/debug/LegacyDataMigrationService.kt` | LegacyDataMigrationService | One-time data migration from older app versions | Service | - | No |
 
 ---
 
@@ -1501,7 +1585,7 @@ BankStatementLifecycleProcessor (for statements)
 **Related Entities:**
 - `ScannedReceipt`, `EmailReceiptSource` ← Receipt sources
 - `ReceiptEvent`, `ReceiptExpenseLink` ← Receipt lifecycle
-- `ManualRecurringExpense`, `RecurringExpense` ← Recurring patterns
+- `ManualRecurringExpense` ← Recurring patterns (accessed by both `ManualRecurringExpenseDao` and the deprecated `RecurringExpenseDao`)
 - `RecurringOccurrence`, `RecurringLifecycleEvent` ← Recurring lifecycle
 - `RecurringReminderDelivery` ← Reminder tracking
 - `Budget`, `BudgetForecast` ← Budget tracking
@@ -1598,19 +1682,19 @@ Engine (integration with other domain logic)
 
 | Metric | Count |
 |--------|-------|
-| **Domain Files** | 520 (55 subdirectories) |
-| **Data Files** | 305 (16 sub-packages) |
+| **Domain Files** | 535 (57 subdirectories) |
+| **Data Files** | 307 (16 sub-packages) |
 | **DI / @Module Files** | 32 (in di/) + 1 (in ui/) + 1 @EntryPoint |
-| **Total Source Files** | 1050 (production .kt) |
-| **Test Files** | 600+ unit + 27 instrumented |
-| **Database Version** | 147 |
-| **Database Entities** | 69 (70 files in entity/ dir, 69 with @Entity) |
-| **DAOs** | 68 (69 files in dao/ dir, 68 with @Dao) |
+| **Total Source Files** | 1073 (production .kt) |
+| **Test Files** | 626+ unit + 28 instrumented |
+| **Database Version** | 148 (baseline v145; see `DatabaseSchemaPolicy`) |
+| **Database Entities** | 70 (all registered in AppDatabase; `entity/` dir has 70 files — one holds a status enum) |
+| **DAOs** | 68 (69 files in dao/ dir: 68 `@Dao` + `RestrictedExpenseDaoMutation` annotation) |
 | **Navigation Destinations** | 40 |
 | **Repositories** | 62 (46 data + 16 domain interfaces) |
 | **Use Cases** | 31 |
 | **ViewModels** | 41 (40 @HiltViewModel + 1 inline) |
-| **Engines (*Engine.kt files)** | 29 |
+| **Engines (*Engine.kt files)** | 28 |
 | **AI Services (domain/ai/service/)** | 18 |
 | **AI Use Cases (domain/ai/usecase/)** | 25 |
 

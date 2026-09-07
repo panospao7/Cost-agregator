@@ -1,5 +1,7 @@
 # Shared UI Primitives Architecture
 
+**Last Updated:** September 7, 2026
+
 ## Overview
 
 Global UI components used across all screens. Changes here have high blast radius.
@@ -8,9 +10,8 @@ Global UI components used across all screens. Changes here have high blast radiu
 
 | File | Role |
 |------|------|
-| `ui/theme/Theme.kt` | Material 3 theme (light/dark/dynamic), typography, status bar |
+| `ui/theme/Theme.kt` | Material 3 theme (light/dark/dynamic), typography, status bar; also hosts the `SemanticColors` object (brand/status colors: budget health, pace, confidence) |
 | `ui/theme/Dimens.kt` | Spacing, touch targets, sizing constants |
-| `ui/theme/SemanticColors` | Brand/status colors (budget health, pace, confidence) |
 
 ### Color Usage Rules
 
@@ -58,23 +59,28 @@ All `EmptyStateScreenKeys` have registered actions:
 ### Action Types
 
 | Type | Behavior |
-|------|----------|
+|------|------|
 | `NavigateToDestination(dest)` | Navigate via NavigationController |
-| `OpenFeature(featureId)` | Open feature by string ID |
+| `OpenFeature(feature: EmptyStateFeatureAction)` | Open a feature via typed enum (S2-007R — no raw string IDs; executor must handle every enum value: AddWarranty, NotificationSettings, AddSubscription, CreateSavingsGoal, SavingsRecommendations, CreateChallenge, NoSpendStreak, CarbonOffset, IncomeSettings) |
 | `ExecuteAction { }` | Run arbitrary lambda |
 
 ### Action Data
 
-`EmptyStateAction` uses `@StringRes titleRes` and `@StringRes descriptionRes` for localization. No hardcoded English strings.
+`EmptyStateAction` uses `@StringRes titleRes` and `@StringRes descriptionRes` for localization. No hardcoded English strings. Each action also carries `id`, `icon`, and a `priority` (higher = more important, sorted descending).
 
 ## Loading Skeleton
 
-- `SkeletonBox` — single shimmer box
-- `ListSkeleton` — list of shimmer rows
-- `ChartSkeleton` — chart placeholder
-- `DashboardSkeleton` — full dashboard loading state
+All defined in `ui/components/common/LoadingSkeleton.kt`:
 
-Uses `SemanticColors.SurfaceLight` (acceptable — loading state is always dark-themed).
+- `SkeletonBox` — single shimmer box (theme-aware defaults since S2-011)
+- `TransactionItemSkeleton` — transaction list row
+- `DashboardCardSkeleton` — dashboard card placeholder
+- `ChartSkeleton` — chart placeholder
+- `ReceiptScanSkeleton` — receipt scanning state
+- `ListSkeleton` — list of shimmer rows
+- `AIProcessingSkeleton` — AI processing state
+
+A few skeletons still reference `SemanticColors.SurfaceLight` / `SemanticColors.PrimaryIndigo` (ChartSkeleton, AIProcessingSkeleton); `SkeletonBox` defaults are theme-aware.
 
 ## Test Coverage
 
@@ -85,9 +91,9 @@ Uses `SemanticColors.SurfaceLight` (acceptable — loading state is always dark-
 
 ## Known Tech Debt
 
-- 12+ screens use hardcoded `Color(0xFF4CAF50)` instead of `SemanticColors.StatusGreen`
+- 15 files under `ui/` use hardcoded `Color(0xFF4CAF50)` instead of `SemanticColors.StatusGreen` (verified September 2026)
 - Loading skeleton accessibility is noisy (S2-005) — ✅ FIXED: parent semantics
 - Empty-state action strings are hardcoded English (S2-007) — ✅ FIXED: @StringRes
-- Form amount input lacks proper money sanitization (S2-008) — ✅ FIXED: AmountInputSanitizer
-- `EmptyState` and `EnhancedEmptyState` duplicate layout logic (S2-004) — ✅ FIXED: EmptyState delegates
-- Some contextual screen keys lack registered actions — partially addressed
+- Form amount input lacks proper money sanitization (S2-008) — ✅ FIXED: AmountInputSanitizer (`ui/util/AmountInputSanitizer.kt`)
+- `EmptyState` and `EnhancedEmptyState` duplicate layout logic (S2-004) — ✅ FIXED: EmptyState delegates to EnhancedEmptyState
+- Contextual screen keys missing registered actions — ✅ RESOLVED: all 10 `EmptyStateScreenKeys` are registered by `DefaultEmptyStateRegistryInitializer` and enforced by `EmptyStateRegistryCompletenessTest`

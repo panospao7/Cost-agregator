@@ -1,8 +1,8 @@
 # ExpenseTracker Frontend UI/UX Comprehensive Mapping
 
-**Refreshed**: June 1, 2026  
-**Scope**: Current frontend inventory including screens, components, navigation, integration, and theming
-**Total Files**: 167 UI source files (40 ViewModels, 59 components, 39 screens, 5 nav, 3 mappers, 2 theme, 4 model, 7 util, 1 integration, 2 root)
+**Refreshed**: September 7, 2026  
+**Scope**: Current frontend inventory including screens, components, navigation, integration, and theming  
+**Total Files**: 166 UI source files (41 ViewModels — 40 in dedicated files incl. MainViewModel + 1 inline, 59 components, 83 screens files, 5 nav, 3 mappers, 2 theme, 4 model, 7 util, 1 integration, 2 root)
 
 ---
 
@@ -59,17 +59,19 @@ ExpenseTrackerApp
 - **Features Menu Button**
 - **Period Navigation**: Current period selector with date range
 - **Dashboard Widgets** (configurable):
-  - TotalsDashboardCard (overall spending)
+  - TotalsDashboardCard (overall spending; RetroTotalsDashboardCard is the retro-skin variant)
   - BudgetBlockPartyCard (budget overview)
   - FinancialWeatherCard (health indicator)
   - FinancialRunwayCard (sustainability forecast)
   - FinancialStressForecastCard (stress level)
   - MonteCarloForecastCard (probabilistic forecast)
-  - HealthScoreWidget (financial health V2)
+  - MoneyRadarWidget (radar/spider chart)
+  - HealthScoreWidget (financial health V1) + FinancialHealthScoreV2Widget (V2)
   - CategoryBreakdownSheet (modal breakdown)
-  - PlaceInsightCard (location-based spending)
   - RecommendationCard (AI recommendations)
   - NoSpendStreakWidget (streaks counter)
+
+> **Note**: `PlaceInsightCard` is **not** a Home dashboard widget — it is consumed by `AnalyticsScreen` and `SpendingMapScreen` for location-based spending insights.
 
 #### Navigation Callbacks:
 - `onNavigateToReview()` → Tab 2
@@ -83,7 +85,7 @@ ExpenseTrackerApp
 #### Modals:
 - **QuickSettingsDialog**: Settings shortcuts (AI, Categories, Debug)
 - **AddPlannedExpenseDialog**: Quick expense planning
-- **FeatureIntegration**: configuration-driven feature routing
+- **FeaturesMenu**: config-driven feature menu (private composable in `HomeScreen.kt`, renders `FeatureConfig.allFeatures`)
 
 ---
 
@@ -272,16 +274,16 @@ These appear over main tabs via `NavigationDestination` sealed class.
 ---
 
 ### Recurring Expenses Screen
-**File**: `ui/screens/recurring/RecurringExpensesScreen.kt`
+**File**: `ui/screens/recurring/RecurringExpensesScreen.kt` + inline `RecurringExpensesViewModel` (`@HiltViewModel` class declared inside the same file)
 **Type**: Full Screen
 **Navigation**: `NavigationDestination.RecurringExpenses`
 
 #### Features:
-- List of recurring expenses
-- Frequency indicators
-- Next occurrence date
-- Edit/delete actions
-- View all occurrences
+- Merged list of recurring patterns: manually confirmed rules (DB) + auto-detected patterns (`RecurringExpenseEngine`); manual entries take precedence per merchant
+- Planned expenses section
+- Confirm a detected pattern as a manual rule
+- Delete manual rule / planned expense
+- Frequency indicators and next occurrence dates (java.time formatting, home currency from `CurrencySettingsRepository`)
 
 ---
 
@@ -339,11 +341,13 @@ These appear over main tabs via `NavigationDestination` sealed class.
 
 ## 4. FEATURE SCREENS (22 Config-Driven Features)
 
+> `FeatureConfig.allFeatures` holds **24 entries**: the 22 feature screens below plus `recurring` (→ `ManualRecurringExpense` overlay, §3) and `privacy` (→ `PrivacySettings`, §5). `NavigationDestination.featureDestinations` (27 entries) additionally includes `RecurringExpenses`, `AiSettings`, and `CategoryManagement`.
+
 All features accessible from:
 1. Home screen widgets/cards
-2. Features Menu (accessed via icon button)
+2. Features Menu (accessed via icon button, rendered by `FeaturesMenu` in `HomeScreen.kt`)
 3. Deep links where applicable
-4. Bottom FAB menu
+4. Quick Settings dialog (management entries)
 
 **Navigation Type**: Full screen with back stack support
 
@@ -636,6 +640,8 @@ All features accessible from:
 - Split expenses within group
 - Settlement tracking
 
+Group expense/member mutations flow through the domain group use cases injected into `SharedExpenseGroupsViewModel` (`AddGroupExpenseUseCase`, `AddGroupMemberUseCase`, `DeleteGroupUseCase`); transaction integrity is enforced by the `GroupTransactionCoordinator` contract (domain interface, data-layer implementation) behind `GroupLifecycleCoordinator`.
+
 #### Sub-Screens (Dialogs):
 - **CreateGroupDialog**: New group form
 - **AddMemberDialog**: Invite members
@@ -692,7 +698,7 @@ All features accessible from:
 
 ### Privacy Settings Screen
 **File**: `ui/screens/privacysettings/PrivacySettingsScreen.kt` + `PrivacySettingsViewModel.kt`
-**Navigation**: *(no standalone route — accessible from Settings gear icon)*
+**Navigation**: `NavigationDestination.PrivacySettings` (FeatureConfig entry `id = "privacy"`; rendered in the standard feature-screen `when` block in `MainActivity`)
 
 #### Features:
 - 10 privacy toggles (notification capture, cloud AI, geocoding, etc.)
@@ -719,16 +725,16 @@ All features accessible from:
 - Issue inspection and data seeding tools
 
 #### Sub-Screens:
-- **CategorizationDebugScreen**: ML model debugging
-- **DebugViewerScreen**: Raw data viewer
+- **CategorizationDebugScreen**: ML model debugging (opened from within DebugScreen)
+- **DebugViewerScreen**: Raw data viewer (embedded in ReceiptScanScreen and ReviewScreen, not routed from DebugScreen)
 - **DebugIssueDetector**: runtime issue inspection
-- **SourceLinkDebugScreen**: Source link provenance debug viewer
+- **SourceLinkDebugScreen**: Source link provenance debug viewer (no in-app entry point found as of 2026-09-07)
 
 #### Sub-Components (Dialogs):
 - **ImportDatabaseDialog**: Database restore
 - **CsvImportDialog**: CSV import tool
 
-**Access**: Hidden in production, accessible via Settings → Debug
+**Access**: `NavigationDestination.Debug` renders `DebugScreen` only when `BuildConfig.DEBUG` is true; in release builds the controller automatically navigates back.
 
 ---
 
@@ -825,6 +831,7 @@ All features accessible from:
 | **CategoryBreakdownSheet** | `CategoryBreakdownSheet.kt` | Modal category spending details |
 | **RetroCategoryBreakdownSheet** | `RetroCategoryBreakdownSheet.kt` | Alternative category breakdown UI |
 | **LocationCorrectionSheet** | `LocationCorrectionSheet.kt` | Fix location modal |
+| **LocationSearchPicker** | `LocationSearchPicker.kt` | Location search/selection UI |
 | **TransactionFilterSheet** | `transactions/TransactionFilterSheet.kt` | Advanced filter options |
 
 ### 7.7 Permission Dialogs
@@ -906,17 +913,17 @@ Index 5: Map         (Spending Map)
 - Switching tabs clears feature back stack
 - Can navigate back from feature to last main tab
 
-### 8.3 Feature Navigation (23 Features)
+### 8.3 Feature Navigation (24 Config Entries)
 
 All features accessible via:
 1. **Home Screen Widgets**: Tap widget → feature
-2. **Features Menu**: Icon button → scrollable menu with all 22
+2. **Features Menu**: Icon button → scrollable menu with all 24 `FeatureConfig.allFeatures` entries
 3. **Tab Navigation**: Feature screen keeps back stack
 4. **Deep Links**: Some support deep links (home, activity, review, plan, add, analytics, map)
 
 **Back Navigation**:
-- Back button returns to home tab
-- Remembers previous main tab index
+- Back from a feature pops the back stack; if empty, returns to the previous main tab (or Home)
+- Back on a non-Home main tab routes to Home first (system back exits only from Home)
 
 ### 8.4 Overlay Navigation (Sheets/Modals)
 
@@ -946,6 +953,10 @@ Assistant              → Bottom sheet modal
 
 **Query Parameters**:
 - `briefingKey`: AI briefing identifier (for home deep link)
+- `expenseId`: on `activity`, opens Transactions filtered to that expense's day when the expense exists; otherwise highlights it via `Transactions(initialExpenseId)`
+- `period` (analytics) / `location` (map): pre-fill the respective screens
+
+**Handling**: `MainActivity.handleIntent` (from `onCreate` and `onNewIntent`) parses these hosts inline and navigates immediately; the link is consumed one-shot (`intent.data` cleared). `DeepLinkParser.kt` additionally provides the tested Allow/RequireConfirmation/Reject classification, but its confirmation gate is not wired into the Activity yet (PRV-16 TODO).
 
 ---
 
@@ -1120,12 +1131,14 @@ Handles configuration-driven feature display and integration with Home screen, F
 </intent-filter>
 ```
 
-### Required Permissions
-- `ACCESS_FINE_LOCATION` (map/location features)
-- `ACCESS_COARSE_LOCATION`
+### Required Permissions (verified against `AndroidManifest.xml`, 2026-09-07)
+- `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` (map/location features)
 - `CAMERA` (receipt scanning)
 - `POST_NOTIFICATIONS` (bill reminders)
-- `INTERNET` (API calls, map tiles)
+- `INTERNET` + `ACCESS_NETWORK_STATE` (API calls, map tiles)
+- `FOREGROUND_SERVICE` (+ `FOREGROUND_SERVICE_DATA_SYNC`, `FOREGROUND_SERVICE_LOCATION`)
+- `RECEIVE_BOOT_COMPLETED` + `WAKE_LOCK` (service restart)
+- `READ_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE` (max-SDK-scoped legacy storage)
 
 ### Services
 - `NotificationCaptureService` (notification listener)
@@ -1135,8 +1148,13 @@ Handles configuration-driven feature display and integration with Home screen, F
 
 ## 15. ORPHANED SCREENS (Non-Navigated)
 
-All screens are navigated to via NavigationDestination with one exception:
-- **PrivacySettingsScreen** has no standalone `NavigationDestination` entry — it is accessible only from the Settings gear icon (treated as a management sub-screen).
+Every screen/overlay is reachable through a `NavigationDestination`, with these nuances (verified 2026-09-07):
+- **PrivacySettingsScreen** now has `NavigationDestination.PrivacySettings` and a `FeatureConfig` entry (`id = "privacy"`); it is no longer settings-gear-only.
+- **DebugScreen** is routed via `NavigationDestination.Debug` but renders only under `BuildConfig.DEBUG`.
+- **DebugViewerScreen** has no destination — it is embedded inside `ReceiptScanScreen` and `ReviewScreen`.
+- **CategorizationDebugScreen** has no destination — opened from within `DebugScreen`.
+- **SourceLinkDebugScreen** (`ui/screens/debug/`) has no in-app entry point found (rendered only via tooling/preview).
+- **SourceLinkBackfillViewModel** (`ui/screens/settings/`) is a headless ViewModel with no UI consumer found yet.
 
 ---
 
@@ -1145,21 +1163,22 @@ All screens are navigated to via NavigationDestination with one exception:
 | Category | Count |
 |----------|-------|
 | **Main Tabs** | 6 |
-| **Feature Screens** | 23 |
+| **Feature Screens** | 22 (FeatureConfig entries: 24; NavigationDestination.featureDestinations: 27) |
 | **Overlay Screens** | 6 |
-| **Management Screens** | 3 (AiSettings, CategoryManagement, PrivacySettings—settings-only) |
-| **Debug Screens** | 3 |
-| **Total Screen Files** | 39 |
+| **Management Screens** | 3 (AiSettings, CategoryManagement, PrivacySettings — all routed) |
+| **Debug Screens** | 4 (DebugScreen + CategorizationDebug, DebugViewer, SourceLinkDebug sub-screens) |
+| **Screen/Sheet Files** (`*Screen.kt` / `*Sheet.kt`) | 42 |
+| **Total `ui/screens/` Files** | 83 |
 | **Component Files** | 59 |
-| **Total UI Files** | 167 |
-| **ViewModels** | 40 (incl. MainViewModel) |
+| **Total UI Files** | 166 |
+| **ViewModels** | 41 `@HiltViewModel` classes (40 in dedicated files incl. MainViewModel + 1 inline in RecurringExpensesScreen.kt) |
 | **Navigation Files** | 5 |
 | **Deep Link Hosts** | 8 |
 | **UI Mapper Files** | 3 |
 | **UI Theme Files** | 2 |
 | **UI Model Files** | 4 |
 | **UI Utility Files** | 7 |
-| **Screenshots/Sheets** | 3 (AddExpenseSheet, AssistantSheet, TransactionFilterSheet) |
+| **Screens/Sheets** | 3 (AddExpenseSheet, AssistantSheet, TransactionFilterSheet) |
 
 ---
 

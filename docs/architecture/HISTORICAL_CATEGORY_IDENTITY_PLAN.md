@@ -1,5 +1,7 @@
 # Historical Category Identity Plan
 
+> Last updated: 2026-09-07 (status re-verified against code — see "Status Review" below; the plan text itself is preserved)
+
 ## Problem Statement
 
 `AnalyticsInputAssembler` derives category names from the **current** category table at assembly time:
@@ -119,11 +121,35 @@ If rename history becomes a requirement, Option A can be extended later with an 
 
 **DEFERRED** — Requires schema work and is not part of the Engine 2 analytics fixes (PR1–PR6, PR8). The current `categoryNameSnapshot` mechanism in `AnalyticsInputAssembler` provides a best-effort lookup from the current category table; this works adequately for the vast majority of queries. The soft-delete schema change should be planned as a separate PR (e.g., PR-CAT1) with its own Room migration and testing cycle.
 
+Re-verified 2026-09-07: still accurate. The database is at schema v148 (`APP_DATABASE_SCHEMA_VERSION` in `data/database/AppDatabase.kt`) and none of Options A/B/C have been implemented (see Status Review below).
+
+---
+
+## Status Review (2026-09-07)
+
+Each claim re-checked against current source (`app/src/main/java`, `app/src/test/java`). No plan text above was altered.
+
+| Plan item | Status | Evidence |
+|-----------|--------|----------|
+| Problem statement: snapshot resolved from current table at assembly time | **Confirmed, still true** | `domain/analytics/AnalyticsInputAssembler.kt` calls `categoryRepository.getAll()` at assembly time and sets `categoryNameSnapshot = categoryNameById[snap.categoryId]`; field declared in `domain/analytics/NormalizedAnalyticsInput.kt` |
+| Option A — soft-delete `isArchived` on `categories` | **PENDING (not implemented)** | `data/database/entity/Category.kt` has only `id`, `name`, `icon`, `color`, `isDefault` — no `isArchived`/`isDeleted` flag anywhere |
+| Option B — snapshot columns on `expenses` | **PENDING (not implemented)** | `data/database/entity/Expense.kt` carries only currency-conversion snapshot fields (D.19); no `categoryNameSnapshot`/`categoryColorSnapshot`/`categoryIconSnapshot` columns |
+| Option C — `category_history` table | **PENDING (not implemented)** | No `category_history` table in entities or schema snapshots |
+
+Related current behavior (verified, unchanged since the plan was written):
+
+- `CategoryRepository.deleteCategory()` still **hard-deletes** the row (guarded only against default categories and categories referenced by budgets). Expenses keep a stale `categoryId`; at assembly time the snapshot resolves to `null` (missing-name case the plan describes).
+- Category rename UI does not exist yet (`CategoryViewModel` contains a `// Future: edit` note); `CategoryDao` has `@Update` and a `reassignExpensesToCategory` merge path, so renames are currently rare — consistent with the plan's rationale for deferring rename history.
+- Adjacent work that is **implemented** (not part of this plan, but easy to confuse with it): lifecycle-aware category *assignment* — `ExpenseCategoryAssignmentPort` + `DefaultExpenseCategoryAssignmentService` (`domain/transaction/`) with `assignCategoryIfUnset`, `CategoryAssignmentOutcome` (`Assigned` / `SkippedAlreadySet` / `SkippedExpenseMissing` / `Failed`), write-barrier check, atomic Room transaction, and an `EXPENSE_CATEGORY_ASSIGNED` `TransactionEvent`. Used by `ReceiptLinkService`. Test coverage: `app/src/test/java/com/yourname/expensetracker/domain/transaction/category/CategoryAssignmentServiceBarrierTest.kt` (write-barrier behavior). This records *assignment provenance*, not historical category *identity* — it does not satisfy any of Options A/B/C.
+- Coverage of the snapshot mechanism: exercised indirectly in analytics/golden tests (e.g. `AdvancedAnalyticsEngineNormalizedTest` fixtures, `AnalyticsInputAssemblerProvenanceTest`), but there is **no dedicated test** for deleted/renamed-category fallback behavior.
+
+Overall plan status: **PENDING / DEFERRED** (unchanged). No option has partial implementation.
+
 ---
 
 ## Tracker Entry
 
-Add to `ENGINE_ISSUES_MASTER_TRACKER.md` under Analytical Engines:
+Add to `ENGINE_ISSUES_MASTER_TRACKER.md` under Analytical Engines (file lives at `docs/analyses and debug master/ENGINE_ISSUES_MASTER_TRACKER.md`; row A15 already present at that wording as of 2026-09-07):
 
 ```
 | A15 | P1 | Category deletion/rename distorts history | Enhancement | Soft-delete (isArchived) designed and deferred; see docs/architecture/HISTORICAL_CATEGORY_IDENTITY_PLAN.md | ⏭ DEFERRED |

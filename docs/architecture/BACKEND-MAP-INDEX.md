@@ -1,9 +1,9 @@
 # 📋 COMPLETE BACKEND & DATABASE MAP INDEX
 
-**Generated:** 2026-06-09  
-**Total Files Documented:** 1050 source files (520 domain + 305 data + 167 UI + 35 di (32 @Module) + 17 service + 3 startup + 2 receiver + 1 worker + 3 util)  
+**Generated:** 2026-06-09 · **Reconciled with code:** 2026-09-07  
+**Total Files Documented:** 1073 source files (535 domain + 307 data + 166 UI + 35 di (32 @Module) + 19 service + 3 startup + 2 receiver + 1 worker + 3 util + 1 diagnostics + 1 root)  
 **Scope:** ExpenseTracker domain, data, and DI packages  
-**Current DB Version:** v147 · **DAOs:** 68 · **Entities:** 69 · **Hilt @Module files:** 32
+**Current DB Version:** v148 (baseline v145) · **DAOs:** 68 · **Entities:** 70 · **Hilt @Module files:** 32
 
 ---
 
@@ -12,7 +12,7 @@
 ### Primary Maps (NEW)
 
 1. **[COMPLETE-BACKEND-MAP.md](./COMPLETE-BACKEND-MAP.md)** ⭐ START HERE
-    - Exhaustive list of ALL 1050 backend files
+    - Exhaustive list of the 1073 backend/source files (principal classes per subsystem)
    - Organized by package and subpackage
    - File type, purpose, dependencies for each
    - Data flow diagrams
@@ -48,7 +48,7 @@
 
 ### By Package Type
 
-#### Domain Package (520 files)
+#### Domain Package (535 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/domain/`
 
 - **AI Subsystem** (64+ files)
@@ -117,18 +117,21 @@
   - PrivacyAuditLogger, RedactionSanitizer, PrivacySettings, PrivacySettingsRepository, etc.
   - EffectiveCloudAiPolicy, CloudPayloadPolicy, RawStorageMode, RawContentSanitizer
 
-- **Reminder** (1 file)
-  - BillReminderManager
-  - Bill payment reminders
+- **Reminder** (3 files)
+  - BillReminderManager, BillReminderSettings, BillReminderSettingsRepository
+  - Bill payment reminders (`BillReminderWorker` lives in `service/reminder/`)
 
 - **Transaction** (~10 files)
   - ExpenseSource, LifecycleEventType, DeduplicationMode, CreateExpenseRequest, CreateExpenseResult, ExpenseUpdates, SideEffectMode
   - `lifecycle/` — TransactionLifecycleCoordinator, TransactionSideEffectDispatcher
   - `validation/` — transaction validation rules
 
-- **Workers** (14 domain files)
+- **Workers** (19 domain files)
   - WorkerSpec, WorkerSpecScheduler, WorkerExecutionGuard, WorkerRunLogger, WorkerRegistry
   - WorkerRunContext, RetryableWorkerException, PrivacyRuntimeWorkerPolicy, NotificationPermissionChecker
+  - WorkerLease/WorkerLeaseRegistry(+Impl), WorkerDrainController(+NoOp), WorkerGuardVerifier
+  - WorkerReasonCodes, WorkerTerminalDiagnosticSink, FileWorkerTerminalDiagnosticSink, ScheduleResult
+  - CoroutineWorkers live elsewhere (10 total, 7 registered in `WorkerRegistry`)
 
 - **Recurring** (~7 files)
   - RecurringOccurrenceExpander, OccurrenceConflictResolver, RecurringPlanProjectionService
@@ -197,21 +200,21 @@
 - **Other Subsystems**
   - Forecasting, location, parsing (`domain/parser/parsers/`), receipt
   - Health, savings, subscriptions, tax
-  - Notification capture (10 files), notification money (1 file)
+  - Notification capture (11 files), notification money (1 file)
   - Notification fingerprinting — `domain/notification/RawNotificationFingerprint`
   - Shared hashing — `domain/common/Hashing.kt`
 
-#### Data Package (305 files)
+#### Data Package (307 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/data/`
 
-- **Database** (109+ files)
-   - 1 main database (AppDatabase.kt, v147)
+- **Database** (151 files)
+   - 1 main database (AppDatabase.kt, v148) + DatabaseMigrations.kt + DatabaseSchemaPolicy.kt (DB ownership policy v2) + RoomDomainTransactionRunner.kt + GroupTransactionCoordinator.kt
    - 68 DAOs (data access objects)
-   - 69 Entities (Room-managed tables, all registered in AppDatabase)
-   - 6+ composite models
+   - 70 Entities (Room-managed tables, all registered in AppDatabase)
+   - 6+ composite models, 1 converter file (22 `@TypeConverter` methods)
 
-- **Repositories** (63 files)
-   - 47 data-layer implementations + 16 domain-layer interfaces
+- **Repositories** (62 files)
+   - 46 data-layer implementations + 16 domain-layer interfaces
    - Expense, budget, analytics, currency
    - Merchant, location, notification
    - Savings, subscription, warranty
@@ -219,7 +222,7 @@
    - DeterministicExpenseExportPager, GroupsRepository (interface), AnomalyAlertRepositoryImpl, SharedExpenseDataPortAdapter
    - TaxSettingsRepository, WidgetStyleRepository, NaturalLanguageExpenseQueryRepository
 
-- **AI Providers** (44+ files)
+- **AI Providers** (43 files)
    - Cloud, OnDevice, Hybrid, NoOp implementations
    - 8 capability types × 4 implementations (+ SmartReceiptAssistService)
    - SmartReceiptAssistService, StrictAiJsonParsing, DashboardBriefingPromptFormatter, DashboardBriefingResponseParser
@@ -227,12 +230,14 @@
    - OnDevice notification parser, review priority scorer, semantic duplicate detector
    - All Cloud*Service implementations (8+ files)
    - Several Hybrid*Service implementations
+   - OkHttpCloudProviderConnectionTester (data/ai root)
 
 - **AI Provider Internals** (7 files)
-   - `data/ai/provider/internal/` — CloudCorrelation, CloudJsonParser, CloudPiiSanitizer, CloudRetryPolicy, DashboardBriefingPromptFormatter, DashboardBriefingResponseParser, StrictAiJsonParsing
+   - `data/ai/provider/internal/` — CloudCorrelation, CloudJsonParser, CloudPiiSanitizer, CloudRetryPolicy
+   - `data/ai/provider/` — DashboardBriefingPromptFormatter, DashboardBriefingResponseParser, StrictAiJsonParsing
 
-- **AI Workers** (1 file)
-   - `data/ai/worker/` — DailyBriefingWorker
+- **AI Workers** (2 files)
+   - `data/ai/worker/` — AiWorkSchedulerImpl, DailyBriefingWorker
 
 - **Email Parsers** (5 files)
    - `data/email/EmailReceiptIngestionService.kt`
@@ -248,8 +253,8 @@
 - **Security** (2 files)
    - `data/security/` — BankTokenCipher, SecureKeyStorage
 
-- **Service Layer** (2 files)
-   - `data/service/` — AndroidNotificationService
+- **Service Layer** (3 files)
+   - `data/service/` — AndroidNotificationService, AndroidNotificationPermissionChecker
    - `data/speech/` — AndroidSpeechInputGateway
 
 - **CSV Import** (1 file)
@@ -257,11 +262,17 @@
    - Supports date, amount, merchant, category, description columns
    - Routes every row through full lifecycle: validate → normalize → dedupe → insert
 
-- **Backup** (4 files)
+- **Backup** (18 files)
    - `data/backup/` — BackupVerifier, CostbackupBundle, RestoreJournal, RestoreMaintenanceMode
+   - Restore/restore-barrier infrastructure: RestoreDatabaseOpener, RestoreJournalImporter, RestoreInternalWriteScope, RestoreDiagnosticsSink, SqliteSnapshotCreator, AppOperationalState
+   - Write/read barriers: DatabaseWriteBarrier, DatabaseReadBarrier (+FlowExt), DatabaseAccessModels
+   - Maintenance runners + safe diagnostic sinks: MaintenanceOperationRunner, MaintenanceSafeDiagnosticSink, DataStoreMaintenanceSafeDiagnosticSink, TimberMaintenanceSafeDiagnosticSink
 
-- **Rescue** (data layer)
-   - `data/rescue/` — Financial rescue path (raw SQLite import bypassing migration chain)
+- **Rescue** (4 files)
+   - `data/rescue/` — FinancialRescueCoordinator, FinancialRescueSnapshot, RescueActivity, RescueConfig (raw SQLite import bypassing migration chain for pre-v145 DBs)
+
+- **Store** (2 files)
+   - `data/store/` — ExpenseReadStore, ExpenseWriteStore
 
 - **Negotiation** (data layer)
    - `data/negotiation/` — MarketRateProvider data implementations
@@ -279,7 +290,7 @@
 
 **Location:** `com.yourname.expensetracker.di`
 
-- 32 Hilt @Module files (31 in `di/` + `EmptyStateModule` in `ui/`)
+- 32 Hilt @Module files (all in `di/`) + `EmptyStatePresentationModule` in `ui/` + qualifier files (`NetworkQualifiers`, `ApplicationScope`)
 - 1 `@EntryPoint` (`AppStartupDelegate` in `startup/`)
 - Database, DAO, Repository bindings
 - AI, services, location provider modules
@@ -288,37 +299,41 @@
 - Diagnostics, provenance, reminder settings, retention, worker logging
 - Negotiation, natural language, OCR improvements, dashboard contracts, savings
 
-#### App Services Package (17 files)
+#### App Services Package (19 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/service/`
 
-- **Notification Capture** (2 files)
+- **Notification Capture** (3 files)
   - `NotificationCaptureService` — Android NotificationListenerService, captures notifications
   - `NotificationFilter` — Filters captured notifications by package/type
+  - `NotificationFilterDecision` — Filter decision + reason models
 
-- **Recommendation System** (7 files)
-  - `RecommendationCacheService` — In-memory LRU cache with TTL for dashboard recommendations
+- **Recommendation System** (6 files)
+  - `RecommendationCacheService` — In-memory LRU cache with 7-day TTL for dashboard recommendations
   - `RecommendationDeduplicator` — Signature-based deduplication per merchant/category/target
   - `RecommendationDismissalHandler` — Handles user dismissal of recommendation cards
   - `RecommendationInvalidator` — Invalidates stale/expired recommendations on transaction changes
   - `RecommendationLifecycleManager` — Manages recommendation lifecycle: expiration, cleanup, threshold refresh
   - `RecommendationStateManager` — Reactive StateFlow for UI observation, max 5 limit, user-specific
-  - `RecommendationCacheService` — LRU cache with 7-day TTL
 
-- **Workers** (3 files)
-  - `BillReminderWorker` — Periodic bill reminder delivery
-  - `ReceiptMatchingWorker` — Background receipt-to-transaction matching
-  - `WarrantyExpirationWorker` — Warranty expiry notification worker
+- **Workers** (5 files)
+  - `receiptmatching/ReceiptMatchingWorker` — Background receipt-to-transaction matching (registered: `receipt_matching`)
+  - `reminder/BillReminderWorker` — Periodic bill reminder delivery, every 4h (registered: `bill_reminder_periodic`)
+  - `reminder/DismissReminderActionWorker` — Durable reminder dismiss action
+  - `reminder/SnoozeReminderActionWorker` — Durable reminder snooze action
+  - `warranty/WarrantyExpirationWorker` — Warranty expiry notification worker (registered: `warranty_expiration_check`)
 
-- **Receivers** (2 files)
-  - `SnoozeReminderReceiver` — Hilt @AndroidEntryPoint broadcast receiver for reminder snooze
-  - `DismissReminderReceiver` — Hilt @AndroidEntryPoint broadcast receiver for reminder dismiss
+- **Receivers** (4 files)
+  - `reminder/SnoozeReminderReceiver` — Hilt @AndroidEntryPoint broadcast receiver for reminder snooze
+  - `reminder/DismissReminderReceiver` — Hilt @AndroidEntryPoint broadcast receiver for reminder dismiss
+  - `receiver/BootReceiver` — BOOT_COMPLETED / MY_PACKAGE_REPLACED receiver
+  - `receiver/ServiceRestartReceiver` — Service keep-alive receiver
 
 - **Utilities** (2 files)
   - `NavigationTargetResolver` — Resolves navigation targets from recommendations
   - `TransactionFilterSerializer` — Serializes transaction filters for deduplication signatures
 
 - **Legacy** (1 file)
-  - `LegacyDataMigrationService` — One-time data migration from older app versions
+  - `debug/LegacyDataMigrationService` — One-time data migration from older app versions
 
 - **Root Utilities** (1 file)
   - `util/CsvExpenseImporter.kt` — Bulk CSV expense import via TransactionLifecycleCoordinator
@@ -339,11 +354,12 @@
 ## 🎯 By Architecture Layer
 
 ### Database Layer
-- **Core:** `AppDatabase.kt` (Room database, v147)
+- **Core:** `AppDatabase.kt` (Room database, v148, baseline v145 — see `DatabaseSchemaPolicy.kt`)
+- **Migrations:** `DatabaseMigrations.kt` (`MIGRATION_145_146/146_147/147_148`)
 - **Access:** 68 DAOs for direct table access
-- **Entities:** 69 Room-managed entities (all registered in AppDatabase)
+- **Entities:** 70 Room-managed entities (all registered in AppDatabase)
 - **Models:** 6+ composite query result models
-- **Coordinator:** `GroupTransactionCoordinator.kt`
+- **Coordinators:** `GroupTransactionCoordinator.kt` (atomic group transactions), `RoomDomainTransactionRunner.kt` (DomainTransactionRunner impl)
 
 ### Repository Layer
 - **63 repositories** providing business logic (47 data + 16 domain interfaces)
@@ -352,7 +368,7 @@
 - Manage database transactions
 
 ### Domain/Business Logic Layer
-- **520 files** implementing business rules
+- **535 files** implementing business rules
 - Engines, services, use cases, value objects
 - No database dependencies
 - Clean separation from infrastructure
@@ -367,12 +383,13 @@
 
 ## 🔍 Files by Type
 
-### Database-Related (178+ files)
-- DAOs (68), Entities (69), Models (6+), Converters (1), Coordinator (1), Database (1), BackgroundJobRun (1)
+### Database-Related (181+ files)
+- DAOs (68), Entities (70), Models (6), Converters (1), Coordinators/Runner (2), Database + Migrations + Schema policy (3)
 - **Key files:** `ExpenseDao.kt`, `Expense.kt`, `AppDatabase.kt`
+- **Guardrail:** direct DAO access outside the tiered allowlist (`scripts/guardrails/dao-approved-files.txt`) is CI-enforced
 
-### Repository-Related (63 files)
-- Data-layer repositories (47), Domain interfaces (16)
+### Repository-Related (62 files)
+- Data-layer repositories (46), Domain interfaces (16)
 - **Key files:** `ExpenseRepository.kt`, `BudgetRepository.kt`, `CategoryRepository.kt`
 
 ### AI-Related (110+ files)
@@ -410,24 +427,24 @@
 
 | Metric | Count |
 |--------|-------|
-| **Total Source Files** | 1050 |
-| Domain files | 520 |
-| Data files | 305 |
-| UI files | 167 |
+| **Total Source Files** | 1073 |
+| Domain files | 535 |
+| Data files | 307 |
+| UI files | 166 |
 | DI files | 32 |
 | Hilt @Module files | 32 |
-| **Database Entities** | 69 |
+| **Database Entities** | 70 |
 | **DAOs** | 68 |
-| **Repositories** | 63 (47 data + 16 domain interfaces) |
+| **Repositories** | 62 (46 data + 16 domain interfaces) |
 | **Use Cases** | 31 |
 | **ViewModels** | 41 |
-| **Workers** | 9 (7 runtime + 2 backfill) |
+| **Workers** | 10 CoroutineWorkers (7 in `WorkerRegistry` + `NotificationIntakeWorker` + 2 reminder action workers) |
 | **Engines** | 28 named `*Engine` files |
 | **AI Services** | 32+ |
 | **Parsers** | 23 (across all layers) |
 | **Geocoders** | 5 |
 | **Email Receipt Parsers** | 4 |
-| **Test Files** | 600+ (unit) + 27 (instrumented) |
+| **Test Files** | 626+ (unit) + 28 (instrumented) |
 
 ---
 
@@ -597,9 +614,9 @@ Receipt captured → validate → dedup → persist → link to expense → side
 4. Review specific provider implementations
 
 ### For Database Schema Changes
-1. Review all 69 entities in `COMPLETE-BACKEND-MAP.md`
+1. Review all 70 entities in `COMPLETE-BACKEND-MAP.md`
 2. Check DAOs and repositories that use them
-3. Consider migrations (current version: v147)
+3. Consider migrations (current version: v148, baseline v145 — see `DatabaseSchemaPolicy.kt` and `docs/ci/DB_ROOM_INVENTORY.md`)
 4. Review existing tests
 
 ### For Adding New Features
@@ -634,9 +651,8 @@ Receipt captured → validate → dedup → persist → link to expense → side
 
 ## ✅ Completeness Checklist
 
-- ✅ ALL 520 domain files listed
-- ✅ ALL 305 data files listed
-- ✅ ALL 32 Hilt @Module files + @EntryPoint listed
+- ✅ Domain (535 files) and data (307 files) packages covered — principal classes row-listed, remainder noted per package
+- ✅ All 32 Hilt @Module files + @EntryPoint listed
 - ✅ File-by-file breakdown with:
   - ✅ File path
   - ✅ Class name
@@ -675,6 +691,6 @@ Receipt captured → validate → dedup → persist → link to expense → side
 
 ---
 
-**Last Updated:** 2026-06-09  
-**Version:** 2.2 - Reconciliation with Codebase  
+**Last Updated:** 2026-09-07  
+**Version:** 2.3 - Reconciled with codebase (DB v148, 68 DAOs, 70 entities)  
 **Status:** ✅ Production-Ready Documentation

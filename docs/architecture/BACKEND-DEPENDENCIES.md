@@ -1,12 +1,12 @@
 # Backend Map - Test Coverage & Cross-References
 
-**Generated:** 2026-06-09
+**Generated:** 2026-06-09 · **Reconciled with code:** 2026-09-07
 
 ---
 
 ## Test Coverage Summary
 
-**Total Test Files:** 600+ (unit) + 27 (instrumented)
+**Total Test Files:** 626+ (unit) + 28 (instrumented)
 
 ### Test Categories
 
@@ -298,7 +298,9 @@ WorkerRunLogger.runCompleted/runFailed(workerName, runId, result)
 PrivacyRuntimeWorkerPolicy (gates execution at runtime)
 ```
 
-**Files:** `workers/WorkerSpec.kt`, `workers/WorkerSpecScheduler.kt`, `workers/WorkerExecutionGuard.kt`, `workers/WorkerRunLogger.kt`, `workers/WorkerRegistry.kt`, `workers/RetryableWorkerException.kt`, `workers/PrivacyRuntimeWorkerPolicy.kt`, `workers/NotificationPermissionChecker.kt`, `workers/WorkerRunContext.kt`
+**Files:** `workers/WorkerSpec.kt`, `workers/WorkerSpecScheduler.kt`, `workers/WorkerExecutionGuard.kt`, `workers/WorkerRunLogger.kt`, `workers/WorkerRegistry.kt`, `workers/RetryableWorkerException.kt`, `workers/PrivacyRuntimeWorkerPolicy.kt`, `workers/NotificationPermissionChecker.kt`, `workers/WorkerRunContext.kt`, `workers/WorkerReasonCodes.kt`, `workers/WorkerTerminalDiagnosticSink.kt`, `workers/FileWorkerTerminalDiagnosticSink.kt`, `workers/WorkerLease.kt`, `workers/WorkerLeaseRegistry.kt`, `workers/WorkerLeaseRegistryImpl.kt`
+
+Registered `WorkerRegistry` entries (7): `location_backfill`, `merchant_key_backfill`, `warranty_expiration_check`, `data_retention`, `bill_reminder_periodic`, `receipt_matching`, `ai_daily_briefing`. CoroutineWorkers not in the registry: `DismissReminderActionWorker`, `SnoozeReminderActionWorker`, `NotificationIntakeWorker`.
 
 ### Chain 11: Receipt Match Lifecycle
 
@@ -495,15 +497,18 @@ ReceiptItemCategorizationService
 
 ```
 DatabaseModule (root)
-    ├─ Provides: AppDatabase (v147, 69 entities)
+    ├─ Provides: AppDatabase (v148, 70 entities; baseline v145 via DatabaseSchemaPolicy)
     ├─ Uses: DaoModule
-    └─ Provides: GroupTransactionCoordinator
+    ├─ Provides: GroupTransactionCoordinator (domain interface → data impl)
+    └─ Provides: DomainTransactionRunner → RoomDomainTransactionRunner
 
 DaoModule
-    └─ Provides: All 68 DAOs
+    ├─ Provides: 64 DAOs
+    └─ (AiModule companion provides the 3 AI DAOs; SourceStatsEventDao is not Hilt-bound)
 
 DiagnosticsModule
-    └─ Provides: DiagnosticEventWriter, Lifecycle event writers, OperationRunRecorder, DiagnosticsRepository
+    ├─ Provides: DiagnosticEventWriter, Lifecycle event writers, OperationRunRecorder, DiagnosticsRepository
+    └─ Binds: WorkerRunLogger → WorkerRunLoggerImpl
 
 ProvenanceModule
     └─ Provides: Provenance event recording
@@ -512,10 +517,13 @@ ReminderSettingsModule
     └─ Provides: BillReminderSettingsRepository
 
 RetentionModule
-    └─ Provides: RetentionRegistry with 5 targets
+    └─ Provides: RetentionRegistry with 10 targets (raw_notifications, notification_intake, scanned_receipts OCR, ai_artifacts, ai_chat_messages, email_receipt_sources, pipeline_diagnostic_events, pending_reviews, background_job_runs, bank_statement_import_items)
 
 WorkerModule
-    └─ Provides: WorkerRunLogger → WorkerRunLoggerImpl
+    ├─ Binds: WorkerLeaseRegistry → WorkerLeaseRegistryImpl
+    ├─ Binds: WorkerDrainController → WorkerLeaseRegistryImpl
+    ├─ Binds: NotificationPermissionChecker → AndroidNotificationPermissionChecker
+    └─ Provides: WorkManager
 
 RepositoryModules (multiple)
     ├─ SavingsRepositoryBindingsModule
@@ -694,9 +702,22 @@ EmptyStateModule
 
 | Barrier | Purpose | File |
 |---------|---------|------|
-| `DatabaseReadBarrier` | Blocks reads during restore/maintenance mode | `data/database/barrier/` |
-| `DatabaseWriteBarrier` | Blocks writes during restore/maintenance mode | `data/database/barrier/` |
+| `DatabaseReadBarrier` | Blocks reads during restore/maintenance mode | `data/backup/DatabaseReadBarrier.kt` |
+| `DatabaseReadBarrierFlowExt` | Flow extensions for the read barrier | `data/backup/DatabaseReadBarrierFlowExt.kt` |
+| `DatabaseWriteBarrier` | Blocks writes during restore/maintenance mode | `data/backup/DatabaseWriteBarrier.kt` |
 | `RestoreMaintenanceMode` | 8-state maintenance mode coordinator, pauses workers via WorkManager | `data/backup/RestoreMaintenanceMode.kt` |
+
+### Database Schema & Migrations
+
+| Fact | Value | Source |
+|------|-------|--------|
+| Current schema version | **148** (`APP_DATABASE_SCHEMA_VERSION`) | `data/database/AppDatabase.kt` |
+| Migration baseline | **145** (older DBs use the `data/rescue/` import path, not migrations) | `data/database/DatabaseSchemaPolicy.kt` |
+| Registered migrations | `MIGRATION_145_146` (creates `negotiation_outcomes`), `MIGRATION_146_147` (group soft-delete: `group_members.leftAt`, `group_expenses.idempotencyKey`, non-unique member-name index), `MIGRATION_147_148` (9 worker-run tracing columns on `background_job_runs`) | `data/database/DatabaseMigrations.kt` |
+| Single source of truth | `DatabaseSchemaPolicy` (`CURRENT_VERSION`, `MIGRATION_BASELINE`, `ALL_MIGRATIONS`) — production, tests, and CI must read from it | `data/database/DatabaseSchemaPolicy.kt` |
+| Schema snapshots | `app/schemas/com.yourname.expensetracker.data.database.AppDatabase/` up to `148.json` | exported via Room |
+| DAO access guardrail | Tiered allowlist enforced by `scripts/guardrails/dao-access-check.kts` + `scripts/guardrails/dao-approved-files.txt`; see `docs/ci/DB_ROOM_INVENTORY.md`, `docs/ci/guard-policy.md` | CI static guard suite |
+| Expense write restriction | Direct `ExpenseDao` mutations require `RestrictedExpenseDaoMutation` opt-in (CI-enforced via `ExpenseDaoMutationAccessTest`) | `data/database/dao/RestrictedExpenseDaoMutation.kt` |
 
 ### Cross-Source Deduplication
 

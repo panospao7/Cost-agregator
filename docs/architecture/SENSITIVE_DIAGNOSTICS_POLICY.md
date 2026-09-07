@@ -1,5 +1,7 @@
 # Sensitive Diagnostics & Logging Policy
 
+> Last updated: 2026-09-07 (re-verified against code; PII guard now enforced blocking in CI)
+
 ## Rule
 
 > No release UI or logs should expose raw merchant names, financial queries, addresses, OCR text, notification content, or financial totals to external observers.
@@ -35,11 +37,21 @@
 - Gated by `BuildConfig.DEBUG` (NavigationDestination.Debug)
 - May show sensitive data for development
 - Must not be accessible in release builds
+- Verified: `MainActivity` renders `DebugScreen` only when `BuildConfig.DEBUG`; otherwise it immediately navigates back
+
+### Worker diagnostics (durable)
+
+All background-work diagnostics use controlled, structured fields — never raw payloads:
+
+- `WorkerRunLogger` (`domain/workers/`) writes run start/success/retry/failure rows to `BackgroundJobRunDao` (BackgroundJobRun table) with reason codes only.
+- `WorkerReasonCodes` (PR12J-1, `domain/workers/`) is the central exception → reason-code mapper. Codes are constrained to `[A-Z0-9_]{1,80}` controlled constants from `DiagnosticReasonCode` (e.g. `WORKER_TIMEOUT`, `WORKER_CANCELLED`, `WORKER_PRIVACY_DENIED`, `WORKER_NOTIFICATION_PERMISSION_DENIED`) — never raw exception messages, file paths, or PII.
+- `DiagnosticEventWriter` (`domain/diagnostics/`) writes typed `DiagnosticEvent` rows (pipeline, stage, outcome, severity, `DiagnosticReasonCode`, entity type/id, `sourceIdHash`, correlation/causation IDs, counts/booleans, `SafeEventMetadata`) to `PipelineDiagnosticEventDao`.
+- Terminal DB-write failures fall back to `WorkerTerminalDiagnosticSink` (PR12H-3); the durable implementation `FileWorkerTerminalDiagnosticSink` (PR12I-1) persists bounded JSONL records (workerName, runId, correlationId, workId, runAttempt, intendedStatus, reasonCode, failureCode, `errorClass` — exception class name only, timestamp) and must never throw.
 
 ### Export/backup
-- Controlled by `PrivacyGate` (RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, EXPENSE_EXPORT_RAW)
-- Raw export requires explicit user permission (debugDataPersistenceEnabled)
-- Redacted export strips sensitive fields; CsvCellSanitizer neutralizes formula injection
+- Controlled by `PrivacyGate` via `ExportPrivacyGate` (`domain/privacy/ExportPrivacyGate.kt`, PR8): dedicated capabilities `EXPENSE_EXPORT`, `EXPENSE_EXPORT_REDACTED`, `EXPENSE_EXPORT_ENCRYPTED`, `EXPENSE_EXPORT_RAW`, `DEBUG_RAW_EXPORT`, `RAW_DATABASE_EXPORT`. `RAWBACKUP_EXPORT` is denied in every branch (sole-owner per the `PrivacyGate` contract KDoc).
+- Raw export requires explicit user permission (debugDataPersistenceEnabled) and/or debug build.
+- Redacted export strips sensitive fields; `CsvCellSanitizer` (`domain/export/`) neutralizes formula injection (`=`, `+`, `-`, `@` prefixes) with RFC-4180 quoting.
 
 ### Privacy audit
 - All privacy gate decisions are logged to `PrivacyAuditEvent`
@@ -59,6 +71,7 @@
   - File paths (`/path/to/file`, `C:\path`) → `[PATH]`
   - URLs and email addresses are NOT explicitly matched (caught incidentally if at all)
   - Any value matching blocked key substrings (`raw`, `ocr`, `prompt`, `token`, `secret`, etc.)
+- Strings longer than `2 × MAX_STRING_LENGTH` (512 chars) are replaced entirely with `[REDACTED]`
 - Messages truncated to `MAX_STRING_LENGTH` (256 chars)
 - Null messages remain null (no redaction needed)
 
@@ -68,11 +81,28 @@
 
 ## Enforcement
 
+### CI guard (blocking, as of 2026-09-07)
+
+- `scripts/verify_pii_logging_boundaries.py` (rule `G-PII-01`) scans `app/src/main/java` for PII leaking into log statements, exception messages, and diagnostics (raw OCR/notification/receipt text variables, stack traces, file paths, `e.message` logging, non-debug-guarded path logging).
+- It runs as a **blocking** guard in the CI static-guard suite: `.github/workflows/ci.yml` job `static-guards` → `scripts/ci/run_static_guard_suite.py` (`GUARD_MANIFEST` entry `pii_logging`, mode `blocking`). A violation fails CI.
+- Exemptions live in `scripts/allowlists/pii_logging_allowlist.yml`, which is currently **empty** — all `absolutePath` / `rawOcrText` / `e.message` exemptions were removed (G3.6); PII handling is enforced in code, not exemptions.
+
+### Architecture guard tests (`app/src/test/java/com/yourname/expensetracker/architecture/`)
+
+- `WorkerGuardArchitectureGuardTest` — every production `CoroutineWorker` routes through `WorkerExecutionGuard` (empty allowlist)
+- `WorkerGuardStaticVerificationTest` — CI-enforcement: no known worker is unguarded; no stale registry entries
+- `SourceScanningArchitectureGuardTest` (PR12F) — source-scanning guards: guard-call presence, no broadcast-receiver DAO injection, workId/runAttemptCount pass-through, schema-version/snapshot match, worker files free of direct DAO usage, notification-posting workers require permission flag
+- `CancellationSafetyArchitectureGuardTest` — `CancellationException` must propagate (workers must not swallow cancellation)
+- `DirectEventDaoInsertGuardTest` — direct `TransactionEvent` DAO inserts are guarded (event provenance)
+
+### Unit enforcement
+
 - `PrivacyCapabilityHandlingPolicyTest` ensures all capabilities have explicit policy
 - `TIMBER_PII_LOGGING` capability is LOCAL_ONLY (no gate needed, just policy)
 - Debug data persistence gated by `debugDataPersistenceEnabled` setting
-- `EventMetadataSanitizer` verified in `GlobalDurableDiagnosticsGoldenTest` and `DurableDiagnosticsAcceptanceTest`
+- `EventMetadataSanitizer` verified in `GlobalDurableDiagnosticsGoldenTest` and `DurableDiagnosticsAcceptanceTest` (plus dedicated regression tests: `DurableDiagnosticsRegressionTest`, `DurableDiagnosticsA8RegressionTest`, `DDL512RegressionTest`)
 - `SafePrivacyMetadata` verified in privacy contract tests
+- Worker diagnostics coverage: `WorkerRunLoggerTest`, `FileWorkerTerminalDiagnosticSinkTest`
 
 ### Recent fixes
 
