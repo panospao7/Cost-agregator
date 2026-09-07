@@ -85,6 +85,33 @@ class AnalysisContract:
     direct_scope_allow_receiverless: bool = False
     worker_base_fqcns: tuple[str, ...] = ()
     transparent_scope_methods: tuple[str, ...] = ()
+    transparent_inline_methods: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.transparent_inline_methods, tuple):
+            raise TypeError("transparent_inline_methods must be a tuple")
+        for name in self.transparent_inline_methods:
+            if not isinstance(name, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*", name
+            ):
+                raise ValueError(
+                    "transparent_inline_methods entries must be plain identifiers"
+                )
+        disjoint_groups = (
+            ("worker_guard_scope_methods", self.worker_guard_scope_methods),
+            ("direct_scope_methods", self.direct_scope_methods),
+            ("transparent_scope_methods", self.transparent_scope_methods),
+        )
+        inline = set(self.transparent_inline_methods)
+        for label, group in disjoint_groups:
+            if not isinstance(group, tuple):
+                raise TypeError("%s must be a tuple" % (label,))
+            overlap = inline & set(group)
+            if overlap:
+                raise ValueError(
+                    "transparent_inline_methods overlaps %s: %s"
+                    % (label, sorted(overlap))
+                )
 
     def is_worker_guard_method(self, method: str) -> bool:
         return method in self.worker_guard_scope_methods
@@ -94,6 +121,78 @@ class AnalysisContract:
 
     def is_transparent_scope_method(self, method: str) -> bool:
         return method in self.transparent_scope_methods
+
+    def is_inline_transparent_method(self, method: str) -> bool:
+        return method in self.transparent_inline_methods
+
+
+# ── GR-14f production inline-carrier table ───────────────────────────────────
+#
+# Closed, reviewed set of lambda-carrier method names admitted as
+# ``transparent`` at the mediation layer (carrier classification only — this
+# is NOT the GR-12 barrier contract and grants no authorization by itself).
+# Every entry must satisfy BOTH:
+#   1. the method is Kotlin-inline (or a project wrapper that provably
+#      invokes its lambda argument exactly once, inline, before returning),
+#      so the lambda cannot execute after the enclosing callable returns and
+#      cannot capture guard context out of it; and
+#   2. the method runs the block synchronously in the caller's coroutine
+#      context (structured concurrency), so caller-side guard context flows
+#      into the lambda unchanged.
+# Admissibility evidence (GR-14f): the stdlib entries are `inline` in
+# kotlin-stdlib/kotlinx-coroutines; `runOperation` is
+# com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder's
+# start/run/finalize wrapper (block invoked once inline, RoomOperationRunRecorder
+# runOperation); `runCatchingCancellable` is
+# com.yourname.expensetracker.domain.util.CancellationSafe's inline
+# try/catch wrapper; `runPostCommitSafely` is a private suspend wrapper in
+# ReceiptRepository / NotificationProcessingPipeline / ReviewQueueRepository.
+# A production tree-wide declaration scan (GR-14f manifest) shows no project
+# member/extension declares any of these names with a lambda parameter, so
+# name-exact admission cannot be shadowed onto a non-inline carrier.
+# Lazy carriers (Sequence/Flow builders, custom dispatch) are deliberately
+# absent and keep the default `async` uncertainty.  Any change to this tuple
+# requires a dedicated reviewed diff with fixture coverage
+# (fixtures helper_proof HP-13..HP-20) and a shadow before/after delta.
+PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
+    # kotlin scope functions (inline, eager)
+    "let",
+    "also",
+    "apply",
+    "run",
+    "with",
+    "takeIf",
+    "takeUnless",
+    # kotlin error wrappers (inline)
+    "runCatching",
+    "getOrElse",
+    "onFailure",
+    # kotlin resource/control (inline)
+    "use",
+    "repeat",
+    # kotlin eager collection operators with lambda (inline)
+    "forEach",
+    "forEachIndexed",
+    "map",
+    "mapNotNull",
+    "mapIndexed",
+    "filter",
+    "any",
+    "none",
+    "count",
+    "first",
+    "firstOrNull",
+    "associateBy",
+    "buildSet",
+    "buildList",
+    # kotlinx structured suspend scopes (inline)
+    "withLock",
+    "withTimeout",
+    # project inline wrappers (see evidence above)
+    "runOperation",
+    "runCatchingCancellable",
+    "runPostCommitSafely",
+)
 
 
 # ── File model ───────────────────────────────────────────────────────────────
@@ -1183,7 +1282,9 @@ class CallGraphBuilder:
                         carrier = "canonical_direct"
                     else:
                         carrier = "unresolved_scope"
-                elif self.contract.is_transparent_scope_method(call.name):
+                elif self.contract.is_transparent_scope_method(
+                    call.name
+                ) or self.contract.is_inline_transparent_method(call.name):
                     carrier = "transparent"
             regions.append(
                 LambdaRegion(
@@ -1333,7 +1434,42 @@ class CallGraphBuilder:
                 )
             ]
         context = self._edge_context(regions, call.name_start)
-        return self._resolve_invocation(model, call, context)
+        resolved = self._resolve_invocation(model, call, context)
+        if self._chain_admitted_by_inline_carrier(regions, call.name_start):
+            # GR-14f resolution-preservation rule: an inline-carrier site
+            # must never lose corpus reachability relative to the historical
+            # uncertain-edge behavior.  When exact resolution cannot bind
+            # the call to corpus targets (untracked receiver chains,
+            # external receivers), keep the conservative name-matched
+            # uncertain edge instead — otherwise reverse-reachability would
+            # shrink and reclassify real recursion/inbound evidence as
+            # zero-inbound external entry.
+            if not any(edge.targets for edge in resolved):
+                return [
+                    CallEdge(
+                        caller_key=model.key,
+                        state=ResolutionState.ASYNC_DISPATCH,
+                        line=call.line,
+                        file=call.file,
+                        name_start=call.name_start,
+                        targets=self._name_match_targets(call.name),
+                        context_kind="none",
+                        uncertain=True,
+                    )
+                ]
+        return resolved
+
+    def _chain_admitted_by_inline_carrier(self, regions, offset: int) -> bool:
+        """True when the transparent region chain at ``offset`` includes an
+        inline-carrier region (GR-14f set).  Called only after
+        ``_uncertain_region_state`` returned None, so every region
+        containing ``offset`` is already transparent; wrapper-only chains
+        keep their historical resolution path."""
+        return any(
+            self.contract.is_inline_transparent_method(region.method)
+            for region in regions
+            if region.start <= offset < region.end
+        )
 
     def _name_match_targets(self, name: str) -> tuple[str, ...]:
         """Corpus callables sharing only a method name (plan hard-stop edges)."""

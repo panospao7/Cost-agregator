@@ -1,7 +1,8 @@
 # GR-13 consolidated expected manifest (shadow corpus).
 # Copies all rows from the per-group manifests: 14 call-binding (CB),
-# 12 helper-proof (HP), 18 worker-proof (WP; WP-15a/WP-15b separate),
-# and 8 protocol (PR) rows = 52 rows total.
+# 20 helper-proof (HP; HP-13..HP-20 are the GR-14f inline-carrier rows),
+# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows
+# = 60 rows total.
 # CB/HP/WP rows use expectedResolution/expectedProof(/expectedRoot);
 # PR rows use expectation. All values use closed vocabularies only.
 fixtures:
@@ -95,6 +96,38 @@ fixtures:
     file: helper_proof/hp12_helper_chain_both_guarded.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
     expectedProof: PROVEN_HELPER
+  - id: HP-13
+    file: helper_proof/hp13_let_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-14
+    file: helper_proof/hp14_apply_runcatching_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-15
+    file: helper_proof/hp15_foreach_map_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-16
+    file: helper_proof/hp16_structured_suspend_carrier_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-17
+    file: helper_proof/hp17_project_helper_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-18
+    file: helper_proof/hp18_assigned_lambda_escape_negative.kt
+    expectedResolution: ESCAPING_LAMBDA
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-19
+    file: helper_proof/hp19_custom_carrier_stays_async_negative.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-20
+    file: helper_proof/hp20_transparent_not_authorization_negative.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
   - id: WP-01
     file: worker_proof/wp01_direct_worker_guard_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE

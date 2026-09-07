@@ -39,6 +39,7 @@ if _PROJECT_ROOT not in sys.path:
 from scripts.db_guard.mediation_analysis.callgraph import (  # noqa: E402
     AnalysisContract,
     CallGraphBuilder,
+    PRODUCTION_TRANSPARENT_INLINE_METHODS,
 )
 from scripts.db_guard.mediation_analysis.models import ProofState  # noqa: E402
 from scripts.db_guard.mediation_analysis.proof import (  # noqa: E402
@@ -66,6 +67,9 @@ FIXTURE_CONTRACT = AnalysisContract(
     direct_scope_methods=("withWriteBarrier",),
     direct_scope_allow_receiverless=True,
     worker_base_fqcns=(FIXTURE_WORKER_BASE_FQCN,),
+    # HP-13..HP-20 exercise the production inline-carrier set; the fixture
+    # contract must classify carriers exactly as production does.
+    transparent_inline_methods=PRODUCTION_TRANSPARENT_INLINE_METHODS,
 )
 
 # CB rows: every listed (caller method, callee name) pair must resolve to
@@ -101,6 +105,14 @@ HP_SUBJECT_HELPERS = {
     "HP-10": "writeRow",
     "HP-11": "writeRow",
     "HP-12": "writeRow",
+    "HP-13": "writeRow",
+    "HP-14": "writeRow",
+    "HP-15": "writeRows",
+    "HP-16": "writeRow",
+    "HP-17": "writeRow",
+    "HP-18": "writeRow",
+    "HP-19": "writeRow",
+    "HP-20": "writeRow",
 }
 
 # WP rows: (owner simple name, callable method, site selector).

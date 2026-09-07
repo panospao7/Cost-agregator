@@ -67,6 +67,7 @@ from scripts.ci.inspect_db_structural_model import (  # noqa: E402
 from scripts.db_guard.mediation_analysis.callgraph import (  # noqa: E402
     AnalysisContract,
     CallGraphBuilder,
+    PRODUCTION_TRANSPARENT_INLINE_METHODS,
 )
 from scripts.db_guard.mediation_analysis.models import ProofState  # noqa: E402
 from scripts.db_guard.mediation_analysis.proof import (  # noqa: E402
@@ -104,7 +105,10 @@ def _production_contract() -> AnalysisContract:
 
     The direct-scope receiver/methods come from the immutable
     ``CANONICAL_BARRIER_CONTRACT_V2`` (single source of truth); the worker
-    guard identity comes from the recorded GR-13 worker-guard contract.
+    guard identity comes from the recorded GR-13 worker-guard contract; the
+    inline-carrier table comes from the reviewed GR-14f closed set
+    (``PRODUCTION_TRANSPARENT_INLINE_METHODS`` — carrier classification
+    only, never an authorization source).
     """
     return AnalysisContract(
         worker_guard_receiver_fqcn=_WORKER_GUARD_RECEIVER_FQCN,
@@ -116,6 +120,7 @@ def _production_contract() -> AnalysisContract:
             wrapper.method
             for wrapper in CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_wrappers
         ),
+        transparent_inline_methods=PRODUCTION_TRANSPARENT_INLINE_METHODS,
     )
 
 
