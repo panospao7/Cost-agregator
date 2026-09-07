@@ -69,16 +69,6 @@ entries:
 
   - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
     class: TransactionLifecycleCoordinator
-    method: "writeUpdateValidationFailedEventBestEffort"
-    daos: [transactionEventDao]
-    operation: "insert"
-    barrier_required: false
-    reason: "Best-effort UPDATE_VALIDATION_FAILED lifecycle event insert; barrier via checkWritesAllowed helper"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-    class: TransactionLifecycleCoordinator
     method: "updateExpense"
     daos: [expenseDao]
     operation: "update"
@@ -334,36 +324,6 @@ entries:
     operation: "insert"
     barrier_required: false
     reason: "DB-only ownership update — UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-    class: TransactionLifecycleCoordinator
-    method: "bulkUpdateCategory"
-    daos: [expenseDao]
-    operation: "updateCategoryForMerchant"
-    barrier_required: false
-    reason: "Bulk merchant-based category reassignment; barrier via checkWritesAllowed helper"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-    class: TransactionLifecycleCoordinator
-    method: "bulkUpdateCategory"
-    daos: [expenseDao]
-    operation: "updateCategoryForCategory"
-    barrier_required: false
-    reason: "Bulk category-to-category reassignment; barrier via checkWritesAllowed helper"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
-  - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-    class: TransactionLifecycleCoordinator
-    method: "bulkUpdateCategory"
-    daos: [transactionEventDao]
-    operation: "insert"
-    barrier_required: false
-    reason: "Bulk category update — BULK_UPDATED lifecycle event insert; barrier via checkWritesAllowed helper"
     owner: "@panospao7"
     linked_issue: "MIT-003"
 

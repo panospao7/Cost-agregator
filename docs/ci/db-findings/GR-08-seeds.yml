@@ -1794,20 +1794,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
   kind: function
-  method: addReturnWindow
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.ReturnWindow
-  daoAccessor: returnWindowDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
-  operation: insertReturnWindow
-  barrierMode: helper
-  reason: "GR-08e2 EXACT_POLICY: return-window insert with provider-stamped createdAt/updatedAt behind the write barrier"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08E
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
-  kind: function
   method: updateReturnWindow
   receiver: null
   parameterTypes:
@@ -4490,38 +4476,6 @@ entries:
   operation: insert
   barrierMode: helper
   reason: "GR-08l2 EXACT_POLICY: single aggregate BULK_UPDATED TransactionEvent (merchant + affectedCount metadata) written in the same transaction, only when rows were affected -- the atomic audit-trail requirement"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-  kind: function
-  method: bulkUpdateCategory
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  - String
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: updateCategoryForCategory
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: category-to-category atomic bulk reassignment overload -- single SQL UPDATE inside database.withTransaction behind checkWritesAllowed (no partial migration possible; crash/event failure rolls back)"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-  kind: function
-  method: bulkUpdateCategory
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  - String
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: aggregate BULK_UPDATED TransactionEvent for the category-to-category overload (atomic=true metadata) written in the same transaction -- authorized separately because the overload's callable identity differs"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt

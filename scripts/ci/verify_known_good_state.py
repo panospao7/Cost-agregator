@@ -191,7 +191,10 @@ _EXPECTED_RESOLVED = 54
 _EXPECTED_UNRESOLVED = 43
 _EXPECTED_DUPLICATES = 0
 _CANDIDATE_SCHEMA_VERSION = 2
-_CANDIDATE_ENTRIES = 475
+# GR-14h Pattern E tranche (2026-09-07): the 3 dead callables' 4 rows
+# left the generation inputs; tracked pair regenerated at 471 and the
+# active policy realigned by controlled promotion.
+_CANDIDATE_ENTRIES = 471
 _STRUCTURAL_ENTRIES = 64
 _STRUCTURAL_EXPECTED = 60
 _STRUCTURAL_FIXTURES = 4

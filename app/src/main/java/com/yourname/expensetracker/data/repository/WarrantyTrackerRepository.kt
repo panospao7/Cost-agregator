@@ -360,18 +360,6 @@ class WarrantyTrackerRepository @Inject constructor(
         )
     }
     
-    suspend fun addReturnWindow(returnWindow: ReturnWindow): Long {
-        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.addReturnWindow")
-        return createReturnWindowTimestamps().let { timestamps ->
-            returnWindowDao.insertReturnWindow(
-                returnWindow.withTimestamps(
-                    createdAt = timestamps.createdAt,
-                    updatedAt = timestamps.updatedAt
-                )
-            )
-        }
-    }
-
     suspend fun getReturnWindowByReceiptId(receiptId: Long): ReturnWindow? =
         returnWindowDao.getReturnWindowByReceiptId(receiptId)
     

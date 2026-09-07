@@ -242,41 +242,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
         }
     }
 
-    private suspend fun writeUpdateValidationFailedEventBestEffort(
-        expenseId: Long,
-        source: String,
-        reason: String?,
-        correlationId: String?,
-        errors: List<TransactionValidationError>
-    ) {
-        runCatching {
-            transactionEventDao.insert(
-                TransactionEvent(
-                    expenseId = expenseId,
-                    eventType = LifecycleEventType.UPDATE_VALIDATION_FAILED.name,
-                    source = source,
-                    actor = null,
-                    occurredAt = timeProvider.now(),
-                    dedupeKey = null,
-                    duplicateExpenseId = null,
-                    beforeSnapshot = null,
-                    afterSnapshot = null,
-                    metadata = JSONObject().apply {
-                        put("operation", "updateExpense")
-                        put("errorCount", errors.size)
-                        put("errorCodes", errors.joinToString(",") { it.code })
-                        put("fields", errors.mapNotNull { it.field }.distinct().joinToString(","))
-                    }.toString(),
-                    reason = reason ?: "Update validation failed: ${errors.firstOrNull()?.message}",
-                    correlationId = correlationId
-                )
-            )
-        }.onFailure {
-            if (it is CancellationException) throw it
-            Timber.w(it, "Failed to write UPDATE_VALIDATION_FAILED for expense %d", expenseId)
-        }
-    }
-
     /**
      * Internal DB-only create mutation. Validates, normalizes, dedupes, inserts
      * atomically (expense + CREATED event + source links), and returns the planned
@@ -1868,70 +1833,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: aggregate bulk side effects failed (affectedCount=%d)", affectedCount)
         }
-    }
-
-    /**
-     * Atomic category-to-category bulk reassignment.
-     * Uses a single SQL UPDATE + one BULK_UPDATED event.
-     * No partial migration possible — crash/event failure rolls back.
-     */
-    suspend fun bulkUpdateCategory(
-        categoryId: Long,
-        newCategoryId: Long,
-        source: String = "CATEGORY_CORRECTION"
-    ) {
-        checkWritesAllowed("bulkUpdateCategoryByCategory")
-
-        if (categoryId == newCategoryId) {
-            Timber.d("Bulk category update skipped: source and target category are identical (%d)", categoryId)
-            return
-        }
-
-        val now = timeProvider.now()
-        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
-        var affectedCount = 0
-
-        database.withTransaction {
-            affectedCount = expenseDao.updateCategoryForCategory(
-                oldCategoryId = categoryId,
-                newCategoryId = newCategoryId
-            )
-
-            if (affectedCount > 0) {
-                transactionEventDao.insert(
-                    TransactionEvent(
-                        expenseId = null,
-                        eventType = LifecycleEventType.BULK_UPDATED.name,
-                        source = source,
-                        actor = null,
-                        occurredAt = now,
-                        dedupeKey = null,
-                        duplicateExpenseId = null,
-                        beforeSnapshot = null,
-                        afterSnapshot = null,
-                        metadata = JSONObject().apply {
-                            put("operation", "bulkUpdateCategoryByCategory")
-                            put("oldCategoryId", categoryId)
-                            put("newCategoryId", newCategoryId)
-                            put("affectedCount", affectedCount)
-                            put("changedFields", "categoryId")
-                            put("atomic", true)
-                        }.toString(),
-                        reason = "Bulk reassigned category $categoryId to $newCategoryId",
-                        correlationId = correlationId
-                    )
-                )
-            }
-        }
-
-        if (affectedCount > 0) {
-            dispatchBulkPostCommitSideEffects(source, affectedCount, setOf(BulkChangedField.CATEGORY))
-        }
-
-        Timber.d(
-            "Bulk category update: %d expenses moved from category %d to %d",
-            affectedCount, categoryId, newCategoryId
-        )
     }
 
     /**
