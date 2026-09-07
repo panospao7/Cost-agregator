@@ -177,6 +177,14 @@ class _DirectSiteProver:
         for offset in sorted(self._requested.get(callable_key, ())):
             result = outcome.result_for_site_start(offset)
             proven[offset] = result.status == ProofStatus.PROVEN
+        # Real mutation sites are proven in the same bridge run; record them
+        # keyed by their site start so the subject-local context check (which
+        # queries exactly those offsets) sees them.  Requested pseudo-sites
+        # keep precedence.
+        for result in outcome.results:
+            proven.setdefault(
+                result.mutation_site.start, result.status == ProofStatus.PROVEN
+            )
         self._results[callable_key] = proven
 
     def proven_sites(self, callable_key: str) -> dict[int, bool]:
@@ -492,6 +500,19 @@ def build_mediation_shadow(
     if direct_prover is not None:
         for key in list(direct_prover._requested):
             direct_prover.proven_sites(key)
+        # Subject callables' real mutation sites must be proven even when the
+        # callable has no exact outbound edge: the subject-local context check
+        # queries exactly those site starts, and without this a helper row's
+        # own local barrier stays invisible (convertibleToDirect stuck false).
+        for subject_key in set(subject_callables.values()):
+            subject_model = builder.callables.get(subject_key)
+            if subject_model is None or subject_model.body_start < 0:
+                continue
+            subject_masked = builder.file_models[subject_model.file].masked
+            if _BARRIER_TEXT_RE.search(
+                subject_masked[subject_model.body_start : subject_model.body_end]
+            ):
+                direct_prover.proven_sites(subject_key)
 
     prover = None
     if graph is not None and discovery is not None:

@@ -1519,6 +1519,20 @@ class CallGraphBuilder:
                         uncertain=True,
                     )
                 ]
+            interface_targets = tuple(
+                sorted(self._override_targets(receiver_fqcn, call.name))
+            )
+            if len(interface_targets) == 1:
+                # Unique production implementation: runtime dispatch provably
+                # reaches exactly this member over the declared roots (no
+                # reflection modeled), so the edge is exact and carries guard
+                # context like any other synchronous call.  Zero or multiple
+                # implementations stay honestly uncertain (GR14_RESOLVE_DISPATCH).
+                return [
+                    self._exact_edge(
+                        model, call, context, interface_targets[:1]
+                    )
+                ]
             return [
                 CallEdge(
                     caller_key=model.key,
