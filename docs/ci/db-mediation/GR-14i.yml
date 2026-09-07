@@ -1,0 +1,73 @@
+# GR-14i — close the LAST DEFINITE_VIOLATION: canonical barrier scope for
+# the group lifecycle audit writer.
+#
+# The program's single remaining counterexample row
+# (GroupLifecycleCoordinator.emitLifecycleEvent -> GroupLifecycleEventDao.insert,
+# the GR-14e remaining-debt row) is a genuine architecture gap, not parser
+# debt: the helper performed its audit insert with NO canonical barrier of
+# its own.  Its caller recordSettlement has only a bare checkWritesAllowed —
+# a CHECK proves the caller's own mutations (GR-12 dominance) but never
+# creates scope context across the call edge, so every path to the
+# mutation was unguarded (counterexample, exact_synchronous path from the
+# public root).
+#
+# Remediation (Pattern A — exact canonical write barrier check/scope):
+#   - writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.
+#     emitLifecycleEvent") at entry (fail-fast, house style, idempotent
+#     with the callers' checks);
+#   - the insert wrapped in writeBarrier.runWrite(
+#     DatabaseAccessOperation("GroupLifecycleCoordinator.
+#     emitLifecycleEvent")) { ... } — the canonical direct scope
+#     (first production use; checkWritesAllowed inside runWrite keeps the
+#     maintenance-mode semantics identical to the callers' checks).
+# Behavior preservation: both barrier checks are idempotent reads of
+# RestoreMaintenanceMode; every caller already performs the same check, so
+# no reachable behavior changes.
+#
+# Shadow delta (same tree, before = post-GR-14h):
+#   counterexample_unguarded_call_path: 1 -> 0   (DEFINITE_VIOLATION CLASS
+#     ELIMINATED PROGRAM-WIDE)
+#   proven_helper: 30 -> 31 (the row: GR13_ALL_PATHS_GUARDED,
+#     localGuard=direct, deciding=exact_canonical_scope)
+#   every other proof state, diagnostics: unchanged.
+#
+# Validation:
+#   - :app:compileDebugKotlin PASS;
+#   - group lifecycle scenario/contract/pipeline tests: 41 PASSED;
+#     2 FAILED (groupMemberRemovalWithoutBalanceSucceeds,
+#     removeMember delete and lifecycle event are atomic) — reproduced
+#     IDENTICALLY at the pre-batch state (git stash A/B): pre-existing,
+#     not caused by this batch;
+#   - GATE-00R double capture + Gradle DB task: OWED at merge (carried).
+schemaVersion: 1
+batchId: GR-14i
+startSha: e9d3839b
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: ffbc229d52ec37521cb1e18f07155496ad97ea4a1d639623c3639e58a0f1337c
+mediationReportSha256After: 836af4fb95a2d65cc840d245b9411a8b78174e255410406622ae460acb85e807
+activePolicySha256: unchanged # no policy edit in this batch
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt:
+      emitLifecycleEvent gains its own canonical barrier: entry
+      checkWritesAllowed + the audit insert scoped in writeBarrier.runWrite
+
+selectedMutationKeys:
+  - GroupLifecycleCoordinator.emitLifecycleEvent -> GroupLifecycleEventDao.insert
+rootCause: DIRECT_COUNTEREXAMPLE # unguarded call path from a public root
+selectedPattern: A # local direct barrier path in the owning callable
+tests:
+  - group lifecycle scenario/contract/pipeline classes: 41 passed; 2
+    pre-existing failures (stash A/B reproduced identically pre-batch)
+validation:
+  - compile PASS; shadow delta exactly the one row -> proven_helper;
+    diagnostics none
+  - GATE-00R double capture + Gradle DB task OWED at merge (carried)
+status: PARTIAL # merge gates owed (carried)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch changes source architecture to satisfy proof requirements.
+  It is not a baseline, exception, or authorization document.

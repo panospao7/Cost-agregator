@@ -13,6 +13,7 @@ import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.entity.GroupSettlementEntity
 import com.yourname.expensetracker.data.database.entity.SplitType
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -537,6 +538,9 @@ class GroupLifecycleCoordinator @Inject constructor(
         expenseId: Long = 0L,
         settlementId: Long = 0L
     ) {
+        // GR-14i: the audit insert carries its own canonical barrier scope —
+        // a caller's check does not cross the call edge.
+        writeBarrier.checkWritesAllowed("GroupLifecycleCoordinator.emitLifecycleEvent")
         Timber.d("GroupLifecycleEvent: groupId=%d, event=%s", groupId, eventType)
         val event = GroupLifecycleEventEntity(
             groupId = groupId,
@@ -545,7 +549,11 @@ class GroupLifecycleCoordinator @Inject constructor(
             relatedSettlementId = settlementId.takeIf { it > 0L },
             createdAt = timeProvider.now()
         )
-        lifecycleEventDao.insert(event)
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("GroupLifecycleCoordinator.emitLifecycleEvent")
+        ) {
+            lifecycleEventDao.insert(event)
+        }
         // Budget check + side effects (best-effort)
         try {
             budgetMonitor.get().checkBudgets()
