@@ -86,6 +86,7 @@ class AnalysisContract:
     worker_base_fqcns: tuple[str, ...] = ()
     transparent_scope_methods: tuple[str, ...] = ()
     transparent_inline_methods: tuple[str, ...] = ()
+    structured_launch_receivers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.transparent_inline_methods, tuple):
@@ -97,6 +98,20 @@ class AnalysisContract:
                 raise ValueError(
                     "transparent_inline_methods entries must be plain identifiers"
                 )
+        if not isinstance(self.structured_launch_receivers, tuple):
+            raise TypeError("structured_launch_receivers must be a tuple")
+        for name in self.structured_launch_receivers:
+            if not isinstance(name, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*", name
+            ):
+                raise ValueError(
+                    "structured_launch_receivers entries must be plain identifiers"
+                )
+        inline = set(self.transparent_inline_methods)
+        if inline & set(STRUCTURED_LAUNCH_METHODS):
+            raise ValueError(
+                "transparent_inline_methods overlaps the structured launch methods"
+            )
         disjoint_groups = (
             ("worker_guard_scope_methods", self.worker_guard_scope_methods),
             ("direct_scope_methods", self.direct_scope_methods),
@@ -188,11 +203,51 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     # kotlinx structured suspend scopes (inline)
     "withLock",
     "withTimeout",
+    "withTimeoutOrNull",
+    # kotlinx structured per-emission flow terminal (context-inheriting)
+    "collect",
+    # kotlinx structured semaphore (suspend inline, like withLock)
+    "withPermit",
     # project inline wrappers (see evidence above)
     "runOperation",
     "runCatchingCancellable",
     "runPostCommitSafely",
+    # GR-14j: project inline try/catch wrapper
+    # (service/receiptmatching/ReceiptMatchingWorker.safeRecordMatchEvent —
+    # block invoked inline, cancellation rethrown)
+    "safeRecordMatchEvent",
 )
+
+# ── GR-14j structured coroutine launch admission ─────────────────────────────
+#
+# The mediation engine classifies every coroutine launch lambda as
+# ``async``-uncertain: the block may run after the call site returns, so
+# caller-side guard context cannot be trusted.  For THIS program's guard
+# model that conservatism is misplaced in one specific way: the
+# maintenance barrier (RestoreMaintenanceMode) is app-global state checked
+# AT THE MUTATION SITE at execution time — caller-side context is
+# irrelevant to barrier correctness.  What matters is that the writer
+# carries its own canonical scope (DatabaseWriteBarrier.runWrite).
+#
+# Approved design (GR-14j, owner-approved 2026-09-07): a `launch` on a
+# REVIEWED STRUCTURED receiver (name-exact closed set — ViewModel- or
+# service-owned CoroutineScope properties, cancelled with their owner;
+# tree-wide grep evidence in the batch manifest) resolves EXACTLY, with
+# context inherited from the enclosing callable (never a guard source by
+# itself).  Consequences, deliberately stricter overall:
+#   * a writer whose mutations sit behind their own canonical scope
+#     proves INDEPENDENT of launch callers;
+#   * a writer WITHOUT local scope on a launch-reachable path becomes a
+#     COUNTEREXAMPLE (definite unguarded call path) instead of
+#     async-unproven — the honest classification that drives the
+#     remaining remediation batches;
+#   * launches on UNKNOWN receivers (GlobalScope, injected dispatchers,
+#     custom parameters) stay async-uncertain (fail closed).
+# STRUCTURED_LAUNCH_METHODS is closed: only `launch` is evidenced in the
+# production tree for the admitted receivers.  Any change to either set
+# requires a dedicated reviewed diff with fixture coverage (fixtures
+# structured_launch SL-01..SL-03) and a shadow before/after delta.
+STRUCTURED_LAUNCH_METHODS: tuple[str, ...] = ("launch",)
 
 
 # ── File model ───────────────────────────────────────────────────────────────
@@ -1286,6 +1341,14 @@ class CallGraphBuilder:
                     call.name
                 ) or self.contract.is_inline_transparent_method(call.name):
                     carrier = "transparent"
+                elif (
+                    call.name in STRUCTURED_LAUNCH_METHODS
+                    and call.receiver_text
+                    in self.contract.structured_launch_receivers
+                ):
+                    # GR-14j: launch on a reviewed structured receiver —
+                    # context inherited (never a guard source), edge exact.
+                    carrier = "transparent"
             regions.append(
                 LambdaRegion(
                     start=call.lambda_start,
@@ -1435,15 +1498,15 @@ class CallGraphBuilder:
             ]
         context = self._edge_context(regions, call.name_start)
         resolved = self._resolve_invocation(model, call, context)
-        if self._chain_admitted_by_inline_carrier(regions, call.name_start):
-            # GR-14f resolution-preservation rule: an inline-carrier site
-            # must never lose corpus reachability relative to the historical
-            # uncertain-edge behavior.  When exact resolution cannot bind
-            # the call to corpus targets (untracked receiver chains,
-            # external receivers), keep the conservative name-matched
-            # uncertain edge instead — otherwise reverse-reachability would
-            # shrink and reclassify real recursion/inbound evidence as
-            # zero-inbound external entry.
+        if self._chain_admitted_by_engine_carriers(regions, call.name_start):
+            # GR-14f/GR-14j resolution-preservation rule: an admitted-carrier
+            # site must never lose corpus reachability relative to the
+            # historical uncertain-edge behavior.  When exact resolution
+            # cannot bind the call to corpus targets (untracked receiver
+            # chains, external receivers), keep the conservative
+            # name-matched uncertain edge instead — otherwise
+            # reverse-reachability would shrink and reclassify real
+            # recursion/inbound evidence as zero-inbound external entry.
             if not any(edge.targets for edge in resolved):
                 return [
                     CallEdge(
@@ -1459,14 +1522,21 @@ class CallGraphBuilder:
                 ]
         return resolved
 
-    def _chain_admitted_by_inline_carrier(self, regions, offset: int) -> bool:
-        """True when the transparent region chain at ``offset`` includes an
-        inline-carrier region (GR-14f set).  Called only after
+    def _chain_admitted_by_engine_carriers(self, regions, offset: int) -> bool:
+        """True when the transparent region chain at ``offset`` includes a
+        carrier admitted by an engine contract (GR-14f inline table or
+        GR-14j structured launch).  Called only after
         ``_uncertain_region_state`` returned None, so every region
         containing ``offset`` is already transparent; wrapper-only chains
-        keep their historical resolution path."""
+        keep their historical resolution path.  A transparent region whose
+        method is a structured launch method can only be an ADMITTED
+        launch (unadmitted launches classify as default-async)."""
         return any(
             self.contract.is_inline_transparent_method(region.method)
+            or (
+                region.carrier == "transparent"
+                and region.method in STRUCTURED_LAUNCH_METHODS
+            )
             for region in regions
             if region.start <= offset < region.end
         )

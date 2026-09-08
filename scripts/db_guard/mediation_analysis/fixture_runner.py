@@ -70,6 +70,10 @@ FIXTURE_CONTRACT = AnalysisContract(
     # HP-13..HP-20 exercise the production inline-carrier set; the fixture
     # contract must classify carriers exactly as production does.
     transparent_inline_methods=PRODUCTION_TRANSPARENT_INLINE_METHODS,
+    # SL-01..SL-03 exercise the production structured-launch admission; a
+    # fixture-local receiver name stands in for the production set, and the
+    # negative fixture proves unlisted receivers stay async.
+    structured_launch_receivers=("viewModelScope", "fixtureScope"),
 )
 
 # CB rows: every listed (caller method, callee name) pair must resolve to
@@ -113,6 +117,9 @@ HP_SUBJECT_HELPERS = {
     "HP-18": "writeRow",
     "HP-19": "writeRow",
     "HP-20": "writeRow",
+    "SL-01": "writeRow",
+    "SL-02": "writeRow",
+    "SL-03": "writeRow",
 }
 
 # WP rows: (owner simple name, callable method, site selector).
@@ -277,7 +284,9 @@ def run_fixture_scenarios(fixtures_dir=None):
                 entry["actualProof"] = None
                 entry["actualRoot"] = None
             else:
-                if fixture_id.startswith("HP-"):
+                if fixture_id.startswith("HP-") or fixture_id.startswith(
+                    "SL-"
+                ):
                     owner_simple = None
                     method = HP_SUBJECT_HELPERS[fixture_id]
                     mode = "helper"

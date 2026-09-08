@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.transaction.lifecycle
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
@@ -1369,53 +1370,59 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
-        database.withTransaction {
-            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
-            if (existing.transactionType == newType) return@withTransaction
+        // GR-14j: canonical direct scope — the mutation's proof must be
+        // local to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.updateType")
+        ) {
+            database.withTransaction {
+                val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+                if (existing.transactionType == newType) return@withTransaction
 
-            val beforeSnapshot = expenseToSnapshot(existing)
-            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                existing.amount, existing.merchant, existing.date, existing.currency, newType
-            )
+                val beforeSnapshot = expenseToSnapshot(existing)
+                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                    existing.amount, existing.merchant, existing.date, existing.currency, newType
+                )
 
-            // Collision check inside transaction for TOCTOU safety
-            val collidingId = expenseDao.findDuplicateIdCurrencyAware(
-                amount = existing.amount,
-                merchant = existing.merchant,
-                date = existing.date,
-                currency = existing.currency,
-                transactionType = newType.name,
-                merchantKey = existing.merchantKey,
-                dedupeKey = newDedupeKey
-            )
-            if (collidingId != null && collidingId != expenseId) {
-                throw DuplicateUpdateException(
-                    "Cannot update type: would create duplicate of expense $collidingId"
+                // Collision check inside transaction for TOCTOU safety
+                val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+                    amount = existing.amount,
+                    merchant = existing.merchant,
+                    date = existing.date,
+                    currency = existing.currency,
+                    transactionType = newType.name,
+                    merchantKey = existing.merchantKey,
+                    dedupeKey = newDedupeKey
+                )
+                if (collidingId != null && collidingId != expenseId) {
+                    throw DuplicateUpdateException(
+                        "Cannot update type: would create duplicate of expense $collidingId"
+                    )
+                }
+
+                val updated = existing.copy(
+                    transactionType = newType,
+                    dedupeKey = newDedupeKey
+                )
+
+                expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = expenseId,
+                        eventType = LifecycleEventType.UPDATED.name,
+                        source = source,
+                        actor = null,
+                        occurredAt = now,
+                        dedupeKey = newDedupeKey,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = beforeSnapshot,
+                        afterSnapshot = expenseToSnapshot(expenseId, updated),
+                        metadata = null,
+                        reason = reason,
+                        correlationId = correlationId  // DDL-C67-10
+                    )
                 )
             }
-
-            val updated = existing.copy(
-                transactionType = newType,
-                dedupeKey = newDedupeKey
-            )
-
-            expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
-            transactionEventDao.insert(
-                TransactionEvent(
-                    expenseId = expenseId,
-                    eventType = LifecycleEventType.UPDATED.name,
-                    source = source,
-                    actor = null,
-                    occurredAt = now,
-                    dedupeKey = newDedupeKey,
-                    duplicateExpenseId = null,
-                    beforeSnapshot = beforeSnapshot,
-                    afterSnapshot = expenseToSnapshot(expenseId, updated),
-                    metadata = null,
-                    reason = reason,
-                    correlationId = correlationId  // DDL-C67-10
-                )
-            )
         }
 
         // Post-update side effects via planner + runner (best-effort)

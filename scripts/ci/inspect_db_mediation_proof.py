@@ -99,6 +99,22 @@ _WORKER_GUARD_RECEIVER_FQCN = (
 _WORKER_GUARD_SCOPE_METHODS = ("runGuarded", "runGuardedWithContext")
 _WORKER_BASE_FQCNS = ("androidx.work.CoroutineWorker",)
 
+#: GR-14j reviewed structured-launch receivers (name-exact, closed set).
+#: Evidence (tree-wide grep, batch manifest): every `launch` on these
+#: receivers targets a class-owned CoroutineScope property tied to its
+#: owner's lifetime (ViewModel.viewModelScope; service/work-tracker scopes
+#: in NotificationCaptureService, TransactionClassifier,
+#: NotificationCaptureGate, EmailReceiptIngestionService).  Launches on
+#: ANY other receiver (GlobalScope, injected dispatchers, parameters)
+#: stay async-uncertain.
+_PRODUCTION_STRUCTURED_LAUNCH_RECEIVERS = (
+    "viewModelScope",
+    "scope",
+    "workTracker",
+    "serviceScope",
+    "diagnosticScope",
+)
+
 
 def _production_contract() -> AnalysisContract:
     """The production contract, derived from the GR-12 + GR-13 records.
@@ -121,6 +137,7 @@ def _production_contract() -> AnalysisContract:
             for wrapper in CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_wrappers
         ),
         transparent_inline_methods=PRODUCTION_TRANSPARENT_INLINE_METHODS,
+        structured_launch_receivers=_PRODUCTION_STRUCTURED_LAUNCH_RECEIVERS,
     )
 
 

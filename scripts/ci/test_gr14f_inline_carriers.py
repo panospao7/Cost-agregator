@@ -33,8 +33,10 @@ class TestInlineCarrierSet:
             "forEach", "forEachIndexed", "map", "mapNotNull", "mapIndexed",
             "filter", "any", "none", "count", "first", "firstOrNull",
             "associateBy", "buildSet", "buildList",
-            "withLock", "withTimeout",
+            "withLock", "withTimeout", "withTimeoutOrNull",
+            "collect", "withPermit",
             "runOperation", "runCatchingCancellable", "runPostCommitSafely",
+            "safeRecordMatchEvent",
         )
 
     def test_production_contract_wires_the_set(self):
