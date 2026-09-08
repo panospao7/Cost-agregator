@@ -216,6 +216,9 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     # (service/receiptmatching/ReceiptMatchingWorker.safeRecordMatchEvent —
     # block invoked inline, cancellation rethrown)
     "safeRecordMatchEvent",
+    # GR-14l: androidx.activity.compose.setContent — the composition root;
+    # its content lambda executes during composition (context inherited)
+    "setContent",
 )
 
 # ── GR-14j structured coroutine launch admission ─────────────────────────────
@@ -313,6 +316,7 @@ class CallableModel:
     is_open: bool = False
     is_generic: bool = False
     is_suspend: bool = False
+    is_composable: bool = False
     params_named: tuple[tuple[str, str], ...] = ()  # (name, type text)
     param_types: tuple[str, ...] = ()
     decl_start: int = 0
@@ -505,6 +509,34 @@ def _visibility_of(prefix: str) -> str:
         if re.search(r"\b%s\b" % token, prefix):
             return token
     return "public"
+
+
+
+def _has_annotation_above(masked: str, fun_start: int, name: str) -> bool:
+    """True when an ``@<name>`` annotation line sits directly above the
+    declaration (walking up across consecutive annotation/blank lines).
+
+    Line-oriented by design: the callgraph never needs annotation
+    arguments, only the presence of the name.
+    """
+    pattern = re.compile(r"^\s*@" + name + r"\b")
+    own_line_start = masked.rfind(chr(10), 0, fun_start) + 1
+    if pattern.match(masked[own_line_start:fun_start]):
+        return True
+    idx = own_line_start
+    while idx > 0:
+        prev_start = masked.rfind(chr(10), 0, max(idx - 1, 0)) + 1
+        line = masked[prev_start:idx].rstrip()
+        if not line.strip():
+            idx = prev_start
+            continue
+        if pattern.match(line):
+            return True
+        if line.lstrip().startswith("@"):
+            idx = prev_start
+            continue
+        break
+    return False
 
 
 def _has_modifier(prefix: str, modifier: str) -> bool:
@@ -870,6 +902,8 @@ def _callable_models(
                 is_open=_has_modifier(prefix, "open") or _has_modifier(prefix, "abstract"),
                 is_generic=bool(re.search(r"fun\s*<", masked[fun_start : paren])),
                 is_suspend=_has_modifier(prefix, "suspend"),
+                is_composable=_has_modifier(prefix, "Composable")
+                or _has_annotation_above(masked, fun_start, "Composable"),
                 params_named=tuple(params_named),
                 param_types=param_types,
                 decl_start=fun_start,
@@ -1349,6 +1383,18 @@ class CallGraphBuilder:
                     # GR-14j: launch on a reviewed structured receiver —
                     # context inherited (never a guard source), edge exact.
                     carrier = "transparent"
+                elif (
+                    carrier == "async"
+                    and model.is_composable
+                    and call.name not in STRUCTURED_LAUNCH_METHODS
+                ):
+                    # GR-14l: inside a @Composable callable, every
+                    # non-launch lambda region (layout content, onClick,
+                    # remember blocks) executes in composition context —
+                    # context inherited (never a guard source), edge exact.
+                    # Launch-family carriers keep their own admission rule
+                    # (unknown receivers stay async-uncertain).
+                    carrier = "transparent"
             regions.append(
                 LambdaRegion(
                     start=call.lambda_start,
@@ -1378,8 +1424,42 @@ class CallGraphBuilder:
                         call_id=-1,
                     )
                 )
+        # GR-14l: nested-carrier inheritance.  A non-launch lambda region
+        # whose innermost containing region is an admitted TRANSPARENT one
+        # (inline carrier, structured launch, composable lambda,
+        # setContent root) executes in that same inherited context — e.g.
+        # themed-wrapper composables nested inside setContent.  Launch
+        # families keep their own admission rule; assigned-literal escapes
+        # are never unlocked.
+        regions = self._propagate_nested_transparency(regions)
         regions.sort(key=lambda region: (region.start, region.end))
         return tuple(regions)
+
+    def _propagate_nested_transparency(self, regions):
+        import dataclasses
+
+        mutable = list(regions)
+        changed = True
+        while changed:
+            changed = False
+            for idx, region in enumerate(mutable):
+                if region.carrier != "async":
+                    continue
+                if region.method in STRUCTURED_LAUNCH_METHODS:
+                    continue
+                container = None
+                for other in mutable:
+                    if other is region or other.carrier != "transparent":
+                        continue
+                    if other.start <= region.start and region.end <= other.end:
+                        if container is None or other.start > container.start:
+                            container = other
+                if container is not None:
+                    mutable[idx] = dataclasses.replace(
+                        region, carrier="transparent"
+                    )
+                    changed = True
+        return mutable
 
     def _call_argument_text(self, masked: str, call: CallRecord) -> str:
         """Bounded argument region of a call (waiver-flag inspection only).
