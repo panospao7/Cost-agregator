@@ -1456,7 +1456,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
-        database.withTransaction {
+        // GR-14k: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.updateTransferDetails"
+            )
+        ) {
+            database.withTransaction {
             val existing = expenseDao.getById(expenseId) ?: return@withTransaction
             if (existing.transferDirection == transferDirection && existing.transferAccountName == transferAccountName) return@withTransaction
 
@@ -1501,6 +1508,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     reason = reason
                 )
             )
+            }
         }
 
         // Post-update side effects via planner + runner (best-effort)

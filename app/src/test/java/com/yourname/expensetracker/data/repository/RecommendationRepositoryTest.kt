@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.RecommendationDao
 import com.yourname.expensetracker.data.database.entity.RecommendationEntity
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
@@ -46,7 +47,16 @@ class RecommendationRepositoryTest {
         timeProvider = FakeTimeProvider(1_700_000_000_000L)
         val filterSerializer = TransactionFilterSerializer()
         deduplicator = RecommendationDeduplicator(filterSerializer)
-        repository = RecommendationRepository(mockk<DatabaseWriteBarrier>(relaxed = true), dao, deduplicator, timeProvider, testDispatcher)
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        // GR-14k: runWrite is a pass-through here — the relaxed mock would
+        // otherwise never invoke the scoped block.
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        repository = RecommendationRepository(writeBarrier, dao, deduplicator, timeProvider, testDispatcher)
     }
 
     @Test
