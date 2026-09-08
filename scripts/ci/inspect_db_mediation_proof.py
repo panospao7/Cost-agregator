@@ -113,6 +113,12 @@ _PRODUCTION_STRUCTURED_LAUNCH_RECEIVERS = (
     "workTracker",
     "serviceScope",
     "diagnosticScope",
+    # GR-14o additions (census-evidenced class-owned scopes):
+    # AppStartupCoordinator lifecycleScope, NotificationProcessingPipeline
+    # asyncScope, RecommendationLifecycleManager applicationScope.
+    "lifecycleScope",
+    "asyncScope",
+    "applicationScope",
 )
 
 

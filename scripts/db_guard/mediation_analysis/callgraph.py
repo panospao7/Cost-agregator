@@ -1062,6 +1062,11 @@ def extract_calls(
         lead = match.group("lead") is not None
         qual = re.sub(r"\s+", "", match.group("qual") or "")
         qualification = qual[:-1] if qual.endswith(".") else qual
+        # GR-14o: a safe call (`a?.b()`) is the same in-process call as
+        # `a.b()` for guard-context purposes — strip the `?` marker so the
+        # receiver resolves exactly instead of leaking an uncertain edge.
+        if qualification.endswith("?"):
+            qualification = qualification[:-1]
         receiver_text = ""
         if qualification and "." not in qualification:
             # Single-prefix calls are member-shaped: `guard.runGuarded(...)`,

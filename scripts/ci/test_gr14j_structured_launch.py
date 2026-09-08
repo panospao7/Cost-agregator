@@ -39,6 +39,9 @@ class TestStructuredLaunchAdmissionPins:
             "workTracker",
             "serviceScope",
             "diagnosticScope",
+            "lifecycleScope",
+            "asyncScope",
+            "applicationScope",
         )
 
     def test_production_contract_wires_receiver_set(self):

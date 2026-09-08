@@ -1,0 +1,53 @@
+# GR-14o — safe-call receiver resolution + three structured scopes.
+#
+# Engine fixes (census-driven):
+#   1. safe-call receiver extraction: `a?.b()` classified the receiver as
+#      "a?" (unresolvable) because the qualification strip removed the `.`
+#      but kept the `?`.  A safe call is the same in-process call as a
+#      plain call for guard-context purposes — the `?` marker is now
+#      stripped, so safe-call edges resolve exactly.
+#   2. structured-launch receiver set += lifecycleScope, asyncScope,
+#      applicationScope (census-evidenced class-owned scopes in
+#      AppStartupCoordinator / NotificationProcessingPipeline /
+#      RecommendationLifecycleManager).
+#
+# Shadow delta (before = post-GR-14n):
+#   unproven_async: 139 -> 133; ambiguous 171 -> 176; counterexamples
+#   2 -> 3 (RecommendationRepository.cleanupExpired joins the queue —
+#   unscoped writers through newly exact edges; the GR-14k scope pattern
+#   drains them).  Net unproven 384; proven unchanged this batch.
+#
+# Validation: structured-launch/carrier/composable modules 23 passed;
+# fixture battery 56 -> 56 (no corpus change); mediation suite 32 passed;
+# CLI battery 23 passed.  No production Kotlin changed.  GATE-00R + Gradle
+# DB owed at merge (carried).
+schemaVersion: 1
+batchId: GR-14o
+startSha: de1d3ac5
+gateEvidenceSha256: null
+mediationReportSha256Before: bfb60311fbeaea6a03c2a7f608c5e25a150a9cca1e8365b814abc93b17cf7800
+mediationReportSha256After: ad19801526d06618f73f1fc49758f92a363cd6351462e5e29efe238f02695dc2
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+engineFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+    - safe-call `?.` receiver marker stripped at call-record extraction
+  - scripts/ci/inspect_db_mediation_proof.py:
+    - structured-launch receivers += lifecycleScope, asyncScope,
+      applicationScope
+
+tests:
+  - structured-launch module pin updated (8 receivers)
+  - all python suites green
+
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+rootCause: ESCAPING_CALLBACK # receiver-resolution gap class
+selectedPattern: engine-enablement
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch corrects a receiver-resolution gap and extends the reviewed
+  structured-scope set.  It is not a baseline, exception, or authorization
+  document.
