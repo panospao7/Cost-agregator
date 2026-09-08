@@ -99,3 +99,7 @@ fixtures:
     file: helper_proof/hp21_named_argument_lambda_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
     expectedProof: PROVEN_HELPER
+  - id: HP-22
+    file: helper_proof/hp22_default_parameter_di_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER

@@ -1,9 +1,10 @@
 # GR-13 consolidated expected manifest (shadow corpus).
 # Copies all rows from the per-group manifests: 14 call-binding (CB),
-# 24 helper-proof (HP; HP-13..HP-20 are the GR-14f inline-carrier rows,
-# SL-01..SL-03 the GR-14j structured-launch rows, HP-21 the
+# 25 helper-proof (HP; HP-13..HP-20 are the GR-14f inline-carrier rows,
+# SL-01..SL-03 the GR-14j structured-launch rows, HP-21 the GR-14m named-argument-lambda regression row, HP-22 the
+# GR-14n default-parameter-DI regression row), the
 # GR-14m named-argument-lambda regression row), 18 worker-proof (WP;
-# WP-15a/WP-15b separate), and 8 protocol (PR) rows = 64 rows total.
+# WP-15a/WP-15b separate), and 8 protocol (PR) rows = 65 rows total.
 # CB/HP/WP rows use expectedResolution/expectedProof(/expectedRoot);
 # PR rows use expectation. All values use closed vocabularies only.
 fixtures:
@@ -143,6 +144,10 @@ fixtures:
     expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
   - id: HP-21
     file: helper_proof/hp21_named_argument_lambda_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-22
+    file: helper_proof/hp22_default_parameter_di_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
     expectedProof: PROVEN_HELPER
   - id: WP-01

@@ -1202,6 +1202,12 @@ class CallGraphBuilder:
         unknown simple names fail closed to ("", "unknown").
         """
         stripped = _strip_type_text(type_text)
+        # GR-14n: parameter texts carry default-value assignments
+        # (`viewModel: ReviewViewModel = hiltViewModel()`); resolution must
+        # use the declared type only.  Canonical keys keep the raw text —
+        # this normalization is resolution-local.
+        if " = " in stripped:
+            stripped = _strip_type_text(stripped.split(" = ", 1)[0])
         if not stripped:
             return "", "unknown"
         if "." in stripped:
