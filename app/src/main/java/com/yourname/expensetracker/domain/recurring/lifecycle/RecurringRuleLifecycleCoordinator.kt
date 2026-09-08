@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
@@ -95,7 +96,12 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
         val now = timeProvider.now()
         val existing = manualRecurringExpenseDao.getById(ruleId)
 
-        database.withTransaction {
+        // GR-14p: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringRuleLifecycleCoordinator.deleteRule")
+        ) {
+            database.withTransaction {
             // Delete reminders for all occurrences of this rule
             val occurrenceIds = occurrenceDao.getIdsBySource(SOURCE_TYPE, ruleId)
             if (occurrenceIds.isNotEmpty()) {
@@ -121,6 +127,7 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     }.toString()
                 )
             )
+            }
         }
     }
 
@@ -132,7 +139,13 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
         writeBarrier.checkWritesAllowed("RecurringRuleLifecycleCoordinator.createRule")
         val now = timeProvider.now()
         val entity = if (expense.createdAt == 0L) expense.copy(createdAt = now) else expense
-        return database.withTransaction {
+
+        // GR-14p: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        return writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringRuleLifecycleCoordinator.createRule")
+        ) {
+            database.withTransaction {
             val id = manualRecurringExpenseDao.insert(entity)
             val saved = entity.copy(id = id)
 
@@ -183,6 +196,7 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                 )
             )
             id
+            }
         }
     }
 
@@ -281,7 +295,12 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
 
         val normalized = if (updated.createdAt == 0L) updated.copy(createdAt = old.createdAt) else updated
 
-        database.withTransaction {
+        // GR-14p: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringRuleLifecycleCoordinator.updateRule")
+        ) {
+            database.withTransaction {
             // Delete open PLANNED occurrences and their reminder deliveries
             val openIds = occurrenceDao.getPlannedIdsBySource(SOURCE_TYPE, updated.id)
             if (openIds.isNotEmpty()) {
@@ -355,6 +374,7 @@ class RecurringRuleLifecycleCoordinator @Inject constructor(
                     }.toString()
                 )
             )
+            }
         }
     }
 }

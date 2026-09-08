@@ -1,0 +1,84 @@
+# GR-14p — scope-foundation tranche (multi-agent wave 1): canonical
+# runWrite scopes across six coordinator/repository files.
+#
+# Three parallel subagents applied the established GR-14k Pattern-A wrap
+# in file-disjoint worktrees (branches gr-14p-a/b/c), each with baseline
+# shadow, compile, and after-shadow; merged into this tree via patches
+# (files fully disjoint), compiled together, and verified with one
+# combined shadow.
+#
+# Scoped callables (63 rows localGuard none -> direct; total local=direct
+# rows 7 -> 84):
+#   - TransactionLifecycleCoordinator: createExpenseMutation,
+#     updateCategory, updateExpense, updateOwnershipDbOnlyV2,
+#     writeDuplicateEvent  (agent A)
+#   - RecommendationRepository: cleanupExpired  (agent A)
+#   - RecurringRuleLifecycleCoordinator: createRule, deleteRule, updateRule
+#   - RecurringLifecycleCoordinator: linkExpenseToOccurrence,
+#     reconcileExpenseLinkAfterUpdate,
+#     regenerateReminderDeliveriesForOccurrence (3 blocks),
+#     unlinkExpenseFromOccurrenceDetailed  (agent B)
+#   - ReviewQueueRepository: approveReview, rejectReview, markAsRelevant,
+#     recoverStuckReviews, updatePendingReviewCategoryBulk,
+#     updatePendingReviewMerchantBulk
+#   - NotificationProcessingPipeline: processInternal (3 blocks),
+#     handleAutoAcceptInTransaction (7 blocks),
+#     handleNeedsReviewInTransaction (4 blocks),
+#     insertRawNotificationIfNotDuplicate, detectAndSaveSubscriptionCandidate
+#     (agent C)
+# Skipped (no writeBarrier property — reported, not improvised):
+#   RecurringOccurrenceMaterializer (6 rows; constructor injects
+#   database/DAOs directly).
+#
+# Shadow delta (before = post-GR-14o): counterexamples 3 -> 2
+# (cleanupExpired proved through its exact edges — the row joined the
+# queue from GR-14o's safe-call resolution); proven_helper 45 -> 46;
+# local=direct 7 -> 84; diagnostics unchanged.
+#
+# STRATEGIC FINDING (both completed agents, independently verified in
+# proof.py): the wrappers register (localGuard=direct on every scoped
+# row) but proofStatus flips only where ALL closure edges are exact —
+# proof.py tier 5 (uncertain edges reaching the subject's ancestor
+# closure) preempts the local-direct proof.  The remaining flips are
+# blocked by upstream closure taint: interface-dispatch edges
+# (privacyGate.check, cloud*Service delegates), function references, and
+# residual unresolved receivers (ReviewViewModel call shapes,
+# hiltViewModel-initializer properties).  GR-14q = closure-taint
+# resolution; the scoped rows then flip en masse (or become honest
+# counterexamples where genuinely unguarded callers exist).
+#
+# Validation: per-agent compile PASS (A 16m42s, B, C); merged-tree
+# compile PASS; combined shadow row-set identical, diagnostics unchanged;
+# per-agent sha256s in build/guard-debug/gr14p-{a,b,c}/shadow_after.json
+# (A's after-shadow owed: its compile verified, edits verified by the
+# combined shadow).  GATE-00R + Gradle DB owed at merge (carried).
+schemaVersion: 1
+batchId: GR-14p
+startSha: e5e47086
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: ad19801526d06618f73f1fc49758f92a363cd6351462e5e29efe238f02695dc2
+mediationReportSha256After: c556addd54844a667dc7dee57922433d05269331f61434739ebe601bac6da0ec
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  - app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  - app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt
+  - app/src/main/java/com/yourname/expensetracker/data/notifications/NotificationProcessingPipeline.kt
+
+tests:
+  - per-agent compile PASS x3; merged compile PASS
+  - per-agent shadows + combined shadow (row-set identical, diagnostics none)
+
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+rootCause: WORKER_SCOPE_ESCAPE # unscoped writers
+selectedPattern: A # canonical scope at the legal writer
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch adds canonical scopes at legal writers (multi-agent wave 1).
+  It is not a baseline, exception, or authorization document.

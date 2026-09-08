@@ -524,7 +524,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // 5. Insert + event inside a single database transaction
         //    Dedup check (STANDARD/BULK_IMPORT) is inside the transaction to prevent TOCTOU race.
         //    Side effects (step 7, 8) remain outside the transaction (post-commit).
-        val insertedId = database.withTransaction {
+        // GR-14p-a: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        val insertedId = writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.createExpenseMutation"
+            )
+        ) {
+            database.withTransaction {
             // NEW-P2-004: Dedup check inside transaction to prevent race condition
             if (!skipDedup) {
                 when (dedupMode) {
@@ -607,6 +614,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
 
             id
+            }
         }
 
         if (insertedId <= 0L) {
@@ -848,7 +856,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
         } else null
 
         // 3. Persist inside a single transaction (TOCTOU-safe: read + write atomic)
-        database.withTransaction {
+        // GR-14p-a: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.updateExpense"
+            )
+        ) {
+            database.withTransaction {
             val existing = expenseDao.getById(expense.id)
                 ?: throw IllegalArgumentException("Expense not found: ${expense.id}")
             val beforeSnapshot = expenseToSnapshot(existing)
@@ -972,6 +987,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId  // DDL-C67-10
                 )
             )
+            }
         }
 
         // Post-update side effects via planner + runner (best-effort, fire-and-forget)
@@ -1005,7 +1021,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
-        database.withTransaction {
+        // GR-14p-a: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.updateCategory"
+            )
+        ) {
+            database.withTransaction {
             val existing = expenseDao.getById(expenseId) ?: return@withTransaction
             if (existing.categoryId == newCategoryId) return@withTransaction
 
@@ -1029,6 +1052,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId
                 )
             )
+            }
         }
 
         // Post-update side effects via planner + runner (best-effort)
@@ -1711,7 +1735,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         var result: MutationResult<OwnershipUpdateResult>? = null
 
-        database.withTransaction {
+        // GR-14p-a: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2"
+            )
+        ) {
+            database.withTransaction {
             val existing = expenseDao.getById(expenseId)
             if (existing == null) {
                 result = MutationResult(
@@ -1770,6 +1801,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = corrId
                 )
             )
+            }
         }
 
         if (result != null) return result!!
@@ -2143,6 +2175,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
         )
 
         return try {
+            // GR-14p-a: canonical direct scope — the mutation's proof is
+            // local to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation(
+                    "TransactionLifecycleCoordinator.writeDuplicateEvent"
+                )
+            ) {
             transactionEventDao.insert(
                 TransactionEvent(
                     expenseId = duplicateExpenseId,
@@ -2159,6 +2198,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId
                 )
             )
+            }
             true
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error

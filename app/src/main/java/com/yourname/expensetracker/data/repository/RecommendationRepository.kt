@@ -225,7 +225,13 @@ class RecommendationRepository @Inject constructor(
     suspend fun cleanupExpired(): Int {
         writeBarrier.checkWritesAllowed("RecommendationRepository.cleanupExpired")
         return withContext(ioDispatcher) {
-            dao.deleteExpired(timeProvider.now())
+            // GR-14p-a: canonical direct scope — the mutation's proof is
+            // local to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("RecommendationRepository.cleanupExpired")
+            ) {
+                dao.deleteExpired(timeProvider.now())
+            }
         }
     }
     

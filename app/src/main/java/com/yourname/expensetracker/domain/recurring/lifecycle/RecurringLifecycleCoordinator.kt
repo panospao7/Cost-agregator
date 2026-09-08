@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -297,7 +298,13 @@ class RecurringLifecycleCoordinator @Inject constructor(
         var matchId = 0L
         var matchKey = ""
         var claimed = false
-        database.withTransaction {
+
+        // GR-14p: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringLifecycleCoordinator.linkExpenseToOccurrence")
+        ) {
+            database.withTransaction {
             // P4-NEW-003: Occurrence lookup INSIDE the transaction — read + write are atomic.
             val occurrences = occurrenceDao.getByDateRange(expenseDayStart, expenseDayEnd)
             val match = occurrences.firstOrNull { occ ->
@@ -374,6 +381,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 newStatus = if (suppressed > 0) "CANCELLED" else null,
                 metadata = """{"expenseId":$expenseId,"suppressedCount":$suppressed,"source":"direct_expense_link"}"""
             )
+            }
         }
 
         if (!claimed) return false
@@ -441,7 +449,13 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
                 // MIT-043: Wrap snapshot update + event in a single transaction
                 // so paid amount update and event never diverge.
-                database.withTransaction {
+
+                // GR-14p: canonical direct scope — the mutations' proof is local
+                // to the legal writer, independent of caller context.
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("RecurringLifecycleCoordinator.reconcileExpenseLinkAfterUpdate")
+                ) {
+                    database.withTransaction {
                     val rows = occurrenceDao.updateLinkedPaymentSnapshot(
                         occurrenceId = linked.id,
                         expenseId = expenseId,
@@ -466,6 +480,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                                 }.toString()
                             )
                         )
+                    }
                     }
                 }
                 return RecurringExpenseReconcileResult.UpdatedLinkedSnapshot(expenseId, linked.id)
@@ -592,7 +607,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
             // Skip past-due reminders
             if (scheduledAt < now) {
                 try {
-                    database.withTransaction {
+                    // GR-14p: canonical direct scope — the mutations' proof is
+                    // local to the legal writer, independent of caller context.
+                    writeBarrier.runWrite(
+                        DatabaseAccessOperation("RecurringLifecycleCoordinator.regenerateReminderDeliveriesForOccurrence")
+                    ) {
+                        database.withTransaction {
                         lifecycleEventDao.insert(
                             RecurringLifecycleEvent(
                                 occurrenceId = occurrence.id,
@@ -603,6 +623,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                                 metadata = """{"window":"$window","scheduledAt":$scheduledAt,"reason":"past_due"}"""
                             )
                         )
+                        }
                     }
                 } catch (e: Exception) {
                     CancellationSafe.rethrowIfCancellation(e)
@@ -613,7 +634,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
             var reopenedInWindow = 0
             try {
-                reopenedInWindow = database.withTransaction {
+                // GR-14p: canonical direct scope — the mutations' proof is
+                // local to the legal writer, independent of caller context.
+                reopenedInWindow = writeBarrier.runWrite(
+                    DatabaseAccessOperation("RecurringLifecycleCoordinator.regenerateReminderDeliveriesForOccurrence")
+                ) {
+                    database.withTransaction {
                     val count = reminderDeliveryDao.reopenDeliveryForOccurrenceWindow(
                         occurrenceId = occurrence.id,
                         window = window,
@@ -633,6 +659,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         )
                     }
                     count
+                    }
                 }
             } catch (e: Exception) {
                 CancellationSafe.rethrowIfCancellation(e)
@@ -647,7 +674,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
             if (existing == null) {
                 var inserted = 0L
                 try {
-                    inserted = database.withTransaction {
+                    // GR-14p: canonical direct scope — the mutations' proof is
+                    // local to the legal writer, independent of caller context.
+                    inserted = writeBarrier.runWrite(
+                        DatabaseAccessOperation("RecurringLifecycleCoordinator.regenerateReminderDeliveriesForOccurrence")
+                    ) {
+                        database.withTransaction {
                         val deliveryId = reminderDeliveryDao.insert(
                             RecurringReminderDelivery(
                                 occurrenceId = occurrence.id,
@@ -672,6 +704,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                             deliveryId
                         } else {
                             0L
+                        }
                         }
                     }
                 } catch (e: Exception) {
@@ -730,7 +763,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
             ?: return RecurringExpenseReconcileResult.Skipped(expenseId, "no_linked_occurrence")
 
-        database.withTransaction {
+        // GR-14p: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringLifecycleCoordinator.unlinkExpenseFromOccurrenceDetailed")
+        ) {
+            database.withTransaction {
             // Reset to PLANNED — the recurring bill is not yet paid
             occurrenceDao.update(
                 linked.copy(
@@ -779,6 +817,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     }.toString()
                 )
             )
+            }
         }
 
         return RecurringExpenseReconcileResult.Unlinked(expenseId, linked.id, reason)
