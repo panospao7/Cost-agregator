@@ -120,6 +120,7 @@ HP_SUBJECT_HELPERS = {
     "SL-01": "writeRow",
     "SL-02": "writeRow",
     "SL-03": "writeRow",
+    "HP-21": "writeRow",
 }
 
 # WP rows: (owner simple name, callable method, site selector).

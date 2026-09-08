@@ -1407,10 +1407,27 @@ class CallGraphBuilder:
                     waiver_requires_db_write_false=waiver_no_write,
                 )
             )
-        # Assigned lambda literals (`x = { ... }`) escape their scope.
+        # Assigned lambda literals (`val x = { ... }` / `x = { ... }` at
+        # statement level) escape their scope.  GR-14m: `name = { ... }`
+        # INSIDE a call's parentheses is a named-argument lambda (dialog
+        # onConfirm/onDismiss/onClick handlers) — it never escapes the
+        # enclosing callable's context and must not be flagged.  Matches
+        # at paren depth > 0 are argument lambdas and are skipped.
+        region_text_start = model.body_start
+        region_text = masked[model.body_start : model.body_end]
+        paren_depth = [0] * (len(region_text) + 1)
+        depth = 0
+        for i, ch in enumerate(region_text):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth = max(0, depth - 1)
+            paren_depth[i + 1] = depth
         for match in re.finditer(
-            r"=\s*\{", masked[model.body_start : model.body_end]
+            r"=\s*\{", region_text
         ):
+            if paren_depth[match.start()] > 0:
+                continue
             literal_start = model.body_start + match.end() - 1
             if any(region.start == literal_start for region in regions):
                 continue
