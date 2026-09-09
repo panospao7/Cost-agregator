@@ -44,3 +44,6 @@ fixtures:
   - id: CB-14
     file: call_binding/cb14_qualified_top_level_call.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-15
+    file: call_binding/cb15_final_class_override_member.kt
+    expectedResolution: EXACT_SYNCHRONOUS

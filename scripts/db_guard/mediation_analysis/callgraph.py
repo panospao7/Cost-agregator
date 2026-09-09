@@ -279,6 +279,7 @@ class OwnerModel:
     simple_name: str
     kind: str  # class | object | interface
     file: str
+    is_final_class: bool = False  # GR-14r: class without open/abstract
     supertype_texts: tuple[str, ...] = ()
     properties: tuple[tuple[str, str], ...] = ()  # (name, type text) name-sorted
 
@@ -732,6 +733,10 @@ def parse_file_model(path: str, text: str) -> FileModel:
                 simple_name=simple,
                 kind=kind,
                 file=path,
+                is_final_class=(
+                    kind in ("class", "object")
+                    and not re.search(r"\b(?:open|abstract)\b", header)
+                ),
                 supertype_texts=tuple(_supertype_texts(header)),
                 properties=tuple(sorted(properties.items())),
             )
@@ -1874,6 +1879,16 @@ class CallGraphBuilder:
                     uncertain=True,
                 )
             ]
+        # GR-14r: Kotlin finality — a final class cannot be subclassed, so
+        # a member call on a final-class-typed receiver dispatches to
+        # exactly the implementation found in scope (its own declaration
+        # or the nearest inherited one).  Open/abstract receivers keep
+        # virtual uncertainty; interface receivers keep INTERFACE_DISPATCH.
+        if (
+            owner.is_final_class
+            and not member.is_generic
+        ):
+            return [self._exact_edge(model, call, context, (member.key,))]
         if member.is_open or member.is_override or self._has_override_named(
             member_owner, call.name
         ):

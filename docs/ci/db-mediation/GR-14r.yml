@@ -1,0 +1,72 @@
+# GR-14r — finality-aware dispatch (engine batch).
+#
+# STRATEGIC FINDING THIS BATCH RESOLVES (surfaced by GR-14q's
+# concretization wave): the engine classified every call to an `override`
+# member as VIRTUAL_DISPATCH-uncertain even when the receiver's declared
+# type is a FINAL concrete class.  Kotlin finality makes that impossible:
+# a final class cannot be subclassed, so the dispatched implementation is
+# exactly the member found in scope (its own declaration or the nearest
+# inherited one).
+#
+# Engine changes:
+#   - OwnerModel.is_final_class: kind in (class, object) without
+#     open/abstract modifiers in the declaration header (defect en route:
+#     the detection regex was transport-mangled to literal backspaces and
+#     matched nothing — caught by the CB-07 regression fixture flipping,
+#     root-caused, fixed before conclusions).
+#   - _resolve_invocation: member call on a final-class-typed receiver
+#     resolves EXACT (own or nearest-inherited implementation).  Open/
+#     abstract receivers keep VIRTUAL_DISPATCH (CB-07 pin); interface
+#     receivers keep INTERFACE_DISPATCH (CB-06 pin); generic members stay
+#     AMBIGUOUS.
+#
+# Shadow delta (before = post-GR-14q): counterexamples 2 -> 4 (the honest
+# inversion: two unscoped writers through newly exact final-dispatch
+# edges — the GR-14k scope queue); ambiguous 176 -> 174.  Net unproven
+# 384 -> 383.  The bulk of the interface-dispatch class (2154 edges) is
+# interface-TYPED receivers — those need the GR-14t concretization tranche
+# (PrivacyGate module decision + per-interface work), not finality.
+#
+# Validation:
+#   - finality module 3/3 (detection pins: open=False, final-derived=True,
+#     object=True, abstract=False; final-override→EXACT edge;
+#     open-override→VIRTUAL preserved);
+#   - fixture battery 58/58 (CB-15 new pin EXACT; CB-07 VIRTUAL contrast
+#     intact); mediation suite 27/27; carrier/launch/composable/CLI
+#     suites green;
+#   - no production Kotlin changed; GATE-00R + Gradle DB owed at merge
+#     (carried).
+schemaVersion: 1
+batchId: GR-14r
+startSha: 6bef2545
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: 4c0812a4e91aa23459e16cc26b08d3733cc80648b9ca74f27d6bf328828489db
+mediationReportSha256After: 97ebea2581f61bf604a9efc128511c1e4500ca1a2d5199bc96014b81ceac6995
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+engineFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+    - OwnerModel.is_final_class (class/object without open/abstract)
+    - _resolve_invocation finality-aware exact dispatch for final-class
+      receivers (before the virtual branch; generics still ambiguous)
+
+fixtures:
+  - call_binding/cb15_final_class_override_member.kt (EXACT contrast to
+    CB-07's VIRTUAL); corpus 65 -> 66 rows
+
+tests:
+  - scripts/ci/test_gr14r_finality.py 3/3
+  - fixture battery 58/58; mediation 27/27; CLI/carrier/launch/composable
+    suites green
+
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+rootCause: ESCAPING_CALLBACK # virtual-dispatch uncertainty class
+selectedPattern: engine-enablement
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch corrects an engine misclassification (finality-aware
+  dispatch).  It is not a baseline, exception, or authorization document;
+  fail-closed behavior is preserved for open/abstract/interface receivers.

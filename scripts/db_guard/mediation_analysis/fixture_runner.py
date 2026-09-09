@@ -93,6 +93,7 @@ CB_SUBJECT_CALLS = {
     "CB-12": (("exercise", "base"),),
     "CB-13": (("exercise", "uniqueNormalize"),),
     "CB-14": (("exerciseCb14", "qualifiedTopLevel"),),
+    "CB-15": (("exerciseCb15", "accept"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.
