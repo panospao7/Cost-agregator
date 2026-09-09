@@ -22,11 +22,6 @@ class MerchantNormalizationRepository @Inject constructor(
         return dao.insertCanonical(merchant)
     }
 
-    suspend fun updateCanonical(merchant: MerchantCanonical) {
-        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.updateCanonical")
-        dao.updateCanonical(merchant)
-    }
-
     suspend fun getCanonicalById(id: Long): MerchantCanonical? =
         dao.getCanonicalById(id)
 
@@ -41,11 +36,6 @@ class MerchantNormalizationRepository @Inject constructor(
 
     suspend fun getTopMerchants(limit: Int): List<MerchantCanonical> =
         dao.getTopMerchants(limit)
-
-    suspend fun updateCanonicalCategory(id: Long, categoryId: Long?) {
-        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.updateCanonicalCategory")
-        dao.updateCanonicalCategory(id, categoryId)
-    }
 
     /**
      * C08 / E3-NOW-005 / E3-NOW-006: Increments merchant stats for a newly created expense.
@@ -128,11 +118,6 @@ class MerchantNormalizationRepository @Inject constructor(
         val seenIds = prefixMatches.asSequence().map { it.id }.toHashSet()
         val dedupedContains = containsMatches.filter { seenIds.add(it.id) }
         return (prefixMatches + dedupedContains).take(limit)
-    }
-
-    suspend fun deleteUnusedAliasesOlderThan(olderThan: Long): Int {
-        writeBarrier.checkWritesAllowed("MerchantNormalizationRepository.deleteUnusedAliasesOlderThan")
-        return dao.deleteUnusedAliasesOlderThan(olderThan)
     }
 
     suspend fun linkAliasToCanonical(rawName: String, normalizedKey: String, canonicalId: Long, isUserDefined: Boolean = false, timestamp: Long): AliasLinkResult {

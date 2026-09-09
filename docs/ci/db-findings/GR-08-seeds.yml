@@ -1794,50 +1794,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
   kind: function
-  method: updateReturnWindow
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.ReturnWindow
-  daoAccessor: returnWindowDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
-  operation: updateReturnWindow
-  barrierMode: helper
-  reason: "GR-08e2 EXACT_POLICY: return-window entity update with provider-stamped updatedAt behind the write barrier"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08E
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
-  kind: function
-  method: deleteReturnWindow
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.ReturnWindow
-  daoAccessor: returnWindowDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
-  operation: deleteReturnWindow
-  barrierMode: helper
-  reason: "GR-08e2 EXACT_POLICY: return-window row delete behind the write barrier"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08E
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
-  kind: function
-  method: markAsReturned
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double?
-  - String?
-  daoAccessor: returnWindowDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
-  operation: updateReturnWindow
-  barrierMode: helper
-  reason: "GR-08e2 EXACT_POLICY: RETURNED status write persisting refund amount/currency (W02 currency fallback chain: explicit -> linked expense -> home currency -> EUR last resort) behind the write barrier"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08E
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
-  kind: function
   method: upsertReturnWindowForReceipt
   receiver: null
   parameterTypes:
@@ -4068,35 +4024,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
   kind: function
-  method: updateCanonical
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.MerchantCanonical
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
-  operation: updateCanonical
-  barrierMode: helper
-  reason: "GR-08l1 EXACT_POLICY: barrier-checked full canonical merchant row update"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
-  kind: function
-  method: updateCanonicalCategory
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long?
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
-  operation: updateCanonicalCategory
-  barrierMode: helper
-  reason: "GR-08l1 EXACT_POLICY: barrier-checked single-column category reassignment on a canonical merchant (user category-correction learning path)"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
-  kind: function
   method: incrementMerchantStats
   receiver: null
   parameterTypes:
@@ -4150,20 +4077,6 @@ entries:
   operation: updateAlias
   barrierMode: helper
   reason: "GR-08l1 EXACT_POLICY: barrier-checked full alias row update"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
-  kind: function
-  method: deleteUnusedAliasesOlderThan
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantNormalizationDao
-  operation: deleteUnusedAliasesOlderThan
-  barrierMode: helper
-  reason: "GR-08l1 EXACT_POLICY: barrier-checked retention cleanup -- hard-deletes merchant aliases unused past the cutoff (SQL delete, no raw payloads materialized)"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
@@ -4284,21 +4197,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
   kind: function
-  method: updateSavingsGoalAmount
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: savingsGoalDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
-  operation: updateGoalAmount
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: domain-typed absolute saved-amount update behind the write barrier (single SQL UPDATE, no read-modify-write)"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
-  kind: function
   method: incrementSavingsGoalAmount
   receiver: null
   parameterTypes:
@@ -4323,50 +4221,6 @@ entries:
   operation: insertGoal
   barrierMode: helper
   reason: "GR-08l2 EXACT_POLICY: deprecated entity-typed create alias; authorized separately because the callable identity differs from the domain-typed createSavingsGoal"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
-  kind: function
-  method: deleteGoal
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.SavingsGoal
-  daoAccessor: savingsGoalDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
-  operation: deleteGoal
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: deprecated entity-typed delete alias; authorized separately because the callable identity differs from the domain-typed deleteSavingsGoal"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
-  kind: function
-  method: updateGoalAmount
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: savingsGoalDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
-  operation: updateGoalAmount
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: deprecated absolute-amount update alias; authorized separately because the callable identity differs from the domain-typed updateSavingsGoalAmount"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
-  kind: function
-  method: addToGoalAmount
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: savingsGoalDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
-  operation: addToGoalAmount
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: deprecated atomic-increment alias; authorized separately because the callable identity differs from the domain-typed incrementSavingsGoalAmount"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt

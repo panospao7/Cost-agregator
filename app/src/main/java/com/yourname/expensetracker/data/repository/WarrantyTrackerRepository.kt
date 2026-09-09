@@ -362,52 +362,6 @@ class WarrantyTrackerRepository @Inject constructor(
     
     suspend fun getReturnWindowByReceiptId(receiptId: Long): ReturnWindow? =
         returnWindowDao.getReturnWindowByReceiptId(receiptId)
-    
-    suspend fun updateReturnWindow(returnWindow: ReturnWindow) {
-        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.updateReturnWindow")
-        returnWindowDao.updateReturnWindow(
-            returnWindow.copy(updatedAt = timeProvider.now())
-        )
-    }
-    
-    suspend fun deleteReturnWindow(returnWindow: ReturnWindow) {
-        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.deleteReturnWindow")
-        returnWindowDao.deleteReturnWindow(returnWindow)
-    }
-
-    /**
-     * W02: Marks a return window as RETURNED with the given refund amount and currency.
-     * If [refundAmount] is null, refund-related fields are left unchanged.
-     * If [refundCurrency] is null, it falls back to the linked Expense's currency,
-     * then to the user's home currency setting.
-     * CURR-C62-10: Falls back to EUR only as last resort if home currency unavailable.
-     */
-    suspend fun markAsReturned(
-        returnWindowId: Long,
-        refundAmount: Double? = null,
-        refundCurrency: String? = null
-    ): ReturnWindow? {
-        writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.markAsReturned")
-        val existing = returnWindowDao.getReturnWindowById(returnWindowId) ?: return null
-        val linkedExpense = existing.expenseId?.let { database.expenseDao().getById(it) }
-        val homeResolution = currencySettingsRepository.resolveHomeCurrency()
-        val homeCurrency = homeResolution.currencyOrNull?.code ?: "EUR" // last resort for refund currency
-        val currency = refundCurrency ?: linkedExpense?.currency ?: homeCurrency
-        val updated = existing.copy(
-            status = ReturnStatus.RETURNED,
-            returnedAt = timeProvider.now(),
-            refundAmount = refundAmount ?: existing.refundAmount,
-            refundCurrency = if (refundAmount != null) currency else existing.refundCurrency,
-            updatedAt = timeProvider.now()
-        )
-        returnWindowDao.updateReturnWindow(updated)
-        // PR3-FINALGATE: Do not write a WarrantyLifecycleEvent for return-window actions
-        // because warrantyId expects a warranty ID, not a receiptId or returnWindowId.
-        // TODO: Add a dedicated ReturnWindowLifecycleEvent table or general diagnostic
-        // event infrastructure when schema evolution is planned.
-        Timber.d("Return window $returnWindowId marked as RETURNED")
-        return updated
-    }
 
     suspend fun reconcileExpiredItems(now: Long = timeProvider.now()): ExpiryReconciliationResult {
         writeBarrier.checkWritesAllowed("WarrantyTrackerRepository.reconcileExpiredItems")

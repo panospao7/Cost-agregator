@@ -12,7 +12,5 @@ interface SavingsGoalRepository {
 
     suspend fun deleteSavingsGoal(goal: SavingsGoal)
 
-    suspend fun updateSavingsGoalAmount(goalId: Long, amount: Double)
-
     suspend fun incrementSavingsGoalAmount(goalId: Long, delta: Double): Boolean
 }
