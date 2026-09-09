@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.TransactionContext
@@ -817,6 +818,13 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
 
         try {
+        // GR-14s: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "ReceiptLifecycleCoordinator.processEmailReceipt"
+            )
+        ) {
         transactionRunner.runInTransaction(
             correlationId = java.util.UUID.randomUUID().toString(),
             operationId = "receipt.process_email",
@@ -1067,6 +1075,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 )
                 pendingReviewDao.insert(review)
             }
+        }
         }
 
         } catch (e: DuplicateReceiptInsertException) {

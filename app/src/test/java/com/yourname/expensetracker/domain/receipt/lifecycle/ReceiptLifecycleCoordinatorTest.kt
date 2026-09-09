@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.EmailReceiptDao
@@ -125,6 +126,14 @@ class ReceiptLifecycleCoordinatorTest {
         receiptLifecycleEventWriter = mockk(relaxed = true)
         // Ingest/delete paths run inside transactionRunner blocks — execute them by default.
         stubTransactionRunnerExecutesBlocks()
+        // GR-14s: runWrite is a pass-through here — the relaxed mock would
+        // otherwise never invoke the scoped block (processEmailReceipt).
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
 
         every { timeProvider.now() } returns now
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")

@@ -1,0 +1,88 @@
+# GR-14s — Pattern A scope tranche: drain the processEmailReceipt
+# counterexamples (4 -> 2).
+#
+# The GR-14r finality-aware dispatch honestly surfaced two unscoped writers
+# through newly exact final-dispatch edges: the late mutation block of
+# ReceiptLifecycleCoordinator.processEmailReceipt
+# (emailReceiptDao.insertOrIgnore + pendingReviewDao.insert, both inside the
+# function's single DomainTransactionRunner.runInTransaction block; entry
+# checkWritesAllowed already existed).  The recoverStaleRunningOperationRuns
+# pair (the other 2 counterexample rows) was REASSIGNED to GR-14u
+# (grep-proven zero production callers — removal candidate, Pattern E), so
+# this batch deliberately scopes only the 2 email-receipt rows.
+#
+# Remediation (Pattern A — the GR-14k large-body precedent):
+#   - the whole transactionRunner.runInTransaction mutation block scoped in
+#     writeBarrier.runWrite(DatabaseAccessOperation(
+#     "ReceiptLifecycleCoordinator.processEmailReceipt")) { ... } inside the
+#     existing try/catch; body indentation deliberately unchanged (minimal
+#     diff).  writeBarrier was already constructor-injected.
+# Behavior preserved: runWrite's checkWritesAllowed is an idempotent read of
+# RestoreMaintenanceMode; the function entry already performs the same check
+# (blocked-writes semantics covered by
+# email_ingestion_uses_write_barrier_not_restore_maintenance_mode, passing).
+#   - ReceiptLifecycleCoordinatorTest: setup gains the runWrite pass-through
+#     stub (relaxed writeBarrier mocks never invoke scoped blocks — GR-14k
+#     precedent); the transactionRunner stub already executed its blocks.
+#
+# Shadow delta (before = post-GR-14r, sha 97ebea25 = GR-14r after — zero
+# drift): counterexample_unguarded_call_path 4 -> 2; proven_helper 46 -> 48
+# (both rows: GR13_ALL_PATHS_GUARDED, localGuard none -> direct, deciding
+# exact_canonical_scope).  Every other proof bucket unchanged; entry set
+# otherwise identical; diagnostics unchanged (DB_SIGNATURE_UNRESOLVED
+# census label, scanFindingCount 0; active policy sha 51f7d40a unchanged).
+# Edge-state drift +1 exact_synchronous / +1 ambiguous_target: mechanical
+# consequence of the new runWrite lambda region (the wrap's own edges);
+# no proof row's deciding resolution changed through them.
+#
+# Validation:
+#   - :app:compileDebugKotlin PASS (6m31s);
+#   - ReceiptLifecycleCoordinatorTest: 12 passed; 7 FAILED — stash A/B at
+#     the pre-batch state reproduces the IDENTICAL 7-failure set (all
+#     mockk-relaxed artifacts: 4x ClassCastException on the relaxed
+#     createExpenseDbOnlyV2 generic, 1x relaxed getBySourceFingerprint
+#     early-Duplicate(0) in the unwrapped dedup block, 2x processReceiptInput
+#     path untouched by this batch; the class was last touched at GR-14b
+#     ee4799f7 and not re-run since) — none caused by this batch;
+#   - python batteries: fixture_runner 58/58; mediation suite 27/27;
+#     test_fixtures 5/5; carrier/launch/composable/finality 26/26; CLI
+#     battery 23/23 (no engine change in this batch — drift confirmation);
+#   - GATE-00R double capture + Gradle DB task: OWED at merge (carried).
+schemaVersion: 1
+batchId: GR-14s
+startSha: 0d7e1b28
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: 97ebea2581f61bf604a9efc128511c1e4500ca1a2d5199bc96014b81ceac6995
+mediationReportSha256After: 234cc95c177188c65af24a1e4cf3b25f66f2ae589f099f4414ef026b3d42c7b5
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt:
+      processEmailReceipt's runInTransaction mutation block scoped in
+      writeBarrier.runWrite (GR-14k large-body precedent; body indentation
+      unchanged)
+  - app/src/test/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinatorTest.kt:
+      runWrite pass-through stub in setup (test plumbing for the scope wrap)
+
+selectedMutationKeys:
+  - ReceiptLifecycleCoordinator.processEmailReceipt -> EmailReceiptDao.insertOrIgnore
+  - ReceiptLifecycleCoordinator.processEmailReceipt -> PendingReviewDao.insert
+rootCause: DIRECT_COUNTEREXAMPLE # unscoped writers through exact final-dispatch edges (GR-14r inversion queue)
+selectedPattern: A # canonical scope at the legal writer
+tests:
+  - ReceiptLifecycleCoordinatorTest 12 passed / 7 pre-existing failures
+    (stash A/B identical at pre-batch state)
+  - fixture battery 58/58; mediation 27/27; fixtures module 5/5;
+    carrier/launch/composable/finality 26/26; CLI 23/23
+validation:
+  - compile PASS; shadow delta exactly the 2 rows -> proven_helper;
+    diagnostics none
+  - GATE-00R double capture + Gradle DB task OWED at merge (carried)
+status: PARTIAL # merge gates owed (carried)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch changes source architecture to satisfy proof requirements.
+  It is not a baseline, exception, or authorization document.
