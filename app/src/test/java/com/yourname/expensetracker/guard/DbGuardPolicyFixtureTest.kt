@@ -24,9 +24,14 @@ import java.io.File
  *   expected/fixtures disjointness, a single global tuple-identity set across
  *   BOTH sections (a cross-section duplicate fails closed), and no
  *   duplicate/wildcard/raw/write tuples.
- * - **Ownership policy:** Exact class, method, DAO, and DAO-operation matching for
- *   the full 99-entry policy. Every approved writer enumerates its exact DAO
- *   operation (never the generic `write` value, which the loader rejects).
+     * - **Ownership policy:** The active `db_ownership_policy.yml` is the
+     *   activated v2 document (`schemaVersion: 2`, 471 entries — one entry per
+     *   canonical mutation key, with `ownerFqcn` / `daoAccessor` / `barrierMode`
+     *   fields). The fixture parser accepts the v2 document header and entry
+     *   schema and maps v2 fields onto the shared [ParsedEntry] model; legacy
+     *   v1 pins that reference the archived 99-entry contract are documented
+     *   per-test. Every approved writer still enumerates an exact DAO
+     *   operation (never the generic `write` value, which the loader rejects).
  * - **Negative tests:** Unrelated class/method/DAO combinations assert they are
  *   NOT present in the policies; wildcard `method = "*"` entries are rejected.
  * - **Parser fail-closed:** unknown keys, missing required fields (including
@@ -120,32 +125,101 @@ class DbGuardPolicyFixtureTest {
 
     private val requiredKeys = listOf("path", "class", "operation", "reason", "owner", "linked_issue")
 
+    // The ONLY keys the v2 ownership policy (schemaVersion: 2) accepts inside
+    // an entry block; anything else fails closed. v1 files (structural
+    // exceptions, parser negative fixtures) keep [knownKeys]. `ownerFqcn:` is
+    // listed before `owner:` so prefix matching cannot shadow it.
+    private val v2EntryKeys = listOf(
+        "ownerFqcn:", "kind:", "method:", "receiver:", "parameterTypes:",
+        "daoAccessor:", "daoFqcn:", "operation:", "barrierMode:", "reason:",
+        "owner:", "linkedIssue:"
+    )
+
+    private val v2RequiredKeys = listOf(
+        "path", "ownerFqcn", "kind", "method", "daoAccessor", "daoFqcn",
+        "operation", "barrierMode", "reason", "owner", "linkedIssue"
+    )
+
+    private val v2BarrierModes = setOf("direct", "helper", "workerMediated")
+
     private fun parseEntries(file: File): List<ParsedEntry> {
         return parseEntriesContent(file.readLines(), file.name)
     }
 
     /**
      * Line-based parser for the flat entry YAML files. Fail-closed:
-     * - every line inside an entry block must be a known key;
-     * - every entry must define all [requiredKeys] plus exactly one of
-     *   `method` / `method_pattern`;
+     * - every line inside an entry block must be a known key for the active
+     *   schema ([knownKeys] for v1, [v2EntryKeys] for v2);
+     * - every v1 entry must define all [requiredKeys] plus exactly one of
+     *   `method` / `method_pattern`; every v2 entry must define all
+     *   [v2RequiredKeys] with a known [v2BarrierModes] value;
      * - any violation throws with the entry/path and file context.
+     *
+     * v2 documents (the activated ownership policy) declare
+     * `schemaVersion: 2` above the `entries:` list; the header is validated
+     * and skipped. For v2 the parser additionally accepts the real document
+     * shapes:
+     * - multi-line quoted scalars (`'...'` with `''` escapes, `"..."` with
+     *   backslash escapes) folded across continuation lines — including
+     *   `#`-prefixed prose, which is literal content inside an open scalar;
+     * - plain multi-line scalars (a bare value continued on a deeper-indented
+     *   line, ended by any key-shaped line);
+     * - `parameterTypes:` block lists (`- <type>` items at entry level).
+     * v1 documents keep the exact pre-v2 parsing behavior.
      */
     private fun parseEntriesContent(lines: List<String>, fileName: String): List<ParsedEntry> {
         val entries = mutableListOf<ParsedEntry>()
         var current: MutableMap<String, String>? = null
         var currentPath: String? = null
         var currentStartLine = 0
+        var schemaVersion: String? = null
+        // Key whose quoted scalar value is still open across lines (v2 only).
+        var openScalarKey: String? = null
+        // Key whose bare scalar value continues on deeper-indented lines (v2 only).
+        var plainContinuationKey: String? = null
+        var plainContinuationIndent = 0
+        // True while a v2 `parameterTypes:` block list is being read.
+        var parameterListOpen = false
 
         for ((lineIndex, line) in lines.withIndex()) {
             val trimmed = line.trim()
 
-            // Blank lines and comments are safe to skip anywhere.
+            // Inside an open multi-line quoted scalar every remaining line is
+            // content — including `#`-prefixed prose — until the closing quote.
+            val openKey = openScalarKey
+            if (current != null && openKey != null) {
+                if (trimmed.isEmpty()) continue
+                current[openKey] = current[openKey]!! + " " + trimmed
+                if (!quotedScalarStillOpen(current[openKey]!!)) {
+                    openScalarKey = null
+                }
+                continue
+            }
+
+            // Blank lines and comments are safe to skip anywhere else.
             if (trimmed.isEmpty() || trimmed.startsWith("#")) continue
+
+            val indent = line.length - line.trimStart().length
+
+            // v2 document header, accepted only before the first entry block.
+            if (current == null && trimmed.startsWith("schemaVersion:")) {
+                require(schemaVersion == null) {
+                    "Duplicate 'schemaVersion' line in $fileName (line ${lineIndex + 1})"
+                }
+                schemaVersion = extractValue(trimmed, "schemaVersion")
+                require(schemaVersion == "2") {
+                    "Unsupported schemaVersion '$schemaVersion' in $fileName " +
+                        "(line ${lineIndex + 1}); only '2' is accepted"
+                }
+                continue
+            }
 
             // Start of a new entry block (line begins with "- path:")
             if (trimmed.startsWith("- path:")) {
-                current?.let { finishEntry(it, entries, fileName, currentPath, currentStartLine) }
+                current?.let { finishEntry(it, entries, fileName, currentPath, currentStartLine, schemaVersion) }
+                openScalarKey = null
+                plainContinuationKey = null
+                parameterListOpen = false
                 current = mutableMapOf()
                 currentPath = extractValue(trimmed, "path")
                 current!!["path"] = currentPath
@@ -164,10 +238,43 @@ class DbGuardPolicyFixtureTest {
                 continue
             }
 
-            // Inside an entry block: every line must be a known key, else fail closed.
-            val matchedKey = knownKeys.firstOrNull { trimmed.startsWith(it) }
+            // v2-only entry shapes: parameterTypes block list items and plain
+            // multi-line scalar continuations.
+            if (schemaVersion == "2") {
+                if (parameterListOpen && trimmed.startsWith("- ")) {
+                    continue
+                }
+                val plainKey = plainContinuationKey
+                if (plainKey != null && indent > plainContinuationIndent &&
+                    !trimmed.startsWith("- ") && v2EntryKeys.none { trimmed.startsWith(it) }
+                ) {
+                    current[plainKey] = current[plainKey]!! + " " + trimmed
+                    continue
+                }
+                plainContinuationKey = null
+            }
+
+            // Inside an entry block: every line must be a known key for the
+            // active schema, else fail closed.
+            val schemaKeys = if (schemaVersion == "2") v2EntryKeys else knownKeys
+            val matchedKey = schemaKeys.firstOrNull { trimmed.startsWith(it) }
             if (matchedKey != null) {
-                current[matchedKey.removeSuffix(":")] = extractValue(trimmed, matchedKey.removeSuffix(":"))
+                val keyName = matchedKey.removeSuffix(":")
+                if (schemaVersion == "2") {
+                    val rawValue = trimmed.removePrefix(matchedKey).trim()
+                    current[keyName] = rawValue
+                    parameterListOpen = keyName == "parameterTypes" && rawValue.isEmpty()
+                    plainContinuationKey = null
+                    when {
+                        quotedScalarStillOpen(rawValue) -> openScalarKey = keyName
+                        rawValue.isNotEmpty() && !rawValue.startsWith("[") -> {
+                            plainContinuationKey = keyName
+                            plainContinuationIndent = indent
+                        }
+                    }
+                } else {
+                    current[keyName] = extractValue(trimmed, keyName)
+                }
                 continue
             }
 
@@ -177,7 +284,7 @@ class DbGuardPolicyFixtureTest {
             )
         }
 
-        current?.let { finishEntry(it, entries, fileName, currentPath, currentStartLine) }
+        current?.let { finishEntry(it, entries, fileName, currentPath, currentStartLine, schemaVersion) }
         return entries
     }
 
@@ -186,8 +293,14 @@ class DbGuardPolicyFixtureTest {
         entries: MutableList<ParsedEntry>,
         fileName: String,
         entryPath: String?,
-        startLine: Int
+        startLine: Int,
+        schemaVersion: String?
     ) {
+        if (schemaVersion == "2") {
+            finishV2Entry(raw, entries, fileName, entryPath, startLine)
+            return
+        }
+
         val context = "entry '${entryPath ?: "<no path>"}' in $fileName (starting line $startLine)"
 
         for (key in requiredKeys) {
@@ -256,6 +369,117 @@ class DbGuardPolicyFixtureTest {
                 barrierVia = barrierVia
             )
         )
+    }
+
+    /**
+     * Validates and maps one v2 ownership-policy entry (schemaVersion: 2 —
+     * one entry per canonical mutation key) onto the shared [ParsedEntry]
+     * model used by the fixture assertions:
+     * - className  <- simple name of `ownerFqcn`
+     * - method     <- `method` (v2 has no method_pattern)
+     * - daos       <- [daoAccessor]
+     * - barrier_required <- true only for barrierMode `direct`
+     * - barrier_via <- "WorkerExecutionGuard" for `workerMediated` rows
+     * Anything missing or malformed fails closed with entry/path context.
+     */
+    private fun finishV2Entry(
+        raw: Map<String, String>,
+        entries: MutableList<ParsedEntry>,
+        fileName: String,
+        entryPath: String?,
+        startLine: Int
+    ) {
+        val context = "entry '${entryPath ?: "<no path>"}' in $fileName (starting line $startLine)"
+
+        for (key in v2RequiredKeys) {
+            require(!normalizeV2Scalar(raw[key] ?: "").isBlank()) {
+                "Missing required field '$key' for $context"
+            }
+        }
+        val barrierMode = normalizeV2Scalar(raw["barrierMode"] ?: "")
+        require(barrierMode in v2BarrierModes) {
+            "barrierMode must be one of ${v2BarrierModes.sorted()} for $context, got '$barrierMode'"
+        }
+
+        entries.add(
+            ParsedEntry(
+                path = normalizeV2Scalar(raw["path"] ?: ""),
+                className = normalizeV2Scalar(raw["ownerFqcn"] ?: "").substringAfterLast('.'),
+                method = normalizeV2Scalar(raw["method"] ?: ""),
+                methodPattern = null,
+                operation = normalizeV2Scalar(raw["operation"] ?: ""),
+                reason = normalizeV2Scalar(raw["reason"] ?: ""),
+                owner = normalizeV2Scalar(raw["owner"] ?: ""),
+                linkedIssue = normalizeV2Scalar(raw["linkedIssue"] ?: ""),
+                daos = listOf(normalizeV2Scalar(raw["daoAccessor"] ?: "")),
+                barrierRequired = barrierMode == "direct",
+                barrierVia = if (barrierMode == "workerMediated") "WorkerExecutionGuard" else null
+            )
+        )
+    }
+
+    /**
+     * True when [rawValue] opens a single- or double-quoted YAML scalar that
+     * does not close on the same line. `''` inside single-quoted scalars and
+     * backslash escapes inside double-quoted scalars are not terminators.
+     */
+    private fun quotedScalarStillOpen(rawValue: String): Boolean {
+        if (rawValue.isEmpty()) return false
+        val quote = rawValue[0]
+        if (quote != '\'' && quote != '"') return false
+        var i = 1
+        while (i < rawValue.length) {
+            val c = rawValue[i]
+            if (quote == '\'') {
+                if (c == '\'' && i + 1 < rawValue.length && rawValue[i + 1] == '\'') {
+                    i += 2
+                } else if (c == '\'') {
+                    return false
+                } else {
+                    i++
+                }
+            } else {
+                if (c == '\\') {
+                    i += 2
+                } else if (c == '"') {
+                    return false
+                } else {
+                    i++
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * Fixture-grade YAML scalar normalization for v2 values: folds the
+     * continuation whitespace, strips the outer quotes and unescapes `''`
+     * (single-quoted) and `\uXXXX` / `\"` / `\\` / `\ ` (double-quoted).
+     * Bare values keep the inline-comment stripping of [extractValue].
+     */
+    private fun normalizeV2Scalar(rawValue: String): String {
+        val folded = rawValue.replace(Regex("\\s+"), " ").trim()
+        return when {
+            folded.startsWith('\'') && folded.endsWith('\'') && folded.length >= 2 ->
+                folded.substring(1, folded.length - 1).replace("''", "'").trim()
+            folded.startsWith('"') && folded.endsWith('"') && folded.length >= 2 -> {
+                val inner = folded.substring(1, folded.length - 1)
+                val unescaped = Regex("\\\\u([0-9a-fA-F]{4})").replace(inner) { m ->
+                    Character.toString(m.groupValues[1].toInt(16))
+                }
+                unescaped
+                    .replace("\\\\", "\u0001")
+                    .replace("\\\"", "\"")
+                    .replace("\\ ", " ")
+                    .replace("\u0001", "\\")
+                    .trim()
+            }
+            else -> {
+                val commentIdx = folded.indexOf(" #")
+                val noComment = if (commentIdx >= 0) folded.substring(0, commentIdx) else folded
+                noComment.trim().trim('"')
+            }
+        }
     }
 
     private fun extractValue(line: String, key: String): String {
@@ -839,9 +1063,9 @@ class DbGuardPolicyFixtureTest {
     // ══════════════════════════════════════════════════════════════════
 
     @Test
-    fun `manifest — ownership policy has exactly 99 entries`() {
+    fun `manifest — ownership policy has exactly 471 entries`() {
         val entries = parseEntries(ownershipPolicyFile)
-        assertEquals("Ownership policy must have exactly 99 entries", 99, entries.size)
+        assertEquals("Ownership policy must have exactly 471 entries", 471, entries.size)
     }
 
     @Test

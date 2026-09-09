@@ -54,6 +54,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
         // Real recurring lifecycle coordinator with real sub-components
         val materializer = RecurringOccurrenceMaterializer(
             database = database,
+            writeBarrier = writeBarrier,
             occurrenceDao = database.recurringOccurrenceDao(),
             reminderDeliveryDao = database.recurringReminderDeliveryDao(),
             timeProvider = timeProvider,

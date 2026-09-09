@@ -217,9 +217,13 @@ class RecommendationRepositoryTest {
 
         repository.saveAll(incoming)
 
+        // Both new recommendations that survived the global top-5 merge are
+        // inserted (new_high_best ranks 1st, new_medium_mid ranks 4th); only
+        // the pre-existing rows are never re-inserted. This is consistent with
+        // the retainedIds pinned in the archiveActiveOverflow matcher below.
         coVerify(exactly = 1) {
             dao.insertAll(match { inserted ->
-                inserted.map { it.id } == listOf("new_high_best")
+                inserted.map { it.id } == listOf("new_high_best", "new_medium_mid")
             })
         }
         coVerify(exactly = 1) {
