@@ -3230,21 +3230,6 @@ entries:
   reason: "GR-08j2 EXACT_POLICY: idempotent per-source stats row bootstrap behind the write barrier (conflict-safe insert keeps re-runs no-ops)"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
-  method: incrementTotal
-  receiver: null
-  parameterTypes:
-  - String
-  - Long
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: incrementTotal
-  barrierMode: helper
-  reason: "GR-08j2 EXACT_POLICY: per-source total counter increment behind the write barrier"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
 - path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
   ownerFqcn: com.yourname.expensetracker.di.RetentionModule
   kind: function
@@ -3990,43 +3975,6 @@ entries:
   reason: "GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt finding -- suffix-substring grouping artifact) -- the mileage feature's repository write path; BusinessExpenseRepository is the SOLE writer of MileageTrackingDao per docs/architecture/dao-map.md, writeBarrier.checkWritesAllowed at the entrypoint plus validateMileageForInsert range validation; auxiliary mileage log insert, no lifecycle event by design"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/ManualRecurringExpenseRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.ManualRecurringExpenseRepository
-  kind: function
-  method: writeLifecycleEvent
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - Long
-  - String?
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: "GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt finding) -- private best-effort diagnostic lifecycle-event helper (exception-swallowing non-critical channel) with NO in-class callers; every live rule mutation routes through RecurringRuleLifecycleCoordinator, the legal lifecycle authority per docs/architecture/dao-map.md and LEGAL_PATHS.md Recurring Rule Mutations; authorized as the exact static site AS WRITTEN -- any future revival must route through RecurringLifecycleEventWriter per LEGAL_PATHS.md Lifecycle Events"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/RecurringExpenseRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.RecurringExpenseRepository
-  kind: function
-  method: writeLifecycleEvent
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - Long
-  - String?
-  - String?
-  - String?
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: "GR-08l1 CLOSURE: residual gr08l-rescan site (NOT an ExpenseRepository.kt finding) -- private best-effort diagnostic lifecycle-event helper (exception-swallowing non-critical channel) with writeBarrier.checkWritesAllowed at the helper entrypoint and NO in-class callers; every live rule mutation routes through RecurringRuleLifecycleCoordinator, the legal lifecycle authority per docs/architecture/dao-map.md and LEGAL_PATHS.md Recurring Rule Mutations; authorized as the exact static site AS WRITTEN -- any future revival must route through RecurringLifecycleEventWriter per LEGAL_PATHS.md Lifecycle Events"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-# ── GR-08l2 rows (verbatim from GR-08l2-seed.yml) ────────────────────────────
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
   kind: function
@@ -4937,41 +4885,6 @@ entries:
   reason: "GR-08n2 EXACT_POLICY: barrier-checked delete-all-receipts maintenance (WARNING-deprecated, P3-0D5-09, points at ReceiptLifecycleCoordinator) -- SQL delete-all after per-receipt stored-image cleanup"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08N
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
-  kind: function
-  method: clearMatchForReceipt
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: scannedReceiptDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
-  operation: update
-  barrierMode: helper
-  reason: "GR-08n2 EXACT_POLICY: barrier-checked match-field clear (expenseId/matchStatus/suggestedExpenseId/matchConfidence reset via the abstract @Update) -- ERROR-deprecated source-compatibility shim pointing at ReceiptMatchLifecycleService.clearMatchForReceipt (the GR-08h legal path); Kotlin callers are compile-time blocked and the row exists only so the surviving shim body is not an unauthorized mutation"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08N
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
-  kind: function
-  method: writeReceiptEvent
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - Long
-  - String
-  - String
-  - String
-  - String
-  - String?
-  daoAccessor: receiptEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
-  operation: insert
-  barrierMode: helper
-  reason: "GR-08n2 EXACT_POLICY: private Pipeline-3 lifecycle-event helper -- best-effort ReceiptEvent insert (failures are logged and never fail the business operation), CancellationException rethrown (catch order: cancellation rethrow, then generic catch), message/errorDetails bounded with take(500) before persistence"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
   ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
   kind: function
@@ -5474,19 +5387,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.MerchantCategoryRepository
   kind: function
-  method: deleteAll
-  receiver: null
-  parameterTypes: []
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantCategoryDao
-  operation: deleteAll
-  barrierMode: helper
-  reason: "GR-08o CLOSURE: residual gr08o-rescan site (NOT a CategoryRepository.kt finding -- suffix-substring grouping artifact) -- barrier-checked full merchant-dictionary reset (SQL DELETE FROM merchant_categories, no payloads materialized) followed by categorization cache invalidation; DB_WRITE_OWNERSHIP.md/dao-map.md owner of merchant_categories; currently no production caller -- authorized as the exact static site AS WRITTEN"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08O
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantCategoryRepository
-  kind: function
   method: insert
   receiver: null
   parameterTypes:
@@ -5553,19 +5453,6 @@ entries:
   operation: insert
   barrierMode: helper
   reason: "GR-08p1 EXACT_POLICY: barrier-checked user-correction record insert (the notification accept/reject learning surface; sole UserCorrectionDao writer)"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/UserCorrectionRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.UserCorrectionRepository
-  kind: function
-  method: deleteAll
-  receiver: null
-  parameterTypes: []
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
-  operation: deleteAll
-  barrierMode: helper
-  reason: "GR-08p1 EXACT_POLICY: barrier-checked full correction reset -- SQL DELETE, no payloads materialized"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/domain/negotiation/SmartBillNegotiationEngine.kt

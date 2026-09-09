@@ -215,17 +215,29 @@ callable, or walk init blocks as context-inherited.  Until then: any
 callee first-called from an `init {}` block will read as
 `unproven_external_entry` — audit for this shape before removing.
 
-### D2. DISSOLVED — ExpenseWriteStore is a fully dead duplicate layer
-(not an engine gap).  The only reference outside its own file is a stale
-doc comment in ExpenseReadStore.kt ("Write paths must use
-[ExpenseWriteStore] or TransactionLifecycleCoordinator"); the workers
-actually call `ExpenseRepository`, whose methods call `expenseDao`
-DIRECTLY — no delegation into the store.  **GR-14u4 headline candidate**:
-remove the whole class (data/store/ExpenseWriteStore.kt, 7 board rows:
+### D2. ExpenseWriteStore — OWNER DECISION (designed-but-unwired layer)
+The only reference outside its own file is a stale doc comment in
+ExpenseReadStore.kt ("Write paths must use [ExpenseWriteStore] or
+TransactionLifecycleCoordinator"); the workers actually call
+`ExpenseRepository`, whose methods call `expenseDao` DIRECTLY — no
+delegation into the store.  It is therefore production-dead (7 board rows:
 conditionallySetLocation/deleteAll/incrementBackfillAttempts/insertAll/
-updateCategory/updateCategoryNullable/updateMerchantKey) + fix the
-ExpenseReadStore.kt comment; also check its insert/update/delete/
-updateMerchant members (no policy rows were ever created for them).
+updateCategory/updateCategoryNullable/updateMerchantKey), BUT it carries
+two DEDICATED test suites (ExpenseStoreTest,
+ExpenseWriteStoreObservabilityTest — barrier-metadata observability) and
+the ExpenseReadStore comment prescribes it as INTENDED architecture that
+was never wired.  Removal = class + both suites + comment fix (owner
+call), or wiring it back in (bigger owner call).  Its remaining members
+(insert/update/delete/updateMerchant) never had policy rows.  Removed
+from GR-14u4 scope for this reason.
+
+Related owner-intent finding: DbGuardPolicyFixtureTest
+`ownership — unrelated class UserCorrectionRepository not present` asserts
+UserCorrectionRepository is ENTIRELY absent from the ownership policy, but
+the policy carries its LIVE `insert` row (GR-08p1, the notification
+learning surface) — the test has therefore never been able to pass and
+encodes an unresolved intent (either the insert moves to a coordinator
+and the class leaves the policy, or the assertion is dropped).
 
 ### D3. Name-match noise floor (handoff §6/§D — untouched, owner-gated)
 Room/Activity `onCreate`-style overrides collide via name-matched edges and

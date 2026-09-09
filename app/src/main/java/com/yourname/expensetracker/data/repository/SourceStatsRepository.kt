@@ -21,9 +21,4 @@ class SourceStatsRepository @Inject constructor(
 
     suspend fun getAll(): List<SourceStats> =
         dao.getAll()
-
-    suspend fun incrementTotal(packageName: String, now: Long) {
-        writeBarrier.checkWritesAllowed("SourceStatsRepository.incrementTotal")
-        dao.incrementTotal(packageName, now)
-    }
 }

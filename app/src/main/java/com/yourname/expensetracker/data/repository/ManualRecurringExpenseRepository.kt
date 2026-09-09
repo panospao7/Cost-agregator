@@ -43,27 +43,4 @@ class ManualRecurringExpenseRepository @Inject constructor(
     suspend fun deleteById(id: Long) {
         ruleLifecycleCoordinator.get().deleteRule(id)
     }
-
-    private suspend fun writeLifecycleEvent(
-        ruleId: Long,
-        eventType: String,
-        occurredAt: Long,
-        metadata: String?
-    ) {
-        if (ruleId <= 0) return
-        try {
-            lifecycleEventDao.insert(
-                com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent(
-                    occurrenceId = null,
-                    eventType = eventType,
-                    occurredAt = occurredAt,
-                    oldStatus = null,
-                    newStatus = null,
-                    metadata = metadata
-                )
-            )
-        } catch (e: Exception) {
-            timber.log.Timber.w(e, "Non-critical: failed to write lifecycle event %s for rule %d", eventType, ruleId)
-        }
-    }
 }
