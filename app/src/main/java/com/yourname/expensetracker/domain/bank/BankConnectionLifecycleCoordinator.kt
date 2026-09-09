@@ -43,14 +43,12 @@ class BankConnectionLifecycleCoordinator @Inject constructor(
             return try {
                 bankApiIntegration.syncTransactions(connection)
                 ConnectionSyncResult.Success
-            } catch (ce: CancellationException) {
-                throw ce
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 ConnectionSyncResult.RetryableFailure
             }
-        } catch (ce: CancellationException) {
-            throw ce
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             return ConnectionSyncResult.RetryableFailure
         }
     }
@@ -62,9 +60,8 @@ class BankConnectionLifecycleCoordinator @Inject constructor(
             if (exists == null) return ConnectionDisconnectResult.NotFound
             bankConnectionDao.disconnect(connectionId)
             return ConnectionDisconnectResult.Success
-        } catch (ce: CancellationException) {
-            throw ce
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             return ConnectionDisconnectResult.RetryableFailure
         }
     }

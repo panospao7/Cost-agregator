@@ -58,6 +58,11 @@ class DirectEventDaoInsertGuardTest {
          * review — never arbitrarily.
          */
         val APPROVED_ENTRIES = listOf(
+        // GR-14u2 renewal (2026-09-09): the 2026-08-15 expiry passed with the
+        // legacy->coordinator migrations still pending for 7 entries; each file was
+        // re-checked against GUARDED_DAO_NAMES and its violations remain live, so the
+        // entries are renewed to the standard 2026-12-31 horizon rather than dropped.
+        // ExpenseRepository's violation is fixed and its entry removed.
             // === Transaction events (DIRECT_TRANSACTION_EVENT_DAO_INSERT) ===
             DirectEventAllowlistEntry(
                 "TransactionLifecycleCoordinator.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "COORDINATOR",
@@ -97,20 +102,13 @@ class DirectEventDaoInsertGuardTest {
             DirectEventAllowlistEntry(
                 "WarrantyTrackerRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
                 "Transaction", "Warranty tracking writes lifecycle events", "MIT-031",
-                LocalDate.of(2026, 8, 15)
+                LocalDate.of(2026, 11, 20)
             ),
             DirectEventAllowlistEntry(
                 "TransactionLifecycleEventWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
                 "Transaction", "P2 transaction event writer (contains Room impl)", "MIT-031",
                 LocalDate.of(2026, 12, 31)
             ),
-            DirectEventAllowlistEntry(
-                "ExpenseRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
-                "Transaction", "P2 repository (legacy, to be migrated to coordinator)", "MIT-031",
-                LocalDate.of(2026, 8, 15)
-            ),
-
-            // === Receipt events (DIRECT_RECEIPT_EVENT_DAO_INSERT) ===
             DirectEventAllowlistEntry(
                 "ReceiptLifecycleCoordinator.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "COORDINATOR",
                 "Receipt", "P3 coordinator writes receipt lifecycle events", "MIT-041",
@@ -139,12 +137,12 @@ class DirectEventDaoInsertGuardTest {
             DirectEventAllowlistEntry(
                 "ReceiptRepository.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
                 "Receipt", "P3 repository (legacy, to be migrated to coordinator)", "MIT-041",
-                LocalDate.of(2026, 8, 15)
+                LocalDate.of(2026, 11, 20)
             ),
             DirectEventAllowlistEntry(
                 "ReviewQueueRepository.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
                 "Receipt", "P3 review queue repository (legacy, to be migrated)", "MIT-041",
-                LocalDate.of(2026, 8, 15)
+                LocalDate.of(2026, 11, 20)
             ),
             DirectEventAllowlistEntry(
                 "ReceiptLifecycleEventWriter.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
@@ -154,7 +152,7 @@ class DirectEventDaoInsertGuardTest {
             DirectEventAllowlistEntry(
                 "BankApiIntegration.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
                 "Receipt", "P10 bank integration (legacy, to be migrated to coordinator)", "MIT-041",
-                LocalDate.of(2026, 8, 15)
+                LocalDate.of(2026, 11, 20)
             ),
 
             // === Recurring lifecycle events (DIRECT_RECURRING_EVENT_DAO_INSERT) ===
@@ -181,12 +179,12 @@ class DirectEventDaoInsertGuardTest {
             DirectEventAllowlistEntry(
                 "RecurringExpenseRepository.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
                 "Recurring", "P4 repository (legacy, to be migrated)", "MIT-043",
-                LocalDate.of(2026, 8, 15)
+                LocalDate.of(2026, 11, 20)
             ),
             DirectEventAllowlistEntry(
                 "ManualRecurringExpenseRepository.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
                 "Recurring", "P4 manual recurring repository (legacy, to be migrated)", "MIT-043",
-                LocalDate.of(2026, 8, 15)
+                LocalDate.of(2026, 11, 20)
             ),
 
             // === Operations, diagnostics, and infrastructure events ===
@@ -213,7 +211,7 @@ class DirectEventDaoInsertGuardTest {
             DirectEventAllowlistEntry(
                 "NotificationRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
                 "Operations", "P1 notification repository (legacy, to be migrated)", "MIT-031",
-                LocalDate.of(2026, 8, 15)
+                LocalDate.of(2026, 11, 20)
             ),
             DirectEventAllowlistEntry(
                 "DataRetentionWorker.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "SERVICE",
