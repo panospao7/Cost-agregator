@@ -71,8 +71,6 @@ class BankApiIntegrationTest {
             metadata: SafeEventMetadata,
             block: suspend (OperationRunHandle) -> T
         ): T = block(NoOpOperationRunHandle)
-
-        override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) = Unit
     }
 
     @Before

@@ -218,12 +218,7 @@ class EnhancedSplitManager @Inject constructor(
     suspend fun getTemplateById(templateId: Long): SplitTemplate? {
         return splitTemplateDao.getTemplateById(templateId)
     }
-    
-    suspend fun updateTemplate(template: SplitTemplate) {
-        writeBarrier.checkWritesAllowed("EnhancedSplitManager.updateTemplate")
-        splitTemplateDao.updateTemplate(template.copy(updatedAt = timeProvider.now()))
-    }
-    
+
     suspend fun deleteTemplate(template: SplitTemplate) {
         writeBarrier.checkWritesAllowed("EnhancedSplitManager.deleteTemplate")
         splitTemplateDao.deleteTemplate(template)
@@ -234,12 +229,7 @@ class EnhancedSplitManager @Inject constructor(
         splitTemplateDao.clearDefaultTemplate()
         splitTemplateDao.setDefaultTemplate(templateId)
     }
-    
-    suspend fun useTemplate(templateId: Long) {
-        writeBarrier.checkWritesAllowed("EnhancedSplitManager.useTemplate")
-        splitTemplateDao.incrementUseCount(templateId, timeProvider.now())
-    }
-    
+
     fun parseShares(template: SplitTemplate): List<SplitShare> {
         val type = object : TypeToken<List<SplitShare>>() {}.type
         return gson.fromJson(template.shares, type) ?: emptyList()
@@ -254,37 +244,6 @@ class EnhancedSplitManager @Inject constructor(
     }
     
     // Item Assignment for Receipt Splitting
-    /**
-     * SHR-13: Wrapped in a Room transaction to ensure atomicity.
-     * If the insertion fails after clearing old assignments, the entire
-     * operation rolls back, preventing orphaned expense items.
-     */
-    suspend fun assignItemsToParticipants(
-        expenseId: Long,
-        assignments: List<ItemAssignment>
-    ) {
-        writeBarrier.checkWritesAllowed("EnhancedSplitManager.assignItemsToParticipants")
-        database.withTransaction {
-            // Clear existing assignments
-            splitItemAssignmentDao.deleteAllForExpense(expenseId)
-
-            // Create new assignments
-            val entities = assignments.mapIndexed { index, assignment ->
-                SplitItemAssignment(
-                    expenseId = expenseId,
-                    receiptItemId = assignment.receiptItemId,
-                    participantName = assignment.participantName,
-                    participantIndex = index,
-                    assignedAmount = assignment.amount,
-                    isPaid = false
-                )
-            }
-
-            splitItemAssignmentDao.insertAssignments(entities)
-        }
-        Timber.d("assignItemsToParticipants: assigned %d items to participants for expense %d (transactional)", assignments.size, expenseId)
-    }
-    
     suspend fun getAssignmentsForExpense(expenseId: Long): List<SplitItemAssignment> {
         return splitItemAssignmentDao.getAssignmentsForExpenseSync(expenseId)
     }
@@ -292,12 +251,7 @@ class EnhancedSplitManager @Inject constructor(
     suspend fun getParticipantTotals(expenseId: Long): List<SplitItemAssignmentDao.ParticipantTotal> {
         return splitItemAssignmentDao.getParticipantTotals(expenseId)
     }
-    
-    suspend fun markAssignmentAsPaid(assignmentId: Long) {
-        writeBarrier.checkWritesAllowed("EnhancedSplitManager.markAssignmentAsPaid")
-        splitItemAssignmentDao.markAsPaid(assignmentId, timeProvider.now())
-    }
-    
+
     data class VisualSplitData(
         val totalAmount: Double,
         val assignedAmount: Double,

@@ -780,6 +780,24 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
   kind: function
+  method: toggleBudget
+  receiver: null
+  parameterTypes:
+  - Long
+  - Boolean
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: setActiveAndEnforceScope
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetDao convenience method
+    (body calls setActive to enforce the single-active-scope invariant) newly indexed
+    by the GR-14a mutator rule; canonical write barrier lexically precedes the call
+    in this callable'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
   method: updateBudget
   receiver: null
   parameterTypes:
@@ -792,6 +810,22 @@ entries:
     \ scope"
   owner: '@panospao7'
   linkedIssue: MIT-003
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateBudgetOrThrow
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Budget
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateAndEnforceActiveScope
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetDao convenience method
+    newly indexed by the GR-14a mutator rule (the sibling updateBudget row already
+    existed); canonical write barrier lexically precedes the call in this callable'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
   kind: function
@@ -953,6 +987,23 @@ entries:
     the CategorizationEngine normalizer (targeted SQL update, no payloads materialized)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08O
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
+  kind: function
+  method: mergeCategories
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: mergeCategories
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction CategoryDao multi-table merge
+    newly indexed by the GR-14a mutator rule; canonical write barrier lexically precedes
+    the withContext(IO) body that performs the call'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl
   kind: function
@@ -1297,6 +1348,24 @@ entries:
     carry-forward stays atomic; GR-08b/GR-08d/GR-08l1 scanner blind-spot pattern)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: saveLocation
+  receiver: null
+  parameterTypes:
+  - String
+  - com.yourname.expensetracker.domain.location.LocationResolutionResult.Resolved
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: upsertLocation
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction MerchantLocationDao upsert newly
+    indexed by the GR-14a mutator rule (the sibling saveCorrection row already existed);
+    canonical write barrier lexically precedes the call'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.MerchantNormalizationRepository
   kind: function
@@ -3389,38 +3458,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
   kind: function
-  method: insertPriceHistory
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
-  daoAccessor: priceHistoryDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08l2 EXACT_POLICY: barrier-checked price-history row insert at the repository
-    layer (the engine''s recordPriceChange/validateAndCreate remain the validated
-    price-change authority)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
-  kind: function
-  method: insertSubscription
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
-  daoAccessor: subscriptionDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08l2 EXACT_POLICY: barrier-checked raw subscription insert -- the documented
-    external entry-point writer (SubscriptionManagementViewModel KDoc) while the UI
-    create flow routes through SubscriptionManagerEngine.validateAndCreate for validation'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
-  kind: function
   method: insertUsage
   receiver: null
   parameterTypes:
@@ -3431,23 +3468,6 @@ entries:
   barrierMode: helper
   reason: 'GR-08l2 EXACT_POLICY: barrier-checked usage log insert for the subscription
     management surface (LEGAL_PATHS RECORD-usage data path at the repository layer)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
-  kind: function
-  method: markCandidateAsConverted
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  - Long
-  daoAccessor: candidateDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
-  operation: markAsConverted
-  barrierMode: helper
-  reason: 'GR-08l2 EXACT_POLICY: barrier-checked candidate disposition -- marks a
-    detected subscription candidate converted with its subscription link and timestamp'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
@@ -4278,6 +4298,24 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
   ownerFqcn: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
   kind: function
+  method: insertForecast
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.BudgetForecast
+  daoAccessor: budgetForecastDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+  operation: insertWithDeactivation
+  barrierMode: direct
+  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetForecastDao insert newly
+    indexed by the GR-14a mutator rule; write barrier check added to insertForecast
+    itself (GR-14a Pattern A -- the only production caller generateForecastResult
+    already checks before dispatching, so the added check is unreachable no-op in
+    every current path)'
+  owner: '@panospao7'
+  linkedIssue: GR-14a
+- path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
+  kind: function
   method: updateForecastAccuracy
   receiver: null
   parameterTypes:
@@ -4311,39 +4349,6 @@ entries:
     typed DiagnosticReasonCode enum name'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08P2
-- path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
-  ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
-  kind: function
-  method: recoverStaleRunningOperationRuns
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: eventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08m1 EXACT_POLICY: best-effort STALE_RECOVERY event insert after a successful
-    stale finalize (DDL-A8-11 -- event failure is recorded to the durable MaintenanceSafeDiagnosticSink
-    and must not abort startup recovery); reasonCode is the controlled CANCELLED_BY_SYSTEM
-    constant'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08M
-- path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
-  ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
-  kind: function
-  method: recoverStaleRunningOperationRuns
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: runDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
-  operation: finalizeIfRunning
-  barrierMode: helper
-  reason: 'GR-08m1 EXACT_POLICY: startup crash recovery -- marks stale RUNNING rows
-    STALE_ABORTED via the idempotent conditional finalize (WHERE status = ''RUNNING'',
-    only first terminal state wins)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08M
 - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
   ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
   kind: function
@@ -5134,28 +5139,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
   kind: function
-  method: writeAssetDeleteFailedEvent
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
-  - Long
-  - String?
-  daoAccessor: receiptEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
-  operation: insert
-  barrierMode: direct
-  reason: 'GR-14b EXACT_IDENTITY_MOVE: the ASSET_DELETE_FAILED fallback event
-    insert moved out of deleteReceipt''s generic post-commit let callback
-    into this private direct owner (GR-14 Pattern A) with its own canonical
-    write barrier check; the only caller already checks first, so the added
-    check is an unreachable no-op on every current path. Replaces the
-    removed deleteReceipt|receiptEventDao|insert row (the mutation no longer
-    occurs in deleteReceipt)'
-  owner: '@panospao7'
-  linkedIssue: GR-14b
-- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
-  kind: function
   method: deleteReceipt
   receiver: null
   parameterTypes:
@@ -5298,6 +5281,27 @@ entries:
     atomically with the lifecycle event (NEW-P3-005: no check-then-write gap)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+  kind: function
+  method: writeAssetDeleteFailedEvent
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+  - Long
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: direct
+  reason: 'GR-14b EXACT_IDENTITY_MOVE: the ASSET_DELETE_FAILED fallback event insert
+    moved out of deleteReceipt''s generic post-commit let callback into this private
+    direct owner (GR-14 Pattern A) with its own canonical write barrier check; the
+    only caller already checks first, so the added check is an unreachable no-op on
+    every current path. Replaces the removed deleteReceipt|receiptEventDao|insert
+    row (the mutation no longer occurs in deleteReceipt)'
+  owner: '@panospao7'
+  linkedIssue: GR-14b
 - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleEventWriter.kt
   ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter
   kind: function
@@ -6779,40 +6783,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
   ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
   kind: function
-  method: assignItemsToParticipants
-  receiver: null
-  parameterTypes:
-  - Long
-  - List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
-  daoAccessor: splitItemAssignmentDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
-  operation: deleteAllForExpense
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: SHR-13 atomic reassignment -- clears the expense''s
-    old assignments inside database.withTransaction so a failed insert rolls back
-    without orphaned items (LEGAL_PATHS.md documents this exact pair)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
-  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
-  kind: function
-  method: assignItemsToParticipants
-  receiver: null
-  parameterTypes:
-  - Long
-  - List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
-  daoAccessor: splitItemAssignmentDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
-  operation: insertAssignments
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: inserts the new participant assignments in the same
-    SHR-13 transaction immediately after the clear (atomic replace; LEGAL_PATHS.md
-    forbids this pair without transaction wrapping)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
-  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
-  kind: function
   method: createTemplate
   receiver: null
   parameterTypes:
@@ -6847,21 +6817,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
   ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
   kind: function
-  method: markAssignmentAsPaid
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: splitItemAssignmentDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
-  operation: markAsPaid
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: barrier-paid flag on a single split item assignment
-    stamped with the payment time'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
-  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
-  kind: function
   method: setDefaultTemplate
   receiver: null
   parameterTypes:
@@ -6887,36 +6842,6 @@ entries:
   barrierMode: helper
   reason: 'GR-08k2 EXACT_POLICY: second half of the single-default invariant -- marks
     the requested template as the only default'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
-  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
-  kind: function
-  method: updateTemplate
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.SplitTemplate
-  daoAccessor: splitTemplateDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
-  operation: updateTemplate
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: barrier-checked template update stamping updatedAt
-    from TimeProvider'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
-  ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
-  kind: function
-  method: useTemplate
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: splitTemplateDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
-  operation: incrementUseCount
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: barrier-checked usage counter increment when a template
-    is applied'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08K
 - path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
@@ -8206,91 +8131,3 @@ entries:
     can always run to delete raw data (never gated on the capability it enforces)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08I
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
-  kind: function
-  method: toggleBudget
-  receiver: null
-  parameterTypes:
-  - Long
-  - Boolean
-  daoAccessor: budgetDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
-  operation: setActiveAndEnforceScope
-  barrierMode: direct
-  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetDao convenience method
-    (body calls setActive to enforce the single-active-scope invariant) newly
-    indexed by the GR-14a mutator rule; canonical write barrier lexically
-    precedes the call in this callable'
-  owner: '@panospao7'
-  linkedIssue: GR-14a
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
-  kind: function
-  method: updateBudgetOrThrow
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.Budget
-  daoAccessor: budgetDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
-  operation: updateAndEnforceActiveScope
-  barrierMode: direct
-  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetDao convenience method
-    newly indexed by the GR-14a mutator rule (the sibling updateBudget row
-    already existed); canonical write barrier lexically precedes the call in
-    this callable'
-  owner: '@panospao7'
-  linkedIssue: GR-14a
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/CategoryRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.CategoryRepository
-  kind: function
-  method: mergeCategories
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  daoAccessor: categoryDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
-  operation: mergeCategories
-  barrierMode: direct
-  reason: 'GR-14a EXACT_POLICY: default @Transaction CategoryDao multi-table
-    merge newly indexed by the GR-14a mutator rule; canonical write barrier
-    lexically precedes the withContext(IO) body that performs the call'
-  owner: '@panospao7'
-  linkedIssue: GR-14a
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
-  kind: function
-  method: saveLocation
-  receiver: null
-  parameterTypes:
-  - String
-  - com.yourname.expensetracker.domain.location.LocationResolutionResult.Resolved
-  - String
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
-  operation: upsertLocation
-  barrierMode: direct
-  reason: 'GR-14a EXACT_POLICY: default @Transaction MerchantLocationDao upsert
-    newly indexed by the GR-14a mutator rule (the sibling saveCorrection row
-    already existed); canonical write barrier lexically precedes the call'
-  owner: '@panospao7'
-  linkedIssue: GR-14a
-- path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
-  ownerFqcn: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
-  kind: function
-  method: insertForecast
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.BudgetForecast
-  daoAccessor: budgetForecastDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetForecastDao
-  operation: insertWithDeactivation
-  barrierMode: direct
-  reason: 'GR-14a EXACT_POLICY: default @Transaction BudgetForecastDao insert
-    newly indexed by the GR-14a mutator rule; write barrier check added to
-    insertForecast itself (GR-14a Pattern A -- the only production caller
-    generateForecastResult already checks before dispatching, so the added
-    check is unreachable no-op in every current path)'
-  owner: '@panospao7'
-  linkedIssue: GR-14a

@@ -72,16 +72,6 @@ class CompositeOperationRunRecorder @Inject constructor(
         }
     }
 
-    override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) {
-        try {
-            roomRecorder.recoverStaleRunningOperationRuns(staleAgeMs)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Timber.w(e, "CompositeOperationRunRecorder: stale recovery failed")
-        }
-    }
-
     private suspend fun safeHandle(operationType: String, metadata: SafeEventMetadata = SafeEventMetadata.empty()): OperationRunHandle {
         val handle = SafeSinkOperationRunHandle(
             correlationId = CorrelationIds.newId(),

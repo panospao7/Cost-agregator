@@ -123,7 +123,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
             override suspend fun <T> runOperation(operationType: String, actor: String?, metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata, block: suspend (com.yourname.expensetracker.domain.diagnostics.OperationRunHandle) -> T): T =
                 block(com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle)
-            override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) = Unit
         },
         com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
         timeProvider

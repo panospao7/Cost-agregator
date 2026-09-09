@@ -74,13 +74,6 @@ interface OperationRunRecorder {
         metadata: SafeEventMetadata = SafeEventMetadata.empty(),
         block: suspend (OperationRunHandle) -> T
     ): T
-
-    /** Mark stale RUNNING operation runs as STALE_ABORTED. Call on app startup. */
-    suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long = DEFAULT_STALE_OPERATION_AGE_MS)
-
-    companion object {
-        const val DEFAULT_STALE_OPERATION_AGE_MS = 6 * 60 * 60 * 1000L // 6 hours
-    }
 }
 
 @Singleton
@@ -139,61 +132,6 @@ class RoomOperationRunRecorder @Inject constructor(
             withContext(NonCancellable) { runCatching { run.failedFinal(e.message ?: "Exception", e) } }
             throw e
         }
-    }
-
-    /** Recover stale RUNNING operation runs after process death. */
-    override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) {
-        val cutoff = timeProvider.now() - staleAgeMs
-        val stale = runDao.getStaleRunning(cutoff)
-        for (run in stale) {
-            val updated = runDao.finalizeIfRunning(
-                id = run.id,
-                status = "STALE_ABORTED",
-                finishedAt = timeProvider.now(),
-                errorSummary = "Recovered stale RUNNING operation after process death"
-            )
-            if (updated > 0) {
-                // DDL-A8-11: best-effort — event insert failure must not abort startup recovery
-                CancellationSafe.runCatchingCancellable {
-                    eventDao.insert(OperationRunEvent(
-                        operationRunId = run.id,
-                        correlationId = run.correlationId,
-                        operationType = run.operationType,
-                        stage = "STALE_RECOVERY",
-                        eventType = "${run.operationType}_STALE_RECOVERY",
-                        outcome = EventOutcome.CANCELLED.name,
-                        severity = EventSeverity.WARNING.name,
-                        reasonCode = DiagnosticReasonCode.CANCELLED_BY_SYSTEM.name,
-                        occurredAt = timeProvider.now(),
-                        isTerminal = true,
-                        eventId = CorrelationIds.newId()  // DDL-C67-08
-                    ))
-                }.onFailure { error ->
-                    Timber.w(error, "Failed to write stale recovery event for run ${run.id}")
-                    // DDL-C67-08: durable safe-sink diagnostic for event insert failure
-                    CancellationSafe.runCatchingCancellable {
-                        safeSink.recordDiagnosticEvent(
-                            event = DiagnosticEvent(
-                                pipeline = pipelineForOperationType(run.operationType),
-                                stage = "stale_recovery_event_write_failed",
-                                outcome = EventOutcome.SIDE_EFFECT_FAILED,
-                                severity = EventSeverity.WARNING,
-                                reasonCode = DiagnosticReasonCode.SIDE_EFFECT_EXCEPTION,
-                                correlationId = run.correlationId,
-                                metadata = SafeEventMetadata.builder()
-                                    .put("operationType", run.operationType)
-                                    .put("operationRunId", run.id)
-                                    .build(),
-                                exception = error,
-                                isTerminal = false
-                            ),
-                            mode = restoreMaintenanceMode.currentMode()
-                        )
-                    }
-                }
-            }
-        }
-        if (stale.isNotEmpty()) Timber.w("Recovered ${stale.size} stale RUNNING operation run(s) as STALE_ABORTED")
     }
 
     private class Handle(
