@@ -16,7 +16,7 @@ The signatures candidate
 ``config/guards/db_ownership_policy.signatures.candidate.yml`` is a valid
 v2 document (``schemaVersion: 2``).  Post-GR-08 (and post-GR-14c truth
 sync, 2026-09-06) it carried the 475 entries; post-GR-14h Pattern E
-removals (2026-09-07) it carries the 451 entries
+removals (2026-09-07) it carries the 441 entries
 of the activated v2 policy (one entry per canonical mutation key); the v2
 loader must accept it with zero errors.
 
@@ -87,13 +87,13 @@ def test_archived_v1_policy_rejected_by_v2_loader():
 
 
 def test_candidate_signatures_accepted_by_v2_loader():
-    """The tracked signatures candidate is a valid v2 document with 451 entries.
+    """The tracked signatures candidate is a valid v2 document with 441 entries.
 
-    Derivation of the 451 pin: the candidate is the activation artifact that
+    Derivation of the 441 pin: the candidate is the activation artifact that
     was promoted over the active path (scripts/ci/promote_db_policy_v2.py),
     so it carries the same entries as the activated v2 policy document
     ``config/guards/db_ownership_policy.yml`` — 475 entries post-GR-08,
-    471 post-GR-14h, 461 post-GR-14u, 451 post-GR-14u2 (dead-writer tranche 3),
+    471 post-GR-14h, 461 post-GR-14u, 451 post-GR-14u2, 441 post-GR-14u3 (dead-writer tranche 4),
     one per canonical mutation key.  Drift history: the GR-14b
     EXACT_IDENTITY_MOVE regenerated the candidate 472 -> 471 (sanctioned
     --generate path); the post-GR-14c truth sync (2026-09-06) closed the
@@ -104,7 +104,7 @@ def test_candidate_signatures_accepted_by_v2_loader():
     exactly the active policy key set (475).  The GR-14h Pattern E tranche
     (2026-09-07) removed the 3 dead callables' 4 rows from the generation
     inputs (3 GR-08l2/e2 seed rows + 4 legacy rows incl. the fold sources),
-    regenerating the tracked pair at 471 (GR-14u: 461; GR-14u2: 451); promotion realigns active.  The earlier PR-GR-05 truth
+    regenerating the tracked pair at 471 (GR-14u: 461; GR-14u2: 451; GR-14u3: 441); promotion realigns active.  The earlier PR-GR-05 truth
     (55 unique keys folded from the pre-sync legacy v1 inputs) is
     superseded by the GR-08 policy growth; that 55 remains pinned as
     migration accounting over the ARCHIVED v1 input by
@@ -114,8 +114,8 @@ def test_candidate_signatures_accepted_by_v2_loader():
     assert document is not None, (
         "tracked signatures candidate must be accepted by the v2 loader"
     )
-    assert len(document) == 451, (
-        "candidate must carry exactly the 451 current signature entries"
+    assert len(document) == 441, (
+        "candidate must carry exactly the 441 current signature entries"
     )
     assert not errors, "acceptance must report zero errors"
 

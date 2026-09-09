@@ -67,31 +67,6 @@ class ReceiptMatchLifecycleService @Inject constructor(
         }
     }
 
-    suspend fun approveMatchSuggestion(receiptId: Long) {
-        writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.approveMatchSuggestion")
-        val now = timeProvider.now()
-        database.withTransaction {
-            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
-            val suggestedId = receipt.suggestedExpenseId ?: return@withTransaction
-            scannedReceiptDao.update(receipt.copy(
-                expenseId = suggestedId,
-                suggestedExpenseId = null,
-                matchConfidence = null,
-                matchStatus = MatchStatus.MANUALLY_MATCHED,
-                updatedAt = now
-            ))
-            receiptEventDao.insert(ReceiptEvent(
-                receiptId = receiptId, sourceType = receipt.sourceType,
-                documentType = receipt.documentType,
-                eventType = "MATCH_APPROVED", occurredAt = now,
-                oldStatus = receipt.processingStatus, newStatus = null,
-                actor = "system:match_lifecycle",
-                message = "Match suggestion approved for expense $suggestedId",
-                metadata = null, errorDetails = null
-            ))
-        }
-    }
-
     suspend fun rejectAllSuggestions(receiptId: Long) {
         writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.rejectAllSuggestions")
         val now = timeProvider.now()

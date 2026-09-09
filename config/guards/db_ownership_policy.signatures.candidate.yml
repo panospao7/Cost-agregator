@@ -3153,110 +3153,6 @@ entries:
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
   kind: function
-  method: decrementPending
-  receiver: null
-  parameterTypes:
-  - String
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: decrementPending
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: per-source pending counter decrement behind the write
-    barrier (review-resolution mirror of the GR-08d/GR-08e1 rows)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
-  method: deleteAll
-  receiver: null
-  parameterTypes: []
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: deleteAll
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: per-source stats table reset behind the write barrier
-    (mirrors the GR-08e1 resetSourceStats row)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
-  method: incrementAccepted
-  receiver: null
-  parameterTypes:
-  - String
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: incrementAccepted
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: per-source accepted counter increment behind the
-    write barrier (mirrors the GR-08d/GR-08e1 pipeline-side rows)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
-  method: incrementAutoRejected
-  receiver: null
-  parameterTypes:
-  - String
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: incrementAutoRejected
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: per-source auto-rejected counter increment behind
-    the write barrier'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
-  method: incrementDuplicate
-  receiver: null
-  parameterTypes:
-  - String
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: incrementDuplicate
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: per-source duplicate counter increment behind the
-    write barrier'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
-  method: incrementPending
-  receiver: null
-  parameterTypes:
-  - String
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: incrementPending
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: per-source pending counter increment behind the write
-    barrier'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
-  method: incrementRejected
-  receiver: null
-  parameterTypes:
-  - String
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: incrementRejected
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: per-source rejected counter increment behind the
-    write barrier'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
   method: incrementTotal
   receiver: null
   parameterTypes:
@@ -3283,20 +3179,6 @@ entries:
   barrierMode: helper
   reason: 'GR-08j2 EXACT_POLICY: idempotent per-source stats row bootstrap behind
     the write barrier (conflict-safe insert keeps re-runs no-ops)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt
-  ownerFqcn: com.yourname.expensetracker.data.repository.SourceStatsRepository
-  kind: function
-  method: resetAllPendingCounts
-  receiver: null
-  parameterTypes: []
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
-  operation: resetAllPendingCounts
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: per-source pending counters reset behind the write
-    barrier (mirrors the GR-08e1 reset rows)'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08J
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SpendingChallengeRepository.kt
@@ -5403,38 +5285,6 @@ entries:
     inside the unlink transaction, after the no-op guard'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
-  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
-  kind: function
-  method: approveMatchSuggestion
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: receiptEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08h EXACT_POLICY: writes the MATCH_APPROVED lifecycle event inside the
-    same transaction as the MANUALLY_MATCHED transition'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08H
-- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
-  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
-  kind: function
-  method: approveMatchSuggestion
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: scannedReceiptDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
-  operation: update
-  barrierMode: helper
-  reason: 'GR-08h EXACT_POLICY: transitions the receipt to MANUALLY_MATCHED (expenseId=suggestedId,
-    suggestedExpenseId and matchConfidence cleared) inside the withTransaction block,
-    atomic with the MATCH_APPROVED ReceiptEvent so the match state can never disagree
-    with its event'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08H
 - path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
   ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
   kind: function
