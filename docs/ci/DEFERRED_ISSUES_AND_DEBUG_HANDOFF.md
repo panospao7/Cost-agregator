@@ -202,13 +202,30 @@ enclosing construct: check whether it sits in a construct the lambda-region
 admission treats as opaque, or a dispatch the resolver misses).  Until
 understood, this row must stay unproven — removal is forbidden.
 
-### D2. ExpenseWriteStore facade/worker chains missed
-`conditionallySetLocation`, `incrementBackfillAttempts`,
-`updateMerchantKey`, (likely) `updateCategory` are engine zero-inbound but
-are called via `LocationBackfillWorker`/`MerchantKeyBackfillWorker` →
-`ExpenseRepository` facade → `ExpenseWriteStore`.  The delegation hop
-(ExpenseRepository → ExpenseWriteStore) evidently does not produce an
-inbound edge for the store method.  Same investigation shape as D1.
+### D1. Class `init {}` blocks are invisible to the engine (root-caused)
+`ReviewQueueRepository.recoverStuckReviews` is engine zero-inbound, yet
+`ReviewViewModel.kt:218` calls it — inside `viewModelScope.launch { }` in
+the ViewModel's **`init { }` block**.  The structured-launch admission
+(GR-14j) can only admit a launch that the scanner attaches to a callable;
+calls inside class-init blocks belong to no callable, so the whole region
+(including the launch lambda and every call in it) never enters the
+callgraph — hence ZERO inbound rather than async-uncertain.  **Candidate
+engine fix**: attribute init-block regions to a synthetic class-initialiser
+callable, or walk init blocks as context-inherited.  Until then: any
+callee first-called from an `init {}` block will read as
+`unproven_external_entry` — audit for this shape before removing.
+
+### D2. DISSOLVED — ExpenseWriteStore is a fully dead duplicate layer
+(not an engine gap).  The only reference outside its own file is a stale
+doc comment in ExpenseReadStore.kt ("Write paths must use
+[ExpenseWriteStore] or TransactionLifecycleCoordinator"); the workers
+actually call `ExpenseRepository`, whose methods call `expenseDao`
+DIRECTLY — no delegation into the store.  **GR-14u4 headline candidate**:
+remove the whole class (data/store/ExpenseWriteStore.kt, 7 board rows:
+conditionallySetLocation/deleteAll/incrementBackfillAttempts/insertAll/
+updateCategory/updateCategoryNullable/updateMerchantKey) + fix the
+ExpenseReadStore.kt comment; also check its insert/update/delete/
+updateMerchant members (no policy rows were ever created for them).
 
 ### D3. Name-match noise floor (handoff §6/§D — untouched, owner-gated)
 Room/Activity `onCreate`-style overrides collide via name-matched edges and
@@ -233,8 +250,22 @@ Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
 ---
 
 ## E. Queue state & how to resume
+0. **GATE-00R attempt recorded (2026-09-09/10)**: capture run 1 at
+   GR-14u3 HEAD (335758ff) completed but is UNTRUSTED (exit 2) — bundle
+   `build/guard-debug/gr14u3/gate00r-capture-1/`.  Honest inventory:
+   gradle-db and gradle-task-graph exit 1 (the protocol's documented
+   config-cache observation), static-suite and focused-python-tests exit 1
+   (the §B pre-existing reds flow into the capture), room/db-inventory exit
+   2 `INVENTORY_DURABILITY_UNCONFIRMED`, gradle-compile and db-cli exit 0,
+   preservation/policy checks all OK, tree clean at the pinned sha.  Also:
+   run 1 was slowed/raced by a mid-capture edit (post-capture-drift
+   warning) — **never edit the tree while a capture runs**.  A TRUSTED
+   double capture becomes reachable once §B4 (freshness stamps via the
+   Gradle DB task) and the §B reds are paid; until then GATE-00R stays
+   "owed at merge" by design.
 1. GATE-00R double capture + Gradle DB task at merge (MANDATORY — policy
-   sha changed twice: 5d3b394d (GR-14u) then c6b0463e (GR-14u2)).
+   sha changed twice: 5d3b394d (GR-14u) then c6b0463e (GR-14u2) then
+   b4d2938c (GR-14u3)).
 2. GR-14u3 dead tranche (≤10 keys) from the GR-14u.yml remainder list —
    SourceStatsRepository ×9 is the big block (callers bypass the wrapper
    and hit SourceStatsDao directly; verify the class's read methods before
