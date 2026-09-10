@@ -8,6 +8,15 @@ out, the exact feedback output, and candidate next steps.  Nothing here is
 speculative debt: every "pre-existing" claim was stash-A/B-proved at the
 pre-batch state during this arc.
 
+> **START HERE: [`GUARDRAIL_STATE_REPORT.md`](./GUARDRAIL_STATE_REPORT.md)** — the
+> consolidated state report (2026-09-10): what the guardrails are, the measured board,
+> every known issue with status, the production-code findings, the owed merge gates,
+> and the prioritized backlog.  This handoff is the per-defect narrative; that report
+> is the index and the standalone summary.  Current board (GR-14u21, sha fe40d369...):
+> proven_helper 155 / proven_worker_mediated 14 / ambiguous 77 / async 133 /
+> external_entry 27 — proven 169 / unproven 237, **counterexamples 0**, policy
+> 7851adc2 unchanged.
+
 Board state after GR-14u2 (build/guard-debug/gr14u2/shadow_after.json,
 sha 82e4fc9f..., double-run byte-identical):
 proven_helper 48 / proven_worker_mediated 14 / counterexample **0** /
@@ -722,6 +731,56 @@ CsvExpenseImporter.getOrCreateCategory),
 14 `function_reference` (ReviewQueueRepository.approveReview, AiChatRepositoryImpl,
 AiArtifactRepositoryImpl.markDismissed, MerchantNormalizationRepository.updateAlias,
 SpendingChallengeRepository.deactivateChallenges, BankConnectionLifecycleCoordinator.disconnectConnection).
+
+### D10. `_inherits_from` followed only the FIRST supertype (latent fail-OPEN —
+###      FIXED in GR-14u21, 0 rows by design)
+`CallGraphBuilder._inherits_from` walked only the first resolvable corpus supertype at
+each hop, so `class Impl : Other, Iface` never reached `Iface`.  Both call sites are
+override enumeration (`_override_targets`, `_has_override_named`); there are no other
+callers.  Two under-approximations, both in the fail-OPEN direction: implementation
+sets were under-counted (11 (interface, method) pairs, with the decisive false-unique
+`WorkerDrainController.requestStopAndAwaitDrain` = engine 1 / complete 2), and a missed
+override let `_resolve_invocation` (callgraph.py:1968) fall through to an EXACT edge on
+a virtually-dispatched member.  **FIXED in GR-14u21** (docs/ci/db-mediation/GR-14u21.yml):
+the traversal is complete, transitive and cycle-safe.  Projected 0 changed rows and the
+live board is byte-identical afterwards, so no live row was ever mis-proved — it is
+landed as its own batch with its own pins precisely so it is not credited with a delta
+it does not have.  This is also the prerequisite that made the §D4 interface rule
+evaluable at all (it removed false-uniqueness from the enumeration); the remaining §D4
+blocker is anonymous `object :` implementors, which are not owners.
+
+Artifacts: `build/guard-debug/gr14w0/probe_iface*.py`,
+`probe_iface_safety4.py`, `probe_anon.py`, `project_inherits.py`, `inherits_projection.log`.
+
+### D11. The 24 `exact_synchronous` ambiguous rows are the GR-14u15 tri-state
+###      working as designed — NOT a defect (measured, do not re-investigate)
+These rows read `unproven_ambiguous_call` with an `exact_synchronous` deciding edge,
+which looks self-contradictory.  It is not: all 24 are `GR13_LOCAL_GUARD_UNMODELABLE`,
+`barrierMode=helper`, `localGuard=none`.  Measured (`build/guard-debug/gr14w0/probe_unmodelable*.py`):
+
+- **24 / 24 contain a canonical `checkWritesAllowed` call** — the guard IS present.
+- **20 / 24 contain `try`/`catch`**, which the GR-12 body model refuses (exception flow).
+- The remaining 4 — `ExpenseRepository.updateExpenseCategoryBulk`,
+  `SubscriptionManagerEngine.acceptCandidate`, `SubscriptionManagerEngine.validateAndCreate` —
+  put the guard first and mutate inside `withLock` / `database.withTransaction` lambdas; the
+  CFG never wires scope children, so the mutation node is disconnected from entry and the
+  body is unmodelable.
+
+Because a barrier call PRECEDES the mutation in every case, "definitely unguarded" is not
+established, so the tri-state correctly reports unproven instead of inventing a violation.
+The representative shape is `BankStatementLifecycleProcessor.processBankStatement:139`
+(guard in `try`, `catch` does `return Result.failure(e)` — fail-closed).  These are the
+lowest-risk unproven rows on the board; proving them would require the GR-12 model to handle
+exception flow, which is a large engine change, not a quick fix.
+
+### D12. Carrier admissions are capped at ~0 rows (measured — plan recalibrated)
+See §D9.  Recording the number here so the next agent does not re-derive it: admitting
+`coroutineScope` (the largest deciding carrier, 37 rows) projected
+**proven_helper +0**, 5 rows moving sideways `async -> ambiguous`.  The GR-14f
+resolution-preservation rule keeps the name-matched edge whenever an admitted carrier's
+calls do not resolve, so a carrier admission can only help where resolution already works.
+
+Artifacts: `build/guard-debug/gr14w0/project_coroutinescope.py` + `.log`.
 
 ### D4. Interface-dispatch residue after the GR-14t negative (20 rows)
 Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
