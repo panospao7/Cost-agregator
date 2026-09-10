@@ -1,0 +1,108 @@
+# GR-14u7 (§D5) — record the REAL mutation-site offsets in the direct-site
+# prover (proven_helper 54 -> 61; unproven_external_entry 36 -> 29).
+#
+# ROOT CAUSE (§D5, root-caused in GR-14u6, fixed here):
+#   `_DirectSiteProver._compute` (scripts/ci/inspect_db_mediation_proof.py)
+#   computes the GR-12 direct-barrier proof over the callable's REAL mutation
+#   sites PLUS every requested mediation pseudo-site — but it read results back
+#   ONLY for the requested offsets (`for offset in sorted(self._requested[...])`).
+#   The CLI requests `edge.name_start` of non-uncertain edges of barrier-text
+#   callables; mediation SUBJECTS query by `subject.site_start`, which is
+#   `MutationObservation.source_start` (the mutation call expression start, see
+#   model.MutationSite.from_observation -> span.start = observation.source_start).
+#   Those two offsets are different, so a writer whose only guard is a dominating
+#   bare `checkWritesAllowed` was reported `local == "none"` — fail-closed noise,
+#   not a real gap.  `runWrite { ... }` worked only because the callgraph marks
+#   the lambda a `canonical_direct` region, independent of offsets.
+#
+# FIX (one hunk + docstring):
+#   record results for `requested | {site.span.start for site in sites}`.
+#   No new sites are passed to the proof (they already were); only the readback
+#   set is widened.  The callback `as_callback()` is the sole consumer, so this
+#   only ADDS information; `proven_sites()` warm-up is unaffected.
+#
+# FIXTURE-FIRST: scripts/ci/test_gr14u7_direct_site_offsets.py
+#   Positive pin FAILED pre-fix (proven_sites returned {} at the mutation offset
+#   while the underlying GR-12 proof, asserted separately, already said PROVEN) —
+#   the exact §D5 signature.  Passes post-fix.  Negative pins keep it honest:
+#   a guard AFTER the mutation is not proven, an unguarded writer is not proven,
+#   and an observation keyed under a different callable is fail-closed.
+#
+# STEP-0 PROJECTION (build/guard-debug/gr14u7/project_d5_fix.py, monkey-patch):
+#   PROCEED — 7 rows `unproven_external_entry -> proven_helper`, 0 counterexample
+#   flips, 0 regressions.  Prover stats: 253 callables computed, 133 real sites,
+#   80 callables had keyed observations, 133 offsets newly registered, 80 proven.
+#
+# The 7 rows are all genuine already-guarded writers (verified by reading the
+# source): `NotificationRepository.deleteAllNotifications` (checkWritesAllowed
+# at :200, x5 sites), `AiArtifactRepositoryImpl.deleteByTargetKey` (:49),
+# `AiChatRepositoryImpl.purgeOldMessages` (:119).  No false proves.
+#
+# Shadow delta (baseline = committed GR-14u6 board ec94b8b2...):
+#   entries 406 -> 406 (key sets EQUAL); summary moves EXACTLY:
+#     proven_helper           54 -> 61
+#     unproven_external_entry 36 -> 29
+#   changed rows: EXACTLY 7 (all `unproven_external_entry -> proven_helper`,
+#   localGuard none -> direct, GR13_ALL_PATHS_GUARDED).  0 counterexample flips,
+#   0 proven->unproven regressions.  Deterministic double-run BYTE-IDENTICAL
+#   (be78c28c231f348a277f394058b7868b16168e4af65f7b01a78a4b285eae8ea7).
+#
+# Validation:
+#   - Step-0 gate: PROCEED (0 counterexample flips).
+#   - pins: test_gr14u7_direct_site_offsets.py 4/4 (positive pin red pre-fix).
+#   - engine battery: 63 passed (gr14u7 + gr14u6 + gr14u5 + gr14f/j/r/l +
+#     shadow-CLI); fixture_runner 58/58; mediation direct-run units OK.
+#   - Python-only; no Kotlin/Gradle change.
+#   - policy bytes UNCHANGED (7851adc2...) and sourceRootManifestSha256
+#     UNCHANGED (37b0d874...), so no migration/tripwire/known-good drift;
+#     GATE-00R remains owed at merge exactly as before.
+#
+# Downstream note: GR-13_UNPROVEN_WRITERS.yml remains stale/not-gate-validated
+# and is left untouched (same call as GR-14u5/u6).
+schemaVersion: 1
+batchId: GR-14u7
+startSha: 50160f33
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: ec94b8b2feb0688c491eb5bd5f276739c4b9b6542002de3f6e6a180b69e4d15e
+mediationReportSha256After: be78c28c231f348a277f394058b7868b16168e4af65f7b01a78a4b285eae8ea7
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+sourceRootManifestSha256: 37b0d874384448d0cc6f843c57476d8858c274faee62aeffdff1992062187c5a
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/ci/inspect_db_mediation_proof.py:
+      _DirectSiteProver._compute records results for the callable's real
+      mutation-site offsets in addition to the requested pseudo-site offsets
+  - scripts/ci/test_gr14u7_direct_site_offsets.py:
+      new pins (4) querying by the D4 mutation offset
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - AiArtifactRepositoryImpl.deleteByTargetKey -> AiArtifactDao.deleteByTargetKey
+  - AiChatRepositoryImpl.purgeOldMessages -> AiChatMessageDao.deleteOlderThan
+  - NotificationRepository.deleteAllNotifications -> RawNotificationDao.deleteAll
+  - NotificationRepository.deleteAllNotifications -> PendingReviewDao.deleteAll
+  - NotificationRepository.deleteAllNotifications -> SourceStatsDao.resetAllPendingCounts
+  - NotificationRepository.deleteAllNotifications -> TransactionEventDao.insert
+  - NotificationRepository.deleteAllNotifications -> UserCorrectionDao.deleteAll
+rootCause: GR13_ZERO_INBOUND_CALL_SITES # dominated site read as localGuard "none"
+selectedPattern: ENGINE
+tests:
+  - test_gr14u7_direct_site_offsets.py 4/4 (positive pin FAILED pre-fix)
+  - engine battery 63 passed; fixture_runner 58/58; direct units OK
+  - live shadow before/after delta: 7 rows, 0 counterexamples, 0 regressions, deterministic
+
+status: COMPLETE # policy unchanged; GATE-00R owed at merge as before
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch makes the mediation direct-site prover report dominance results at
+  the callable's real mutation-site offsets, so writers already guarded by a
+  bare dominating checkWritesAllowed stop reading as unproven.  It changes no
+  policy, baseline, exception or authorization bytes, and it is shadow-only
+  (reportOnly: true).  The reclassification is evidence-backed: 7 policy rows
+  move from unproven to proven_helper, each verified in source to carry a
+  dominating checkWritesAllowed, with a fixture pin that failed before the fix.

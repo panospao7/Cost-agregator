@@ -162,7 +162,8 @@ class _DirectSiteProver:
     the site dominated by a canonical direct-barrier check/scope.  The proof
     consumes the callable's REAL mutation sites plus every mediation
     pseudo-site requested for that callable, so a lambda hiding a real
-    mutation is never modeled opaque.
+    mutation is never modeled opaque.  Results are recorded for BOTH sets of
+    offsets: subjects query by mutation offset, edges query by name offset.
     """
 
     def __init__(self, builder: CallGraphBuilder, observations_by_callable) -> None:
@@ -202,7 +203,15 @@ class _DirectSiteProver:
             callable_key=callable_key,
         )
         proven: dict[int, bool] = {}
-        for offset in sorted(self._requested.get(callable_key, ())):
+        # Record BOTH the requested pseudo-site offsets (mediation call edges)
+        # and the callable's REAL mutation-site offsets.  Mediation subjects ask
+        # by ``observation.source_start`` (the mutation site), which is never an
+        # edge name offset, so reading back only the requested offsets left a
+        # bare dominating ``checkWritesAllowed`` invisible ("none" instead of
+        # "direct") for every guarded writer whose guard is not a runWrite scope.
+        offsets = set(self._requested.get(callable_key, ()))
+        offsets.update(site.span.start for site in sites)
+        for offset in sorted(offsets):
             result = outcome.result_for_site_start(offset)
             proven[offset] = result.status == ProofStatus.PROVEN
         self._results[callable_key] = proven

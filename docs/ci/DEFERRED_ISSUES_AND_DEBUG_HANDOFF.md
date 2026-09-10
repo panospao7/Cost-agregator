@@ -301,25 +301,26 @@ which the gate passed and all 5 rows proved.  Board delta: proven_helper
 49 -> 54, ambiguous 174 -> 169.
 
 ### D5. Direct-site prover never sees bare `checkWritesAllowed` at a subject
-###     mutation site (GR-14u6 finding — root-caused)
+###     mutation site (GR-14u6 finding — RESOLVED in GR-14u7)
 While fixing D3, adding `writeBarrier.checkWritesAllowed("...")` at the TOP of a
 writer did NOT register as local-direct in the mediation proof.  Root cause:
-`_DirectSiteProver._compute` (scripts/ci/inspect_db_mediation_proof.py:177-208)
-populates `self._results[callable_key]` ONLY for the offsets explicitly
-REQUESTED via `request()` — the CLI requests `edge.name_start` for each exact
-edge of a barrier-text callable — while `MediationProver._local_site_context`
-queries `subject.site_start`, which comes from the D4 observation's
-`source_start`.  Those two offsets differ, so `as_callback` returns False and a
-bare `checkWritesAllowed` guard stays invisible.  Wrapping the mutation in
-`writeBarrier.runWrite { ... }` works because the callgraph classifies the
-`runWrite` lambda as a `canonical_direct` region (offset-independent), so
-`local == "direct"` directly.  **Consequence**: `runWrite` is currently the only
-reliable local-direct form for a subject mutation; writers whose only guard is a
-dominating `checkWritesAllowed` may be under-proven (fail-closed, but noisy).
-Candidate fix: make `_compute` also register the callable's real mutation-site
-offsets in `_results` (they are already passed to
-`prove_callable_direct_barriers`).  This is an ENGINE change → fixture-first
-plan + shadow delta, like D1/D3.
+`_DirectSiteProver._compute` (scripts/ci/inspect_db_mediation_proof.py) computes
+the GR-12 proof over the callable's REAL mutation sites PLUS the requested
+mediation pseudo-sites, but read results back ONLY for the requested offsets
+(`edge.name_start`), while `MediationProver._local_site_context` queries
+`subject.site_start` = `MutationObservation.source_start` (the mutation call
+start).  Those offsets differ, so a bare dominating `checkWritesAllowed` was
+invisible; `runWrite { ... }` worked only because the callgraph marks the lambda
+a `canonical_direct` region (offset-independent).
+
+**RESOLVED in GR-14u7** (docs/ci/db-mediation/GR-14u7.yml): `_compute` now
+records results for `requested | {site.span.start for site in sites}`.  The
+already-guarded writers became visible: 7 rows moved `unproven_external_entry ->
+proven_helper` (proven_helper 54 -> 61, external_entry 36 -> 29), 0
+counterexamples, 0 regressions.  Fixture pin
+`scripts/ci/test_gr14u7_direct_site_offsets.py` was RED before the fix (prover
+returned `{}` at the mutation offset while the underlying GR-12 proof already
+said PROVEN).
 
 ### D4. Interface-dispatch residue after the GR-14t negative (17 rows)
 Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
@@ -374,21 +375,23 @@ Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
    RetentionModule.provideRetentionTargets (DI module pattern).
 5. GR-15 must NOT start until the GR-14 zero gate (§8 of the handoff).
 
-**GR-14u6 census outcome (measured, see §D3).**  The `super` resolution batch
-is DONE: it removed the wrong edge, hard-stopped on 5 counterexamples the taint
-was hiding, and — after the notification-capture writers were guarded — proved
-those 5.  Board now: proven_helper 54 / proven_worker_mediated 14 / ambiguous
-169 / async 133 / external_entry 36.  The `super` fix did NOT prove 137 (the
-taint is layered; the other ~132 rows have secondary uncertain edges).
+**GR-14u6/u7 outcome (measured, see §D3/§D5).**  Both engine batches are DONE.
+Board now: proven_helper 61 / proven_worker_mediated 14 / ambiguous 169 /
+async 133 / external_entry 29 (proven 75 / unproven 331).  GR-14u6 removed the
+wrong `super` edge and (via its Step-0 hard-stop) guarded 5 genuinely unguarded
+notification-capture writers; GR-14u7 made the direct-site prover report
+dominance at the real mutation offset, proving 7 already-guarded writers.  The
+`super` fix did NOT prove 137 (the taint is layered).
 Recommended order from here:
-  (a) §D5 direct-site-prover offset fix — likely proves other already-guarded
-      writers cheaply (fail-closed today, so pure noise reduction);
+  (a) Defect II — init-block invisibility (§D1 remainder; fail-OPEN, so higher
+      severity than any remaining noise), fixture-first + projection;
   (b) dead-writer tail (mechanical, steady movement);
   (c) interface_dispatch/function_reference residue (§D4);
   (d) async-carrier admissions one carrier at a time (each a closed admission).
 
 Artifacts this arc: build/guard-debug/{gr14s,gr14t,gr14u,gr14u2,gr14u3,
-gr14u4,gr14u5,gr14u6}/ (shadows before/after + double-runs, compile logs,
+gr14u4,gr14u5,gr14u6,gr14u7}/ (shadows before/after + double-runs, compile logs,
 targeted-test logs, A/B failure lists, the abandoned GR-14t patch, edit
 scripts; gr14u5 adds the ambiguous/async census + super probe; gr14u6 adds the
-Step-0 super projection gate + live shadow delta).
+Step-0 super projection gate + live shadow delta; gr14u7 adds the §D5
+projection + delta).
