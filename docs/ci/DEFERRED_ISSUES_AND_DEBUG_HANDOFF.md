@@ -262,6 +262,36 @@ Room/Activity `onCreate`-style overrides collide via name-matched edges and
 taint several closures.  Any admission here is an owner-gated engine change
 (closed reviewed set + pin fixture + shadow delta, per GR-14f/j/l precedent).
 
+**GR-14u5 census MEASURED it — and it is the single biggest remaining
+blocker, not a small tail.**  A read-only tier-5 replay over the post-u5
+board (`build/guard-debug/gr14u5/census.py` + `probe_super.py`, reproduces
+every row's proofStatus exactly) shows the 174 unproven_ambiguous rows'
+deciding resolutions are: 143 `unresolved_target`, 17 `interface_dispatch`,
+14 `function_reference`.  Of the 143 `unresolved_target` rows, **137 are
+decided by ONE call site** — `super.onCreate(...)` in
+`MainApplication.onCreate` (a 5-target name-match on `onCreate`), plus 5 by
+`super.onListenerConnected(...)` in NotificationCaptureService and 1 real
+row.  Root cause: `CallGraphBuilder.receiver_fqcn_for_call` handles `this` /
+`this@X` but has NO `super` / `super@X` case, so `super.onCreate()` resolves
+to an unknown receiver and falls back to `_name_match_targets` — which then
+taints the ancestor closure of essentially every writer reachable from the
+app-startup root (`MainApplication.onCreate` is itself one of the matched
+`onCreate` callables → self-taint).
+
+Implication for prioritization: a `super.<override>()` receiver-resolution
+fix (resolve to the corpus supertype member, or external when the supertype
+is external — `Application`/`Activity`/`Service`/`RoomDatabase.Callback` are
+all external here) would drain ~137 ambiguous rows in one batch — ~79% of
+the ambiguous mass and ~45% of the whole 307-row ambiguous+async mass.  The
+previously-hypothesized "ViewModel default-DI owner-property initializer
+type inference" shape is NOT dominant: the census shows only ~9 rows of
+`initializer-ctor` shape (all `tempZip`/`File`).  The async half (123
+`async_dispatch`) is spread thin across lambda carriers (`coroutineScope` 37,
+a privacy-gate lambda 23, `PostCommitAction` 19, `navigation.launch` 17,
+`confirmQuickApprove` 9, `photon.coroutineScope` 6) with no single dominant
+fix — each carrier would be its own closed reviewed admission.  This is an
+ENGINE change → fixture-first plan + shadow delta + owner sign-off.
+
 ### D4. Interface-dispatch residue after the GR-14t negative (17 rows)
 Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
  callers (addExpenseToGroup, createGroupWithMembers[Atomic],
@@ -315,6 +345,17 @@ Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
    RetentionModule.provideRetentionTargets (DI module pattern).
 5. GR-15 must NOT start until the GR-14 zero gate (§8 of the handoff).
 
-Artifacts this arc: build/guard-debug/{gr14s,gr14t,gr14u,gr14u2}/
-(shadows before/after + double-runs, compile logs, targeted-test logs,
-A/B failure lists, the abandoned GR-14t patch, edit scripts).
+**GR-14u5 census priority (measured, see §D3).**  The ambiguous+async census
+(`build/guard-debug/gr14u5/census.py`, tier-5 replay exact on 307/307 rows)
+reorders the queue: the highest-leverage next engine batch is the
+`super.<override>()` receiver-resolution fix (~137 rows, §D3), NOT the
+async-lambda carriers (123 rows, thin across many carriers, each a separate
+closed admission) and NOT the hypothesized ViewModel-DI shape (~9 rows).
+The 31 interface_dispatch/function_reference rows are the §D4 residue.
+Recommended order: (a) `super` resolution batch, (b) dead-writer tail
+(mechanical), (c) async-carrier admissions one carrier at a time.
+
+Artifacts this arc: build/guard-debug/{gr14s,gr14t,gr14u,gr14u2,gr14u3,
+gr14u4,gr14u5}/ (shadows before/after + double-runs, compile logs,
+targeted-test logs, A/B failure lists, the abandoned GR-14t patch, edit
+scripts; gr14u5 adds the ambiguous/async census + super probe).
