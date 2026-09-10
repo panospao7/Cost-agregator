@@ -1249,9 +1249,13 @@ class CallGraphBuilder:
             return corpus_candidates[0], "corpus"
         if simple in _BUILTIN_TYPE_NAMES:
             return "kotlin." + simple, "external"
-        # A single star import binds a simple name exactly the way Kotlin
-        # does (prefix + name); two or more star imports could both export
-        # the name, which stays fail-closed unknown.
+        # A star import binds a simple name the way Kotlin does (prefix + name).
+        # With ONE star import that is unambiguous.  With SEVERAL the name is
+        # resolved only when exactly one candidate is confident — a corpus owner,
+        # or a package under a known external root — because two plausible
+        # candidates is ambiguity, not licence to guess (GR-14u18).  This matters
+        # for `AppDatabase.kt` (entity.* + dao.* + androidx.room.*), whose
+        # `RoomDatabase` must resolve so `super.onCreate` stops name-matching.
         star_prefixes = [
             entry.fqcn for entry in file_model.imports if entry.is_star
         ]
@@ -1260,6 +1264,20 @@ class CallGraphBuilder:
             if candidate in self.owners:
                 return candidate, "corpus"
             return candidate, "external"
+        if len(star_prefixes) > 1:
+            candidates = [prefix + "." + simple for prefix in star_prefixes]
+            corpus = [candidate for candidate in candidates if candidate in self.owners]
+            if len(corpus) == 1:
+                return corpus[0], "corpus"
+            if len(corpus) > 1:
+                return "", "unknown"
+            external = [
+                candidate
+                for candidate in candidates
+                if candidate.split(".", 1)[0] in _KNOWN_EXTERNAL_ROOTS
+            ]
+            if len(external) == 1:
+                return external[0], "external"
         return "", "unknown"
 
     def _resolve_simple(self, file_model: FileModel, name: str) -> str:

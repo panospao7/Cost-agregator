@@ -464,8 +464,8 @@ entries** (28/28 identical); mediation board **0 rows** (byte-identical,
 da296160...); 5 new pins (the real form was RED pre-fix).  With GR-14u15 the D6
 projection is proven_helper +12, NEW counterexamples 15 -> **7**, 0 regressions.
 
-**SUB-CAUSE 2b-ii — locally-delegated guard helpers are invisible (STILL OPEN —
-the last blocker for D6, 6 of the 7 rows).**
+**SUB-CAUSE 2b-ii — locally-delegated guard helpers are invisible — FIXED
+(GR-14u17, docs/ci/db-mediation/GR-14u17.yml).**
 `TransactionLifecycleCoordinator` defines
 `private fun checkWritesAllowed(operation: String)` (TransactionLifecycleCoordinator.kt:102)
 forwards to `writeBarrier.checkWritesAllowed(...)`, and its mutating methods call it
@@ -473,6 +473,16 @@ UNQUALIFIED (`:1560`, `:1830`).  `canonical_barrier_call_sites` matches
 `receiver.method(` only (`_CALL_RE`), so an intra-class delegating guard is
 invisible to both the direct proof and the barrier-presence evidence.  Accounts for
 6 of the 7 remaining D6 counterexamples.
+FIXED by the PRODUCTION route (not an engine change — the pattern occurs in this
+one file only): the 14 call sites are now
+`writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.<method>")` and
+the unused private wrapper is deleted.  This is the form the rest of the codebase
+already uses, and GR-14u6 adopted the same approach for the notification writers.
+The rewrite is semantically identical (the wrapper performed exactly that
+delegation) and mechanical.  MEASURED under the D6 projection: NEW counterexamples
+**7 -> 1**, proven_helper **69 -> 87 (+18)**, 0 regressions.  Kotlin compile +
+coordinator tests were still owed at the time of writing (AGENTS.md: ask before
+expensive Gradle) — the batch is marked PARTIAL until they run.
 
 **The 7th is a REAL FINDING, not noise:** `LegacyDataMigrationService.migrateCategories`
 (`:143`) writes `categoryDao.insert(...)` inside nested try/catch with NO guard —
@@ -497,18 +507,26 @@ annotation but `private val categoryUpdateMutex = Mutex()` has none, so admissio
 would fail even after a contract bump.  GR-14u16 addresses the same body by fixing
 the recognized `runWrite` form instead, which is cheaper and broader.)
 
-**Consequence for the plan.**  D6 (multi-star) remains BLOCKED, on 2b-ii alone:
-7 counterexample flips remain (6 false positives from the locally-delegated helper,
-1 genuine unguarded migration write).  Next: fix 2b-ii (teach the engine that a
-local method delegating to the canonical receiver is a barrier form, or follow one
-level of intra-class delegation in the CFG) — that is a pure DETECTION improvement
-with no violation-semantics change, so it needs only its own fixture pin +
-projection + shadow delta, per GR-14f/j/l precedent.  Then re-run the D6 projection
-and expect the 6 to clear, leaving the single genuine `migrateCategories` finding
-to be dispositioned on its own.  Reproduce:
+**D6 (multi-star) — LANDED as GR-14u19, and the one real finding FIXED as
+GR-14u18.**  Final state: proven_helper **69 -> 87 (+18)**, unproven_ambiguous_call
+**169 -> 151**, **0 counterexamples**, **0 regressions**, live board byte-identical
+across a double run (2b282860...), policy bytes unchanged (7851adc2...).  The whole
+D7 chain (GR-14u11 triage → u12/u13/u15/u16/u17 engine + production fixes → u18
+guard → u19 land) is closed.  Reproduce:
 `build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`,
 `build/guard-debug/gr14u12/probe_after_bug13.py`,
-`build/guard-debug/gr14u15/project_d6.py`.
+`build/guard-debug/gr14u15/project_d6.py`,
+`build/guard-debug/gr14u17/{recon_helper,project_d6}.py`,
+`build/guard-debug/gr14u18/project_d6.py`.
+
+**TEST-VALIDATION NOTE (important for anything that follows).**  Kotlin
+verification for the production guards (GR-14u17/u18) is `:app:compileDebugKotlin`
+— **PASSED**.  The full test suite is NOT a usable gate: `TEST_FAILURE_LEDGER.md`
+records 121 pre-existing `domain.*` + 53 `data.*` failures plus a JVM
+instrumentation-agent crash, and `TEST_FAILURE_TRACKER.md:154` already lists
+`TransactionLifecycleCoordinatorDbContractTest` as failing (the one assertion that
+failed in the targeted run — an event-count expectation, unrelated to guard form).
+Prefer targeted `--tests "*Class*"` filters over whole-suite runs.
 
 ### D2. ExpenseWriteStore — OWNER DECISION (designed-but-unwired layer)
 The only reference outside its own file is a stale doc comment in
