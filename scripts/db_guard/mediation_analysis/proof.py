@@ -532,8 +532,16 @@ class MediationProver:
             key=lambda edge: (edge.state.value, edge.caller_key, edge.name_start)
         )
         if not exact_in and not uncertain_in:
-            if mode == "workerMediated" and model.method == "doWork":
-                pass  # the root path starts at doWork itself
+            # GR-14u5: a self-scoped helper (its mutation sits inside the
+            # writer's own canonical direct scope, e.g. DatabaseWriteBarrier
+            # .runWrite) proves INDEPENDENT of callers — any caller, detected
+            # or not, reaches a guarded mutation (the GR-14j principle).  This
+            # exemption covers ONLY the zero-inbound case; an uncertain inbound
+            # edge still stops the proof below (step 5), preserving the GR-14f
+            # inline-carrier invariant.
+            self_scoped_helper = mode == "helper" and local == "direct"
+            if (mode == "workerMediated" and model.method == "doWork") or self_scoped_helper:
+                pass  # doWork: root path starts at itself; helper: self-guarded
             else:
                 return SubjectProof(
                     mutation_key=subject.mutation_key,

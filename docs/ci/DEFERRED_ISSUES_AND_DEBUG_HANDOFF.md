@@ -194,26 +194,44 @@ inside the body, or the allowlist with owner+issue+expiry.
 ## D. Mediation-engine issues (proof bugs / visibility gaps — do NOT remove
 ##    the code below; it is ALIVE despite engine zero-inbound)
 
-### D1. ReviewQueueRepository.recoverStuckReviews — REAL caller missed
-The engine classifies it `unproven_external_entry` (zero inbound), but
-`ReviewViewModel.kt:218` calls `reviewQueueRepository.recoverStuckReviews()`.
-Investigate why the ViewModel→repository edge is invisible (call site's
-enclosing construct: check whether it sits in a construct the lambda-region
-admission treats as opaque, or a dispatch the resolver misses).  Until
-understood, this row must stay unproven — removal is forbidden.
+### D1. `ReviewQueueRepository.recoverStuckReviews` — REAL caller missed
+This item SPLIT into two defects during the GR-14u5 investigation.  Both
+are stated here; only Defect I is fixed.
 
-### D1. Class `init {}` blocks are invisible to the engine (root-caused)
-`ReviewQueueRepository.recoverStuckReviews` is engine zero-inbound, yet
-`ReviewViewModel.kt:218` calls it — inside `viewModelScope.launch { }` in
-the ViewModel's **`init { }` block**.  The structured-launch admission
-(GR-14j) can only admit a launch that the scanner attaches to a callable;
-calls inside class-init blocks belong to no callable, so the whole region
-(including the launch lambda and every call in it) never enters the
-callgraph — hence ZERO inbound rather than async-uncertain.  **Candidate
-engine fix**: attribute init-block regions to a synthetic class-initialiser
-callable, or walk init blocks as context-inherited.  Until then: any
-callee first-called from an `init {}` block will read as
-`unproven_external_entry` — audit for this shape before removing.
+**Defect I — self-scoped helper misreported as external entry (RESOLVED in
+GR-14u5, commit + docs/ci/db-mediation/GR-14u5.yml).**  The row is
+`barrierMode: helper` and guards its OWN mutation:
+`writeBarrier.runWrite(...) { pendingReviewDao.recoverStuckProcessing() }`
+(`runWrite` is the sole `guarded_scope_method` on `DatabaseWriteBarrier`).
+It registered zero inbound (its only caller sits in `ReviewViewModel`'s
+`init {}`), and `MediationProver.prove()` step 4 returned
+`UNPROVEN_EXTERNAL_ENTRY` / `GR13_ZERO_INBOUND_CALL_SITES` for ANY
+non-`doWork` subject with zero inbound — before the local-direct evidence
+could award `PROVEN_HELPER`.  The fix exempts a `helper` whose site-local
+context is `direct` from that short-circuit (step 5, the uncertain-inbound
+stop, is untouched).  Board delta: `recoverStuckReviews`
+`unproven_external_entry -> proven_helper`; exactly 1 row, 0 regressions.
+The row is now PROVEN but the code is still ALIVE (real caller) — removal
+remains forbidden.  Symmetry note: a zero-inbound helper whose OWN worker
+guard (`runGuarded`) covers the mutation is NOT exempted and still reads
+`unproven_external_entry` — same class as Defect I but fail-closed
+(under-proves) and 0 current rows; deferred deliberately.
+
+**Defect II — class `init {}` blocks are invisible to the engine
+(root-caused, STILL OPEN).**  The regex call-graph parser attaches calls to
+`fun` callables only; calls inside class-init blocks belong to no callable,
+so the whole region (including a `viewModelScope.launch { }` and every call
+in it) never enters the callgraph — ZERO inbound rather than
+async-uncertain.  Consequence now visible: for an UNGUARDED writer that is
+first-called from an `init {}` block, the engine still reports
+`unproven_external_entry` where the honest answer is a counterexample — a
+fail-OPEN gap (under-reports a violation).  **Candidate engine fix**:
+attribute init-block regions to a synthetic class-initialiser callable, or
+walk init blocks as context-inherited.  This is a larger engine change and
+needs its own fixture-first plan + shadow delta (closed set + pin fixture +
+delta, per GR-14f/j/l precedent).  Until then: audit any callee
+first-called from an `init {}` block before removing it, and do not trust
+its `unproven_external_entry` label.
 
 ### D2. ExpenseWriteStore — OWNER DECISION (designed-but-unwired layer)
 The only reference outside its own file is a stale doc comment in
