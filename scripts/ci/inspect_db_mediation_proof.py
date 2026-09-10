@@ -271,6 +271,31 @@ def _correlate_subject_callable(builder: CallGraphBuilder, declaration_index, ob
     return None
 
 
+def _observations_by_graph_callable(builder, declaration_index, observations):
+    """Observations keyed by the GRAPH callable key (span-exact correlation).
+
+    The D4 scanner's ``observation.callable_key`` spells parameter types FULLY
+    QUALIFIED (``android.net.Uri``), while the graph parser normalizes them
+    (``Uri``).  The mediation direct prover is keyed by the graph key, so a
+    direct D4-key lookup silently disabled the GR-12 proof for most callables
+    (GR-14u11 Bug 1: 157/252 observed callables) and left guarded writers at
+    ``local=none``.  Correlation is offset-based, so it is exact and
+    overload-safe.  Uncorrelated observations keep their D4 key (fail closed,
+    never silently dropped).
+    """
+    by_graph_key: dict[str, list[MutationObservation]] = {}
+    for observation in observations:
+        graph_key = None
+        if builder is not None:
+            graph_key = _correlate_subject_callable(
+                builder, declaration_index, observation
+            )
+        by_graph_key.setdefault(
+            graph_key if graph_key is not None else observation.callable_key, []
+        ).append(observation)
+    return by_graph_key
+
+
 def build_mediation_shadow(
     root: str,
     policy_path_value: str | None,
@@ -341,7 +366,6 @@ def build_mediation_shadow(
 
     # Mutation-key correlation (same contract as the GR-12 shadow CLI).
     obs_by_mutation_key: dict[str, list[MutationObservation]] = {}
-    obs_by_callable: dict[str, list[MutationObservation]] = {}
     for observation in observations:
         mutation_key = (
             observation.callable_key
@@ -353,7 +377,6 @@ def build_mediation_shadow(
             + observation.operation
         )
         obs_by_mutation_key.setdefault(mutation_key, []).append(observation)
-        obs_by_callable.setdefault(observation.callable_key, []).append(observation)
 
     # Per-invocation file-text cache shared by the declaration index and the
     # graph corpus.  NOT a module global: two runs in one process (the PR-02
@@ -505,7 +528,17 @@ def build_mediation_shadow(
         )
 
     # Pre-request every call site needing a GR-12 direct proof.
-    direct_prover = _DirectSiteProver(builder, obs_by_callable) if graph is not None else None
+    #
+    # The prover is keyed by the GRAPH callable key, so the observations must be
+    # re-keyed off the D4 canonical key (see
+    # ``_observations_by_graph_callable``).
+    direct_prover = (
+        _DirectSiteProver(
+            builder, _observations_by_graph_callable(builder, declaration_index, observations)
+        )
+        if graph is not None
+        else None
+    )
     if graph is not None and direct_prover is not None:
         # Bounded prefilter: only callables whose masked body mentions a
         # canonical barrier method can ever gain direct context.  Every

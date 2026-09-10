@@ -299,18 +299,19 @@ resolving external with no targets.  **BUT the 18 counterexamples are FALSE
 POSITIVES from two pre-existing bugs — see §D7 — so fix §D7 first, then re-run
 this projection and expect them to disappear.**
 
-### D7. TRIAGE of the 18 D6 counterexamples: ALL FALSE POSITIVES — two
-###     pre-existing `local=none` bugs (GR-14u11, measured)
+### D7. TRIAGE of the 18 D6 counterexamples: ALL FALSE POSITIVES — three
+###     `local=none` bugs (GR-14u11 triage; Bug 1 FIXED in GR-14u12)
 Every one of the 18 rows carries `localGuard: none` BOTH before and after the
 multi-star change, yet the writers are genuinely guarded (e.g.
 `ReceiptRepository.clearAllScannedReceipts` has
 `writeBarrier.checkWritesAllowed(...)` as its first statement at ReceiptRepository
 :535; `BankStatementLifecycleProcessor.processBankStatement` at :140).  The
-multi-star fix did not create violations — it exposed two pre-existing defects in
-the mediation direct-site path that make guards invisible.  **Do NOT land D6
-(multi-star) until these are fixed**, or 18 false counterexamples surface.
+multi-star fix did not create violations — it exposed three pre-existing defects
+in the mediation direct-site path that make guards invisible.  **Do NOT land D6
+(multi-star) until all three are fixed**, or false counterexamples surface.
 
-**Bug 1 — D4 observation key vs GRAPH callable key mismatch (LARGE: 157/252).**
+**Bug 1 — D4 observation key vs GRAPH callable key mismatch — FIXED (GR-14u12,
+docs/ci/db-mediation/GR-14u12.yml).**
 `_DirectSiteProver` is constructed with `obs_by_callable`, keyed by the D4
 `observation.callable_key` (canonical, FULLY-QUALIFIED parameter types), while
 `_compute` looks up `self._observations.get(callable_key)` with the GRAPH
@@ -327,10 +328,15 @@ proving anything and the guard can never be seen.  Examples:
   - D4  `…|addMemberToGroup|null|Long,String,String?,Boolean,(Long) -> Unit`
     GRAPH `…|addMemberToGroup|null|Long,String,String,Boolean,suspend (memberId: Long) -> Unit`
   (nullability, FQ vs simple, generic arguments, and lambda spelling all differ.)
-  This is the dominant cause: it silently disables the GR-12 direct proof for
-  most guarded writers, which is why so many rows sit at `local=none`.
+  This was the dominant cause: it silently disabled the GR-12 direct proof for
+  most guarded writers, which is why so many rows sat at `local=none`.
+  **FIXED in GR-14u12**: `_observations_by_graph_callable` re-keys observations
+  by the span-exact graph key (via `_correlate_subject_callable` — offset
+  containment, exact and overload-safe).  Measured delta: proven_helper 61 -> 68,
+  external_entry 29 -> 22 (7 rows), 0 counterexamples, 0 regressions.
+  Effect on the D6 projection: counterexample flips 18 -> 16 (it fixed 2 only).
 
-**Bug 2 — pseudo-site opacity interference (proved directly).**  `_compute` proves
+**Bug 2 — pseudo-site opacity interference (proved directly; STILL OPEN).**  `_compute` proves
 over the observation sites PLUS a `_pseudo_site` per requested edge offset.  For
 `ReceiptRepository.clearAllScannedReceipts` (key DOES match, so Bug 1 does not
 apply):
@@ -340,16 +346,24 @@ apply):
 A pseudo-site landing inside a lambda region flips the whole callable's proof to
 UNSUPPORTED, so a correctly-dominated guard reads as `none`.
 
-**Consequence for the plan.**  The correct order is: (1) fix Bug 1 (align the
-D4 observation key with the graph callable key when building `obs_by_callable`,
-or make `_compute` resolve by path|owner|kind|method|receiver ignoring parameter
-spelling); (2) fix Bug 2 (keep pseudo-sites out of the opacity predicate, or
-prove pseudo-sites in a separate pass so they cannot degrade real mutation
-sites); (3) THEN re-run the D6 projection and expect the false counterexamples to
-disappear (and `local=none` to drop sharply).  Each needs its own fixture-first
-pin (key-with-FQ-params; pseudo-site-does-not-degrade-a-real-site) + projection +
-shadow delta, per GR-14f/j/l precedent.  Reproduce:
-`build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`.
+**Bug 2b — body-parse limitation (isolated; STILL OPEN).**  For some writers the
+proof is UNSUPPORTED even with NO pseudo-sites: after the Bug 1 fix,
+`BankStatementLifecycleProcessor.processBankStatement` (20 observations) and
+`ExpenseRepository.updateExpenseCategoryBulk` return
+`DB_DIRECT_BARRIER_PROOF_UNSUPPORTED` on the observation sites alone
+(`has_canonical_barrier: False`).  So these bodies cannot be modeled by the
+GR-11/GR-12 pipeline at all, independent of mediation.  This is a deeper parser
+limitation and needs its own diagnosis.
+
+**Consequence for the plan.**  D6 (multi-star) remains BLOCKED: after Bug 1,
+16 counterexample flips remain (all false positives from Bug 2 / Bug 2b).  Order:
+(2) fix pseudo-site interference (keep pseudo-sites out of the opacity predicate,
+or prove them in a separate pass so they cannot degrade real mutation sites);
+(2b) diagnose the UNSUPPORTED bodies; then re-run the D6 projection and expect
+the false counterexamples to disappear.  Each needs its own fixture-first pin +
+projection + shadow delta, per GR-14f/j/l precedent.  Reproduce:
+`build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`
+and `build/guard-debug/gr14u12/probe_after_bug13.py`.
 
 ### D2. ExpenseWriteStore — OWNER DECISION (designed-but-unwired layer)
 The only reference outside its own file is a stale doc comment in
