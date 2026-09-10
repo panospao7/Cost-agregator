@@ -218,20 +218,85 @@ guard (`runGuarded`) covers the mutation is NOT exempted and still reads
 (under-proves) and 0 current rows; deferred deliberately.
 
 **Defect II — class `init {}` blocks are invisible to the engine
-(root-caused, STILL OPEN).**  The regex call-graph parser attaches calls to
-`fun` callables only; calls inside class-init blocks belong to no callable,
-so the whole region (including a `viewModelScope.launch { }` and every call
-in it) never enters the callgraph — ZERO inbound rather than
-async-uncertain.  Consequence now visible: for an UNGUARDED writer that is
-first-called from an `init {}` block, the engine still reports
-`unproven_external_entry` where the honest answer is a counterexample — a
-fail-OPEN gap (under-reports a violation).  **Candidate engine fix**:
-attribute init-block regions to a synthetic class-initialiser callable, or
-walk init blocks as context-inherited.  This is a larger engine change and
-needs its own fixture-first plan + shadow delta (closed set + pin fixture +
-delta, per GR-14f/j/l precedent).  Until then: audit any callee
-first-called from an `init {}` block before removing it, and do not trust
+(MEASURED in GR-14u8: real but LATENT — 0 current fail-open instances).**  The
+regex call-graph parser attaches calls to `fun` callables only; calls inside
+class-init blocks belong to no callable (`_FUN_DECL_RE` discovery in
+`mediation_analysis/callgraph.py`), so the whole region (including a
+`viewModelScope.launch { }` and every call in it) never enters the callgraph —
+ZERO inbound rather than async-uncertain.  Confirmed at the engine level by a
+synthetic probe (`build/guard-debug/gr14u8/probe_init_visibility.py`): a class
+whose `init {}` calls a writer produces NO callable and NO edge for that region.
+
+**Measured impact (GR-14u8 census, read-only, 1073 production files):**
+- Of the 29 `unproven_external_entry` rows, **0** are called from any `init {}`
+  block (`census_init_broad.py`) — so there is **no current fail-open instance**.
+  All 29 are zero-inbound for other reasons (the ExpenseWriteStore /
+  GroupLifecycleCoordinator / InvestmentTracker dead-or-owner-decision tail).
+- Latent surface = **6 rows** whose method IS called from an `init {}` block
+  (`census_latent_surface.py`): `ReviewViewModel.recoverStuckReviews`
+  (proven_helper — the historical Defect I case), 4×
+  `CategoryViewModel.ensureDefaultCategories` (already
+  unproven_ambiguous_call), and 1× `ReviewViewModel.emit` (already async
+  unproven).  None is mis-labeled as a safe external entry.
+
+So the earlier "fail-OPEN, higher severity" framing does not hold against
+current code: the gap is real but has no live effect.  **Deferred (owner call).**
+**Candidate engine fix** (when taken): attribute `init {}` regions to a synthetic
+class-initialiser callable AND make class construction of a framework-instantiated
+owner (ViewModel/Activity/Fragment/Service, or any owner whose zero-inbound
+member is already `FRAMEWORK_CALLBACK`) inherit that root kind — a synthetic
+`<init>` callable ALONE is insufficient, because it would itself be zero-inbound
+and re-classify as `PUBLIC_OR_PROTECTED_EXTERNAL`, leaving the verdict unchanged.
+Larger engine change: own fixture-first plan + projection + shadow delta (closed
+set + pin fixture + delta, per GR-14f/j/l precedent).  Until then: audit any
+callee first-called from an `init {}` block before removing it, and do not trust
 its `unproven_external_entry` label.
+
+### D6. Multi-star imports are unresolved, so `RoomDatabase` never resolves
+###     (GR-14u10 finding — measured, HARD-STOPPED, needs owner triage)
+`_resolve_type` (mediation_analysis/callgraph.py) skips `entry.is_star` in the
+exact-import loop and only handles the wildcard case when a file has EXACTLY ONE
+star import (`if len(star_prefixes) == 1`).  `AppDatabase.kt` has THREE
+(`…database.entity.*`, `…database.dao.*`, `androidx.room.*`), so `RoomDatabase`
+stays `unknown`.  Consequence: `AppDatabase.onCreate`'s `super.onCreate(db)` —
+which lives in an anonymous `object : RoomDatabase.Callback()` — fails closed in
+`_super_receiver_fqcn` and still falls back to `_name_match_targets("onCreate")`.
+That single wrong edge is the tier-5 deciding edge for **137 of the 169
+remaining `unproven_ambiguous_call` rows** (re-census of the gr14u7 board:
+`build/guard-debug/gr14u10/`).  This is the SAME defect class as GR-14u6, which
+fixed the four other `super.onCreate` sites (MainApplication, RescueActivity,
+NotificationCaptureService, MainActivity — all with explicit imports).
+
+**Step-0 projection (multi-star resolution, monkey-patch): HARD STOP.**
+Resolving a simple name through multiple star imports when exactly one candidate
+is confident (a corpus owner, or a known external root package) gives:
+  - `unproven_ambiguous_call` 169 -> 142, `proven_helper` 61 -> 70 (**+9**),
+  - **18 rows become `counterexample_unguarded_call_path`** (0 regressions).
+Resolver stats: 97 external / 5 corpus resolutions; 1910 ambiguous names stayed
+fail-closed unknown; 38 found no candidate.  All 18 counterexamples reach a
+`framework_callback` root by an ALL-EXACT path (`deciding=exact_synchronous`) and
+are unguarded: `updateExpenseCategoryBulk`, `updateUserCorrection`,
+`clearAllScannedReceipts`, `expireOld`, `processBankStatement` (x7),
+`bulkUpdateCategory` (x2), `updateTypeAndTransferDetails` (x4),
+`migrateCategories`.  Reproduce: `build/guard-debug/gr14u10/project_multistar.py`
+(+ `projected_board.json`, `projection.log`).
+
+**Why deferred (not landed):** 18 new definite-violation claims require human
+triage before they can be recorded, exactly like the GR-14u6 gate.  Two things
+must be resolved first: (a) are those 18 genuine unguarded framework-reachable
+paths, or an artifact of resolving a receiver to a GUESSED external FQCN?  The
+guess (`starPrefix + "." + simple`) is inherently heuristic — the existing
+single-star path makes the same assumption, but at 3 star imports the chance of
+a wrong package match grows.  (b) each 18 needs a disposition (fix the guard, or
+prove the path is unreachable).  Note the projection's own guard: 1910
+multi-candidate names stayed `unknown`, so the change is fail-closed for
+ambiguity — the risk is only the confident-by-luck single candidate.
+
+**Recommended when taken:** land the multi-star resolution with a projection
+gate (as here), a fixture pin for (i) one-star, (ii) multi-star unambiguous,
+(iii) multi-star ambiguous => unknown, and (iv) `super.onCreate` under multi-star
+resolving external with no targets; then triage the 18 counterexamples as their
+own batch (guard-or-disposition), because they are real reachability, not noise.
 
 ### D2. ExpenseWriteStore — OWNER DECISION (designed-but-unwired layer)
 The only reference outside its own file is a stale doc comment in
