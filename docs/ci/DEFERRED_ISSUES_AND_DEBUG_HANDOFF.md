@@ -617,7 +617,50 @@ counterexamples, 0 regressions.  Fixture pin
 returned `{}` at the mutation offset while the underlying GR-12 proof already
 said PROVEN).
 
-### D4. Interface-dispatch residue after the GR-14t negative (17 rows)
+### D8. A Kotlin arrow (`->`) was counted as a generic close bracket (GR-14u20
+###     — FIXED; found by a fresh census of the post-u19 board)
+After GR-14u19 the remaining 284 ambiguous+async rows were re-censused
+(`build/guard-debug/gr14w0/census.log`, exact reconstruction fidelity).  The
+deciding resolutions were 123 `async_dispatch`, 108 `unresolved_target`, 20
+`interface_dispatch`, 14 `function_reference` — and one receiver name dominated
+the `unresolved_target` half: **91 rows were decided by a member call on a
+receiver called `viewModel`** with no `val`/`var` declaration, i.e. a Compose
+screen's ViewModel *function parameter*.
+
+Root cause: the parameter-list comma splitter in `CallGraphBuilder` tracked
+bracket depth over `"(<["` / `")>]"`, so in a function type like
+`onDismiss: () -> Unit` the ARROW's `>` counted as a CLOSING bracket and drove
+the depth negative; no later comma was ever at depth 0 and the whole parameter
+list collapsed into one unnamed piece.  With no parameter names recorded,
+`receiver_fqcn_for_call`'s parameter branch could never match.  Measured blast
+radius: 195 callables with a collapsed list, 239 unresolved `viewModel` call
+sites, 91 ambiguous rows.  `_skip_return_type` already carried the exact guard
+("Kotlin arrow (`->`): not a generic close bracket") — the splitters never got it.
+
+**RESOLVED in GR-14u20** (docs/ci/db-mediation/GR-14u20.yml): the splitter is now
+arrow-aware.  Unresolved `viewModel` call sites 239 -> 0.  The Step-0 gate
+HARD-STOPPED the engine fix alone on **2 counterexample flips** — resolving
+`viewModel` turned two previously name-matched paths exact, and both were real
+unguarded direct DAO writes:
+`ExpenseRepository.updateExpenseMerchant` (`pendingReviewDao.bulkRenameMerchant`
+on the `applyToAll` branch) and `BankApiIntegration.refreshToken`
+(`bankConnectionDao.updateToken`).  Both classes already injected
+`DatabaseWriteBarrier`; both now check it (same shape as GR-14u6).  Board delta:
+proven_helper 87 -> 155 (+68), ambiguous 151 -> 77, external_entry 21 -> 27, 0
+counterexamples, 0 regressions, deterministic (fe40d369...), policy bytes
+unchanged.  The 6 lateral ambiguous -> external_entry moves are a CORRECTION:
+identical callable keys, and the `unresolved_target` edge was a name-match false
+inbound (those are the §E item 3 dead callables, genuinely zero-inbound).
+
+**Still open in the same class.**  The ARGUMENT-list splitter in
+`_select_overload` and the supertype-list splitter in `_supertype_texts` carry
+the identical `"(<["` / `")>]"` pattern (callgraph.py).  Neither is currently
+triggered in production (1 supertype header, and the arg path fails closed to
+`None` -> uncertain), so they were deliberately left alone to keep GR-14u20 a
+closed reviewed set.  Fix them with the same one-line guard if a census ever
+shows them deciding rows.
+
+### D4. Interface-dispatch residue after the GR-14t negative (20 rows)
 Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
  callers (addExpenseToGroup, createGroupWithMembers[Atomic],
  deleteGroupAtomic, removeMember, archiveGroup, restoreGroup),
@@ -670,23 +713,37 @@ Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
    RetentionModule.provideRetentionTargets (DI module pattern).
 5. GR-15 must NOT start until the GR-14 zero gate (§8 of the handoff).
 
-**GR-14u6/u7 outcome (measured, see §D3/§D5).**  Both engine batches are DONE.
-Board now: proven_helper 61 / proven_worker_mediated 14 / ambiguous 169 /
-async 133 / external_entry 29 (proven 75 / unproven 331).  GR-14u6 removed the
-wrong `super` edge and (via its Step-0 hard-stop) guarded 5 genuinely unguarded
-notification-capture writers; GR-14u7 made the direct-site prover report
-dominance at the real mutation offset, proving 7 already-guarded writers.  The
-`super` fix did NOT prove 137 (the taint is layered).
+**GR-14u6 -> GR-14u20 outcome (measured; see §D3/§D5/§D6/§D7/§D8).**  The engine
+batches are DONE.  Board now (GR-14u20, sha fe40d369...):
+proven_helper 155 / proven_worker_mediated 14 / ambiguous 77 / async 133 /
+external_entry 27 — **proven 169 / unproven 237, counterexamples 0**.
+GR-14u6 removed the wrong `super` edge and (via its Step-0 hard-stop) guarded 5
+genuinely unguarded notification-capture writers; GR-14u7 made the direct-site
+prover report dominance at the real mutation offset; GR-14u11-u17 triaged the D6
+counterexample flips into three real engine defects plus one unguarded write;
+GR-14u19 landed the multi-star resolution (+18); GR-14u20 made the parameter
+splitter arrow-aware (+68) and, again via the Step-0 hard-stop, guarded 2 more
+genuinely unguarded DAO writers.  Neither `super` (u6) nor multi-star (u19) nor
+the arrow (u20) proved the rows on its own — the taint is LAYERED, and each fix
+promotes the next uncertain edge.
+
 Recommended order from here:
-  (a) Defect II — init-block invisibility (§D1 remainder; fail-OPEN, so higher
-      severity than any remaining noise), fixture-first + projection;
-  (b) dead-writer tail (mechanical, steady movement);
-  (c) interface_dispatch/function_reference residue (§D4);
-  (d) async-carrier admissions one carrier at a time (each a closed admission).
+  (a) dead-writer tail (mechanical, steady movement) — now BETTER SIGNALED: the
+      engine resolves receivers properly, so a `unproven_external_entry` row that
+      is genuinely zero-inbound is trustworthy again;
+  (b) async-carrier admissions one carrier at a time (each a closed admission) —
+      the largest remaining block (123 `async_dispatch` rows; `coroutineScope` 37,
+      a privacy-gate lambda 23, `PostCommitAction` 19, `navigation.launch` 17,
+      `confirmQuickApprove` 9, `photon.coroutineScope` 6);
+  (c) interface_dispatch/function_reference residue (§D4, 20 + 14 rows);
+  (d) Defect II — init-block invisibility (§D1 remainder; measured LATENT, 0 live
+      fail-open instances, so lower priority than its earlier framing suggested).
 
 Artifacts this arc: build/guard-debug/{gr14s,gr14t,gr14u,gr14u2,gr14u3,
-gr14u4,gr14u5,gr14u6,gr14u7}/ (shadows before/after + double-runs, compile logs,
-targeted-test logs, A/B failure lists, the abandoned GR-14t patch, edit
-scripts; gr14u5 adds the ambiguous/async census + super probe; gr14u6 adds the
-Step-0 super projection gate + live shadow delta; gr14u7 adds the §D5
-projection + delta).
+gr14u4,gr14u5,gr14u6,gr14u7,gr14u8,gr14u9,gr14u10,gr14u11,gr14u12,gr14u13,
+gr14u14,gr14u15,gr14u16,gr14u17,gr14u18,gr14w0}/ (shadows before/after +
+double-runs, compile logs, targeted-test logs, A/B failure lists, edit scripts).
+`gr14w0` is the GR-14u20 workspace: the post-u19 census, the arrow fix's board
+(`board_arrow.json`, the HARD-STOP state with 2 counterexamples), the re-projected
+clean board (`board_arrow2.json`), the determinism double-run and the delta
+scripts (`project_arrow*.py`, `triage.py`, `detail6.py`).

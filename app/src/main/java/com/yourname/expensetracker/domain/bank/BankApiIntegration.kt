@@ -417,6 +417,7 @@ class BankApiIntegration @Inject constructor(
     @StubForDemo
     private suspend fun refreshToken(connection: BankConnection): RefreshOutcome {
         requireStubMode()
+        writeBarrier.checkWritesAllowed("BankApiIntegration.refreshToken")
 
         // NEW-P10-002: use decryptWithResult so key invalidation is not collapsed to null.
         return when (BankTokenCipher.decryptWithResult(connection.refreshToken)) {

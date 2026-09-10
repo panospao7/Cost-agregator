@@ -829,7 +829,21 @@ def _callable_models(
             depth = 0
             pieces: list[str] = []
             current: list[str] = []
-            for ch in param_text:
+            cursor = 0
+            while cursor < len(param_text):
+                ch = param_text[cursor]
+                if (
+                    ch == "-"
+                    and cursor + 1 < len(param_text)
+                    and param_text[cursor + 1] == ">"
+                ):
+                    # Kotlin arrow (`->`): not a generic close bracket.  Without
+                    # this, `() -> Unit` drives the depth negative and no later
+                    # comma is ever at depth 0, collapsing the whole parameter
+                    # list into one unnamed piece.
+                    current.append("->")
+                    cursor += 2
+                    continue
                 if ch in "(<[":
                     depth += 1
                 elif ch in ")>]":
@@ -839,6 +853,7 @@ def _callable_models(
                     current = []
                 else:
                     current.append(ch)
+                cursor += 1
             pieces.append("".join(current))
             for piece in pieces:
                 piece = piece.strip()

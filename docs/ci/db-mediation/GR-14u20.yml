@@ -1,0 +1,141 @@
+# GR-14u20 (§D3/§E) — a Kotlin arrow is not a generic close bracket.
+# proven_helper 87 -> 155 (+68); unproven_ambiguous_call 151 -> 77;
+# 0 counterexamples; 0 regressions.
+#
+# ROOT CAUSE (engine): the parameter-list comma splitter in `CallGraphBuilder`
+#   tracked bracket depth over `"(<["` / `")>]"`.  In a function type such as
+#   `onDismiss: () -> Unit` the ARROW's `>` was counted as a CLOSING bracket,
+#   driving the depth to -1.  No later comma is ever at depth 0 after that, so
+#   the whole parameter list collapsed into ONE unnamed piece:
+#       params_named == [("", "onDismiss: () -> Unit,\n amount: ...,\n viewModel: ...")]
+#   With no parameter NAMES recorded, `receiver_fqcn_for_call`'s parameter branch
+#   could never match, so `viewModel.<member>()` — the receiver of every Compose
+#   screen in this app — fell through to the name-match fallback and stayed an
+#   UNCERTAIN edge.  Measured: 195 callables had a collapsed parameter list and
+#   239 call sites with receiver `viewModel` were unresolved; 91 of the 151
+#   unproven_ambiguous_call rows were decided by that one shape.
+#
+#   `_skip_return_type` ALREADY carried the correct guard, with the exact comment
+#   "Kotlin arrow (`->`): not a generic close bracket."  The splitters were simply
+#   never given it.  This is a pre-existing parser defect, not a regression.
+#
+# FIX (engine): make the parameter splitter arrow-aware, reusing that same rule.
+#   After the fix: unnamed entries 255 -> 24, arrow-collapsed lists 195 -> 0,
+#   unresolved `viewModel` call sites 239 -> 0, parameter entries 10337 -> 10719.
+#
+# THE STEP-0 GATE FIRED — and that is the point of it.  The first projection of
+#   the ENGINE FIX ALONE was a HARD STOP:
+#     NEW counterexamples: 2   (updateExpenseMerchant, refreshToken)
+#   Resolving `viewModel` made two paths EXACT that had previously been
+#   name-matched, and both turned out to be genuine unguarded direct DAO writes:
+#     * ExpenseRepository.updateExpenseMerchant -> pendingReviewDao.bulkRenameMerchant
+#       (the `applyToAll` branch; the expense write routes through the coordinator,
+#       but this cross-table pendingReview write did not).  Reached from
+#       TransactionsViewModel.updateMerchant (user edits a merchant, "apply to all").
+#     * BankApiIntegration.refreshToken -> bankConnectionDao.updateToken
+#       (the demo/stub token-refresh path).  Reached from
+#       BankConnectionsViewModel.syncConnection -> BankConnectionLifecycleCoordinator
+#       -> BankApiIntegration.syncTransactions -> refreshToken.
+#   Both classes ALREADY injected `DatabaseWriteBarrier`; both now check it as the
+#   established `writeBarrier.checkWritesAllowed("Class.method")` form.  This is
+#   the same shape as GR-14u6, where removing the wrong `super` edge revealed 5
+#   genuinely unguarded notification-capture writers.
+#
+# THE 6 LATERAL MOVES ARE A CORRECTION, NOT A REGRESSION.
+#   `unproven_ambiguous_call -> unproven_external_entry` for ExpenseWriteStore.updateMerchant,
+#   GroupLifecycleCoordinator.{addExpense,addMember,createGroup} and
+#   TransactionLifecycleCoordinator.deleteExpense (x2): their callableKeys are
+#   IDENTICAL before and after, so nothing was re-keyed.  Those rows previously
+#   reported deciding `unresolved_target`; that edge was a name-match FALSE
+#   inbound, and once the receiver resolved it disappeared, leaving the truth:
+#   GR13_ZERO_INBOUND_CALL_SITES.  These are exactly the production-dead /
+#   owner-decision callables of handoff §E item 3 — they were never reachable,
+#   and the engine now says so.
+#
+# SHADOW DELTA (baseline = the committed GR-14u19 board 2b282860...):
+#   entries 406 -> 406 (key sets EQUAL; no row added or removed)
+#     proven_helper           87 -> 155   (+68)
+#     unproven_ambiguous_call 151 -> 77   (-74)
+#     unproven_external_entry  21 -> 27   (+6, the corrected zero-inbound above)
+#     proven_worker_mediated   14 (unchanged); async 133 (unchanged)
+#   changed rows: EXACTLY 74 = 68 `unproven_ambiguous_call -> proven_helper`
+#   + 6 `unproven_ambiguous_call -> unproven_external_entry`.
+#   **0 counterexample transitions, 0 proven->unproven regressions.**
+#   Deterministic double-run BYTE-IDENTICAL
+#   (fe40d36915c153dc4894acf0905dc572cee8767bc9d49284f85c9b6082b7133a).
+#   Policy bytes UNCHANGED (7851adc2...); baseline/exception bytes unchanged.
+#
+# FIXTURE PINS (scripts/ci/test_gr14u20_arrow_param_split.py, 5):
+#   - the AddExpenseSheet shape (lambda param FIRST, then amount, then viewModel)
+#     keeps all three parameter names — verified RED before the fix;
+#   - two arrows in one parameter list;
+#   - a nested function type `(Int) -> (String) -> Unit` before a trailing param;
+#   - generics AND a lambda together (`List<Map<String, Int>>, cb: () -> Unit, n`)
+#     still split — regression guard for real bracket balance;
+#   - `viewModel.save()` resolves to its declared parameter type instead of
+#     falling back to name-matching.
+#   All 5 RED before the change, GREEN after.
+#
+# Validation:
+#   - engine battery 94 passed (+5 new pins); scripts/db_guard 235 passed
+#     (test_models.py excluded — pre-existing bare `import models`); fixture_runner
+#     58/58.
+#   - Kotlin: `:app:compileDebugKotlin` PASSED (exit 0; both recompiled classes
+#     present with fresh timestamps — the Windows-redirect log is empty).
+#   - live board deterministic double-run (fe40d369...); policy bytes unchanged.
+schemaVersion: 1
+batchId: GR-14u20
+startSha: 3860fed5
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: 2b282860fae306c52a1542b6965523023e26c008d252cd23952c60ede7e51c1f
+mediationReportSha256After: fe40d36915c153dc4894acf0905dc572cee8767bc9d49284f85c9b6082b7133a
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+      the parameter-list comma splitter no longer counts the `>` of a Kotlin
+      arrow as a closing bracket, so parameter lists split correctly and
+      parameter receivers resolve to their declared types
+  - scripts/ci/test_gr14u20_arrow_param_split.py: new pins (5)
+
+productionFixes:
+  - ExpenseRepository.updateExpenseMerchant: writeBarrier.checkWritesAllowed
+    ("ExpenseRepository.updateExpenseMerchant") added — the `applyToAll` branch
+    wrote `pendingReviewDao.bulkRenameMerchant` unguarded
+  - BankApiIntegration.refreshToken: writeBarrier.checkWritesAllowed
+    ("BankApiIntegration.refreshToken") added — the stub token-refresh path wrote
+    `bankConnectionDao.updateToken` unguarded
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - (68 rows) unproven_ambiguous_call -> proven_helper
+  - (6 rows)  unproven_ambiguous_call -> unproven_external_entry (correction)
+rootCause: GR13_UNCERTAIN_CALL_EDGE # arrow-collapsed parameter list hid the receiver
+selectedPattern: ENGINE # with 2 production guards the fix exposed
+tests:
+  - test_gr14u20_arrow_param_split.py 5/5 (all RED pre-fix)
+  - engine battery 94 passed; scripts/db_guard 235 passed; fixture_runner 58/58
+  - Kotlin :app:compileDebugKotlin PASSED
+  - live board: +68 proven_helper, 0 counterexamples, 0 regressions, deterministic
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  A Kotlin arrow inside a function type was counted as a closing bracket by the
+  parameter-list splitter, so any declaration whose parameter list contained a
+  lambda type lost every parameter name after it.  Compose screens all take their
+  ViewModel as such a parameter, so their calls resolved by name-matching instead
+  of by type, and the reachability those calls carry stayed uncertain.  This batch
+  makes the splitter arrow-aware, reusing the guard the return-type scanner already
+  had, so parameter lists split and parameter receivers resolve to their declared
+  types.  Because that made previously ambiguous paths exact, the safety gate
+  surfaced two genuinely unguarded direct DAO writes; both are now guarded with the
+  canonical barrier.  The result is 68 rows moving from unproven_ambiguous to
+  proven_helper and 6 rows correctly reclassified as zero-inbound, with zero
+  counterexamples, zero regressions, a deterministic board, and policy, baseline
+  and exception bytes unchanged; the report remains shadow-only (reportOnly: true).
