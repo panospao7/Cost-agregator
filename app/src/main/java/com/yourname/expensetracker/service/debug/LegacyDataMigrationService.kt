@@ -2,6 +2,8 @@ package com.yourname.expensetracker.service.debug
 
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -82,6 +84,7 @@ class LegacyDataMigrationService @Inject constructor(
     private val manualRecurringExpenseRepository: ManualRecurringExpenseRepository,
     private val plannedExpenseRepository: PlannedExpenseRepository,
     private val savingsGoalRepository: SavingsGoalRepository,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val timeProvider: TimeProvider
 ) {
 
@@ -147,6 +150,7 @@ class LegacyDataMigrationService @Inject constructor(
         var failed = 0
 
         try {
+            writeBarrier.checkWritesAllowed("LegacyDataMigrationService.migrateCategories")
             // Pre-load all existing categories by lowercased name for O(1) lookups
             val existingByName = categoryDao.getAll()
                 .associateBy { it.name.lowercase() }
@@ -191,6 +195,8 @@ class LegacyDataMigrationService @Inject constructor(
                     }
                 }
             }
+        } catch (blocked: DatabaseAccessBlockedException) {
+            Timber.w("Categories migration skipped: database writes blocked during restore")
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to migrate categories table")
