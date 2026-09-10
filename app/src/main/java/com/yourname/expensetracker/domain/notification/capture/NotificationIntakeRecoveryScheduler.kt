@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.domain.notification.capture
 
 import androidx.work.*
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.worker.NotificationIntakeWorker
@@ -13,7 +16,8 @@ import javax.inject.Singleton
 class NotificationIntakeRecoveryScheduler @Inject constructor(
     private val intakeDao: NotificationIntakeDao,
     private val workManager: WorkManager,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     companion object {
         private const val STALE_PROCESSING_MS = 10 * 60 * 1000L // 10 minutes
@@ -24,11 +28,27 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
      * Call on: app start, listener connected, restore complete.
      */
     suspend fun recoverPending(limit: Int = 100) {
+        try {
+            writeBarrier.checkWritesAllowed("NotificationIntakeRecoveryScheduler.recoverPending")
+        } catch (blocked: DatabaseAccessBlockedException) {
+            Timber.w("Intake recovery skipped: database writes blocked during restore")
+            return
+        }
+
         val now = timeProvider.now()
         val staleBefore = now - STALE_PROCESSING_MS
 
         // Release stale rows
-        val released = intakeDao.releaseStaleProcessing(staleBefore, now)
+        val released = try {
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationIntakeRecoveryScheduler.recoverPending")
+            ) {
+                intakeDao.releaseStaleProcessing(staleBefore, now)
+            }
+        } catch (blocked: DatabaseAccessBlockedException) {
+            Timber.w("Intake recovery skipped: database writes blocked during restore")
+            return
+        }
         if (released > 0) {
             Timber.d("IntakeRecovery: released $released stale PROCESSING rows")
         }
