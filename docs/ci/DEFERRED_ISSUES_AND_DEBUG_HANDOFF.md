@@ -361,8 +361,28 @@ proof is UNSUPPORTED even with NO pseudo-sites: after the Bug 1 fix,
 `ExpenseRepository.updateExpenseCategoryBulk` return
 `DB_DIRECT_BARRIER_PROOF_UNSUPPORTED` on the observation sites alone
 (`has_canonical_barrier: False`).  So these bodies cannot be modeled by the
-GR-11/GR-12 pipeline at all, independent of mediation.  This is a deeper parser
-limitation and needs its own diagnosis.
+GR-11/GR-12 pipeline at all, independent of mediation.
+
+**ROOT CAUSE (found GR-14u13 follow-up): an unrecognized wrapper scope.**
+`ExpenseRepository.updateExpenseCategoryBulk` (ExpenseRepository.kt:475) is
+`checkWritesAllowed(...)` followed by `categoryUpdateMutex.withLock { ... }`, and
+`CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_wrappers`
+(barrier_proof.py:204-225) covers only `withTransaction` (androidx.room
+RoomDatabase / AppDatabase), `runInTransaction` (DomainTransactionRunner) and
+`withContext` (kotlinx.coroutines.withContext).  **`Mutex.withLock` is not in the
+list**, so its lambda is modeled as an opaque/unscoped region and the mutations
+inside it can never be proven — even though a `checkWritesAllowed` BEFORE the
+lock dominates them (which is exactly the pattern the project uses).
+
+**Candidate fix:** add `withLock` as a transparent-scope wrapper
+(`kotlinx.coroutines.sync.Mutex` receiver, or `import_fqcn="kotlinx.coroutines.
+sync.withLock"`).  CAUTION: this edits the SHARED barrier contract that the D4
+gate also consumes, and the contract's identity participates in stored evidence,
+so it should be a CONTRACT VERSION BUMP (V2 -> V3) rather than an in-place edit —
+otherwise existing D4/mediation evidence hashes drift silently.  Needs: fixture
+pins (a dominated mutation inside `withLock` becomes PROVEN; an UNGUARDED one
+inside `withLock` stays unproven/counterexample), a projection over both the D4
+gate and the mediation board, and a policy/evidence-hash impact check.
 
 **Consequence for the plan.**  D6 (multi-star) remains BLOCKED, now on Bug 2b
 alone: 15 counterexample flips remain, all false positives from bodies the
