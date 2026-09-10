@@ -354,43 +354,74 @@ construction (verified: D4 CLI 28/28 direct, 0 fail).  Measured delta:
 proven_helper 68 -> 69, external_entry 22 -> 21 (1 row), 0 regressions.  Effect
 on the D6 projection: counterexample flips 16 -> 15.
 
-**Bug 2b — body-parse limitation (isolated; STILL OPEN — the ONLY remaining
-D6 blocker).**  For some writers the
-proof is UNSUPPORTED even with NO pseudo-sites: after the Bug 1 fix,
-`BankStatementLifecycleProcessor.processBankStatement` (20 observations) and
-`ExpenseRepository.updateExpenseCategoryBulk` return
-`DB_DIRECT_BARRIER_PROOF_UNSUPPORTED` on the observation sites alone
-(`has_canonical_barrier: False`).  So these bodies cannot be modeled by the
-GR-11/GR-12 pipeline at all, independent of mediation.
+**Bug 2b — conservative body-model rejections + a mediator conflation
+(RE-SCOPED in GR-14u14; my earlier `withLock` root cause was TOO NARROW —
+`withLock` explains only 1 of 82).**
 
-**ROOT CAUSE (found GR-14u13 follow-up): an unrecognized wrapper scope.**
-`ExpenseRepository.updateExpenseCategoryBulk` (ExpenseRepository.kt:475) is
-`checkWritesAllowed(...)` followed by `categoryUpdateMutex.withLock { ... }`, and
-`CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_wrappers`
-(barrier_proof.py:204-225) covers only `withTransaction` (androidx.room
-RoomDatabase / AppDatabase), `runInTransaction` (DomainTransactionRunner) and
-`withContext` (kotlinx.coroutines.withContext).  **`Mutex.withLock` is not in the
-list**, so its lambda is modeled as an opaque/unscoped region and the mutations
-inside it can never be proven — even though a `checkWritesAllowed` BEFORE the
-lock dominates them (which is exactly the pattern the project uses).
+MEASURED: of the 252 callables carrying mutation observations, **82 (33%)** are
+UNSUPPORTED even with observation sites only (`build/guard-debug/gr14u14/
+size_bug2b.py`).  The `withLock` case (`ExpenseRepository.updateExpenseCategoryBulk`)
+is ONE of them.  Construct frequency among the 82: `try`/`catch` 43,
+`withTransaction` 34, `withContext` 23, `.let` 18, `when` 14, `for` 13,
+`runInTransaction` 7, `.forEach` 5, `withLock` 1.  These are DELIBERATE
+conservative rejections — the tokenizer's unsupported reasons include
+`exception-flow` (`DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED`),
+`coroutine-builder`, `labelled-return`, `elvis-block`, `local-function`,
+`anonymous-object`, `lambda-escape` (see
+`scripts/db_guard/structural_analysis/test_tokenizer.py::TestConservativeUnsupported`).
+So this is NOT a bug in the parser: it is the engine refusing to model constructs
+it cannot model safely (exception flow above all).
 
-**Candidate fix:** add `withLock` as a transparent-scope wrapper
-(`kotlinx.coroutines.sync.Mutex` receiver, or `import_fqcn="kotlinx.coroutines.
-sync.withLock"`).  CAUTION: this edits the SHARED barrier contract that the D4
-gate also consumes, and the contract's identity participates in stored evidence,
-so it should be a CONTRACT VERSION BUMP (V2 -> V3) rather than an in-place edit —
-otherwise existing D4/mediation evidence hashes drift silently.  Needs: fixture
-pins (a dominated mutation inside `withLock` becomes PROVEN; an UNGUARDED one
-inside `withLock` stays unproven/counterexample), a projection over both the D4
-gate and the mediation board, and a policy/evidence-hash impact check.
+THE ACTUAL DEFECT is in the MEDIATOR, not the parser.  `_local_site_context`
+returns `"none"` whenever the direct-site probe does not return True, and
+`MediationProver.prove()` then (step 7/8, proof.py:627-657) turns
+`"none" in effective` into `COUNTEREXAMPLE_UNGUARDED_CALL_PATH`.  That conflates
+"there is no guard" with "we could not model the body to prove a guard".  Pre-GR-14u10
+this was masked (an uncertain `super.onCreate` edge short-circuited these rows to
+`unproven_ambiguous_call`); the D6 multi-star fix made the paths exact, so the
+conflation now surfaces as false counterexamples.
+
+WHY A BLANKET DOWNGRADE IS UNSAFE (my first instinct — rejected):
+measured with `build/guard-debug/gr14u14/measure_guards.py`, of the 82
+unmodelable bodies **57** carry `checkWritesAllowed` strictly before their first
+mutation, **9** carry a `runWrite` scope, and **16 carry NEITHER** — including
+`DataRetentionWorker.doWork`, `WarrantyExpirationWorker.doWork`,
+`NotificationIntakeWorker.doWork`, `SourceLinkBackfillWorker.backfillLegacySource/
+backfillNotificationLinks`, `DatabaseBackupRepositoryImpl.restoreReceiptAssets`,
+`RestoreJournalImporter.importLastFailureJournalIfPresent`,
+`LegacyDataMigrationService.migrateCategories`.  Reclassifying "unmodelable" as
+"unproven" wholesale would hide those 16.
+
+SOUND DIRECTION (design, not yet implemented): make the local proof TRI-STATE —
+PROVEN (dominance proven) / UNGUARDED (body fully modeled and no dominating
+barrier) / UNMODELABLE (parse unsupported).  Declare a counterexample ONLY on a
+definitive UNGUARDED.  On UNMODELABLE, classify as an explicitly-labelled
+unproven state — justified because a visible canonical barrier on the write-barrier
+receiver is positive evidence AGAINST "definitely unguarded", whereas its absence
+leaves the counterexample intact (the 16 above).  `canonical_barrier_call_sites`
+already works on masked text + body span WITHOUT a CFG, so the barrier-presence
+evidence is obtainable even when the parse is unsupported.
+
+**OWNER DECISION REQUIRED.**  This changes the gate's definition of a violation
+(a false-positive fix, but it converts some current counterexamples into a new
+unproven state).  It touches proof.py's tier structure and must not be read as
+"relaxing assertions to make findings disappear" — hence sign-off before landing,
+plus a projection showing exactly which rows move and confirmation that no
+genuinely-unguarded row (like the 16) is downgraded.
+
+(NOTE: the `withLock`-as-transparent-scope idea was considered and set aside: it
+fixes 1 row, needs a shared-contract V2->V3 bump, AND needs the resolver extended
+for untyped constructor-initialised properties — `_PROP_RE` requires a type
+annotation but `private val categoryUpdateMutex = Mutex()` has none, so admission
+would fail even after a contract bump.)
 
 **Consequence for the plan.**  D6 (multi-star) remains BLOCKED, now on Bug 2b
-alone: 15 counterexample flips remain, all false positives from bodies the
-parser cannot model.  Next: diagnose the UNSUPPORTED bodies (what construct
-defeats the parse — try/catch, `withContext`, deeply nested lambdas?), fix or
-explicitly fail-closed them, then re-run the D6 projection and expect the false
-counterexamples to disappear.  Needs its own fixture-first pin + projection +
-shadow delta, per GR-14f/j/l precedent.  Reproduce:
+alone: 15 counterexample flips remain, false positives from the
+unmodelable/local-`none` conflation described above.  The fix is the tri-state
+local proof in the MEDIATOR (not a parser feature and not a contract bump), and it
+needs owner sign-off because it redefines when a row counts as a violation.
+Needs its own fixture-first pin + projection + shadow delta, per GR-14f/j/l
+precedent.  Reproduce:
 `build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`
 and `build/guard-debug/gr14u12/probe_after_bug13.py`.
 
