@@ -184,6 +184,7 @@ def prove_callable_direct_barriers(
     *,
     path: str,
     callable_key: str,
+    opacity_sites=None,
 ) -> CallableDirectBarrierProof:
     """Prove every mutation site of one callable; never raises.
 
@@ -192,6 +193,15 @@ def prove_callable_direct_barriers(
     CFG construction -> ``prove_direct_barrier``.  All sites of the callable
     must be passed: a lambda hiding any other row's mutation must never be
     modeled opaque, so partial site sets are caller bugs, not optimizations.
+
+    ``opacity_sites`` optionally overrides which sites drive the opacity
+    predicate (the proof itself still runs over every ``mutation_sites`` entry).
+    The mediation caller passes the callable's REAL mutation sites here while
+    still passing its pseudo-sites in ``mutation_sites`` so results exist for
+    their offsets: a pseudo-site is a call-edge offset, not a mutation, and
+    letting it force a lambda to be modeled can flip the whole callable to
+    UNSUPPORTED and hide a dominating barrier (GR-14u13).  Defaults to
+    ``mutation_sites`` — unchanged for every other caller.
     """
     sites = tuple(sorted(mutation_sites, key=lambda site: (site.span.start, site.span.end)))
     if not sites:
@@ -203,7 +213,12 @@ def prove_callable_direct_barriers(
             diagnostics=("DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",),
         )
 
-    opacity = _default_opacity_predicate(masked, body_span, sites)
+    gate_sites = (
+        sites
+        if opacity_sites is None
+        else tuple(sorted(opacity_sites, key=lambda site: (site.span.start, site.span.end)))
+    )
+    opacity = _default_opacity_predicate(masked, body_span, gate_sites)
     parse_result = parse_callable_body(
         masked,
         body_span,

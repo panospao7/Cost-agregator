@@ -186,9 +186,10 @@ class _DirectSiteProver:
         body_span = callable_body_span(masked, model)
         if body_span is None:
             return
-        sites = list(mutation_sites_from_observations(
+        real_sites = list(mutation_sites_from_observations(
             self._observations.get(callable_key, ())
         ))
+        sites = list(real_sites)
         for offset in sorted(self._requested.get(callable_key, ())):
             sites.append(
                 _pseudo_site(masked, callable_key, model.file, offset)
@@ -201,6 +202,11 @@ class _DirectSiteProver:
             tuple(sites),
             path=model.file,
             callable_key=callable_key,
+            # Only REAL mutation sites drive the opacity gate: a pseudo-site is
+            # a call-edge offset, and letting it force a lambda to be modeled
+            # could flip the whole callable to UNSUPPORTED and hide a dominating
+            # barrier (GR-14u13).
+            opacity_sites=tuple(real_sites),
         )
         proven: dict[int, bool] = {}
         # Record BOTH the requested pseudo-site offsets (mediation call edges)

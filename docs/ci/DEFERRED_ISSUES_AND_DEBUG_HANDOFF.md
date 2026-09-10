@@ -336,7 +336,8 @@ proving anything and the guard can never be seen.  Examples:
   external_entry 29 -> 22 (7 rows), 0 counterexamples, 0 regressions.
   Effect on the D6 projection: counterexample flips 18 -> 16 (it fixed 2 only).
 
-**Bug 2 — pseudo-site opacity interference (proved directly; STILL OPEN).**  `_compute` proves
+**Bug 2 — pseudo-site opacity interference — FIXED (GR-14u13,
+docs/ci/db-mediation/GR-14u13.yml).**  `_compute` proves
 over the observation sites PLUS a `_pseudo_site` per requested edge offset.  For
 `ReceiptRepository.clearAllScannedReceipts` (key DOES match, so Bug 1 does not
 apply):
@@ -345,8 +346,16 @@ apply):
     (`DB_DIRECT_BARRIER_PROOF_UNSUPPORTED`)
 A pseudo-site landing inside a lambda region flips the whole callable's proof to
 UNSUPPORTED, so a correctly-dominated guard reads as `none`.
+**FIXED in GR-14u13**: `prove_callable_direct_barriers` gained an optional
+`opacity_sites` keyword, so the proof still runs over every site (results exist
+for pseudo offsets) while the opacity gate is built from the REAL mutation sites
+only.  Defaults to `mutation_sites`, so the D4 gate is unchanged by
+construction (verified: D4 CLI 28/28 direct, 0 fail).  Measured delta:
+proven_helper 68 -> 69, external_entry 22 -> 21 (1 row), 0 regressions.  Effect
+on the D6 projection: counterexample flips 16 -> 15.
 
-**Bug 2b — body-parse limitation (isolated; STILL OPEN).**  For some writers the
+**Bug 2b — body-parse limitation (isolated; STILL OPEN — the ONLY remaining
+D6 blocker).**  For some writers the
 proof is UNSUPPORTED even with NO pseudo-sites: after the Bug 1 fix,
 `BankStatementLifecycleProcessor.processBankStatement` (20 observations) and
 `ExpenseRepository.updateExpenseCategoryBulk` return
@@ -355,13 +364,13 @@ proof is UNSUPPORTED even with NO pseudo-sites: after the Bug 1 fix,
 GR-11/GR-12 pipeline at all, independent of mediation.  This is a deeper parser
 limitation and needs its own diagnosis.
 
-**Consequence for the plan.**  D6 (multi-star) remains BLOCKED: after Bug 1,
-16 counterexample flips remain (all false positives from Bug 2 / Bug 2b).  Order:
-(2) fix pseudo-site interference (keep pseudo-sites out of the opacity predicate,
-or prove them in a separate pass so they cannot degrade real mutation sites);
-(2b) diagnose the UNSUPPORTED bodies; then re-run the D6 projection and expect
-the false counterexamples to disappear.  Each needs its own fixture-first pin +
-projection + shadow delta, per GR-14f/j/l precedent.  Reproduce:
+**Consequence for the plan.**  D6 (multi-star) remains BLOCKED, now on Bug 2b
+alone: 15 counterexample flips remain, all false positives from bodies the
+parser cannot model.  Next: diagnose the UNSUPPORTED bodies (what construct
+defeats the parse — try/catch, `withContext`, deeply nested lambdas?), fix or
+explicitly fail-closed them, then re-run the D6 projection and expect the false
+counterexamples to disappear.  Needs its own fixture-first pin + projection +
+shadow delta, per GR-14f/j/l precedent.  Reproduce:
 `build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`
 and `build/guard-debug/gr14u12/probe_after_bug13.py`.
 
