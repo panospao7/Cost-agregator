@@ -95,14 +95,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
 ) {
     // ---- Write-barrier guard ----
 
-    /**
-     * Centralized write permission check. All mutating methods must call this
-     * instead of querying RestoreMaintenanceMode directly.
-     */
-    private fun checkWritesAllowed(operation: String) {
-        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.$operation")
-    }
-
     // ---- Canonical dedupe key helpers ----
 
     private fun strictExternalIdentityKey(request: CreateExpenseRequest): String? {
@@ -256,7 +248,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // Guard: block writes during restore maintenance mode
         try {
-            checkWritesAllowed("createExpense")
+            writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.createExpense")
         } catch (blocked: DatabaseAccessBlockedException) {
             emitCreateBlockedDiagnosticBestEffort(
                 request = request,
@@ -833,7 +825,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ) {
         // Guard: block writes during restore maintenance mode
-        checkWritesAllowed("updateExpense")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateExpense")
 
         val now = timeProvider.now()
 
@@ -1017,7 +1009,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ) {
         // Guard: block writes during restore maintenance mode
-        checkWritesAllowed("updateCategory")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateCategory")
 
         val now = timeProvider.now()
 
@@ -1087,7 +1079,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ) {
-        checkWritesAllowed("updateLocation")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateLocation")
         require(latitude in -90.0..90.0) { "Latitude out of range" }
         require(longitude in -180.0..180.0) { "Longitude out of range" }
 
@@ -1143,7 +1135,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ): BusinessExpenseUpdateResult {
-        checkWritesAllowed("updateBusinessExpensePatch")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateBusinessExpensePatch")
 
         if (patch.isEmpty()) {
             return BusinessExpenseUpdateResult.NoChange
@@ -1309,7 +1301,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ) {
-        checkWritesAllowed("updateMerchant")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateMerchant")
 
         val now = timeProvider.now()
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
@@ -1390,7 +1382,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ) {
-        checkWritesAllowed("updateType")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateType")
 
         val now = timeProvider.now()
 
@@ -1476,7 +1468,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         source: String = "USER_EDIT"
     ) {
-        checkWritesAllowed("updateTransferDetails")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateTransferDetails")
 
         val now = timeProvider.now()
 
@@ -1557,7 +1549,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         transferAccountName: String?,
         source: String = "USER_EDIT"
     ) {
-        checkWritesAllowed("updateTypeAndTransferDetails")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateTypeAndTransferDetails")
 
         val now = timeProvider.now()
 
@@ -1728,7 +1720,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ): MutationResult<OwnershipUpdateResult> {
-        checkWritesAllowed("updateOwnershipDbOnlyV2")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2")
 
         val corrId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
         val now = timeProvider.now()
@@ -1827,7 +1819,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ) {
-        checkWritesAllowed("bulkUpdateCategory")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.bulkUpdateCategory")
         val merchantKey = MerchantKeyGenerator.generate(merchant)
         val now = timeProvider.now()
         var affectedCount = 0
@@ -1899,7 +1891,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ) {
-        checkWritesAllowed("bulkUpdateMerchant")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.bulkUpdateMerchant")
         if (oldMerchant == newMerchant) return
         val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
@@ -1980,7 +1972,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ): Result<Unit> {
         try {
-            checkWritesAllowed("deleteExpense")
+            writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.deleteExpense")
         } catch (blocked: DatabaseAccessBlockedException) {
             return Result.failure(blocked)
         } catch (blocked: RuntimeException) {
@@ -2049,7 +2041,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ): Result<Unit> {
         // Guard: block writes during restore maintenance mode
         try {
-            checkWritesAllowed("deleteExpense")
+            writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.deleteExpense")
         } catch (blocked: DatabaseAccessBlockedException) {
             return Result.failure(blocked)
         } catch (blocked: RuntimeException) {

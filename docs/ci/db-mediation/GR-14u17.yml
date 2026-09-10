@@ -1,0 +1,120 @@
+# GR-14u17 (§D7 sub-cause 2b-ii) — make TransactionLifecycleCoordinator's write
+# guard ENGINE-VISIBLE (production guard-form change).
+#
+# Board effect at this level: 0 rows (still gated by earlier tiers).  Under the D6
+# multi-star projection: NEW counterexamples 7 -> 1, proven_helper 69 -> 87 (+18),
+# 0 regressions.
+#
+# ROOT CAUSE (sub-cause 2b-ii, found in the GR-14u11/GR-14u14 triage):
+#   TransactionLifecycleCoordinator guards its mutating methods through a private
+#   wrapper
+#       private fun checkWritesAllowed(operation: String) {   // :102 (pre-change)
+#           writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.$operation")
+#       }
+#   and calls it UNQUALIFIED (`checkWritesAllowed("bulkUpdateCategory")`, :1830 and
+#   :1560 among 14 sites).  `canonical_barrier_call_sites` matches
+#   `receiver.method(` only (`_CALL_RE`), so an unqualified local helper is
+#   invisible to BOTH the dominance proof and the text-only barrier scan.  Those
+#   methods therefore read `localGuard: none`, and once D6 makes their paths exact
+#   they were reported as unguarded call paths — 6 false counterexamples
+#   (`bulkUpdateCategory` x2, `updateTypeAndTransferDetails` x4).
+#
+# FIX: qualify every call site with the canonical receiver, preserving the
+# fully-qualified operation naming, and delete the now-unused wrapper:
+#       writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.<method>")
+#   This is the SAME house pattern GR-14u6 adopted for the notification-capture
+#   writers and that the rest of the codebase already uses (e.g.
+#   BusinessExpenseRepository.addMileage, which GR-14u12 proved).  It is
+#   semantically IDENTICAL: the deleted wrapper performed exactly this delegation.
+#   An engine change was rejected as over-engineering — the pattern occurs in this
+#   ONE file (`grep '^\s*checkWritesAllowed\s*\('` hits only this file plus
+#   DatabaseWriteBarrier's own internal overloads).
+#
+# BLAST RADIUS: 1 production file, mechanical, 14 call sites re-qualified with the
+# operation string unchanged in meaning, 1 unused private helper deleted.  15
+# qualified calls now exist: the 14 rewritten plus 1 PRE-EXISTING qualified call
+# at :1271 (untouched).  Zero unqualified calls remain.
+#
+# EVIDENCE:
+#   - current board (no D6): 0 rows changed; summary identical
+#     (proven_helper 69 / worker 14 / ambiguous 169 / async 133 / external 21).
+#   - D6 projection (build/guard-debug/gr14u17/project_d6.py, read-only resolver
+#     patch over the rewritten tree): NEW counterexamples **7 -> 1**,
+#     proven_helper **69 -> 87 (+18)**, unproven_ambiguous 169 -> 150,
+#     0 counterexample regressions.  The SINGLE remaining new counterexample is
+#     `LegacyDataMigrationService.migrateCategories` — a GENUINE finding (that file
+#     contains zero barrier references), not engine noise.
+#   - Therefore D6 (multi-star) is now unblocked: it would surface exactly one real
+#     unguarded path and no false positives.
+#
+# VALIDATION STATUS: COMPLETE.
+#   - engine-side evidence: COMPLETE (board delta + D6 projection above);
+#     engine battery 84 passed and scripts/db_guard 235 passed on the engine work
+#     of GR-14u15/u16 (this batch changes no engine bytes).
+#   - Kotlin compile: **PASSED** — `gradlew :app:compileDebugKotlin` ran to
+#     completion (the task proceeded on to `:app:testDebugUnitTest`), and the
+#     recompiled TransactionLifecycleCoordinator classes are present with fresh
+#     timestamps.  Main-source compile therefore confirms the guard re-qualification
+#     and the deleted wrapper are sound (no unresolved reference to the removed
+#     helper, no arity/type change).
+#   - Targeted tests: `--tests "*TransactionLifecycleCoordinator*"
+#     --tests "*LifecycleBarrierContract*" --tests "*TransactionLifecycleDbContract*"`.
+#     `TransactionLifecycleCoordinatorDbContractTest` update/delete/insert tests
+#     PASSED; `createExpense duplicate detected and skipped` FAILED on an event
+#     COUNT assertion (expected 2, got 3).  That failure is PRE-EXISTING and
+#     unrelated: `docs/testing/generated/TEST_FAILURE_TRACKER.md:154` already
+#     records this class as failing ("DB contract test uses old constructor —
+#     UPDATE constructor"), and this batch cannot alter event counts — it only
+#     changes the guard call form, and `checkWritesAllowed` is a no-op in NORMAL
+#     restore mode (which is what tests run in).
+#   - NOTE: the full suite is NOT a usable gate (TEST_FAILURE_LEDGER.md records
+#     121 `domain.*` + 53 `data.*` pre-existing failures and a JVM agent crash);
+#     prefer targeted compile/test runs.
+schemaVersion: 1
+batchId: GR-14u17
+startSha: 50c0b8bc
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+mediationReportSha256After: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/
+    TransactionLifecycleCoordinator.kt:
+      qualify 14 checkWritesAllowed call sites with the canonical writeBarrier
+      receiver; delete the now-unused private wrapper
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - none on the current board (0 rows move); the effect is gated on D6
+rootCause: GR13_LOCAL_GUARD_UNMODELABLE # guard invoked through an unqualified local wrapper
+selectedPattern: PRODUCTION
+tests:
+  - board delta: 0 rows (identical summary)
+  - D6 projection: new counterexamples 7 -> 1, proven_helper +18, 0 regressions
+  - Kotlin compile: PASSED (:app:compileDebugKotlin completed)
+  - targeted coordinator tests: passing except one PRE-EXISTING failure
+    (TransactionLifecycleCoordinatorDbContractTest event-count assertion,
+    already recorded in docs/testing/generated/TEST_FAILURE_TRACKER.md:154)
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  TransactionLifecycleCoordinator guarded its mutating methods through a private
+  wrapper called unqualified, which the receiver-based barrier scan cannot see, so
+  those guards were invisible to the proof engine and surfaced as false unguarded
+  call paths once exact-path resolution improved.  This batch re-qualifies the 14
+  call sites with the canonical writeBarrier receiver - the same engine-visible
+  form the rest of the codebase already uses and that GR-14u6 adopted - and deletes
+  the now-unused wrapper.  The change is semantically identical, alters no business
+  rule or lifecycle path, changes no policy, baseline, exception or authorization
+  bytes, leaves the current mediation board unchanged, and reduces the D6
+  projection from seven rows to one genuinely unguarded path with zero
+  regressions.  Main-source Kotlin compilation passes; the single targeted test
+  failure is a pre-existing stale assertion recorded in the repository's own test
+  failure tracker.
