@@ -412,26 +412,64 @@ with a visible barrier ⇒ not a counterexample"):**
   NEW counterexamples fall 15 (D6 alone) -> **7**, i.e. the design removes 8 of the
   15 false positives while KEEPING a counterexample wherever no barrier is visible.
 
-**SUB-CAUSE 2b-ii — locally-delegated guard helpers are invisible (NEW).**
-The 7 survivors are `TransactionLifecycleCoordinator.bulkUpdateCategory` (x2),
-`updateTypeAndTransferDetails` (x4) and `LegacyDataMigrationService.migrateCategories`.
-The first six ARE guarded — both methods call `checkWritesAllowed("...")` as their
-first statement (TransactionLifecycleCoordinator.kt:1560 and :1830) — but the call
-is UNQUALIFIED, and that class defines a private delegating helper:
+**MEDIATOR CONFLATION — FIXED (GR-14u15, docs/ci/db-mediation/GR-14u15.yml).**
+The mediator now uses a TRI-STATE local proof (`proven` | `unmodelable` |
+`unguarded`) and only reports a counterexample for a definitively `unguarded`
+site; an unmodelable site whose mutation is PRECEDED by a canonical barrier call
+is reported as unproven with the new reason `GR13_LOCAL_GUARD_UNMODELABLE`
+(family GR14_SPLIT_UNMODELABLE_BODY).  On the current board this is a ZERO-ROW
+change (report byte-identical, da296160...).  With the D6 multi-star patch it
+discards 8 of the 15 false counterexamples (15 -> 7), +12 proven_helper, 0
+regressions.
 
-    private fun checkWritesAllowed(operation: String) {           // :102
-        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.$operation")
-    }
+**GR-14u16 — THE BARRIER-SCOPE FORM DOES NOT MATCH THE REAL API (NEW, and the
+single largest cause: 47 of the 82 unmodelable bodies).**
+`DatabaseWriteBarrier.runWrite` is declared
+`suspend fun <T> runWrite(operation: DatabaseAccessOperation, block: suspend () -> T): T`
+(DatabaseWriteBarrier.kt:33) — the operation argument is REQUIRED.  So the only
+legal call shape is `writeBarrier.runWrite(op) { ... }` (or `runWrite(op, { ... })`).
+But the tokenizer's `_RE_BARRIER_SCOPE` is
+`r"\bwriteBarrier\s*\.\s*runWrite\s*\{"` (tokenizer.py:39) — it demands the brace
+IMMEDIATELY after `runWrite`, i.e. a bare `runWrite { ... }` that cannot be written
+against this signature.  Real usage therefore misses the BARRIER_SCOPE branch and
+falls into `_RE_LIKE_BARRIER` (tokenizer.py:49), which fails the WHOLE body with
+`DB_STRUCTURAL_MODEL_BARRIER_FORM_UNRECOGNIZED` ("barrier-form-unrecognized").
 
-`canonical_barrier_call_sites` matches `receiver.method(` only (`_CALL_RE`), so an
-intra-class delegating guard is invisible to both the direct proof and the
-barrier-presence evidence.  (Only `migrateCategories` looks genuinely unguarded, so
-it is correctly retained — consistent with the gr14u14/measure_guards.py "NEITHER"
-list.)  This is the same class of problem as §D5/GR-14u7 (a guard form the engine
-cannot see), and it means the tri-state design alone under-resolves Bug 2b: the
-guard-helper indirection needs its own recognition rule (e.g. treat a zero-arg/
-one-arg local method whose body delegates to the canonical receiver as a barrier
-form, or follow one level of intra-class delegation in the CFG).
+MEASURED (`build/guard-debug/gr14u15/probe_forms.py`, real masked source):
+  - `checkWritesAllowed(op)` then write    -> parses, 1 barrier site
+  - `runWrite(op) { ... }`                 -> **barrier-form-unrecognized**
+  - `runWrite(op, { ... })`                -> **barrier-form-unrecognized**
+  - `runWrite { ... }` (bare)              -> parses ... but is not legal Kotlin here
+Note `_RE_WORKER_GUARD` (tokenizer.py:45) ALREADY allows the parenthesised form
+(`runGuardedWithContext|runGuarded\s*(?:\([^()]*\))?\s*\{`) — the barrier scope is
+the odd one out, which looks like an oversight rather than a design choice.
+
+WHY IT MATTERS: every callable that guards with the canonical `runWrite(op) { ... }`
+has an UNMODELABLE body, so it can never be proven and (pre-GR-14u15) would be
+reported as an unguarded call path as soon as its paths become exact.  This
+includes the notification-capture writers guarded in GR-14u6
+(`NotificationIntakeCoordinator.capture` / `.captureForRetry`, see
+NotificationIntakeCoordinator.kt:140 and :248) and
+`TransactionLifecycleCoordinator.createExpenseMutation`.
+
+CANDIDATE FIX: teach the barrier-scope branch the real form — mirror
+`_RE_WORKER_GUARD`'s optional parenthesised argument list, with enough nesting
+tolerance for `runWrite(\n  DatabaseAccessOperation("...") \n) {`.  CAUTION: this
+edits the SHARED tokenizer consumed by the D4 gate as well, so it needs a
+fixture-first pin per form + a projection over BOTH the D4 gate and the mediation
+board + a shadow delta, and it must not start accepting genuinely-escaping lambdas
+(the existing `lambda-before-barrier-scope` guard at tokenizer.py:731 must stay).
+Expected to be the highest-value remaining engine fix: 47 bodies.
+
+**SUB-CAUSE 2b-ii — locally-delegated guard helpers are invisible (STILL OPEN).**
+`TransactionLifecycleCoordinator` defines
+`private fun checkWritesAllowed(operation: String)` (TransactionLifecycleCoordinator.kt:102)
+forwards to `writeBarrier.checkWritesAllowed(...)`, and its mutating methods call it
+UNQUALIFIED (`:1560`, `:1830`).  `canonical_barrier_call_sites` matches
+`receiver.method(` only (`_CALL_RE`), so an intra-class delegating guard is
+invisible to both the direct proof and the barrier-presence evidence.  Accounts for
+6 of the 7 remaining D6 counterexamples; the 7th (`migrateCategories`) looks
+genuinely unguarded and is correctly retained.
 
 **OWNER DECISION REQUIRED.**  This changes the gate's definition of a violation
 (a false-positive fix, but it converts some current counterexamples into a new

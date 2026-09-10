@@ -171,6 +171,11 @@ class _DirectSiteProver:
         self._observations = observations_by_callable
         self._requested: dict[str, set[int]] = {}
         self._results: dict[str, dict[int, bool]] = {}
+        # Tri-state per offset, alongside the boolean proof map: a body the GR-12
+        # engine refuses to model yields "unmodelable" (which is NOT evidence of
+        # an unguarded mutation) rather than collapsing into "not proven"
+        # (GR-14u15).  Only "unguarded" may become a counterexample.
+        self._status: dict[str, dict[int, str]] = {}
 
     def request(self, callable_key: str, site_start: int) -> None:
         self._requested.setdefault(callable_key, set()).add(site_start)
@@ -217,14 +222,45 @@ class _DirectSiteProver:
         # "direct") for every guarded writer whose guard is not a runWrite scope.
         offsets = set(self._requested.get(callable_key, ()))
         offsets.update(site.span.start for site in sites)
+        unmodelable = outcome.diagnostics == ("DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",)
+        barrier_offsets = outcome.barrier_call_offsets
+        proven: dict[int, bool] = {}
+        status: dict[int, str] = {}
         for offset in sorted(offsets):
             result = outcome.result_for_site_start(offset)
-            proven[offset] = result.status == ProofStatus.PROVEN
+            is_proven = result.status == ProofStatus.PROVEN
+            proven[offset] = is_proven
+            if is_proven:
+                status[offset] = "proven"
+            elif unmodelable and any(b < offset for b in barrier_offsets):
+                # The body could not be modeled, but a canonical barrier call
+                # PRECEDES this mutation, so "definitely unguarded" is not
+                # established: not a counterexample.  Position matters — a
+                # barrier that comes after the mutation does not cover it.
+                status[offset] = "unmodelable"
+            else:
+                status[offset] = "unguarded"
         self._results[callable_key] = proven
+        self._status[callable_key] = status
 
     def proven_sites(self, callable_key: str) -> dict[int, bool]:
         self._compute(callable_key)
         return self._results.get(callable_key, {})
+
+    def local_status(self, callable_key: str, site_start: int) -> str:
+        """``proven`` | ``unmodelable`` | ``unguarded`` for one mutation site.
+
+        ``unmodelable`` means the body could not be modeled AND a canonical
+        barrier call precedes the site, so the engine must not report a
+        counterexample from it (it lacks the evidence of an unguarded path).
+        ``unguarded`` is the only value that permits a counterexample.  A site
+        with no recorded status (no body span, unknown callable) stays
+        ``unguarded``, i.e. exactly today's behaviour — this change only ever
+        suppresses a counterexample where a preceding barrier was actually seen.
+        """
+        self._compute(callable_key)
+        recorded = self._status.get(callable_key, {})
+        return recorded.get(site_start, "unguarded")
 
     def as_callback(self):
         """Callback for the propagation: precomputed results only."""
@@ -582,6 +618,9 @@ def build_mediation_shadow(
             ambiguous_worker_classes=frozenset(discovery.ambiguous_worker_classes),
             direct_site_prover=(
                 direct_prover.as_callback() if direct_prover is not None else None
+            ),
+            direct_site_status=(
+                direct_prover.local_status if direct_prover is not None else None
             ),
         )
 

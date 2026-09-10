@@ -157,12 +157,17 @@ class MediationProver:
         registered_do_work_roots: frozenset[str] = frozenset(),
         ambiguous_worker_classes: frozenset[str] = frozenset(),
         direct_site_prover=None,
+        direct_site_status=None,
     ) -> None:
         self.builder = builder
         self.graph = graph
         self.registered_do_work_roots = frozenset(registered_do_work_roots)
         self.ambiguous_worker_classes = frozenset(ambiguous_worker_classes)
         self._direct_site_prover = direct_site_prover
+        # Tri-state probe ("proven" | "unmodelable" | "unguarded").  A body the
+        # GR-12 engine refuses to model is NOT evidence of an unguarded mutation,
+        # so it must not produce a counterexample (GR-14u15).
+        self._direct_site_status = direct_site_status
         self._reverse_exact: dict[str, list[CallEdge]] = {}
         self._reverse_all: dict[str, list[CallEdge]] = {}
         for edge in graph.edges:
@@ -228,6 +233,22 @@ class MediationProver:
             ):
                 context = "direct"
         return context, uncertain, waived
+
+    def _local_guard_unmodelable(self, subject) -> bool:
+        """True when this subject's guard could not be evaluated, not disproved.
+
+        The GR-12 body model refuses constructs it cannot prove safe (exception
+        flow above all), so "not proven" there is absence of evidence, not
+        evidence of absence.  Only this tri-state probe can tell the two apart;
+        without it every unmodelable body would be reported as an unguarded call
+        path (GR-14u15).
+        """
+        if self._direct_site_status is None:
+            return False
+        return (
+            self._direct_site_status(subject.callable_key, subject.site_start)
+            == "unmodelable"
+        )
 
     # ── propagation ──
 
@@ -633,6 +654,29 @@ class MediationProver:
                         barrier_mode=mode,
                         proof_state=ProofState.UNPROVEN_EXTERNAL_ENTRY,
                         reason_code="GR13_UNGUARDED_PATH_FROM_UNKNOWN_ROOT",
+                        deciding_resolution=ResolutionState.EXACT_SYNCHRONOUS,
+                        local_guard=local_guard,
+                        bounded_path=self._reconstruct_path(
+                            subject.callable_key, "none"
+                        ),
+                        reaching_root_kinds=ancestor_kinds,
+                        convertible_to_direct=convertible,
+                    )
+                # A counterexample asserts a DEFINITELY unguarded call path.
+                # When the GR-12 engine could not model this callable's body and
+                # a canonical barrier call precedes the mutation, that assertion
+                # is not established: the guard may exist but be unprovable
+                # (try/catch and other conservatively-rejected constructs).
+                # Report unproven instead, so no violation is invented.  Rows
+                # whose body is unmodelable with NO preceding barrier keep the
+                # counterexample (GR-14u15).
+                if self._local_guard_unmodelable(subject):
+                    return SubjectProof(
+                        mutation_key=subject.mutation_key,
+                        callable_key=subject.callable_key,
+                        barrier_mode=mode,
+                        proof_state=ProofState.UNPROVEN_AMBIGUOUS_CALL,
+                        reason_code="GR13_LOCAL_GUARD_UNMODELABLE",
                         deciding_resolution=ResolutionState.EXACT_SYNCHRONOUS,
                         local_guard=local_guard,
                         bounded_path=self._reconstruct_path(

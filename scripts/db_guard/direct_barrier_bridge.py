@@ -104,6 +104,11 @@ class CallableDirectBarrierProof:
     results: tuple[DirectBarrierProofResult, ...] = ()
     callable_wide_failure: DirectBarrierProofResult | None = None
     has_canonical_barrier: bool = False
+    # Start offsets of every canonical barrier call site in the body, computed
+    # from masked text alone (no CFG).  Available even when the body cannot be
+    # modeled, where it is the only evidence that a guard exists at all
+    # (GR-14u15).  NOT a proof: presence never implies dominance.
+    barrier_call_offsets: tuple[int, ...] = ()
     diagnostics: tuple[str, ...] = ()
     _by_site_start: dict[int, DirectBarrierProofResult] = field(
         default_factory=dict, init=False, repr=False, compare=False
@@ -218,6 +223,23 @@ def prove_callable_direct_barriers(
         if opacity_sites is None
         else tuple(sorted(opacity_sites, key=lambda site: (site.span.start, site.span.end)))
     )
+
+    # Barrier call sites come from masked text alone, so this evidence survives
+    # a body the tokenizer refuses to model.
+    barrier_offsets = tuple(
+        sorted(
+            {
+                site.span.start
+                for site in canonical_barrier_call_sites(
+                    masked,
+                    body_span,
+                    CANONICAL_BARRIER_CONTRACT_V2,
+                    ReceiverTypeResolver(masked),
+                )
+            }
+        )
+    )
+
     opacity = _default_opacity_predicate(masked, body_span, gate_sites)
     parse_result = parse_callable_body(
         masked,
@@ -228,7 +250,8 @@ def prove_callable_direct_barriers(
     if parse_result.unsupported:
         return CallableDirectBarrierProof(
             results=tuple(_unsupported_result(site, callable_key) for site in sites),
-            has_canonical_barrier=False,
+            has_canonical_barrier=bool(barrier_offsets),
+            barrier_call_offsets=barrier_offsets,
             diagnostics=("DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",),
         )
     markers = collect_barrier_markers(parse_result, masked)
@@ -284,6 +307,7 @@ def prove_callable_direct_barriers(
         results=per_site_results,
         callable_wide_failure=callable_wide_failure,
         has_canonical_barrier=has_canonical_barrier,
+        barrier_call_offsets=barrier_offsets,
         diagnostics=tuple(proof_diagnostics),
     )
 

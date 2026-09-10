@@ -1,0 +1,124 @@
+# GR-14u15 (§D7 Bug 2b) — the local guard proof is TRI-STATE and position-aware.
+#
+# On the CURRENT board this is a ZERO-ROW, BYTE-IDENTICAL change (see delta
+# below).  It is the guard that stops the D6 multi-star fix from inventing
+# violations: it is inert until exact paths reach bodies the GR-12 engine
+# refuses to model.
+#
+# ROOT CAUSE (GR-14u14/GR-14u11, handoff §D7):
+#   `_local_site_context` returns "none" whenever the direct-site probe is not
+#   True, and `MediationProver.prove()` step 7/8 turns "none" in `effective` into
+#   COUNTEREXAMPLE_UNGUARDED_CALL_PATH.  That conflates "there is no guard" with
+#   "we could not model the body to prove a guard".  82 of 252 observed callables
+#   (33%) are unmodelable, so the conflation is wide.  It was masked while an
+#   uncertain `super.onCreate` edge short-circuited those rows to
+#   `unproven_ambiguous_call`; the D6 multi-star fix makes the paths exact and the
+#   false counterexamples surface (15 of them).
+#
+# A BLANKET DOWNGRADE WAS REJECTED: of the 82 unmodelable bodies, 57 carry
+# `checkWritesAllowed` before their mutation and 9 carry a `runWrite` scope, but
+# 16 carry NEITHER (three `doWork` workers, the backfill sources,
+# `restoreReceiptAssets`, `migrateCategories`).  Those must stay counterexamples.
+#
+# FIX (three parts):
+#   1. `direct_barrier_bridge.CallableDirectBarrierProof` gains
+#      `barrier_call_offsets`: the start offsets of every canonical barrier call
+#      site, computed from masked text ALONE (no CFG) so the evidence survives a
+#      body the tokenizer refuses to model.  Presence is not dominance.
+#   2. `_DirectSiteProver` records a tri-state per offset —
+#      `proven` | `unmodelable` | `unguarded` — exposed as `local_status(...)`.
+#      `unmodelable` requires BOTH that the parse was unsupported AND that a
+#      canonical barrier call PRECEDES this mutation.  A site with no recorded
+#      status stays `unguarded` (today's behaviour), so the change never silently
+#      suppresses a counterexample it has no evidence about.
+#   3. `MediationProver` takes `direct_site_status` and, at the counterexample
+#      branch only, returns UNPROVEN_AMBIGUOUS_CALL /
+#      `GR13_LOCAL_GUARD_UNMODELABLE` instead.  The propagation callback keeps
+#      BOOLEAN semantics deliberately: only a genuine PROVEN grants "direct"
+#      context, so this cannot fabricate a proof downstream.
+#   `GR13_LOCAL_GUARD_UNMODELABLE` is registered in `_REMEDIATION_RULES` with the
+#   same family as `GR13_CALLABLE_BODY_UNMODELABLE` (GR14_SPLIT_UNMODELABLE_BODY).
+#
+# POSITION MATTERS: the barrier must precede the mutation offset.  A mutation
+# that comes first, with the only barrier after it, stays `unguarded` — a second,
+# genuinely unguarded write in the same body is never excused.  That specific
+# case is pinned (see below) and the pin was verified to FAIL when the rule is
+# weakened to "a barrier exists anywhere in the body".
+#
+# SHADOW DELTA on the current board: 0 rows.  The board is BYTE-IDENTICAL to the
+# committed GR-14u13 report (da296160...) and deterministic across a double run.
+# There are no counterexample rows today, so the new gate never fires — exactly
+# as intended.
+#
+# PROJECTION with the D6 multi-star change applied (build/guard-debug/gr14u15/
+# project_d6.py, read-only resolver patch): NEW counterexamples 15 -> **7**,
+# proven_helper 69 -> 81 (+12), unproven_ambiguous 169 -> 150,
+# external_entry 21 -> 21, 0 regressions; 8 rows classified
+# `GR13_LOCAL_GUARD_UNMODELABLE` (updateExpenseCategoryBulk x1,
+# processBankStatement x7).  The 7 survivors are the SUB-CAUSE 2b-ii
+# (locally-delegated guard helper) plus the one genuinely unguarded
+# `migrateCategories`.  D6 therefore REMAINS BLOCKED until 2b-ii and GR-14u16
+# are resolved.
+#
+# Validation:
+#   - test_gr14u15_local_guard_tristate.py 6/6 — including the position pin
+#     above (verified RED when the rule is weakened) and the fail-open guard
+#     that an unknown callable still reads `unguarded`.
+#   - engine battery 79 passed; scripts/db_guard 235 passed
+#     (test_models.py excluded — it uses a bare `import models` and only runs
+#     from its own directory; pre-existing and unrelated).
+#   - fixture_runner 58/58 (unchanged contract path).
+#   - Python-only; no Kotlin/Gradle change; policy bytes unchanged (7851adc2...).
+schemaVersion: 1
+batchId: GR-14u15
+startSha: cdea73a3
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+mediationReportSha256After: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/direct_barrier_bridge.py:
+      CallableDirectBarrierProof.barrier_call_offsets (text-only evidence,
+      computed before the parse, recorded on both the unsupported and the
+      modeled path)
+  - scripts/ci/inspect_db_mediation_proof.py:
+      _DirectSiteProver records proven|unmodelable|unguarded per offset and
+      exposes local_status(); wired into MediationProver as direct_site_status
+  - scripts/db_guard/mediation_analysis/proof.py:
+      direct_site_status param + _local_guard_unmodelable(); the counterexample
+      branch returns UNPROVEN_AMBIGUOUS_CALL / GR13_LOCAL_GUARD_UNMODELABLE when
+      the guard is unmodelable rather than disproven
+  - scripts/ci/generate_gr13_unproven_writers.py:
+      register GR13_LOCAL_GUARD_UNMODELABLE -> GR14_SPLIT_UNMODELABLE_BODY
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - none on the current board (0 rows move); the effect is gated on D6
+rootCause: GR13_LOCAL_GUARD_UNMODELABLE # mediator conflated "unmodelable" with "no guard"
+selectedPattern: ENGINE
+tests:
+  - test_gr14u15_local_guard_tristate.py 6/6 (position pin verified RED when weakened)
+  - engine battery 79 passed; scripts/db_guard 235 passed; fixture_runner 58/58
+  - current board byte-identical + deterministic (da296160...)
+  - D6 projection: new counterexamples 15 -> 7, proven +12, 0 regressions
+
+status: COMPLETE # prerequisite for D6; D6 still blocked on 2b-ii + GR-14u16
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch stops the mediator from reporting a definitely-unguarded call path
+  when what actually happened is that the GR-12 body model refused to model the
+  callable and a canonical barrier call precedes the mutation.  A counterexample
+  now requires a definitively unguarded site; an unmodelable-but-preceded site is
+  reported as unproven with a distinct reason code and its own remediation family.
+  The change is provably inert on the current board (byte-identical report), never
+  fabricates a proof (the propagation callback stays boolean and only a genuine
+  PROVEN grants direct context), and never suppresses a counterexample it has no
+  evidence about (an unknown callable still reads unguarded).  No policy,
+  baseline, exception or authorization bytes change, and the report remains
+  shadow-only (reportOnly: true).
