@@ -295,8 +295,61 @@ ambiguity — the risk is only the confident-by-luck single candidate.
 **Recommended when taken:** land the multi-star resolution with a projection
 gate (as here), a fixture pin for (i) one-star, (ii) multi-star unambiguous,
 (iii) multi-star ambiguous => unknown, and (iv) `super.onCreate` under multi-star
-resolving external with no targets; then triage the 18 counterexamples as their
-own batch (guard-or-disposition), because they are real reachability, not noise.
+resolving external with no targets.  **BUT the 18 counterexamples are FALSE
+POSITIVES from two pre-existing bugs — see §D7 — so fix §D7 first, then re-run
+this projection and expect them to disappear.**
+
+### D7. TRIAGE of the 18 D6 counterexamples: ALL FALSE POSITIVES — two
+###     pre-existing `local=none` bugs (GR-14u11, measured)
+Every one of the 18 rows carries `localGuard: none` BOTH before and after the
+multi-star change, yet the writers are genuinely guarded (e.g.
+`ReceiptRepository.clearAllScannedReceipts` has
+`writeBarrier.checkWritesAllowed(...)` as its first statement at ReceiptRepository
+:535; `BankStatementLifecycleProcessor.processBankStatement` at :140).  The
+multi-star fix did not create violations — it exposed two pre-existing defects in
+the mediation direct-site path that make guards invisible.  **Do NOT land D6
+(multi-star) until these are fixed**, or 18 false counterexamples surface.
+
+**Bug 1 — D4 observation key vs GRAPH callable key mismatch (LARGE: 157/252).**
+`_DirectSiteProver` is constructed with `obs_by_callable`, keyed by the D4
+`observation.callable_key` (canonical, FULLY-QUALIFIED parameter types), while
+`_compute` looks up `self._observations.get(callable_key)` with the GRAPH
+callable key (SIMPLE / normalized parameter types).  Measured on the current
+board: of **252** callables with observations, **157 (62%)** have a D4 key that is
+NOT present in `builder.callables` at all, so `_compute` returns `{}` before
+proving anything and the guard can never be seen.  Examples:
+  - D4  `…|function|processBankStatement|null|android.net.Uri`
+    GRAPH `…|function|processBankStatement|null|Uri`
+  - D4  `…|function|insertOrUpdate|null|…domain.currency.DomainExchangeRate`
+    GRAPH `…|function|insertOrUpdate|null|DomainExchangeRate`
+  - D4  `…|insertOrUpdateAll|null|List<…DomainExchangeRate>`
+    GRAPH `…|insertOrUpdateAll|null|List`
+  - D4  `…|addMemberToGroup|null|Long,String,String?,Boolean,(Long) -> Unit`
+    GRAPH `…|addMemberToGroup|null|Long,String,String,Boolean,suspend (memberId: Long) -> Unit`
+  (nullability, FQ vs simple, generic arguments, and lambda spelling all differ.)
+  This is the dominant cause: it silently disables the GR-12 direct proof for
+  most guarded writers, which is why so many rows sit at `local=none`.
+
+**Bug 2 — pseudo-site opacity interference (proved directly).**  `_compute` proves
+over the observation sites PLUS a `_pseudo_site` per requested edge offset.  For
+`ReceiptRepository.clearAllScannedReceipts` (key DOES match, so Bug 1 does not
+apply):
+  - proof over the observation site alone  -> site 27427 = **PROVEN**
+  - proof with the 2 requested pseudo sites -> site 27427 = **UNSUPPORTED**
+    (`DB_DIRECT_BARRIER_PROOF_UNSUPPORTED`)
+A pseudo-site landing inside a lambda region flips the whole callable's proof to
+UNSUPPORTED, so a correctly-dominated guard reads as `none`.
+
+**Consequence for the plan.**  The correct order is: (1) fix Bug 1 (align the
+D4 observation key with the graph callable key when building `obs_by_callable`,
+or make `_compute` resolve by path|owner|kind|method|receiver ignoring parameter
+spelling); (2) fix Bug 2 (keep pseudo-sites out of the opacity predicate, or
+prove pseudo-sites in a separate pass so they cannot degrade real mutation
+sites); (3) THEN re-run the D6 projection and expect the false counterexamples to
+disappear (and `local=none` to drop sharply).  Each needs its own fixture-first
+pin (key-with-FQ-params; pseudo-site-does-not-degrade-a-real-site) + projection +
+shadow delta, per GR-14f/j/l precedent.  Reproduce:
+`build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`.
 
 ### D2. ExpenseWriteStore — OWNER DECISION (designed-but-unwired layer)
 The only reference outside its own file is a stale doc comment in
