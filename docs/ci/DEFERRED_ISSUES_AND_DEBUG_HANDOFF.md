@@ -660,6 +660,55 @@ triggered in production (1 supertype header, and the arg path fails closed to
 closed reviewed set.  Fix them with the same one-line guard if a census ever
 shows them deciding rows.
 
+### D9. Carrier admissions have a MEASURED near-zero ceiling — the remaining
+###     rows are gated on RESOLUTION, not carrier classification (GR-14w1)
+The post-GR-14u20 census pointed at `coroutineScope` as the single largest
+deciding carrier (**37 rows**), and `kotlinx.coroutines.coroutineScope { }` is
+squarely admissible on the inline table's own stated criteria: it is structured
+concurrency that runs its block in the caller's coroutine context and does not
+return until the block and all its children complete, so it neither creates nor
+removes guard context (criterion 2, verbatim).  The table already admits the
+same category in `withTimeout`, `withTimeoutOrNull`, `withLock`, `collect` and
+`withPermit`.  A tree-wide scan confirmed the name cannot be shadowed: no
+project member or extension declares `coroutineScope` with a lambda parameter
+(the only other uses are `val coroutineScope = rememberCoroutineScope()`, whose
+calls are `launch`).
+
+**It was projected and NOT landed, because it buys nothing.**
+`build/guard-debug/gr14w0/project_coroutinescope.py` (runtime patch of
+`PRODUCTION_TRANSPARENT_INLINE_METHODS`, baseline the committed GR-14u20 board
+fe40d369...):
+
+```
+proven_helper            155 -> 155   (+0)
+unproven_ambiguous_call   77 ->  82
+unproven_async           133 -> 128
+changed rows: 5, ALL `unproven_async_or_escaping_callback -> unproven_ambiguous_call`
+new counterexamples: 0   regressions: 0
+```
+
+Five rows move sideways; **not one row is proven.**  The cause is the GR-14f
+resolution-preservation rule (callgraph.py `_resolve_call`, the
+`_chain_admitted_by_engine_carriers` branch): when an admitted carrier's call
+does not bind to corpus targets, the conservative name-matched uncertain edge is
+DELIBERATELY kept — "otherwise reverse-reachability would shrink and reclassify
+real recursion/inbound evidence as zero-inbound external entry."  So admitting a
+carrier only helps when the calls *inside* it already resolve exactly; where they
+do not, the carrier is not the real blocker and admission just promotes the next
+uncertain edge.
+
+**Consequence — recalibrated plan.**  Do NOT spend cycles admitting
+`PrivacyGate` (23), `PostCommitAction` (19), `navigation.launch` (17),
+`confirmQuickApprove` (9) or `photon`-region (6) one at a time on the assumption
+that the largest carrier is the largest win: each is capped the same way, and
+each costs a pinned-set change plus fixture coverage for ~0 rows.  The remaining
+210 rows are gated on **receiver/target RESOLUTION** — which is exactly where
+every recent win came from (GR-14u6 `super`, GR-14u19 multi-star, GR-14u20 the
+arrow).  Triage the residual by deciding-edge *resolution*, not by carrier name:
+20 `interface_dispatch` (§D4 — blocked on the A1 interface/impl concretization),
+19 `unresolved_target`, 14 `function_reference`, and the 34 rows whose deciding
+edge is a closure/exact edge rather than a single uncertain call.
+
 ### D4. Interface-dispatch residue after the GR-14t negative (20 rows)
 Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
  callers (addExpenseToGroup, createGroupWithMembers[Atomic],
@@ -727,17 +776,20 @@ genuinely unguarded DAO writers.  Neither `super` (u6) nor multi-star (u19) nor
 the arrow (u20) proved the rows on its own — the taint is LAYERED, and each fix
 promotes the next uncertain edge.
 
-Recommended order from here:
-  (a) dead-writer tail (mechanical, steady movement) — now BETTER SIGNALED: the
-      engine resolves receivers properly, so a `unproven_external_entry` row that
-      is genuinely zero-inbound is trustworthy again;
-  (b) async-carrier admissions one carrier at a time (each a closed admission) —
-      the largest remaining block (123 `async_dispatch` rows; `coroutineScope` 37,
-      a privacy-gate lambda 23, `PostCommitAction` 19, `navigation.launch` 17,
-      `confirmQuickApprove` 9, `photon.coroutineScope` 6);
-  (c) interface_dispatch/function_reference residue (§D4, 20 + 14 rows);
-  (d) Defect II — init-block invisibility (§D1 remainder; measured LATENT, 0 live
-      fail-open instances, so lower priority than its earlier framing suggested).
+Recommended order from here (RECALIBRATED by the §D9 measurement — carrier
+admissions are capped at ~0 rows, so they are NOT the next win):
+  (a) RESOLUTION triage of the 210 remaining rows, by deciding resolution rather
+      than by carrier name: 20 `interface_dispatch` (§D4), 19 `unresolved_target`,
+      14 `function_reference`, 34 closure/exact-decided.  Every recent win came
+      from this axis (`super` u6, multi-star u19, the arrow u20).
+  (b) dead-writer tail (mechanical, steady movement) — well signaled now that
+      receivers resolve properly and a genuinely zero-inbound row is trustworthy;
+  (c) Defect II — init-block invisibility (§D1 remainder; measured LATENT, 0 live
+      fail-open instances, so lower priority than its earlier framing suggested);
+  (d) carrier admissions last, and only if a census ever shows one whose calls
+      ALREADY resolve exactly (see §D9 for why: the GR-14f resolution-preservation
+      rule keeps the name-matched edge whenever resolution does not bind, so
+      admitting a carrier cannot help until resolution works).
 
 Artifacts this arc: build/guard-debug/{gr14s,gr14t,gr14u,gr14u2,gr14u3,
 gr14u4,gr14u5,gr14u6,gr14u7,gr14u8,gr14u9,gr14u10,gr14u11,gr14u12,gr14u13,
