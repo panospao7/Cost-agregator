@@ -402,12 +402,48 @@ leaves the counterexample intact (the 16 above).  `canonical_barrier_call_sites`
 already works on masked text + body span WITHOUT a CFG, so the barrier-presence
 evidence is obtainable even when the parse is unsupported.
 
+**PROJECTION OF THE TRI-STATE DESIGN (GR-14u14, read-only monkey-patch,
+`build/guard-debug/gr14u14/project_tristate.py` = D6 multi-star + "unmodelable
+with a visible barrier ⇒ not a counterexample"):**
+  baseline (gr14u13) -> projected: proven_helper 69 -> **81** (+12),
+  counterexample 0 -> 7, unproven_ambiguous 169 -> 179,
+  unproven_async 133 -> 116, external_entry 21 -> 9; 48 rows changed,
+  **0 regressions**, 30 unmodelable-with-barrier callables touched.
+  NEW counterexamples fall 15 (D6 alone) -> **7**, i.e. the design removes 8 of the
+  15 false positives while KEEPING a counterexample wherever no barrier is visible.
+
+**SUB-CAUSE 2b-ii — locally-delegated guard helpers are invisible (NEW).**
+The 7 survivors are `TransactionLifecycleCoordinator.bulkUpdateCategory` (x2),
+`updateTypeAndTransferDetails` (x4) and `LegacyDataMigrationService.migrateCategories`.
+The first six ARE guarded — both methods call `checkWritesAllowed("...")` as their
+first statement (TransactionLifecycleCoordinator.kt:1560 and :1830) — but the call
+is UNQUALIFIED, and that class defines a private delegating helper:
+
+    private fun checkWritesAllowed(operation: String) {           // :102
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.$operation")
+    }
+
+`canonical_barrier_call_sites` matches `receiver.method(` only (`_CALL_RE`), so an
+intra-class delegating guard is invisible to both the direct proof and the
+barrier-presence evidence.  (Only `migrateCategories` looks genuinely unguarded, so
+it is correctly retained — consistent with the gr14u14/measure_guards.py "NEITHER"
+list.)  This is the same class of problem as §D5/GR-14u7 (a guard form the engine
+cannot see), and it means the tri-state design alone under-resolves Bug 2b: the
+guard-helper indirection needs its own recognition rule (e.g. treat a zero-arg/
+one-arg local method whose body delegates to the canonical receiver as a barrier
+form, or follow one level of intra-class delegation in the CFG).
+
 **OWNER DECISION REQUIRED.**  This changes the gate's definition of a violation
 (a false-positive fix, but it converts some current counterexamples into a new
 unproven state).  It touches proof.py's tier structure and must not be read as
 "relaxing assertions to make findings disappear" — hence sign-off before landing,
 plus a projection showing exactly which rows move and confirmation that no
 genuinely-unguarded row (like the 16) is downgraded.
+
+(ALSO NOTE: the projected tri-state run ALSO carries the D6 multi-star change, so
+its "+12 proven_helper" mixes both effects; a clean landing should separate the
+mediator change from the multi-star change, or land them as one reviewed batch
+with the D6 gate evidence.)
 
 (NOTE: the `withLock`-as-transparent-scope idea was considered and set aside: it
 fixes 1 row, needs a shared-contract V2->V3 bump, AND needs the resolver extended
