@@ -239,33 +239,25 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             .includedExpenses
             .groupBy(::buildMonthKey)
 
-        val startYear = TimePeriodUtils.getYear(startDate)
-        val startMonth = TimePeriodUtils.getMonth(startDate)
-
-        var currentYear = startYear
-        var currentMonth = startMonth
-
-        // Iterate with a calendar-month cursor; stop when the cursor reaches endDate
+        // Iterate with a month-start cursor; stop when the cursor reaches endDate
         // (half-open: buckets cover [startDate, endDate), so stop when monthStart >= endDate)
-        while (true) {
-            // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-            val calendar = java.util.Calendar.getInstance()
-            calendar.set(currentYear, currentMonth, 1, 0, 0, 0)
-            calendar.set(java.util.Calendar.MILLISECOND, 0)
-            val monthStart = calendar.timeInMillis
+        // A18: java.time/TimePeriodUtils month-start iteration — no raw Calendar cursor.
+        // TimePeriodUtils uses the system default timezone; monthStart is always the 1st at
+        // 00:00, so Calendar.add(MONTH, 1) semantics never trigger end-of-month coercion.
+        var monthStart = TimePeriodUtils.getStartOfMonth(startDate)
 
+        while (true) {
             // Stop if the start of this month is at or beyond endDate (half-open upper bound)
             if (monthStart >= endDate) break
 
-            // Advance calendar to the first day of the next month to get nextMonthStart
-            calendar.add(java.util.Calendar.MONTH, 1)
-            val nextMonthStart = calendar.timeInMillis
+            // Advance to the first day of the next month to get nextMonthStart
+            val nextMonthStart = TimePeriodUtils.getEndOfMonth(monthStart)
 
             // Clamp bucket to the requested half-open dashboard range [startDate, endDate)
             val bucketStart = maxOf(monthStart, startDate)
             val bucketEnd = minOf(nextMonthStart, endDate)
 
-            val monthKey = "$currentYear-${(currentMonth + 1).toString().padStart(2, '0')}"
+            val monthKey = TimePeriodUtils.formatMonthKey(monthStart)
 
             val expenses = monthlyBuckets[monthKey].orEmpty().filter {
                 it.date >= bucketStart && it.date < bucketEnd
@@ -286,11 +278,7 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             result.add(MonthlyDataPoint(monthKey, spending, income, displayCurrency))
 
             // Move to next month
-            currentMonth++
-            if (currentMonth > 11) {
-                currentMonth = 0
-                currentYear++
-            }
+            monthStart = nextMonthStart
         }
 
         return result
@@ -337,15 +325,14 @@ class AdvancedAnalyticsDashboard @Inject constructor(
             7 to UiText.fromKey(DomainTextKeys.COMMON_DAY_SUNDAY)
         )
         
-        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-        val calendar = java.util.Calendar.getInstance()
-        
+        // T4A: java.time — DayOfWeek.value is Monday=1..Sunday=7, matching the
+        // dayMap keys used below (1 = Monday ... 7 = Sunday).
         for (expense in expenses) {
             if (expense.transactionType == DomainTransactionType.PURCHASE) {
-                calendar.timeInMillis = expense.date
-                val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
-                // Convert to Monday = 1 format
-                val adjustedDay = if (dayOfWeek == java.util.Calendar.SUNDAY) 7 else dayOfWeek - 1
+                val adjustedDay = java.time.Instant.ofEpochMilli(expense.date)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .dayOfWeek
+                    .value
                 
                 val list = dayMap.getOrPut(adjustedDay) { mutableListOf() }
                 list.add(expense.effectiveAmount)
@@ -387,16 +374,16 @@ class AdvancedAnalyticsDashboard @Inject constructor(
         }
 
         // Check weekend spending
-        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-        val calendar = java.util.Calendar.getInstance()
+        // T4A: java.time — SATURDAY/SUNDAY comparison preserves weekend semantics.
         var weekendSpending = 0.0
         var weekdaySpending = 0.0
 
             for (expense in expenses) {
             if (expense.transactionType == DomainTransactionType.PURCHASE) {
-                calendar.timeInMillis = expense.date
-                val dayOfWeek = calendar.get(java.util.Calendar.DAY_OF_WEEK)
-                if (dayOfWeek == java.util.Calendar.SATURDAY || dayOfWeek == java.util.Calendar.SUNDAY) {
+                val dayOfWeek = java.time.Instant.ofEpochMilli(expense.date)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .dayOfWeek
+                if (dayOfWeek == java.time.DayOfWeek.SATURDAY || dayOfWeek == java.time.DayOfWeek.SUNDAY) {
                     weekendSpending += expense.effectiveAmount
                 } else {
                     weekdaySpending += expense.effectiveAmount

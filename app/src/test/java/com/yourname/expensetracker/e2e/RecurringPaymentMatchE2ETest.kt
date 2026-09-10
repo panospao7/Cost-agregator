@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.e2e
 
 import com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter
+import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
@@ -53,6 +54,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
         // Real recurring lifecycle coordinator with real sub-components
         val materializer = RecurringOccurrenceMaterializer(
             database = database,
+            writeBarrier = writeBarrier,
             occurrenceDao = database.recurringOccurrenceDao(),
             reminderDeliveryDao = database.recurringReminderDeliveryDao(),
             timeProvider = timeProvider,
@@ -74,6 +76,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             restoreMaintenanceMode = restoreMaintenanceMode,
             writeBarrier = writeBarrier,
             plannedExpenseDao = database.plannedExpenseDao(),
+            transactionRunner = RoomDomainTransactionRunner(database, timeProvider),
             eventWriter = mockk(relaxed = true)
         )
 
@@ -82,7 +85,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             every { it.homeCurrency() } returns flowOf("EUR")
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
-        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao())
+        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao(), writeBarrier)
         val currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)
         multiCurrencyRepository = MultiCurrencyRepository(
             expenseDao = database.expenseDao(),

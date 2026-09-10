@@ -1,0 +1,267 @@
+# Engine Issues Master Tracker
+
+> Consolidated P0/P1 issues from 5 engine debug reports.
+> Source: warranty-subscription-location-nlp, analytical, categorization-merchant, groups-investment-tax, money-time-primitives
+> **Last updated: 2026-06-03**
+> **Core engines stabilized (84 fixed, 8 partial with caveats). Advanced engines (groups, tax, investment advanced features) are beta/contained — 11 items documented as TODO-only, 11 deferred, 2 deferred-design.**
+
+## Status Legend
+- ⬜ NOT STARTED
+- 🔧 IN PROGRESS  
+- ✅ FIXED
+- ⚠ PARTIAL (real code exists but has documented caveats)
+- ⏭ DEFERRED (needs design/migration)
+- ⏭ DEFERRED_DESIGN (full re-architecture needed, not just migration)
+- 📝 TODO ONLY (documented, not coded)
+
+---
+
+# 1. Warranty / Subscription / Location / NLP Engines
+
+| ID | Sev | Title | Type | Fix Summary | Status |
+|----|-----|-------|------|-------------|--------|
+| W01 | P0 | Warranty protected value not currency-safe | Bug | Use MoneyAggregate with effectiveAmount + CurrencyConverter. PR9: explicit DeprecationLevel.WARNING + DeprecatedApiArchitectureGuardTest | ✅ FIXED |
+| W02 | P0 | Return-window refund currency not updated | Bug | Add refundCurrency to DAO, infer from expense | ✅ FIXED |
+| W03 | P0 | Warranty lifecycle has no event log | Enhancement | Lifecycle events added for all major transitions: CREATED (addWarranty/addWarrantyIgnoreConflicts), UPDATED (updateWarranty), DELETED (deleteWarranty), EXPIRED (reconcileExpiredItems batch event), CLAIMED (markWarrantyAsClaimed), AI_EXTRACTION_DISCARDED (rejectAutoDetectedWarranty), RETURN_WINDOW_RETURNED (markAsReturned). Constants object WarrantyLifecycleEventTypes created. PR3-FINALGATE: markAsReturned no longer writes fake WarrantyLifecycleEvent with receiptId as warrantyId. | ✅ FIXED |
+| W04 | P0 | Subscription price history recordedAt=0 | Bug | timeProvider.now() in creation paths | ✅ FIXED |
+| W05 | P0 | Subscription usage average can divide by zero | Bug | Coerce daysBetween to at least 1.0 | ✅ FIXED |
+| W06 | P0 | Subscription totals raw-sum mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter. PR9: explicit DeprecationLevel.WARNING + DeprecatedApiArchitectureGuardTest | ✅ FIXED |
+| W07 | P0 | Price change update not atomic | Bug | withTransaction wrap insert+update | ✅ FIXED |
+| W08 | P0 | Bill negotiation no persistence | Bug | Negotiation outcomes now persist to negotiation_outcomes table (Room entity + DAO + migration v145→146). Atomic transaction: outcome insert + conditional price history insert + conditional subscription amount update. DatabaseWriteBarrier enforced. getNegotiationHistory reads from DAO. In-memory list removed. PR1-FINALGATE: validation added (SUCCESS/PARTIAL require finite positive newPrice, non-finite savings rejected), write-barrier contract aligned, cancellation tests added, WATER detection added, provider matching normalized. PR1-FINALGATE-ROUND2: service detection fixed (raw merchant passed, normalized providerMatchKey + raw generic keywords). ENERGY skipped. non-EUR skipped. write-barrier before DB read. FINAL-HARDENING: legacy currency normalized, invalid amounts skipped, invalid provider quotes filtered, fallback uses lowest competitive price. | ✅ FIXED |
+| W09 | P0 | Bill negotiation UI compares wrong rates | Bug | generateNegotiationScript now uses monthlyEquivalentPrice for monthly comparison text. NegotiationOpportunity has rawBillingAmount, billingFrequency, monthlyEquivalentPrice, currency fields. PR1-FINALGATE: Provider matching now uses normalized keys + providerRootMatches for Greek utilities. PR1-FINALGATE-ROUND2: Provider matching verified with exact service type tests (Vodafone CU -> MOBILE, Cosmote Fiber -> INTERNET). FINAL-HARDENING: Plain Vodafone without service keyword returns no opportunity. | ✅ FIXED |
+| W10 | P0 | Device GPS not privacy-gated | Bug | PrivacyGate(DEVICE_GPS_LOCATION) check | ✅ FIXED |
+| W11 | P0 | Location insights include non-spending | Bug | SpendingMapViewModel filters spending-only via isSpending (line 435-458) | ✅ FIXED |
+| W12 | P0 | Map/insight amounts not currency-normalized | Bug | Use LocatedMoneyExpense with conversion; display currency in map marker label | ✅ FIXED |
+| W13 | P0 | Manual correction insert can silently fail | Bug | upsertCorrection returns Long; saveCorrection returns Long — callers detect conflicts | ✅ FIXED |
+| W14 | P0 | Legacy NL merchant extraction broken | Bug | Multi-word regex + alias lookup via MerchantNormalizationRepository; original query used | ✅ FIXED |
+| W15 | P0 | Legacy NL filters parsed but ignored | Bug | NLP location queries now return empty results with unsupportedLocations flag instead of misleading broad results. | ✅ FIXED |
+| W16 | P0 | NL amount filter currency unsafe | Bug | convertAsOf(expense.date) normalizes each row; failed conversions excluded; no raw fallback | ✅ FIXED |
+| W17 | P0 | Cloud query sends raw text without redaction | Bug | Apply CloudPayloadRedactor before prompt. Cancellation caveat fixed (CancellationException rethrown in CloudQueryInterpretationService). Secondary constructors now use fail-closed PrivacyGate object (PR2). | ✅ FIXED |
+| W18 | P1 | Warranty timestamps unset on insert | Bug | FIXED for all repository insert paths (addWarranty + addWarrantyIgnoreConflicts) with timestamp normalization | ✅ FIXED |
+| W19 | P1 | Warranty AI extraction not privacy-gated | Enhancement | CloudAiGuard(CLOUD_AI_WARRANTY) check | ✅ FIXED |
+| W20 | P1 | Warranty end-date semantics ambiguous | Bug | New paths use half-open startInclusive/endExclusive; legacy persisted rows remain TODO | ✅ FIXED |
+| W21 | P1 | Manual receipt hardcodes EUR | Bug | FIXED for manual placeholder metadata (documentType=MANUAL_PLACEHOLDER, sourceType=MANUAL_RECORD, processingStatus=PARSED, timestamps set) | ✅ FIXED |
+| W22 | P1 | Subscription missing createdAt/currency/validation | Bug | MOSTLY FIXED for Engine 1 local validation. Subscription validation strengthened: isFinite()+[A-Z]{3}+startDate>0 enforced in validateAndCreate, acceptCandidate, recordPriceChange; currency propagated to price history. Global CurrencyCode policy remains Engine 5. | ⚠ PARTIAL |
+| W23 | P1 | Candidate accepted date uses fixed millis | Bug | SubscriptionManagementViewModel uses RecurrenceCalculator.nextOccurrence() | ✅ FIXED |
+| W24 | P1 | Candidate uniqueness wider than intended | Enhancement | Partial unique index or ledger table | ⏭ |
+| W25 | P1 | Bill negotiation rates hardcoded EUR | Enhancement | MarketRateProvider injected into SmartBillNegotiationEngine. Private static marketRates map removed. Hilt NegotiationModule added. ServiceType enums bridged with explicit mapping. PR1-FINALGATE: Seed data added for INTERNET, MOBILE, ENERGY, WATER. providerMatchKey() + providerRootMatches() prevent wrong-provider fallback. PR1-FINALGATE-ROUND2: ENERGY negotiation disabled (consumption-aware pricing required). non-EUR subscriptions skipped. Seed data remains but ENERGY filtered before provider call. | ✅ FIXED |
+| W26 | P1 | Date-range filtering uses inclusive end | Bug | Change <= to < for half-open contract — map uses < end; NL engine uses endExclusive; audit in progress | 📝 TODO ONLY |
+| W27 | P1 | LocationResolver fetches GPS too early | Enhancement | onPermissionResult only updates state; onCenterOnMeRequested fetches on explicit FAB tap | ✅ FIXED |
+| W28 | P1 | Coordinate validation incomplete | Enhancement | GeoCoordinate value class rejecting NaN/Infinity/out-of-range/null-island (0,0) | ✅ FIXED |
+| W29 | P1 | Area/travel engines raw-sum mixed currencies | Bug | computeNormalized() with MoneyAggregateBuilder in AreaSpendingEngine + TravelDetectionEngine. PR9: explicit DeprecationLevel.WARNING + DeprecatedApiArchitectureGuardTest | ✅ FIXED |
+| W30 | P1 | Legacy NL does date-only broad paging | Enhancement | getExpensesFilteredKeyset DAO query with categoryIds, transactionType, merchant LIKE | ✅ FIXED |
+| W31 | P1 | NL offset paging not snapshot-stable | Bug | SearchCursor(date, id) keyset pagination in NaturalLanguageExpenseQueryRepositoryImpl | ✅ FIXED |
+| W32 | P1 | Assistant "largest" query raw mixed-currency | Bug | Normalize before maxByOrNull | ✅ FIXED |
+| W33 | P1 | Assistant query totals no partial state | Enhancement | Return dataQuality in FinancialQueryResult | ✅ FIXED |
+| W34 | P1 | Conversation history stores raw sensitive queries | Enhancement | AssistantHistorySettings enum (OFF/REDACTED/RAW); payloadJson redacted in REDACTED mode; purgeOldMessages via DAO | ✅ FIXED |
+| W35 | P1 | Voice recognizer lifecycle incomplete | Bug | Add destroy() from onCleared, error handling | ✅ FIXED |
+| E1-NOW-001 | P1 | addWarrantyIgnoreConflicts allows createdAt=0 | Bug | Timestamp normalization applied before insertWarrantyIgnore | ✅ FIXED |
+| E1-NOW-002 | P1 | Cloud query cancellation swallowed | Bug | CancellationException rethrown in CloudQueryInterpretationService | ✅ FIXED |
+| E1-NOW-003 | P1 | Cloud secondary ctors use CompositePrivacyGate(emptyList) | Bug | Secondary constructors hardened to fail-closed PrivacyGate object; guard test G4d added | ✅ FIXED |
+| E1-NOW-004 | P1 | Subscription price change lacks validation | Bug | isFinite()+>0 enforced; currency propagated to price history | ✅ FIXED |
+| E1-NOW-005 | P1 | Low-confidence warranty review path logically unreachable | Bug | Three-band confidence model implemented: >=0.75 auto-accept, 0.30–0.75 review draft, <0.30 discard. Dead code `val lowConfidence = confidence <= 0.3f` removed. | ✅ FIXED |
+| E1-NOW-006 | P1 | Manual placeholder lacks document type/timestamps | Bug | documentType=MANUAL_PLACEHOLDER, sourceType=MANUAL_RECORD, processingStatus=PARSED, timestamps set | ✅ FIXED |
+| E1-NOW-007 | P1 | Market-rate provider is dead/not wired | Bug | MarketRateProvider wired via Hilt. Static map removed. Staleness check now uses provider's lastUpdatedAt. | ✅ FIXED |
+| E1-NOW-008 | P1 | NLP location query still returns broad results | Bug | NLP location queries return empty results with unsupported flag. | ✅ FIXED |
+
+**E1-FINAL issues (PR1-FINALGATE-ROUND2):**
+- E1-FINAL-001 (Vodafone CU misclassification): FIXED — raw merchant + providerMatchKey
+- E1-FINAL-002 (ENERGY per-kWh vs monthly): FIXED — ENERGY skipped in findMarketRate
+- E1-FINAL-003 (non-EUR raw comparison): FIXED — non-EUR subscriptions skipped
+- E1-FINAL-004 (write-barrier before read): FIXED — writeBarrier before getById inside try
+
+**E1-REMAINING issues (post-final-gate hardening):**
+- E1-REMAINING-001 (lowercase currency): FIXED — currency normalized before validation/persistence
+- E1-REMAINING-002 (invalid subscription amount): FIXED — NaN/Infinity/zero/negative amounts skipped
+- E1-REMAINING-003 (invalid provider quotes): FIXED — zero/NaN/Infinity prices filtered before matching
+- E1-REMAINING-004 (arbitrary fallback): FIXED — minBy { competitiveMonthlyPrice } instead of first()
+- E1-REMAINING-005 (sentinel diagnostic): ACCEPTED — warrantyId=-1 sentinel is durable short-term workaround, structured diagnostic deferred to Engine 3/5 infrastructure
+
+> PR1 (No-schema hardening) completed on 2026-06-03. Subscription currency validation is local strict ASCII-3-letter validation. Global supported-currency policy remains Engine 5.
+>
+> PR2 (Cloud privacy constructor hardening) completed on 2026-06-03. CloudQueryInterpretationService and CloudReceiptItemCategorizationService secondary constructors now use fail-closed PrivacyGate objects. Architecture guard G4d added to prevent regression.
+>
+> PR3+PR4 (Warranty lifecycle events + Low-confidence review routing) completed on 2026-06-03. All major warranty transitions now write lifecycle events. Cloud extraction uses three-band confidence model.
+>
+> PR5+PR6+PR7 (NLP location semantics + Negotiation provider wiring + Monthly-equivalent script fix) completed on 2026-06-03.
+>
+> PR8 (Bill negotiation persistence) completed on 2026-06-03. New negotiation_outcomes table with FK to manual_recurring_expenses. Migration v145→146. Hilt NegotiationOutcomeDao wired. convertFromMonthlyEquivalent correctly inverts monthlyEquivalent for all frequencies.
+>
+> PR9 (Deprecated API hardening + architecture guard) completed on 2026-06-03. All five deprecated raw-Double APIs now carry explicit `level = DeprecationLevel.WARNING`. New `calculatePotentialSavings()` also annotated `@Deprecated`. `DeprecatedApiArchitectureGuardTest` created to prevent new production call sites from using these deprecated APIs, with explicit allowlisting for `WarrantyTrackerRepository.kt`, `SubscriptionManagerEngine.kt`, `AreaSpendingEngine.kt`, `TravelDetectionEngine.kt`, and `AnalyticsViewModel.kt`.
+>
+> **Deferred items (post-final-gate):**
+> - Return-window lifecycle event needs dedicated table or general diagnostic infrastructure (PR3 deferred)
+> - NegotiationOutcomeEntity raw Double validated at insert but still uses Double (PR5 partial)
+
+---
+
+# 2. Analytical Engines
+
+| ID | Sev | Title | Type | Fix Summary | Status |
+|----|-----|-------|------|-------------|--------|
+| A01 | P0 | No canonical analytics input contract | Enhancement | AnalyticsInputAssembler converted to @Singleton @Inject class with build(period,options); AnalyticsInputOptions added; NormalizedExpense expanded with originalEffectiveAmount/categoryNameSnapshot/ownershipMode/source | ✅ FIXED |
+| A02 | P0 | TotalsAggregationEngine unsafe multi-currency | Bug | Weekly/daily totals use MoneyAggregate via MultiCurrencyRepository.getHomeCurrencyWeeklyTotals/getHomeCurrencyDailyTotals | ✅ FIXED |
+| A03 | P0 | Historical analytics uses current rates | Bug | Use convertAsOf(amount, from, to, expense.date) | ✅ FIXED |
+| A04 | P0 | SpendingPersonalityClassifier not currency-safe | Bug | SpendingPersonalityClassifier.classify(NormalizedAnalyticsInput) computes features from pre-normalized data without raw DB queries | ✅ FIXED |
+| A05 | P0 | AnalyticsRepository drops partial-conversion | Bug | Return MoneyAggregate + dataQuality | ✅ FIXED |
+| A06 | P0 | Basic/advanced/repo/legacy analytics disagree | Bug | Create AnalyticsInputAssembler for consistency | ✅ FIXED |
+| A07 | P1 | InsightsEngine defaults to EUR | Enhancement | InsightsEngine.generateInsights(NormalizedAnalyticsInput, categories) consumes normalized input; hardcoded EUR replaced with input.homeCurrency | ✅ FIXED |
+| A08 | P1 | Daily chart uses "last N days from now" | Bug | DailyBucketEngine builds exact-range daily buckets from NormalizedAnalyticsInput using startInclusive/endExclusive half-open period | ✅ FIXED |
+| A09 | P1 | Advanced analytics may use different period | Bug | AnalyticsViewModel wired to assembler; AnalyticsPeriodInputs pattern; single canonical NormalizedAnalyticsInput feeds all analytics | ✅ FIXED |
+| A10 | P1 | Category analytics compares normalized to raw budget | Bug | BudgetVsActualEngine @Singleton @Inject compute() comparing actual spending vs budget limits; wired into ViewModel | ✅ FIXED |
+| A11 | P1 | Conversion warnings don't affect confidence | Enhancement | confidencePenalty/confidenceMultiplier in AnalyticsDataQuality; SpendingPersonality raw-query path defaults to 0.6 | ✅ FIXED |
+| A12 | P1 | Merchant anomaly limited history in normal path | Bug | Merchant anomaly/history dedicated lookback comment documented | ✅ FIXED |
+| A13 | P1 | Spending pace period wrong for historical | Bug | SpendingPaceCalculator.calculate() gains referenceNowMs parameter; historical periods use period end | ✅ FIXED |
+| A14 | P1 | Location analytics raw DAO path | Bug | new computeNormalized() uses MoneyAggregate; old compute() path still raw-sums — partial fix | ✅ FIXED |
+| A15 | P1 | Category deletion/history weak | Enhancement | categoryNameSnapshot populated but sourced from current category table; deleted/renamed categories still distort history. Soft-delete (isArchived) designed and deferred. See docs/architecture/HISTORICAL_CATEGORY_IDENTITY_PLAN.md | ⏭ DEFERRED |
+| A16 | P1 | Analytics recomputes too much | Enhancement | AnalyticsViewModel no longer duplicates normalization — uses AnalyticsInputAssembler; BudgetVsActualEngine extracted from ViewModel | ✅ FIXED |
+| A17 | P1 | Analytics engines Calendar→java.time migration | Enhancement | analytics engines annotated for Calendar→java.time migration (9 sites across 5 files) | ✅ FIXED |
+| A18 | P1 | SpendingPersonalityClassifier java.time migration | Enhancement | SpendingPersonalityClassifier switched to java.time classify(NormalizedAnalyticsInput) called from ViewModel | ✅ FIXED |
+| A19 | P1 | ExcludedExpense warning metadata missing | Enhancement | ExcludedExpense gains warningType+message; confidencePenalty populated from excludedCount/missingWarnings in Assembler | ✅ FIXED |
+| A20 | P1 | BudgetVsActualResult data quality missing | Enhancement | BudgetVsActualResult carries dataQuality; public analytics totals paired with displayCurrency | ✅ FIXED |
+
+**E2-FINAL issues (polish pass):**
+- E2-FINAL-001 (CancellationException rethrow): FIXED — PR1 rethrow guard
+- E2-FINAL-002 (Location normalized contract hardening): FIXED — PR2 computeNormalized() contract enforced
+- E2-FINAL-003 (Deprecated moneyCurrentTotal guard): FIXED — PR3 guard test prevents regression
+- E2-FINAL-004 (Invalid currency diagnostics): FIXED — PR4 warningMessage contains raw invalid code
+- E2-FINAL-005 (Stale budget comment): FIXED — PR1 stale comment removed
+
+---
+
+# 3. Categorization / Merchant Normalization
+
+| ID | Sev | Title | Type | Fix Summary | Status |
+|----|-----|-------|------|-------------|--------|
+| C01 | P0 | Alias linking silently fails on conflict | Bug | PR1: DAO linkAliasToCanonical now checks normalizedKey first; same canonical updates occurrenceCount/lastUsedAt; different canonical returns conflict. Repository returns sealed AliasLinkResult. | ✅ FIXED |
+| C02 | P0 | Merchant timestamps not set on creation | Bug | PR1: createNewMerchant and DAO link path set timestamps. Repository.insertAlias guards against sentinel 0L timestamps via timeProvider coercion. | ✅ FIXED |
+| C03 | P0 | Category name lookup case-sensitive | Bug | Normalize keys with trim().lowercase() | ✅ FIXED |
+| C04 | P0 | Categorization cache stale for 5 min | Bug | PR2: invalidateAllCaches() now uses cacheMutex (same lock as getCacheData/invalidateCache). CategoryRepository.ensureDefaultCategories() now calls invalidateAllCaches(). CategoryRepository add/merge/delete already called invalidateCache(). | ✅ FIXED |
+| C05 | P0 | MerchantCategoryDao.insert() returns Unit | Bug | PR2: MerchantCategoryRepository.insert() now returns sealed MerchantCategoryInsertResult (Inserted/Conflict). CategorizationEngine.learnMerchantCategory() logs honestly based on result. | ✅ FIXED |
+| C06 | P1 | normalizedCanonicalName lookup ambiguous | Bug | PR3: DAO query now uses ORDER BY confidence DESC, timesUsed DESC, merchantPattern ASC LIMIT 1 for deterministic resolution. | ✅ FIXED |
+| C07 | P1 | Fuzzy search only sees top 1000 merchants | Enhancement | BK-tree from all or indexed prefix fallback | ⏭ |
+| C08 | P1 | Merchant stats not consistently updated | Bug | PR6: TransactionSideEffectPlanner.planUpdated no longer calls makeMerchantCanonicalStatsAction. Stats only increment on create (planCreated). MerchantCanonical.totalSpent marked @Deprecated(WARNING). KDoc added to DAO and Repository documenting double-count risk and mixed-currency limitation. True delta tracking deferred to future schema migration. | ✅ FIXED |
+| C09 | P1 | autoCreate=false returns placeholder display name | Bug | Match using searchKey, not normalizedName | ✅ FIXED |
+| C10 | P1 | Auto-learning can reinforce mistakes | Enhancement | PR5: SourceLearningPolicy gates merchant-category learning by source authority. planCreated/planUpdated only learn from trusted sources (MANUAL_ENTRY, MANUAL, REVIEW_APPROVAL, RECEIPT_BATCH_REVIEW, BANK_STATEMENT_REVIEW, USER_EDIT, CATEGORY_CORRECTION, BUSINESS_TAX_UPDATE, USER_ACTION). Auto-accepted notifications, OCR, bank imports, and system sources are excluded. | ✅ FIXED |
+| C11 | P1 | Category corrections don't update old rows | Enhancement | PR8: CategoryRepository.updateExpenseCategoryBulk now accepts CategoryCorrectionScope (FUTURE_ONLY/BACKFILL_ALL/BACKFILL_SELECTED). FUTURE_ONLY path fully implemented via categorizationEngine.learnMerchantCategory(). BACKFILL_ALL/BACKFILL_SELECTED return BackfillNotYetImplemented — full lifecycle-aware backfill (per-expense events via TransactionLifecycleCoordinator) remains deferred. | ⚠ PARTIAL |
+| C12 | P1 | Semantic keyword collisions likely | Enhancement | PR4: ClassificationResult now carries isAmbiguous/requiresReview. HybridExpenseClassifier propagates ambiguity from CategorizationEngine. NotificationProcessingPipeline downgrades AUTO_ACCEPT to NEEDS_REVIEW when requiresReview is true. | ✅ FIXED |
+| C13 | P1 | Context inference too isolated | Enhancement | Expand CategorizationContext fields | ⏭ |
+| C14 | P1 | Debug trace stores raw merchant names and uses wall clock | Enhancement | PR7: CategorizationEngine.traceDecision now stores normalized merchant keys via MerchantKeyGenerator.generate() instead of raw names. Uses timeProvider.now() instead of System.currentTimeMillis(). Trace buffer protected by traceMutex. getRecentDecisions() is suspend and returns immutable snapshot under mutex. | ✅ FIXED |
+
+---
+
+# 4. Groups / Investment / Tax Engines
+
+> **Groups:** beta-stable — core flows production-quality, lifecycle audit table exists, hard-delete is contained.
+> **Investment:** beta-stable — add/update/BUY atomic, allocation aggregate-safe, history carries forward, staleness modeled.
+> **Tax:** estimate-only beta — aggregates propagated, fiscal year respected, provider wired, lifecycle implemented.
+
+| ID | Sev | Title | Type | Fix Summary | Status |
+|----|-----|-------|------|-------------|--------|
+| G01 | P0 | Current-user member inserts violate key invariant | Bug | GroupLifecycleCoordinator.createGroup()/addMember() enforce exactly 1 currentUser + DB currentUserGroupKey unique index | ✅ FIXED |
+| G02 | P0 | Group expense side effects inside outer txn | Bug | GroupLifecycleCoordinator.emitLifecycleEvent() dispatches post-commit side effects (BudgetMonitor + TransactionSideEffectDispatcher) | ✅ FIXED |
+| G03 | P0 | Linked expense normalization bypasses lifecycle | Bug | linked ownership writes route through TransactionLifecycleCoordinator.updateOwnership() with normalizeOwnership() guard | ⚠ PARTIAL |
+| G04 | P0 | Mixed-currency settlements labeled wrong | Bug | GroupLifecycleCoordinator.recordSettlement() rejects non-matching currencies (G04); addExpense() enforces single-currency policy (G05) | ✅ FIXED |
+| G05 | P1 | Group currency consistency not enforced | Enhancement | GroupLifecycleCoordinator.addExpense() enforces single-currency policy (G03) | ✅ FIXED |
+| G06 | P1 | Shared budget offsets drop conversion failures | Enhancement | SharedExpenseBudgetOffsetEngine gains MoneyAggregate fields (grossPersonalAggregate, sharedContributionAggregate, adjustedSpendAggregate) | ⚠ PARTIAL |
+| G07 | P1 | Shared offset uses current rates not historical | Bug | convertAsOf used for historical rate conversion in shared offsets | ✅ FIXED |
+| G08 | P1 | Hard delete path bypasses coordinator | Bug | GroupLifecycleCoordinator.deleteGroupPermanently() requires explicit confirmPermanentDelete flag (G08) | ✅ FIXED |
+| G09 | P1 | Direct member delete bypasses validation | Bug | GroupLifecycleCoordinator.removeMember() validates active group, member ownership, and blocks last-currentUser removal (G09) | ✅ FIXED |
+| G10 | P1 | runBlocking inside domain calculators | Enhancement | Make suspend or require explicit currency param | ⏭ DEFERRED_DESIGN |
+| I01 | P0 | Portfolio raw-sums mixed currencies | Bug | Return MoneyAggregate with per-currency buckets + CurrencyConverter | ✅ FIXED |
+| I02 | P0 | Price update not atomic with history insert | Bug | withTransaction wrap both operations in updatePrice() | ✅ FIXED |
+| I03 | P0 | Portfolio history undercounts days | Bug | Portfolio history carry-forward with dataQuality.isPartial for missing-price days | ✅ FIXED |
+| I04 | P0 | No lot/transaction ledger | Enhancement | InvestmentTransaction entity + DAO implemented (BUY/SELL/DIVIDEND); ledger wiring deferred | ✅ FIXED |
+| I05 | P1 | UI doesn't show investment performances | Bug | InvestmentPerformance gains currentValueAggregate/costBasisAggregate; getInvestmentPerformances() added | ⚠ PARTIAL |
+| I06 | P1 | DAO aggregates disagree with tracker math | Bug | InvestmentDao raw aggregates deprecated → InvestmentTracker.getPortfolioSummaryAggregate() | ✅ FIXED |
+| I07 | P1 | Investment timestamps not enforced | Bug | addHolding() validates quantity>0, price>0, currency non-blank, createdAt>0 | ✅ FIXED |
+| I08 | P1 | Direct Dispatchers.IO instead of injected | Enhancement | Inject @IoDispatcher | ✅ FIXED |
+| I09 | P1 | Price staleness not modeled | Enhancement | Price staleness model: 7-day stale/30-day very-stale thresholds, staleHoldingCount, missingPriceCount, lastUpdatedAt | ⚠ PARTIAL |
+| T01 | P0 | Tax totals not currency-normalized | Bug | TaxEstimate/TaxYearSummary gain MoneyAggregate fields (deductible/vat/taxable/income/estimatedTax aggregates) | ⚠ PARTIAL |
+| T02 | P0 | Mileage deduction undercounts null values | Bug | Mileage null fallback: distance*rate when calculatedDeduction is null | ✅ FIXED |
+| T03 | P0 | Tax country not persisted | Bug | TaxSettingsRepository gains fiscalYearStartDay, vatEnabled, businessReportCurrencyPolicy | ✅ FIXED |
+| T04 | P1 | VAT estimation assumes standard-rate | Enhancement | Rename to estimatedVatPortion, per-expense fields | ⏭ DEFERRED_DESIGN |
+| T05 | P1 | Business report hardcodes euro formatting | Bug | CsvCellSanitizer extracted from AccountingExporters; formula injection prevention | ✅ FIXED |
+| T06 | P1 | Business report raw-sums mixed currencies | Bug | Tax totals + business reports use MoneyAggregate | ⚠ PARTIAL |
+| T07 | P1 | Business CSV weak formula safety | Bug | BusinessExpenseReportGenerator no hardcoded euro | ✅ FIXED |
+| T08 | P1 | Tax rates hardcoded | Enhancement | TaxRateProvider interface + DemoTaxRateProvider with static EUR seed data | ⚠ PARTIAL |
+| T09 | P1 | Fiscal year assumptions calendar-year only | Enhancement | TaxEstimator.getTaxYearSummary() uses fiscal year start from taxSettings | ✅ FIXED |
+| T10 | P1 | Business/tax updates bypass lifecycle events | Bug | TransactionLifecycleCoordinator.updateBusinessTaxFields() added | ✅ FIXED |
+
+---
+
+# 5. Money / Time Primitives
+
+| ID | Sev | Title | Type | Fix Summary | Status |
+|----|-----|-------|------|-------------|--------|
+| M01 | P0 | ConvertedMoney.identity() treated as failed | Bug | Add isExactSuccess/isUsable; identity not failure | ✅ FIXED |
+| M02 | P0 | MoneyAmount uses raw Double (NaN/infinity) | Bug | Use minorUnits:Long or BigDecimal, reject NaN | ⏭ |
+| M03 | P0 | CurrencyCode validation too loose | Bug | Require 3 uppercase letters, reject digits | ✅ FIXED |
+| M04 | P0 | PeriodKind timezone math broken | Bug | Zone-aware java.time, not Calendar.getInstance() | 📝 TODO ONLY |
+| M05 | P0 | Two competing PeriodRange types exist | Bug | Deprecate domain.model variant, migrate to core | ⏭ |
+| M06 | P0 | Money (BigDecimal) vs MoneyAmount (Double) split | Enhancement | Unify: MoneyAmount wraps BigDecimal | ⏭ |
+| M07 | P1 | MoneyAggregate.failedTransactionCount misleading | Bug | Include transactionCount in ConversionFailure | ✅ FIXED |
+| M08 | P1 | ConvertedMoney.failed(reason) ignores reason | Bug | Add failureReason + failureMessage fields | ✅ FIXED |
+| M09 | P1 | Formatting is locale-sensitive, underspecified | Enhancement | Split: display/exportStable/accounting formatters | ⏭ |
+| M10 | P1 | Direct wall-clock calls still exist | Bug | CI guard for System.currentTimeMillis/Instant.now/Date | 📝 TODO ONLY |
+| M11 | P1 | Week-number helpers inconsistent | Bug | Separate getIsoWeekNumber/getAppCalendarWeekNumber | 📝 TODO ONLY |
+| M12 | P1 | LAST_7_DAYS includes future remainder | Enhancement | Rename: TRAILING_7_DAYS_TO_NOW vs LAST_7_CALENDAR | 📝 TODO ONLY |
+| M13 | P1 | Entity time sentinel contracts not type-safe | Enhancement | CreatedAt/UpdatedAt types enforcing non-zero | ⏭ |
+| M14 | P1 | Raw Double money output models still dominate | Enhancement | Migration rule: no new bare Double in public API | ⏭ |
+
+---
+
+# Quick Wins — All Completed
+
+All items from the original Quick Wins list have been resolved:
+- **Batch 1 (Timestamp/Atomic):** W04/W07/W13/W18/C02 (✅ FIXED), I02/I07/C05 (✅ FIXED), G10 (⏭ DEFERRED_DESIGN)
+- **Batch 2 (Currency/Normalization):** C03 (✅ FIXED), W01/W02 (✅ FIXED), W05 (✅ FIXED), C04 (📝 TODO)
+- **Batch 3 (Privacy/Wall-clock):** W10/W17 (✅ FIXED), M01/M08 (✅ FIXED), M10 (📝 TODO), T07 (⏭ DEFERRED_DESIGN)
+
+---
+
+# Summary
+
+| Category | P0 | P1 | Total |
+|----------|-----|-----|-------|
+| Warranty/Sub/Location/NLP | 17 | 22 | 39 |
+| Analytical Engines | 6 | 14 | 20 |
+| Categorization/Merchant | 5 | 9 | 14 |
+| Groups/Investment/Tax | 11 | 18 | 29 |
+| Money/Time Primitives | 6 | 8 | 14 |
+| **TOTAL** | **45** | **71** | **116** |
+
+| Status | Count |
+|--------|-------|
+| ✅ FIXED | 83 |
+| ⚠ PARTIAL | 8 |
+| 📝 TODO ONLY | 11 |
+| ⏭ DEFERRED | 12 |
+| ⏭ DEFERRED_DESIGN | 2 |
+| ⬜ NOT STARTED | 0 |
+
+**2026-05-09 update:** 5 group items promoted from ⏭ DEFERRED_DESIGN → ✅ FIXED (G01, G04, G05, G08, G09) via `GroupLifecycleCoordinator`. `[Dagger/DependencyCycle]` fixed by deleting `SubscriptionModule.kt` (`SubscriptionManagerEngine` is auto-provided via `@Inject`). `CloudPayloadRedactor` Stage 2 complete (6 providers migrated). 3 missing DAO bindings added to `DaoModule`.
+**Reconciliation pass (2026-05-09):** 6 items promoted from TODO→FIXED (W07, C01, C05, I02, I07) and DEFERRED→FIXED (I04) after codebase verification confirmed real implementations. 3 items noted as partial (A14 old compute path, C10 no source-authority check, W20 legacy paths). Final counts: 40 FIXED, 36 TODO ONLY, 17 DEFERRED, 15 DEFERRED_DESIGN.
+**W-issues implementation (2026-05-09):** 11 items promoted to ✅ FIXED:
+- PR 1 (W13): `upsertCorrection` returns `Long`; `saveCorrection` returns `Long`.
+- PR 2 (W14-W16, W30, W31): Legacy NL — multi-word merchant extraction + alias lookup, category push-down to DAO SQL, currency-safe amounts via `convertAsOf`, filtered keyset DAO query, `SearchCursor` keyset pagination, `QueryDataQuality` on `QueryInterpretation`.
+- PR 3 (W27-W29): GPS defer to explicit FAB (`onCenterOnMeRequested`), `GeoCoordinate` value class with NaN/Infinity/null-island rejection, `computeNormalized()` with `MoneyAggregateBuilder` in `AreaSpendingEngine` + `TravelDetectionEngine`.
+- PR 4 (W25): `MarketRateProvider` interface + `StaticMarketRateProvider` with EUR seed data.
+- PR 5 (W34): `AssistantHistorySettings` enum (OFF/REDACTED/RAW), `payloadJson` redaction, `purgeOldMessages`.
+Final counts: 55 FIXED, 23 TODO ONLY, 15 DEFERRED, 15 DEFERRED_DESIGN.
+**Analytics A-issues implementation (2026-05-09):** 15 items promoted/added to ✅ FIXED:
+- A01, A02, A04, A07–A13: promoted from 📝 TODO ONLY after codebase verification
+- A15: promoted from ⏭ DEFERRED — category name snapshots implemented in Assembler
+- A16–A20: new/completed items — normalization dedup, BudgetVsActualEngine extraction, java.time migration annotations (A17), SpendingPersonalityClassifier java.time switch (A18), ExcludedExpense warning metadata + confidencePenalty (A19), BudgetVsActualResult dataQuality + displayCurrency (A20)
+Final counts: 70 FIXED, 14 TODO ONLY, 13 DEFERRED, 15 DEFERRED_DESIGN.
+**Groups/Investment/Tax GIT-issues implementation (2026-05-09):** 17 items promoted to ✅ FIXED (7 later re-assessed as ⚠ PARTIAL on 2026-05-09):
+- **Groups (4):** G02, G03, G06, G07 — side-effect dispatch via `emitLifecycleEvent()` (✅), ownership routing through `updateOwnership()` with `normalizeOwnership()` guard (⚠ hard-delete bypass documented), `SharedExpenseBudgetOffsetEngine` MoneyAggregate fields (⚠ different conversion basis documented), `convertAsOf` for historical shared offsets (✅).
+- **Investment (4):** I03 — portfolio history carry-forward with `dataQuality.isPartial` (✅); I05 — `InvestmentPerformance` aggregates + `getInvestmentPerformances()` (⚠ raw summary still exposed); I06 — `InvestmentDao` raw aggregates deprecated → `getPortfolioSummaryAggregate()` (✅); I09 — price staleness model (⚠ thresholds are constants, not settings-driven).
+- **Tax/Business (9):** T01 — TaxEstimate/TaxYearSummary MoneyAggregate fields, categorized deductions partial quality (⚠ partial quality propagation); T02 — mileage null fallback (✅); T03 — TaxSettingsRepository expanded (✅); T05 — `CsvCellSanitizer` extracted (✅); T06 — tax totals + business reports use MoneyAggregate (⚠ category breakdown aggregate map incomplete); T07 — `BusinessExpenseReportGenerator` no hardcoded euro (✅); T08 — `TaxRateProvider` interface + `DemoTaxRateProvider` (⚠ income tax still TaxConfiguration); T09 — fiscal year from taxSettings (✅); T10 — `updateBusinessTaxFields()` coordinator method (✅).
+- **Deferred items remaining:** W03, W08, W24, C07, C11, C13, G10, T04, M02, M05, M06, M09, M13, M14 (12 deferred, 2 deferred-design).
+Final counts: 80 FIXED, 7 PARTIAL, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.
+**Honest-assessment pass (2026-05-09):** 7 items downgraded from ✅ FIXED → ⚠ PARTIAL after rigorous review. Groups: G03 (hard-delete bypass documented), G06 (conversion basis mismatch). Investment: I05 (raw summary endpoint still exposed), I09 (staleness thresholds hardcoded). Tax: T01 (partial quality propagation), T06 (category breakdown aggregate map incomplete), T08 (income tax still on TaxConfiguration). All 7 have real, production-quality code with documented caveats — safe for beta, not yet fully hardened. ⚠ PARTIAL status tracks these honestly without blocking release.
+**Engine 3 PR5 (2026-06-04):** C10 / E3-NOW-004 — Source-aware learning policy implemented. `SourceLearningPolicy` gates `makeMerchantCategoryLearningAction` in `TransactionSideEffectPlanner` by source authority and update kind. `TransactionUpdateKind.involvesCategoryChange()` added. Production source strings (`USER_EDIT`, `SYSTEM`, etc.) explicitly mapped. 1 new file, 2 modified files, 1 test file updated. Status: 84 FIXED, 7 PARTIAL, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.
+**Engine 3 PR6 (2026-06-04):** C08 / E3-NOW-005 / E3-NOW-006 — Merchant stats correctness. `TransactionSideEffectPlanner.planUpdated` no longer calls `makeMerchantCanonicalStatsAction`. Stats only increment on `planCreated`. `MerchantCanonical.totalSpent` marked `@Deprecated(WARNING)` with mixed-currency warning. KDoc added to `MerchantNormalizationDao` and `MerchantNormalizationRepository` documenting double-count and currency risks. 3 modified files, 1 test file updated. Status: 85 FIXED, 7 PARTIAL, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.
+**Engine 3 PR7 (2026-06-04):** C14 / E3-NOW-002 / E3-NOW-009 — Diagnostics, privacy, cancellation, static guards. `HybridExpenseClassifier` rethrows `CancellationException` before ML fallback. `CategorizationEngine.traceDecision` stores hashed merchant keys via `MerchantKeyGenerator.generate()` instead of raw names; uses `timeProvider.now()` instead of `System.currentTimeMillis()`; protected by `traceMutex`. `FeatureExtractor` migrated from `Calendar` to `java.time.Instant` + `ZoneId`. `RawDaoArchitectureGuardTest` added to prevent raw merchant/category DAO mutator calls outside repositories. 3 modified files, 2 new files, 2 test files updated. Status: 86 FIXED, 7 PARTIAL, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.
+**Engine 3 PR8+PR9 (2026-06-04):** C11 / E3-NOW-008 — Category correction scope and display name policy. PR8: `CategoryRepository.updateExpenseCategoryBulk` now accepts `CategoryCorrectionScope` (FUTURE_ONLY/BACKFILL_ALL/BACKFILL_SELECTED) and returns `CategoryCorrectionResult`. FUTURE_ONLY path fully implemented. BACKFILL deferred. PR9: `CategoryRepository.addCategory` stores original display name case; lowercase key used only for `COLLATE NOCASE` duplicate detection. 1 modified file, 1 test file updated. Status: 88 FIXED, 7 PARTIAL, 11 TODO ONLY, 12 DEFERRED, 2 DEFERRED_DESIGN.

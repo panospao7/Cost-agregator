@@ -11,7 +11,6 @@ import com.google.gson.Gson
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
-import java.util.Calendar
 import java.util.Locale
 
 private val Context.automatedSavingsRuleStateDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -203,12 +202,14 @@ class AutomatedSavingsRuleStateRepository(
         }
 
         internal fun buildYearMonthKey(timestamp: Long): String {
-            val calendar = Calendar.getInstance().apply { timeInMillis = timestamp }
+            // G-TIME-01: derive calendar fields from the caller-supplied epoch
+            // (itself derived from TimeProvider.now()) via TimePeriodUtils'
+            // java.time helpers instead of Calendar.getInstance().
             return String.format(
                 Locale.US,
                 "%04d-%02d",
-                calendar.get(Calendar.YEAR),
-                calendar.get(Calendar.MONTH) + 1
+                TimePeriodUtils.getYear(timestamp),
+                TimePeriodUtils.getMonth(timestamp) + 1
             )
         }
     }

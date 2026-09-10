@@ -1,0 +1,104 @@
+# GR-14h — entry family tranche 1: Pattern E dead-writer removal (475 -> 471).
+#
+# Removal set (each independently proven dead: engine zero-inbound after
+# GR-14f precise resolution + repo-wide grep zero call sites + compile
+# success after removal as the final caller-inventory proof):
+#   1. WarrantyTrackerRepository.addReturnWindow
+#      (returnWindowDao.insertReturnWindow)
+#   2. TransactionLifecycleCoordinator.writeUpdateValidationFailedEventBestEffort
+#      (transactionEventDao.insert)
+#   3. TransactionLifecycleCoordinator.bulkUpdateCategory(Long,Long,String)
+#      (expenseDao.updateCategoryForCategory)  -- dead overload; the sole
+#      production call site resolves exactly to the surviving
+#      (String,Long,String,String?,String?) overload
+#   4. TransactionLifecycleCoordinator.bulkUpdateCategory(Long,Long,String)
+#      (transactionEventDao.insert)
+#
+# Policy handling (EXACT_IDENTITY removal, GR-14 Step 4 + GR-14c precedent):
+#   - generation inputs edited (NO artifact hand-edits): 3 rows out of
+#     docs/ci/db-findings/GR-08-seeds.yml (421 -> 418) and 4 v1 rows out of
+#     config/guards/db_ownership_policy.legacy.yml (97 -> 93; the 3 dead
+#     bulkUpdateCategory rows were CALLABLE_AMBIGUOUS debt, the dead
+#     writer row was the one resolved emitter);
+#   - tracked candidate/accounting pair regenerated via the sanctioned
+#     `migrate_db_policy_signatures.py --generate` (475 -> 471);
+#     `--verify` full match (all sections);
+#   - mutation-key delta vs the active policy: EXACTLY -4 (the removal
+#     set), zero additions;
+#   - active policy updated by direct reviewed edit per the GR-14c
+#     dead-row precedent (the promote CLI's default archive target would
+#     clobber the legacy migration input); active == candidate == 471,
+#     key sets identical.  No candidate/active drift this time (GR-14c
+#     owed its sync; this batch does not).
+#   new active policy sha256:
+#   51f7d40aad92918f2ff27f63615462fe27e70f9662aaa0a1e465b08becf4aad8
+#
+# Fold truth: 97/54/44 -> 93/53/40 over the legacy input (fold groups
+# (a)-(d) unchanged in kind; folded-only set recomputed: 15; 18, 19;
+# 22-26; 37, 38).  Pins updated with drift notes: tripwire
+# (test_db_guard_policy_v2_current_repo 475 -> 471), known-good-state
+# validator (_CANDIDATE_ENTRIES), guard_registry prose, migration test
+# fold literals (85/85 pass after update).
+#
+# Shadow delta (same tree, before = post-GR-14g):
+#   policy rows 447 -> 443; entry family 68 -> 64;
+#   exactly the 4 removal rows vanish; every other proof state unchanged;
+#   diagnostics delta: none; deterministic double-run BYTE-IDENTICAL
+#   (ffbc229d52ec37521cb1e18f07155496ad97ea4a1d639623c3639e58a0f1337c).
+#
+# Validation:
+#   - :app:compileDebugKotlin + compileDebugUnitTestKotlin BUILD
+#     SUCCESSFUL (10m13s) -- caller-inventory proof;
+#   - mediation shadow: double-run byte-identical;
+#   - python batteries: migration 85/85 (after pin drift update),
+#     current-repo tripwire 3/3, GR-14f carrier module 12/12;
+#   - WarrantyTrackerRepositoryTest: executor JVM OOM/JPLISAgent crash,
+#     FAILED twice, then reproduced IDENTICALLY at the pre-batch state
+#     (git stash A/B) -- pre-existing infra failure class (same family as
+#     the GR-14e-documented hangs), not caused by this batch; owed to the
+#     dedicated test-infra batch.
+#   - GATE-00R double capture + Gradle DB task: OWED at merge -- MANDATORY
+#     for this batch (policy bytes changed).
+schemaVersion: 1
+batchId: GR-14h
+startSha: 68fda8c7
+gateEvidenceSha256: null # GATE-00R recapture MANDATORY at merge (policy changed)
+mediationReportSha256Before: 08ed7ddb2792b2a67b8cfc47a7e830a9bd7f1d2ff744b199c8e570ece5c89aa0
+mediationReportSha256After: ffbc229d52ec37521cb1e18f07155496ad97ea4a1d639623c3639e58a0f1337c
+activePolicySha256: 51f7d40aad92918f2ff27f63615462fe27e70f9662aaa0a1e465b08becf4aad8
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt:
+      removed dead addReturnWindow (shared createReturnWindowTimestamps
+      helper retained -- two live callers)
+  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt:
+      removed dead writeUpdateValidationFailedEventBestEffort and the dead
+      bulkUpdateCategory(Long,Long,String) category-to-category overload
+
+policyFixes:
+  - docs/ci/db-findings/GR-08-seeds.yml: 3 dead seed rows removed (421 -> 418)
+  - config/guards/db_ownership_policy.legacy.yml: 4 dead v1 rows removed
+    (97 -> 93; one resolved emitter + three CALLABLE_AMBIGUOUS rows)
+  - config/guards/db_ownership_policy.signatures.candidate.yml: regenerated 475 -> 471
+  - config/guards/db_ownership_policy.signatures.accounting.json: regenerated (paired)
+  - config/guards/db_ownership_policy.yml: active realigned 475 -> 471
+    (GR-14c dead-row precedent; direct reviewed edit, key sets == candidate)
+
+tests:
+  - scripts/test_migrate_db_policy_signatures.py 85/85 (fold-truth pins
+    updated to 93/53/40/43 + 471/418 with drift notes)
+  - scripts/test_db_guard_policy_v2_current_repo.py 3/3 (pin 475 -> 471)
+  - scripts/ci/test_gr14f_inline_carriers.py 12/12
+  - WarrantyTrackerRepositoryTest: pre-existing infra failure (A/B-proved)
+
+status: PARTIAL # GATE-00R recapture + Gradle DB task owed at merge
+pattern: E # remove dead/unreachable writer
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch removes dead code and its now-meaningless authorization rows.
+  It is not a baseline, exception, or authorization document.  The
+  candidate/active pair stays key-set aligned at 471; every removal was
+  triple-proven dead (engine + grep + compile) before and after.

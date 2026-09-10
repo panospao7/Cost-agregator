@@ -209,11 +209,11 @@ class RecommendationDaoTest {
         dao.clearByUser(userId1)
 
         // Check user1 has no recommendations
-        val user1Results = dao.getActiveByUser(userId1)
+        val user1Results = dao.getActiveByUser(userId1, FIXED_NOW)
         assertEquals(0, user1Results.size)
 
         // Check user2 still has recommendations
-        val user2Results = dao.getActiveByUser(userId2)
+        val user2Results = dao.getActiveByUser(userId2, FIXED_NOW)
         assertEquals(1, user2Results.size)
     }
 

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.health
 
 import com.yourname.expensetracker.AnalyticsEngineTestBase
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.HealthScoreHistoryDao
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
@@ -26,6 +27,7 @@ import com.yourname.expensetracker.domain.model.DomainTransactionType
 import com.yourname.expensetracker.domain.model.DomainTransferDirection
 import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -35,6 +37,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import timber.log.Timber
 import java.util.Calendar
 
 class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
@@ -44,6 +47,10 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
     private lateinit var savingsGoalRepository: SavingsGoalRepository
     private lateinit var recurringExpenseEngine: RecurringExpenseEngine
     private lateinit var healthScoreHistoryDao: HealthScoreHistoryDao
+    private lateinit var analyticsCurrencyNormalizer: AnalyticsCurrencyNormalizer
+    private lateinit var currencySettingsRepository: CurrencySettingsRepository
+    private lateinit var cashFlowCalculator: CashFlowCalculator
+    private lateinit var writeBarrier: DatabaseWriteBarrier
 
     private lateinit var calculator: FinancialHealthScoreV2
 
@@ -58,10 +65,12 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         savingsGoalRepository = mockk()
         recurringExpenseEngine = mockk()
         healthScoreHistoryDao = mockk(relaxed = true)
-        val analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
-        val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
+        analyticsCurrencyNormalizer = mockk<AnalyticsCurrencyNormalizer>(relaxed = true)
+        currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
+        cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true)
+        writeBarrier = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
         coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
@@ -97,8 +106,8 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             timeProvider = timeProvider,
             analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
             currencySettingsRepository = currencySettingsRepository,
-            cashFlowCalculator = mockk<CashFlowCalculator>(relaxed = true),
-            writeBarrier = mockk(relaxed = true)
+            cashFlowCalculator = cashFlowCalculator,
+            writeBarrier = writeBarrier
         )
     }
 
@@ -125,6 +134,61 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         assertEquals(90, result.budgetAdherenceScore)
         assertEquals(75, result.billReliabilityScore)
         assertEquals(54, result.overallScore)
+    }
+
+    @Test
+    fun `calculateHealthScore timing diagnostic uses injected fake clock not wall clock`() = runTest {
+        // Same deterministic scenario as the weighted-formula test, but driven by
+        // the real FakeTimeProvider (fixed at `now`) so the reported duration is
+        // provably derived from the injected reads (fixed -> fixed = 0ms), never
+        // the real wall clock. A wall-clock regression would make this flaky
+        // (non-deterministic positive elapsed time) instead of exactly 0ms.
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 1000.0, TransactionType.DEPOSIT, now - 10 * dayMs),
+            expense(2L, 900.0, TransactionType.PURCHASE, now - 9 * dayMs)
+        )
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns listOf(
+            budgetStatus(amount = 1000.0, spent = 1100.0)
+        )
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 3000.0, current = 900.0))
+
+        val captured = StringBuilder()
+        val tree = object : Timber.Tree() {
+            override fun log(priority: Int, tag: String?, message: String, t: Throwable?) {
+                if (message.startsWith("FinancialHealthScoreV2 calculated in")) {
+                    captured.append(message)
+                }
+            }
+        }
+        Timber.plant(tree)
+        try {
+            val fakeTime = FakeTimeProvider(now)
+            val fakeCalculator = FinancialHealthScoreV2(
+                budgetRepository = budgetRepository,
+                expenseRepository = expenseRepository,
+                savingsGoalRepository = savingsGoalRepository,
+                recurringExpenseEngine = recurringExpenseEngine,
+                healthScoreHistoryDao = healthScoreHistoryDao,
+                timeProvider = fakeTime,
+                analyticsCurrencyNormalizer = analyticsCurrencyNormalizer,
+                currencySettingsRepository = currencySettingsRepository,
+                cashFlowCalculator = cashFlowCalculator,
+                writeBarrier = writeBarrier
+            )
+
+            val result = fakeCalculator.calculateHealthScore()
+
+            assertTrue(
+                "Timing diagnostic must use the injected clock, got: $captured",
+                captured.contains("calculated in 0ms")
+            )
+            // Score semantics are preserved under the fake clock.
+            assertEquals(54, result.overallScore)
+            assertEquals(50, result.savingsRateScore)
+            assertEquals(8, result.runwayScore)
+        } finally {
+            Timber.uproot(tree)
+        }
     }
 
     @Test

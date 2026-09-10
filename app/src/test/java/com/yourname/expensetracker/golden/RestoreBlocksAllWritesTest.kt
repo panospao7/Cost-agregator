@@ -3,6 +3,7 @@ package com.yourname.expensetracker.golden
 import android.content.Context
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
@@ -24,7 +25,7 @@ class RestoreBlocksAllWritesTest {
         every { prefs.getString(any(), any()) } returns "NORMAL"
         val context = mockk<Context>(relaxed = true)
         every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context)
+        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
         val barrier = DatabaseWriteBarrier(mode)
 
         // Should not throw
@@ -37,7 +38,7 @@ class RestoreBlocksAllWritesTest {
         every { prefs.getString(any(), any()) } returns "RESTORE_PREPARING"
         val context = mockk<Context>(relaxed = true)
         every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context)
+        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
         val barrier = DatabaseWriteBarrier(mode)
 
         assertThrows(IllegalStateException::class.java) {
@@ -51,7 +52,7 @@ class RestoreBlocksAllWritesTest {
         every { prefs.getString(any(), any()) } returns "BACKUP_EXPORTING"
         val context = mockk<Context>(relaxed = true)
         every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context)
+        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
         val barrier = DatabaseWriteBarrier(mode)
 
         assertThrows(IllegalStateException::class.java) {
@@ -65,7 +66,7 @@ class RestoreBlocksAllWritesTest {
         every { prefs.getString(any(), any()) } returns "RESTORE_COMPLETE_RESTART_REQUIRED"
         val context = mockk<Context>(relaxed = true)
         every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context)
+        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
         val barrier = DatabaseWriteBarrier(mode)
 
         assertThrows(IllegalStateException::class.java) {
@@ -79,7 +80,7 @@ class RestoreBlocksAllWritesTest {
         every { prefs.getString(any(), any()) } returns "RESTORE_SWAPPING"
         val context = mockk<Context>(relaxed = true)
         every { context.getSharedPreferences(any(), any()) } returns prefs
-        val mode = RestoreMaintenanceMode(context)
+        val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
         val barrier = DatabaseWriteBarrier(mode)
 
         assertThrows(IllegalStateException::class.java) {
@@ -99,7 +100,7 @@ class RestoreBlocksAllWritesTest {
             every { prefs.getString(any(), any()) } returns modeName
             val context = mockk<Context>(relaxed = true)
             every { context.getSharedPreferences(any(), any()) } returns prefs
-            val mode = RestoreMaintenanceMode(context)
+            val mode = RestoreMaintenanceMode(context, FakeTimeProvider(1716163200000L))
             val barrier = DatabaseWriteBarrier(mode)
 
             try {

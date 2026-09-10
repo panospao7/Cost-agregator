@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import com.yourname.expensetracker.data.database.dao.RecommendationDao
 import com.yourname.expensetracker.data.database.entity.RecommendationEntity
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
 import com.yourname.expensetracker.domain.model.recommendation.RecommendationPriority
@@ -46,7 +47,16 @@ class RecommendationRepositoryTest {
         timeProvider = FakeTimeProvider(1_700_000_000_000L)
         val filterSerializer = TransactionFilterSerializer()
         deduplicator = RecommendationDeduplicator(filterSerializer)
-        repository = RecommendationRepository(mockk<DatabaseWriteBarrier>(relaxed = true), dao, deduplicator, timeProvider, testDispatcher)
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        // GR-14k: runWrite is a pass-through here — the relaxed mock would
+        // otherwise never invoke the scoped block.
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        repository = RecommendationRepository(writeBarrier, dao, deduplicator, timeProvider, testDispatcher)
     }
 
     @Test
@@ -207,9 +217,13 @@ class RecommendationRepositoryTest {
 
         repository.saveAll(incoming)
 
+        // Both new recommendations that survived the global top-5 merge are
+        // inserted (new_high_best ranks 1st, new_medium_mid ranks 4th); only
+        // the pre-existing rows are never re-inserted. This is consistent with
+        // the retainedIds pinned in the archiveActiveOverflow matcher below.
         coVerify(exactly = 1) {
             dao.insertAll(match { inserted ->
-                inserted.map { it.id } == listOf("new_high_best")
+                inserted.map { it.id } == listOf("new_high_best", "new_medium_mid")
             })
         }
         coVerify(exactly = 1) {

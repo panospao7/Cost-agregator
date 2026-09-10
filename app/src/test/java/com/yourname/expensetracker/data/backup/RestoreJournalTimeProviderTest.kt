@@ -111,7 +111,7 @@ class RestoreJournalTimeProviderTest {
     }
 
     @Test
-    fun `JournalEntry fromJson uses wall-clock fallback for legacy startedAt`() {
+    fun `JournalEntry fromJson uses supplied nowEpochMs fallback for legacy startedAt`() {
         // Simulate old JSON without startedAt field
         val oldJson = org.json.JSONObject().apply {
             put("operationId", "test-op")
@@ -120,11 +120,14 @@ class RestoreJournalTimeProviderTest {
             // No startedAt field
         }
 
-        // Note: fromJson() uses System.currentTimeMillis() as fallback for old JSON
-        // This is documented as legacy behavior
-        val entry = RestoreJournal.JournalEntry.fromJson(oldJson)
-        assertTrue("legacy fallback should set startedAt to current time (within 5s)",
-            kotlin.math.abs(entry.startedAt - System.currentTimeMillis()) < 5000)
+        // Note: fromJson() falls back to the explicit caller-supplied nowEpochMs
+        // for legacy JSON — never a hidden wall-clock read.
+        val entry = RestoreJournal.JournalEntry.fromJson(oldJson, fixedTime)
+        assertEquals(
+            "legacy fallback should set startedAt to the exact supplied timestamp",
+            fixedTime,
+            entry.startedAt
+        )
     }
 
     @Test
@@ -136,7 +139,7 @@ class RestoreJournalTimeProviderTest {
             put("startedAt", 1234567890L)
         }
 
-        val entry = RestoreJournal.JournalEntry.fromJson(json)
+        val entry = RestoreJournal.JournalEntry.fromJson(json, fixedTime)
         assertEquals(1234567890L, entry.startedAt)
     }
 }

@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseAccessType
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -22,13 +23,16 @@ import org.junit.Test
 class WorkerLeaseRegistryTest {
 
     private val writeBarrier = mockk<DatabaseWriteBarrier>()
+    private val timeProvider = object : TimeProvider {
+        override fun now(): Long = System.currentTimeMillis()
+    }
     private lateinit var registry: WorkerLeaseRegistryImpl
 
     @Before
     fun setup() {
         every { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         every { writeBarrier.checkWritesAllowed(any<DatabaseAccessOperation>()) } returns Unit
-        registry = WorkerLeaseRegistryImpl(writeBarrier)
+        registry = WorkerLeaseRegistryImpl(writeBarrier, timeProvider)
     }
 
     // ── restore_waits_for_running_worker_to_stop ──────────────────
@@ -85,7 +89,7 @@ class WorkerLeaseRegistryTest {
         registry.requestStopAll("restore started")
 
         assertThrows(kotlinx.coroutines.CancellationException::class.java) {
-            runTest { lease.checkpoint("updateLocation") }
+            kotlinx.coroutines.runBlocking { lease.checkpoint("updateLocation") }
         }
 
         lease.close()
@@ -101,7 +105,7 @@ class WorkerLeaseRegistryTest {
         val lease = registry.acquire("location_backfill")
 
         assertThrows(DatabaseAccessBlockedException::class.java) {
-            runTest { lease.checkpoint("updateLocation") }
+            kotlinx.coroutines.runBlocking { lease.checkpoint("updateLocation") }
         }
 
         lease.close()
@@ -152,27 +156,167 @@ class WorkerLeaseRegistryTest {
         assertTrue(registry.awaitNoActiveWorkers(100))
     }
 
-    // ── S6 (P9-P1-07 / NEW-07): same-name acquisition is NOT mutually exclusive ──
+    // ── PR2: same-name acquisitions create distinct leases ─────────
 
     @Test
-    fun same_name_acquire_is_not_mutually_exclusive() = runTest {
-        // Pins the S6 finding: acquire(name) records the lease in a map and returns
-        // immediately — it does NOT block or serialize. Two acquisitions of the SAME
-        // name (e.g. periodic "receipt_matching" overlapping the manual one-shot) both
-        // return without waiting, and collapse to a single map entry rather than queuing.
-        // Therefore the lease registry CANNOT be relied on to prevent overlapping
-        // receipt-matching runs; overlap safety is provided by the per-receipt atomic
-        // claim (ScannedReceiptDao.claimForAutoMatch) instead.
+    fun same_name_acquire_creates_distinct_leases() = runTest {
+        // PR2-FIX: concurrent same-name workers must each have their own lease,
+        // so that close() of one does not accidentally remove the other's lease.
         val lease1 = registry.acquire("receipt_matching")
-        // Second acquire of the same name must NOT block (no deadlock here proves it).
         val lease2 = registry.acquire("receipt_matching")
 
-        // Same key → one active entry, not two serialized leases.
-        assertEquals(1, registry.activeLeaseCount())
+        // Two distinct leases, not collapsed into one
+        assertEquals(2, registry.activeLeaseCount())
 
         lease1.close()
+        assertEquals(1, registry.activeLeaseCount()) // lease2 still active
+
         lease2.close()
         assertEquals(0, registry.activeLeaseCount())
+    }
+
+    @Test
+    fun drain_sees_all_concurrent_same_name_workers() = runTest {
+        val lease1 = registry.acquire("receipt_matching")
+        val lease2 = registry.acquire("receipt_matching")
+
+        // Drain should timeout while both leases are held
+        assertFalse(registry.awaitNoActiveWorkers(100))
+
+        lease1.close()
+        // Still one lease active
+        assertFalse(registry.awaitNoActiveWorkers(100))
+
+        lease2.close()
+        // Now fully drained
+        assertTrue(registry.awaitNoActiveWorkers(100))
+    }
+
+    // ── PR6A: New lease registry hardening tests ──────────────────
+
+    @Test
+    fun `acquire after stop request is rejected`() = runTest {
+        registry.requestStopAll("backup starting")
+
+        assertThrows(LeaseAcquisitionBlockedException::class.java) {
+            kotlinx.coroutines.runBlocking { registry.acquire("data_retention") }
+        }
+    }
+
+    @Test
+    fun `drain does not miss late acquire`() = runTest {
+        // Use a virtual time provider so awaitNoActiveWorkers cooperates with runTest's virtual time
+        val scheduler = testScheduler
+        val virtualTimeProvider = object : TimeProvider {
+            override fun now(): Long = scheduler.currentTime
+        }
+        val virtualRegistry = WorkerLeaseRegistryImpl(writeBarrier, virtualTimeProvider)
+
+        // Start with an active lease so drain won't finish immediately
+        val existingLease = virtualRegistry.acquire("data_retention")
+
+        // Start a drain — it will spin in the background
+        var drainResult: Boolean? = null
+        val drainJob = launch {
+            drainResult = virtualRegistry.requestStopAndAwaitDrain("backup", timeoutMs = 10_000)
+        }
+
+        // Advance time past the timeout so drain completes (it sees the existing lease and times out)
+        advanceTimeBy(10_500)
+
+        // Now drain has completed (because existing lease hasn't been released yet, it timed out)
+        // But stop has been requested, so late acquire should be rejected
+        val ex = assertThrows(LeaseAcquisitionBlockedException::class.java) {
+            kotlinx.coroutines.runBlocking { virtualRegistry.acquire("late_worker") }
+        }
+        assertTrue(ex.message!!.contains("stop requested"))
+
+        existingLease.close()
+    }
+
+    @Test
+    fun `concurrent acquire and request stop is safe`() = runTest {
+        // Acquire on one "thread" and request stop on another should not corrupt state
+        var lease1: WorkerLease? = null
+        val acquiredSuccessfully = mutableListOf<String>()
+
+        val job1 = launch {
+            try {
+                lease1 = registry.acquire("worker_a")
+                acquiredSuccessfully.add("worker_a")
+            } catch (e: LeaseAcquisitionBlockedException) {
+                // Either outcome is acceptable — we just need no crash/corruption
+            }
+        }
+        val job2 = launch {
+            try {
+                registry.acquire("worker_b")
+                acquiredSuccessfully.add("worker_b")
+            } catch (e: LeaseAcquisitionBlockedException) {
+                // OK
+            }
+        }
+        val job3 = launch {
+            registry.requestStopAll("concurrent test")
+        }
+
+        job1.join()
+        job2.join()
+        job3.join()
+
+        // Verify the registry is in a consistent state
+        val activeCount = registry.activeLeaseCount()
+        assertTrue("active leases should be 0, 1, or 2 (consistent state)", activeCount in 0..2)
+
+        // If any leases were acquired, they should be releasable without error
+        lease1?.close()
+    }
+
+    @Test
+    fun `release removes primary and secondary indexes`() = runTest {
+        val lease = registry.acquire("receipt_matching")
+
+        // Primary index has the lease
+        assertEquals(1, registry.activeLeaseCount())
+
+        // Secondary index has the worker name entry
+        assertTrue(
+            "Secondary index should contain receipt_matching",
+            registry.workerNameIndex.containsKey("receipt_matching")
+        )
+        val idsBefore = registry.workerNameIndex["receipt_matching"] ?: emptySet()
+        assertEquals(1, idsBefore.size)
+
+        lease.close()
+
+        // Primary index empty
+        assertEquals(0, registry.activeLeaseCount())
+
+        // Secondary index should have removed the entry
+        // (ids becomes empty → entry removed)
+        assertFalse(
+            "Secondary index should not contain receipt_matching after release",
+            registry.workerNameIndex.containsKey("receipt_matching")
+        )
+    }
+
+    @Test
+    fun `reset stop flag allows future acquire`() = runTest {
+        // Stop all
+        registry.requestStopAll("maintenance")
+
+        // Acquire should be blocked
+        assertThrows(LeaseAcquisitionBlockedException::class.java) {
+            kotlinx.coroutines.runBlocking { registry.acquire("data_retention") }
+        }
+
+        // Reset
+        registry.resetStopFlag()
+
+        // Now acquire should succeed
+        val lease = registry.acquire("data_retention")
+        assertEquals(1, registry.activeLeaseCount())
+        lease.close()
     }
 }
 

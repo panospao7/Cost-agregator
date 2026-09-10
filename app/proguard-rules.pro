@@ -19,3 +19,6 @@
 -keepattributes Signature
 -keepattributes InnerClasses
 -keepattributes EnclosingMethod
+
+# Suppress warnings for optional PDF image decoding libraries
+-dontwarn com.gemalto.jp2.JP2Decoder

@@ -74,7 +74,13 @@ class FinancialHealthScoreV2 @Inject constructor(
 
     /**
      * Calculate comprehensive financial health score (0-100).
-     * 
+     *
+     * NOTE: This method has a side-effect — it persists the calculated result to
+     * `healthScoreHistoryDao` via [saveToHistory]. Callers that need a pure
+     * read without persistence should use the component methods directly
+     * (calculateSavingsRateScore, calculateRunwayScore, etc.) and avoid
+     * this convenience method.
+     *
      * @param periodStart Start of the evaluation period (inclusive)
      * @param periodEnd End of the evaluation period (inclusive)
      * @return FinancialHealthResult containing the score and all component breakdowns
@@ -83,7 +89,7 @@ class FinancialHealthScoreV2 @Inject constructor(
         periodStart: Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),
         periodEnd: Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
     ): FinancialHealthResult {
-        val startTime = System.currentTimeMillis()
+        val startTime = timeProvider.now()
         val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
             .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
         
@@ -190,7 +196,7 @@ class FinancialHealthScoreV2 @Inject constructor(
                 recommendation = recommendation
             )
             
-            val duration = System.currentTimeMillis() - startTime
+            val duration = timeProvider.now() - startTime
             Timber.d("FinancialHealthScoreV2 calculated in ${duration}ms: overall=$overallScore, savings=$savingsRateScore, runway=$runwayScore, budget=$budgetAdherenceScore, bills=$billReliabilityScore")
             
             FinancialHealthResult(

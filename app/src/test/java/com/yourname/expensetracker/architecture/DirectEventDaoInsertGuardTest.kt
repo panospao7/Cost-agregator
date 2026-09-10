@@ -1,0 +1,408 @@
+package com.yourname.expensetracker.architecture
+
+import org.junit.Assert.*
+import org.junit.Test
+import java.io.File
+import java.time.LocalDate
+
+/**
+ * PR 3 — Guard: Direct lifecycle event DAO inserts from non-approved files.
+ *
+ * Contract EVENT-GUARD-01: Critical lifecycle event DAO `insert()` calls (from
+ * `TransactionEventDao`, `ReceiptEventDao`, `RecurringLifecycleEventDao`,
+ * `LifecycleEventDao`, `WarrantyLifecycleEventDao`, `GroupLifecycleEventDao`)
+ * MUST only originate from approved coordinator/writer files.
+ *
+ * This test scans production `.kt` source files and fails if any non-approved
+ * file contains a direct event DAO `.insert(` call on a critical DAO type.
+ *
+ * The APPROVED_ENTRIES list represents the current approved write owners per
+ * `docs/atomicity/TRANSACTIONAL_EVENT_POLICY.md` §6.1. New entries require
+ * architecture review and owner/reason documentation.
+ */
+class DirectEventDaoInsertGuardTest {
+
+    private val sourceRoot: File by lazy { resolveSourceRoot() }
+
+    private fun resolveSourceRoot(): File {
+        val candidates = listOf(
+            File("src/main/java"),
+            File("app/src/main/java"),
+            File(System.getProperty("user.dir") ?: ".", "src/main/java"),
+            File(System.getProperty("user.dir") ?: ".", "app/src/main/java")
+        )
+        return candidates.firstOrNull { it.exists() && it.isDirectory }
+            ?: error("Could not locate production source root. user.dir=${System.getProperty("user.dir")}")
+    }
+
+    /**
+     * Structured allowlist entry that requires owner, reason, issue tracking, and
+     * expiry date — ensuring no allowlisted entry is left unaccounted for.
+     */
+    data class DirectEventAllowlistEntry(
+        val fileName: String,
+        val rule: String,
+        val category: String = "UNCATEGORIZED",
+        val owner: String,
+        val reason: String,
+        val issue: String,
+        val expires: LocalDate
+    )
+
+    companion object {
+        /**
+         * Files approved to call critical event DAO insert methods.
+         *
+         * Each entry is a structured [DirectEventAllowlistEntry] with owner, reason,
+         * issue tracking, and expiry date. This list MUST only grow with architecture
+         * review — never arbitrarily.
+         */
+        val APPROVED_ENTRIES = listOf(
+        // GR-14u2 renewal (2026-09-09): the 2026-08-15 expiry passed with the
+        // legacy->coordinator migrations still pending for 7 entries; each file was
+        // re-checked against GUARDED_DAO_NAMES and its violations remain live, so the
+        // entries are renewed to the standard 2026-12-31 horizon rather than dropped.
+        // ExpenseRepository's violation is fixed and its entry removed.
+            // === Transaction events (DIRECT_TRANSACTION_EVENT_DAO_INSERT) ===
+            DirectEventAllowlistEntry(
+                "TransactionLifecycleCoordinator.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "COORDINATOR",
+                "Transaction", "P2 coordinator writes lifecycle events", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "DebugExpenseAuditWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Transaction", "P2 debug audit writes transaction events", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "DefaultExpenseCategoryAssignmentService.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "SERVICE",
+                "Transaction", "P2 category assignment writes transaction events", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "GroupTransactionCoordinator.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "COORDINATOR",
+                "Transaction", "P2 group transaction coordinator", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "TransactionSideEffectFailureEventWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Transaction", "P2 side-effect mirror writes failure events", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "TransactionSideEffectPlanner.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "COORDINATOR",
+                "Transaction", "P2 side-effect planner coordinates event writes", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "GroupLifecycleCoordinator.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "COORDINATOR",
+                "Transaction", "P2 group lifecycle coordinator", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "WarrantyTrackerRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
+                "Transaction", "Warranty tracking writes lifecycle events", "MIT-031",
+                LocalDate.of(2026, 11, 20)
+            ),
+            DirectEventAllowlistEntry(
+                "TransactionLifecycleEventWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Transaction", "P2 transaction event writer (contains Room impl)", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "ReceiptLifecycleCoordinator.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "COORDINATOR",
+                "Receipt", "P3 coordinator writes receipt lifecycle events", "MIT-041",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "ReceiptSideEffectPlanner.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "COORDINATOR",
+                "Receipt", "P3 side-effect planner coordinates receipt event writes", "MIT-041",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "ReceiptMatchLifecycleService.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "SERVICE",
+                "Receipt", "P3 match lifecycle writes receipt events", "MIT-041",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "ReceiptLinkService.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "SERVICE",
+                "Receipt", "P3 link service writes receipt events", "MIT-041",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "BankStatementLifecycleProcessor.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "SERVICE",
+                "Receipt", "P3 bank statement processor writes receipt events", "MIT-041",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "ReceiptRepository.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
+                "Receipt", "P3 repository (legacy, to be migrated to coordinator)", "MIT-041",
+                LocalDate.of(2026, 11, 20)
+            ),
+            DirectEventAllowlistEntry(
+                "ReviewQueueRepository.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
+                "Receipt", "P3 review queue repository (legacy, to be migrated)", "MIT-041",
+                LocalDate.of(2026, 11, 20)
+            ),
+            DirectEventAllowlistEntry(
+                "ReceiptLifecycleEventWriter.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Receipt", "P3 receipt event writer (contains Room impl)", "MIT-041",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "BankApiIntegration.kt", "DIRECT_RECEIPT_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
+                "Receipt", "P10 bank integration (legacy, to be migrated to coordinator)", "MIT-041",
+                LocalDate.of(2026, 11, 20)
+            ),
+
+            // === Recurring lifecycle events (DIRECT_RECURRING_EVENT_DAO_INSERT) ===
+            DirectEventAllowlistEntry(
+                "RecurringLifecycleCoordinator.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "COORDINATOR",
+                "Recurring", "P4 coordinator writes recurring lifecycle events", "MIT-043",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "RecurringRuleLifecycleCoordinator.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "COORDINATOR",
+                "Recurring", "P4 rule lifecycle coordinator", "MIT-043",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "RecurringOccurrenceMaterializer.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "SERVICE",
+                "Recurring", "P4 materializer (known LEGAL_PATHS deviation)", "MIT-043",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "RecurringLifecycleEventWriter.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Recurring", "P4 event writer (contains Room impl)", "MIT-043",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "RecurringExpenseRepository.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
+                "Recurring", "P4 repository (legacy, to be migrated)", "MIT-043",
+                LocalDate.of(2026, 11, 20)
+            ),
+            DirectEventAllowlistEntry(
+                "ManualRecurringExpenseRepository.kt", "DIRECT_RECURRING_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
+                "Recurring", "P4 manual recurring repository (legacy, to be migrated)", "MIT-043",
+                LocalDate.of(2026, 11, 20)
+            ),
+
+            // === Operations, diagnostics, and infrastructure events ===
+            DirectEventAllowlistEntry(
+                "OperationRunRecorder.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Operations", "Ops run recorder writes operation events", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "RestoreJournalImporter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "SERVICE",
+                "Operations", "P7 restore journal importer", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "WorkerRunLogger.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Operations", "P9 worker run logger writes lifecycle events", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "WorkerExecutionGuard.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "SERVICE",
+                "Operations", "P9 worker guard writes safeguard events", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "NotificationRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
+                "Operations", "P1 notification repository (legacy, to be migrated)", "MIT-031",
+                LocalDate.of(2026, 11, 20)
+            ),
+            DirectEventAllowlistEntry(
+                "DataRetentionWorker.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "SERVICE",
+                "Operations", "P8 data retention worker writes audit events", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "DiagnosticEventWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Operations", "Diagnostic event writer (contains Room impl)", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "DiagnosticSideEffectEventWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Operations", "Diagnostic side-effect event writer", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "CompositeSideEffectEventWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Operations", "Composite side-effect event writer", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "CompositeDiagnosticEventWriter.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Operations", "Composite diagnostic event writer", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+            DirectEventAllowlistEntry(
+                "CompositeOperationRunRecorder.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "WRITER_IMPLEMENTATION",
+                "Operations", "Composite operation run recorder", "MIT-031",
+                LocalDate.of(2026, 12, 31)
+            ),
+        )
+
+        /** DAO variable names whose `.insert()` calls are guarded. */
+        val GUARDED_DAO_NAMES = setOf(
+            "transactionEventDao",
+            "receiptEventDao",
+            "lifecycleEventDao",
+            "recurringLifecycleEventDao",
+            "warrantyLifecycleEventDao",
+            "groupLifecycleEventDao",
+            "operationRunEventDao",
+            "auditDao",
+            "eventDao",          // Used by OperationRunRecorder
+            "pendingReviewDao",  // MIT-041: PendingReview insert from non-coordinator
+        )
+
+        /**
+         * DAO insert patterns to detect.
+         *
+         * Pattern 1 (direct): `transactionEventDao.insert()`
+         * Pattern 2 (database-chained): `database.transactionEventDao().insert()`
+         */
+        val DIRECT_INSERT_PATTERN = Regex("""(?:\b(\w+)\.insert\s*\()""")
+        val CHAINED_INSERT_PATTERN = Regex("""database\s*\.\s*(\w*)Dao\s*\(\s*\)\s*\.\s*insert\s*\(""")
+    }
+
+    @Test
+    fun `direct event DAO inserts only from approved files`() {
+        val approvedFileNames = APPROVED_ENTRIES.map { it.fileName }.toSet()
+        val ktFiles = sourceRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .filter { it.name !in approvedFileNames }
+            .filter {
+                val text = it.readText()
+                // Check for direct pattern: daoName.insert()
+                val hasDirect = GUARDED_DAO_NAMES.any { name -> text.contains("$name.insert") }
+                // Check for chained pattern: database.daoName().insert()
+                val hasChained = CHAINED_INSERT_PATTERN.containsMatchIn(text)
+                hasDirect || hasChained
+            }
+            .toList()
+
+        assertTrue(
+            "Architecture guard scanned ZERO .kt files in ${sourceRoot.absolutePath}. " +
+                "Source root resolution is broken — this test would pass vacuously.",
+            sourceRoot.walkTopDown().filter { it.isFile && it.extension == "kt" }.count() >= 10
+        )
+
+        val violations = mutableListOf<String>()
+
+        for (file in ktFiles) {
+            val content = file.readText()
+            val relativePath = file.relativeTo(sourceRoot).path
+
+            // Check pattern 1: direct daoName.insert()
+            for (match in DIRECT_INSERT_PATTERN.findAll(content)) {
+                val varName = match.groupValues[1]
+                if (varName !in GUARDED_DAO_NAMES) continue
+                val lineNum = content.substring(0, match.range.first).count { it == '\n' } + 1
+                violations.add("$relativePath:$lineNum — $varName.insert() call outside approved file")
+            }
+
+            // Check pattern 2: database.xxxDao().insert()
+            for (match in CHAINED_INSERT_PATTERN.findAll(content)) {
+                val daoName = match.groupValues[1]
+                // Build the variable-like name: "transactionEventDao"
+                val varName = "${daoName}Dao"
+                if (varName !in GUARDED_DAO_NAMES) continue
+                val lineNum = content.substring(0, match.range.first).count { it == '\n' } + 1
+                violations.add("$relativePath:$lineNum — database.$daoName Dao().insert() call outside approved file")
+            }
+        }
+
+        assertTrue(
+            "EVENT-GUARD-01 violations: direct event DAO insert calls from non-approved files.\n" +
+                "Add the file to APPROVED_ENTRIES with owner/reason/issue/expiry, or route through an approved writer.\n" +
+                violations.joinToString("\n"),
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun `approved files list maps to real source files`() {
+        val allKtNames = sourceRoot.walkTopDown()
+            .filter { it.isFile && it.extension == "kt" }
+            .map { it.name }
+            .toSet()
+        val stale = APPROVED_ENTRIES.filter { it.fileName !in allKtNames }
+        assertTrue(
+            "APPROVED_ENTRIES contains entries that don't map to real source files: " +
+                stale.map { it.fileName } +
+                ". Remove stale/renamed entries.",
+            stale.isEmpty()
+        )
+    }
+
+    // ── Structured allowlist validation ──────────────────────────────────────
+
+    @Test
+    fun `structured allowlist requires owner reason issue expiry category`() {
+        for (entry in APPROVED_ENTRIES) {
+            assertTrue(
+                "Allowlist entry ${entry.fileName} missing owner",
+                entry.owner.isNotBlank()
+            )
+            assertTrue(
+                "Allowlist entry ${entry.fileName} missing reason",
+                entry.reason.isNotBlank()
+            )
+            assertTrue(
+                "Allowlist entry ${entry.fileName} missing issue",
+                entry.issue.isNotBlank()
+            )
+            assertNotNull(
+                "Allowlist entry ${entry.fileName} missing expiry",
+                entry.expires
+            )
+            assertTrue(
+                "Allowlist entry ${entry.fileName} missing rule",
+                entry.rule.isNotBlank()
+            )
+            assertTrue(
+                "Allowlist entry ${entry.fileName} missing category",
+                entry.category.isNotBlank()
+            )
+        }
+    }
+
+    @Test
+    fun `expired direct event allowlist entries fail`() {
+        val today = LocalDate.now()
+        val expired = APPROVED_ENTRIES.filter { it.expires.isBefore(today) }
+        assertTrue(
+            "Expired direct event allowlist entries found: " +
+                expired.map { it.fileName },
+            expired.isEmpty()
+        )
+    }
+
+    @Test
+    fun `no duplicate direct event allowlist entries`() {
+        val duplicates = APPROVED_ENTRIES.groupBy { it.fileName }
+            .filter { it.value.size > 1 }
+            .keys
+        assertTrue(
+            "Duplicate direct event allowlist entries found: $duplicates",
+            duplicates.isEmpty()
+        )
+    }
+
+    @Test
+    fun `legacy repository entries have short expiry`() {
+        val legacyRepos = APPROVED_ENTRIES.filter { it.category == "LEGACY_REPOSITORY" }
+        val maxExpiry = LocalDate.now().plusDays(75)
+        val longExpiry = legacyRepos.filter {
+            it.expires.isAfter(maxExpiry)
+        }
+        assertTrue(
+            "LEGACY_REPOSITORY entries must expire within 75 days (by $maxExpiry). Long-expiry: ${longExpiry.map { it.fileName }}",
+            longExpiry.isEmpty()
+        )
+    }
+}

@@ -1,0 +1,627 @@
+﻿# GR-08 batch 12, part 2 (GR-08l2) tracked batch manifest -- top-density
+# files, group 2: data/repository/SavingsGoalRepository.kt (repository legal
+# writer, sole SavingsGoalDao writer) +
+# domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt (THE
+# expense lifecycle authority per docs/architecture/LEGAL_PATHS.md) +
+# data/repository/SubscriptionManagementRepository.kt (repository legal
+# writer for the subscription management surface).
+#
+# Batch scope (plan): GR-08l covered FIVE files as ONE batch, with a forced
+# split if the combined unique fingerprint count exceeded 25 (see
+# GR-08l1.yml for the split arithmetic: 39 combined unique > 25).  Scope
+# verification against the trusted START report
+# (build/guard-debug/gr08l/before.json == trusted GR-08k after.json,
+# 163 findings / 20 advisory diagnostics): SavingsGoalRepository.kt carries
+# exactly 8 DB_UNAUTHORIZED_MUTATION findings / 8 UNIQUE fingerprints,
+# TransactionLifecycleCoordinator.kt carries exactly 8 findings / 8 UNIQUE
+# fingerprints and SubscriptionManagementRepository.kt carries exactly 7
+# findings / 7 UNIQUE fingerprints (dedup key: callable identity +
+# daoAccessor + daoFqcn + operation).  This part is within the cap (23
+# unique).
+#
+# LAYER LEGALITY:
+# * TransactionLifecycleCoordinator is THE expense lifecycle authority named
+#   by docs/architecture/LEGAL_PATHS.md ("Expense Mutations"): "DELETE
+#   expense -> TransactionLifecycleCoordinator.deleteExpense(id) ... loads
+#   snapshot INSIDE transaction -> TransactionEvent with
+#   LifecycleEventType.DELETED", and bulk category reassignment is the
+#   coordinator's own documented bulk-update path (single SQL UPDATE + one
+#   BULK_UPDATED TransactionEvent inside database.withTransaction +
+#   aggregate post-commit side effects via
+#   dispatchBulkPostCommitSideEffects).  "ExpenseDao.delete() from
+#   repositories directly" is FORBIDDEN -- these rows ARE the coordinator
+#   writing through its own injected expenseDao, i.e. the legal path
+#   itself.  Every entrypoint runs checkWritesAllowed (writeBarrier
+#   delegation) first; the class carries
+#   @OptIn(RestrictedExpenseDaoMutation::class).  The coordinator's OTHER
+#   mutating callables (createExpenseMutation, updateExpense, updateCategory,
+#   updateMerchant, updateType, updateTransferDetails,
+#   updateTypeAndTransferDetails, updateOwnershipDbOnlyV2, bulkUpdateMerchant,
+#   writeDuplicateEvent, writeUpdateValidationFailedEventBestEffort) are
+#   ALREADY authorized by the active policy -- only the two
+#   bulkUpdateCategory overloads and the two deleteExpense overloads were
+#   still unauthorized.  CancellationException is rethrown in every catch
+#   path of the covered callables.
+# * SavingsGoalRepository is the repository-layer legal writer for savings
+#   goals (implements the domain.savings.SavingsGoalRepository interface; it
+#   is the SOLE writer of SavingsGoalDao).  Every mutating method runs
+#   writeBarrier.checkWritesAllowed directly before the delegated DAO
+#   mutation.  The deprecated entity-typed aliases (addGoal/deleteGoal/
+#   updateGoalAmount/addToGoalAmount) are distinct callables from the
+#   domain-typed overrides and are authorized separately.  Mirrors the
+#   GR-08k1 RecommendationRepository adjudication.
+# * SubscriptionManagementRepository is a repository-layer legal writer for
+#   the subscription MANAGEMENT surface (edit/delete/usage
+#   logging/candidate disposition) consumed by
+#   SubscriptionManagementViewModel.  Every mutating method runs
+#   writeBarrier.checkWritesAllowed directly before the delegated DAO
+#   mutation.  LEGAL_PATHS.md ("Subscription Mutations") keeps
+#   SubscriptionManagerEngine.validateAndCreate/acceptCandidate/
+#   recordPriceChange as the validated CREATE/ACCEPT/price-change authority
+#   (the engine's own DAO writes are the sanctioned path and stay
+#   authorized there); the FORBIDDEN rows target RAW DAO writes bypassing
+#   that validation from arbitrary layers -- this repository is the
+#   sanctioned barrier-checked writer layer for the management flows that
+#   have no engine-owned alternative (updateSubscription/
+#   deleteSubscriptionById/insertUsage/markCandidateAsConverted/
+#   markCandidateAsRejected), the same repository-layer-writer precedent as
+#   GR-08k1 RecommendationRepository and GR-08j2 SourceStatsRepository.
+#   insertSubscription remains the raw writer behind the documented external
+#   entry points (SubscriptionManagementViewModel KDoc) while the UI create
+#   flow routes through validateAndCreate.
+#
+# barrierMode is `helper` for every row (the GR-08a..k batch convention; no
+# direct-barrier proof is claimed even though every covered callable places
+# writeBarrier.checkWritesAllowed at its entrypoint).
+#
+# Chain-form census: ZERO database-chained `database.xxxDao()` mutation
+# receivers in ALL THREE files (every DAO call goes through the injected
+# constructor properties expenseDao / transactionEventDao / savingsGoalDao /
+# subscriptionDao / priceHistoryDao / usageDao / candidateDao; the
+# database.withTransaction calls are the androidx.room.withTransaction
+# extension, not DAO accessors).  NO accessor-normalization source change is
+# needed for this part.
+#
+# Closure additions (GR-08l blind-spot sweep): ZERO closure rows for ALL
+# THREE files.  Every dao-accessor call in ALL batch callable bodies was
+# enumerated: SavingsGoalDao, UserCorrectionDao, TransactionEventDao,
+# ManualRecurringExpenseDao, SubscriptionPriceHistoryDao,
+# SubscriptionUsageDao and SubscriptionCandidateDao are fully abstract
+# interfaces with ZERO body-carrying @Transaction convenience methods; the
+# coordinator's body-carrying @Transaction ExpenseDao composites
+# (findDuplicateIdCurrencyAware / isDuplicateCurrencyAware) are strictly
+# read-only, and its database.withTransaction calls are the
+# androidx.room.withTransaction extension, not DAO accessors.
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1 +
+# GR-08l2 rows verbatim, 291 rows); passing only GR-08l2-seed.yml would drop
+# the earlier batches' rows from the rendered candidate.
+schemaVersion: 1
+batchId: GR-08l2
+startSha: d69af416
+startReport:
+  path: build/guard-debug/gr08l/before.json
+  # SHA-256 of the reference copy (trusted GR-08k after report; 163 findings
+  # / 20 advisory).  ORCHESTRATOR: fill this in from the reference-copy step
+  # before the generate step (same value as GR-08l1.yml).
+  sha256: 
+  trusted: true
+  findingCount: 163
+activePolicySha256: 
+# ORCHESTRATOR: fill activePolicySha256 from the CURRENT active policy
+# (config/guards/db_ownership_policy.yml) at batch start, before generate
+# (same value as GR-08l1.yml).
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08L
+counts:
+  fileFindings: 23
+  batchCallablesFindings: 23
+  uniqueFingerprints: 23
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=createSavingsGoal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.model.SavingsGoal%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=insertGoal|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=deleteSavingsGoal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.model.SavingsGoal%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=deleteGoal|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=updateSavingsGoalAmount|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=updateGoalAmount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=incrementSavingsGoalAmount|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=addToGoalAmount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=addGoal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SavingsGoal%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=insertGoal|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=deleteGoal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SavingsGoal%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=deleteGoal|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=updateGoalAmount|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=updateGoalAmount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=addToGoalAmount|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=addToGoalAmount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=bulkUpdateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateCategoryForMerchant|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=bulkUpdateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=transactionEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=bulkUpdateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateCategoryForCategory|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=bulkUpdateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=transactionEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=deleteExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=transactionEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=deleteExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=deleteExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=transactionEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=deleteExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=insertUsage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SubscriptionUsage%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao|identity.accessor=usageDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=updateSubscription|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ManualRecurringExpense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|identity.accessor=subscriptionDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=deleteSubscriptionById|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|identity.accessor=subscriptionDao|identity.operation=deleteById|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=insertSubscription|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ManualRecurringExpense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|identity.accessor=subscriptionDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=insertPriceHistory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao|identity.accessor=priceHistoryDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=markCandidateAsConverted|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao|identity.accessor=candidateDao|identity.operation=markAsConverted|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=markCandidateAsRejected|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao|identity.accessor=candidateDao|identity.operation=markAsRejected|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+# â”€â”€ SavingsGoalRepository.kt (8 fingerprints / 8 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=createSavingsGoal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.model.SavingsGoal%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=insertGoal|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+    method: createSavingsGoal
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.model.SavingsGoal
+    kind: function
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: insertGoal
+  locations: [32]
+  disposition: EXACT_POLICY
+  rationale: "Domain-typed create -- maps the domain SavingsGoal to the entity and inserts behind the write barrier (OnConflictStrategy.IGNORE: callers check the 0-skipped return)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=deleteSavingsGoal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.model.SavingsGoal%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=deleteGoal|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+    method: deleteSavingsGoal
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.model.SavingsGoal
+    kind: function
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: deleteGoal
+  locations: [37]
+  disposition: EXACT_POLICY
+  rationale: "Domain-typed delete behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=updateSavingsGoalAmount|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=updateGoalAmount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+    method: updateSavingsGoalAmount
+    receiver: null
+    parameterTypes:
+    - Long
+    - Double
+    kind: function
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: updateGoalAmount
+  locations: [42]
+  disposition: EXACT_POLICY
+  rationale: "Domain-typed absolute saved-amount update behind the write barrier (single SQL UPDATE, no read-modify-write)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=incrementSavingsGoalAmount|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=addToGoalAmount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+    method: incrementSavingsGoalAmount
+    receiver: null
+    parameterTypes:
+    - Long
+    - Double
+    kind: function
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: addToGoalAmount
+  locations: [47]
+  disposition: EXACT_POLICY
+  rationale: "Domain-typed atomic increment -- the single SQL UPDATE currentAmount = currentAmount + :delta form that eliminates the concurrent-contribution lost-update race; returns rows-affected > 0."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=addGoal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SavingsGoal%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=insertGoal|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+    method: addGoal
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.SavingsGoal
+    kind: function
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: insertGoal
+  locations: [63]
+  disposition: EXACT_POLICY
+  rationale: "Deprecated entity-typed create alias; authorized separately because the callable identity differs from the domain-typed createSavingsGoal."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=deleteGoal|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SavingsGoal%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=deleteGoal|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+    method: deleteGoal
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.SavingsGoal
+    kind: function
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: deleteGoal
+  locations: [69]
+  disposition: EXACT_POLICY
+  rationale: "Deprecated entity-typed delete alias; authorized separately because the callable identity differs from the domain-typed deleteSavingsGoal."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=updateGoalAmount|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=updateGoalAmount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+    method: updateGoalAmount
+    receiver: null
+    parameterTypes:
+    - Long
+    - Double
+    kind: function
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: updateGoalAmount
+  locations: [75]
+  disposition: EXACT_POLICY
+  rationale: "Deprecated absolute-amount update alias; authorized separately because the callable identity differs from the domain-typed updateSavingsGoalAmount."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSavingsGoalRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SavingsGoalRepository|symbol.name=addToGoalAmount|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SavingsGoalDao|identity.accessor=savingsGoalDao|identity.operation=addToGoalAmount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SavingsGoalRepository
+    method: addToGoalAmount
+    receiver: null
+    parameterTypes:
+    - Long
+    - Double
+    kind: function
+  daoAccessor: savingsGoalDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SavingsGoalDao
+  operation: addToGoalAmount
+  locations: [91]
+  disposition: EXACT_POLICY
+  rationale: "Deprecated atomic-increment alias; authorized separately because the callable identity differs from the domain-typed incrementSavingsGoalAmount."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ TransactionLifecycleCoordinator.kt (8 fingerprints / 8 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=bulkUpdateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateCategoryForMerchant|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+    method: bulkUpdateCategory
+    receiver: null
+    parameterTypes:
+    - String
+    - Long
+    - String
+    - String?
+    - String?
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateCategoryForMerchant
+  locations: [1821]
+  disposition: EXACT_POLICY
+  rationale: "Merchant-key bulk category reassignment -- single SQL UPDATE inside database.withTransaction behind checkWritesAllowed; the coordinator IS the LEGAL_PATHS expense-mutation authority."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=bulkUpdateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=transactionEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+    method: bulkUpdateCategory
+    receiver: null
+    parameterTypes:
+    - String
+    - Long
+    - String
+    - String?
+    - String?
+    kind: function
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  locations: [1825]
+  disposition: EXACT_POLICY
+  rationale: "Single aggregate BULK_UPDATED TransactionEvent (merchant + affectedCount metadata) written in the same transaction, only when rows were affected -- the atomic audit-trail requirement."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=bulkUpdateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=updateCategoryForCategory|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+    method: bulkUpdateCategory
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: updateCategoryForCategory
+  locations: [1892]
+  disposition: EXACT_POLICY
+  rationale: "Category-to-category atomic bulk reassignment overload -- single SQL UPDATE inside database.withTransaction behind checkWritesAllowed (no partial migration possible; crash/event failure rolls back)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=bulkUpdateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=transactionEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+    method: bulkUpdateCategory
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    kind: function
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  locations: [1898]
+  disposition: EXACT_POLICY
+  rationale: "Aggregate BULK_UPDATED TransactionEvent for the category-to-category overload (atomic=true metadata) written in the same transaction -- authorized separately because the overload's callable identity differs."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=deleteExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=transactionEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+    method: deleteExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    - String?
+    - String?
+    - String?
+    kind: function
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  locations: [2047]
+  disposition: EXACT_POLICY
+  rationale: "By-id hard delete, audit half -- writes the DELETED TransactionEvent with the full beforeSnapshot loaded INSIDE the transaction (P2-08 TOCTOU-safe) before the row is removed."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=deleteExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+    method: deleteExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    - String?
+    - String?
+    - String?
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: delete
+  locations: [2063]
+  disposition: EXACT_POLICY
+  rationale: "By-id hard delete, mutation half -- removes the expense row in the same transaction after the DELETED event (the documented LEGAL_PATHS delete path; post-delete side effects run best-effort after commit via runBestEffortAfterCommit)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=deleteExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=transactionEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+    method: deleteExpense
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Expense
+    - String
+    - String?
+    - String?
+    - String?
+    kind: function
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  locations: [2117]
+  disposition: EXACT_POLICY
+  rationale: "By-entity hard delete overload, audit half -- re-reads the fresh row inside the transaction (P2-08) and writes the DELETED event with its snapshot; authorized separately because the overload's callable identity differs."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|symbol.name=deleteExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Expense%22%2C%22String%22%2C%22String%3F%22%2C%22String%3F%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+    method: deleteExpense
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Expense
+    - String
+    - String?
+    - String?
+    - String?
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: delete
+  locations: [2134]
+  disposition: EXACT_POLICY
+  rationale: "By-entity hard delete overload, mutation half -- removes the freshly re-read row in the same transaction after the DELETED event; authorized separately because the overload's callable identity differs."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ SubscriptionManagementRepository.kt (7 fingerprints / 7 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=insertUsage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SubscriptionUsage%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao|identity.accessor=usageDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+    method: insertUsage
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.SubscriptionUsage
+    kind: function
+  daoAccessor: usageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
+  operation: insert
+  locations: [38]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked usage log insert for the subscription management surface (LEGAL_PATHS RECORD-usage data path at the repository layer)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=updateSubscription|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ManualRecurringExpense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|identity.accessor=subscriptionDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+    method: updateSubscription
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+    kind: function
+  daoAccessor: subscriptionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: update
+  locations: [46]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked subscription edit (management-UI update path with no engine-owned alternative)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=deleteSubscriptionById|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|identity.accessor=subscriptionDao|identity.operation=deleteById|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+    method: deleteSubscriptionById
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: subscriptionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: deleteById
+  locations: [51]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked subscription removal from the management surface."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=insertSubscription|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ManualRecurringExpense%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|identity.accessor=subscriptionDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+    method: insertSubscription
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+    kind: function
+  daoAccessor: subscriptionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: insert
+  locations: [56]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked raw subscription insert -- the documented external entry-point writer (SubscriptionManagementViewModel KDoc) while the UI create flow routes through SubscriptionManagerEngine.validateAndCreate for validation."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=insertPriceHistory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao|identity.accessor=priceHistoryDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+    method: insertPriceHistory
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory
+    kind: function
+  daoAccessor: priceHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
+  operation: insert
+  locations: [61]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked price-history row insert at the repository layer (the engine's recordPriceChange/validateAndCreate remain the validated price-change authority)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=markCandidateAsConverted|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao|identity.accessor=candidateDao|identity.operation=markAsConverted|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+    method: markCandidateAsConverted
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - Long
+    kind: function
+  daoAccessor: candidateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+  operation: markAsConverted
+  locations: [66]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked candidate disposition -- marks a detected subscription candidate converted with its subscription link and timestamp."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FSubscriptionManagementRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.SubscriptionManagementRepository|symbol.name=markCandidateAsRejected|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao|identity.accessor=candidateDao|identity.operation=markAsRejected|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
+    method: markCandidateAsRejected
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: candidateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+  operation: markAsRejected
+  locations: [71]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked candidate disposition -- marks a detected subscription candidate rejected at the given timestamp."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08L
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for the GR-08l2 files: after the GR-08l promotion, SavingsGoalRepository.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (8/8 sites authorized across 8 fingerprints), TransactionLifecycleCoordinator.kt carries 0 (8/8 sites authorized across 8 fingerprints; all other coordinator callables were already authorized by the active policy) and SubscriptionManagementRepository.kt carries 0 (7/7 sites authorized across 7 fingerprints).  Out-of-batch stability: the rescan delta expectation for the WHOLE GR-08l batch is 163 -> 124 (39 = 8 ExpenseRepository + 8 MerchantNormalizationRepository + 8 SavingsGoalRepository + 8 TransactionLifecycleCoordinator + 7 SubscriptionManagementRepository); the remaining 124 include the still-unauthorized files deferred to future batches (e.g. BusinessExpenseRepository.kt, ManualRecurringExpenseRepository.kt, RecurringExpenseRepository.kt, SubscriptionManagerEngine.kt), which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

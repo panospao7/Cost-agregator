@@ -16,8 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.yourname.expensetracker.data.database.entity.BankConnection
-import com.yourname.expensetracker.data.database.entity.SyncStatus
+import com.yourname.expensetracker.domain.bank.BankConnectionSummary
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import kotlinx.coroutines.launch
@@ -41,7 +40,7 @@ fun BankConnectionsScreen(
     val isLoading by viewModel.isLoading.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    var pendingDisconnect by remember { mutableStateOf<BankConnection?>(null) }
+    var pendingDisconnect by remember { mutableStateOf<BankConnectionSummary?>(null) }
     
     Scaffold(
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
@@ -191,7 +190,7 @@ private fun EmptyBankConnectionsView(onAddConnection: () -> Unit) {
 
 @Composable
 private fun BankConnectionCard(
-    connection: BankConnection,
+    connection: BankConnectionSummary,
     onSync: () -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -217,7 +216,7 @@ private fun BankConnectionCard(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${connection.countryCode} • ${connection.syncFrequency.name}",
+                        text = "${connection.countryCode} • ${connection.syncFrequency}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -232,14 +231,6 @@ private fun BankConnectionCard(
                 Text(
                     text = stringResource(R.string.label_last_synced_format, dateFormat.format(Instant.ofEpochMilli(lastSync).atZone(ZoneId.systemDefault()))),
                     style = MaterialTheme.typography.bodySmall
-                )
-            }
-            
-            if (!connection.lastError.isNullOrEmpty()) {
-                Text(
-                    text = stringResource(R.string.label_error_prefix_format, connection.lastError),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error
                 )
             }
             
@@ -271,16 +262,16 @@ private fun BankConnectionCard(
 }
 
 @Composable
-private fun ConnectionStatusIcon(isConnected: Boolean, syncStatus: SyncStatus) {
+private fun ConnectionStatusIcon(isConnected: Boolean, lastSyncStatus: String?) {
     when {
-        isConnected && syncStatus == SyncStatus.SUCCESS -> {
+        isConnected && lastSyncStatus == "SUCCESS" -> {
             Icon(
                 imageVector = Icons.Default.CheckCircle,
                 contentDescription = stringResource(R.string.cd_connected),
                 tint = MaterialTheme.colorScheme.tertiary
             )
         }
-        isConnected && syncStatus == SyncStatus.FAILED -> {
+        isConnected && lastSyncStatus == "FAILED" -> {
             Icon(
                 imageVector = Icons.Default.Error,
                 contentDescription = stringResource(R.string.cd_sync_failed),

@@ -1,0 +1,275 @@
+# GR-08 batch 2 (GR-08b) reviewed exact v2 policy seed rows (MIT-DB-08B).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: the three remaining NotificationProcessingPipeline.kt callables
+# (repository layer = legal writer layer; expense creation itself goes
+# through TransactionLifecycleCoordinator.createExpenseDbOnlyV2 per
+# docs/architecture/LEGAL_PATHS.md).  barrierMode is `helper` for every
+# row: the write barrier runs in the pipeline entrypoints (process /
+# processBatch, NotificationProcessingPipeline.kt lines 187/212), not
+# directly before each mutation in these bodies, and no direct-barrier
+# proof is claimed.
+#
+# Closure additions (GR-08b evidence run): the GR-08a alias-bridge fix made
+# the constructor-property accessor `pendingReviewDao` fully evidenced, so
+# the v2 evidence verifier now sees one additional REAL mutation per
+# callable that the FINDINGS report never carried (the findings scanner's
+# gating did not report the body-carrying @Transaction PendingReviewDao
+# convenience method upsertByRawNotificationId).  Both are legal writer
+# mutations in this same repository-layer class, so two closure rows are
+# added: processInternal and handleNeedsReviewInTransaction each gain
+# pendingReviewDao.upsertByRawNotificationId (13 rows total; the 11
+# findings-derived rows are unchanged).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a rows + these rows); passing
+# only this file would drop the GR-08a rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── processInternal (21 findings / 6 unique fingerprints + 1 closure row) ────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: processInternal
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Boolean
+  - String?
+  - com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markProcessed
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: terminal raw-notification state write on every processed branch inside the pipeline DB transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: processInternal
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Boolean
+  - String?
+  - com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: raw-notification relevance bookkeeping on every processed branch inside the pipeline DB transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: processInternal
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Boolean
+  - String?
+  - com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndAutoRejected
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: per-source auto-rejected counter increment on the rejected processing branches"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: processInternal
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Boolean
+  - String?
+  - com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndDuplicate
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: per-source duplicate counter increment on every processing dedupe branch (canonical, pending-review, raw-duplicate)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: processInternal
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Boolean
+  - String?
+  - com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndPending
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: per-source pending counter increment after needs-review creation"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: processInternal
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Boolean
+  - String?
+  - com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: insertIfNotExists
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: idempotent per-source stats row bootstrap on first processing of a package"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: processInternal
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Boolean
+  - String?
+  - com.yourname.expensetracker.domain.notification.NotificationPersistenceContext?
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: upsertByRawNotificationId
+  barrierMode: helper
+  reason: "GR-08b CLOSURE: needs-review review-row upsert on the oversized-amount and transaction-signal parse-failed branches, evidenced after the GR-08a alias-bridge fix; legal writer mutation in this repository-layer pipeline class with no findings-report row (scanner gating never reported the body-carrying @Transaction DAO convenience method)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+# ── handleNeedsReviewInTransaction (8 findings / 4 unique fingerprints + 1 closure row) ──────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleNeedsReviewInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markProcessed
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: terminal raw-notification state write on every needs-review branch, atomically inside the pipeline DB transaction (P1-SLICE-D)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleNeedsReviewInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: needs-review dedupe-branch relevance bookkeeping inside the pipeline DB transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleNeedsReviewInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndDuplicate
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: per-source duplicate counter on the needs-review dedupe branches (canonical, pending-review)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleNeedsReviewInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndPending
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: per-source pending counter increment after review creation"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleNeedsReviewInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: upsertByRawNotificationId
+  barrierMode: helper
+  reason: "GR-08b CLOSURE: needs-review review-row upsert on the review-creation branch, evidenced after the GR-08a alias-bridge fix; legal writer mutation in this repository-layer pipeline class with no findings-report row (scanner gating never reported the body-carrying @Transaction DAO convenience method)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B
+# ── insertRawNotificationIfNotDuplicate (1 finding / 1 unique fingerprint) ───
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: insertRawNotificationIfNotDuplicate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: insertOrIgnore
+  barrierMode: helper
+  reason: "GR-08b EXACT_POLICY: dedupe-guarded raw-notification persistence writer (fingerprint precheck + insertOrIgnore conflict basis) inside the pipeline DB transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08B

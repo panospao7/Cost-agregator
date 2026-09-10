@@ -1,0 +1,422 @@
+﻿# GR-08 batch 13, part 2 (GR-08m2) tracked batch manifest -- file group 2:
+# domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt (THE receipt
+# lifecycle authority) + service/warranty/WarrantyExpirationWorker.kt
+# (worker; WorkerExecutionGuard verified in the body).
+#
+# Batch scope (plan): GR-08m covered FIVE files as ONE batch, with a forced
+# split if the combined unique fingerprint count exceeded 25.  Scope
+# verification against the trusted START report
+# (build/guard-debug/gr08m/before.json == trusted GR-08l after-l3.json,
+# 121 findings / 20 advisory diagnostics; reference-copy SHA-256 recorded
+# below): ReceiptLifecycleCoordinator.kt carries exactly 6
+# DB_UNAUTHORIZED_MUTATION findings collapsing to 6 UNIQUE fingerprints and
+# WarrantyExpirationWorker.kt carries exactly 6 findings collapsing to 6
+# UNIQUE fingerprints (dedup key: callable identity + daoAccessor + daoFqcn
+# + operation).  Combined batch unique count 28 > the 25-fingerprint batch
+# cap, so the batch was SPLIT into GR-08m1 (AiChatRepositoryImpl.kt +
+# OperationRunRecorder.kt + RestoreJournalImporter.kt, 17 findings / 16
+# unique fingerprints) and GR-08m2 (this manifest, 12 findings / 12 unique
+# fingerprints) per the GR-08c/GR-08e/GR-08i/GR-08j/GR-08k/GR-08l
+# precedent; each part is within the cap.
+#
+# RECEIPTLIFECOORDINATOR LAYER LEGALITY: ReceiptLifecycleCoordinator is THE
+# receipt lifecycle authority -- the single entry point for processing
+# receipt input through any path (camera scan, gallery pick, email
+# ingestion, bank statement import) per its own contract and
+# docs/architecture/LEGAL_PATHS.md receipt lifecycle rules; receipt
+# mutations MUST route through it, so its own DAO writes are the legal
+# lifecycle path, not bypasses.  Both mutating entrypoints run
+# writeBarrier.checkWritesAllowed (processReceiptInput line 250,
+# processEmailReceipt line 749).  Every flagged site sits inside a
+# transactionRunner.runInTransaction block with the lifecycle event written
+# in the SAME transaction:
+#   - processReceiptInput receipt.dedup_hash_delete: exact-hash duplicate
+#     cleanup -- pendingReviewDao.deleteByScannedReceiptId +
+#     scannedReceiptDao.delete atomically with the DUPLICATE_DETECTED
+#     lifecycle event (legacy persisted-duplicate path only; drafts never
+#     touch the DB);
+#   - processReceiptInput receipt.dedup_post_ocr: post-OCR duplicate
+#     marking -- scannedReceiptDao.update with fingerprints +
+#     DUPLICATE_DETECTED event in one transaction (NEW-P3-005 no
+#     check-then-write gap);
+#   - processReceiptInput receipt.save_with_review: MIT-041 atomicity --
+#     pendingReviewDao.insert inside the same transaction as the resolver
+#     insert + RECEIPT_SAVED event so a crash cannot leave a saved receipt
+#     without its review row;
+#   - processEmailReceipt receipt.process_email: emailReceiptDao.insertOrIgnore
+#     (source row with storage-mode-sanitized sender/subject and hash-based
+#     dedup keys, PRIV-441/PRIV-6825) and pendingReviewDao.insert (MIT-041
+#     NeedsReview atomicity) inside the single email transaction.
+#   Pre-existing coverage note: deleteReceipt's three DAO sites
+#   (receiptEventDao.insert / receiptExpenseLinkDao.deleteAllLinksForReceipt
+#   / scannedReceiptDao.delete) are ALREADY authorized by MIT-003 entries
+#   in the active v2 policy and correctly produce NO findings.
+#   Delegating writers invoked by the coordinator (ReceiptInsertResolver,
+#   ReceiptLifecycleEventWriter, ReceiptLinkService,
+#   TransactionLifecycleCoordinator, SourceLinkWriter, DiagnosticEventWriter)
+#   are separate files with their own coverage/deferral -- out of batch
+#   scope.
+#
+# WARRANTYEXPIRATIONWORKER LAYER LEGALITY (worker): WORKER-GUARD VERIFIED
+# before EXACT_POLICY -- the ENTIRE mutating body of doWork (and the
+# deliverReminder calls it makes) runs inside
+# executionGuard.runGuardedWithContext(WorkerGuardRequest(workerName =
+# "warranty_expiration_check", requiresNotificationPermission = true,
+# allowDuringBackupExport = false, blockedPolicy = BlockedPolicy.RETRY,
+# workId, runAttemptCount)) { ctx -> ... }: the guard checks the
+# restore/write barrier FIRST and records a durable SKIPPED run when
+# blocked.  CancellationException is rethrown (catch order:
+# CancellationException rethrow, then generic rethrow -- no swallowed
+# cancellation).  The six sites implement the durable claim-before-notify
+# sent-state machine (S9/P9-P1-09): recoverStaleClaimed (crash recovery of
+# CLAIMED rows), insertOrIgnore (idempotent SCHEDULED seed on the
+# (warrantyId, windowDays, expiryDate) unique key), claim (atomic
+# SCHEDULED/FAILED -> CLAIMED -- durable cross-reboot dedup, two concurrent
+# runs can never both claim), markSentFromClaimed (the ONLY transition into
+# SENT, only from CLAIMED, persists notificationId), markFailed (records
+# the transient reason, stays re-claimable), deleteOlderThan (90-day
+# prune).  Notification permission gates notification posting only (guard
+# SKIPPED run with the controlled NOTIFICATION_PERMISSION_DENIED reason
+# code); notification metrics (ctx.addNotificationsSent) increment only
+# after a real successful send.  Idempotent across WorkManager retries by
+# construction (claim returns 0 for already-SENT rows).
+#
+# Chain-form census AFTER review: ZERO database-chained
+# `appDatabase.xxxDao()` mutation receivers and ZERO method-local DAO
+# aliases in BOTH files.  ReceiptLifecycleCoordinator injects AppDatabase
+# but NEVER uses it as a DAO accessor (all 1415 lines enumerated -- every
+# transaction goes through the injected DomainTransactionRunner and every
+# DAO call through the injected constructor properties scannedReceiptDao /
+# pendingReviewDao / emailReceiptDao / receiptEventDao /
+# receiptExpenseLinkDao); WarrantyExpirationWorker does not inject
+# AppDatabase at all.  NO accessor-normalization source change is needed
+# for this part.
+#
+# Closure additions (GR-08m2 blind-spot sweep): ZERO closure rows.  Every
+# dao-accessor call in ALL batch callable bodies was enumerated, not just
+# the findings: every called mutating DAO method
+# (PendingReviewDao.insert / deleteByScannedReceiptId,
+# ScannedReceiptDao.update / delete, EmailReceiptDao.insertOrIgnore,
+# WarrantyReminderDeliveryDao.insertOrIgnore / claim / markSentFromClaimed /
+# markFailed / recoverStaleClaimed / deleteOlderThan) is an abstract
+# Room-annotated method.  The body-carrying @Transaction methods that DO
+# exist in PendingReviewDao (upsertByRawNotificationId and the
+# getPendingWithReceipt-style composites) are NOT called from any batch
+# callable, and WarrantyReminderDeliveryDao's unused update/claimById are
+# likewise never invoked from the worker -- no convenience-method closure
+# row exists for this part (the GR-08b/GR-08d pattern does not trigger).
+# Other DAO-accessor calls in the bodies are read-only lookups
+# (scannedReceiptDao.getById/getRecentReceipts/getBySourceFingerprint,
+# emailReceiptDao.getByFingerprint/getByMessageId/getByMessageIdHash/
+# getByContentFingerprintHash, deliveryDao.getByKey).
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1 +
+# GR-08l2 + GR-08m1 + GR-08m2 rows verbatim, 322 rows after GR-08m);
+# passing only GR-08m2-seed.yml would drop the earlier batches' rows from
+# the rendered candidate.
+schemaVersion: 1
+batchId: GR-08m2
+startSha: 54719197
+startReport:
+  path: build/guard-debug/gr08m/before.json
+  # SHA-256 of the reference copy (trusted GR-08l after-l3 report; 121
+  # findings / 20 advisory).  ORCHESTRATOR: fill this in from the
+  # reference-copy step before the generate step.  Reference copy created
+  # by the orchestrator (batch agent is command-prohibited); expected
+  # source: build/guard-debug/gr08l/after-l3.json (trusted: true).
+  sha256: 
+  trusted: true
+  findingCount: 121
+activePolicySha256: 
+# ORCHESTRATOR: fill activePolicySha256 from the CURRENT active policy
+# (config/guards/db_ownership_policy.yml) at batch start, before generate.
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08M
+counts:
+  fileFindings: 12
+  batchCallablesFindings: 12
+  uniqueFingerprints: 12
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processReceiptInput|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=deleteByScannedReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processReceiptInput|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processReceiptInput|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processReceiptInput|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processEmailReceipt|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.receipt.EmailReceiptData%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.EmailReceiptDao|identity.accessor=emailReceiptDao|identity.operation=insertOrIgnore|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processEmailReceipt|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.receipt.EmailReceiptData%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=doWork|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=recoverStaleClaimed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=doWork|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=deleteOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=deliverReminder|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Warranty%22%2C%22Int%22%2C%22Long%22%2C%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=insertOrIgnore|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=deliverReminder|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Warranty%22%2C%22Int%22%2C%22Long%22%2C%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=claim|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=deliverReminder|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Warranty%22%2C%22Int%22%2C%22Long%22%2C%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=markSentFromClaimed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=deliverReminder|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Warranty%22%2C%22Int%22%2C%22Long%22%2C%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=markFailed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+# â”€â”€ ReceiptLifecycleCoordinator.kt (6 fingerprints / 6 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processReceiptInput|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=deleteByScannedReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+    method: processReceiptInput
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    - com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions
+    kind: function
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: deleteByScannedReceiptId
+  locations: [368]
+  disposition: EXACT_POLICY
+  rationale: "Exact-hash duplicate cleanup inside the receipt.dedup_hash_delete transaction -- deletes the duplicate's pending reviews atomically with the DUPLICATE_DETECTED lifecycle event so no detached actionable review survives the duplicate delete."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processReceiptInput|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+    method: processReceiptInput
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    - com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions
+    kind: function
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: delete
+  locations: [381]
+  disposition: EXACT_POLICY
+  rationale: "Exact-hash duplicate cleanup inside the receipt.dedup_hash_delete transaction -- deletes the duplicate receipt row (legacy persisted path only; drafts never touch the DB) atomically with the lifecycle event."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processReceiptInput|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+    method: processReceiptInput
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    - com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions
+    kind: function
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  locations: [454]
+  disposition: EXACT_POLICY
+  rationale: "Post-OCR duplicate marking inside the receipt.dedup_post_ocr transaction -- persists DUPLICATE_DETECTED status + text/semantic fingerprints atomically with the lifecycle event (NEW-P3-005: no check-then-write gap)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processReceiptInput|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.net.Uri%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+    method: processReceiptInput
+    receiver: null
+    parameterTypes:
+    - android.net.Uri
+    - com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator.ReceiptProcessingOptions
+    kind: function
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: insert
+  locations: [553]
+  disposition: EXACT_POLICY
+  rationale: "MIT-041 atomicity -- creates the PendingReview inside the receipt.save_with_review transaction (low-confidence or options.createReview) so receipt + event + review commit or roll back together."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processEmailReceipt|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.receipt.EmailReceiptData%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.EmailReceiptDao|identity.accessor=emailReceiptDao|identity.operation=insertOrIgnore|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+    method: processEmailReceipt
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.receipt.EmailReceiptData
+    - String
+    - String
+    - String
+    - String
+    - String
+    - String
+    - String?
+    kind: function
+  daoAccessor: emailReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.EmailReceiptDao
+  operation: insertOrIgnore
+  locations: [877]
+  disposition: EXACT_POLICY
+  rationale: "Email provenance source row inside the receipt.process_email transaction -- insertOrIgnore on the emailMessageId unique key with storage-mode-sanitized sender/subject (PRIV-6825) and hash-based dedup keys (PRIV-441: hash always stored, raw messageId only in STORE_RAW); -1 return resolves to the existing source or rolls the transaction back."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator|symbol.name=processEmailReceipt|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.receipt.EmailReceiptData%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+    method: processEmailReceipt
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.receipt.EmailReceiptData
+    - String
+    - String
+    - String
+    - String
+    - String
+    - String
+    - String?
+    kind: function
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: insert
+  locations: [1068]
+  disposition: EXACT_POLICY
+  rationale: "MIT-041 atomicity for the email path -- creates the NeedsReview PendingReview inside the receipt.process_email transaction so a crash after commit cannot leave a NeedsReview receipt without its review row."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ WarrantyExpirationWorker.kt (6 fingerprints / 6 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=doWork|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=recoverStaleClaimed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
+    method: doWork
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: deliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
+  operation: recoverStaleClaimed
+  locations: [91]
+  disposition: EXACT_POLICY
+  rationale: "Crash recovery at run start inside the WorkerExecutionGuard.runGuardedWithContext lambda -- resets CLAIMED deliveries whose claim is older than STALE_CLAIM_MS back to SCHEDULED so a worker that crashed mid-send retries instead of being stuck."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=doWork|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=deleteOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
+    method: doWork
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: deliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
+  operation: deleteOlderThan
+  locations: [136]
+  disposition: EXACT_POLICY
+  rationale: "End-of-run 90-day prune inside the guard lambda -- SQL-deletes delivery rows whose expiry is long past (replaces the SharedPreferences sweep; no payloads materialized)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=deliverReminder|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Warranty%22%2C%22Int%22%2C%22Long%22%2C%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=insertOrIgnore|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
+    method: deliverReminder
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Warranty
+    - Int
+    - Long
+    - String
+    - String
+    kind: function
+  daoAccessor: deliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
+  operation: insertOrIgnore
+  locations: [171]
+  disposition: EXACT_POLICY
+  rationale: "Claim-before-notify step 1 -- idempotent SCHEDULED seed on the (warrantyId, windowDays, expiryDate) unique key (no-op when the row exists); called only from inside the doWork guard lambda."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=deliverReminder|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Warranty%22%2C%22Int%22%2C%22Long%22%2C%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=claim|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
+    method: deliverReminder
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Warranty
+    - Int
+    - Long
+    - String
+    - String
+    kind: function
+  daoAccessor: deliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
+  operation: claim
+  locations: [185]
+  disposition: EXACT_POLICY
+  rationale: "Claim-before-notify step 2 -- atomic conditional UPDATE (SCHEDULED/FAILED -> CLAIMED) so an already-SENT row is skipped (durable cross-reboot dedup) and two concurrent runs can never both claim; claimed != 1 returns without notifying."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=deliverReminder|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Warranty%22%2C%22Int%22%2C%22Long%22%2C%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=markSentFromClaimed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
+    method: deliverReminder
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Warranty
+    - Int
+    - Long
+    - String
+    - String
+    kind: function
+  daoAccessor: deliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
+  operation: markSentFromClaimed
+  locations: [204]
+  disposition: EXACT_POLICY
+  rationale: "Claim-before-notify step 3a -- the ONLY transition into SENT, only from CLAIMED, persisting the notificationId after NotificationService reports DELIVERED; notification metrics increment only after this real success."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fwarranty%2FWarrantyExpirationWorker.kt|symbol.owner=com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker|symbol.name=deliverReminder|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.Warranty%22%2C%22Int%22%2C%22Long%22%2C%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao|identity.accessor=deliveryDao|identity.operation=markFailed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.service.warranty.WarrantyExpirationWorker
+    method: deliverReminder
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.Warranty
+    - Int
+    - Long
+    - String
+    - String
+    kind: function
+  daoAccessor: deliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyReminderDeliveryDao
+  operation: markFailed
+  locations: [207]
+  disposition: EXACT_POLICY
+  rationale: "Claim-before-notify step 3b -- records the transient failure reason (controlled constant notification_not_delivered) from CLAIMED; the row stays re-claimable on a later run."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for the GR-08m2 files: after the GR-08m promotion, ReceiptLifecycleCoordinator.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (6/6 flagged sites authorized across 6 fingerprints; deleteReceipt's three sites were already MIT-003-authorized in the active v2 policy) and WarrantyExpirationWorker.kt carries 0 (6/6 sites authorized across 6 fingerprints).  Out-of-batch stability: the rescan delta expectation for the WHOLE GR-08m batch is 121 -> 92 (28 = 6 AiChatRepositoryImpl + 6 OperationRunRecorder + 4 RestoreJournalImporter + 6 ReceiptLifecycleCoordinator + 6 WarrantyExpirationWorker unique fingerprints; 29 findings disappear because the shared RestoreJournalImporter fingerprint covers 2 findings); the remaining 92 include the still-unauthorized files deferred to future batches, which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

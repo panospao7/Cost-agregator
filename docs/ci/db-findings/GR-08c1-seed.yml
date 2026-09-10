@@ -1,0 +1,204 @@
+# GR-08 batch 3a (GR-08c1) reviewed exact v2 policy seed rows (MIT-DB-08C).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: the four occurrence/expense-link lifecycle callables of
+# RecurringLifecycleCoordinator.kt (linkExpenseToOccurrence,
+# reconcileExpenseLinkAfterUpdate, unlinkExpenseFromOccurrenceDetailed,
+# updateOccurrenceStatus).  This is the DOMAIN LIFECYCLE COORDINATOR -- the
+# MOST authoritative writer layer per docs/architecture/LEGAL_PATHS.md
+# (recurring rule mutations MUST go through the recurring rule lifecycle
+# coordinator), so every row is a legal-writer EXACT_POLICY authorization.
+# The original batch plan (GR-08c, 28 findings) collapsed to 26 UNIQUE
+# fingerprints, which exceeds the 25-fingerprint batch cap, so the batch was
+# split by callable groups: GR-08c1 carries the occurrence/expense-link
+# group (10 findings / 10 unique fingerprints) and GR-08c2 carries the
+# reminder-delivery group (18 findings / 16 unique fingerprints).
+#
+# barrierMode is `helper` for every row: the write barrier runs at the
+# coordinator pipeline entrypoints (writeBarrier.checkWritesAllowed at each
+# public entry), not directly before each individual mutation inside the
+# transaction bodies, and no direct-barrier proof is claimed.
+#
+# Closure sweep (GR-08c planning): the known findings-scanner blind spot
+# (body-carrying @Transaction DAO convenience methods produce NO findings
+# but DO produce evidence closure requirements, as in GR-08b's
+# upsertByRawNotificationId rows) was enumerated by reading EVERY
+# dao-accessor call in ALL batch callable bodies.  Result: ZERO closure
+# rows.  Every mutating DAO method called from this file's callables is an
+# abstract Room-annotated method (@Insert/@Update/mutating @Query) on the
+# four touched DAOs (RecurringOccurrenceDao, RecurringReminderDeliveryDao,
+# PlannedExpenseDao, RecurringLifecycleEventDao -- all fully abstract), and
+# every one of those call sites produced a findings row.  The remaining
+# collaborators are non-DAO types whose internal mutations belong to their
+# own files' batch scope: eventWriter (RecurringLifecycleEventWriter ->
+# RoomRecurringLifecycleEventWriter.dao.insert lives in
+# RecurringLifecycleEventWriter.kt), materializer (RecurringOccurrenceMaterializer.kt),
+# and transactionRunner (DomainTransactionRunner, a transaction wrapper).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a rows + GR-08b rows + these
+# rows + GR-08c2 rows); passing only this file would drop the earlier
+# batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── linkExpenseToOccurrence (3 findings / 3 unique fingerprints) ─────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: linkExpenseToOccurrence
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: claimForExpense
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: atomic PLANNED->PAID occurrence claim inside the link transaction (conditional WHERE guards against double-claim races; P4-CURRENT-001)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: linkExpenseToOccurrence
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: linkToActualExpense
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: planned-expense fulfillment write when a matched occurrence is paid, inside the link transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: linkExpenseToOccurrence
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: suppressOpenDeliveriesForOccurrence
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: suppression of open/snoozed/claimed/transient reminder deliveries when the occurrence is paid, preventing notification-after-payment races"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+# ── reconcileExpenseLinkAfterUpdate (2 findings / 2 unique fingerprints) ─────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: reconcileExpenseLinkAfterUpdate
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: updateLinkedPaymentSnapshot
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: conditional payment-snapshot refresh on a still-matching linked occurrence inside the reconcile transaction (MIT-043)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: reconcileExpenseLinkAfterUpdate
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: OCCURRENCE_PAID_SNAPSHOT_UPDATED provenance event written only after a successful snapshot update, inside the reconcile transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+# ── unlinkExpenseFromOccurrenceDetailed (3 findings / 3 unique fingerprints) ─
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: unlinkExpenseFromOccurrenceDetailed
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: entity update resetting a PAID occurrence back to PLANNED (clearing link/payment snapshot) when its expense is deleted or unlinked"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: unlinkExpenseFromOccurrenceDetailed
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: unlinkActualExpense
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: atomic planned-expense unlink (status back to PLANNED, linkedActualExpenseId NULLed; P4-CURRENT-002) inside the unlink transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: unlinkExpenseFromOccurrenceDetailed
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: OCCURRENCE_UNLINKED provenance event written inside the unlink transaction after the occurrence reset"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+# ── updateOccurrenceStatus (2 findings / 2 unique fingerprints) ──────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: updateOccurrenceStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: updateStatus
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: typed SKIPPED/CANCELLED/MISSED status transition validated by RecurringOccurrenceTransitionPolicy, inside the status transaction (MIT-043)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+  kind: function
+  method: updateOccurrenceStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceStatus
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceTransitionReason
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08c1 EXACT_POLICY: OCCURRENCE_SKIPPED/CANCELLED/MISSED provenance event written only after a successful status transition, inside the status transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C

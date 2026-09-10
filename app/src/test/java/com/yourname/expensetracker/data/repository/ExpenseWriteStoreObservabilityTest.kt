@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifec
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectDispatcher
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
 import com.yourname.expensetracker.domain.transaction.validation.TransactionValidator
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.Lazy
 import io.mockk.coEvery
@@ -236,6 +237,9 @@ class ExpenseWriteStoreObservabilityTest {
 
     @Test
     fun `bulk idempotency keys unique across invocations`() {
+        // Deterministic clock: advance time between invocations so timestamp-based
+        // bulk idempotency keys differ without relying on the wall clock.
+        val fakeTime = FakeTimeProvider(now)
         val planner = TransactionSideEffectPlanner(
             budgetMonitor = Lazy { mockk(relaxed = true) },
             anomalyAlertOrchestrator = mockk(relaxed = true),
@@ -243,7 +247,8 @@ class ExpenseWriteStoreObservabilityTest {
             merchantNormalizationRepository = mockk(relaxed = true),
             recurringLifecycleCoordinator = Lazy { mockk<RecurringLifecycleCoordinator>(relaxed = true) },
             expenseDao = mockk(relaxed = true),
-            categoryDao = mockk(relaxed = true)
+            categoryDao = mockk(relaxed = true),
+            timeProvider = fakeTime
         )
 
         val batch1 = planner.planBulkUpdated(
@@ -252,6 +257,9 @@ class ExpenseWriteStoreObservabilityTest {
             correlationId = "corr-1",
             changedFields = setOf(BulkChangedField.CATEGORY)
         )
+
+        // Controlled time progression between invocations (G-TIME-01)
+        fakeTime.advanceTime(1_000L)
 
         val batch2 = planner.planBulkUpdated(
             source = "USER_EDIT",

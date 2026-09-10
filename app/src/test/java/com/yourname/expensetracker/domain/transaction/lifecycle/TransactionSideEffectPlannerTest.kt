@@ -10,6 +10,7 @@ import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycle
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.SourceLearningPolicy
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import dagger.Lazy
 import io.mockk.mockk
 import org.junit.Assert.assertEquals
@@ -27,6 +28,7 @@ import org.junit.Test
 class TransactionSideEffectPlannerTest {
 
     private lateinit var planner: TransactionSideEffectPlanner
+    private val timeProvider = FakeTimeProvider(1_712_000_000_000L)
 
     @Before
     fun setup() {
@@ -37,7 +39,8 @@ class TransactionSideEffectPlannerTest {
             merchantNormalizationRepository = mockk(relaxed = true),
             recurringLifecycleCoordinator = Lazy { mockk<RecurringLifecycleCoordinator>(relaxed = true) },
             expenseDao = mockk(relaxed = true),
-            categoryDao = mockk(relaxed = true)
+            categoryDao = mockk(relaxed = true),
+            timeProvider = timeProvider
         )
     }
 

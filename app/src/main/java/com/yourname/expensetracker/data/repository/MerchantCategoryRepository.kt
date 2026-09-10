@@ -33,13 +33,6 @@ class MerchantCategoryRepository @Inject constructor(
         }
     }
 
-    suspend fun deleteAll() {
-        writeBarrier.checkWritesAllowed("MerchantCategoryRepository.deleteAll")
-        dao.deleteAll()
-        // E3-005: Invalidate categorization caches after merchant-category mapping change
-        categorizationEngineProvider.get().invalidateAllCaches()
-    }
-
     /**
      * Learns a merchant -> category mapping.
      * Uses Provider to break circular dependency with CategorizationEngine.

@@ -538,17 +538,6 @@ class ReceiptRepository @Inject constructor(
         scannedReceiptDao.deleteAll()
     }
 
-    @Deprecated("Use ReceiptMatchLifecycleService.clearMatchForReceipt().", level = DeprecationLevel.ERROR)
-    suspend fun clearMatchForReceipt(receiptId: Long) {
-        writeBarrier.checkWritesAllowed("ReceiptRepository.clearMatchForReceipt")
-        val receipt = scannedReceiptDao.getById(receiptId) ?: return
-        scannedReceiptDao.update(receipt.copy(
-            expenseId = null,
-            matchStatus = com.yourname.expensetracker.data.database.entity.MatchStatus.UNMATCHED,
-            suggestedExpenseId = null, matchConfidence = null, updatedAt = timeProvider.now()
-        ))
-    }
-
     suspend fun getRecentReceipts(since: Long, limit: Int = Int.MAX_VALUE): List<ScannedReceipt> {
         return scannedReceiptDao.getRecentReceipts(since, limit)
     }
@@ -859,27 +848,6 @@ class ReceiptRepository @Inject constructor(
     )
     suspend fun rejectAllSuggestions(receiptId: Long) {
         error("Disabled: use ReceiptLifecycleCoordinator for match operations")
-    }
-
-    // ── Pipeline 3 event helper ──────────────────────────────────────────────
-
-    private suspend fun writeReceiptEvent(
-        receiptId: Long, eventType: String, occurredAt: Long,
-        message: String, newStatus: String,
-        sourceType: String = "CAMERA", documentType: String = "RETAIL_RECEIPT",
-        errorDetails: String? = null
-    ) {
-        try {
-            receiptEventDao.insert(ReceiptEvent(
-                receiptId = receiptId, sourceType = sourceType,
-                documentType = documentType, eventType = eventType,
-                occurredAt = occurredAt, oldStatus = null,
-                newStatus = newStatus, actor = "system:repository",
-                message = message.take(500), metadata = null,
-                errorDetails = errorDetails?.take(500)
-            ))
-        } catch (e: kotlinx.coroutines.CancellationException) { throw e
-        } catch (e: Exception) { Timber.w(e, "Failed to write receipt event %s", eventType) }
     }
 
     suspend fun getCandidateExpensesForReceipt(

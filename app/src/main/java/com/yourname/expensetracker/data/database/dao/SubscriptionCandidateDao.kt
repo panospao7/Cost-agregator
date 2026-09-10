@@ -77,10 +77,10 @@ interface SubscriptionCandidateDao {
         WHERE id = :candidateId
     """)
     /**
-     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param timestamp Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
-    suspend fun markAsConverted(candidateId: Long, subscriptionId: Long, timestamp: Long = System.currentTimeMillis())
+    suspend fun markAsConverted(candidateId: Long, subscriptionId: Long, timestamp: Long)
     
     /**
      * Mark a candidate as rejected by the user.
@@ -92,10 +92,10 @@ interface SubscriptionCandidateDao {
         WHERE id = :candidateId
     """)
     /**
-     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param timestamp Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
-    suspend fun markAsRejected(candidateId: Long, timestamp: Long = System.currentTimeMillis())
+    suspend fun markAsRejected(candidateId: Long, timestamp: Long)
     
     /**
      * Get count of pending candidates.

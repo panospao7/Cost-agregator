@@ -3,6 +3,8 @@ package com.yourname.expensetracker.domain.receipt.lifecycle
 import android.net.Uri
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
 import com.yourname.expensetracker.data.database.dao.BankStatementImportRunDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -29,12 +31,16 @@ import com.yourname.expensetracker.domain.receipt.BankStatementParser
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.RawContentSanitizer
 import com.yourname.expensetracker.domain.util.TimeProvider
 import timber.log.Timber
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -97,6 +103,7 @@ data class BankStatementResult(
 @Singleton
 class BankStatementLifecycleProcessor @Inject constructor(
     private val database: AppDatabase,
+    private val transactionRunner: DomainTransactionRunner,
     private val receiptRepository: ReceiptRepository,
     private val scannedReceiptDao: ScannedReceiptDao,
     private val receiptLifecycleEventWriter: ReceiptLifecycleEventWriter,
@@ -138,6 +145,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
         val startTime = timeProvider.now()
         val parsingLogs = mutableListOf<String>()
         var runId: Long? = null
+        var statementReceiptId: Long? = null
 
         return try {
             // ── Step 1: Pre-OCR duplicate detection via file hash ──────────────
@@ -190,7 +198,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             val correlationId = java.util.UUID.randomUUID().toString()
             val statementSourceFingerprint = preOcrHash
             val now = timeProvider.now()
-            runId = bankStatementImportRunDao.insert(
+            val importRunId = bankStatementImportRunDao.insert(
                 BankStatementImportRun(
                     statementReceiptId = null,  // will update after receipt insert
                     sourceFingerprint = statementSourceFingerprint,
@@ -200,7 +208,8 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     totalItems = parsedTransactions.size
                 )
             )
-            require(runId != null && runId!! > 0) { "Failed to create bank statement import run" }
+            require(importRunId > 0) { "Failed to create bank statement import run" }
+            runId = importRunId
 
             // ── Step 3c: AI validation ─────────────────────────────────────────
             // Use ValidateBankStatementTransactionsUseCase to validate/correct
@@ -256,7 +265,10 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 }
             }
 
-            // ── Step 4: Save statement receipt with lifecycle metadata ─────────
+            // ── Steps 4+5: Save receipt + events atomically (MIT-041) ──────────
+            // MIT-041: Wrap receipt insert, run attachment, and initial RECEIPT_SAVED
+            // event in a single database transaction so the receipt never commits
+            // without its lifecycle event.
             // Compute the image hash from the saved file path as a fallback
             // (the pre-OCR hash from computeUriHash is stored when available;
             // this fallback ensures the hash is ALWAYS stored so future re-imports
@@ -290,6 +302,15 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 updatedAt = timeProvider.now()
             )
 
+            // MIT-041: declared outside transaction so it's visible to Step 6
+            var receiptId: Long = 0L
+            var earlyReturn: Result<BankStatementResult>? = null
+
+            transactionRunner.runInTransaction(
+                correlationId = java.util.UUID.randomUUID().toString(),
+                operationId = "bank_statement.save_receipt",
+                source = "BankStatementLifecycleProcessor"
+            ) { context ->
             // NOTE: Directly inserting via receiptRepository.insertReceipt() instead of
             // going through ReceiptLifecycleCoordinator because this processor already
             // writes its own lifecycle events (RECEIPT_SAVED, PROCESSING_COMPLETE) and
@@ -297,32 +318,36 @@ class BankStatementLifecycleProcessor @Inject constructor(
             // coordinator provides.
             // P3-D4B-03: Use typed ReceiptRecordWriter.
             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.writeResults")
-            val receiptId: Long
             when (val write = receiptRecordWriter.insertOrResolve(statementReceipt)) {
                 is ReceiptRecordWriteResult.Inserted -> {
                     receiptId = write.receipt.id
-                    bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = receiptId)
+                    statementReceiptId = receiptId
+                    bankStatementImportRunDao.attachReceipt(runId = importRunId, receiptId = receiptId)
                 }
                 is ReceiptRecordWriteResult.Duplicate -> {
-                    bankStatementImportRunDao.attachReceipt(runId = runId!!, receiptId = write.existingReceipt.id)
+                    bankStatementImportRunDao.attachReceipt(runId = importRunId, receiptId = write.existingReceipt.id)
                     bankStatementImportRunDao.finalize(
-                        runId = runId!!, status = BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS,
+                        runId = importRunId, status = BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS,
                         completedAt = timeProvider.now(), totalItems = 0, processedItems = 0,
                         createdReviewCount = 0, duplicateExpenseCount = 0,
                         duplicatePendingCount = 0, failedItemCount = 0,
                         errorSummary = "Duplicate statement receipt"
                     )
-                    return Result.success(BankStatementResult(
+                    earlyReturn = Result.success(BankStatementResult(
                         receiptId = write.existingReceipt.id,
                         transactionsFound = 0, reviewsCreated = 0, duplicatesSkipped = 0,
                         duplicateOfReceiptId = write.existingReceipt.id
                     ))
+                    return@runInTransaction
                 }
-                is ReceiptRecordWriteResult.Failed -> return Result.failure(IllegalStateException(write.reason))
+                is ReceiptRecordWriteResult.Failed -> {
+                    earlyReturn = Result.failure(IllegalStateException(write.reason))
+                    return@runInTransaction
+                }
             }
 
             // ── Step 5: Write RECEIPT_SAVED lifecycle event ────────────────────
-            receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+            receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
                 receiptId = receiptId,
                 sourceType = ReceiptSourceType.BANK_STATEMENT.name,
                 documentType = ReceiptDocumentType.BANK_STATEMENT.name,
@@ -336,7 +361,7 @@ class BankStatementLifecycleProcessor @Inject constructor(
             val pagesProcessed = ocrResult.pagesProcessed
             val totalPages = ocrResult.totalPages
             if (pagesProcessed != null && totalPages != null && pagesProcessed < totalPages) {
-                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
+                receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
                     receiptId = receiptId,
                     sourceType = ReceiptSourceType.BANK_STATEMENT.name,
                     documentType = ReceiptDocumentType.BANK_STATEMENT.name,
@@ -351,10 +376,15 @@ class BankStatementLifecycleProcessor @Inject constructor(
                 ))
                 // P3-03EA-05: Also update run fields for self-contained ledger
                 bankStatementImportRunDao.updatePdfPartial(
-                    runId = runId!!, pdfPartial = true,
+                    runId = importRunId, pdfPartial = true,
                     pagesProcessed = pagesProcessed, totalPages = totalPages
                 )
             }
+
+            } // end MIT-041: receipt + events transaction
+
+            // If receipt was a duplicate or failed, return early
+            if (earlyReturn != null) return earlyReturn!!
 
             // ── Step 6: Create a PendingReview for each transaction ────────────
             var reviewsCreated = 0
@@ -363,6 +393,101 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
             for ((index, tx) in mergedTransactions.withIndex()) {
                 try {
+                    // ── PR15: Pre-mutation validation ──────────────────────────
+                    if (tx.amount.isNaN() || tx.amount.isInfinite()) {
+                        bankStatementImportItemDao.insert(
+                            BankStatementImportItem(
+                                runId = importRunId,
+                                itemIndex = index,
+                                transactionFingerprint = null,
+                                status = BankStatementImportItem.STATUS_SKIPPED,
+                                merchant = sanitizeMerchant(tx.merchant),
+                                amount = null,
+                                currency = tx.currency,
+                                transactionDate = tx.date ?: now,
+                                errorReason = "INVALID_AMOUNT",
+                                duplicateReason = null,
+                                expenseId = null,
+                                createdAt = now,
+                                updatedAt = now
+                            )
+                        )
+                        failedItemCount++
+                        parsingLogs += "Skipped item $index: invalid amount (${tx.amount})"
+                        continue
+                    }
+
+                    if (tx.amount <= 0.0) {
+                        bankStatementImportItemDao.insert(
+                            BankStatementImportItem(
+                                runId = importRunId,
+                                itemIndex = index,
+                                transactionFingerprint = null,
+                                status = BankStatementImportItem.STATUS_SKIPPED,
+                                merchant = sanitizeMerchant(tx.merchant),
+                                amount = null,
+                                currency = tx.currency,
+                                transactionDate = tx.date ?: now,
+                                errorReason = "NON_POSITIVE_AMOUNT",
+                                duplicateReason = null,
+                                expenseId = null,
+                                createdAt = now,
+                                updatedAt = now
+                            )
+                        )
+                        failedItemCount++
+                        parsingLogs += "Skipped item $index: non-positive amount (${tx.amount})"
+                        continue
+                    }
+
+                    if (tx.currency.isBlank()) {
+                        bankStatementImportItemDao.insert(
+                            BankStatementImportItem(
+                                runId = importRunId,
+                                itemIndex = index,
+                                transactionFingerprint = null,
+                                status = BankStatementImportItem.STATUS_SKIPPED,
+                                merchant = sanitizeMerchant(tx.merchant),
+                                amount = tx.amount,
+                                currency = null,
+                                transactionDate = tx.date ?: now,
+                                errorReason = "MISSING_CURRENCY",
+                                duplicateReason = null,
+                                expenseId = null,
+                                createdAt = now,
+                                updatedAt = now
+                            )
+                        )
+                        failedItemCount++
+                        parsingLogs += "Skipped item $index: blank currency"
+                        continue
+                    }
+
+                    // Date sanity: reject dates > 1 day in the future or < year 2000
+                    val transactionDate = tx.date ?: now
+                    if (transactionDate > now + 86_400_000L || transactionDate < 946_684_800_000L) {
+                        bankStatementImportItemDao.insert(
+                            BankStatementImportItem(
+                                runId = importRunId,
+                                itemIndex = index,
+                                transactionFingerprint = null,
+                                status = BankStatementImportItem.STATUS_SKIPPED,
+                                merchant = sanitizeMerchant(tx.merchant),
+                                amount = tx.amount,
+                                currency = tx.currency,
+                                transactionDate = transactionDate,
+                                errorReason = "UNREASONABLE_DATE",
+                                duplicateReason = null,
+                                expenseId = null,
+                                createdAt = now,
+                                updatedAt = now
+                            )
+                        )
+                        failedItemCount++
+                        parsingLogs += "Skipped item $index: unreasonable date (${transactionDate})"
+                        continue
+                    }
+
                     // Normalize merchant
                     val lookupResult = merchantNormalizer.normalize(tx.merchant, autoCreate = true)
                     val normalizedMerchant = lookupResult.canonical.normalizedName
@@ -372,14 +497,12 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         merchantName = normalizedMerchant,
                         amount = tx.amount
                     )
-
-                    val transactionDate = tx.date ?: timeProvider.now()
                     val merchantKey = MerchantKeyGenerator.generate(normalizedMerchant)
 
                     // ── Recurring rule active check ────────────────────────────
                     // Log whether an active recurring rule exists for this merchant
                     // so users can decide whether to merge with existing subscriptions.
-                    val existingRecurring = runCatching {
+                    val existingRecurring = CancellationSafe.runCatchingCancellable {
                         recurringExpenseRepository.getByMerchantFuzzy(normalizedMerchant)
                     }.getOrNull()
                     if (existingRecurring != null) {
@@ -424,14 +547,29 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
                     if (hasExpenseDuplicate) {
                         duplicatesSkipped++
+                        // PR15: Fetch the actual duplicate expense ID for ledger auditing.
+                        val duplicateExpenseId = expenseDao.findDuplicateIdCurrencyAware(
+                            amount = tx.amount,
+                            merchant = normalizedMerchant,
+                            date = transactionDate,
+                            currency = tx.currency,
+                            transactionType = txType.name,
+                            merchantKey = merchantKey
+                        )
                         // P3-BLOCKER-H2: Wrap duplicate decision + item insert in transaction.
-                        database.withTransaction {
+                        transactionRunner.runInTransaction(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            operationId = "bank_statement.skip_duplicate",
+                            source = "BankStatementLifecycleProcessor"
+                        ) { context ->
                             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.duplicateExpense.tx")
                             bankStatementImportItemDao.insert(
                                 BankStatementImportItem(
-                                    runId = runId, itemIndex = index, transactionFingerprint = merchantKey,
+                                    runId = importRunId, itemIndex = index, transactionFingerprint = merchantKey,
                                     status = BankStatementImportItem.STATUS_DUPLICATE_EXPENSE,
-                                    merchant = tx.merchant, amount = tx.amount, currency = tx.currency,
+                                    duplicateReason = duplicateExpenseId?.let { "Duplicate expense ID $it" },
+                                    expenseId = duplicateExpenseId,
+                                    merchant = sanitizeMerchant(tx.merchant), amount = tx.amount, currency = tx.currency,
                                     transactionDate = tx.date, createdAt = timeProvider.now(), updatedAt = timeProvider.now()
                                 )
                             )
@@ -455,14 +593,20 @@ class BankStatementLifecycleProcessor @Inject constructor(
                     if (duplicateReview != null) {
                         duplicatesSkipped++
                         // P3-BLOCKER-H2: Wrap duplicate decision + item insert in transaction.
-                        database.withTransaction {
+                        transactionRunner.runInTransaction(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            operationId = "bank_statement.skip_duplicate_review",
+                            source = "BankStatementLifecycleProcessor"
+                        ) { context ->
                             writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.duplicatePending.tx")
                             bankStatementImportItemDao.insert(
                                 BankStatementImportItem(
-                                    runId = runId, itemIndex = index, transactionFingerprint = merchantKey,
+                                    runId = importRunId, itemIndex = index, transactionFingerprint = merchantKey,
                                     status = BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW,
+                                    duplicateReason = "Duplicate pending review ID ${duplicateReview.id}",
+                                    expenseId = null,
                                     pendingReviewId = duplicateReview.id,
-                                    merchant = tx.merchant, amount = tx.amount, currency = tx.currency,
+                                    merchant = sanitizeMerchant(tx.merchant), amount = tx.amount, currency = tx.currency,
                                     transactionDate = tx.date, createdAt = timeProvider.now(), updatedAt = timeProvider.now()
                                 )
                             )
@@ -487,24 +631,31 @@ class BankStatementLifecycleProcessor @Inject constructor(
                         confidence = tx.confidence,
                         packageName = "statement.import",
                         notificationTitle = "Bank Statement Transaction",
-                        notificationText = "Imported from statement: ${tx.merchant}",
+                        // PR15: PII fix — do not embed raw merchant in notification text
+                        notificationText = "New transaction: ${tx.amount} ${tx.currency}",
                         createdAt = timeProvider.now()
                     )
 
                     // P3-REG-005: Wrap review creation and item row in a single
                     // transaction so neither can exist without the other.
-                    val reviewId = database.withTransaction {
+                    val reviewId = transactionRunner.runInTransaction(
+                        correlationId = java.util.UUID.randomUUID().toString(),
+                        operationId = "bank_statement.create_review",
+                        source = "BankStatementLifecycleProcessor"
+                    ) { context ->
                         writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.processItem.tx")
                         val revId = pendingReviewDao.insert(review)
                         require(revId > 0) { "PendingReview insert failed" }
                         bankStatementImportItemDao.insert(
                             BankStatementImportItem(
-                                runId = runId,
+                                runId = importRunId,
                                 itemIndex = index,
                                 transactionFingerprint = merchantKey,
                                 status = BankStatementImportItem.STATUS_CREATED_REVIEW,
+                                duplicateReason = null,
+                                expenseId = null,
                                 pendingReviewId = revId,
-                                merchant = tx.merchant,
+                                merchant = sanitizeMerchant(tx.merchant),
                                 amount = tx.amount,
                                 currency = tx.currency,
                                 transactionDate = tx.date,
@@ -512,6 +663,22 @@ class BankStatementLifecycleProcessor @Inject constructor(
                                 updatedAt = timeProvider.now()
                             )
                         )
+                        // PR15: Per-item lifecycle event for audit trail
+                        receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
+                            receiptId = receiptId,
+                            sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                            documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                            eventType = "REVIEW_CREATED",
+                            oldStatus = ReceiptProcessingStatus.PARSED.name,
+                            newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                            actor = "system:bank_statement_processor",
+                            message = "Review created for item $index: \$${tx.amount} ${tx.currency}",
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .put("itemIndex", index)
+                                .put("amount", tx.amount)
+                                .put("currency", tx.currency)
+                                .build()
+                        ))
                         revId
                     }
                     reviewsCreated++
@@ -519,96 +686,137 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
+                    failedItemCount++
                     writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.processItem.errorRecovery")
+                    // PR15: Structured failure codes — no raw exception messages persisted
+                    val failureCode = when (e) {
+                        is java.sql.SQLException -> "DB_INSERT_FAILURE"
+                        is IllegalStateException -> "PROCESSING_STATE_ERROR"
+                        else -> "ITEM_PROCESSING_FAILURE"
+                    }
+                    val errorClass = e::class.simpleName ?: "Unknown"
                     bankStatementImportItemDao.insert(
                         BankStatementImportItem(
-                            runId = runId,
+                            runId = importRunId,
                             itemIndex = index,
                             transactionFingerprint = null,
                             status = BankStatementImportItem.STATUS_FAILED,
-                            merchant = tx.merchant,
+                            merchant = sanitizeMerchant(tx.merchant),
                             amount = tx.amount,
                             currency = tx.currency,
-                            errorReason = "Bank transaction processing failed",
+                            errorReason = "$failureCode: error class=$errorClass, item=$index",
                             createdAt = timeProvider.now(),
                             updatedAt = timeProvider.now()
                         )
                     )
-                    parsingLogs.add("ERROR: Failed to process transaction [REDACTED]")
+                    parsingLogs.add("ERROR: Failed to process transaction $index (code=$failureCode)")
                     Timber.e(e, "Failed to create PendingReview for bank statement transaction")
                 }
             }
 
             // ── Step 7: Finalize the import run ledger ─────────────────────────
             // P3-P1-10 / P3-REG-008: Use actual DAO counts for correct ledger.
-            val finalFailedItemCount = bankStatementImportItemDao.countByRunAndStatus(runId!!, BankStatementImportItem.STATUS_FAILED)
-            val expDupCount = bankStatementImportItemDao.countByRunAndStatus(runId, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
-            val pendDupCount = bankStatementImportItemDao.countByRunAndStatus(runId, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
-            val createdCount = bankStatementImportItemDao.countByRunAndStatus(runId, BankStatementImportItem.STATUS_CREATED_REVIEW)
-            val totalItems = finalFailedItemCount + expDupCount + pendDupCount + createdCount
+            val finalFailedItemCount = bankStatementImportItemDao.countByRunAndStatus(importRunId, BankStatementImportItem.STATUS_FAILED)
+            val skippedItemCount = bankStatementImportItemDao.countByRunAndStatus(importRunId, BankStatementImportItem.STATUS_SKIPPED)
+            val expDupCount = bankStatementImportItemDao.countByRunAndStatus(importRunId, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
+            val pendDupCount = bankStatementImportItemDao.countByRunAndStatus(importRunId, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
+            val createdCount = bankStatementImportItemDao.countByRunAndStatus(importRunId, BankStatementImportItem.STATUS_CREATED_REVIEW)
+            val totalItems = finalFailedItemCount + skippedItemCount + expDupCount + pendDupCount + createdCount
             val finalStatus = when {
-                finalFailedItemCount > 0 -> BankStatementImportRun.STATUS_FAILED
+                (finalFailedItemCount + skippedItemCount) > 0 -> BankStatementImportRun.STATUS_FAILED
                 (expDupCount + pendDupCount) > 0 -> BankStatementImportRun.STATUS_COMPLETED_WITH_SKIPS
                 else -> BankStatementImportRun.STATUS_COMPLETED
             }
             val endTime = timeProvider.now()
-            bankStatementImportRunDao.finalize(
-                runId = runId,
-                status = finalStatus,
-                completedAt = endTime,
-                totalItems = transactionsFound,
-                processedItems = totalItems,
-                createdReviewCount = createdCount,
-                duplicateExpenseCount = expDupCount,
-                duplicatePendingCount = pendDupCount,
-                failedItemCount = finalFailedItemCount,
-                errorSummary = null
-            )
 
-            // ── Step 8: Conditionally write completion events ──────────────────
+            // ── Step 8: Finalize run + receipt status + events atomically ──────
             // P3-BLOCKER-05.3: Only write PROCESSING_COMPLETE / REVIEW_CREATED
             // status when the run is not in a failed state.
+            // P3-P1-10 / P3-REG-008: Run finalization is inside the same
+            // transaction as receipt-status update and event write so the ledger
+            // never disagrees with the receipt state.
             val runSucceeded = finalStatus != BankStatementImportRun.STATUS_FAILED
             if (runSucceeded) {
-                // P3-PR2 / P3-P1-05: Write barrier check before direct DAO mutation
-                writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.finalizeStatus")
-                val receiptToUpdate = scannedReceiptDao.getById(receiptId)
-                if (receiptToUpdate != null) {
-                    scannedReceiptDao.update(receiptToUpdate.copy(
-                        processingStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
-                        updatedAt = timeProvider.now()
+                transactionRunner.runInTransaction(
+                    correlationId = java.util.UUID.randomUUID().toString(),
+                    operationId = "bank_statement.finalize_success",
+                    source = "BankStatementLifecycleProcessor"
+                ) { context ->
+                    // P3-PR2 / P3-P1-05: Write barrier check before direct DAO mutation
+                    writeBarrier.checkWritesAllowed("BankStatementLifecycleProcessor.finalizeStatus")
+
+                    // Finalize the import run atomically with receipt status update
+                    bankStatementImportRunDao.finalize(
+                        runId = importRunId,
+                        status = finalStatus,
+                        completedAt = endTime,
+                        totalItems = transactionsFound,
+                        processedItems = totalItems,
+                        createdReviewCount = createdCount,
+                        duplicateExpenseCount = expDupCount,
+                        duplicatePendingCount = pendDupCount,
+                        failedItemCount = finalFailedItemCount + skippedItemCount,
+                        errorSummary = null
+                    )
+
+                    val receiptToUpdate = scannedReceiptDao.getById(receiptId)
+                    if (receiptToUpdate != null) {
+                        scannedReceiptDao.update(receiptToUpdate.copy(
+                            processingStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                            updatedAt = timeProvider.now()
+                        ))
+                    }
+                    receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
+                        receiptId = receiptId,
+                        sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                        documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                        eventType = "PROCESSING_COMPLETE",
+                        oldStatus = ReceiptProcessingStatus.PARSED.name,
+                        newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
+                        actor = "system:bank_statement_processor",
+                        message = "Bank statement processing complete: $transactionsFound transactions, $reviewsCreated reviews, $duplicatesSkipped duplicates skipped",
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("transactionsFound", transactionsFound)
+                            .put("reviewsCreated", reviewsCreated)
+                            .put("duplicatesSkipped", duplicatesSkipped)
+                            .build()
                     ))
                 }
-                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                    receiptId = receiptId,
-                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
-                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
-                    eventType = "PROCESSING_COMPLETE",
-                    oldStatus = ReceiptProcessingStatus.PARSED.name,
-                    newStatus = ReceiptProcessingStatus.REVIEW_CREATED.name,
-                    actor = "system:bank_statement_processor",
-                    message = "Bank statement processing complete: $transactionsFound transactions, $reviewsCreated reviews, $duplicatesSkipped duplicates skipped",
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .put("transactionsFound", transactionsFound)
-                        .put("reviewsCreated", reviewsCreated)
-                        .put("duplicatesSkipped", duplicatesSkipped)
-                        .build()
-                ))
             } else {
-                receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                    receiptId = receiptId,
-                    sourceType = ReceiptSourceType.BANK_STATEMENT.name,
-                    documentType = ReceiptDocumentType.BANK_STATEMENT.name,
-                    eventType = "PROCESSING_FAILED",
-                    oldStatus = ReceiptProcessingStatus.PARSED.name,
-                    newStatus = null,
-                    actor = "system:bank_statement_processor",
-                    message = "Bank statement processing had failures: $finalFailedItemCount failed items",
-                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                        .put("transactionsFound", transactionsFound)
-                        .put("failedItemCount", finalFailedItemCount)
-                        .build()
-                ))
+                transactionRunner.runInTransaction(
+                    correlationId = java.util.UUID.randomUUID().toString(),
+                    operationId = "bank_statement.finalize_failure",
+                    source = "BankStatementLifecycleProcessor"
+                ) { context ->
+                    // Finalize the import run atomically with the failure event
+                    bankStatementImportRunDao.finalize(
+                        runId = importRunId,
+                        status = BankStatementImportRun.STATUS_FAILED,
+                        completedAt = endTime,
+                        totalItems = transactionsFound,
+                        processedItems = totalItems,
+                        createdReviewCount = createdCount,
+                        duplicateExpenseCount = expDupCount,
+                        duplicatePendingCount = pendDupCount,
+                        failedItemCount = finalFailedItemCount + skippedItemCount,
+                        errorSummary = "Bank statement processing had failures"
+                    )
+
+                    receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
+                        receiptId = receiptId,
+                        sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                        documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                        eventType = "PROCESSING_FAILED",
+                        oldStatus = ReceiptProcessingStatus.PARSED.name,
+                        newStatus = null,
+                        actor = "system:bank_statement_processor",
+                        message = "Bank statement processing had failures: $finalFailedItemCount failed items",
+                        metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                            .put("transactionsFound", transactionsFound)
+                            .put("failedItemCount", finalFailedItemCount)
+                            .build()
+                    ))
+                }
                 return Result.failure(Exception("Bank statement import had $finalFailedItemCount failed items"))
             }
 
@@ -628,44 +836,116 @@ class BankStatementLifecycleProcessor @Inject constructor(
 
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) {
+                val cancellation = e
                 runId?.let { rid ->
-                    val ec = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
-                    val ed = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
-                    val ep = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
-                    val ef = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
-                    // P3-0D5-05: Use actual item counts on cancellation
-                    bankStatementImportRunDao.finalize(
-                        runId = rid, status = BankStatementImportRun.STATUS_CANCELLED,
-                        completedAt = timeProvider.now(),
-                        totalItems = ec + ed + ep + ef,
-                        processedItems = ec + ed + ep + ef,
-                        createdReviewCount = ec, duplicateExpenseCount = ed,
-                        duplicatePendingCount = ep, failedItemCount = ef,
-                        errorSummary = "Cancelled during processing"
-                    )
+                    try {
+                        withContext(NonCancellable) {
+                            withTimeout(2000L) {
+                                val processedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
+                                val failedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
+                                bankStatementImportRunDao.finalize(
+                                    runId = rid,
+                                    status = BankStatementImportRun.STATUS_CANCELLED,
+                                    completedAt = timeProvider.now(),
+                                    totalItems = processedItems + failedItems,
+                                    processedItems = processedItems,
+                                    createdReviewCount = processedItems,
+                                    duplicateExpenseCount = 0,
+                                    duplicatePendingCount = 0,
+                                    failedItemCount = failedItems,
+                                    errorSummary = "WORKER_CANCELLED"
+                                )
+                            }
+                        }
+                    } catch (cleanupError: Throwable) {
+                        // NEVER rethrow from cancellation cleanup. Add as suppressed for diagnostics.
+                        cancellation.addSuppressed(cleanupError)
+                        Timber.w(cleanupError, "Failed to finalize cancelled bank statement import run $rid")
+                    }
                 }
-                throw e
+                throw cancellation
             }
             Timber.e(e, "BankStatementLifecycleProcessor failed")
             runId?.let { rid ->
-                val ec = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
-                val ed = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_EXPENSE)
-                val ep = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_DUPLICATE_PENDING_REVIEW)
-                val ef = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
-                // P3-0D5-06: processedItems includes all item rows
-                bankStatementImportRunDao.finalize(
-                    runId = rid, status = BankStatementImportRun.STATUS_FAILED,
-                    completedAt = timeProvider.now(),
-                    totalItems = ec + ed + ep + ef,
-                    processedItems = ec + ed + ep + ef,
-                    createdReviewCount = ec,
-                    duplicateExpenseCount = ed,
-                    duplicatePendingCount = ep,
-                    failedItemCount = ef,
-                    errorSummary = "Bank statement processing failed"
-                )
+                val receiptId = statementReceiptId
+                if (receiptId != null) {
+                    // Receipt was created — finalize run + write PROCESSING_FAILED event atomically
+                    try {
+                        transactionRunner.runInTransaction(
+                            correlationId = java.util.UUID.randomUUID().toString(),
+                            operationId = "bank_statement.finalize_unexpected_failure",
+                            source = "BankStatementLifecycleProcessor"
+                        ) { context ->
+                            val processedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
+                            val failedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
+                            bankStatementImportRunDao.finalize(
+                                runId = rid,
+                                status = BankStatementImportRun.STATUS_FAILED,
+                                completedAt = timeProvider.now(),
+                                totalItems = processedItems + failedItems,
+                                processedItems = processedItems,
+                                createdReviewCount = processedItems,
+                                duplicateExpenseCount = 0,
+                                duplicatePendingCount = 0,
+                                failedItemCount = failedItems,
+                                errorSummary = "WORKER_UNHANDLED_EXCEPTION"
+                            )
+                            receiptLifecycleEventWriter.write(context, ReceiptLifecycleEvent(
+                                receiptId = receiptId,
+                                sourceType = ReceiptSourceType.BANK_STATEMENT.name,
+                                documentType = ReceiptDocumentType.BANK_STATEMENT.name,
+                                eventType = "PROCESSING_FAILED",
+                                oldStatus = ReceiptProcessingStatus.PARSED.name,
+                                newStatus = null,
+                                actor = "system:bank_statement_processor",
+                                message = "Bank statement processing failed unexpectedly",
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .put("reason", "WORKER_UNHANDLED_EXCEPTION")
+                                    .put("errorClass", e::class.simpleName ?: "Unknown")
+                                    .build()
+                            ))
+                        }
+                    } catch (finalizeError: Exception) {
+                        if (finalizeError is kotlinx.coroutines.CancellationException) throw finalizeError
+                        Timber.w(finalizeError, "Failed to finalize bank statement import run $rid")
+                    }
+                } else {
+                    // No receipt created — finalize run as ledger-only
+                    try {
+                        val processedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_CREATED_REVIEW)
+                        val failedItems = bankStatementImportItemDao.countByRunAndStatus(rid, BankStatementImportItem.STATUS_FAILED)
+                        bankStatementImportRunDao.finalize(
+                            runId = rid,
+                            status = BankStatementImportRun.STATUS_FAILED,
+                            completedAt = timeProvider.now(),
+                            totalItems = processedItems + failedItems,
+                            processedItems = processedItems,
+                            createdReviewCount = processedItems,
+                            duplicateExpenseCount = 0,
+                            duplicatePendingCount = 0,
+                            failedItemCount = failedItems,
+                            errorSummary = "WORKER_UNHANDLED_EXCEPTION"
+                        )
+                    } catch (finalizeError: Exception) {
+                        if (finalizeError is kotlinx.coroutines.CancellationException) throw finalizeError
+                        Timber.w(finalizeError, "Failed to finalize bank statement import run $rid")
+                    }
+                }
             }
             Result.failure(e)
         }
+    }
+
+    /**
+     * Sanitizes a merchant/description string for safe storage.
+     * Removes control characters and truncates to a safe length.
+     * PR15: Pre-mutation validation.
+     */
+    private fun sanitizeMerchant(raw: String?): String? {
+        if (raw == null) return null
+        // Remove control characters (except common whitespace) and truncate
+        val sanitized = raw.replace(Regex("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]"), "")
+            .take(200)
+        return sanitized.ifBlank { null }
     }
 }

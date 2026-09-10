@@ -129,13 +129,17 @@ ExpenseTracker/
 
 - **200+ unit tests:** Architecture guards, consistency, contract, currency, DI, domain, E2E flows, golden masters, guards, integration, metrics, scenarios, services, startup, verification
 - **27+ instrumented tests:** DAO stress tests, migration contract tests, database migration verification, location worker tests
-- **Verification guards** (wired into `check`):
+- **Verification guards** (registry-owned; wired into `check` and the static-guard suite):
   - Room schema snapshot verification
-  - Lifecycle bypass guard (no direct `ExpenseDao` mutations outside coordinator)
+  - DB access boundary guard (exact ownership-policy authorization, protocol v2 ratchet)
   - Raw money aggregates guard (no raw `Double` financial arithmetic)
   - Direct time calls guard (enforces `TimeProvider` abstraction)
-  - DB access boundary guard (authorized writer allowlist)
   - Ignored test growth guard
+
+  The full per-guard inventory, canonical commands, and evidence state are
+  generated, never hand-copied: `docs/ci/GUARD_COMMANDS.generated.md` and
+  `docs/ci/GUARD_STATUS.generated.md` (indexed by
+  `docs/ci/GUARD_DOCUMENT_INDEX.yml`).
 
 ## CI Pipeline
 
@@ -230,7 +234,7 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 - **Git commits:** 840+
 - **Lines of code:** 60,000+
 - **Test coverage:** 80%+
-- **CI guards:** 10+ (schema, bypass, boundaries, privacy, money, time)
+- **CI guards:** registry-owned inventory (blocking + ratchet guards) — see docs/ci/GUARD_COMMANDS.generated.md and docs/ci/GUARD_STATUS.generated.md
 
 ## License
 

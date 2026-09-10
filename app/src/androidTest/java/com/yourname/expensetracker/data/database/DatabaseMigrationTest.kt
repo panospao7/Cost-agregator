@@ -3819,4 +3819,180 @@ class DatabaseMigrationTest {
 
         db.close()
     }
+
+    // ────────────────────────────────────────────────────────────────────────────
+    // Migration 147 → 148 (PR12A): Worker-run tracing columns on background_job_runs
+    // ────────────────────────────────────────────────────────────────────────────
+
+    private val workerTracingColumns = listOf(
+        "workId", "uniqueWorkName", "specVersion", "runAttempt", "leaseId",
+        "terminalReasonCode", "terminalDiagnosticCode", "partialFailureCount", "failedTargetCount"
+    )
+
+    /**
+     * Verifies that MIGRATION_147_148 adds all 9 worker-run tracing columns
+     * to the background_job_runs table.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun migration_147_148_adds_background_job_run_columns() {
+        assumeTrue(hasSchema(147) && hasSchema(148))
+
+        var db = helper.createDatabase(testDb, 147)
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            148,
+            true,
+            DatabaseMigrations.MIGRATION_147_148
+        )
+
+        // Verify all 9 new columns exist
+        val columnNames = mutableSetOf<String>()
+        db.query("PRAGMA table_info(background_job_runs)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) {
+                columnNames.add(cursor.getString(nameIndex))
+            }
+        }
+
+        workerTracingColumns.forEach { columnName ->
+            assertTrue(
+                "Column '$columnName' should exist in background_job_runs after 147→148 migration",
+                columnNames.contains(columnName)
+            )
+        }
+
+        db.close()
+    }
+
+    /**
+     * Verifies that a fresh database created at version 148 produces an
+     * identityHash matching the schema produced by migrating 147 → 148.
+     * The `runMigrationsAndValidate` call with validateDroppedTables=true
+     * performs this comparison automatically.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun fresh_148_schema_matches_migrated_147_148_schema() {
+        assumeTrue(hasSchema(147) && hasSchema(148))
+
+        // Create DB at 147, run migration to 148, and validate against exported schema
+        var db = helper.createDatabase(testDb, 147)
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            148,
+            true,
+            DatabaseMigrations.MIGRATION_147_148
+        )
+
+        // If we reach here without exception, the identityHash of the migrated
+        // DB matches the fresh 148 exported schema JSON — runMigrationsAndValidate
+        // enforces this automatically.
+        assertNotNull(db)
+        db.close()
+    }
+
+    /**
+     * Iterates ALL registered migrations from DatabaseMigrations.ALL and
+     * verifies each one succeeds when run as part of the full chain.
+     *
+     * Starts from the lowest schema version for which we have a JSON export
+     * and runs the entire chain through to APP_DATABASE_SCHEMA_VERSION.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun all_migrations_to_latest_pass() {
+        val lowestVersion = 145 // Baseline for DatabaseMigrations.ALL
+        assumeTrue(hasSchema(lowestVersion) && hasSchema(APP_DATABASE_SCHEMA_VERSION))
+
+        var db = helper.createDatabase(testDb, lowestVersion)
+        db.close()
+
+        db = helper.runMigrationsAndValidate(
+            testDb,
+            APP_DATABASE_SCHEMA_VERSION,
+            true,
+            *DatabaseMigrations.ALL
+        )
+
+        // Verify the background_job_runs table has all expected columns at latest
+        val columnNames = mutableSetOf<String>()
+        db.query("PRAGMA table_info(background_job_runs)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) {
+                columnNames.add(cursor.getString(nameIndex))
+            }
+        }
+
+        workerTracingColumns.forEach { columnName ->
+            assertTrue(
+                "Column '$columnName' should exist after all migrations to latest",
+                columnNames.contains(columnName)
+            )
+        }
+
+        db.close()
+    }
+
+    /**
+     * Verifies that the historical 147 schema does NOT include any of the
+     * 9 worker-run tracing columns. These columns are added only by
+     * MIGRATION_147_148.
+     */
+    @Test
+    @Throws(IOException::class)
+    fun historical_147_schema_does_not_include_worker_tracing_columns() {
+        assumeTrue(hasSchema(147))
+
+        val db = helper.createDatabase(testDb, 147)
+
+        val columnNames = mutableSetOf<String>()
+        db.query("PRAGMA table_info(background_job_runs)").use { cursor ->
+            val nameIndex = cursor.getColumnIndexOrThrow("name")
+            while (cursor.moveToNext()) {
+                columnNames.add(cursor.getString(nameIndex))
+            }
+        }
+
+        workerTracingColumns.forEach { columnName ->
+            assertFalse(
+                "Column '$columnName' should NOT exist in background_job_runs at version 147",
+                columnNames.contains(columnName)
+            )
+        }
+
+        db.close()
+    }
+
+    /**
+     * Asserts that APP_DATABASE_SCHEMA_VERSION equals the highest schema JSON
+     * file number in the exported schemas directory. Prevents version/schema drift.
+     */
+    @Test
+    fun schema_version_matches_latest_schema_file() {
+        val assets = InstrumentationRegistry.getInstrumentation().context.assets
+        val schemaDir = AppDatabase::class.java.canonicalName ?: return
+
+        var maxExportedVersion = -1
+        val files = assets.list(schemaDir) ?: emptyArray()
+        for (fileName in files) {
+            val match = Regex("""^(\d+)\.json$""").find(fileName)
+            if (match != null) {
+                val version = match.groupValues[1].toInt()
+                if (version > maxExportedVersion) {
+                    maxExportedVersion = version
+                }
+            }
+        }
+
+        assertEquals(
+            "APP_DATABASE_SCHEMA_VERSION must equal the highest exported schema JSON version",
+            maxExportedVersion,
+            APP_DATABASE_SCHEMA_VERSION
+        )
+    }
 }

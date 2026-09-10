@@ -49,18 +49,18 @@ interface AiArtifactDao {
      * while preserving the record for diagnostics.
      */
     /**
-     * @param now Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param now Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE ai_artifacts SET status = :dismissed, updatedAt = :now WHERE id = :id")
-    suspend fun markDismissed(id: Long, dismissed: String = AiArtifactStatus.DISMISSED.name, now: Long = System.currentTimeMillis())
+    suspend fun markDismissed(id: Long, dismissed: String = AiArtifactStatus.DISMISSED.name, now: Long)
 
     /**
-     * @param now Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param now Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE ai_artifacts SET status = :applied, updatedAt = :now WHERE id = :id")
-    suspend fun markApplied(id: Long, applied: String = AiArtifactStatus.APPLIED.name, now: Long = System.currentTimeMillis())
+    suspend fun markApplied(id: Long, applied: String = AiArtifactStatus.APPLIED.name, now: Long)
 
     /**
      * Delete all artifacts whose TTL has expired.

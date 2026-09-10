@@ -8,6 +8,11 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
  */
 interface WorkerLease : AutoCloseable {
     /**
+     * Unique identifier for this lease instance, used for run logging and tracing.
+     */
+    val leaseId: String
+
+    /**
      * Called before each DB mutation inside a worker.
      * Checks the write barrier and yields for cancellation.
      * Throws [com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException]

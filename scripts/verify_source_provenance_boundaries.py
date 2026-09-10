@@ -19,11 +19,45 @@ Rules enforced:
 """
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Set, Tuple
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    is_declared_production_path,
+    iter_production_kotlin_files,
+    resolve_production_kotlin_file,
+    resolve_production_source_scope,
+)
+
+# PR-GR-10B: the scanned production source scope is declared by the
+# checked-in manifest ``config/guards/production_source_roots.yml``
+# (resolved via scripts/guardrails/production_source_scope.py).  There is
+# NO conventional-root fallback: a missing, malformed, or undeclared
+# manifest fails closed with exit 2.  The historical hard-coded root
+# (``app/src/main/java``) is the manifest's currently declared single root,
+# so the scanned file set is unchanged.  The package-level targeted paths
+# below are the guard's declared targets under that root.
+
+_TARGET_PROVENANCE_DIR = (
+    "app/src/main/java/com/yourname/expensetracker/domain/provenance"
+)
+_TARGET_COORDINATOR = (
+    "app/src/main/java/com/yourname/expensetracker/domain/transaction/"
+    "lifecycle/TransactionLifecycleCoordinator.kt"
+)
+_TARGET_SOURCE_LINK_WRITER = (
+    "app/src/main/java/com/yourname/expensetracker/domain/provenance/"
+    "SourceLinkWriterImpl.kt"
+)
 
 
 @dataclass
@@ -384,10 +418,15 @@ def check_expense_source_coverage(coordinator_path: Path) -> List[Violation]:
     return violations
 
 
-def check_entity_source_link_constructors(src_dir: Path) -> List[Violation]:
-    """G-PROV-05: No direct EntitySourceLink( constructor outside allowed files."""
+def check_entity_source_link_constructors_files(kt_files: List[Path]) -> List[Violation]:
+    """G-PROV-05: No direct EntitySourceLink( constructor outside allowed files.
+
+    PR-GR-10B form: operates on the already-enumerated declared production
+    Kotlin files (deterministic order, manifest-scoped) instead of walking a
+    hard-coded directory.  The exclusion filter semantics are unchanged.
+    """
     violations: List[Violation] = []
-    for kt_file in sorted(src_dir.rglob('*.kt')):
+    for kt_file in kt_files:
         if is_excluded(kt_file):
             continue
         if kt_file.name in ALLOWED_ENTITY_SOURCE_LINK_FILES:
@@ -417,6 +456,13 @@ def check_entity_source_link_constructors(src_dir: Path) -> List[Violation]:
     return violations
 
 
+def check_entity_source_link_constructors(src_dir: Path) -> List[Violation]:
+    """G-PROV-05 (legacy directory form, retained for direct callers)."""
+    return check_entity_source_link_constructors_files(
+        sorted(src_dir.rglob('*.kt'))
+    )
+
+
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
@@ -437,26 +483,46 @@ def main():
         print("Note: No checks currently support --fix auto-remediation.", file=sys.stderr)
 
     root = args.root
-    src_dir = root / 'app' / 'src' / 'main' / 'java'
-    if not src_dir.exists():
-        print(f"Error: Source directory not found: {src_dir}", file=sys.stderr)
-        sys.exit(1)
 
-    provenance_dir = src_dir / 'com' / 'yourname' / 'expensetracker' / 'domain' / 'provenance'
-    coordinator_path = (
-        src_dir / 'com' / 'yourname' / 'expensetracker' / 'domain' /
-        'transaction' / 'lifecycle' / 'TransactionLifecycleCoordinator.kt'
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"Error: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # Targeted declared targets: exact declared-path resolution (zero
+    # matches fail closed via the guard's missing-required-files path).
+    writer_resolved, _code = resolve_production_kotlin_file(
+        str(root), root_set, _TARGET_SOURCE_LINK_WRITER
     )
-    source_link_writer_path = provenance_dir / 'SourceLinkWriterImpl.kt'
+    coordinator_resolved, _code = resolve_production_kotlin_file(
+        str(root), root_set, _TARGET_COORDINATOR
+    )
+    source_link_writer_path = (
+        Path(writer_resolved.absolute_path) if writer_resolved else None
+    )
+    coordinator_path = (
+        Path(coordinator_resolved.absolute_path) if coordinator_resolved else None
+    )
+    provenance_dir = (
+        Path(os.path.join(os.path.abspath(str(root)), *_TARGET_PROVENANCE_DIR.split("/")))
+        if is_declared_production_path(root_set, _TARGET_PROVENANCE_DIR)
+        else None
+    )
 
     # Verify expected files exist
     missing_files = []
-    if not provenance_dir.exists():
-        missing_files.append(str(provenance_dir))
-    if not coordinator_path.exists():
-        missing_files.append(str(coordinator_path))
-    if not source_link_writer_path.exists():
-        missing_files.append(str(source_link_writer_path))
+    if provenance_dir is None or not provenance_dir.exists():
+        missing_files.append(_TARGET_PROVENANCE_DIR)
+    if coordinator_path is None or not coordinator_path.exists():
+        missing_files.append(_TARGET_COORDINATOR)
+    if source_link_writer_path is None or not source_link_writer_path.exists():
+        missing_files.append(_TARGET_SOURCE_LINK_WRITER)
 
     if missing_files:
         print(f"Error: Required files not found:", file=sys.stderr)
@@ -469,8 +535,19 @@ def main():
     # ── Check 1: Raw metadata (scan all Kotlin source files) ─────────────────
     print("Check G-PROV-01: Scanning for raw sensitive keys in metadata (mapOf, JSONObject.put, putString, buildJsonObject)...")
     raw_violations: List[Violation] = []
-    kt_files = [f for f in src_dir.rglob('*.kt') if not is_excluded(f)]
-    for kt_file in sorted(kt_files):
+    try:
+        kt_files = [
+            Path(s.absolute_path)
+            for s in iter_production_kotlin_files(str(root), root_set)
+            if not is_excluded(Path(s.absolute_path))
+        ]
+    except ProductionSourceScopeError as exc:
+        print(
+            f"Error: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    for kt_file in kt_files:
         raw_violations.extend(check_raw_metadata(kt_file))
 
     if raw_violations:
@@ -510,7 +587,7 @@ def main():
 
     # ── Check 5: EntitySourceLink constructor ───────────────────────────────
     print("\nCheck G-PROV-05: Verifying EntitySourceLink constructor boundaries...")
-    constructor_violations = check_entity_source_link_constructors(src_dir)
+    constructor_violations = check_entity_source_link_constructors_files(kt_files)
     if constructor_violations:
         all_violations.append(
             ("G-PROV-05 EntitySourceLink constructor", constructor_violations)

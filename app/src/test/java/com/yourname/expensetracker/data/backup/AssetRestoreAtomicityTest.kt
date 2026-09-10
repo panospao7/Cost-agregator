@@ -32,6 +32,9 @@ class AssetRestoreAtomicityTest {
 
     private lateinit var journal: RestoreJournal
 
+    /** Deterministic epoch-millis injected via FakeTimeProvider for all fromJson calls. */
+    private val fixedTime = 1716163200000L // 2024-05-20 00:00 UTC
+
     @Before
     fun setUp() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
@@ -41,7 +44,7 @@ class AssetRestoreAtomicityTest {
             RestoreJournal.FAILURE_JOURNAL_FILENAME,
             RestoreJournal.SUCCESS_JOURNAL_FILENAME
         ).forEach { File(context.filesDir, it).delete() }
-        journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(fixedTime))
     }
 
     // ── A) extractTempDirPath round-trip ─────────────────────────────
@@ -63,7 +66,7 @@ class AssetRestoreAtomicityTest {
         )
 
         // Deserialize
-        val restored = RestoreJournal.JournalEntry.fromJson(json)
+        val restored = RestoreJournal.JournalEntry.fromJson(json, fixedTime)
         assertEquals(
             "extractTempDirPath must round-trip through JSON",
             originalPath,
@@ -80,7 +83,7 @@ class AssetRestoreAtomicityTest {
             json.isNull("_extractTempDirPath")
         )
 
-        val restored = RestoreJournal.JournalEntry.fromJson(json)
+        val restored = RestoreJournal.JournalEntry.fromJson(json, fixedTime)
         assertEquals(
             "extractTempDirPath must be null by default",
             null,
@@ -216,7 +219,7 @@ class AssetRestoreAtomicityTest {
 
         // Verify JSON round-trip directly
         val json = entry.toJson()
-        val restored = RestoreJournal.JournalEntry.fromJson(json)
+        val restored = RestoreJournal.JournalEntry.fromJson(json, fixedTime)
         assertEquals(3, restored.assetTasks.size)
         restored.assetTasks.forEach { task ->
             assertEquals(

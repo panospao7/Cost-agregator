@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkResu
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
 import com.yourname.expensetracker.domain.provenance.SourceLinkWriteResult
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
@@ -95,6 +96,7 @@ class NotificationProcessingPipelineSourceLinkTest {
             pendingReviewSourceLinkService = pendingReviewSourceLinkService,
             sourceLinkWriter = sourceLinkWriter,
             transactionLifecycleEventWriter = mockk(relaxed = true),
+            transactionRunner = mockk(relaxed = true),
             diagnosticEmitter = diagnosticEmitter,
             writeBarrier = writeBarrier,
             privacySettingsRepository = mockk(relaxed = true),

@@ -51,7 +51,7 @@ abstract class GoldenTestBase {
 
     // Real write barrier backed by real maintenance mode
     protected val restoreMaintenanceMode by lazy {
-        RestoreMaintenanceMode(ApplicationProvider.getApplicationContext<Context>())
+        RestoreMaintenanceMode(ApplicationProvider.getApplicationContext<Context>(), timeProvider)
     }
     protected val writeBarrier = DatabaseWriteBarrier(restoreMaintenanceMode)
 

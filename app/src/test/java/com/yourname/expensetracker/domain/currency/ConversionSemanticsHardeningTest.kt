@@ -22,6 +22,10 @@ class ConversionSemanticsHardeningTest {
     private val NOW = 1716163200000L // 2024-05-20 00:00 UTC
     private val DAY = 86400000L
 
+    // Relaxed barrier so adapter write methods pass through in NORMAL mode.
+    private val writeBarrier =
+        io.mockk.mockk<com.yourname.expensetracker.data.backup.DatabaseWriteBarrier>(relaxed = true)
+
     @Before
     fun setup() {
         store = FakeStore()
@@ -246,20 +250,20 @@ class ConversionSemanticsHardeningTest {
     @Test(expected = IllegalArgumentException::class)
     fun `storeAdapter rejects null validDate`() = runTest {
         // Attempt to store a rate with null validDate through the adapter
-        val adapter = com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter(FakeDao())
+        val adapter = com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter(FakeDao(), writeBarrier)
         adapter.insertOrUpdate(DomainExchangeRate("USD", "EUR", 0.90, lastUpdated = NOW, source = "test", validDate = null))
     }
 
     @Test(expected = IllegalArgumentException::class)
     fun `storeAdapter rejects zero validDate`() = runTest {
-        val adapter = com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter(FakeDao())
+        val adapter = com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter(FakeDao(), writeBarrier)
         adapter.insertOrUpdate(DomainExchangeRate("USD", "EUR", 0.90, lastUpdated = NOW, source = "test", validDate = 0L))
     }
 
     @Test
     fun `storeAdapter accepts valid validDate`() = runTest {
         val dao = FakeDao()
-        val adapter = com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter(dao)
+        val adapter = com.yourname.expensetracker.data.currency.ExchangeRateStoreAdapter(dao, writeBarrier)
         adapter.insertOrUpdate(DomainExchangeRate("USD", "EUR", 0.90, lastUpdated = NOW, source = "test", validDate = NOW))
         assertEquals(1, dao.inserted.size)
     }

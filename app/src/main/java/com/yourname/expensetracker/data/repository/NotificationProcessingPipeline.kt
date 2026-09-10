@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -14,7 +15,9 @@ import com.yourname.expensetracker.data.database.entity.PaymentMethod
 import com.yourname.expensetracker.data.database.entity.PendingReview
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -156,6 +159,7 @@ class NotificationProcessingPipeline @Inject constructor(
     private val pendingReviewSourceLinkService: PendingReviewSourceLinkService,
     private val sourceLinkWriter: SourceLinkWriter,
     private val transactionLifecycleEventWriter: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter,
+    private val transactionRunner: DomainTransactionRunner,
     private val diagnosticEmitter: com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter,
     private val writeBarrier: DatabaseWriteBarrier,
     private val privacySettingsRepository: PrivacySettingsRepository,
@@ -189,14 +193,13 @@ class NotificationProcessingPipeline @Inject constructor(
                 val outcome = processInternal(notification, storageNotification, initializeClassifier = true, correlationId = cid, persistenceContext = persistenceContext)
                 writePipelineDiagnosticEvent(outcome, notification.packageName, correlationId = cid)
                 outcome
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, cid, e)
-                // DDL-F876-08: use the same cid so exceptions are traceable from listener
-                writePipelineDiagnosticEvent(errorOutcome, notification.packageName, correlationId = cid)
-                errorOutcome
-            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, cid, e)
+            // DDL-F876-08: use the same cid so exceptions are traceable from listener
+            writePipelineDiagnosticEvent(errorOutcome, notification.packageName, correlationId = cid)
+            errorOutcome
+        }
         }
     }
 
@@ -217,14 +220,13 @@ class NotificationProcessingPipeline @Inject constructor(
                     val outcome = processInternal(notification, initializeClassifier = false)
                     writePipelineDiagnosticEvent(outcome, notification.packageName)
                     results += outcome
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
-                    val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, null, e)
-                    writePipelineDiagnosticEvent(errorOutcome, notification.packageName)
-                    results += errorOutcome
-                }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.e(e, "Error processing notification in batch: ${notification.packageName}")
+            val errorOutcome = NotificationPipelineOutcome.Error(notification.packageName, null, e)
+            writePipelineDiagnosticEvent(errorOutcome, notification.packageName)
+            results += errorOutcome
+        }
             }
         }
         return results
@@ -250,7 +252,13 @@ class NotificationProcessingPipeline @Inject constructor(
         if (dao.existsByDedupeFingerprint(dedupeFingerprint)) {
             Timber.d("TRN-8: Duplicate notification detected by fingerprint before parse: ${notification.packageName}")
             Timber.d("Pipeline outcome: DUPLICATE for package=%s", notification.packageName)
+            // GR-14p-c: canonical direct scope — the mutation's proof is local
+            // to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationProcessingPipeline.processInternal")
+            ) {
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
+            }
             return NotificationPipelineOutcome.Duplicate(notification.packageName, correlationId, "Fingerprint duplicate before parse")
         }
 
@@ -294,6 +302,11 @@ class NotificationProcessingPipeline @Inject constructor(
             // P1-PR2: Collect source-link failures for post-commit diagnostic emission
             val deferredLinkDiagnostics = mutableListOf<DeferredSourceLinkDiagnostic>()
             var parserFailedOutcome: NotificationPipelineOutcome? = null
+            // GR-14p-c: canonical direct scope — the mutations' proof is local
+            // to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationProcessingPipeline.processInternal")
+            ) {
             database.withTransaction {
                 when (val insertResult = insertRawNotificationIfNotDuplicate(notification, storageNotification)) {
                     is RawNotificationInsertResult.Duplicate -> {
@@ -517,6 +530,7 @@ class NotificationProcessingPipeline @Inject constructor(
                     } // close Inserted
                 } // close when
             } // close withTransaction
+            } // close runWrite GR-14p-c
 
             // Phase 3: Post-commit best-effort actions
             // P1-PR2: Emit deferred source-link diagnostics now that transaction is committed
@@ -534,7 +548,12 @@ class NotificationProcessingPipeline @Inject constructor(
         // Phase 2: DB transaction (DB-only mutations)
         // P1-PR2: Collect source-link failures for post-commit diagnostic emission
         val deferredLinkDiagnosticsParsed = mutableListOf<DeferredSourceLinkDiagnostic>()
-        val dbOutcome = database.withTransaction {
+        // GR-14p-c: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        val dbOutcome = writeBarrier.runWrite(
+            DatabaseAccessOperation("NotificationProcessingPipeline.processInternal")
+        ) {
+        database.withTransaction {
             val rawId = when (val insertResult = insertRawNotificationIfNotDuplicate(notification, storageNotification)) {
                 is RawNotificationInsertResult.Duplicate -> return@withTransaction ParsedDbOutcome.RawDuplicate
                 is RawNotificationInsertResult.Inserted -> insertResult.rawId
@@ -584,6 +603,7 @@ class NotificationProcessingPipeline @Inject constructor(
                     }
                 }
             }
+        }
         }
 
         val outcome = when (dbOutcome) {
@@ -778,9 +798,13 @@ class NotificationProcessingPipeline @Inject constructor(
         }
 
         // Always persist the resolved fingerprint in the storage row
-        val insertId = dao.insertOrIgnore(
+        val insertId = writeBarrier.runWrite(
+            DatabaseAccessOperation("NotificationProcessingPipeline.insertRawNotificationIfNotDuplicate")
+        ) {
+        dao.insertOrIgnore(
             storageNotification.copy(dedupeFingerprint = fingerprint)
         )
+        }
 
         return if (insertId == -1L) {
             RawNotificationInsertResult.Duplicate(
@@ -1181,6 +1205,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
+            // GR-14p-c: canonical direct scope — the mutations' proof is local
+            // to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationProcessingPipeline.handleAutoAcceptInTransaction")
+            ) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             // PR5: Write dedupe source link
@@ -1195,6 +1224,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             }
             // P1-SLICE-D: markProcessed atomically inside transaction
             dao.markProcessed(rawId)
+            }
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1211,6 +1241,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             transactionType = preDb.transactionType.name
         )
         if (hasPendingDuplicate) {
+            // GR-14p-c: canonical direct scope — the mutations' proof is local
+            // to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationProcessingPipeline.handleAutoAcceptInTransaction")
+            ) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             // PR5: Write dedupe source link
@@ -1225,6 +1260,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             }
             // P1-SLICE-D: markProcessed atomically inside transaction
             dao.markProcessed(rawId)
+            }
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1271,8 +1307,14 @@ private val AMOUNT_TOKEN_REGEX = Regex(
         return when (val result = mutation.value) {
             is CreateExpenseResult.Created -> {
                 val expenseId = result.expenseId
+                // GR-14p-c: canonical direct scope — the mutations' proof is local
+                // to the legal writer, independent of caller context.
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("NotificationProcessingPipeline.handleAutoAcceptInTransaction")
+                ) {
                 dao.markRelevance(rawId, true)
                 sourceStatsDao.incrementTotalAndAccepted(notification.packageName, sourceStatsTimestamp)
+                }
 
                 // AID-9 Gap 1: Write audit event for AI auto-accept
                 val auditMetadata = JSONObject().apply {
@@ -1287,22 +1329,30 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                     put("amount", preDb.parsed.amount)
                     put("merchant", preDb.correctedMerchant)
                 }.toString()
-                runCatching {
-                    transactionLifecycleEventWriter.write(
-                        com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
-                            expenseId = expenseId,
-                            eventType = "AI_AUTO_ACCEPT",
-                            source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
-                            actor = "system:ai_auto_accept",
-                            correlationId = correlationId,  // DDL-512-05
-                            dedupeKey = preDb.dedupeKey,
-                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
-                                .putHashed("packageName", notification.packageName)
-                                .build()
+                try {
+                    transactionRunner.runInTransaction(
+                        operationId = "notification.auto_accept",
+                        correlationId = java.util.UUID.randomUUID().toString(),
+                        source = "NotificationProcessingPipeline"
+                    ) { ctx ->
+                        transactionLifecycleEventWriter.write(
+                            ctx,
+                            com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent(
+                                expenseId = expenseId,
+                                eventType = "AI_AUTO_ACCEPT",
+                                source = ExpenseSource.NOTIFICATION_AUTO_ACCEPT.name,
+                                actor = "system:ai_auto_accept",
+                                correlationId = correlationId,  // DDL-512-05
+                                dedupeKey = preDb.dedupeKey,
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("packageName", notification.packageName)
+                                    .build()
+                            )
                         )
-                    )
-                }.onFailure { error ->
-                    Timber.w(error, "AID-9: Failed to write AI_AUTO_ACCEPT audit event for expenseId=$expenseId")
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Timber.w(e, "AID-9: Failed to write AI_AUTO_ACCEPT audit event for expenseId=$expenseId")
                 }
 
                 // AID-9 Gap 3: Notify user via log (visible in debug viewer)
@@ -1315,7 +1365,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 )
 
                 // P1-SLICE-D: markProcessed atomically inside transaction
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("NotificationProcessingPipeline.handleAutoAcceptInTransaction")
+                ) {
                 dao.markProcessed(rawId)
+                }
                 ParsedDbOutcome.AutoAccepted(
                     rawId = rawId,
                     expenseId = expenseId,
@@ -1325,6 +1379,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             }
 
             is CreateExpenseResult.DuplicateSkipped -> {
+                // GR-14p-c: canonical direct scope — the mutations' proof is local
+                // to the legal writer, independent of caller context.
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("NotificationProcessingPipeline.handleAutoAcceptInTransaction")
+                ) {
                 dao.markRelevance(rawId, false)
                 sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                 // PR5: Write dedupe source link
@@ -1336,6 +1395,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 )
                 // P1-SLICE-D: markProcessed atomically inside transaction
                 dao.markProcessed(rawId)
+                }
                 ParsedDbOutcome.Duplicate
             }
 
@@ -1343,6 +1403,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 check(hasCanonicalExpenseDuplicate(preDb)) {
                     "Expense insert conflicted without a canonical duplicate for rawId=$rawId"
                 }
+                // GR-14p-c: canonical direct scope — the mutations' proof is local
+                // to the legal writer, independent of caller context.
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("NotificationProcessingPipeline.handleAutoAcceptInTransaction")
+                ) {
                 dao.markRelevance(rawId, false)
                 sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                 // PR5: Write dedupe source link
@@ -1354,11 +1419,17 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 )
                 // P1-SLICE-D: markProcessed atomically inside transaction
                 dao.markProcessed(rawId)
+                }
                 ParsedDbOutcome.Duplicate
             }
 
             is CreateExpenseResult.ValidationFailed -> {
                 Timber.w("Auto-accept validation failed: ${result.errors}")
+                // GR-14p-c: canonical direct scope — the mutations' proof is local
+                // to the legal writer, independent of caller context.
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("NotificationProcessingPipeline.handleAutoAcceptInTransaction")
+                ) {
                 dao.markRelevance(rawId, false)
                 sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
                 // PR5: Write dedupe source link
@@ -1370,6 +1441,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 )
                 // P1-SLICE-D: markProcessed atomically inside transaction
                 dao.markProcessed(rawId)
+                }
                 ParsedDbOutcome.Duplicate
             }
 
@@ -1389,6 +1461,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
     ): ParsedDbOutcome {
         val isDuplicate = hasCanonicalExpenseDuplicate(preDb)
         if (isDuplicate) {
+            // GR-14p-c: canonical direct scope — the mutations' proof is local
+            // to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationProcessingPipeline.handleNeedsReviewInTransaction")
+            ) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             // PR5: Write dedupe source link
@@ -1403,6 +1480,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             }
             // P1-SLICE-D: markProcessed atomically inside transaction
             dao.markProcessed(rawId)
+            }
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1421,6 +1499,11 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             transactionType = preDb.transactionType.name
         )
         if (hasPendingDuplicate) {
+            // GR-14p-c: canonical direct scope — the mutations' proof is local
+            // to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationProcessingPipeline.handleNeedsReviewInTransaction")
+            ) {
             dao.markRelevance(rawId, false)
             sourceStatsDao.incrementTotalAndDuplicate(notification.packageName, sourceStatsTimestamp)
             // PR5: Write dedupe source link
@@ -1435,6 +1518,7 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             }
             // P1-SLICE-D: markProcessed atomically inside transaction
             dao.markProcessed(rawId)
+            }
             return ParsedDbOutcome.Duplicate
         }
 
@@ -1457,7 +1541,13 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             suggestedLatitude = preDb.deviceGps?.first,
             suggestedLongitude = preDb.deviceGps?.second
         )
-        val reviewId = pendingReviewDao.upsertByRawNotificationId(review)
+        // GR-14p-c: canonical direct scope — the mutation's proof is local
+        // to the legal writer, independent of caller context.
+        val reviewId = writeBarrier.runWrite(
+            DatabaseAccessOperation("NotificationProcessingPipeline.handleNeedsReviewInTransaction")
+        ) {
+        pendingReviewDao.upsertByRawNotificationId(review)
+        }
         // PR3: Write source links for review provenance
         val linkResult = pendingReviewSourceLinkService.linkSourcesForReview(
             review = review,
@@ -1488,9 +1578,15 @@ private val AMOUNT_TOKEN_REGEX = Regex(
             )
         }
         Timber.d("Pipeline outcome: NEEDS_REVIEW reviewId=%d", reviewId)
+        // GR-14p-c: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("NotificationProcessingPipeline.handleNeedsReviewInTransaction")
+        ) {
         sourceStatsDao.incrementTotalAndPending(notification.packageName, sourceStatsTimestamp)
         // P1-SLICE-D: markProcessed atomically inside transaction
         dao.markProcessed(rawId)
+        }
         return ParsedDbOutcome.NeedsReviewCreated(rawId = rawId, reviewId = reviewId)
     }
 
@@ -1592,11 +1688,10 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                             recommendationRepository.saveAll(recommendations)
                         }
                     } ?: Timber.w("Recommendation generation timed out after ${RECOMMENDATION_JOB_TIMEOUT_MS}ms")
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Timber.w(e, "Recommendation generation failed for expenseId=${expense.id}")
-                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w(e, "Recommendation generation failed for expenseId=${expense.id}")
+            }
             }
         }
     }
@@ -1608,22 +1703,20 @@ private val AMOUNT_TOKEN_REGEX = Regex(
                 withTimeoutOrNull(SUBSCRIPTION_DETECTION_TIMEOUT_MS) {
                     detectAndSaveSubscriptionCandidate(merchant, categoryId)
                 } ?: Timber.w("Subscription detection timed out after ${SUBSCRIPTION_DETECTION_TIMEOUT_MS}ms")
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.w(e, "Subscription detection failed for merchant: $merchant")
-            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "Subscription detection failed for merchant: $merchant")
+        }
         }
     }
 
     private suspend fun runPostCommitSafely(action: String, block: suspend () -> Unit) {
         try {
             block()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Timber.e(e, "Post-commit action failed: $action")
-        }
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        Timber.e(e, "Post-commit action failed: $action")
+    }
     }
 
     /**
@@ -1680,13 +1773,20 @@ private val AMOUNT_TOKEN_REGEX = Regex(
 
             candidates.firstOrNull { it.canonicalMerchant !in existingPending }?.let { candidate ->
                 val entity = subscriptionDetector.toEntity(candidate)
+                // GR-14p-c: canonical direct scope — the mutation's proof is local
+                // to the legal writer, independent of caller context.
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("NotificationProcessingPipeline.detectAndSaveSubscriptionCandidate")
+                ) {
                 subscriptionCandidateDao.insert(entity)
+                }
                 Timber.i(
                     "Saved subscription candidate for ${candidate.canonicalMerchant} " +
                         "(${candidate.detectedInterval}, confidence=${"%.2f".format(candidate.confidence)})"
                 )
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             Timber.w(e, "Error detecting subscription candidate for: $merchant")
         }
     }

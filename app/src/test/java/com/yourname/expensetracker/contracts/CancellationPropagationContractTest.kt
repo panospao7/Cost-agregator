@@ -38,7 +38,7 @@ class CancellationPropagationContractTest {
         CriticalCatch("com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectDispatcher.kt",
             "dispatchAfterSave", "dispatchAfterSave failed"),
         CriticalCatch("com/yourname/expensetracker/domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt",
-            "processStatementImport per-item", "Bank transaction processing failed"),
+            "processStatementImport per-item", "ITEM_PROCESSING_FAILURE"),
         CriticalCatch("com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt",
             "unlinkReceiptFromExpense", "Result.failure"),
         CriticalCatch("com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt",

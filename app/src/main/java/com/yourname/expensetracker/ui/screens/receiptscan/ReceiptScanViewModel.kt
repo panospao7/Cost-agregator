@@ -189,6 +189,9 @@ class ReceiptScanViewModel @Inject constructor(
     private val hybridClassifier: HybridExpenseClassifier
 ) : ViewModel() {
 
+    /** G-TIME-01: the screen's single TimeProvider-backed "now" source. */
+    fun referenceNowMillis(): Long = timeProvider.now()
+
     private val _state = MutableStateFlow(ReceiptScanState(
         tempCameraUri = savedStateHandle.get<Uri>("temp_uri"),
         editDate = timeProvider.now()
@@ -396,7 +399,8 @@ class ReceiptScanViewModel @Inject constructor(
                                     merchant = parsed.merchantName ?: "Unknown",
                                     type = ParsedTransactionType.PURCHASE,
                                     confidence = parsed.confidence,
-                                    date = parsed.date
+                                    date = parsed.date,
+                                    validationNowEpochMs = timeProvider.now()
                                 )
                             }
                         ),

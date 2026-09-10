@@ -12,6 +12,7 @@ import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.data.database.entity.Expense
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -64,9 +65,12 @@ class SourceLinkBackfillWorker @Inject constructor(
 
         for ((index, expense) in allExpenses.withIndex()) {
             try {
+                writeBarrier.checkWritesAllowed("SourceLinkBackfillWorker.expense_${expense.id}")
                 val result = backfillExpense(expense)
                 linksCreated += result.created
                 linksSkipped += result.skipped
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.e(e, "Backfill failed for expense ${expense.id}")
                 errors++

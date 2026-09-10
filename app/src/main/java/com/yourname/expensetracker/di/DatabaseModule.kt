@@ -5,12 +5,14 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+import com.yourname.expensetracker.data.database.RoomDomainTransactionRunner
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
 import com.yourname.expensetracker.data.database.dao.GroupExpenseDao
 import com.yourname.expensetracker.data.database.dao.GroupMemberDao
 import com.yourname.expensetracker.domain.groups.GroupTransactionCoordinator as GroupTransactionCoordinatorInterface
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEventWriter
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
@@ -53,6 +55,7 @@ object DatabaseModule {
         postCommitActionRunner: PostCommitActionRunner,
         writeBarrier: DatabaseWriteBarrier,
         timeProvider: TimeProvider,
+        transactionRunner: DomainTransactionRunner,
         @IoDispatcher ioDispatcher: CoroutineDispatcher
     ): GroupTransactionCoordinatorInterface {
         return GroupTransactionCoordinator(
@@ -67,7 +70,18 @@ object DatabaseModule {
             postCommitActionRunner = postCommitActionRunner,
             writeBarrier = writeBarrier,
             timeProvider = timeProvider,
-            ioDispatcher = ioDispatcher
+            ioDispatcher = ioDispatcher,
+            transactionRunner = transactionRunner
         )
     }
+
+    /**
+     * PR 3: Provides shared transaction runner wrapping Room's [androidx.room.withTransaction].
+     * All domain coordinators that need atomic state+event writes should inject this.
+     */
+    @Provides
+    @Singleton
+    fun provideDomainTransactionRunner(
+        impl: RoomDomainTransactionRunner
+    ): DomainTransactionRunner = impl
 }

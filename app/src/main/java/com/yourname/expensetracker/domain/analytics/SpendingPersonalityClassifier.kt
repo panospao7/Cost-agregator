@@ -213,12 +213,10 @@ class SpendingPersonalityClassifier @Inject constructor(
      * Calculate weekend spend share: % of spending on Saturday and Sunday.
      */
     private fun calculateWeekendSpendShare(purchases: List<ExpenseSnapshot>): Double {
-        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-        val calendar = Calendar.getInstance()
-        
+        // T4A: TimePeriodUtils.getDayOfWeek returns Calendar-style constants (Sunday=1..Saturday=7),
+        // preserving the original weekend semantics.
         val weekendSpending = purchases.filter { purchase ->
-            calendar.timeInMillis = purchase.date
-            val dayOfWeek = calendar.get(Calendar.DAY_OF_WEEK)
+            val dayOfWeek = TimePeriodUtils.getDayOfWeek(purchase.date)
             dayOfWeek == Calendar.SATURDAY || dayOfWeek == Calendar.SUNDAY
         // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         }.sumOf { it.effectiveAmount }
@@ -233,12 +231,10 @@ class SpendingPersonalityClassifier @Inject constructor(
      * Calculate night spend share: % of spending after 8 PM.
      */
     private fun calculateNightSpendShare(purchases: List<ExpenseSnapshot>): Double {
-        // A18: Replace Calendar with java.time.ZonedDateTime + ZoneId.systemDefault()
-        val calendar = Calendar.getInstance()
-        
+        // T4A: TimePeriodUtils.getHourOfDay returns the local hour (0-23) in the system
+        // default zone, preserving the original ">= 8 PM" night semantics.
         val nightSpending = purchases.filter { purchase ->
-            calendar.timeInMillis = purchase.date
-            calendar.get(Calendar.HOUR_OF_DAY) >= NIGHT_HOUR_THRESHOLD
+            TimePeriodUtils.getHourOfDay(purchase.date) >= NIGHT_HOUR_THRESHOLD
         // SAFE: data normalized via AnalyticsCurrencyNormalizer before reaching this engine
         }.sumOf { it.effectiveAmount }
         

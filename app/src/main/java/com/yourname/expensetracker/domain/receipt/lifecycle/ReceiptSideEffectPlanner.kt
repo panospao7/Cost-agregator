@@ -212,8 +212,8 @@ class ReceiptSideEffectPlanner @Inject constructor(
             } catch (e: Exception) {
                 Timber.w(e, "Warranty extraction failed for receipt %d", receiptId)
                 SideEffectOutcome.FailedRetryable(
-                    e.message ?: "Warranty extraction failed",
-                    e.javaClass.name
+                    "warranty_extraction_failed",
+                    e::class.simpleName
                 )
             }
         }
@@ -249,8 +249,8 @@ class ReceiptSideEffectPlanner @Inject constructor(
             } catch (e: Exception) {
                 Timber.w(e, "Item categorization failed for receipt %d", receiptId)
                 SideEffectOutcome.FailedRetryable(
-                    e.message ?: "Item categorization failed",
-                    e.javaClass.name
+                    "receipt_item_categorization_failed",
+                    e::class.simpleName
                 )
             }
         }
@@ -312,11 +312,11 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 if (freshReceipt != null) {
                     writeMatchEvent(freshReceipt, "MATCH_FAILED",
                         "Transaction matching threw exception",
-                        errorDetails = e.message?.take(300))
+                        errorDetails = "transaction_matching_exception")
                 }
                 SideEffectOutcome.FailedRetryable(
-                    e.message ?: "Transaction matching failed",
-                    e.javaClass.name
+                    "receipt_transaction_match_failed",
+                    e::class.simpleName
                 )
             }
         }
@@ -349,11 +349,12 @@ class ReceiptSideEffectPlanner @Inject constructor(
                     Timber.w("Auto-match link failed for receipt %d: %s",
                         receipt.id, linkResult.exceptionOrNull()?.message)
                     writeMatchEvent(receipt, "MATCH_FAILED",
-                        "Auto-match link failed: ${linkResult.exceptionOrNull()?.message}",
-                        expenseId = matchResult.transaction.id, score = matchResult.score.toFloat())
+                        "Auto-match link failed",
+                        expenseId = matchResult.transaction.id, score = matchResult.score.toFloat(),
+                        errorDetails = "auto_match_link_failed")
                     SideEffectOutcome.FailedRetryable(
-                        linkResult.exceptionOrNull()?.message ?: "Auto-match link failed",
-                        linkResult.exceptionOrNull()?.javaClass?.name
+                        "auto_match_link_failed",
+                        linkResult.exceptionOrNull()?.let { it::class.simpleName }
                     )
                 } else {
                     Timber.d("Auto-matched receipt %d to expense %d (score=%.3f)",
@@ -455,8 +456,8 @@ class ReceiptSideEffectPlanner @Inject constructor(
             } catch (e: Exception) {
                 Timber.w(e, "Price protection check failed for receipt %d", receipt.id)
                 SideEffectOutcome.FailedRetryable(
-                    e.message ?: "Price protection check failed",
-                    e.javaClass.name
+                    "price_protection_check_failed",
+                    e::class.simpleName
                 )
             }
         }

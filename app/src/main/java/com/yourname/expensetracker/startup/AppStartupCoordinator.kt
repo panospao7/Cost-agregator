@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
+import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -24,7 +25,8 @@ class AppStartupCoordinator @Inject constructor(
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val restoreDatabaseOpener: RestoreDatabaseOpener,
     private val workerExecutionGuard: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard,
-    private val restoreJournalImporter: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+    private val restoreJournalImporter: com.yourname.expensetracker.data.backup.RestoreJournalImporter,
+    private val timeProvider: TimeProvider
 ) {
 
     fun initialize(application: Application) {
@@ -314,7 +316,7 @@ class AppStartupCoordinator @Inject constructor(
      */
     private fun scheduleStartupWork(application: Application) {
         Timber.i("Startup: scheduling workers via WorkerRegistry")
-        WorkerRegistry.scheduleAll(application)
+        WorkerRegistry.scheduleAll(application, timeProvider)
     }
 
     private fun syncProactiveBriefingWork() {
@@ -334,11 +336,21 @@ class AppStartupCoordinator @Inject constructor(
      * stale because the previous process is dead. The shorter window ensures recent
      * crash-orphaned rows are recovered immediately rather than lingering for hours.
      */
+    /**
+     * T3A / G-TIME-01: Startup stale-run recovery cutoff, computed from the
+     * injected [TimeProvider] (never the wall clock). Visible for testing so the
+     * threshold computation can be asserted deterministically without bootstrapping
+     * [ProcessLifecycleOwner].
+     */
+    @androidx.annotation.VisibleForTesting
+    internal fun startupStaleThresholdMs(): Long =
+        timeProvider.now() - STARTUP_STALE_THRESHOLD_MS
+
     private fun recoverStaleWorkerRuns() {
         ProcessLifecycleOwner.get().lifecycleScope.launch {
             runCatching {
                 workerExecutionGuard.recoverStaleRunningJobs(
-                    staleThresholdMs = System.currentTimeMillis() - STARTUP_STALE_THRESHOLD_MS
+                    staleThresholdMs = startupStaleThresholdMs()
                 )
             }.onFailure { Timber.w(it, "Startup: stale worker-run recovery failed") }
         }

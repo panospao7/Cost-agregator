@@ -1,0 +1,13 @@
+# ui_dao_allowlist.yml
+# G-UI-DAO-01: Entries that allow specific UI-layer DAO usage with documented justification.
+#
+# Every entry MUST have:
+#   - rule: G-UI-DAO-01
+#   - path: relative path from project root
+#   - reason: why this is safe
+#   - owner: @github-handle
+#   - expires: YYYY-MM-DD or "permanent"
+#
+# Add entries sparingly — the default state should be NO UI-layer DAO usage.
+
+

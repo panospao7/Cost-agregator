@@ -136,7 +136,8 @@ fun ReceiptScanScreen(
     if (showDebugViewer && state.debugData != null) {
         com.yourname.expensetracker.ui.screens.debug.DebugViewerScreen(
             debugData = state.debugData!!,
-            onClose = { showDebugViewer = false }
+            onClose = { showDebugViewer = false },
+            referenceNowMillis = viewModel.referenceNowMillis()
         )
     }
 

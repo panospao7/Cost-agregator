@@ -55,6 +55,9 @@ interface BackgroundJobRunDao {
     )
     suspend fun getStaleRunningRuns(staleThresholdMs: Long): List<BackgroundJobRun>
 
+    @Query("SELECT * FROM background_job_runs WHERE id = :id LIMIT 1")
+    suspend fun getById(id: Long): BackgroundJobRun?
+
     @Query("SELECT * FROM background_job_runs WHERE correlationId = :correlationId ORDER BY startedAt ASC")
     suspend fun getByCorrelationId(correlationId: String): List<BackgroundJobRun>
 
@@ -73,4 +76,72 @@ interface BackgroundJobRunDao {
           AND errorMessage IS NOT NULL
     """)
     suspend fun redactErrorMessagesOlderThan(cutoffMs: Long): Int
+
+    /**
+     * Atomically completes a job run record with terminal status and metrics.
+     * Uses UPDATE ... WHERE id = :id AND status = 'RUNNING' to prevent
+     * double-completion races.
+     * @return number of rows updated (1 = success, 0 = already completed).
+     */
+    @Query("""
+        UPDATE background_job_runs
+        SET status = :status,
+            finishedAt = :finishedAt,
+            rowsScanned = :rowsScanned,
+            rowsUpdated = :rowsUpdated,
+            notificationsSent = :notificationsSent,
+            statusReason = :statusReason,
+            retryReason = :retryReason,
+            errorMessage = :errorMessage,
+            errorClass = :errorClass,
+            cancellationReason = :cancellationReason,
+            terminalReasonCode = :terminalReasonCode,
+            terminalDiagnosticCode = :terminalDiagnosticCode,
+            partialFailureCount = :partialFailureCount,
+            failedTargetCount = :failedTargetCount
+        WHERE id = :id AND status = 'RUNNING'
+    """)
+    suspend fun completeTerminal(
+        id: Long,
+        status: String,
+        finishedAt: Long,
+        rowsScanned: Int = 0,
+        rowsUpdated: Int = 0,
+        notificationsSent: Int = 0,
+        statusReason: String? = null,
+        retryReason: String? = null,
+        errorMessage: String? = null,
+        errorClass: String? = null,
+        cancellationReason: String? = null,
+        terminalReasonCode: String? = null,
+        terminalDiagnosticCode: String? = null,
+        partialFailureCount: Int? = null,
+        failedTargetCount: Int? = null
+    ): Int
+
+    /**
+     * Conditionally marks a stale RUNNING job as STALE_ABORTED.
+     * Only updates if the row is still RUNNING and started before the stale threshold.
+     * This is a CAS (compare-and-set) to prevent overwriting a real terminal state.
+     * @return number of rows updated (1 = success, 0 = already terminal or not stale).
+     */
+    @Query("""
+        UPDATE background_job_runs
+        SET status = 'STALE_ABORTED',
+            finishedAt = :finishedAt,
+            statusReason = :statusReason,
+            terminalReasonCode = :terminalReasonCode,
+            terminalDiagnosticCode = :terminalDiagnosticCode
+        WHERE id = :id
+          AND status = 'RUNNING'
+          AND startedAt < :staleThresholdMs
+    """)
+    suspend fun staleAbortIfStillRunning(
+        id: Long,
+        staleThresholdMs: Long,
+        finishedAt: Long,
+        statusReason: String,
+        terminalReasonCode: String,
+        terminalDiagnosticCode: String
+    ): Int
 }

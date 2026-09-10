@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -52,7 +53,8 @@ data class MaintenanceDiagnosticRecord(
  */
 @Singleton
 class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val timeProvider: TimeProvider
 ) : MaintenanceSafeDiagnosticSink {
 
     override suspend fun recordBlockedOperation(
@@ -75,7 +77,7 @@ class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
                         pipeline = pipeline,
                         entity = entity,
                         reason = reason.name,
-                        timestamp = System.currentTimeMillis()
+                        timestamp = timeProvider.now()
                     )
                 )
                 val trimmed = if (existing.size > MAX_RECORDS) existing.takeLast(MAX_RECORDS) else existing
@@ -106,7 +108,7 @@ class DataStoreMaintenanceSafeDiagnosticSink @Inject constructor(
                         pipeline = event.pipeline.name,
                         entity = event.entityType,
                         reason = event.reasonCode?.name ?: "NONE",
-                        timestamp = System.currentTimeMillis(),
+                        timestamp = timeProvider.now(),
                         correlationId = event.correlationId,
                         causationId = event.causationId,
                         outcome = event.outcome.name,

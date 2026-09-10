@@ -16,7 +16,7 @@ import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.HybridDashboardBriefingService
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.FakePrivacySettingsRepository
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
@@ -38,7 +38,7 @@ class GenerateTransactionInsightUseCaseTest {
 
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
-    private lateinit var dashboardBriefingService: DashboardBriefingService
+    private lateinit var dashboardBriefingService: HybridDashboardBriefingService
     private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var aiPolicy: AiPolicy
     private lateinit var timeProvider: FakeTimeProvider

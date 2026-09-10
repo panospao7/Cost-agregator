@@ -1,0 +1,84 @@
+# GR-14t — PrivacyGate concretization: BLOCKED (investigated, not landed).
+#
+# NO production code changed in this batch.  The handoff queue item was
+# executed through the full investigation + trial implementation, and the
+# working tree was REVERTED (full diff preserved at
+# build/guard-debug/gr14t/gr14t_abandoned.patch and stash@{0}
+# "GR-14t abandoned"); this manifest documents why.
+#
+# PREMISE VERIFIED (per handoff: re-verify binding map before editing):
+#   - PrivacyModule.providePrivacyGate is the ONLY PrivacyGate binding
+#     (companion-object @Provides, manually builds CompositePrivacyGate;
+#     no @Inject ctor).  CompositePrivacyGate is FINAL, single check()
+#     member; GR-14r exact dispatch would apply on final-typed receivers.
+#   - Injection sites: 30 `private val privacyGate: PrivacyGate` files +
+#     1 `lateinit var` (NotificationCaptureService) = the handoff's 31;
+#     plus 3 @Provides params feeding concretized ctors (AiModule x2,
+#     ServiceModule), 1 secondary-ctor test seam
+#     (DatabaseBackupRepositoryImpl), and 8 cloud-service secondary ctor
+#     test seams passing anonymous FailClosed gates (G4/G4b-guarded
+#     pattern) that needed single-gate CompositePrivacyGate wraps.
+#
+# TRIAL IMPLEMENTATION (fully compiled main + tests):
+#   - provider return type -> CompositePrivacyGate + @Binds for PrivacyGate
+#     (Hilt graph validated by kspDebugKotlin PASS);
+#   - 31 fields + 5 secondary sites concretized; 12 test-seam gates
+#     wrapped; 22 test files mechanically updated.
+#
+# FINDING 1 — ZERO BOARD MOVEMENT (gotcha-2 empty-delta investigation):
+#   with the trial tree, shadow before/after: interface_dispatch
+#   2150 -> 2103 (-47: the drained privacyGate.check edges resolve exact),
+#   exact_synchronous +49; EVERY proof bucket and all 443 rows byte-stable.
+#   The 17 rows with decidingResolution=interface_dispatch (before AND
+#   after, identical) are decided by OTHER interfaces — all in the
+#   groups/location area (GroupLifecycleCoordinator, LocationResolver
+#   flows).  The privacyGate.check edges were contributing closure taint
+#   but were never the deciding blocker for any row, so concretization
+#   flips nothing today.  No new counterexamples surfaced either.
+#
+# FINDING 2 — TEST INFRA HARD BLOCKER (gotcha-8 JPLIS family):
+#   concretized ctors force ~20 test files to mock the FINAL
+#   CompositePrivacyGate.  mockk needs the byte-buddy agent for final
+#   classes; ByteBuddyAgent.installExternal fails in this environment
+#   ("Could not self-attach to current VM using external process" — the
+#   same A/B-proved WarrantyTrackerRepositoryTest OOM/JPLIS constraint),
+#   which poisons JvmMockKGateway for the whole test JVM (67 cascading
+#   failures + OOM across unrelated classes in the targeted run;
+#   build/guard-debug/gr14t/test_targeted.log).  Interface mocks never
+#   touch the agent, which is why the pre-batch suites work.
+#
+# VERDICT: the handoff's GR-14t plan is not executable in this
+# environment without either (a) a fake-based (non-mockk) rewrite of ~20
+# test files, or (b) a Gradle test-JVM self-attach configuration change
+# (jdk.attach.allowAttachSelf / instrumentaiton agent args) — both are
+# owner decisions beyond the queued plan, and FINDING 1 shows the batch
+# would move ZERO rows even if landed.  Decision requested from owner;
+# the 47-edge drain remains available as groundwork if the row-blocking
+# interfaces (groups/location area, 17 rows listed in
+# build/guard-debug/gr14t/) are concretized first or instead.
+#
+# Artifacts: build/guard-debug/gr14t/{shadow_before.json (sha 234cc95c =
+# post-GR-14s, zero drift), shadow_after.json (sha a5a805f8, trial tree),
+# compare output, compile_main.log, compile_main2.log, compile_test.log,
+# compile_test2.log, compile_test3.log, test_targeted.log,
+# gr14t_abandoned.patch, apply_edits.py, apply_edits2.py,
+# apply_test_edits.py}.
+schemaVersion: 1
+batchId: GR-14t
+startSha: 72064061
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: 234cc95c177188c65af24a1e4cf3b25f66f2ae589f099f4414ef026b3d42c7b5
+mediationReportSha256After: a5a805f86b6051af6e11a54f3fb47f74e4ba819cff172a9f84682890ec1287a8 # trial tree only; NOT landed
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+status: BLOCKED # owner decision requested; working tree reverted to GR-14s
+rootCause: ESCAPING_CALLBACK # interface-dispatch uncertainty class
+selectedPattern: concretization # GR-14q precedent; blocked by test infra
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This is an investigation record, not an authorization.  No baseline,
+  exception, or policy change is made; fail-closed behavior untouched;
+  no production code landed.

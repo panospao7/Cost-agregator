@@ -17,7 +17,7 @@ import com.yourname.expensetracker.domain.ai.model.DashboardUpcomingItemInput
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.HybridDashboardBriefingService
 import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.model.UiText
@@ -39,7 +39,7 @@ class GenerateDashboardBriefingUseCaseTest {
 
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
-    private lateinit var dashboardBriefingService: DashboardBriefingService
+    private lateinit var dashboardBriefingService: HybridDashboardBriefingService
     private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var inputBuilder: DashboardBriefingInputBuilder
     private lateinit var timeProvider: FakeTimeProvider

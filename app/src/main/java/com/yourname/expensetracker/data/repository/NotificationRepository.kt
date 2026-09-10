@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.BlockedPackageDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
 import com.yourname.expensetracker.data.database.dao.RawNotificationDao
 import com.yourname.expensetracker.data.database.dao.SourceStatsDao
+import com.yourname.expensetracker.data.database.dao.TransactionEventDao
 import com.yourname.expensetracker.data.database.dao.UserCorrectionDao
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.entity.BlockedPackage
@@ -42,6 +43,7 @@ class NotificationRepository @Inject constructor(
     private val pendingReviewDao: PendingReviewDao,
     private val userCorrectionDao: UserCorrectionDao,
     private val sourceStatsDao: SourceStatsDao,
+    private val transactionEventDao: TransactionEventDao,
     private val classifier: TransactionClassifier,
     private val pipeline: NotificationProcessingPipeline,
     private val writeBarrier: DatabaseWriteBarrier,
@@ -188,17 +190,22 @@ class NotificationRepository @Inject constructor(
      *
      * Unlike [deleteAll] this does **not** touch the expenses table, making it
      * safe for notification-specific cleanup without losing imported expense records.
+     *
+     * @param now Current time in epoch milliseconds (G-TIME-01). Used as the
+     *   [TransactionEvent.occurredAt] for the BULK_DELETED audit event. Callers
+     *   must pass the injected [com.yourname.expensetracker.domain.util.TimeProvider]
+     *   value — this method intentionally has no hidden clock.
      */
-    suspend fun deleteAllNotifications() {
+    suspend fun deleteAllNotifications(now: Long) {
         writeBarrier.checkWritesAllowed("NotificationRepository.deleteAllNotifications")
         database.withTransaction {
             // P2-PR2 (NEW-P2-006): Write BULK_DELETED TransactionEvent before mutation
-            database.transactionEventDao().insert(TransactionEvent(
+            transactionEventDao.insert(TransactionEvent(
                 expenseId = null,
                 eventType = LifecycleEventType.BULK_DELETED.name,
                 source = "SYSTEM",
                 actor = null,
-                occurredAt = System.currentTimeMillis(),
+                occurredAt = now,
                 dedupeKey = null,
                 duplicateExpenseId = null,
                 beforeSnapshot = null,

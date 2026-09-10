@@ -1,0 +1,96 @@
+# GR-13 worker-proof fixtures (shadow slice S2c).
+# One row per fixture file; expectedResolution uses the controlled
+# resolution-state vocabulary, expectedProof uses the controlled
+# proof-state vocabulary, and expectedRoot uses the controlled
+# root-vocabulary only.
+fixtures:
+  - id: WP-01
+    file: worker_proof/wp01_direct_worker_guard_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-02
+    file: worker_proof/wp02_fqcn_base_worker_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-03
+    file: worker_proof/wp03_alias_import_worker_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-04
+    file: worker_proof/wp04_intermediate_abstract_base_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-05
+    file: worker_proof/wp05_nested_worker_class_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-06
+    file: worker_proof/wp06_mutation_inside_guard_lambda_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-07
+    file: worker_proof/wp07_mutation_before_guard.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-08
+    file: worker_proof/wp08_mutation_after_scope_exit.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-09
+    file: worker_proof/wp09_guard_in_dead_helper.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-10
+    file: worker_proof/wp10_helper_inside_guard_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-11
+    file: worker_proof/wp11_shared_helper_non_worker_caller.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_NON_WORKER_ROOT
+    expectedRoot: PUBLIC_OR_PROTECTED_EXTERNAL
+  - id: WP-12
+    file: worker_proof/wp12_wrong_receiver_guard.kt
+    expectedResolution: UNRESOLVED_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-13
+    file: worker_proof/wp13_launch_escape_callback.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-14
+    file: worker_proof/wp14_unregistered_worker.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_NON_WORKER_ROOT
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-15a
+    file: worker_proof/wp15_duplicate_worker_a.kt
+    expectedResolution: AMBIGUOUS_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: UNKNOWN_EXTERNAL
+  - id: WP-15b
+    file: worker_proof/wp15_duplicate_worker_b.kt
+    expectedResolution: AMBIGUOUS_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: UNKNOWN_EXTERNAL
+  - id: WP-16
+    file: worker_proof/wp16_cancellation_path_outside_scope.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-17
+    file: worker_proof/wp17_checkpoint_not_scope.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK

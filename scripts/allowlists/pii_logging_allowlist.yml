@@ -1,0 +1,18 @@
+# PII Logging Boundary Allowlist
+# Guard: verify_pii_logging_boundaries.py
+# Rule: G-PII-01
+#
+# Entries here are exempt from PII logging guard violations.
+# Format: rule, path, symbol, reason, owner, expires, linked_issue
+#
+# `path`   — relative path from the project root or from app/src/main/java/
+# `symbol` — optional class or function name for precise targeting; "*" for all
+# `reason` — required explanation of why this is safe
+# `owner`  — GitHub handle of the exemption owner
+# `expires`— "permanent" or "YYYY-MM-DD" for temporary exemptions
+# `linked_issue` — associated MIT issue or PR number
+#
+# G3.6: All entries with symbol types absolutePath, rawOcrText,
+# e.message_logging, e.message_wrap have been removed — PII handling
+# is now in code, not exemptions.
+[]

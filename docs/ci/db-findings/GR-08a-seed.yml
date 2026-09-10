@@ -1,0 +1,110 @@
+# GR-08a reviewed exact v2 policy seed rows (MIT-DB-08A).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: the two GR-08a callables in NotificationProcessingPipeline.kt
+# (repository layer = legal writer layer; expense creation itself goes
+# through TransactionLifecycleCoordinator.createExpenseDbOnlyV2 per
+# docs/architecture/LEGAL_PATHS.md).  barrierMode is `helper` for every
+# row: the write barrier runs in the pipeline entrypoints (process /
+# processBatch), not directly before each mutation in these bodies, and no
+# direct-barrier proof is claimed.
+schemaVersion: 2
+entries:
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: detectAndSaveSubscriptionCandidate
+  receiver: null
+  parameterTypes:
+  - String
+  - Long?
+  daoAccessor: subscriptionCandidateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08a EXACT_POLICY: post-commit subscription-candidate persistence writer; single insert guarded by pending-merchant dedupe"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleAutoAcceptInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markProcessed
+  barrierMode: helper
+  reason: "GR-08a EXACT_POLICY: auto-accept terminal raw-notification state write inside the pipeline DB transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleAutoAcceptInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  barrierMode: helper
+  reason: "GR-08a EXACT_POLICY: auto-accept relevance bookkeeping inside the pipeline DB transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleAutoAcceptInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndAccepted
+  barrierMode: helper
+  reason: "GR-08a EXACT_POLICY: per-source accepted counter increment after coordinator-created expense"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+  kind: function
+  method: handleAutoAcceptInTransaction
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.RawNotification
+  - Long
+  - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+  - Long
+  - String?
+  - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndDuplicate
+  barrierMode: helper
+  reason: "GR-08a EXACT_POLICY: per-source duplicate counter increment on every auto-accept dedupe branch"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A

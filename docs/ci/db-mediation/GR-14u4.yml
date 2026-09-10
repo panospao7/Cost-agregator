@@ -1,0 +1,132 @@
+# GR-14u4 — entry family tranche 5: Pattern E dead-writer removal (441 -> 434).
+#
+# Removal set (each independently triple-proven dead: engine zero-inbound
+# on the post-GR-14u3 board + repo grep zero call sites in main AND test
+# with same-name collisions ruled out + compile success after removal as
+# the final caller-inventory proof):
+#   1. SourceStatsRepository.incrementTotal (SourceStatsDao.incrementTotal)
+#      — completes the source-stats counter family; the class retains its
+#      live insertIfNotExists/getByPackage/getAll members.
+#   2. ReceiptRepository.clearMatchForReceipt (ScannedReceiptDao.update) —
+#      @Deprecated(level = ERROR): any caller would fail to compile; the
+#      live path is ReceiptMatchLifecycleService.clearMatchForReceipt.
+#   3. ReceiptRepository.writeReceiptEvent (ReceiptEventDao.insert) —
+#      private helper, zero internal callers (Pipeline 3 moved to the
+#      lifecycle coordinator).
+#   4. ManualRecurringExpenseRepository.writeLifecycleEvent
+#      (lifecycleEventDao.insert) — private helper, zero internal callers.
+#   5. RecurringExpenseRepository.writeLifecycleEvent
+#      (lifecycleEventDao.insert) — private helper, zero internal callers.
+#   6. MerchantCategoryRepository.deleteAll (dao.deleteAll)
+#   7. UserCorrectionRepository.deleteAll (dao.deleteAll)
+#   7 policy keys — within the GR-14H_PLAN tranche cap.  ExpenseWriteStore
+#   (7 rows) was deferred from this tranche to an OWNER DECISION: it is a
+#   designed-but-unwired write layer with dedicated observability/store
+#   test suites (see docs/ci/DEFERRED_ISSUES_AND_DEBUG_HANDOFF.md §D2).
+#
+# Policy handling (EXACT_IDENTITY removal, GR-14c/GR-14h→GR-14u3 precedent):
+#   - generation input edited: 7 seed blocks out of
+#     docs/ci/db-findings/GR-08-seeds.yml (388 -> 381); legacy input
+#     UNTOUCHED (93);
+#   - tracked candidate/accounting pair regenerated via the sanctioned
+#     `migrate_db_policy_signatures.py --generate` and `--verify
+#     --seed-rows` FULL MATCH; fold distribution UNCHANGED (53/40/43);
+#   - mutation-key delta vs the active policy: EXACTLY -7, zero additions;
+#   - active policy realigned by direct reviewed edit; active == candidate
+#     == 434 entries.
+#   NEW active policy sha256:
+#   7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+#   (was b4d2938c...).
+#
+# Pins updated with drift notes: known-good-state validator
+# (_CANDIDATE_ENTRIES 441 -> 434), current-repo tripwire (441 -> 434,
+# 3/3 PASS).
+#
+# Shadow delta (semantic baseline = post-GR-14u3 board, sha 01d53a37 =
+# build/guard-debug/gr14u3/shadow_after.json; NOTE process slip: the fresh
+# gr14u4 baseline run was corrupted by a mid-run edit race — captured
+# mixed state 616341d2, discarded — so the committed post-GR-14u3 artifact
+# is used as the authoritative before-state; the committed tree at
+# 335758ff was content-identical to that artifact's tree):
+#   entries 433 -> 426; entry family 44 -> 37; EXACTLY the 7 removal rows
+#   vanish; counterexamples stay 0; every other proof bucket byte-stable;
+#   diagnostics unchanged; deterministic double-run BYTE-IDENTICAL
+#   (b8f701e13741ce18ca93b98848103cb88a91e392172c550f830f3ca76e5a3b44).
+#
+# Validation:
+#   - :app:compileDebugKotlin + compileDebugUnitTestKotlin BUILD
+#     SUCCESSFUL — caller-inventory proof;
+#   - python batteries: fixture_runner 58/58; mediation+fixtures 32/32;
+#     carrier/launch/composable/finality+CLI+tripwire 52/52;
+#   - targeted tests (CategorizationEngineDebug, CategoryRepository,
+#     DbGuardPolicyFixture): 3 passed; 1 FAILED —
+#     DbGuardPolicyFixtureTest `ownership — unrelated class
+#     UserCorrectionRepository not present` asserts the whole class is
+#     absent from the ownership policy, but its LIVE insert row
+#     (GR-08p1, notification learning surface) has been in the policy
+#     since before this arc; the failing assertion is on that row, which
+#     this batch does not touch — deterministically pre-existing;
+#     recorded as an owner-intent decision item (§D2 of the handoff doc);
+#   - GATE-00R double capture + Gradle DB task: OWED at merge — MANDATORY
+#     (active policy bytes changed, new sha 7851adc2...).  Attempt 1 for
+#     the arc (untrusted, honest inventory) recorded in
+#     docs/ci/DEFERRED_ISSUES_AND_DEBUG_HANDOFF.md §E.0.
+#
+# Remaining entry family: 37 rows (see
+# docs/ci/DEFERRED_ISSUES_AND_DEBUG_HANDOFF.md §D/§E).
+schemaVersion: 1
+batchId: GR-14u4
+startSha: 335758ff
+gateEvidenceSha256: null # GATE-00R recapture MANDATORY at merge (policy changed)
+mediationReportSha256Before: 01d53a37beee6b5bfb3174fa4cba1b3f0a6727541488fa1d95d69025c143b2cb
+mediationReportSha256After: b8f701e13741ce18ca93b98848103cb88a91e392172c550f830f3ca76e5a3b44
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt:
+      removed dead incrementTotal (family completion)
+  - app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt:
+      removed ERROR-deprecated clearMatchForReceipt + dead private
+      writeReceiptEvent helper
+  - app/src/main/java/com/yourname/expensetracker/data/repository/ManualRecurringExpenseRepository.kt:
+      removed dead private writeLifecycleEvent helper
+  - app/src/main/java/com/yourname/expensetracker/data/repository/RecurringExpenseRepository.kt:
+      removed dead private writeLifecycleEvent helper
+  - app/src/main/java/com/yourname/expensetracker/data/repository/MerchantCategoryRepository.kt:
+      removed dead deleteAll
+  - app/src/main/java/com/yourname/expensetracker/data/repository/UserCorrectionRepository.kt:
+      removed dead deleteAll
+
+policyFixes:
+  - docs/ci/db-findings/GR-08-seeds.yml: 7 dead seed blocks removed (388 -> 381)
+  - config/guards/db_ownership_policy.signatures.candidate.yml: regenerated 441 -> 434
+  - config/guards/db_ownership_policy.signatures.accounting.json: regenerated (paired)
+  - config/guards/db_ownership_policy.yml: active realigned 441 -> 434
+    (direct reviewed edit, key sets == candidate)
+
+selectedMutationKeys:
+  - SourceStatsRepository.incrementTotal -> SourceStatsDao.incrementTotal
+  - ReceiptRepository.clearMatchForReceipt -> ScannedReceiptDao.update
+  - ReceiptRepository.writeReceiptEvent -> ReceiptEventDao.insert
+  - ManualRecurringExpenseRepository.writeLifecycleEvent -> lifecycleEventDao.insert
+  - RecurringExpenseRepository.writeLifecycleEvent -> lifecycleEventDao.insert
+  - MerchantCategoryRepository.deleteAll -> MerchantCategoryDao.deleteAll
+  - UserCorrectionRepository.deleteAll -> UserCorrectionDao.deleteAll
+rootCause: GR13_ZERO_INBOUND_CALL_SITES
+selectedPattern: E # remove dead/unreachable writer (triple-proven)
+tests:
+  - current-repo tripwire 3/3 (434 pin)
+  - targeted touched-area suites 3 passed / 1 pre-existing failure
+    (DbGuardPolicyFixtureTest UserCorrectionRepository intent pin —
+    deterministic, predates this arc; owner-intent item)
+
+status: PARTIAL # GATE-00R recapture + Gradle DB task MANDATORY at merge (policy changed)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch removes dead code and its now-meaningless authorization rows.
+  It is not a baseline, exception, or authorization document.  The
+  candidate/active pair stays key-set aligned at 434; every removal was
+  triple-proven dead (engine + grep + compile) before and after.

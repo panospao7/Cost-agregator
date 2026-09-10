@@ -272,7 +272,7 @@ class WarrantyExpirationWorkerTest {
     @Test
     fun `worker retries when block throws RetryableWorkerException`() = runTest {
         coEvery { warrantyRepository.reconcileExpiredItems(any<Long>()) } throws
-            RetryableWorkerException("transient warranty reconcile failure, will retry")
+            RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
         // P9-NEW-13: an explicit typed retry signal is recognized by the guard
         // independent of message keywords -> Result.retry(). Together with the
         // non-transient failure test above, both real behaviors are pinned.

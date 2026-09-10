@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.transaction.lifecycle
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.RestrictedExpenseDaoMutation
@@ -239,41 +240,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
         } catch (e: Exception) {
             Timber.w(e, "Failed to emit restore-blocked create diagnostic")
             false
-        }
-    }
-
-    private suspend fun writeUpdateValidationFailedEventBestEffort(
-        expenseId: Long,
-        source: String,
-        reason: String?,
-        correlationId: String?,
-        errors: List<TransactionValidationError>
-    ) {
-        runCatching {
-            transactionEventDao.insert(
-                TransactionEvent(
-                    expenseId = expenseId,
-                    eventType = LifecycleEventType.UPDATE_VALIDATION_FAILED.name,
-                    source = source,
-                    actor = null,
-                    occurredAt = timeProvider.now(),
-                    dedupeKey = null,
-                    duplicateExpenseId = null,
-                    beforeSnapshot = null,
-                    afterSnapshot = null,
-                    metadata = JSONObject().apply {
-                        put("operation", "updateExpense")
-                        put("errorCount", errors.size)
-                        put("errorCodes", errors.joinToString(",") { it.code })
-                        put("fields", errors.mapNotNull { it.field }.distinct().joinToString(","))
-                    }.toString(),
-                    reason = reason ?: "Update validation failed: ${errors.firstOrNull()?.message}",
-                    correlationId = correlationId
-                )
-            )
-        }.onFailure {
-            if (it is CancellationException) throw it
-            Timber.w(it, "Failed to write UPDATE_VALIDATION_FAILED for expense %d", expenseId)
         }
     }
 
@@ -558,7 +524,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // 5. Insert + event inside a single database transaction
         //    Dedup check (STANDARD/BULK_IMPORT) is inside the transaction to prevent TOCTOU race.
         //    Side effects (step 7, 8) remain outside the transaction (post-commit).
-        val insertedId = database.withTransaction {
+        // GR-14p-a: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        val insertedId = writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.createExpenseMutation"
+            )
+        ) {
+            database.withTransaction {
             // NEW-P2-004: Dedup check inside transaction to prevent race condition
             if (!skipDedup) {
                 when (dedupMode) {
@@ -641,6 +614,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
 
             id
+            }
         }
 
         if (insertedId <= 0L) {
@@ -882,7 +856,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
         } else null
 
         // 3. Persist inside a single transaction (TOCTOU-safe: read + write atomic)
-        database.withTransaction {
+        // GR-14p-a: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.updateExpense"
+            )
+        ) {
+            database.withTransaction {
             val existing = expenseDao.getById(expense.id)
                 ?: throw IllegalArgumentException("Expense not found: ${expense.id}")
             val beforeSnapshot = expenseToSnapshot(existing)
@@ -1006,6 +987,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId  // DDL-C67-10
                 )
             )
+            }
         }
 
         // Post-update side effects via planner + runner (best-effort, fire-and-forget)
@@ -1039,7 +1021,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
-        database.withTransaction {
+        // GR-14p-a: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.updateCategory"
+            )
+        ) {
+            database.withTransaction {
             val existing = expenseDao.getById(expenseId) ?: return@withTransaction
             if (existing.categoryId == newCategoryId) return@withTransaction
 
@@ -1063,6 +1052,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId
                 )
             )
+            }
         }
 
         // Post-update side effects via planner + runner (best-effort)
@@ -1286,6 +1276,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
         receiptRequired: Boolean? = null,
         source: String = "BUSINESS_TAX_UPDATE"
     ): BusinessExpenseUpdateResult {
+        writeBarrier.checkWritesAllowed(
+            "TransactionLifecycleCoordinator.updateBusinessFlags"
+        )
         return updateBusinessExpensePatch(
             expenseId = expenseId,
             patch = BusinessExpensePatch(
@@ -1401,53 +1394,59 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
-        database.withTransaction {
-            val existing = expenseDao.getById(expenseId) ?: return@withTransaction
-            if (existing.transactionType == newType) return@withTransaction
+        // GR-14j: canonical direct scope — the mutation's proof must be
+        // local to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("TransactionLifecycleCoordinator.updateType")
+        ) {
+            database.withTransaction {
+                val existing = expenseDao.getById(expenseId) ?: return@withTransaction
+                if (existing.transactionType == newType) return@withTransaction
 
-            val beforeSnapshot = expenseToSnapshot(existing)
-            val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
-                existing.amount, existing.merchant, existing.date, existing.currency, newType
-            )
+                val beforeSnapshot = expenseToSnapshot(existing)
+                val newDedupeKey = DuplicateDetectionPolicy.generateDedupeKeyWithType(
+                    existing.amount, existing.merchant, existing.date, existing.currency, newType
+                )
 
-            // Collision check inside transaction for TOCTOU safety
-            val collidingId = expenseDao.findDuplicateIdCurrencyAware(
-                amount = existing.amount,
-                merchant = existing.merchant,
-                date = existing.date,
-                currency = existing.currency,
-                transactionType = newType.name,
-                merchantKey = existing.merchantKey,
-                dedupeKey = newDedupeKey
-            )
-            if (collidingId != null && collidingId != expenseId) {
-                throw DuplicateUpdateException(
-                    "Cannot update type: would create duplicate of expense $collidingId"
+                // Collision check inside transaction for TOCTOU safety
+                val collidingId = expenseDao.findDuplicateIdCurrencyAware(
+                    amount = existing.amount,
+                    merchant = existing.merchant,
+                    date = existing.date,
+                    currency = existing.currency,
+                    transactionType = newType.name,
+                    merchantKey = existing.merchantKey,
+                    dedupeKey = newDedupeKey
+                )
+                if (collidingId != null && collidingId != expenseId) {
+                    throw DuplicateUpdateException(
+                        "Cannot update type: would create duplicate of expense $collidingId"
+                    )
+                }
+
+                val updated = existing.copy(
+                    transactionType = newType,
+                    dedupeKey = newDedupeKey
+                )
+
+                expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
+                transactionEventDao.insert(
+                    TransactionEvent(
+                        expenseId = expenseId,
+                        eventType = LifecycleEventType.UPDATED.name,
+                        source = source,
+                        actor = null,
+                        occurredAt = now,
+                        dedupeKey = newDedupeKey,
+                        duplicateExpenseId = null,
+                        beforeSnapshot = beforeSnapshot,
+                        afterSnapshot = expenseToSnapshot(expenseId, updated),
+                        metadata = null,
+                        reason = reason,
+                        correlationId = correlationId  // DDL-C67-10
+                    )
                 )
             }
-
-            val updated = existing.copy(
-                transactionType = newType,
-                dedupeKey = newDedupeKey
-            )
-
-            expenseDao.updateTransactionType(expenseId, newType.name, newDedupeKey)
-            transactionEventDao.insert(
-                TransactionEvent(
-                    expenseId = expenseId,
-                    eventType = LifecycleEventType.UPDATED.name,
-                    source = source,
-                    actor = null,
-                    occurredAt = now,
-                    dedupeKey = newDedupeKey,
-                    duplicateExpenseId = null,
-                    beforeSnapshot = beforeSnapshot,
-                    afterSnapshot = expenseToSnapshot(expenseId, updated),
-                    metadata = null,
-                    reason = reason,
-                    correlationId = correlationId  // DDL-C67-10
-                )
-            )
         }
 
         // Post-update side effects via planner + runner (best-effort)
@@ -1481,7 +1480,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val now = timeProvider.now()
 
-        database.withTransaction {
+        // GR-14k: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.updateTransferDetails"
+            )
+        ) {
+            database.withTransaction {
             val existing = expenseDao.getById(expenseId) ?: return@withTransaction
             if (existing.transferDirection == transferDirection && existing.transferAccountName == transferAccountName) return@withTransaction
 
@@ -1526,6 +1532,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     reason = reason
                 )
             )
+            }
         }
 
         // Post-update side effects via planner + runner (best-effort)
@@ -1728,7 +1735,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         var result: MutationResult<OwnershipUpdateResult>? = null
 
-        database.withTransaction {
+        // GR-14p-a: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2"
+            )
+        ) {
+            database.withTransaction {
             val existing = expenseDao.getById(expenseId)
             if (existing == null) {
                 result = MutationResult(
@@ -1787,6 +1801,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = corrId
                 )
             )
+            }
         }
 
         if (result != null) return result!!
@@ -1865,70 +1880,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
         } catch (e: Exception) {
             Timber.w(e, "Non-critical: aggregate bulk side effects failed (affectedCount=%d)", affectedCount)
         }
-    }
-
-    /**
-     * Atomic category-to-category bulk reassignment.
-     * Uses a single SQL UPDATE + one BULK_UPDATED event.
-     * No partial migration possible — crash/event failure rolls back.
-     */
-    suspend fun bulkUpdateCategory(
-        categoryId: Long,
-        newCategoryId: Long,
-        source: String = "CATEGORY_CORRECTION"
-    ) {
-        checkWritesAllowed("bulkUpdateCategoryByCategory")
-
-        if (categoryId == newCategoryId) {
-            Timber.d("Bulk category update skipped: source and target category are identical (%d)", categoryId)
-            return
-        }
-
-        val now = timeProvider.now()
-        val correlationId = com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
-        var affectedCount = 0
-
-        database.withTransaction {
-            affectedCount = expenseDao.updateCategoryForCategory(
-                oldCategoryId = categoryId,
-                newCategoryId = newCategoryId
-            )
-
-            if (affectedCount > 0) {
-                transactionEventDao.insert(
-                    TransactionEvent(
-                        expenseId = null,
-                        eventType = LifecycleEventType.BULK_UPDATED.name,
-                        source = source,
-                        actor = null,
-                        occurredAt = now,
-                        dedupeKey = null,
-                        duplicateExpenseId = null,
-                        beforeSnapshot = null,
-                        afterSnapshot = null,
-                        metadata = JSONObject().apply {
-                            put("operation", "bulkUpdateCategoryByCategory")
-                            put("oldCategoryId", categoryId)
-                            put("newCategoryId", newCategoryId)
-                            put("affectedCount", affectedCount)
-                            put("changedFields", "categoryId")
-                            put("atomic", true)
-                        }.toString(),
-                        reason = "Bulk reassigned category $categoryId to $newCategoryId",
-                        correlationId = correlationId
-                    )
-                )
-            }
-        }
-
-        if (affectedCount > 0) {
-            dispatchBulkPostCommitSideEffects(source, affectedCount, setOf(BulkChangedField.CATEGORY))
-        }
-
-        Timber.d(
-            "Bulk category update: %d expenses moved from category %d to %d",
-            affectedCount, categoryId, newCategoryId
-        )
     }
 
     /**
@@ -2224,6 +2175,13 @@ class TransactionLifecycleCoordinator @Inject constructor(
         )
 
         return try {
+            // GR-14p-a: canonical direct scope — the mutation's proof is
+            // local to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation(
+                    "TransactionLifecycleCoordinator.writeDuplicateEvent"
+                )
+            ) {
             transactionEventDao.insert(
                 TransactionEvent(
                     expenseId = duplicateExpenseId,
@@ -2240,6 +2198,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId
                 )
             )
+            }
             true
         } catch (error: Exception) {
             if (error is kotlinx.coroutines.CancellationException) throw error

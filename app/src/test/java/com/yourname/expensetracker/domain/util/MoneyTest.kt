@@ -1,7 +1,6 @@
 package com.yourname.expensetracker.domain.util
 
 import com.google.common.truth.Truth.assertThat
-import org.junit.Ignore
 import org.junit.Test
 import java.math.BigDecimal
 import java.math.RoundingMode
@@ -104,7 +103,6 @@ class MoneyTest {
         assertThat(result.toDouble()).isEqualTo(15.0)
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `arithmetic - multiplication with double should avoid precision loss`() {
         // Arrange
@@ -113,8 +111,8 @@ class MoneyTest {
         // Act
         val result = ten * 0.1
         
-        // Assert
-        assertThat(result).isEqualTo(Money.fromDouble(1.0))
+        // Assert — compare underlying BigDecimal to avoid Kotlin value class boxing
+        assertThat(result.amount).isEqualTo(Money.fromDouble(1.0).amount)
     }
 
     @Test
@@ -131,7 +129,6 @@ class MoneyTest {
         assertThat(split.format()).isEqualTo("33.33")
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `division - sum of splits should equal original total`() {
         // CRITICAL: This is what the split feature needs!
@@ -143,8 +140,8 @@ class MoneyTest {
         val splits = List(numParticipants) { total.divide(numParticipants) }
         val sum = splits.sum()
         
-        // Assert - This would fail with Double arithmetic (99.999999...)
-        assertThat(sum).isEqualTo(total)
+        // Assert — compare underlying BigDecimal to avoid Kotlin value class boxing
+        assertThat(sum.amount).isEqualTo(total.amount)
     }
 
     @Test
@@ -159,7 +156,6 @@ class MoneyTest {
         assertThat(split.toDouble()).isEqualTo(0.03)
     }
 
-    @Ignore("Truth assertThat incompatible with Kotlin value class boxing")
     @Test
     fun `division - precise split with adjustment`() {
         // Simulate real split: 100€ / 3 people = 33.33 + 33.33 + 33.34
@@ -184,7 +180,8 @@ class MoneyTest {
         assertThat(adjustedSplits[2].toDouble()).isEqualTo(33.33)
         
         val totalOfSplits = adjustedSplits.sum()
-        assertThat(totalOfSplits).isEqualTo(total)
+        // Compare underlying BigDecimal to avoid Kotlin value class boxing
+        assertThat(totalOfSplits.amount).isEqualTo(total.amount)
     }
 
     @Test

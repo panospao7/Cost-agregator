@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.transaction.lifecycle
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -72,6 +74,21 @@ class TransactionLifecycleCoordinatorTest {
         recurringLifecycleCoordinator = mockk(relaxed = true)
         restoreMaintenanceMode = mockk(relaxed = true)
         writeBarrier = mockk(relaxed = true)
+        // GR-14p: mutations are scoped in writeBarrier.runWrite; a relaxed mock
+        // would neither run the block nor return its value (the coordinator
+        // casts the result to Long), so pass the block through.
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        // The scoped block opens a Room transaction; a relaxed database mock
+        // would never execute it. Pass the transaction block through (same
+        // pattern as NotificationRepositoryDeleteAllNotificationsClockTest).
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            firstArg<suspend () -> Any>().invoke()
+        }
         currencySettingsRepository = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now

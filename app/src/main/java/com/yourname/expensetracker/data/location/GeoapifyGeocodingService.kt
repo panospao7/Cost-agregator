@@ -105,10 +105,10 @@ class GeoapifyGeocodingService @Inject constructor(
                 else GeocodingBatchResult.Success(parsed)
             }
         } catch (e: IOException) {
-            Log.e(TAG, "    Geoapify network error: ${e.message}")
+            Log.e(TAG, "GEOCODE_NETWORK_ERROR", e)
             GeocodingBatchResult.Failure(GeocodingError.NetworkError)
         } catch (e: JSONException) {
-            Log.e(TAG, "    Geoapify parse error: ${e.message}")
+            Log.e(TAG, "GEOCODE_PARSE_ERROR", e)
             GeocodingBatchResult.Failure(GeocodingError.ParseError)
         }
     }

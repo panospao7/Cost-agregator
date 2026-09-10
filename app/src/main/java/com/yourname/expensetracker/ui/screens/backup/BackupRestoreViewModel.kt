@@ -10,6 +10,7 @@ import com.yourname.expensetracker.data.backup.CostbackupBundle
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,15 +31,15 @@ data class BackupRestoreUiState(
     val lastBackupDate: String? = null,
     val errorMessage: String? = null,
     val successMessage: String? = null,
-    val restartRequired: Boolean = false,
-    val lastBackupFile: String? = null
+    val restartRequired: Boolean = false
 )
 
 @HiltViewModel
 class BackupRestoreViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val databaseBackupRepository: DatabaseBackupRepository,
-    private val restoreMaintenanceMode: RestoreMaintenanceMode
+    private val restoreMaintenanceMode: RestoreMaintenanceMode,
+    private val timeProvider: TimeProvider
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(BackupRestoreUiState())
@@ -91,25 +92,27 @@ class BackupRestoreViewModel @Inject constructor(
 
             result.fold(
                 onSuccess = { file ->
-                    Timber.d("Backup created: %s", file.absolutePath)
+                    Timber.d("Backup created successfully")
                     _uiState.value = _uiState.value.copy(
                         isBackingUp = false,
                         successMessage = "Backup created successfully: ${file.name}",
-                        lastBackupFile = file.absolutePath,
                         lastBackupDate = java.time.format.DateTimeFormatter.ofPattern(
                             "yyyy-MM-dd HH:mm",
                             java.util.Locale.getDefault()
-                        ).format(java.time.LocalDateTime.now().atZone(java.time.ZoneId.systemDefault()))
+                        ).format(
+                            // G-TIME-01: derive the display timestamp from the injected TimeProvider.
+                            java.time.Instant.ofEpochMilli(timeProvider.now()).atZone(java.time.ZoneId.systemDefault())
+                        )
                     )
                 },
                 onFailure = { error ->
-                    Timber.e(error, "Backup creation failed")
+                    Timber.e(error, "BACKUP_CREATE_FAILED")
                     val message = when {
-                        error.message?.contains("password", ignoreCase = true) == true ->
-                            "Encryption error: ${error.message}"
+                        error is com.yourname.expensetracker.data.backup.CostbackupBundle.WrongBackupPasswordException ->
+                            "Encryption error: Incorrect password or corrupt backup file"
                         error.message?.contains("denied", ignoreCase = true) == true ->
-                            "Privacy gate denied: ${error.message}"
-                        else -> "Backup failed: ${error.message ?: "Unknown error"}"
+                            "Backup denied by privacy settings"
+                        else -> "Backup failed. Please try again."
                     }
                     _uiState.value = _uiState.value.copy(
                         isBackingUp = false,
@@ -172,7 +175,7 @@ class BackupRestoreViewModel @Inject constructor(
                         "Unsupported backup version"
                     is CostbackupBundle.BackupTooLargeException ->
                         "Backup file is too large (max ${MAX_BACKUP_BUNDLE_BYTES / (1024 * 1024)} MB)"
-                    else -> "Failed to read backup file: ${error.message}"
+                    else -> "Failed to read backup file"
                 }
                 _uiState.value = _uiState.value.copy(isRestoring = false, errorMessage = message)
                 return@launch
@@ -202,7 +205,7 @@ class BackupRestoreViewModel @Inject constructor(
                     }
                 },
                 onFailure = { error ->
-                    Timber.e(error, "Restore failed")
+                    Timber.e(error, "RESTORE_FAILED")
                     val message = when {
                         error is com.yourname.expensetracker.data.backup.CostbackupBundle.WrongBackupPasswordException ->
                             "Incorrect password or corrupt backup file"
@@ -213,8 +216,8 @@ class BackupRestoreViewModel @Inject constructor(
                         error.message?.contains("password", ignoreCase = true) == true ->
                             "Incorrect password or corrupt backup file"
                         error.message?.contains("denied", ignoreCase = true) == true ->
-                            "Privacy gate denied: ${error.message}"
-                        else -> "Restore failed: ${error.message ?: "Unknown error"}"
+                            "Restore denied by privacy settings"
+                        else -> "Restore failed. Please try again."
                     }
                     _uiState.value = _uiState.value.copy(isRestoring = false, errorMessage = message)
                 }

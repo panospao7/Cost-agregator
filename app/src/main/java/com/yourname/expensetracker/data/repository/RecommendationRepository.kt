@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import javax.inject.Singleton
 
@@ -159,7 +160,7 @@ class RecommendationRepository @Inject constructor(
     suspend fun expireOld(userId: String, beforeTimestamp: Long = timeProvider.now()) {
         writeBarrier.checkWritesAllowed("RecommendationRepository.expireOld")
         withContext(ioDispatcher) {
-            dao.expireOld(userId, beforeTimestamp)
+            dao.expireOld(userId, beforeTimestamp, timeProvider.now())
         }
     }
 
@@ -170,7 +171,7 @@ class RecommendationRepository @Inject constructor(
     suspend fun expireAll(userId: String, beforeTimestamp: Long = timeProvider.now()) {
         writeBarrier.checkWritesAllowed("RecommendationRepository.expireAll")
         withContext(ioDispatcher) {
-            dao.expireOld(userId, beforeTimestamp)
+            dao.expireOld(userId, beforeTimestamp, timeProvider.now())
             dao.expireAllActiveByUser(userId, timeProvider.now())
         }
     }
@@ -181,7 +182,13 @@ class RecommendationRepository @Inject constructor(
     suspend fun clearForUser(userId: String) {
         writeBarrier.checkWritesAllowed("RecommendationRepository.clearForUser")
         withContext(ioDispatcher) {
-            dao.clearByUser(userId)
+            // GR-14k: canonical direct scope — the mutation's proof is
+            // local to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("RecommendationRepository.clearForUser")
+            ) {
+                dao.clearByUser(userId)
+            }
         }
     }
     
@@ -218,7 +225,13 @@ class RecommendationRepository @Inject constructor(
     suspend fun cleanupExpired(): Int {
         writeBarrier.checkWritesAllowed("RecommendationRepository.cleanupExpired")
         return withContext(ioDispatcher) {
-            dao.deleteExpired(timeProvider.now())
+            // GR-14p-a: canonical direct scope — the mutation's proof is
+            // local to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("RecommendationRepository.cleanupExpired")
+            ) {
+                dao.deleteExpired(timeProvider.now())
+            }
         }
     }
     

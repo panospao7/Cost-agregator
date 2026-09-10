@@ -1,0 +1,21 @@
+{
+  "guard": "db_access",
+  "generated": "2026-07-10T22:03:53.298282+00:00",
+  "fingerprints": [
+    "FORBIDDEN_FILE_OP: DB file operation outside approved backup/restore class app/src/main/java/com/yourname/expensetracker/data/database/DatabaseMigrations.kt",
+    "FORBIDDEN_FILE_OP: DB file operation outside approved backup/restore class app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptInsertResolver.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/bank/BankApiIntegration.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/negotiation/SmartBillNegotiationEngine.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkBackfillWorker.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkWriterImpl.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/transaction/DefaultExpenseCategoryAssignmentService.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/DebugExpenseAuditWriter.kt",
+    "UNALLOWLISTED_CLASS app/src/main/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorker.kt",
+    "UNALLOWLISTED_CLASS_DIRECT_CHAIN app/src/main/java/com/yourname/expensetracker/domain/negotiation/SmartBillNegotiationEngine.kt"
+  ]
+}

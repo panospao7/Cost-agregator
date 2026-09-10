@@ -36,5 +36,15 @@ data class BackgroundJobRun(
     val correlationId: String? = null,
     val cancellationReason: String? = null,
     val metadataJson: String? = null,
-    val errorClass: String? = null
+    val errorClass: String? = null,
+    // --- PR9 additions (worker run tracing) ---
+    val workId: String? = null,
+    val uniqueWorkName: String? = null,
+    val specVersion: Int? = null,
+    val runAttempt: Int? = null,
+    val leaseId: String? = null,
+    val terminalReasonCode: String? = null,
+    val terminalDiagnosticCode: String? = null,
+    val partialFailureCount: Int? = null,
+    val failedTargetCount: Int? = null
 )

@@ -28,11 +28,11 @@ interface SplitItemAssignmentDao {
     suspend fun updateAssignment(assignment: SplitItemAssignment)
     
     /**
-     * @param timestamp Defaults to [System.currentTimeMillis] for backward compat;
-     *   production callers should pass [com.yourname.expensetracker.domain.util.TimeProvider.now] explicitly.
+     * @param timestamp Required current time in epoch-millis, supplied by the caller
+     *   (e.g. [com.yourname.expensetracker.domain.util.TimeProvider.now]).
      */
     @Query("UPDATE split_item_assignments SET isPaid = 1, paidAt = :timestamp WHERE id = :assignmentId")
-    suspend fun markAsPaid(assignmentId: Long, timestamp: Long = System.currentTimeMillis())
+    suspend fun markAsPaid(assignmentId: Long, timestamp: Long)
     
     @Delete
     suspend fun deleteAssignment(assignment: SplitItemAssignment)

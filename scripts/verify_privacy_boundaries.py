@@ -42,9 +42,36 @@ import argparse
 from dataclasses import dataclass, field
 from typing import List
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    PRODUCTION_SOURCE_SCOPE_UNREADABLE,
+    ProductionSourceScopeError,
+    is_declared_production_path,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
+
 MAIN_SRC = "app/src/main/java/com/yourname/expensetracker"
+PRIVACY_PACKAGE_SUBTREE = "com/yourname/expensetracker"
 AI_PROVIDER_PKG = f"{MAIN_SRC}/data/ai"
 CLOUD_BACKUP_PKG = f"{MAIN_SRC}/data/backup"
+
+# PR-GR-10B: MAIN_SRC is the guard's package-level semantic scope (a
+# subtree of the declared production roots), not a root filter.
+# PRIVACY_PACKAGE_SUBTREE is that same package subtree expressed
+# root-relative, so the semantic filter applies under EVERY declared
+# production root.  Enumeration goes through the neutral fail-closed
+# enumerator ``iter_production_kotlin_files`` over ALL declared roots of
+# the checked-in manifest
+# ``config/guards/production_source_roots.yml`` resolved via
+# ``scripts/guardrails/production_source_scope.py``: the repository-level
+# guard fails closed (exit 2) when the manifest is missing/malformed,
+# when MAIN_SRC is not a declared production path, or when enumeration
+# fails (unreadable tree / symlink escape) — a partial scan is never
+# reported as a pass.  There is NO conventional-root fallback.
 
 
 @dataclass
@@ -56,14 +83,17 @@ class Violation:
     message: str
 
 
-def find_kt_files(root: str, sub: str = "") -> List[str]:
-    search_root = os.path.join(root, sub) if sub else root
-    result = []
-    for dirpath, _, filenames in os.walk(search_root):
-        for fn in filenames:
-            if fn.endswith(".kt"):
-                result.append(os.path.join(dirpath, fn))
-    return result
+def _in_privacy_package_subtree(source_file) -> bool:
+    """True when an enumerated ProductionSourceFile lives in the guard's
+    expensetracker package subtree (root-relative semantic filter, applied
+    under every declared production root)."""
+    root_rel = os.path.relpath(
+        source_file.absolute_path, source_file.root_path
+    ).replace(os.sep, "/")
+    return (
+        root_rel == PRIVACY_PACKAGE_SUBTREE
+        or root_rel.startswith(PRIVACY_PACKAGE_SUBTREE + "/")
+    )
 
 
 def scan_file(filepath: str, rules) -> List[Violation]:
@@ -72,7 +102,11 @@ def scan_file(filepath: str, rules) -> List[Violation]:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
     except OSError:
-        return violations
+        # Fail closed (PR-GR-10B): enumeration vouches for readable regular
+        # files, so a read failure here must never silently shrink the
+        # scanned surface into a false pass.  The controlled error carries
+        # only the diagnostic code — no paths, no exception text.
+        raise ProductionSourceScopeError(PRODUCTION_SOURCE_SCOPE_UNREADABLE) from None
 
     for rule_fn in rules:
         violations.extend(rule_fn(filepath, lines))
@@ -463,11 +497,17 @@ ALL_RULES = [
 ]
 
 
-def run(root: str) -> List[Violation]:
+def run(root: str, root_set) -> List[Violation]:
+    """Scan the expensetracker package subtree under EVERY declared
+    production root (PR-GR-10B: enumeration through the neutral module's
+    ``iter_production_kotlin_files`` — deterministic root-order then
+    canonical path-order, fail closed; the package subtree is the semantic
+    filter, not a root filter)."""
     all_violations: List[Violation] = []
-    kt_files = find_kt_files(root, MAIN_SRC)
-    for filepath in kt_files:
-        all_violations.extend(scan_file(filepath, ALL_RULES))
+    for source_file in iter_production_kotlin_files(root, root_set):
+        if not _in_privacy_package_subtree(source_file):
+            continue
+        all_violations.extend(scan_file(source_file.absolute_path, ALL_RULES))
     return all_violations
 
 
@@ -485,7 +525,35 @@ def main():
     root = os.path.abspath(args.root)
     print(f"Scanning privacy boundaries in: {root}")
 
-    violations = run(root)
+    # PR-GR-10B: fail closed when the production source-root manifest is
+    # missing/malformed or when the package-level scan scope is not a
+    # declared production path (no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(root)
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"ERROR: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    if not is_declared_production_path(root_set, MAIN_SRC):
+        print(
+            "ERROR: privacy scan scope is not a declared production path: "
+            f"{MAIN_SRC}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    try:
+        violations = run(root, root_set)
+    except ProductionSourceScopeError as exc:
+        # Fail-closed enumeration (unreadable tree / symlink escape):
+        # infrastructure error, not a violation and never a pass.
+        print(
+            f"ERROR: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if not violations:
         print("[OK] No privacy boundary violations found.")
         sys.exit(0)

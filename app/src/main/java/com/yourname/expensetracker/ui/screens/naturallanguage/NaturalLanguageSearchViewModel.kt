@@ -145,9 +145,10 @@ class NaturalLanguageSearchViewModel @Inject constructor(
                 SearchState.Results
             }
             
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
-            e.printStackTrace()
-            _searchState.value = SearchState.Error(e.message ?: "Unknown error")
+            _searchState.value = SearchState.Error("SEARCH_FAILED")
         }
     }
     

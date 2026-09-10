@@ -42,7 +42,7 @@ class AppStartupCoordinatorRecoveryTest {
         // pauseAllWorkers() → WorkManager.getInstance(); initialise the test instance.
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
         // Deterministic clean slate: clear any persisted mode + journal files.
-        RestoreMaintenanceMode(context).reset()
+        RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)).reset()
         listOf(
             "restore_journal.json",
             "restore_journal_last_failure.json",
@@ -50,7 +50,12 @@ class AppStartupCoordinatorRecoveryTest {
         ).forEach { File(context.filesDir, it).delete() }
     }
 
-    private fun newCoordinator(mode: RestoreMaintenanceMode, journal: RestoreJournal): AppStartupCoordinator =
+    private fun newCoordinator(
+        mode: RestoreMaintenanceMode,
+        journal: RestoreJournal,
+        timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
+            com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)
+    ): AppStartupCoordinator =
         AppStartupCoordinator(
             backgroundLifecycleObserver = mockk(relaxed = true),
             syncProactiveBriefingWorkUseCase = mockk(relaxed = true),
@@ -58,7 +63,8 @@ class AppStartupCoordinatorRecoveryTest {
             restoreMaintenanceMode = mode,
             restoreDatabaseOpener = mockk<RestoreDatabaseOpener>(relaxed = true),
             workerExecutionGuard = mockk(relaxed = true),
-            restoreJournalImporter = mockk(relaxed = true)
+            restoreJournalImporter = mockk(relaxed = true),
+            timeProvider = timeProvider
         )
 
     /**
@@ -89,7 +95,7 @@ class AppStartupCoordinatorRecoveryTest {
 
     @Test
     fun `failed crash recovery enters CRITICAL_RECOVERY_REQUIRED and blocks writes`() {
-        val mode = RestoreMaintenanceMode(context)
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         writeUnrecoverableSwapJournal(journal)
 
@@ -109,7 +115,7 @@ class AppStartupCoordinatorRecoveryTest {
     fun `CRITICAL_RECOVERY_REQUIRED survives the next restart with writes still blocked`() {
         // ── First startup: recovery fails, enters critical mode, renames journal away ──
         run {
-            val mode = RestoreMaintenanceMode(context)
+            val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
             val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
             writeUnrecoverableSwapJournal(journal)
             newCoordinator(mode, journal).checkRestoreJournal()
@@ -120,7 +126,7 @@ class AppStartupCoordinatorRecoveryTest {
         }
 
         // ── Second startup (process restart): fresh instances read persisted prefs/files ──
-        val mode2 = RestoreMaintenanceMode(context)
+        val mode2 = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         val journal2 = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         // No active journal exists now, so checkAndRecover() returns NoAction.
         assertFalse("No active journal should remain on second startup", journal2.hasJournal())
@@ -144,7 +150,7 @@ class AppStartupCoordinatorRecoveryTest {
     fun `successful restart-required mode IS reset to NORMAL on a clean restart`() {
         // Regression guard: the success "please restart" mode (set after a successful restore)
         // must still auto-reset on the next clean startup, unlike CRITICAL_RECOVERY_REQUIRED.
-        val mode = RestoreMaintenanceMode(context)
+        val mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
         mode.exit(forceRestartRequired = true)
         assertEquals(
             RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED,
@@ -162,5 +168,37 @@ class AppStartupCoordinatorRecoveryTest {
             mode.currentMode()
         )
         assertTrue("Writes should resume after a successful restore + restart", mode.isWritesAllowed())
+    }
+
+    /**
+     * T3A / G-TIME-01: The startup stale-run recovery cutoff must be derived from
+     * the injected [com.yourname.expensetracker.domain.util.TimeProvider], never the
+     * wall clock. Exercised via the [AppStartupCoordinator.startupStaleThresholdMs]
+     * seam so the computation is asserted deterministically without bootstrapping
+     * [ProcessLifecycleOwner] / the full initialize path.
+     */
+    @Test
+    fun `stale threshold is computed from injected time provider not wall clock`() {
+        val fixedTime = 1_900_000_000_000L
+        val fakeTime = com.yourname.expensetracker.domain.util.FakeTimeProvider(fixedTime)
+        val coordinator = newCoordinator(
+            mode = RestoreMaintenanceMode(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)),
+            journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L)),
+            timeProvider = fakeTime
+        )
+
+        val expectedCutoff = fixedTime - 15 * 60 * 1000L
+        assertEquals(
+            "Stale cutoff must be computed from the fixed provider time",
+            expectedCutoff, coordinator.startupStaleThresholdMs()
+        )
+
+        // Deterministic time progression: moving the provider moves the cutoff.
+        fakeTime.advanceTime(60_000L)
+        assertEquals(
+            "Stale cutoff must track the injected provider, not the wall clock",
+            fixedTime + 60_000L - 15 * 60 * 1000L,
+            coordinator.startupStaleThresholdMs()
+        )
     }
 }

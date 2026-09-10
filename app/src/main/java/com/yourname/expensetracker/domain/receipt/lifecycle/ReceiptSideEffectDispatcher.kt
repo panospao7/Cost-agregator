@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
 import com.yourname.expensetracker.domain.diagnostics.CorrelationIds
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
+import com.yourname.expensetracker.domain.sideeffect.PostCommitSideEffectEvidenceService
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -12,9 +13,9 @@ import javax.inject.Singleton
  * Compatibility wrapper that delegates to [ReceiptSideEffectPlanner] and
  * [PostCommitActionRunner].
  *
- * This class is retained for binary compatibility during the PR4 migration.
- * New call sites should use [ReceiptSideEffectPlanner] directly and invoke
- * the runner themselves.
+ * PR 8: Now records durable evidence of side-effect outcomes via
+ * [PostCommitSideEffectEvidenceService] so failed post-commit actions
+ * are queryable through the diagnostics infrastructure.
  *
  * ## Migration path
  * 1. Inject [ReceiptSideEffectPlanner] where needed.
@@ -25,7 +26,8 @@ import javax.inject.Singleton
 @Singleton
 class ReceiptSideEffectDispatcher @Inject constructor(
     private val planner: ReceiptSideEffectPlanner,
-    private val runner: PostCommitActionRunner
+    private val runner: PostCommitActionRunner,
+    private val evidenceService: PostCommitSideEffectEvidenceService
 ) {
 
     /**
@@ -48,7 +50,12 @@ class ReceiptSideEffectDispatcher @Inject constructor(
                     rawStorageMode = RawStorageMode.STORE_RAW, correlationId = correlationId),
                 causationId = causationId
             )
-            runner.run(batch)
+            // PR 8: Record durable evidence of side-effect outcomes
+            evidenceService.runBestEffortWithEvidence(
+                batch = batch,
+                logMessage = "Receipt side-effect batch completed with evidence",
+                targetId = receipt.id
+            )
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "dispatchAfterSave failed for receipt %d", receipt.id)

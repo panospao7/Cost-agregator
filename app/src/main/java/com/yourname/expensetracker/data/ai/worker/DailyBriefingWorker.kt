@@ -11,11 +11,15 @@ import com.yourname.expensetracker.domain.ai.service.AiWorkScheduler
 import com.yourname.expensetracker.domain.ai.usecase.DeliverProactiveBriefingNotificationUseCase
 import com.yourname.expensetracker.domain.ai.usecase.GenerateDashboardBriefingUseCase
 import com.yourname.expensetracker.domain.config.AppConfig
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
+import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardAnalyticsRepository
 import com.yourname.expensetracker.domain.usecase.dashboard.DashboardDataProvider
@@ -57,7 +61,8 @@ class DailyBriefingWorker @AssistedInject constructor(
     private val timeProvider: TimeProvider,
     private val aiArtifactRepository: AiArtifactRepository,
     private val aiWorkScheduler: AiWorkScheduler,
-    private val executionGuard: WorkerExecutionGuard
+    private val executionGuard: WorkerExecutionGuard,
+    private val diagnosticEventWriter: DiagnosticEventWriter
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -67,7 +72,12 @@ class DailyBriefingWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "ai_daily_briefing",
                 requiredCapabilities = listOf(PrivacyCapability.CLOUD_AI_DAILY_BRIEFING),
-                allowDuringBackupExport = false
+                requiresNotificationPermission = true,
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.SKIP_SUCCESS,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount,
+                specVersion = WorkerSpec.DEFAULTS["ai_daily_briefing"]?.version
             )
         ) { ctx ->
             val startedAt = timeProvider.now()
@@ -89,30 +99,43 @@ class DailyBriefingWorker @AssistedInject constructor(
             }
 
             val notificationId = NotificationIdGenerator.forGeneral(dateKey.hashCode().toLong())
-            withTimeout(BRIEFING_PIPELINE_TIMEOUT_MS) {
-                val processedData = dashboardDataProvider
-                    .getProcessedDataFlow(analyticsRepository)
-                    .first()
-                generateDashboardBriefingUseCase(processedData, startedAt)
-                deliverProactiveBriefingNotificationUseCase(
-                    dateKey = dateKey,
-                    startedAt = startedAt,
-                    notificationId = notificationId
-                )
-                // P9-S4 (NEW-03): record the proactive briefing delivery so the run
-                // surfaces a non-zero notificationsSent in BackgroundJobRun. This is
-                // best-effort at the worker boundary: the delivery use case completed
-                // without throwing or timing out. (The use case may still internally
-                // no-op on settings/dedupe; surfacing that would require a delivery
-                // return value, which is out of scope for this counts-only slice.)
-                ctx.addNotificationsSent()
+            try {
+                withTimeout(BRIEFING_PIPELINE_TIMEOUT_MS) {
+                    val processedData = dashboardDataProvider
+                        .getProcessedDataFlow(analyticsRepository)
+                        .first()
+                    generateDashboardBriefingUseCase(processedData, startedAt)
+                    deliverProactiveBriefingNotificationUseCase(
+                        dateKey = dateKey,
+                        startedAt = startedAt,
+                        notificationId = notificationId
+                    )
+                    // P9-S4 (NEW-03): record the proactive briefing delivery so the run
+                    // surfaces a non-zero notificationsSent in BackgroundJobRun. This is
+                    // best-effort at the worker boundary: the delivery use case completed
+                    // without throwing or timing out. (The use case may still internally
+                    // no-op on settings/dedupe; surfacing that would require a delivery
+                    // return value, which is out of scope for this counts-only slice.)
+                    ctx.addNotificationsSent()
+                }
+            } catch (e: TimeoutCancellationException) {
+                Timber.w(e, "DailyBriefingWorker: pipeline timed out after ${BRIEFING_PIPELINE_TIMEOUT_MS}ms — retrying")
+                throw com.yourname.expensetracker.domain.workers.RetryableWorkerException(DiagnosticReasonCode.WORKER_TIMEOUT.name, cause = e)
             }
             Timber.d("DailyBriefingWorker: completed successfully.")
         }
 
         if (shouldRescheduleNextMidnight(guardResult)) {
-            runCatching { aiWorkScheduler.scheduleDailyBriefing() }
-                .onFailure { Timber.e(it, "DailyBriefingWorker: failed to reschedule next midnight") }
+            val result = WorkerSpecScheduler.scheduleAtMidnight(
+                applicationContext,
+                AppConfig.Ai.WORK_NAME_DAILY_BRIEFING,
+                DailyBriefingWorker::class.java,
+                timeProvider,
+                diagnosticEventWriter
+            )
+            if (!result.scheduled) {
+                Timber.w("DailyBriefingWorker: midnight reschedule failed — ${result.error}")
+            }
         }
 
         return guardResult.toWorkerResult()
@@ -145,6 +168,7 @@ class DailyBriefingWorker @AssistedInject constructor(
     private fun shouldRescheduleNextMidnight(result: WorkerGuardResult<Unit>): Boolean = when (result) {
         is WorkerGuardResult.Success -> true
         is WorkerGuardResult.Skipped -> result.reason != DISABLED_BY_SPEC_REASON
+        is WorkerGuardResult.BlockedRetry -> false
         is WorkerGuardResult.Retry -> false
         is WorkerGuardResult.Failed -> false
     }

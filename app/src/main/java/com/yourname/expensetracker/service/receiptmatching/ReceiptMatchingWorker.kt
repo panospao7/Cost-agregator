@@ -13,12 +13,15 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAlreadyClaime
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
+import com.yourname.expensetracker.domain.workers.NotificationPermissionChecker
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
 import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
 @HiltWorker
@@ -30,6 +33,7 @@ class ReceiptMatchingWorker @AssistedInject constructor(
     private val receiptLinkService: ReceiptLinkService,
     private val matchService: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService,
     private val notificationService: com.yourname.expensetracker.domain.service.NotificationService,
+    private val notificationPermissionChecker: NotificationPermissionChecker,
     private val executionGuard: WorkerExecutionGuard
 ) : CoroutineWorker(context, params) {
 
@@ -37,7 +41,11 @@ class ReceiptMatchingWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "receipt_matching",
-                allowDuringBackupExport = false
+                requiresNotificationPermission = false,
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount
             )
         ) { ctx ->
             try {
@@ -90,12 +98,50 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                             if (linkResult.isSuccess) {
                                 autoMatched++
                                 ctx.addRowsUpdated()
-                                notificationService.sendBudgetAlert(
-                                    notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
-                                    title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
-                                    message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
-                                )
-                                ctx.addNotificationsSent()
+                                if (notificationPermissionChecker.areNotificationsEnabled()) {
+                                    try {
+                                        notificationService.sendBudgetAlert(
+                                            notificationId = com.yourname.expensetracker.domain.util.NotificationIdGenerator.forReceipt(receipt.id),
+                                            title = applicationContext.getString(R.string.receipt_matching_auto_matched_title),
+                                            message = applicationContext.getString(R.string.receipt_matching_auto_matched_message_format, receipt.parsedMerchant ?: applicationContext.getString(R.string.label_unknown))
+                                        )
+                                        ctx.addNotificationsSent()
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: SecurityException) {
+                                        Timber.w(e, "Notification permission revoked after check for receipt ${receipt.id}")
+                                        // PR12L-3: durable diagnostic for permission-revoked suppression
+                                        safeRecordMatchEvent("NOTIFICATION_SUPPRESSED for receipt ${receipt.id}") {
+                                            matchService.recordNotificationSuppressed(
+                                                receiptId = receipt.id,
+                                                expenseId = matchResult.transaction.id,
+                                                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_REVOKED",
+                                                errorClass = e.javaClass.simpleName
+                                            )
+                                        }
+                                    } catch (e: Exception) {
+                                        Timber.w(e, "Notification service failure for receipt ${receipt.id}")
+                                        // PR12M-2: durable diagnostic for non-permission notification failures
+                                        safeRecordMatchEvent("NOTIFICATION_SUPPRESSED for receipt ${receipt.id}") {
+                                            matchService.recordNotificationSuppressed(
+                                                receiptId = receipt.id,
+                                                expenseId = matchResult.transaction.id,
+                                                reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_SERVICE_FAILURE",
+                                                errorClass = e.javaClass.simpleName
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Timber.d("Notifications disabled — suppressing alert for receipt ${receipt.id}")
+                                    // PR12L-3: durable diagnostic for suppressed notification
+                                    safeRecordMatchEvent("NOTIFICATION_SUPPRESSED for receipt ${receipt.id}") {
+                                        matchService.recordNotificationSuppressed(
+                                            receiptId = receipt.id,
+                                            expenseId = matchResult.transaction.id,
+                                            reasonCode = "RECEIPT_MATCH_NOTIFICATION_SUPPRESSED_PERMISSION_DENIED"
+                                        )
+                                    }
+                                }
                             } else {
                                 val linkError = linkResult.exceptionOrNull()
                                 if (linkError is ReceiptAlreadyClaimedException) {
@@ -105,14 +151,16 @@ class ReceiptMatchingWorker @AssistedInject constructor(
                                     // false positive). The other run owns the auto-match + alert.
                                     Timber.d("Receipt ${receipt.id} already claimed by a concurrent matching run; skipping")
                                 } else {
-                                    val failureMessage = linkError?.message
-                                    Timber.w("Auto-match link failed for receipt ${receipt.id}: $failureMessage")
+                                    val failureCode = linkFailureCode(linkError)
+                                    Timber.w("Auto-match link failed for receipt ${receipt.id}: code=$failureCode class=${linkError?.javaClass?.simpleName}")
                                     // P9-P1-08: emit a durable event in addition to the log
+                                    // PR12L-2: persist structured reason code + error class instead of raw message
                                     safeRecordMatchEvent("AUTO_MATCH_LINK_FAILED for receipt ${receipt.id}") {
                                         matchService.recordAutoMatchLinkFailed(
                                             receiptId = receipt.id,
                                             expenseId = matchResult.transaction.id,
-                                            reason = failureMessage
+                                            reason = failureCode,
+                                            errorClass = linkError?.javaClass?.simpleName
                                         )
                                     }
                                 }
@@ -176,6 +224,16 @@ class ReceiptMatchingWorker @AssistedInject constructor(
             normalizedMessage.contains("malformed") ||
             normalizedMessage.contains("invalid") ||
             normalizedMessage.contains("inconsistent")
+    }
+
+    // PR12L-2: structured reason-code mapper for link failures
+    private fun linkFailureCode(error: Throwable?): String = when (error) {
+        is ReceiptAlreadyClaimedException -> "RECEIPT_ALREADY_CLAIMED"
+        is SecurityException -> "RECEIPT_LINK_SECURITY_ERROR"
+        is IllegalArgumentException -> "RECEIPT_LINK_INVALID_ARGUMENT"
+        is IllegalStateException -> "RECEIPT_LINK_INVALID_STATE"
+        is CancellationException -> "RECEIPT_LINK_CANCELLED"
+        else -> "RECEIPT_LINK_FAILED"
     }
 
     companion object {

@@ -1,0 +1,39 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "default_agent": "orchestrator",
+
+  "share": "manual",
+
+  "permission": {
+    "edit": "ask",
+    "bash": "ask"
+  },
+
+  "compaction": {
+    "auto": true,
+    "prune": true,
+    "reserved": 12000
+  },
+
+  "watcher": {
+    "ignore": [
+      ".git/**",
+      ".gradle/**",
+      ".kotlin/**",
+      "**/build/**",
+      "app/build/**",
+      "*.db",
+      "*.sqlite",
+      "repomix-output.xml",
+      "extracted_codebase/**",
+      "validation-*.txt",
+      "build_log.txt",
+      "test_output.txt"
+    ]
+  },
+
+  "instructions": [
+    "AGENTS.md"
+  ]
+}

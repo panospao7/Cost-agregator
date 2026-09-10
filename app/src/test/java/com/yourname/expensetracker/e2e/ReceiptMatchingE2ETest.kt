@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.receiptmatching.MatchResult
 import com.yourname.expensetracker.domain.receiptmatching.ReceiptTransactionMatcher
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.util.StringDistanceUtils
@@ -56,7 +57,7 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             every { it.homeCurrency() } returns flowOf("EUR")
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         }
-        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao())
+        val exchangeRateStore = ExchangeRateStoreAdapter(database.exchangeRateDao(), writeBarrier)
         val currencyConverter = CurrencyConverter(exchangeRateStore, timeProvider)
         multiCurrencyRepository = MultiCurrencyRepository(
             expenseDao = database.expenseDao(),
@@ -90,7 +91,8 @@ class ReceiptMatchingE2ETest : GoldenTestBase() {
             timeProvider = timeProvider,
             sourceLinkWriter = mockk(relaxed = true),
             writeBarrier = mockk(relaxed = true),
-            categoryAssignmentPort = mockk(relaxed = true)
+            categoryAssignmentPort = mockk(relaxed = true),
+            transactionRunner = mockk(relaxed = true)
         )
 
         // Real matcher

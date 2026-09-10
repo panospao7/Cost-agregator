@@ -51,21 +51,6 @@ class SubscriptionManagementRepository @Inject constructor(
         subscriptionDao.deleteById(subscriptionId)
     }
 
-    suspend fun insertSubscription(subscription: ManualRecurringExpense): Long {
-        writeBarrier.checkWritesAllowed("SubscriptionManagementRepository.insertSubscription")
-        return subscriptionDao.insert(subscription)
-    }
-
-    suspend fun insertPriceHistory(entry: SubscriptionPriceHistory): Long {
-        writeBarrier.checkWritesAllowed("SubscriptionManagementRepository.insertPriceHistory")
-        return priceHistoryDao.insert(entry)
-    }
-
-    suspend fun markCandidateAsConverted(candidateId: Long, subscriptionId: Long, timestamp: Long) {
-        writeBarrier.checkWritesAllowed("SubscriptionManagementRepository.markCandidateAsConverted")
-        candidateDao.markAsConverted(candidateId, subscriptionId, timestamp)
-    }
-
     suspend fun markCandidateAsRejected(candidateId: Long, timestamp: Long) {
         writeBarrier.checkWritesAllowed("SubscriptionManagementRepository.markCandidateAsRejected")
         candidateDao.markAsRejected(candidateId, timestamp)

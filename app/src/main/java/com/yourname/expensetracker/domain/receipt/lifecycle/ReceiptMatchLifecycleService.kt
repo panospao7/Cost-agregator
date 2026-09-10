@@ -9,6 +9,7 @@ import com.yourname.expensetracker.data.database.entity.ReceiptEvent
 import com.yourname.expensetracker.data.database.dao.ReceiptEventDao
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.WorkerReasonCodes
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -61,31 +62,6 @@ class ReceiptMatchLifecycleService @Inject constructor(
                 oldStatus = receipt.processingStatus, newStatus = null,
                 actor = "system:match_lifecycle",
                 message = "Suggested match to expense $suggestedExpenseId (confidence=$confidence)",
-                metadata = null, errorDetails = null
-            ))
-        }
-    }
-
-    suspend fun approveMatchSuggestion(receiptId: Long) {
-        writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.approveMatchSuggestion")
-        val now = timeProvider.now()
-        database.withTransaction {
-            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
-            val suggestedId = receipt.suggestedExpenseId ?: return@withTransaction
-            scannedReceiptDao.update(receipt.copy(
-                expenseId = suggestedId,
-                suggestedExpenseId = null,
-                matchConfidence = null,
-                matchStatus = MatchStatus.MANUALLY_MATCHED,
-                updatedAt = now
-            ))
-            receiptEventDao.insert(ReceiptEvent(
-                receiptId = receiptId, sourceType = receipt.sourceType,
-                documentType = receipt.documentType,
-                eventType = "MATCH_APPROVED", occurredAt = now,
-                oldStatus = receipt.processingStatus, newStatus = null,
-                actor = "system:match_lifecycle",
-                message = "Match suggestion approved for expense $suggestedId",
                 metadata = null, errorDetails = null
             ))
         }
@@ -216,7 +192,9 @@ class ReceiptMatchLifecycleService @Inject constructor(
      * P9-P1-08: Previously this path was only logged via Timber.w and produced
      * no durable trace.
      */
-    suspend fun recordAutoMatchLinkFailed(receiptId: Long, expenseId: Long?, reason: String?) {
+    suspend fun recordAutoMatchLinkFailed(receiptId: Long, expenseId: Long?, reason: String?, errorClass: String? = null) {
+        val safeReason = WorkerReasonCodes.sanitizeReasonCode(reason)
+        val safeErrorClass = errorClass?.take(80)?.filter { it.isLetterOrDigit() || it == '.' || it == '_' }
         writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordAutoMatchLinkFailed")
         val now = timeProvider.now()
         database.withTransaction {
@@ -228,7 +206,34 @@ class ReceiptMatchLifecycleService @Inject constructor(
                 oldStatus = receipt.processingStatus, newStatus = null,
                 actor = "system:match_lifecycle",
                 message = "Auto-match link failed for expense $expenseId",
-                metadata = null, errorDetails = reason
+                metadata = null, errorDetails = if (safeErrorClass != null) "code=$safeReason, class=$safeErrorClass" else safeReason
+            ))
+        }
+    }
+
+    // ── PR12L-3: durable notification-suppression diagnostics ────────────────
+
+    /**
+     * Records that a notification was suppressed for [receiptId]'s auto-match.
+     *
+     * PR12L-3: Previously suppression was only logged via Timber; this provides
+     * a durable trace for auditing, debugging, and gap detection.
+     */
+    suspend fun recordNotificationSuppressed(receiptId: Long, expenseId: Long?, reasonCode: String, errorClass: String? = null) {
+        val safeReason = WorkerReasonCodes.sanitizeReasonCode(reasonCode)
+        val safeErrorClass = errorClass?.take(80)?.filter { it.isLetterOrDigit() || it == '.' || it == '_' }
+        writeBarrier.checkWritesAllowed("ReceiptMatchLifecycleService.recordNotificationSuppressed")
+        val now = timeProvider.now()
+        database.withTransaction {
+            val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
+            receiptEventDao.insert(ReceiptEvent(
+                receiptId = receiptId, sourceType = receipt.sourceType,
+                documentType = receipt.documentType,
+                eventType = ReceiptLifecycleEventTypes.NOTIFICATION_SUPPRESSED, occurredAt = now,
+                oldStatus = receipt.processingStatus, newStatus = null,
+                actor = "system:match_lifecycle",
+                message = "Notification suppressed for expense $expenseId: $safeReason",
+                metadata = null, errorDetails = if (safeErrorClass != null) "code=$safeReason, class=$safeErrorClass" else safeReason
             ))
         }
     }

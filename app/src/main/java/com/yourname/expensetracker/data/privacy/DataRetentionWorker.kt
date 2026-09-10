@@ -11,18 +11,28 @@ import androidx.work.*
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
 import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
+import com.yourname.expensetracker.domain.diagnostics.AppPipeline
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
+import com.yourname.expensetracker.domain.diagnostics.EventOutcome
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
-import com.yourname.expensetracker.domain.util.TimeProvider
-import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
-import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
-import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
-import com.yourname.expensetracker.domain.workers.toWorkerResult
-import com.yourname.expensetracker.domain.privacy.RetentionTarget
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import com.yourname.expensetracker.domain.privacy.RetentionRegistry
+import com.yourname.expensetracker.domain.privacy.RetentionTarget
+import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
+import com.yourname.expensetracker.domain.workers.RetryableWorkerException
+import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
+import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
+import com.yourname.expensetracker.domain.workers.WorkerSpec
+import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
+import com.yourname.expensetracker.domain.workers.toWorkerResult
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -30,11 +40,10 @@ import java.util.concurrent.TimeUnit
  * after the retention period configured in [PrivacySettings].
  *
  * ## RCP-10: Raw OCR purge respects retention
- * The [purgeRawOcrText] method nulls out [ScannedReceipt.rawOcrText] and sets
- * [ScannedReceipt.rawOcrTextPurgedAt] for receipts whose `createdAt` is older
- * than the configured retention period AND that have not already been purged.
- * This ensures that raw OCR data is not retained indefinitely and respects
- * the user's privacy retention preferences.
+ * Raw OCR data on [ScannedReceipt.rawOcrText] is nulled out for receipts
+ * whose `createdAt` is older than the configured retention period AND that
+ * have not already been purged. This ensures that raw OCR data is not
+ * retained indefinitely and respects the user's privacy retention preferences.
  *
  * Runs daily via [PeriodicWorkRequest] and is safe to call multiple times:
  * - Only rows whose `rawContentPurgedAt` / `rawOcrTextPurgedAt` IS NULL are candidates.
@@ -50,7 +59,8 @@ class DataRetentionWorker @AssistedInject constructor(
     private val appDatabase: AppDatabase,
     private val timeProvider: TimeProvider,
     private val executionGuard: WorkerExecutionGuard,
-    private val retentionRegistry: RetentionRegistry
+    private val retentionRegistry: RetentionRegistry,
+    private val diagnosticEventWriter: DiagnosticEventWriter
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -67,7 +77,12 @@ class DataRetentionWorker @AssistedInject constructor(
         val guardResult = executionGuard.runGuardedWithContext(
             WorkerGuardRequest(
                 workerName = "data_retention",
-                allowDuringBackupExport = false
+                requiredCapabilities = emptyList(),
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount,
+                specVersion = WorkerSpec.DEFAULTS["data_retention"]?.version
             )
         ) { ctx ->
             val settings = privacySettingsRepository.getSettings()
@@ -117,13 +132,19 @@ class DataRetentionWorker @AssistedInject constructor(
                 val result = try {
                     target.purge(cutoff)
                 } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is CancellationException) throw e
                     Log.e(TAG, "RetentionTarget[${target.name}] purge threw — continuing", e)
+                    val isTransient = isTransientFailure(e)
+                    val failureCode = if (isTransient)
+                        DiagnosticReasonCode.WORKER_TRANSIENT_ERROR.name
+                        else DiagnosticReasonCode.WORKER_UNHANDLED_EXCEPTION.name
                     RetentionPurgeResult(
                         targetName = target.name,
                         rowsPurged = 0,
                         success = false,
-                        errorMessage = "Exception: ${e.message}"
+                        errorCode = failureCode,
+                        errorClass = e.javaClass.simpleName,
+                        isTransient = isTransient
                     )
                 }
                 results += result
@@ -132,7 +153,27 @@ class DataRetentionWorker @AssistedInject constructor(
                     markTargetComplete(prefs, target.name)
                 } else {
                     markTargetFailed(prefs, target.name)
-                    Log.w(TAG, "RetentionTarget[${target.name}] purge reported failure: ${result.errorMessage}")
+                    Log.w(TAG, "RetentionTarget[${target.name}] purge reported failure: ${result.errorCode}/${result.errorClass}")
+
+                    // Emit diagnostic for failure
+                    try {
+                        diagnosticEventWriter.emit(DiagnosticEvent(
+                            pipeline = AppPipeline.PRIVACY,
+                            stage = "retention_purge",
+                            outcome = if (result.isTransient) EventOutcome.FAILED_RETRYABLE else EventOutcome.FAILED_FINAL,
+                            entityType = "RetentionTarget",
+                            entityId = null,
+                            metadata = SafeEventMetadata.builder()
+                                .put("target", target.name)
+                                .put("transient", result.isTransient)
+                                .put("failureCode", result.errorCode)
+                                .put("errorClass", result.errorClass)
+                                .build()
+                        ))
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Log.w(TAG, "Failed to write retention diagnostic", e)
+                    }
                 }
             }
 
@@ -144,13 +185,9 @@ class DataRetentionWorker @AssistedInject constructor(
             // Log per-target counts and audit successes
             for (result in results) {
                 if (result.rowsPurged > 0 || !result.success) {
-                    Log.d(TAG, "RetentionTarget[${result.targetName}]: purged=${result.rowsPurged} success=${result.success} error=${result.errorMessage}")
+                    Log.d(TAG, "RetentionTarget[${result.targetName}]: purged=${result.rowsPurged} success=${result.success} errorCode=${result.errorCode} errorClass=${result.errorClass}")
                 }
             }
-
-            // P9-S4 (NEW-03): feed real purge counts into BackgroundJobRun. rowsUpdated
-            // is the total rows purged/redacted across all retention targets this run.
-            ctx.addRowsUpdated(results.sumOf { it.rowsPurged })
 
             val notifCount = results.firstOrNull { it.targetName == "raw_notifications" }?.rowsPurged ?: 0
             val ocrCount = results.firstOrNull { it.targetName == "scanned_receipts.rawOcrText" }?.rowsPurged ?: 0
@@ -176,14 +213,25 @@ class DataRetentionWorker @AssistedInject constructor(
                 ))
             }
 
-            // P8-PR1 (NEW-P8-006): Report partial success — if any target failed, the
-            // run is not fully successful but still soft-succeeds (will retry next day).
-            val anyFailure = results.any { !it.success }
+            val failedTargets = results.filter { !it.success }
+            val anyFailure = failedTargets.isNotEmpty()
+            val anyTransient = failedTargets.any { it.isTransient }
+
             if (anyFailure) {
-                val failed = results.filter { !it.success }.map { it.targetName }
-                Log.w(TAG, "Data retention worker completed with PARTIAL failures: $failed")
+                val failedNames = failedTargets.map { it.targetName }
+                Log.w(TAG, "Data retention worker completed with PARTIAL failures: $failedNames")
             } else {
                 Log.d(TAG, "Data retention worker completed: notifications=$notifCount ocr=$ocrCount")
+            }
+
+            // Report partial failure counts to run context
+            ctx.addRowsUpdated(results.sumOf { it.rowsPurged })
+
+            // If any transient failure occurred, trigger retry
+            if (anyTransient) {
+                val transientNames = failedTargets.filter { it.isTransient }.map { it.targetName }
+                Log.w(TAG, "Transient failures detected in targets: $transientNames — requesting retry")
+                throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name, message = "RETENTION_PARTIAL_FAILURE: $transientNames")
             }
         }
 
@@ -191,72 +239,19 @@ class DataRetentionWorker @AssistedInject constructor(
     }
 
     /**
-     * Nulls out raw content fields of [RawNotification] rows whose
-     * [RawNotification.capturedAt] is older than [cutoff] and that have not
-     * already been purged ([RawNotification.rawContentPurgedAt] IS NULL).
-     *
-     * P2-28: Uses LIMIT-based pagination to avoid loading all candidates into memory.
-     *
-     * @return number of rows updated
+     * Classifies whether a given exception represents a transient (retryable) failure
+     * or a permanent one. Transient failures include I/O problems, SQLite locking
+     * issues, and timeouts.
      */
-    private suspend fun purgeRawNotifications(
-        dao: com.yourname.expensetracker.data.database.dao.RawNotificationDao,
-        cutoff: Long,
-        now: Long
-    ): Int {
-        var totalPurged = 0
-        while (true) {
-            val candidates = dao.getUnpurgedRawNotificationsOlderThan(cutoff, PAGE_SIZE)
-            if (candidates.isEmpty()) break
-
-            for (notification in candidates) {
-                executionGuard.checkpoint("data_retention_notifications")
-                dao.updateRawContentPurged(
-                    id = notification.id,
-                    rawContentPurgedAt = now,
-                    title = null,
-                    text = null,
-                    bigText = null,
-                    subText = null,
-                    extrasJson = null,
-                    parseResult = null
-                )
-            }
-            totalPurged += candidates.size
-        }
-        return totalPurged
+    private fun isTransientFailure(e: Exception): Boolean = when {
+        e is java.io.IOException -> true
+        e.message?.contains("database is locked", ignoreCase = true) == true -> true
+        e.message?.contains("SQLITE_BUSY", ignoreCase = true) == true -> true
+        e.message?.contains("timeout", ignoreCase = true) == true -> true
+        else -> false
     }
 
-    /**
-     * Nulls out [ScannedReceipt.rawOcrText] for rows whose [ScannedReceipt.createdAt]
-     * is older than [cutoff] and that have not already been purged
-     * ([ScannedReceipt.rawOcrTextPurgedAt] IS NULL).
-     *
-     * P2-28: Uses LIMIT-based pagination to avoid loading all candidates into memory.
-     *
-     * @return number of rows updated
-     */
-    private suspend fun purgeRawOcrText(
-        dao: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao,
-        cutoff: Long,
-        now: Long
-    ): Int {
-        var totalPurged = 0
-        while (true) {
-            val candidates = dao.getUnpurgedScannedReceiptsOlderThan(cutoff, PAGE_SIZE)
-            if (candidates.isEmpty()) break
 
-            for (receipt in candidates) {
-                executionGuard.checkpoint("data_retention_ocr")
-                dao.updateRawOcrTextPurged(
-                    id = receipt.id,
-                    rawOcrTextPurgedAt = now
-                )
-            }
-            totalPurged += candidates.size
-        }
-        return totalPurged
-    }
 
     // ── P8-PR1 (NEW-P8-002): Checkpoint helpers ──────────────────────
 
@@ -306,8 +301,6 @@ class DataRetentionWorker @AssistedInject constructor(
     companion object {
         const val TAG = "DataRetentionWorker"
         const val WORK_NAME = "data_retention"
-        private const val PAGE_SIZE = 100
-
         private const val PREFS_NAME = "data_retention_checkpoint"
         private const val CHECKPOINT_PREFIX = "completed_"
         private const val PREFS_CLEARED_KEY = "_cleared"

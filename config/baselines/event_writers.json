@@ -1,0 +1,22 @@
+{
+  "guard": "event_writers",
+  "generated": "2026-07-10T22:03:54.806036+00:00",
+  "fingerprints": [
+    "DAO app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt",
+    "DAO app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt",
+    "DAO app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt",
+    "DAO app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt",
+    "DAO app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt",
+    "DAO app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt",
+    "DAO app/src/main/java/com/yourname/expensetracker/domain/transaction/DefaultExpenseCategoryAssignmentService.kt",
+    "DAO app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/DebugExpenseAuditWriter.kt",
+    "ENTITY app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt",
+    "ENTITY app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt",
+    "ENTITY app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt",
+    "ENTITY app/src/main/java/com/yourname/expensetracker/data/repository/ReviewQueueRepository.kt",
+    "ENTITY app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt",
+    "ENTITY app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptSideEffectPlanner.kt",
+    "ENTITY app/src/main/java/com/yourname/expensetracker/domain/transaction/DefaultExpenseCategoryAssignmentService.kt",
+    "ENTITY app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/DebugExpenseAuditWriter.kt"
+  ]
+}

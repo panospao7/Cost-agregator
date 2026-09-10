@@ -23,5 +23,7 @@ enum class NotificationIntakeStatus {
     /** Row is stale and was cancelled. */
     CANCELLED_STALE,
     /** Cannot process because raw payload is unavailable per privacy policy. */
-    PAYLOAD_UNAVAILABLE_PRIVACY
+    PAYLOAD_UNAVAILABLE_PRIVACY,
+    /** Privacy gate denied processing at worker runtime. */
+    PRIVACY_DENIED
 }

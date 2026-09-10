@@ -1,0 +1,509 @@
+﻿# GR-08 batch 11, part 1 (GR-08k1) tracked batch manifest -- top-density
+# files, group 1: di/RetentionModule.kt (privacy retention-cleanup path) +
+# data/repository/RecommendationRepository.kt (repository legal writer).
+#
+# Batch scope (plan): GR-08k covered FOUR files as ONE batch, with a forced
+# split if the combined unique fingerprint count exceeded 25.  Scope
+# verification against the trusted START report
+# (build/guard-debug/gr08k/before.json == trusted GR-08j after.json,
+# 200 findings / 20 advisory diagnostics; reference-copy SHA-256 recorded
+# below): RetentionModule.kt carries exactly 10 DB_UNAUTHORIZED_MUTATION
+# findings collapsing to 10 UNIQUE fingerprints and
+# RecommendationRepository.kt carries exactly 9 findings collapsing to 9
+# UNIQUE fingerprints (dedup key: callable identity + daoAccessor + daoFqcn
+# + operation; expireOld appears behind BOTH the expireOld and the expireAll
+# callables, and saveAll carries two distinct RecommendationDao operations,
+# so no two findings share a fingerprint).  Combined batch unique count
+# 37 > the 25-fingerprint batch cap, so the batch was SPLIT into GR-08k1
+# (this manifest: RetentionModule.kt + RecommendationRepository.kt,
+# 19 findings / 19 unique fingerprints) and GR-08k2
+# (GroupLifecycleCoordinator.kt + EnhancedSplitManager.kt, 18 findings /
+# 18 unique fingerprints) per the GR-08c/GR-08e/GR-08i/GR-08j precedent;
+# each part is within the cap.
+#
+# RETENTIONMODULE ADJUDICATION (GR-08k task-2 gate): the 10 findings are the
+# purge mutations of the RetentionTarget set registered by the PRIV-441-12
+# Hilt module that DataRetentionWorker drives through
+# RetentionRegistry.allTargets.  Adjudicated as the CANONICAL PRIVACY
+# RETENTION-CLEANUP path, NOT a forbidden writer: every row nulls/redacts/
+# deletes expired RAW PII (raw notification text, OCR text, notification
+# intake payloads, email sensitive fields, pending-review notification text,
+# background-job error messages, bank-statement merchant names, AI artifacts
+# and chat messages, pipeline diagnostic events) exactly as the privacy
+# rules require -- privacy cleanup workers must be able to run so they can
+# delete raw data.  These purges ARE the legal retention mechanism; there is
+# no other writer for them.  Failure handling stays sanitized
+# (errorMessage carries only the RETENTION_PURGE_FAILED:<class-simpleName>
+# constant) and CancellationSafe.runCatchingCancellable rethrows
+# CancellationException.  CODE_FIX was rejected: moving the purges out of
+# the retention targets would break the RetentionRegistry contract and
+# gate cleanup on the very capability it enforces.
+#
+# RECOMMENDATIONREPOSITORY LAYER LEGALITY: repository-layer writer (legal
+# writer layer) for dashboard follow-through recommendations; every
+# mutating method runs writeBarrier.checkWritesAllowed directly before the
+# delegated DAO mutation, and the repository is the SOLE writer of
+# RecommendationDao.  Mirrors the GR-08j2 SourceStatsRepository
+# adjudication.
+#
+# ACCESSOR NORMALIZATION (GR-08k1 source change, GR-08e precedent): the
+# START findings spell 7 chain-form accessors (appDatabase.aiArtifactDao()
+# etc.) and 3 method-local aliases all named `dao` behind THREE different
+# DAOs (RawNotificationDao / ScannedReceiptDao / NotificationIntakeDao).
+# No chain-form spelling can pass both the scanner gate (exact
+# receiver-text match) and the v2 evidence verifier (canonical accessor
+# identity), and the colliding `dao` aliases resolve last-write-wins to one
+# identity carrying three FQCNs (DB_V2_POLICY_DAO_AMBIGUOUS).  The source
+# change renames each target's local to its DAO-named accessor
+# (rawNotificationDao / scannedReceiptDao / notificationIntakeDao) and
+# introduces the same DAO-named locals for the 7 chain-form sites; the seed
+# rows spell those normalized accessors.  A wrong accessor spelling --
+# including the historical chain text -- stays unauthorized.
+#
+# Chain-form census AFTER the normalization: ZERO database-chained
+# `appDatabase.xxxDao()` mutation receivers remain in RetentionModule.kt;
+# RecommendationRepository.kt never had one (every DAO call goes through
+# the injected `dao` constructor property).
+#
+# Closure additions (GR-08k blind-spot sweep): ZERO closure rows for BOTH
+# files.  Every mutating DAO call in both files is an abstract
+# Room-annotated method already covered by a finding (all ten RetentionModule
+# DAOs and RecommendationDao carry ZERO body-carrying @Transaction
+# convenience methods reachable from these files -- PendingReviewDao's
+# mutating upsertByRawNotificationId / bulkUpdateCategoryByMerchant /
+# bulkRenameMerchant are NOT called from RetentionModule, whose only
+# PendingReviewDao call is the abstract redactNotificationTextOlderThan;
+# the remaining RetentionModule DAO calls
+# getUnpurgedRawNotificationsOlderThan /
+# getUnpurgedScannedReceiptsOlderThan / getUnpurgedIntakeOlderThan and all
+# other RecommendationRepository calls are read-only).
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 rows verbatim,
+# 249 rows); passing only GR-08k1-seed.yml would drop the earlier batches'
+# rows from the rendered candidate.
+schemaVersion: 1
+batchId: GR-08k1
+startSha: 8fa53369
+startReport:
+  path: build/guard-debug/gr08k/before.json
+  # SHA-256 of the reference copy (trusted GR-08j after report; 200 findings
+  # / 20 advisory).  ORCHESTRATOR: fill this in from the reference-copy step
+  # before the generate step.  Reference copy created by the orchestrator
+  # (batch agent is command-prohibited); expected source:
+  # build/guard-debug/gr08j/after.json (trusted: true).
+  sha256: 
+  trusted: true
+  findingCount: 200
+activePolicySha256: 
+# ORCHESTRATOR: fill activePolicySha256 from the CURRENT active policy
+# (config/guards/db_ownership_policy.yml) at batch start, before generate.
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08K
+counts:
+  fileFindings: 19
+  batchCallablesFindings: 19
+  uniqueFingerprints: 19
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=updateRawContentPurged|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=dao|identity.operation=updateRawOcrTextPurged|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiArtifactDao|identity.accessor=appDatabase.aiArtifactDao%28%29|identity.operation=deleteExpired|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatMessageDao|identity.accessor=appDatabase.aiChatMessageDao%28%29|identity.operation=deleteOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.EmailReceiptDao|identity.accessor=appDatabase.emailReceiptDao%28%29|identity.operation=redactSensitiveFieldsOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|identity.accessor=dao|identity.operation=purgeRawPayload|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao|identity.accessor=appDatabase.pipelineDiagnosticEventDao%28%29|identity.operation=deleteOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=appDatabase.pendingReviewDao%28%29|identity.operation=redactNotificationTextOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|identity.accessor=appDatabase.backgroundJobRunDao%28%29|identity.operation=redactErrorMessagesOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=appDatabase.bankStatementImportItemDao%28%29|identity.operation=redactMerchantOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=save|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=saveAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=saveAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=archiveActiveOverflow|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=dismiss|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=archive|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=expireOld|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=expireOld|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=expireAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=expireOld|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=expireAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=expireAllActiveByUser|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=clearForUser|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=clearByUser|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=cleanupExpired|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=deleteExpired|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+# â”€â”€ RetentionModule.kt retention purges (10 fingerprints / 10 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=updateRawContentPurged|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: rawNotificationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: updateRawContentPurged
+  locations: [45]
+  disposition: EXACT_POLICY
+  rationale: "raw_notifications retention target nulls title/text/bigText/subText/extrasJson/parseResult on unpurged raw notifications past the cutoff (batched loop) -- the canonical privacy purge; the seed row spells the GR-08k1-normalized accessor (the START finding's `dao` alias)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=dao|identity.operation=updateRawOcrTextPurged|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: updateRawOcrTextPurged
+  locations: [73]
+  disposition: EXACT_POLICY
+  rationale: "scanned_receipts.rawOcrText retention target nulls rawOcrText (stamps rawOcrTextPurgedAt) on unpurged scanned receipts past the cutoff -- the canonical OCR-text privacy purge; the seed row spells the GR-08k1-normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiArtifactDao|identity.accessor=appDatabase.aiArtifactDao%28%29|identity.operation=deleteExpired|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: aiArtifactDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: deleteExpired
+  locations: [90]
+  disposition: EXACT_POLICY
+  rationale: "ai_artifacts retention target hard-deletes expired AI artifact rows; the seed row spells the GR-08k1-normalized accessor (the START finding's chain-form appDatabase.aiArtifactDao() receiver)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatMessageDao|identity.accessor=appDatabase.aiChatMessageDao%28%29|identity.operation=deleteOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: aiChatMessageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
+  operation: deleteOlderThan
+  locations: [105]
+  disposition: EXACT_POLICY
+  rationale: "ai_chat_messages retention target hard-deletes AI chat message rows past the cutoff; the seed row spells the GR-08k1-normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.EmailReceiptDao|identity.accessor=appDatabase.emailReceiptDao%28%29|identity.operation=redactSensitiveFieldsOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: emailReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.EmailReceiptDao
+  operation: redactSensitiveFieldsOlderThan
+  locations: [122]
+  disposition: EXACT_POLICY
+  rationale: "email_receipt_sources retention target redacts sensitive fields past the email cutoff while preserving rows (PRIV-43B-12: dedup hashes/links survive); the seed row spells the GR-08k1-normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|identity.accessor=dao|identity.operation=purgeRawPayload|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: notificationIntakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: purgeRawPayload
+  locations: [147]
+  disposition: EXACT_POLICY
+  rationale: "notification_intake retention target nulls the captured raw payload on unpurged intake rows past the notification cutoff (P8F-01, batched loop); the seed row spells the GR-08k1-normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao|identity.accessor=appDatabase.pipelineDiagnosticEventDao%28%29|identity.operation=deleteOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: pipelineDiagnosticEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
+  operation: deleteOlderThan
+  locations: [167]
+  disposition: EXACT_POLICY
+  rationale: "pipeline_diagnostic_events retention target hard-deletes old diagnostic rows whose free-text message/exceptionMessage/metadataJson can carry PII (P8F-06); the seed row spells the GR-08k1-normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=appDatabase.pendingReviewDao%28%29|identity.operation=redactNotificationTextOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: redactNotificationTextOlderThan
+  locations: [184]
+  disposition: EXACT_POLICY
+  rationale: "pending_reviews.notificationText retention target redacts notification text/title past the notification retention window while preserving structural review-queue fields (PR5); the seed row spells the GR-08k1-normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|identity.accessor=appDatabase.backgroundJobRunDao%28%29|identity.operation=redactErrorMessagesOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: backgroundJobRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
+  operation: redactErrorMessagesOlderThan
+  locations: [201]
+  disposition: EXACT_POLICY
+  rationale: "background_job_runs.errorMessage retention target redacts error messages older than 30 days (PR5 -- error text may carry PII from exception traces); the seed row spells the GR-08k1-normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdi%2FRetentionModule.kt|symbol.owner=com.yourname.expensetracker.di.RetentionModule|symbol.name=provideRetentionTargets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao|identity.accessor=appDatabase.bankStatementImportItemDao%28%29|identity.operation=redactMerchantOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.di.RetentionModule
+    method: provideRetentionTargets
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: bankStatementImportItemDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
+  operation: redactMerchantOlderThan
+  locations: [217]
+  disposition: EXACT_POLICY
+  rationale: "bank_statement_import_items.merchant retention target redacts raw merchant names past the retention window (U-PRIVACY-01); the seed row spells the GR-08k1-normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ RecommendationRepository.kt (9 fingerprints / 9 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=save|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: save
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: insert
+  locations: [66]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked single-recommendation insert behind the repository's write-barrier check."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=saveAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: saveAll
+    receiver: null
+    parameterTypes:
+    - List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: insertAll
+  locations: [109]
+  disposition: EXACT_POLICY
+  rationale: "Inserts only the deduplicated, globally top-5-ranked NEW recommendations (retainedNew) after the existing-active merge -- the 5-card cap enforcement path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=saveAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=archiveActiveOverflow|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: saveAll
+    receiver: null
+    parameterTypes:
+    - List<com.yourname.expensetracker.domain.model.recommendation.DashboardFollowThroughRecommendation>
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: archiveActiveOverflow
+  locations: [119]
+  disposition: EXACT_POLICY
+  rationale: "Archives the active rows that fell out of the global top 5 after the merge (overflow pruning), keeping the active set within MAX_ACTIVE_RECOMMENDATIONS."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=dismiss|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=archive|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: dismiss
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: archive
+  locations: [152]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked user dismiss -- archives a single recommendation by ID."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=expireOld|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=expireOld|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: expireOld
+    receiver: null
+    parameterTypes:
+    - String
+    - Long
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireOld
+  locations: [162]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked expiry of the user's recommendations older than the cutoff timestamp."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=expireAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=expireOld|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: expireAll
+    receiver: null
+    parameterTypes:
+    - String
+    - Long
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireOld
+  locations: [173]
+  disposition: EXACT_POLICY
+  rationale: "The follow-through infrastructure alias runs the same cutoff expiry as expireOld before expiring the remaining active set; authorized separately because the callable identity differs."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=expireAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=expireAllActiveByUser|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: expireAll
+    receiver: null
+    parameterTypes:
+    - String
+    - Long
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: expireAllActiveByUser
+  locations: [174]
+  disposition: EXACT_POLICY
+  rationale: "Second half of the alias contract -- expires ALL remaining active recommendations for the user after the cutoff expiry."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=clearForUser|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=clearByUser|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: clearForUser
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: clearByUser
+  locations: [184]
+  disposition: EXACT_POLICY
+  rationale: "Account-switch cleanup -- clears all recommendations for one user behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FRecommendationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.RecommendationRepository|symbol.name=cleanupExpired|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecommendationDao|identity.accessor=dao|identity.operation=deleteExpired|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.RecommendationRepository
+    method: cleanupExpired
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecommendationDao
+  operation: deleteExpired
+  locations: [221]
+  disposition: EXACT_POLICY
+  rationale: "Background-worker cleanup -- deletes expired recommendation rows and returns the affected count."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for the GR-08k1 files: after the GR-08k1 promotion, RetentionModule.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (10/10 sites authorized across 10 fingerprints on the normalized accessors) and RecommendationRepository.kt carries 0 (9/9 sites authorized across 9 fingerprints).  Out-of-batch stability: the rescan delta expectation for the WHOLE GR-08k batch is 200 -> 163 (37 = 10 RetentionModule + 9 RecommendationRepository + 9 GroupLifecycleCoordinator + 9 EnhancedSplitManager); the remaining 163 include the still-unauthorized files deferred to future batches, which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

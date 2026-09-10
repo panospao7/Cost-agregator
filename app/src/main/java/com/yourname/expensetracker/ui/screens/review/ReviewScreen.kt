@@ -761,7 +761,8 @@ fun ReviewScreen(
             debugData?.let { data ->
                 DebugViewerScreen(
                     debugData = data,
-                    onClose = { showDebugViewer = false }
+                    onClose = { showDebugViewer = false },
+                    referenceNowMillis = viewModel.referenceNowMillis()
                 )
             }
         }

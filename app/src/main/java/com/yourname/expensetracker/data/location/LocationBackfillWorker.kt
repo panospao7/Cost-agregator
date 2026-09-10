@@ -10,7 +10,9 @@ import com.yourname.expensetracker.data.repository.MerchantLocationRepository
 import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
+import com.yourname.expensetracker.domain.workers.BlockedPolicy
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardRequest
 import com.yourname.expensetracker.domain.workers.WorkerSpecScheduler
@@ -51,7 +53,10 @@ class LocationBackfillWorker @AssistedInject constructor(
             WorkerGuardRequest(
                 workerName = "location_backfill",
                 requiredCapabilities = listOf(PrivacyCapability.BACKGROUND_LOCATION_BACKFILL),
-                allowDuringBackupExport = false
+                allowDuringBackupExport = false,
+                blockedPolicy = BlockedPolicy.RETRY,
+                workId = id.toString(),
+                runAttemptCount = runAttemptCount
             )
         ) { ctx ->
             // Evict stale merchant-location cache entries before geocoding new ones.
@@ -158,10 +163,10 @@ class LocationBackfillWorker @AssistedInject constructor(
             Log.d(TAG, "Backfill run complete: resolved=$resolved skipped=$skipped failed=$failed shouldRetry=$shouldRetry")
             // P9-PR2 (NEW-P9-009): If stopped mid-loop, signal retry instead of misleading SUCCESS
             if (isStopped) {
-                throw RetryableWorkerException("Worker stopped mid-backfill, will retry remaining")
+                throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
             }
             if (shouldRetry) {
-                throw RetryableWorkerException("Some backfill resolutions failed, will retry")
+                throw RetryableWorkerException(DiagnosticReasonCode.WORKER_RETRYABLE_ERROR.name)
             }
         }
 

@@ -17,7 +17,9 @@ import com.yourname.expensetracker.domain.ai.usecase.ExecuteFinancialQueryUseCas
 import com.yourname.expensetracker.domain.ai.usecase.GetAiRuntimeStatusUseCase
 import com.yourname.expensetracker.domain.ai.usecase.InterpretFinancialQueryUseCase
 import com.yourname.expensetracker.domain.ai.usecase.MapFinancialQueryToNavigationUseCase
+import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
 import com.yourname.expensetracker.ui.components.asString
 import com.yourname.expensetracker.ui.screens.transactions.TransactionFilter
 import com.yourname.expensetracker.ui.mappers.toUi
@@ -37,7 +39,12 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
+import java.io.IOException
+import java.util.UUID
 import javax.inject.Inject
+
+/** AID-10: Nanoseconds per millisecond for elapsed-duration diagnostics. */
+private const val NANOS_PER_MILLI = 1_000_000L
 
 data class AssistantUiState(
     val messages: List<AssistantConversationItem> = emptyList(),
@@ -95,7 +102,8 @@ class AssistantViewModel @Inject constructor(
     private val interpretFinancialQueryUseCase: InterpretFinancialQueryUseCase,
     private val executeFinancialQueryUseCase: ExecuteFinancialQueryUseCase,
     private val mapFinancialQueryToNavigationUseCase: MapFinancialQueryToNavigationUseCase,
-    private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+    private val privacySettingsRepository: com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository,
+    private val monotonicTimeProvider: MonotonicTimeProvider
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AssistantUiState())
@@ -155,10 +163,14 @@ class AssistantViewModel @Inject constructor(
 
     /**
      * AID-10: Per-request diagnostics tracking.
-     * Captures phase-level timing, routing info, and error details for each query.
+     * Captures phase-level timing, routing info, and error details.
+     *
+     * S11-009 / T1 privacy: user query text is NEVER captured. There is no
+     * query field, so `toDisplayString()` can only emit controlled timing,
+     * result-type, route, and reason-code/exception-class fields in every
+     * build (debug and release alike).
      */
     private data class QueryDiagnostics(
-        val query: String,
         val totalDurationMs: Long,
         val interpretationDurationMs: Long? = null,
         val executionDurationMs: Long? = null,
@@ -167,10 +179,6 @@ class AssistantViewModel @Inject constructor(
         val error: String? = null
     ) {
         fun toDisplayString(): String = buildString {
-            // S11-009: Never expose raw query text in release builds
-            if (com.yourname.expensetracker.BuildConfig.DEBUG) {
-                appendLine("Query: ${query.take(50)}")
-            }
             appendLine("Total: ${totalDurationMs}ms")
             interpretationDurationMs?.let { appendLine("Interpret: ${it}ms") }
             executionDurationMs?.let { appendLine("Execute: ${it}ms") }
@@ -180,13 +188,21 @@ class AssistantViewModel @Inject constructor(
         }
     }
 
+    /**
+     * AID-10: Whole-millisecond elapsed duration from a monotonic start read.
+     * Monotonic (not wall-clock) so diagnostics stay correct across NTP/user
+     * clock jumps; the arbitrary origin makes only the difference meaningful.
+     */
+    private fun elapsedMillis(startNanos: Long): Long =
+        (monotonicTimeProvider.nowNanos() - startNanos) / NANOS_PER_MILLI
+
     fun submitQuery(rawQuery: String = _uiState.value.input) {
         val query = rawQuery.trim()
         if (query.isBlank()) return
         if (!_isSubmitting.compareAndSet(false, true)) return
 
         _currentQueryJob?.cancel()
-        val queryStartedAt = System.currentTimeMillis()
+        val queryStartedAt = monotonicTimeProvider.nowNanos()
 
         _currentQueryJob = viewModelScope.launch {
             var lastDiagnostics: QueryDiagnostics? = null
@@ -202,7 +218,7 @@ class AssistantViewModel @Inject constructor(
                 }
 
                 val userItem = AssistantConversationItem.User(
-                    id = "user-${System.nanoTime()}",
+                    id = "user-${UUID.randomUUID().toString()}",
                     text = query
                 )
 
@@ -233,13 +249,12 @@ class AssistantViewModel @Inject constructor(
                 }
 
                 // AID-10: Capture interpretation timing
-                val interpretationStart = System.currentTimeMillis()
+                val interpretationStart = monotonicTimeProvider.nowNanos()
                 val interpretation = interpretFinancialQueryUseCase(query, historyMessages)
-                val interpretationDuration = System.currentTimeMillis() - interpretationStart
+                val interpretationDuration = elapsedMillis(interpretationStart)
 
                 val diagnosticsBuilder = QueryDiagnostics(
-                    query = query,
-                    totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                    totalDurationMs = elapsedMillis(queryStartedAt),
                     interpretationDurationMs = interpretationDuration,
                     route = _uiState.value.runtimeDiagnostics
                 )
@@ -247,18 +262,18 @@ class AssistantViewModel @Inject constructor(
                 when (interpretation) {
                     is FinancialQueryInterpretationResult.Structured -> {
                         // AID-10: Capture execution timing
-                        val execStart = System.currentTimeMillis()
+                        val execStart = monotonicTimeProvider.nowNanos()
                         val result = executeFinancialQueryUseCase(interpretation.intent)
-                        val executionDuration = System.currentTimeMillis() - execStart
+                        val executionDuration = elapsedMillis(execStart)
                         val navigationFilter = mapFinancialQueryToNavigationUseCase(interpretation.intent)?.toUi()
                         val resultItem = AssistantConversationItem.Result(
-                            id = "result-${System.nanoTime()}",
+                            id = "result-${UUID.randomUUID().toString()}",
                             queryText = query,
                             result = result,
                             drilldownFilter = navigationFilter
                         )
                         lastDiagnostics = diagnosticsBuilder.copy(
-                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            totalDurationMs = elapsedMillis(queryStartedAt),
                             executionDurationMs = executionDuration,
                             resultType = result::class.simpleName
                         )
@@ -275,12 +290,12 @@ class AssistantViewModel @Inject constructor(
                             options = interpretation.options
                         )
                         val resultItem = AssistantConversationItem.Result(
-                            id = "clarification-${System.nanoTime()}",
+                            id = "clarification-${UUID.randomUUID().toString()}",
                             queryText = query,
                             result = result
                         )
                         lastDiagnostics = diagnosticsBuilder.copy(
-                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            totalDurationMs = elapsedMillis(queryStartedAt),
                             resultType = "Clarification"
                         )
                         _uiState.value = _uiState.value.copy(
@@ -293,12 +308,12 @@ class AssistantViewModel @Inject constructor(
                     is FinancialQueryInterpretationResult.Unsupported -> {
                         val result = FinancialQueryResult.Unsupported(interpretation.reason)
                         val resultItem = AssistantConversationItem.Result(
-                            id = "unsupported-${System.nanoTime()}",
+                            id = "unsupported-${UUID.randomUUID().toString()}",
                             queryText = query,
                             result = result
                         )
                         lastDiagnostics = diagnosticsBuilder.copy(
-                            totalDurationMs = System.currentTimeMillis() - queryStartedAt,
+                            totalDurationMs = elapsedMillis(queryStartedAt),
                             resultType = "Unsupported"
                         )
                         _uiState.value = _uiState.value.copy(
@@ -311,18 +326,20 @@ class AssistantViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.e(e, "Assistant query pipeline failed")
+                // S11-009: Log only controlled reason code + exception class; never raw
+                // exception messages, SQL text, paths, or stack traces.
+                val failureCode = assistantFailureCode(e)
+                Timber.e("Assistant query pipeline failed: reasonCode=%s errorClass=%s", failureCode, e::class.simpleName)
                 val friendlyMessage = mapAssistantExceptionToUserMessage(e)
                 lastDiagnostics = QueryDiagnostics(
-                    query = query,
-                    totalDurationMs = System.currentTimeMillis() - queryStartedAt,
-                    error = "${e::class.simpleName}: ${e.message}"
+                    totalDurationMs = elapsedMillis(queryStartedAt),
+                    error = "$failureCode [${e::class.simpleName}]"
                 )
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     errorMessage = friendlyMessage,
                     messages = _uiState.value.messages + AssistantConversationItem.Error(
-                        id = "error-${System.nanoTime()}",
+                        id = "error-${UUID.randomUUID().toString()}",
                         text = friendlyMessage
                     ),
                     input = if (_uiState.value.input.isBlank()) query else _uiState.value.input
@@ -527,6 +544,18 @@ class AssistantViewModel @Inject constructor(
                 "Secure connection failed. Please try again in a moment."
             else -> "Something went wrong while handling your request. Please retry."
         }
+    }
+
+    /**
+     * S11-009: Maps a pipeline exception to a controlled [DiagnosticReasonCode]
+     * name only. Never returns raw exception messages, SQL text, file paths, or
+     * user payloads. The exception class name may be surfaced separately as a
+     * bounded structured field.
+     */
+    private fun assistantFailureCode(error: Throwable): String = when (error) {
+        is SecurityException -> DiagnosticReasonCode.PERMISSION_DENIED.name
+        is IOException -> DiagnosticReasonCode.NETWORK_UNAVAILABLE.name
+        else -> DiagnosticReasonCode.UNKNOWN_ERROR.name
     }
 }
 

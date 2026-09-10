@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.notification.capture
 
+import android.annotation.SuppressLint
 import android.os.Bundle
 
 /**
@@ -31,6 +32,7 @@ data class NotificationTextParts(
          * P1-P1-03: Uses proper MessagingStyle.Message APIs for EXTRA_MESSAGES
          * instead of treating message payloads as plain CharSequence.
          */
+        @SuppressLint("NewApi")
         fun extract(extras: Bundle): NotificationTextParts {
             val title = extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString()
             val text = extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString()

@@ -51,9 +51,4 @@ class UserCorrectionRepository @Inject constructor(
 
     suspend fun hasPreviousApprovals(merchant: String, packageName: String): Boolean =
         dao.hasPreviousApprovals(merchant, packageName)
-
-    suspend fun deleteAll() {
-        writeBarrier.checkWritesAllowed("UserCorrectionRepository.deleteAll")
-        dao.deleteAll()
-    }
 }

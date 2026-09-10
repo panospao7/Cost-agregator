@@ -1,0 +1,63 @@
+# GR-14k — Pattern A scope tranche: drain the inversion counterexamples
+# (4 -> 0), RecommendationRepository + TransactionLifecycleCoordinator.
+#
+# The GR-14j strictness inversion classified 4 launch-reachable writers as
+# definite counterexamples.  This batch gives each its own canonical direct
+# scope (writeBarrier.runWrite) so the proof is local to the legal writer,
+# independent of caller context — the emitLifecycleEvent/updateType
+# pattern applied to the inversion queue:
+#   1. RecommendationRepository.clearForUser
+#      (dao.clearByUser scoped inside withContext)
+#   2-4. TransactionLifecycleCoordinator.updateTransferDetails
+#      (the whole database.withTransaction block scoped; body indentation
+#      deliberately unchanged — minimal diff)
+# Behavior preserved: runWrite's checkWritesAllowed is an idempotent read
+# of RestoreMaintenanceMode; every entry already performs the same check.
+#
+# Shadow delta (before = post-GR-14j):
+#   counterexample_unguarded_call_path: 4 -> 0
+#   proven_helper: 39 -> 43 (all 4 rows: GR13_ALL_PATHS_GUARDED,
+#     localGuard=direct)
+#   everything else, diagnostics: unchanged.
+#
+# Validation:
+#   - :app:compileDebugKotlin PASS;
+#   - RecommendationRepositoryTest: 16 passed, 1 pre-existing failure
+#     (saveAll merge determinism — mockk matcher quirk, stash A/B
+#     reproduced identically pre-batch); clearForUser test required the
+#     runWrite pass-through stub (relaxed mocks do not invoke scoped
+#     blocks) — added in this batch;
+#   - TLC classes: hang/pre-existing family, A/B-documented in GR-14e/j;
+#   - GATE-00R double capture + Gradle DB task: OWED at merge (carried).
+schemaVersion: 1
+batchId: GR-14k
+startSha: 25c225f1
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: 1b997fd2ecb2ca02ec64fa6562fde39ed090edea389494aa34c26764f648225b
+mediationReportSha256After: e8abe47baef9400d8fe6aa5df07423cd5f86a8a60d29f508f686d2f58fdc54ac
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/data/repository/RecommendationRepository.kt:
+    - clearForUser insert scoped in writeBarrier.runWrite (inside the
+      existing withContext)
+  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt:
+    - updateTransferDetails transaction block scoped in writeBarrier.runWrite
+  - app/src/test/java/com/yourname/expensetracker/data/repository/RecommendationRepositoryTest.kt:
+    - runWrite pass-through stub (test plumbing for the scope wrap)
+
+selectedMutationKeys:
+  - RecommendationRepository.clearForUser -> RecommendationDao.clearByUser
+  - TransactionLifecycleCoordinator.updateTransferDetails -> ExpenseDao.updateTransferAccountName
+  - TransactionLifecycleCoordinator.updateTransferDetails -> ExpenseDao.updateTransferDirection
+  - TransactionLifecycleCoordinator.updateTransferDetails -> TransactionEventDao.insert
+rootCause: WORKER_SCOPE_ESCAPE # unscoped writers on launch-reachable paths
+selectedPattern: A
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch changes source architecture to satisfy proof requirements.
+  It is not a baseline, exception, or authorization document.

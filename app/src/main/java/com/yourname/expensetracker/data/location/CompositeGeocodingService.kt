@@ -387,8 +387,8 @@ class CompositeGeocodingService @Inject constructor(
         Log.d(TAG, "safeLookup[$name]: cancelled, propagating")
         throw e
     } catch (e: Exception) {
-        Log.w(TAG, "safeLookup[$name]: failed — ${e.message}")
-        GeocodingLookupResult.Failure(GeocodingError.Unknown(e.message))
+        Log.w(TAG, "GEOCODE_LOOKUP_FAILED", e)
+        GeocodingLookupResult.Failure(GeocodingError.Unknown("GEOCODE_UNKNOWN"))
     }
 
     /**
@@ -407,8 +407,8 @@ class CompositeGeocodingService @Inject constructor(
         Log.d(TAG, "safeSearch[$name]: cancelled, propagating")
         throw e
     } catch (e: Exception) {
-        Log.w(TAG, "safeSearch[$name]: failed — ${e.message}")
-        GeocodingBatchResult.Failure(GeocodingError.Unknown(e.message))
+        Log.w(TAG, "GEOCODE_SEARCH_FAILED", e)
+        GeocodingBatchResult.Failure(GeocodingError.Unknown("GEOCODE_UNKNOWN"))
     }
 
     private companion object {

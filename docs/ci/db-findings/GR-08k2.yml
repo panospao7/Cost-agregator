@@ -1,0 +1,494 @@
+﻿# GR-08 batch 11, part 2 (GR-08k2) tracked batch manifest -- top-density
+# files, group 2: domain/groups/GroupLifecycleCoordinator.kt (authoritative
+# group lifecycle coordinator) + domain/split/EnhancedSplitManager.kt
+# (authoritative split/template manager).
+#
+# Batch scope (plan): GR-08k covered FOUR files as ONE batch, with a forced
+# split if the combined unique fingerprint count exceeded 25 (see
+# GR-08k1.yml for the split arithmetic: 37 combined unique > 25).  Scope
+# verification against the trusted START report
+# (build/guard-debug/gr08k/before.json == trusted GR-08j after.json,
+# 200 findings / 20 advisory diagnostics): GroupLifecycleCoordinator.kt
+# carries exactly 9 DB_UNAUTHORIZED_MUTATION findings / 9 UNIQUE fingerprints
+# and EnhancedSplitManager.kt carries exactly 9 findings / 9 UNIQUE
+# fingerprints (dedup key: callable identity + daoAccessor + daoFqcn +
+# operation).  This part is within the cap (18 unique).
+#
+# LAYER LEGALITY:
+# * GroupLifecycleCoordinator is the AUTHORITATIVE group lifecycle
+#   coordinator named by docs/architecture/LEGAL_PATHS.md ("Group
+#   Mutations"): GroupSettlementDao.insert outside it is FORBIDDEN (so the
+#   recordSettlement row IS the legal path), GroupLifecycleEventDao.insert
+#   directly is forbidden (must go through the coordinator -- these rows ARE
+#   the coordinator writing its own audit trail), and removeMember's
+#   memberDao.update is the documented leftAt soft-remove path
+#   ("GroupMemberDao.delete or leftAt update").  Every public entrypoint
+#   runs writeBarrier.checkWritesAllowed first; the removeMember
+#   balance-check + soft-remove + event and the recordSettlement
+#   settlement + event pairs run inside database.withTransaction.  The five
+#   coordinator-method event inserts are the lambda callbacks handed to the
+#   GroupTransactionCoordinator port (already authorized in GR-08i1); the
+#   emitLifecycleEvent row is the private helper recordSettlement calls
+#   inside its transaction (chain-form site: recordSettlement ->
+#   emitLifecycleEvent -> lifecycleEventDao.insert; the guard attributes
+#   the insert to the immediate enclosing callable).
+# * EnhancedSplitManager is the AUTHORITATIVE split/template manager named
+#   by docs/architecture/LEGAL_PATHS.md ("Split / Template Mutations"):
+#   createTemplate -> SplitTemplateDao.insertTemplate and
+#   assignItemsToParticipants -> deleteAllForExpense + insertAssignments
+#   inside database.withTransaction are the documented legal paths, and
+#   "SplitTemplateDao.insertTemplate outside EnhancedSplitManager" is
+#   FORBIDDEN -- the manager is the SOLE writer of SplitTemplateDao and
+#   SplitItemAssignmentDao.  updateTemplate/deleteTemplate/
+#   setDefaultTemplate/useTemplate/markAssignmentAsPaid are the same
+#   manager's owned template/assignment lifecycle with the write barrier
+#   checked at each entrypoint.  Split math stays on Money/BigDecimal; no
+#   money semantics changed.  CODE_FIX was rejected for BOTH files: the
+#   domain split manager writing its own DAOs is the documented legal
+#   layer, not a forbidden layer.
+#
+# barrierMode is `helper` for every row (the GR-08a..k batch convention; no
+# direct-barrier proof is claimed even though every covered callable places
+# writeBarrier.checkWritesAllowed at its entrypoint).
+#
+# Chain-form census: ZERO database-chained `database.xxxDao()` mutation
+# receivers in EITHER file (every DAO call goes through the injected
+# constructor properties; the database.withTransaction calls are the
+# androidx.room.withTransaction extension, not DAO accessors).  NO
+# accessor-normalization source change is needed for this part.
+#
+# Closure additions (GR-08k blind-spot sweep): ZERO closure rows for BOTH
+# files.  Every mutating DAO call is an abstract Room-annotated method
+# already covered by a finding (GroupLifecycleEventDao, GroupSettlementDao,
+# GroupMemberDao, SplitTemplateDao and SplitItemAssignmentDao carry no
+# body-carrying @Transaction convenience method reachable from these files
+# -- GroupMemberDao's mutating setCurrentUser convenience is NOT called
+# from GroupLifecycleCoordinator, whose memberDao calls are the reads
+# getActiveMembersForGroup/getMemberById plus the abstract update).
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 rows verbatim,
+# 249 rows); passing only GR-08k2-seed.yml would drop the earlier batches'
+# rows from the rendered candidate.
+schemaVersion: 1
+batchId: GR-08k2
+startSha: 8fa53369
+startReport:
+  path: build/guard-debug/gr08k/before.json
+  # SHA-256 of the reference copy (trusted GR-08j after report; 200 findings
+  # / 20 advisory).  ORCHESTRATOR: fill this in from the reference-copy step
+  # before the generate step (same value as GR-08k1.yml).
+  sha256: 
+  trusted: true
+  findingCount: 200
+activePolicySha256: 
+# ORCHESTRATOR: fill activePolicySha256 from the CURRENT active policy
+# (config/guards/db_ownership_policy.yml) at batch start, before generate
+# (same value as GR-08k1.yml).
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08K
+counts:
+  fileFindings: 18
+  batchCallablesFindings: 18
+  uniqueFingerprints: 18
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=createGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22String%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=addMember|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=removeMember|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=removeMember|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=addExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22Double%22%2C%22Long%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.data.database.entity.SplitType%22%2C%22String%3F%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=archiveGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=deleteGroupPermanently|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=recordSettlement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22Long%22%2C%22Double%22%2C%22String%22%2C%22String%3F%22%2C%22Long%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupSettlementDao|identity.accessor=settlementDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=emitLifecycleEvent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=createTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Int%22%2C%22com.yourname.expensetracker.data.database.entity.SplitTemplate.SplitType%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.SplitShare%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=insertTemplate|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=updateTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SplitTemplate%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=updateTemplate|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=deleteTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SplitTemplate%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=deleteTemplate|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=setDefaultTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=clearDefaultTemplate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=setDefaultTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=setDefaultTemplate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=useTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=incrementUseCount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=assignItemsToParticipants|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22List%3Ccom.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao|identity.accessor=splitItemAssignmentDao|identity.operation=deleteAllForExpense|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=assignItemsToParticipants|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22List%3Ccom.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao|identity.accessor=splitItemAssignmentDao|identity.operation=insertAssignments|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=markAssignmentAsPaid|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao|identity.accessor=splitItemAssignmentDao|identity.operation=markAsPaid|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+# â”€â”€ GroupLifecycleCoordinator.kt (9 fingerprints / 9 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=createGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22String%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: createGroup
+    receiver: null
+    parameterTypes:
+    - String
+    - String?
+    - String
+    - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  locations: [144]
+  disposition: EXACT_POLICY
+  rationale: "GROUP_CREATED audit event written by the coordinator's callback into the GroupTransactionCoordinator creation transaction (G01-validated members)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=addMember|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22String%3F%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: addMember
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    - String?
+    - Boolean
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  locations: [207]
+  disposition: EXACT_POLICY
+  rationale: "GROUP_MEMBER_ADDED audit event written by the coordinator's callback into the port's add-member transaction after the duplicate/single-currentUser gates."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=removeMember|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: removeMember
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: update
+  locations: [263]
+  disposition: EXACT_POLICY
+  rationale: "G05/G06-gated soft remove -- stamps leftAt inside the E4-006 balance-check transaction (LEGAL_PATHS.md: 'GroupMemberDao.delete or leftAt update')."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=removeMember|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: removeMember
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  locations: [270]
+  disposition: EXACT_POLICY
+  rationale: "GROUP_MEMBER_REMOVED audit event written atomically with the leftAt soft-remove inside the same transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=addExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22Double%22%2C%22Long%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.data.database.entity.SplitType%22%2C%22String%3F%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: addExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    - Double
+    - Long
+    - String?
+    - com.yourname.expensetracker.data.database.entity.SplitType
+    - String?
+    - Long
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  locations: [346]
+  disposition: EXACT_POLICY
+  rationale: "GROUP_EXPENSE_ADDED audit event written by the coordinator's callback into the port's add-expense transaction after the G03 single-currency gate."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=archiveGroup|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: archiveGroup
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  locations: [385]
+  disposition: EXACT_POLICY
+  rationale: "GROUP_ARCHIVED audit event written by the coordinator's callback into the port's soft-delete transaction (G07)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=deleteGroupPermanently|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: deleteGroupPermanently
+    receiver: null
+    parameterTypes:
+    - Long
+    - Boolean
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  locations: [432]
+  disposition: EXACT_POLICY
+  rationale: "GROUP_PERMANENTLY_DELETED audit event written by the coordinator's callback into the port's hard-delete transaction (G08 explicit-confirmation + G04 archive-first gates)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=recordSettlement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22Long%22%2C%22Double%22%2C%22String%22%2C%22String%3F%22%2C%22Long%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupSettlementDao|identity.accessor=settlementDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: recordSettlement
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - Long
+    - Double
+    - String
+    - String?
+    - Long?
+    kind: function
+  daoAccessor: settlementDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+  operation: insert
+  locations: [519]
+  disposition: EXACT_POLICY
+  rationale: "Persists the G04-validated settlement record inside database.withTransaction (LEGAL_PATHS.md: GroupSettlementDao.insert outside GroupLifecycleCoordinator is FORBIDDEN -- this IS the legal writer)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FGroupLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator|symbol.name=emitLifecycleEvent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%2C%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
+    method: emitLifecycleEvent
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    - Long
+    - Long
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
+  operation: insert
+  locations: [548]
+  disposition: EXACT_POLICY
+  rationale: "Private audit-trail helper recordSettlement invokes inside its transaction (SETTLEMENT_RECORDED with the settlement id); the coordinator is the legal GroupLifecycleEventDao writer."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ EnhancedSplitManager.kt (9 fingerprints / 9 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=createTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Int%22%2C%22com.yourname.expensetracker.data.database.entity.SplitTemplate.SplitType%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.SplitShare%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=insertTemplate|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: createTemplate
+    receiver: null
+    parameterTypes:
+    - String
+    - Int
+    - com.yourname.expensetracker.data.database.entity.SplitTemplate.SplitType
+    - List<com.yourname.expensetracker.data.database.entity.SplitShare>
+    kind: function
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: insertTemplate
+  locations: [161]
+  disposition: EXACT_POLICY
+  rationale: "SHR-14-validated template insert behind the write barrier (LEGAL_PATHS.md: SplitTemplateDao.insertTemplate outside EnhancedSplitManager.createTemplate is FORBIDDEN)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=updateTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SplitTemplate%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=updateTemplate|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: updateTemplate
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.SplitTemplate
+    kind: function
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: updateTemplate
+  locations: [224]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked template update stamping updatedAt from TimeProvider."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=deleteTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.SplitTemplate%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=deleteTemplate|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: deleteTemplate
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.SplitTemplate
+    kind: function
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: deleteTemplate
+  locations: [229]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked template delete behind the manager's owned template lifecycle."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=setDefaultTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=clearDefaultTemplate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: setDefaultTemplate
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: clearDefaultTemplate
+  locations: [234]
+  disposition: EXACT_POLICY
+  rationale: "First half of the single-default invariant -- clears the current default before marking the new one."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=setDefaultTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=setDefaultTemplate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: setDefaultTemplate
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: setDefaultTemplate
+  locations: [235]
+  disposition: EXACT_POLICY
+  rationale: "Second half of the single-default invariant -- marks the requested template as the only default."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=useTemplate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitTemplateDao|identity.accessor=splitTemplateDao|identity.operation=incrementUseCount|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: useTemplate
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: splitTemplateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitTemplateDao
+  operation: incrementUseCount
+  locations: [240]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked usage counter increment when a template is applied."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=assignItemsToParticipants|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22List%3Ccom.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao|identity.accessor=splitItemAssignmentDao|identity.operation=deleteAllForExpense|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: assignItemsToParticipants
+    receiver: null
+    parameterTypes:
+    - Long
+    - List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
+    kind: function
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: deleteAllForExpense
+  locations: [269]
+  disposition: EXACT_POLICY
+  rationale: "SHR-13 atomic reassignment -- clears the expense's old assignments inside database.withTransaction so a failed insert rolls back without orphaned items (LEGAL_PATHS.md documents this exact pair)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=assignItemsToParticipants|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22List%3Ccom.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao|identity.accessor=splitItemAssignmentDao|identity.operation=insertAssignments|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: assignItemsToParticipants
+    receiver: null
+    parameterTypes:
+    - Long
+    - List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>
+    kind: function
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: insertAssignments
+  locations: [283]
+  disposition: EXACT_POLICY
+  rationale: "Inserts the new participant assignments in the same SHR-13 transaction immediately after the clear (atomic replace; LEGAL_PATHS.md forbids this pair without transaction wrapping)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fsplit%2FEnhancedSplitManager.kt|symbol.owner=com.yourname.expensetracker.domain.split.EnhancedSplitManager|symbol.name=markAssignmentAsPaid|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao|identity.accessor=splitItemAssignmentDao|identity.operation=markAsPaid|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.split.EnhancedSplitManager
+    method: markAssignmentAsPaid
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: splitItemAssignmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SplitItemAssignmentDao
+  operation: markAsPaid
+  locations: [298]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked paid flag on a single split item assignment stamped with the payment time."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08K
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for the GR-08k2 files: after the GR-08k2 promotion, GroupLifecycleCoordinator.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (9/9 sites authorized across 9 fingerprints) and EnhancedSplitManager.kt carries 0 (9/9 sites authorized across 9 fingerprints).  Out-of-batch stability: the rescan delta expectation for the WHOLE GR-08k batch is 200 -> 163 (37 = 10 RetentionModule + 9 RecommendationRepository + 9 GroupLifecycleCoordinator + 9 EnhancedSplitManager); the remaining 163 include the still-unauthorized files deferred to future batches, which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

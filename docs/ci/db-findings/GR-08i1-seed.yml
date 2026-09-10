@@ -1,0 +1,334 @@
+# GR-08 batch 9, part 1 (GR-08i1) reviewed exact v2 policy seed rows (MIT-DB-08I).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: data/database/GroupTransactionCoordinator.kt -- 14
+# DB_UNAUTHORIZED_MUTATION findings collapsing to 14 UNIQUE fingerprints
+# (dedup key: callable identity + daoAccessor + daoFqcn + operation; every
+# one of the 14 per-call-site findings is its own tuple -- no two sites
+# share a callable+DAO+operation identity).  Unique count 14 <= the
+# 25-fingerprint batch cap, so this part needed NO further split.  This is
+# the data/database layer coordinator -- the AUTHORITATIVE writer for atomic
+# group mutations per docs/architecture/LEGAL_PATHS.md ("Group Mutations":
+# CREATE group -> GroupLifecycleCoordinator.createGroup() ->
+# GroupTransactionCoordinator.createGroupWithMembersAtomic(); ADD member ->
+# GroupTransactionCoordinator.addMemberToGroup(); ADD expense to group ->
+# GroupTransactionCoordinator.addExpenseToGroup() / addExpenseWithLink();
+# CREATE system expense AND link to group (atomic) ->
+# GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup(); ARCHIVE /
+# DELETE group -> GroupTransactionCoordinator.permanentlyDeleteGroup() hard
+# delete with cascade cleanup via ExpenseGroupDao + GroupExpenseDao +
+# GroupMemberDao; FORBIDDEN: ExpenseGroupDao.insert() /
+# GroupMemberDao.insert() / GroupExpenseDao.insert() outside
+# GroupTransactionCoordinator) -- so every row is a legal-writer EXACT_POLICY
+# authorization.
+#
+# NOTE on the plan's "15 findings": the trusted START report
+# (build/guard-debug/gr08i/before.json == trusted GR-08h after.json,
+# 291 findings / 20 advisory) carries exactly 14 findings for this file.
+# The 15th mutating DAO call site, addExpenseToGroupAtomic's
+# groupExpenseDao.insert (line 1032), is ALREADY authorized by the active
+# policy's legacy MIT-003 direct row (barrierMode=direct;
+# writeBarrier.checkWritesAllowed is the first statement of that callable),
+# so the scanner never reported it.  Blind-spot sweep evidence:
+# build/guard-debug/gr08i/probe-gr08i-scanner-exp.json (empty-policy scan
+# emits line 1032; the active-policy report does not).
+#
+# barrierMode is `helper` for every row: the write barrier runs at each
+# callable entrypoint (writeBarrier.checkWritesAllowed is the FIRST
+# statement of every mutating callable in the file), then the mutations run
+# inside the database.withTransaction block -- the barrier is NOT re-checked
+# directly before each individual mutation, and no direct-barrier proof is
+# claimed.
+#
+# Closure additions (GR-08i1 blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in every mutating-callable body was enumerated, not just
+# the findings: the 14 findings == the 14 uncovered mutating DAO call sites,
+# and every called mutating DAO method (ExpenseGroupDao.insert/archiveGroup/
+# delete, GroupMemberDao.insert/insertAll/deleteAllForGroup,
+# GroupExpenseDao.insert/deleteAllForGroup, ExpenseDao.clearSharedExpenseFlags)
+# is an abstract Room-annotated method.  The two body-carrying @Transaction
+# convenience methods that EXIST in the touched DAOs --
+# ExpenseGroupDao.insertGroupWithMembers and GroupMemberDao.setCurrentUser --
+# are NOT called from this file, so no convenience-method closure row exists
+# for this batch (ExpenseDao's @Transaction methods are read-only composites
+# and equally unreached).  The only other DAO-accessor calls in the mutating
+# bodies are read-only lookups (groupDao.getById/getGroupById,
+# memberDao.getActiveMembersForGroup/getCurrentUser,
+# groupExpenseDao.getByIdempotencyKey/getGroupExpenseForExpense/
+# getExpensesForGroupOnce, expenseDao.getById).  The database.withTransaction
+# calls are the androidx.room.withTransaction extension on the injected
+# AppDatabase, not DAO accessors, and carry no closure obligation.
+# Constructor-property DAO aliases (GR-08a pattern): all four DAO accessors
+# (groupDao, memberDao, groupExpenseDao, expenseDao) are direct @Inject
+# constructor properties resolved natively by the evidence verifier; there
+# are NO alias indirections and NO database-chained `database.xxxDao()`
+# call sites (chain-form census: 0 -- the injected `database: AppDatabase`
+# constructor property is only ever used as the withTransaction receiver,
+# so NO GR-08e accessor-normalization source change is needed for this
+# batch).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 rows verbatim); passing only this file would drop the
+# earlier batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── atomic create-group (createGroupWithMembers, 2 tuples) ───────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: createGroupWithMembers
+  receiver: null
+  parameterTypes:
+  - String
+  - String?
+  - String
+  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+  - (Long) -> Unit
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: inserts the ExpenseGroup row as the first write of the atomic create-group transaction (group + members + onInsideTransaction callback commit or roll back together); LEGAL_PATHS.md Group Mutations names GroupTransactionCoordinator as the legal writer and forbids ExpenseGroupDao.insert() outside it"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: createGroupWithMembers
+  receiver: null
+  parameterTypes:
+  - String
+  - String?
+  - String
+  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+  - (Long) -> Unit
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: insertAll
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: inserts the initial members (G01 currentUserGroupKey invariant applied, joinedAt normalized) inside the same atomic transaction as the group insert, so a member failure rolls the group back (no orphaned groups)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── member add (addMemberToGroup, 1 tuple) ───────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: addMemberToGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - String?
+  - Boolean
+  - (Long) -> Unit
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: inserts the validated new member inside the withTransaction block that closes the read-check-then-insert TOCTOU window (group-active, duplicate-name and single-currentUser checks run in the same transaction); LEGAL_PATHS.md ADD member names GroupTransactionCoordinator.addMemberToGroup() as the legal path"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── group expenses (addExpenseToGroup / addExpenseWithLink /
+#    createSystemExpenseAndLinkToGroup, 3 tuples) ─────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: addExpenseToGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Double
+  - Long
+  - String?
+  - com.yourname.expensetracker.data.database.entity.SplitType
+  - String?
+  - Long
+  - String?
+  - (Long) -> Unit
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: persists the standalone group expense (expenseId null) inside the withTransaction block after group-active/payer/split/idempotency/single-currency validation; LEGAL_PATHS.md forbids GroupExpenseDao.insert() outside GroupTransactionCoordinator"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: addExpenseWithLink
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - String
+  - Double
+  - Long
+  - String?
+  - com.yourname.expensetracker.data.database.entity.SplitType
+  - String?
+  - Long
+  - String?
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: persists the group expense linked to the system expense inside the withTransaction block, atomic with the ownership update via TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2 (post-commit side effects deferred to PostCommitActionRunner after outer commit)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: createSystemExpenseAndLinkToGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Double
+  - Long
+  - String
+  - com.yourname.expensetracker.data.database.entity.SplitType
+  - String?
+  - Long
+  - com.yourname.expensetracker.data.database.entity.TransactionType
+  - String?
+  - String?
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: creates the group-expense link row inside the withTransaction block after TransactionLifecycleCoordinator.createExpenseDbOnlyV2 created the system expense (DEFER side effects); any failure throws GroupExpenseAtomicRollback so Room rolls back BOTH the expense and the link (LEGAL_PATHS.md: CREATE system expense AND link to group (atomic))"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── soft delete / archive (deleteGroup / archiveGroup, 2 tuples) ─────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: deleteGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: archiveGroup
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: soft-deletes the group (isActive=false) behind the write barrier; the coordinator is the legal writer for group archive per LEGAL_PATHS.md (archiveGroup: sets isActive=false, preserves expense history)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: archiveGroup
+  receiver: null
+  parameterTypes:
+  - Long
+  - () -> Unit
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: archiveGroup
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: archives the group (isActive=false) inside the withTransaction block so the onInsideTransaction work commits or rolls back with the archive transition"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── low-level atomic create (createGroupWithMembersAtomic, 2 tuples) ─────────
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: createGroupWithMembersAtomic
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ExpenseGroup
+  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: low-level atomic create -- inserts the ExpenseGroup entity first; a member-insertion failure rolls the group back (prevents orphaned groups); LEGAL_PATHS.md CREATE group names GroupTransactionCoordinator.createGroupWithMembersAtomic() as the atomic insert path"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: createGroupWithMembersAtomic
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ExpenseGroup
+  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: insertAll
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: inserts the member entities (G01 currentUserGroupKey invariant applied) inside the same atomic transaction as the group insert"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── hard-delete cascade (deleteGroupAtomic, 4 tuples) ────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: deleteGroupAtomic
+  receiver: null
+  parameterTypes:
+  - Long
+  - () -> Unit
+  daoAccessor: groupExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupExpenseDao
+  operation: deleteAllForGroup
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: hard-delete cascade -- deletes the group's expense rows first (child table) inside the withTransaction block; LEGAL_PATHS.md DELETE group names GroupTransactionCoordinator.permanentlyDeleteGroup() -> cascade cleanup via GroupExpenseDao"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: deleteGroupAtomic
+  receiver: null
+  parameterTypes:
+  - Long
+  - () -> Unit
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: deleteAllForGroup
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: hard-delete cascade -- deletes the group's members inside the same transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: deleteGroupAtomic
+  receiver: null
+  parameterTypes:
+  - Long
+  - () -> Unit
+  daoAccessor: groupDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+  operation: delete
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: hard-delete cascade -- deletes the group row last (parent table) inside the same transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.data.database.GroupTransactionCoordinator
+  kind: function
+  method: deleteGroupAtomic
+  receiver: null
+  parameterTypes:
+  - Long
+  - () -> Unit
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: clearSharedExpenseFlags
+  barrierMode: helper
+  reason: "GR-08i1 EXACT_POLICY: clears orphaned shared-expense flags (isSharedExpense/myShareAmount/mySharePercentage/sharedWithName) on the linked system expenses inside the same transaction (P2-CURRENT-008), atomic with the BULK_UPDATED TransactionLifecycleEvent"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I

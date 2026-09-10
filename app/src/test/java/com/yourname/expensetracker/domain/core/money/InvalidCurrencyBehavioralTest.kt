@@ -20,7 +20,7 @@ import org.junit.Test
  */
 class InvalidCurrencyBehavioralTest {
 
-    private lateinit var store: FakeExchangeRateStore
+    private lateinit var store: InvalidCurrencyFakeExchangeRateStore
     private lateinit var timeProvider: FakeTimeProvider
     private lateinit var converter: CurrencyConverter
 
@@ -29,7 +29,7 @@ class InvalidCurrencyBehavioralTest {
 
     @Before
     fun setup() {
-        store = FakeExchangeRateStore()
+        store = InvalidCurrencyFakeExchangeRateStore()
         timeProvider = FakeTimeProvider(NOW)
         converter = CurrencyConverter(store, timeProvider)
     }
@@ -240,7 +240,7 @@ class InvalidCurrencyBehavioralTest {
 
 // --- Test doubles ---
 
-private class FakeExchangeRateStore : ExchangeRateStore {
+private class InvalidCurrencyFakeExchangeRateStore : ExchangeRateStore {
     val rates = mutableMapOf<String, DomainExchangeRate>()
     val ratesAsOf = mutableMapOf<String, DomainExchangeRate>()
     var latestByValidDate = false

@@ -90,8 +90,8 @@ class RecurringArchitectureGuardTest {
         )
 
         val required = listOf(
-            "goAsync()",
-            "pendingResult.finish()"
+            "workManager.enqueue",
+            "OneTimeWorkRequestBuilder"
         )
 
         val errors = mutableListOf<String>()

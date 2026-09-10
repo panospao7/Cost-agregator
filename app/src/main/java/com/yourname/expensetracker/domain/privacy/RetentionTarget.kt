@@ -7,7 +7,10 @@ data class RetentionPurgeResult(
     val targetName: String,
     val rowsPurged: Int,
     val success: Boolean,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    val isTransient: Boolean = false,
+    val errorCode: String? = null,
+    val errorClass: String? = null
 )
 
 /**

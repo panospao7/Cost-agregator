@@ -1,0 +1,114 @@
+# GR-14u3 — entry family tranche 4: Pattern E dead-writer removal (451 -> 441).
+#
+# Removal set (each independently triple-proven dead: engine zero-inbound
+# on the post-GR-14u2 board + repo grep zero call sites in main AND test
+# with same-name DAO-layer collisions ruled out + compile success after
+# removal as the final caller-inventory proof):
+#   1-8. SourceStatsRepository incrementAccepted / incrementRejected /
+#      incrementAutoRejected / incrementPending / incrementDuplicate /
+#      decrementPending / resetAllPendingCounts / deleteAll — the write
+#      wrappers are dead: NotificationRepository and ReviewQueueRepository
+#      bypass the repository and call SourceStatsDao directly (the source
+#      stats counters family).  incrementTotal deliberately DEFERRED to
+#      GR-14u4 to hold this tranche at the 10-key cap.  The class retains
+#      its live insertIfNotExists/getByPackage/getAll members.
+#   9-10. ReceiptMatchLifecycleService.approveMatchSuggestion (2 keys:
+#      ScannedReceiptDao.update + ReceiptEventDao.insert) — zero callers
+#      in main and test (rejectAllSuggestions/clearMatchForReceipt remain
+#      and are alive).
+#
+# Policy handling (EXACT_IDENTITY removal, GR-14c/GR-14h/GR-14u/GR-14u2
+# precedent):
+#   - generation input edited: 10 seed blocks out of
+#     docs/ci/db-findings/GR-08-seeds.yml (398 -> 388); legacy input
+#     UNTOUCHED (93);
+#   - tracked candidate/accounting pair regenerated via the sanctioned
+#     `migrate_db_policy_signatures.py --generate` and `--verify
+#     --seed-rows` FULL MATCH; fold distribution UNCHANGED (53/40/43);
+#   - mutation-key delta vs the active policy: EXACTLY -10, zero additions;
+#   - active policy realigned by direct reviewed edit; active == candidate
+#     == 441 entries.
+#   NEW active policy sha256:
+#   b4d2938cab90f81b756d7fbd8b1564a2c127beaca62c69eb68ef11873138bf6a
+#   (was c6b0463e...).
+#
+# Pins updated with drift notes: known-good-state validator
+# (_CANDIDATE_ENTRIES 451 -> 441), current-repo tripwire (451 -> 441,
+# 3/3 PASS).
+#
+# Shadow delta (baseline fdec38fb... = post-GR-14u2 82e4fc9f... plus the
+# guard-hygiene commit 59477516, whose production change — the bank
+# coordinator catch restructure — and doc/test edits moved ONLY source-
+# manifest metadata: ZERO proof-state, edge-state, or diagnostic deltas,
+# verified row-by-row before this batch started):
+#   entries 433 -> 423; entry family 54 -> 44; EXACTLY the 10 removal rows
+#   vanish; counterexamples stay 0; every other proof bucket byte-stable;
+#   diagnostics unchanged; deterministic double-run BYTE-IDENTICAL
+#   (01d53a37beee6b5bfb3174fa4cba1b3f0a6727541488fa1d95d69025c143b2cb).
+#
+# Validation:
+#   - :app:compileDebugKotlin + compileDebugUnitTestKotlin BUILD
+#     SUCCESSFUL — caller-inventory proof;
+#   - python batteries: fixture_runner 58/58; mediation+fixtures 32/32;
+#     carrier/launch/composable/finality+CLI+tripwire 52/52;
+#   - targeted tests (ReceiptMatchLifecycleServiceTest, ConfidenceRouter
+#     Test, ConfidenceRouterEdgeCaseTest, ScannedReceiptClaimTest,
+#     DirectEventDaoInsertGuardTest, NotificationRepositoryStressTest,
+#     ReviewQueueRepositoryStressTest): 38 passed, 0 failed;
+#   - GATE-00R double capture + Gradle DB task: OWED at merge — MANDATORY
+#     (active policy bytes changed, new sha b4d2938c...).
+#
+# Remaining entry family: 44 rows (44 - GR-14u4 candidates: SourceStats
+# incrementTotal, ReceiptRepository.clearMatchForReceipt/writeReceiptEvent,
+# and the owner-decision + alive-with-callers sets classified in
+# docs/ci/DEFERRED_ISSUES_AND_DEBUG_HANDOFF.md).
+schemaVersion: 1
+batchId: GR-14u3
+startSha: 7815d0d4
+gateEvidenceSha256: null # GATE-00R recapture MANDATORY at merge (policy changed)
+mediationReportSha256Before: fdec38fb727cb889bc9e0422d707a0e7b1f7aa59e990cb7ed25429609e13b143
+mediationReportSha256After: 01d53a37beee6b5bfb3174fa4cba1b3f0a6727541488fa1d95d69025c143b2cb
+activePolicySha256: b4d2938cab90f81b756d7fbd8b1564a2c127beaca62c69eb68ef11873138bf6a
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/data/repository/SourceStatsRepository.kt:
+      removed 8 dead counter-write wrappers (increment family;
+      incrementTotal deferred to GR-14u4; live
+      insertIfNotExists/getByPackage/getAll retained)
+  - app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt:
+      removed dead approveMatchSuggestion
+
+policyFixes:
+  - docs/ci/db-findings/GR-08-seeds.yml: 10 dead seed blocks removed (398 -> 388)
+  - config/guards/db_ownership_policy.signatures.candidate.yml: regenerated 451 -> 441
+  - config/guards/db_ownership_policy.signatures.accounting.json: regenerated (paired)
+  - config/guards/db_ownership_policy.yml: active realigned 451 -> 441
+    (direct reviewed edit, key sets == candidate)
+
+selectedMutationKeys:
+  - SourceStatsRepository.incrementAccepted -> SourceStatsDao.incrementAccepted
+  - SourceStatsRepository.incrementRejected -> SourceStatsDao.incrementRejected
+  - SourceStatsRepository.incrementAutoRejected -> SourceStatsDao.incrementAutoRejected
+  - SourceStatsRepository.incrementPending -> SourceStatsDao.incrementPending
+  - SourceStatsRepository.incrementDuplicate -> SourceStatsDao.incrementDuplicate
+  - SourceStatsRepository.decrementPending -> SourceStatsDao.decrementPending
+  - SourceStatsRepository.resetAllPendingCounts -> SourceStatsDao.resetAllPendingCounts
+  - SourceStatsRepository.deleteAll -> SourceStatsDao.deleteAll
+  - ReceiptMatchLifecycleService.approveMatchSuggestion -> ScannedReceiptDao.update
+  - ReceiptMatchLifecycleService.approveMatchSuggestion -> ReceiptEventDao.insert
+rootCause: GR13_ZERO_INBOUND_CALL_SITES
+selectedPattern: E # remove dead/unreachable writer (triple-proven)
+tests:
+  - current-repo tripwire 3/3 (441 pin)
+  - targeted touched-area suites 38 passed / 0 failed
+
+status: PARTIAL # GATE-00R recapture + Gradle DB task MANDATORY at merge (policy changed)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch removes dead code and its now-meaningless authorization rows.
+  It is not a baseline, exception, or authorization document.  The
+  candidate/active pair stays key-set aligned at 441; every removal was
+  triple-proven dead (engine + grep + compile) before and after.

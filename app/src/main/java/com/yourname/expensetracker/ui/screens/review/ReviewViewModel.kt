@@ -130,8 +130,16 @@ class ReviewViewModel @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiRuntimeDiagnostics: AiRuntimeDiagnostics,
     private val receiptLifecycleCoordinator: ReceiptLifecycleCoordinator,
-    private val receiptDebugExporter: com.yourname.expensetracker.domain.debug.ReceiptDebugExporter
+    private val receiptDebugExporter: com.yourname.expensetracker.domain.debug.ReceiptDebugExporter,
+    // G-TIME-01: reference clock for UI export metadata. Hilt injects the bound
+    // TimeProvider; the default keeps existing manual/test constructors compiling
+    // (same optional-param pattern as SynthesisEngine.recurringOccurrenceDao).
+    private val timeProvider: com.yourname.expensetracker.domain.util.TimeProvider =
+        com.yourname.expensetracker.domain.util.SystemTimeProvider()
 ) : ViewModel() {
+
+    /** G-TIME-01: the screen's single TimeProvider-backed "now" source. */
+    fun referenceNowMillis(): Long = timeProvider.now()
     
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage = _errorMessage.asStateFlow()

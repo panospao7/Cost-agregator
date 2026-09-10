@@ -4,6 +4,7 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.DailyTotal
 import com.yourname.expensetracker.data.repository.SpendingChallengeRepository
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -50,18 +51,18 @@ class SpendingChallengeManager @Inject constructor(
      */
     suspend fun checkNoSpendStreak(): NoSpendStatus = withContext(ioDispatcher) {
         val today = timeProvider.now()
-        val startOfDay = getStartOfDay(today)
+        val startOfDay = TimePeriodUtils.getStartOfDay(today)
         val endOfDay = startOfDay + DAY_MS
         val oldestExpenseDate = expenseDao.getOldestExpenseDate()
-        val rangeStart = oldestExpenseDate?.let(::getStartOfDay) ?: startOfDay
+        val rangeStart = oldestExpenseDate?.let { TimePeriodUtils.getStartOfDay(it) } ?: startOfDay
 
         @Suppress("DEPRECATION_ERROR") // TODO: migrate to MultiCurrencyRepository
         val spendingDays = expenseDao.getSpendingDailyTotalsBetween(rangeStart, endOfDay)
-        val spendingByDay = spendingDays.associateBy { getStartOfDay(it.startDate) }
+        val spendingByDay = spendingDays.associateBy { TimePeriodUtils.getStartOfDay(it.startDate) }
         val todaySpent = spendingByDay[startOfDay]?.total ?: 0.0
         val hasNoSpend = todaySpent <= 0.0
 
-        val firstTrackedDay = spendingDays.firstOrNull()?.let { getStartOfDay(it.startDate) } ?: rangeStart
+        val firstTrackedDay = spendingDays.firstOrNull()?.let { TimePeriodUtils.getStartOfDay(it.startDate) } ?: rangeStart
         var streakDays = if (hasNoSpend) 1 else 0
         if (hasNoSpend) {
             var checkDay = startOfDay - DAY_MS
@@ -73,7 +74,7 @@ class SpendingChallengeManager @Inject constructor(
             }
         }
 
-        val lastSpendDate = spendingDays.lastOrNull()?.let { getStartOfDay(it.startDate) } ?: today
+        val lastSpendDate = spendingDays.lastOrNull()?.let { TimePeriodUtils.getStartOfDay(it.startDate) } ?: today
 
         NoSpendStatus(
             hasNoSpendToday = hasNoSpend,
@@ -178,7 +179,7 @@ class SpendingChallengeManager @Inject constructor(
     ): ChallengeBaseline? {
         if (type != ChallengeType.REDUCE_SPENDING) return null
 
-        val baselineEnd = getStartOfDay(now)
+        val baselineEnd = TimePeriodUtils.getStartOfDay(now)
         val baselineStart = baselineEnd - durationDays.toLong() * DAY_MS
         val baselineAmount = getSpentForChallengeRange(
             startDate = baselineStart,
@@ -205,16 +206,6 @@ class SpendingChallengeManager @Inject constructor(
         return ((elapsed.toDouble() / duration.toDouble()) * 100.0).coerceIn(0.0, 100.0)
     }
 
-    private fun getStartOfDay(timestamp: Long): Long {
-        val calendar = java.util.Calendar.getInstance()
-        calendar.timeInMillis = timestamp
-        calendar.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        calendar.set(java.util.Calendar.MINUTE, 0)
-        calendar.set(java.util.Calendar.SECOND, 0)
-        calendar.set(java.util.Calendar.MILLISECOND, 0)
-        return calendar.timeInMillis
-    }
-
     private suspend fun getSpentForChallengeRange(
         startDate: Long,
         endDate: Long,
@@ -237,7 +228,7 @@ class SpendingChallengeManager @Inject constructor(
     }
 
     private fun findLastSpendDate(spendingDays: List<DailyTotal>): Long? {
-        return spendingDays.lastOrNull { it.total > 0.0 }?.let { getStartOfDay(it.startDate) }
+        return spendingDays.lastOrNull { it.total > 0.0 }?.let { TimePeriodUtils.getStartOfDay(it.startDate) }
     }
 
     companion object {

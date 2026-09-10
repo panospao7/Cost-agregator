@@ -1,0 +1,409 @@
+# GR-08 batch 3b (GR-08c2) tracked batch manifest -- DB_UNAUTHORIZED_MUTATION
+# exact-policy authorization for RecurringLifecycleCoordinator.kt.
+#
+# Batch scope (plan): GR-08c targeted RecurringLifecycleCoordinator.kt with
+# 28 findings as ONE batch.  Scope verification against the trusted START
+# report (build/guard-debug/gr08c/before.json == trusted GR-08b after.json,
+# 446 findings / 20 advisory diagnostics): the file carries exactly 28
+# DB_UNAUTHORIZED_MUTATION findings collapsing to 26 UNIQUE fingerprints
+# (dedup key: callable identity + daoAccessor + daoFqcn + operation; the
+# triage fingerprint excludes line/column, so per-call-site repeats share
+# one fingerprint).  Unique count 26 > 25, so the batch-cap rule FORCED a
+# split into GR-08c1/c2 by callable groups:
+#   - GR-08c1: the occurrence/expense-link lifecycle group -- 10 findings /
+#     10 unique fingerprints (see GR-08c1.yml).
+#   - GR-08c2 (this manifest): the reminder-delivery lifecycle group --
+#     regenerateReminderDeliveriesForOccurrence,
+#     recoverStaleClaimedDeliveries, claimReminderDelivery,
+#     cancelClaimedReminderDelivery, markReminderSent, markReminderFailed,
+#     dismissReminderDelivery, snoozeReminderDelivery -- 18 findings / 16
+#     unique fingerprints (regenerateReminderDeliveriesForOccurrence's three
+#     lifecycleEventDao.insert call sites at lines 596/624/662 share one
+#     fingerprint).
+# All 28 file findings are DB_UNAUTHORIZED_MUTATION with disposition
+# EXACT_POLICY: this file is the DOMAIN LIFECYCLE COORDINATOR, the MOST
+# authoritative writer layer per docs/architecture/LEGAL_PATHS.md (recurring
+# rule mutations MUST go through the recurring rule lifecycle coordinator).
+#
+# Closure additions (GR-08c planning): NONE.  The known findings-scanner
+# blind spot (body-carrying @Transaction DAO convenience methods produce NO
+# findings but DO produce evidence closure requirements -- GR-08b carried 2
+# such closure rows for pendingReviewDao.upsertByRawNotificationId) was
+# enumerated by reading EVERY dao-accessor call in ALL 12 mutating-callable
+# bodies of this file, not just the findings.  Result: ZERO closure rows.
+# Every mutating DAO method called from this file's callables is an abstract
+# Room-annotated method (@Insert/@Update/mutating @Query) on the four touched
+# DAOs (RecurringOccurrenceDao, RecurringReminderDeliveryDao,
+# PlannedExpenseDao, RecurringLifecycleEventDao -- all fully abstract, no
+# body-carrying @Transaction convenience methods), and every one of those
+# call sites produced a findings row (28 findings == 28 mutating call sites).
+# Non-DAO collaborators carry no closure obligations for THIS file:
+# eventWriter (RecurringLifecycleEventWriter; its RoomRecurringLifecycleEventWriter
+# implementation's dao.insert call sites live in RecurringLifecycleEventWriter.kt
+# -- that file's own batch scope), materializer (RecurringOccurrenceMaterializer.kt),
+# and transactionRunner (DomainTransactionRunner, a transaction wrapper, not a
+# DAO accessor).  Seed accounting is therefore findings-derived rows only:
+# GR-08c2-seed.yml carries exactly 16 rows.
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# rows verbatim); passing only GR-08c2-seed.yml would drop the earlier
+# batches' rows -- including the GR-08c1 rows promoted immediately before
+# this batch -- from the rendered candidate.
+schemaVersion: 1
+batchId: GR-08c2
+startSha: b7968bc1
+startReport:
+  path: build/guard-debug/gr08c/before.json
+  sha256: 1306768ea20af54264be8856476dcc2901f5ef15ea64b78f19217023c8f19aaa
+  trusted: true
+  findingCount: 446
+activePolicySha256: f4e9d2b78517447944cda20daf3e5fab2d1945908ef1be0cd14570fae1471421
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08C
+counts:
+  fileFindings: 28
+  batchCallablesFindings: 18
+  uniqueFingerprints: 16
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=regenerateReminderDeliveriesForOccurrence|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RecurringOccurrence%22%2C%22Long%22%2C%22List%3CString%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=regenerateReminderDeliveriesForOccurrence|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RecurringOccurrence%22%2C%22Long%22%2C%22List%3CString%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=reopenDeliveryForOccurrenceWindow|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=regenerateReminderDeliveriesForOccurrence|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RecurringOccurrence%22%2C%22Long%22%2C%22List%3CString%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=recoverStaleClaimedDeliveries|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=recoverStaleClaimedDeliveries|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=recoverStaleClaimedDeliveries|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=claimReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=claimDelivery|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=cancelClaimedReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=cancelClaimedDelivery|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=cancelClaimedReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=markReminderSent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Int%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=markSentFromClaimed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=markReminderSent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Int%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=markReminderFailed|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=markFailedFromClaimed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=markReminderFailed|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=dismissReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=dismissReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=snoozeReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=snoozeReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+findings:
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=regenerateReminderDeliveriesForOccurrence|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RecurringOccurrence%22%2C%22Long%22%2C%22List%3CString%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: regenerateReminderDeliveriesForOccurrence
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+    - Long
+    - List<String>
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  locations: [596, 624, 662]
+  disposition: EXACT_POLICY
+  rationale: "Per-window regeneration provenance events (REMINDER_REGENERATION_SKIPPED on past-due windows, REMINDER_REOPENED_AFTER_UNLINK after a successful reopen, REMINDER_SCHEDULED_AFTER_UNLINK after a successful insert); each write is isolated in its own transaction and CancellationSafe.rethrowIfCancellation preserves cancellation."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=regenerateReminderDeliveriesForOccurrence|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RecurringOccurrence%22%2C%22Long%22%2C%22List%3CString%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=reopenDeliveryForOccurrenceWindow|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: regenerateReminderDeliveriesForOccurrence
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+    - Long
+    - List<String>
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: reopenDeliveryForOccurrenceWindow
+  locations: [617]
+  disposition: EXACT_POLICY
+  rationale: "Conditional per-window reopen of CANCELLED/FAILED_TRANSIENT deliveries back to SCHEDULED (never SENT -- the user already saw those) when an unlinked occurrence returns to PLANNED."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=regenerateReminderDeliveriesForOccurrence|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RecurringOccurrence%22%2C%22Long%22%2C%22List%3CString%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: regenerateReminderDeliveriesForOccurrence
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+    - Long
+    - List<String>
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: insert
+  locations: [651]
+  disposition: EXACT_POLICY
+  rationale: "SCHEDULED delivery insert for windows with no existing row during post-unlink regeneration; conflict-safe @Insert IGNORE with deliveryId>0 gating the paired provenance event."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=recoverStaleClaimedDeliveries|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=recoverStaleClaimedDeliveries|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: recoverStaleClaimedDeliveries
+    receiver: null
+    parameterTypes:
+    - String
+    - String
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: recoverStaleClaimedDeliveries
+  locations: [913]
+  disposition: EXACT_POLICY
+  rationale: "Stale-claim recovery resetting CLAIMED deliveries older than STALE_CLAIM_THRESHOLD_MS back to SCHEDULED (claimedAt-based so fresh claims are not stolen; P4-CURRENT-005), inside the DomainTransactionRunner transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=recoverStaleClaimedDeliveries|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: recoverStaleClaimedDeliveries
+    receiver: null
+    parameterTypes:
+    - String
+    - String
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  locations: [918]
+  disposition: EXACT_POLICY
+  rationale: "Aggregate STALE_DELIVERIES_RECOVERED provenance event (occurrenceId=0, recoveredCount metadata only) written only when recovery count > 0, inside the same transaction as the recovery."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=claimReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=claimDelivery|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: claimReminderDelivery
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: claimDelivery
+  locations: [940]
+  disposition: EXACT_POLICY
+  rationale: "Atomic due-delivery claim (status-specific SCHEDULED scheduledAt / SNOOZED snoozedUntil conditions, attemptCount increment, failureReason cleared; P4-CURRENT-006); rows>0 gates notification dispatch."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=cancelClaimedReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=cancelClaimedDelivery|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: cancelClaimedReminderDelivery
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: cancelClaimedDelivery
+  locations: [982]
+  disposition: EXACT_POLICY
+  rationale: "Conditional cancel of a CLAIMED delivery whose occurrence is no longer PLANNED (claim-vs-payment race resolution for BillReminderWorker), inside the cancel transaction (MIT-043)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=cancelClaimedReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: cancelClaimedReminderDelivery
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  locations: [984]
+  disposition: EXACT_POLICY
+  rationale: "REMINDER_CANCELLED_NO_LONGER_PLANNED provenance event (JSONObject-escaped reason) written only after a successful cancel, inside the same transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=markReminderSent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Int%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=markSentFromClaimed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: markReminderSent
+    receiver: null
+    parameterTypes:
+    - Long
+    - Int
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: markSentFromClaimed
+  locations: [1019]
+  disposition: EXACT_POLICY
+  rationale: "CLAIMED->SENT transition persisting the notificationId; only succeeds from CLAIMED so a payment-suppression cancel between claim and send wins the race; inside the mark-sent transaction (MIT-043)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=markReminderSent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Int%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: markReminderSent
+    receiver: null
+    parameterTypes:
+    - Long
+    - Int
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  locations: [1021]
+  disposition: EXACT_POLICY
+  rationale: "REMINDER_SENT provenance event written only after a successful CLAIMED->SENT transition, inside the same transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=markReminderFailed|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=markFailedFromClaimed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: markReminderFailed
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: markFailedFromClaimed
+  locations: [1045]
+  disposition: EXACT_POLICY
+  rationale: "CLAIMED->FAILED_PERMISSION/FAILED_TRANSIENT transition with the controlled failure reason persisted on the delivery row; only succeeds from CLAIMED; inside the mark-failed transaction (MIT-043)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=markReminderFailed|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: markReminderFailed
+    receiver: null
+    parameterTypes:
+    - Long
+    - String
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  locations: [1047]
+  disposition: EXACT_POLICY
+  rationale: "REMINDER_DELIVERY_FAILED provenance event with controlled reason metadata, written only after a successful failure transition, inside the same transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=dismissReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: dismissReminderDelivery
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: update
+  locations: [1082]
+  disposition: EXACT_POLICY
+  rationale: "Entity update dismissing a non-terminal delivery (status DISMISSED, dismissedAt/updatedAt set; TERMINAL_STATUSES short-circuit to NoOp) inside the dismiss transaction with an in-transaction write-barrier recheck (DismissReminderReceiver goAsync path)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=dismissReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: dismissReminderDelivery
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  locations: [1083]
+  disposition: EXACT_POLICY
+  rationale: "REMINDER_DISMISSED provenance event written inside the dismiss transaction after the delivery update."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=snoozeReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|identity.accessor=reminderDeliveryDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: snoozeReminderDelivery
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: update
+  locations: [1117]
+  disposition: EXACT_POLICY
+  rationale: "Entity update snoozing a non-terminal delivery (status SNOOZED, snoozedUntil set; TERMINAL_STATUSES short-circuit to NoOp) inside the snooze transaction with an in-transaction write-barrier recheck (SnoozeReminderReceiver goAsync path)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Frecurring%2Flifecycle%2FRecurringLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator|symbol.name=snoozeReminderDelivery|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|identity.accessor=lifecycleEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator
+    method: snoozeReminderDelivery
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  locations: [1118]
+  disposition: EXACT_POLICY
+  rationale: "REMINDER_SNOOZED provenance event written inside the snooze transaction after the delivery update."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08C
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "None within RecurringLifecycleCoordinator.kt: GR-08c1 (already promoted before this batch) authorized the occurrence/expense-link callable group and this batch authorizes the remaining 18 findings; after the GR-08c2 rescan the file carries 0 DB_UNAUTHORIZED_MUTATION findings (batch 0 remaining).  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

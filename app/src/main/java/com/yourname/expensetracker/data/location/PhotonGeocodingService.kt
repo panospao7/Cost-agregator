@@ -92,10 +92,10 @@ class PhotonGeocodingService @Inject constructor(
                 else GeocodingBatchResult.Success(parsed)
             }
         } catch (e: IOException) {
-            Log.e(TAG, "    Photon network error: ${e.message}")
+            Log.e(TAG, "GEOCODE_NETWORK_ERROR", e)
             GeocodingBatchResult.Failure(GeocodingError.NetworkError)
         } catch (e: JSONException) {
-            Log.e(TAG, "    Photon parse error: ${e.message}")
+            Log.e(TAG, "GEOCODE_PARSE_ERROR", e)
             GeocodingBatchResult.Failure(GeocodingError.ParseError)
         }
     }

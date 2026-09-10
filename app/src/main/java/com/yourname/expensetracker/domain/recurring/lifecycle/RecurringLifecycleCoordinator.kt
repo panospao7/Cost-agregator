@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -18,6 +19,8 @@ import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
 import com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationResult
 import com.yourname.expensetracker.data.database.entity.TransactionType
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -55,7 +58,8 @@ class RecurringLifecycleCoordinator @Inject constructor(
     private val eventWriter: RecurringLifecycleEventWriter,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val writeBarrier: DatabaseWriteBarrier,
-    private val plannedExpenseDao: PlannedExpenseDao
+    private val plannedExpenseDao: PlannedExpenseDao,
+    private val transactionRunner: DomainTransactionRunner
 ) {
     companion object {
         /** Source type used for manual recurring rules. */
@@ -66,6 +70,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         /** Statuses from which dismiss/snooze are no-ops. */
         val TERMINAL_STATUSES = setOf("DISMISSED", "CANCELLED", "FAILED_FINAL", "SENT")
+
+        /** Stale claim threshold in ms (5 minutes). */
+        const val STALE_CLAIM_THRESHOLD_MS = 300_000L
     }
 
     /**
@@ -87,56 +94,65 @@ class RecurringLifecycleCoordinator @Inject constructor(
     ): MaterializationResult {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.generateOccurrences")
 
-        val rule = manualRecurringExpenseDao.getById(ruleId)
-            ?: throw IllegalArgumentException("Recurring rule not found: id=$ruleId")
+        // MIT-043: Wrap rule read + expense read + materialize in a single
+        // transaction to prevent read-write skew. If a concurrent mutation
+        // (e.g. rule deactivation, expense insert) occurs between reads and
+        // write, the transaction will detect it via snapshot isolation.
+        return database.withTransaction {
+            val rule = manualRecurringExpenseDao.getById(ruleId)
+                ?: throw IllegalArgumentException("Recurring rule not found: id=$ruleId")
 
-        // P4-CURRENT-010: Inactive rules must not generate occurrences
-        if (!rule.isActive) return MaterializationResult(0, 0, 0, 0)
+            // P4-CURRENT-010: Inactive rules must not generate occurrences
+            if (!rule.isActive) return@withTransaction MaterializationResult(0, 0, 0, 0)
 
-        // Use rule.nextDate as the expansion anchor. If it's before startDate,
-        // advance it by the frequency until it falls within the range.
-        var anchorDate = rule.nextDate
-        var advanceIterations = 0
-        while (anchorDate < startDate && rule.frequency != RecurrenceFrequency.IRREGULAR) {
-            if (++advanceIterations > 1000) {
-                Timber.w("Anchor advance loop exceeded 1000 iterations for ruleId=%d, breaking", ruleId)
-                break
+            // Use rule.nextDate as the expansion anchor. If it's before startDate,
+            // advance it by the frequency until it falls within the range.
+            var anchorDate = rule.nextDate
+            var advanceIterations = 0
+            while (anchorDate < startDate && rule.frequency != RecurrenceFrequency.IRREGULAR) {
+                if (++advanceIterations > 1000) {
+                    Timber.w("Anchor advance loop exceeded 1000 iterations for ruleId=%d, breaking", ruleId)
+                    break
+                }
+                anchorDate = expander.advanceDate(anchorDate, rule.frequency)
             }
-            anchorDate = expander.advanceDate(anchorDate, rule.frequency)
-        }
 
-        val request = RecurringOccurrenceExpander.ExpandRequest(
-            merchant = rule.merchant,
-            amount = rule.amount,
-            currency = rule.currency,
-            frequency = rule.frequency,
-            categoryId = rule.categoryId, // P4-CURRENT-014: Preserve rule category
-            startDate = startDate,
-            endDate = endDate,
-            anchorDate = anchorDate,
-            sourceType = SOURCE_TYPE_RECURRING_RULE,
-            sourceId = rule.id
-        )
-
-        val candidates = expander.expand(request)
-        val actualExpenses = expenseDao.getExpensesBetween(startDate, endDate)
-        val resolved = resolver.resolve(candidates, actualExpenses)
-
-        val windowsForMaterializer = if (options.createReminderDeliveries) {
-            options.reminderWindows.ifEmpty { DEFAULT_REMINDER_WINDOWS }
-        } else {
-            emptyList()
-        }
-
-        return materializer.materialize(
-            resolved = resolved,
-            options = RecurringOccurrenceMaterializer.MaterializationOptions(
-                createReminderDeliveries = options.createReminderDeliveries,
-                reminderWindows = windowsForMaterializer,
-                generationSource = options.generationSource.name,
-                allowPastDueReminderDeliveries = options.allowPastDueReminderDeliveries
+            val request = RecurringOccurrenceExpander.ExpandRequest(
+                merchant = rule.merchant,
+                amount = rule.amount,
+                currency = rule.currency,
+                frequency = rule.frequency,
+                categoryId = rule.categoryId, // P4-CURRENT-014: Preserve rule category
+                startDate = startDate,
+                endDate = endDate,
+                anchorDate = anchorDate,
+                sourceType = SOURCE_TYPE_RECURRING_RULE,
+                sourceId = rule.id
             )
-        )
+
+            val candidates = expander.expand(request)
+            val actualExpenses = expenseDao.getExpensesBetween(startDate, endDate)
+            val resolved = resolver.resolve(candidates, actualExpenses)
+
+            val windowsForMaterializer = if (options.createReminderDeliveries) {
+                options.reminderWindows.ifEmpty { DEFAULT_REMINDER_WINDOWS }
+            } else {
+                emptyList()
+            }
+
+            // materialize() opens its own inner transaction — Room nested
+            // transactions are savepoints, so a failure in the materializer
+            // rolls back to this point, preserving the outer read snapshot.
+            materializer.materialize(
+                resolved = resolved,
+                options = RecurringOccurrenceMaterializer.MaterializationOptions(
+                    createReminderDeliveries = options.createReminderDeliveries,
+                    reminderWindows = windowsForMaterializer,
+                    generationSource = options.generationSource.name,
+                    allowPastDueReminderDeliveries = options.allowPastDueReminderDeliveries
+                )
+            )
+        }
     }
 
     /**
@@ -282,7 +298,13 @@ class RecurringLifecycleCoordinator @Inject constructor(
         var matchId = 0L
         var matchKey = ""
         var claimed = false
-        database.withTransaction {
+
+        // GR-14p: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringLifecycleCoordinator.linkExpenseToOccurrence")
+        ) {
+            database.withTransaction {
             // P4-NEW-003: Occurrence lookup INSIDE the transaction — read + write are atomic.
             val occurrences = occurrenceDao.getByDateRange(expenseDayStart, expenseDayEnd)
             val match = occurrences.firstOrNull { occ ->
@@ -359,6 +381,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 newStatus = if (suppressed > 0) "CANCELLED" else null,
                 metadata = """{"expenseId":$expenseId,"suppressedCount":$suppressed,"source":"direct_expense_link"}"""
             )
+            }
         }
 
         if (!claimed) return false
@@ -423,16 +446,25 @@ class RecurringLifecycleCoordinator @Inject constructor(
         if (linked != null) {
             if (isExpenseEligibleForRecurring(expense) && expenseMatchesOccurrence(expense, linked)) {
                 val now = timeProvider.now()
-                val rows = occurrenceDao.updateLinkedPaymentSnapshot(
-                    occurrenceId = linked.id,
-                    expenseId = expenseId,
-                    amount = expense.amount,
-                    currency = expense.currency,
-                    paidAt = expense.date,
-                    updatedAt = now
-                )
-                if (rows > 0) {
-                    try {
+
+                // MIT-043: Wrap snapshot update + event in a single transaction
+                // so paid amount update and event never diverge.
+
+                // GR-14p: canonical direct scope — the mutations' proof is local
+                // to the legal writer, independent of caller context.
+                writeBarrier.runWrite(
+                    DatabaseAccessOperation("RecurringLifecycleCoordinator.reconcileExpenseLinkAfterUpdate")
+                ) {
+                    database.withTransaction {
+                    val rows = occurrenceDao.updateLinkedPaymentSnapshot(
+                        occurrenceId = linked.id,
+                        expenseId = expenseId,
+                        amount = expense.amount,
+                        currency = expense.currency,
+                        paidAt = expense.date,
+                        updatedAt = now
+                    )
+                    if (rows > 0) {
                         // P4-NEW-009: JSONObject.put() auto-escapes user-provided strings (currency)
                         lifecycleEventDao.insert(
                             RecurringLifecycleEvent(
@@ -448,9 +480,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                                 }.toString()
                             )
                         )
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        /* best-effort */
+                    }
                     }
                 }
                 return RecurringExpenseReconcileResult.UpdatedLinkedSnapshot(expenseId, linked.id)
@@ -499,7 +529,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     is RecurringExpenseReconcileResult.Error -> { failed++; Timber.w("Reconcile error: %s", result.reason) }
                 }
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
+                CancellationSafe.rethrowIfCancellation(e)
                 failed++
             }
         }
@@ -577,79 +607,111 @@ class RecurringLifecycleCoordinator @Inject constructor(
             // Skip past-due reminders
             if (scheduledAt < now) {
                 try {
-                    lifecycleEventDao.insert(
-                        RecurringLifecycleEvent(
-                            occurrenceId = occurrence.id,
-                            eventType = "REMINDER_REGENERATION_SKIPPED",
-                            occurredAt = now,
-                            oldStatus = null,
-                            newStatus = null,
-                            metadata = """{"window":"$window","scheduledAt":$scheduledAt,"reason":"past_due"}"""
+                    // GR-14p: canonical direct scope — the mutations' proof is
+                    // local to the legal writer, independent of caller context.
+                    writeBarrier.runWrite(
+                        DatabaseAccessOperation("RecurringLifecycleCoordinator.regenerateReminderDeliveriesForOccurrence")
+                    ) {
+                        database.withTransaction {
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = occurrence.id,
+                                eventType = "REMINDER_REGENERATION_SKIPPED",
+                                occurredAt = now,
+                                oldStatus = null,
+                                newStatus = null,
+                                metadata = """{"window":"$window","scheduledAt":$scheduledAt,"reason":"past_due"}"""
+                            )
                         )
-                    )
+                        }
+                    }
                 } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    /* best-effort event */
+                    CancellationSafe.rethrowIfCancellation(e)
+                    // Non-cancellation event write failure is isolated; continue to next window
                 }
                 continue
             }
 
-            val reopened = reminderDeliveryDao.reopenDeliveryForOccurrenceWindow(
-                occurrenceId = occurrence.id,
-                window = window,
-                scheduledAt = scheduledAt,
-                now = now
-            )
-            if (reopened > 0) {
-                restored += reopened
-                try {
-                    lifecycleEventDao.insert(
-                        RecurringLifecycleEvent(
-                            occurrenceId = occurrence.id,
-                            eventType = "REMINDER_REOPENED_AFTER_UNLINK",
-                            occurredAt = now,
-                            oldStatus = "CANCELLED",
-                            newStatus = "SCHEDULED",
-                            metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
-                        )
+            var reopenedInWindow = 0
+            try {
+                // GR-14p: canonical direct scope — the mutations' proof is
+                // local to the legal writer, independent of caller context.
+                reopenedInWindow = writeBarrier.runWrite(
+                    DatabaseAccessOperation("RecurringLifecycleCoordinator.regenerateReminderDeliveriesForOccurrence")
+                ) {
+                    database.withTransaction {
+                    val count = reminderDeliveryDao.reopenDeliveryForOccurrenceWindow(
+                        occurrenceId = occurrence.id,
+                        window = window,
+                        scheduledAt = scheduledAt,
+                        now = now
                     )
-                } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    /* best-effort event */
+                    if (count > 0) {
+                        lifecycleEventDao.insert(
+                            RecurringLifecycleEvent(
+                                occurrenceId = occurrence.id,
+                                eventType = "REMINDER_REOPENED_AFTER_UNLINK",
+                                occurredAt = now,
+                                oldStatus = "CANCELLED",
+                                newStatus = "SCHEDULED",
+                                metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                            )
+                        )
+                    }
+                    count
+                    }
                 }
+            } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
+                Timber.w(e, "Skipped reminder regeneration for window $window (occurrence ${occurrence.id})")
+            }
+            if (reopenedInWindow > 0) {
+                restored += reopenedInWindow
                 continue
             }
 
             val existing = reminderDeliveryDao.getByOccurrenceAndWindow(occurrence.id, window)
             if (existing == null) {
-                val deliveryId = reminderDeliveryDao.insert(
-                    RecurringReminderDelivery(
-                        occurrenceId = occurrence.id,
-                        reminderWindow = window,
-                        scheduledAt = scheduledAt,
-                        status = "SCHEDULED",
-                        createdAt = now,
-                        updatedAt = now
-                    )
-                )
-                if (deliveryId > 0) {
-                    restored++
-                    try {
-                        lifecycleEventDao.insert(
-                            RecurringLifecycleEvent(
+                var inserted = 0L
+                try {
+                    // GR-14p: canonical direct scope — the mutations' proof is
+                    // local to the legal writer, independent of caller context.
+                    inserted = writeBarrier.runWrite(
+                        DatabaseAccessOperation("RecurringLifecycleCoordinator.regenerateReminderDeliveriesForOccurrence")
+                    ) {
+                        database.withTransaction {
+                        val deliveryId = reminderDeliveryDao.insert(
+                            RecurringReminderDelivery(
                                 occurrenceId = occurrence.id,
-                                eventType = "REMINDER_SCHEDULED_AFTER_UNLINK",
-                                occurredAt = now,
-                                oldStatus = null,
-                                newStatus = "SCHEDULED",
-                                metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                                reminderWindow = window,
+                                scheduledAt = scheduledAt,
+                                status = "SCHEDULED",
+                                createdAt = now,
+                                updatedAt = now
                             )
                         )
-                    } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
-                    /* best-effort event */
+                        if (deliveryId > 0) {
+                            lifecycleEventDao.insert(
+                                RecurringLifecycleEvent(
+                                    occurrenceId = occurrence.id,
+                                    eventType = "REMINDER_SCHEDULED_AFTER_UNLINK",
+                                    occurredAt = now,
+                                    oldStatus = null,
+                                    newStatus = "SCHEDULED",
+                                    metadata = """{"window":"$window","scheduledAt":$scheduledAt}"""
+                                )
+                            )
+                            deliveryId
+                        } else {
+                            0L
+                        }
+                        }
+                    }
+                } catch (e: Exception) {
+                    CancellationSafe.rethrowIfCancellation(e)
+                    Timber.w(e, "Skipped reminder regeneration for window $window (occurrence ${occurrence.id})")
                 }
-                }
+                if (inserted > 0) restored++
             }
         }
         return restored
@@ -701,7 +763,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
         val linked = occurrenceDao.getByLinkedExpenseId(expenseId)
             ?: return RecurringExpenseReconcileResult.Skipped(expenseId, "no_linked_occurrence")
 
-        database.withTransaction {
+        // GR-14p: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("RecurringLifecycleCoordinator.unlinkExpenseFromOccurrenceDetailed")
+        ) {
+            database.withTransaction {
             // Reset to PLANNED — the recurring bill is not yet paid
             occurrenceDao.update(
                 linked.copy(
@@ -750,6 +817,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     }.toString()
                 )
             )
+            }
         }
 
         return RecurringExpenseReconcileResult.Unlinked(expenseId, linked.id, reason)
@@ -784,45 +852,56 @@ class RecurringLifecycleCoordinator @Inject constructor(
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.updateOccurrenceStatus")
 
         val now = timeProvider.now()
-        val occurrence = occurrenceDao.getById(occurrenceId) ?: return
 
-        val oldStatus = RecurringOccurrenceStatus.fromDb(occurrence.status)
-        RecurringOccurrenceTransitionPolicy.requireAllowed(oldStatus, newStatus, reason)
+        // MIT-043: Wrap read + status update + event in a single transaction
+        // so the occurrence state never diverges from its lifecycle event.
+        database.withTransaction {
+            val occurrence = occurrenceDao.getById(occurrenceId) ?: return@withTransaction
 
-        occurrenceDao.updateStatus(listOf(occurrenceId), newStatus.dbValue, now)
+            val oldStatus = RecurringOccurrenceStatus.fromDb(occurrence.status)
+            RecurringOccurrenceTransitionPolicy.requireAllowed(oldStatus, newStatus, reason)
 
-        // Write lifecycle event
-        val eventType = when (newStatus) {
-            RecurringOccurrenceStatus.SKIPPED -> "OCCURRENCE_SKIPPED"
-            RecurringOccurrenceStatus.CANCELLED -> "OCCURRENCE_CANCELLED"
-            RecurringOccurrenceStatus.MISSED -> "OCCURRENCE_MISSED"
-            else -> null
-        }
-        if (eventType != null) {
-            lifecycleEventDao.insert(
-                RecurringLifecycleEvent(
-                    occurrenceId = occurrenceId,
-                    eventType = eventType,
-                    occurredAt = now,
-                    oldStatus = oldStatus.dbValue,
-                    newStatus = newStatus.dbValue,
-                    metadata = """{"reason":"${reason.name}"}"""
+            occurrenceDao.updateStatus(listOf(occurrenceId), newStatus.dbValue, now)
+
+            // Write lifecycle event
+            val eventType = when (newStatus) {
+                RecurringOccurrenceStatus.SKIPPED -> "OCCURRENCE_SKIPPED"
+                RecurringOccurrenceStatus.CANCELLED -> "OCCURRENCE_CANCELLED"
+                RecurringOccurrenceStatus.MISSED -> "OCCURRENCE_MISSED"
+                else -> null
+            }
+            if (eventType != null) {
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = occurrenceId,
+                        eventType = eventType,
+                        occurredAt = now,
+                        oldStatus = oldStatus.dbValue,
+                        newStatus = newStatus.dbValue,
+                        metadata = """{"reason":"${reason.name}"}"""
+                    )
                 )
-            )
+            }
         }
     }
 
     /** Convenience: skip an occurrence. */
-    suspend fun skipOccurrence(occurrenceId: Long) =
+    suspend fun skipOccurrence(occurrenceId: Long) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.skipOccurrence")
         updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.SKIPPED, RecurringOccurrenceTransitionReason.USER_SKIPPED)
+    }
 
     /** Convenience: cancel an occurrence. */
-    suspend fun cancelOccurrence(occurrenceId: Long) =
+    suspend fun cancelOccurrence(occurrenceId: Long) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.cancelOccurrence")
         updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.CANCELLED, RecurringOccurrenceTransitionReason.USER_CANCELLED)
+    }
 
     /** Convenience: mark an occurrence missed. */
-    suspend fun markOccurrenceMissed(occurrenceId: Long) =
+    suspend fun markOccurrenceMissed(occurrenceId: Long) {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markOccurrenceMissed")
         updateOccurrenceStatus(occurrenceId, RecurringOccurrenceStatus.MISSED, RecurringOccurrenceTransitionReason.SYSTEM_MARKED_MISSED)
+    }
 
     /**
      * Returns all reminder deliveries whose scheduled time has passed and
@@ -831,12 +910,27 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * This is intended to be called by a [ReminderDispatchWorker] (WorkManager)
      * that runs periodically to check for and dispatch due reminders.
      *
+     * This is a PURE READ — it does NOT recover stale deliveries. Callers that
+     * need recovery should use [recoverAndGetDueReminders] instead, or call
+     * [recoverStaleClaimedDeliveries] explicitly before this method.
+     *
      * @return The list of pending [RecurringReminderDelivery] items, ordered by scheduledAt.
      */
     suspend fun getDueReminders(): List<RecurringReminderDelivery> {
-        // P4-CURRENT-005: Recover stale CLAIMED deliveries before querying due ones
-        recoverStaleClaimedDeliveries()
         return reminderDeliveryDao.getPendingDeliveriesForPlannedOccurrences(timeProvider.now())
+    }
+
+    /**
+     * MIT-043: Explicit combined method — recovers stale CLAIMED deliveries then
+     * returns all pending deliveries. This method makes the write side-effect
+     * visible in its name and is the preferred entry point for workers that
+     * need recovery + dispatch in a single call.
+     *
+     * @return The list of pending [RecurringReminderDelivery] items, ordered by scheduledAt.
+     */
+    suspend fun recoverAndGetDueReminders(): List<RecurringReminderDelivery> {
+        recoverStaleClaimedDeliveries()
+        return getDueReminders()
     }
 
     /**
@@ -845,13 +939,39 @@ class RecurringLifecycleCoordinator @Inject constructor(
      *
      * Uses claimedAt (not scheduledAt) to determine staleness, so freshly claimed overdue
      * reminders are not immediately recovered by another worker.
+     *
+     * Made public in PR 7 so callers can explicitly recover stale deliveries before
+     * querying due reminders.
      */
-    private suspend fun recoverStaleClaimedDeliveries(staleThresholdMs: Long = 300_000) {
-        val now = timeProvider.now()
-        val staleClaimThreshold = now - staleThresholdMs
-        val recovered = reminderDeliveryDao.recoverStaleClaimedDeliveries(staleClaimThreshold, now)
-        if (recovered > 0) {
-            Timber.d("Recovered %d stale CLAIMED reminder deliveries", recovered)
+    suspend fun recoverStaleClaimedDeliveries(
+        correlationId: String = java.util.UUID.randomUUID().toString(),
+        actor: String = "system"
+    ): Int {
+        writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.recoverStaleClaimedDeliveries")
+        return transactionRunner.runInTransaction(
+            correlationId = correlationId,
+            operationId = "recurring.recover_stale_claimed_deliveries",
+            source = "RecurringLifecycleCoordinator"
+        ) { context ->
+            val now = context.occurredAt
+            val staleClaimThreshold = now - STALE_CLAIM_THRESHOLD_MS
+            val recovered = reminderDeliveryDao.recoverStaleClaimedDeliveries(
+                staleClaimThreshold = staleClaimThreshold,
+                now = now
+            )
+            if (recovered > 0) {
+                lifecycleEventDao.insert(
+                    RecurringLifecycleEvent(
+                        occurrenceId = 0L,  // aggregate event, no single occurrence
+                        eventType = "STALE_DELIVERIES_RECOVERED",
+                        occurredAt = context.occurredAt,
+                        oldStatus = null,
+                        newStatus = null,
+                        metadata = """{"recoveredCount":$recovered}"""
+                    )
+                )
+            }
+            recovered
         }
     }
 
@@ -900,10 +1020,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
     suspend fun cancelClaimedReminderDelivery(deliveryId: Long, reason: String): Boolean {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.cancelClaimedReminderDelivery")
         val now = timeProvider.now()
-        val delivery = reminderDeliveryDao.getById(deliveryId) ?: return false
-        val rows = reminderDeliveryDao.cancelClaimedDelivery(deliveryId, reason, now)
-        if (rows > 0) {
-            try {
+
+        // MIT-043: Wrap delivery cancel + event in a single transaction.
+        return database.withTransaction {
+            val delivery = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction false
+            val rows = reminderDeliveryDao.cancelClaimedDelivery(deliveryId, reason, now)
+            if (rows > 0) {
                 lifecycleEventDao.insert(
                     RecurringLifecycleEvent(
                         occurrenceId = delivery.occurrenceId,
@@ -917,12 +1039,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         }.toString()
                     )
                 )
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                Timber.w(e, "Non-critical: failed to write REMINDER_CANCELLED event for delivery %d", deliveryId)
             }
+            rows > 0
         }
-        return rows > 0
     }
 
     /**
@@ -937,12 +1056,13 @@ class RecurringLifecycleCoordinator @Inject constructor(
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markReminderSent")
 
         val now = timeProvider.now()
-        val existing = reminderDeliveryDao.getById(deliveryId) ?: return false
 
-        val rows = reminderDeliveryDao.markSentFromClaimed(deliveryId, notificationId, now)
-        if (rows > 0) {
-            // Write lifecycle event
-            try {
+        // MIT-043: Wrap markSent + event in a single transaction.
+        return database.withTransaction {
+            val existing = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction false
+
+            val rows = reminderDeliveryDao.markSentFromClaimed(deliveryId, notificationId, now)
+            if (rows > 0) {
                 lifecycleEventDao.insert(
                     RecurringLifecycleEvent(
                         occurrenceId = existing.occurrenceId,
@@ -953,22 +1073,22 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         metadata = """{"deliveryId":$deliveryId,"notificationId":$notificationId}"""
                     )
                 )
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                Timber.w(e, "Non-critical: failed to write REMINDER_SENT event for delivery %d", deliveryId)
             }
+            rows > 0
         }
-        return rows > 0
     }
 
     suspend fun markReminderFailed(deliveryId: Long, reason: String): Boolean {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markReminderFailed")
-        val existing = reminderDeliveryDao.getById(deliveryId) ?: return false
-        val status = if (reason.contains("permission", ignoreCase = true)) "FAILED_PERMISSION" else "FAILED_TRANSIENT"
+
         val now = timeProvider.now()
-        val rows = reminderDeliveryDao.markFailedFromClaimed(deliveryId, status, reason, now)
-        if (rows > 0) {
-            try {
+        val status = if (reason.contains("permission", ignoreCase = true)) "FAILED_PERMISSION" else "FAILED_TRANSIENT"
+
+        // MIT-043: Wrap markFailed + event in a single transaction.
+        return database.withTransaction {
+            val existing = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction false
+            val rows = reminderDeliveryDao.markFailedFromClaimed(deliveryId, status, reason, now)
+            if (rows > 0) {
                 lifecycleEventDao.insert(
                     RecurringLifecycleEvent(
                         occurrenceId = existing.occurrenceId,
@@ -982,12 +1102,9 @@ class RecurringLifecycleCoordinator @Inject constructor(
                         }.toString()
                     )
                 )
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                Timber.w(e, "Non-critical: failed to write REMINDER_DELIVERY_FAILED event for delivery %d", deliveryId)
             }
+            rows > 0
         }
-        return rows > 0
     }
 
     /**
@@ -1079,45 +1196,44 @@ class RecurringLifecycleCoordinator @Inject constructor(
     )
 
     /**
-     * Compares planned vs actual spending for a recurring rule over the past N months.
+     * Ensures occurrences are generated for the given rule and period.
+     * This is the EXPLICIT WRITE command — callers must do this before getting a report.
      *
-     * **Note:** This method has write side-effects — it calls [generateOccurrences]
-     * internally to ensure the database is up-to-date before computing the report.
-     * Despite the query-like name, this is NOT a pure read-only method.
-     *
-     * TODO(P4-NEW-008): Split into a pure query method and a separate
-     * "ensureGenerated" method so callers that only need the current snapshot
-     * don't trigger writes.
-     *
-     * Logic:
-     * 1. Generate occurrences for the past N months via [generateOccurrences].
-     * 2. Load all occurrences in that range.
-     * 3. Compare PAID occurrences (expectedAmount vs paidAmount).
-     * 4. Count PLANNED occurrences that have no linked expense.
-     * 5. Return a [ReconciliationReport] with drift analysis.
-     *
-     * @param ruleId The ID of the recurring rule.
-     * @param monthsBack Number of months to look back (default 3).
+     * P4-NEW-008: Extracted from reconcilePlannedVsActual to separate write from read.
      */
-    suspend fun reconcilePlannedVsActual(ruleId: Long, monthsBack: Int = 3): ReconciliationReport {
+    suspend fun ensureOccurrencesGeneratedForReconciliation(ruleId: Long, monthsBack: Int = 3) {
         val now = timeProvider.now()
         val endDate = TimePeriodUtils.getStartOfDay(now)
         val startDate = TimePeriodUtils.getStartOfMonth(
             TimePeriodUtils.addMonths(now, -monthsBack)
         )
 
-        // 1. Generate occurrences so the DB is up to date — must NOT create reminder deliveries
-        generateOccurrences(
-            ruleId = ruleId,
-            startDate = startDate,
-            endDate = endDate,
-            options = OccurrenceGenerationOptions(
-                createReminderDeliveries = false,
-                generationSource = OccurrenceGenerationSource.RECONCILIATION_REPORT
+        database.withTransaction {
+            generateOccurrences(
+                ruleId = ruleId,
+                startDate = startDate,
+                endDate = endDate,
+                options = OccurrenceGenerationOptions(
+                    createReminderDeliveries = false,
+                    generationSource = OccurrenceGenerationSource.RECONCILIATION_REPORT
+                )
             )
+        }
+    }
+
+    /**
+     * Calculates planned vs actual spending for a recurring rule over the past N months.
+     *
+     * P4-NEW-008: PURE READ — no DB writes. Callers must call
+     * [ensureOccurrencesGeneratedForReconciliation] first if fresh generation is needed.
+     */
+    suspend fun calculatePlannedVsActualReport(ruleId: Long, monthsBack: Int = 3): ReconciliationReport {
+        val now = timeProvider.now()
+        val endDate = TimePeriodUtils.getStartOfDay(now)
+        val startDate = TimePeriodUtils.getStartOfMonth(
+            TimePeriodUtils.addMonths(now, -monthsBack)
         )
 
-        // 2. Load all occurrences for this rule in the period
         val occurrences = occurrenceDao.getByDateRange(startDate, endDate)
             .filter { it.sourceType == SOURCE_TYPE_RECURRING_RULE && it.sourceId == ruleId }
 
@@ -1142,8 +1258,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     totalPlanned += occ.expectedAmount
                     unmatchedCount++
                 }
-                // SKIPPED, CANCELLED, MISSED, IGNORED are excluded from normal totals
-                else -> { /* excluded from planned vs actual */ }
+                else -> { /* excluded */ }
             }
         }
 
@@ -1163,5 +1278,36 @@ class RecurringLifecycleCoordinator @Inject constructor(
             unmatchedCount = unmatchedCount,
             overBudgetCount = overBudgetCount
         )
+    }
+
+    /**
+     * Compares planned vs actual spending for a recurring rule over the past N months.
+     *
+     * **Note:** This method has write side-effects — it calls [generateOccurrences]
+     * internally to ensure the database is up-to-date before computing the report.
+     * Despite the query-like name, this is NOT a pure read-only method.
+     *
+     * @deprecated Split into [ensureOccurrencesGeneratedForReconciliation] (explicit write)
+     *             + [calculatePlannedVsActualReport] (pure read).
+     *             Use those two methods instead of this combined one.
+     *
+     * Logic:
+     * 1. Generate occurrences for the past N months via [generateOccurrences].
+     * 2. Load all occurrences in that range.
+     * 3. Compare PAID occurrences (expectedAmount vs paidAmount).
+     * 4. Count PLANNED occurrences that have no linked expense.
+     * 5. Return a [ReconciliationReport] with drift analysis.
+     *
+     * @param ruleId The ID of the recurring rule.
+     * @param monthsBack Number of months to look back (default 3).
+     */
+    @Deprecated(
+        message = "Use ensureOccurrencesGeneratedForReconciliation() + calculatePlannedVsActualReport()",
+        replaceWith = ReplaceWith("this.ensureOccurrencesGeneratedForReconciliation(ruleId, monthsBack); this.calculatePlannedVsActualReport(ruleId, monthsBack)"),
+        level = DeprecationLevel.ERROR
+    )
+    suspend fun reconcilePlannedVsActual(ruleId: Long, monthsBack: Int = 3): ReconciliationReport {
+        ensureOccurrencesGeneratedForReconciliation(ruleId, monthsBack)
+        return calculatePlannedVsActualReport(ruleId, monthsBack)
     }
 }

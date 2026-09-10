@@ -1,0 +1,149 @@
+# GR-14f — mediation inline-carrier contract extension (GR-13 carrier
+# classification enablement).  Engine-only batch: NO production Kotlin
+# changed, no policy change, no baseline change.
+#
+# Scope: the async family's dominant root cause measured by the GR-14f
+# clustering pass (build/guard-debug/gr14f/, main-tree analysis pass) was
+# NOT escaping production code but the mediation carrier default: every
+# lambda not covered by the three-entry transparent wrapper table
+# (withTransaction / runInTransaction / withContext) classified its call
+# sites as uncertain async_dispatch, even when the carrier is Kotlin-inline
+# and cannot escape.  This batch admits a closed, reviewed inline-carrier
+# table (PRODUCTION_TRANSPARENT_INLINE_METHODS in callgraph.py) at the
+# MEDIATION LAYER ONLY — the GR-12 CanonicalBarrierContract, its dominance
+# engine, and its receiver/import admission are untouched.
+#
+# Fail-closed design (adversarially pinned by HP-13..HP-20 and
+# scripts/ci/test_gr14f_inline_carriers.py):
+#   - transparency grants no authorization (HP-20: unguarded caller stays
+#     COUNTEREXAMPLE_UNGUARDED_CALL_PATH);
+#   - assigned lambda literals still escape (HP-18);
+#   - carriers outside the closed set stay async_dispatch (HP-19: custom
+#     HOF; flow/sequence builders deliberately excluded as lazy carriers);
+#   - resolution preservation: an inline-carrier call site that cannot be
+#     exactly bound falls back to the historical conservative name-matched
+#     uncertain edge, so reverse-reachability never shrinks and no row
+#     loses real inbound/recursion evidence (test_inline_carrier_site_
+#     keeps_uncertain_evidence_when_unbindable).
+#
+# Shadow delta (gr-14e-wip tip 6affe67a worktree, before/after, same tree,
+# double-run byte-identical):
+#   proven_helper               29 -> 30
+#   proven_worker_mediated      10 -> 14
+#   unproven_async              300 -> 305 (composition change, see below)
+#   unproven_external_entry      64 -> 68 (overload-split, see below)
+#   unproven_recursion           38 -> 23 (phantom correction, see below)
+#   unproven_ambiguous_call       5 ->  6 (precise interface-dispatch exposure)
+#   DEFINITE_VIOLATION counterexamples: 1 -> 1 (unchanged; the known
+#     expression-body parser debt from GR-14e)
+#   diagnostics delta: none; mutation-key sets identical.
+#
+# Row-level review of all 47 moved rows (evidence: scc_probe2.out,
+# site_probe/key_probe.out, grep verification):
+#   +5  PROVEN: WarrantyExpirationWorker.deliverReminder x4 (guard context
+#       now flows through inline carriers) and
+#       TransactionLifecycleCoordinator.updateBusinessExpensePatch event
+#       insert (helper proven through inline error carrier).
+#   22  async/SITE_INSIDE_UNRESOLVED_LAMBDA -> async/UNCERTAIN_CALL_EDGE:
+#       within-category improvement; local lambda shape now clean, the
+#       remaining blocker is caller-side async dispatch (true remediation
+#       surface exposed).
+#   15  recursion -> async PHANTOM CORRECTION: the patched exact-edge set
+#       is a superset of the baseline's (plain-body resolution untouched),
+#       so no real cycle can have disappeared; probe shows NONE of the 15
+#       movers has any exact-SCC ancestor.  Baseline flags were inherited
+#       from genuinely-recursive utilities (EventMetadataSanitizer,
+#       Cloud*Service JSON extractors, LegacyDataMigrationService get*,
+#       AdvancedAnalyticsEngine period pair, BKTree.searchRecursive,
+#       AndroidSpeechInputGateway.destroy) through name-matched phantom
+#       caller edges.
+#    4  async -> external_entry ZERO_INBOUND (overload/precision split):
+#       WarrantyTrackerRepository.addReturnWindow and
+#       TransactionLifecycleCoordinator.writeUpdateValidationFailedEvent
+#       BestEffort have ZERO production call sites (grep-verified dead);
+#       TransactionLifecycleCoordinator.bulkUpdateCategory(String,Long,
+#       String) is precisely bound now (exact_synchronous edge from
+#       ExpenseRepository.updateExpenseCategoryBulk, probe-verified) and
+#       its (Long,Long,String) overload has zero call sites.
+#    1  async -> ambiguous: OperationRunRecorder.recoverStaleRunning
+#       OperationRuns inbound edge via CompositeOperationRunRecorder is
+#       precisely exposed as interface (virtual) dispatch; fail-closed.
+#
+# Consequence for the program estimate: the REAL recursion family is 23
+# rows rooted in 6 utility SCCs (one mechanical iterative-rewrite batch
+# releases them); the async family's remaining work is caller-side
+# dispatch/entry evidence, not 300 local refactors.
+schemaVersion: 1
+batchId: GR-14f
+startSha: 6affe67a2399c3df421f0ad3ea2d64ab966ef94e
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (GR-14e debt carried)
+mediationReportSha256Before: da8d43fdd6572c0a0ff1f6ce36f809d0232b8fd83afe8790a03a431cecf7fda7 # shadow_before.json
+mediationReportSha256After: 6bf538b4129c33e136065ddd31f0a552a11a618aa78a3b94a606e83ac919442f # shadow_after.json
+activePolicySha256: unchanged # no policy edit in this batch
+baselineSha256: unchanged # no baseline edit in this batch
+
+engineChanges:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+    - AnalysisContract.transparent_inline_methods field (validated: plain
+      identifiers, disjoint from guard/direct/wrapper method sets)
+    - PRODUCTION_TRANSPARENT_INLINE_METHODS closed reviewed table (31
+      entries: kotlin inline scope/error/resource/collection carriers,
+      kotlinx structured suspend scopes withLock/withTimeout, project
+      inline wrappers runOperation/runCatchingCancellable/
+      runPostCommitSafely with inline-execution evidence in the table
+      docstring)
+    - _lambda_regions admits inline carriers as transparent (name-exact,
+      same tier semantics as existing wrapper entries)
+    - _resolve_call resolution-preservation fallback for inline-carrier
+      sites that exact resolution cannot bind
+  - scripts/ci/inspect_db_mediation_proof.py: production contract wires
+    PRODUCTION_TRANSPARENT_INLINE_METHODS
+  - scripts/db_guard/mediation_analysis/fixture_runner.py: fixture
+    contract mirrors the production set (pin-tested)
+
+fixtures:
+  - helper_proof/hp13_let_inline_positive.kt
+  - helper_proof/hp14_apply_runcatching_inline_positive.kt
+  - helper_proof/hp15_foreach_map_inline_positive.kt
+  - helper_proof/hp16_structured_suspend_carrier_positive.kt
+  - helper_proof/hp17_project_helper_inline_positive.kt
+  - helper_proof/hp18_assigned_lambda_escape_negative.kt
+  - helper_proof/hp19_custom_carrier_stays_async_negative.kt
+  - helper_proof/hp20_transparent_not_authorization_negative.kt
+  consolidated manifest: 52 -> 60 rows (8 GR-14f rows)
+
+tests:
+  - scripts/ci/test_gr14f_inline_carriers.py (12: set pin, wiring pins,
+    disjointness, contract validation, 6 engine behavior proofs incl.
+    resolution-preservation)
+  - fixture battery: 52 checked (60 - 8 protocol), all pass, exit 0
+  - scripts/db_guard/mediation_analysis suite: 32 pass
+  - scripts/ci/test_inspect_db_mediation_proof.py: 23 pass
+  - GR-12 regression (untouched engine): test_transparent_scopes +
+    test_barrier_proof 43 pass
+
+validation:
+  - shadow determinism: two after-runs BYTE-IDENTICAL (adversarial #10)
+  - shadow before/after on the same tree, deltas reviewed row-level
+  - no production Kotlin changed -> compile/test runs NOT required
+  - Gradle DB task + GATE-00R double capture: OWED at merge (carried
+    with the GR-14e debt; this record is conditional on them)
+
+status: PARTIAL # code+fixtures+python gates green; merge gates owed
+
+selectedMutationKeys: # rows this batch PROVES
+  - WarrantyExpirationWorker.deliverReminder -> WarrantyReminderDeliveryDao.claim
+  - WarrantyExpirationWorker.deliverReminder -> WarrantyReminderDeliveryDao.insertOrIgnore
+  - WarrantyExpirationWorker.deliverReminder -> WarrantyReminderDeliveryDao.markFailed
+  - WarrantyExpirationWorker.deliverReminder -> WarrantyReminderDeliveryDao.markSentFromClaimed
+  - TransactionLifecycleCoordinator.updateBusinessExpensePatch -> TransactionEventDao.insert
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch changes engine classification to satisfy proof requirements.
+  It is not a baseline, exception, or authorization document.  Transparency
+  admits inline carriers into EXISTING context-propagation semantics only;
+  every moved row remains inside the closed proof vocabulary, no
+  DEFINITE_VIOLATION appeared, and the fail-closed adversarial corpus
+  (HP-13..HP-20) pins the boundaries.

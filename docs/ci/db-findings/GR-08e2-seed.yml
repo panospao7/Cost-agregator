@@ -1,0 +1,409 @@
+# GR-08 batch 5, part 2 (GR-08e2) reviewed exact v2 policy seed rows
+# (MIT-DB-08E).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: WarrantyTrackerRepository.kt -- 23 DB_UNAUTHORIZED_MUTATION findings
+# collapsing to 23 UNIQUE fingerprints (dedup key: callable identity +
+# daoAccessor + daoFqcn + operation; every finding in this file is a distinct
+# tuple -- no per-call-site repeats).  Unique count 23 <= the 25-fingerprint
+# batch cap.  The COMBINED GR-08e batch (GR-08e1-seed.yml + this file) would
+# carry 46 unique fingerprints > the cap, so the batch was SPLIT into
+# GR-08e1 / GR-08e2 (this file) per the GR-08c precedent (a split is forced
+# only above 25).  This is the REPOSITORY layer -- the legal writer for
+# warranty and return-window rows per docs/architecture/LEGAL_PATHS.md (the
+# file's own KDoc: WarrantyDao/ReturnWindowDao have no lifecycle abstraction
+# above them) -- so every row is a legal-writer EXACT_POLICY authorization.
+# Receipt data itself is still reached only through ReceiptRepository
+# (getReceiptById / insertReceipt), never through ScannedReceiptDao.
+#
+# barrierMode is `helper` for every row: the write barrier runs at the
+# repository public entrypoints (every mutating callable opens with
+# writeBarrier.checkWritesAllowed), not directly before each individual
+# mutation, and no direct-barrier proof is claimed.
+#
+# GR-08e SOURCE CHANGE (accessor normalization): the eight warranty lifecycle
+# event writes previously reached the DAO through the database-chained form
+# `database.warrantyLifecycleEventDao().insert(...)`.  The findings scanner
+# reports that receiver text verbatim
+# (`database.warrantyLifecycleEventDao()`), but the v2 source-evidence
+# verifier resolves chain-form bodies to the Room accessor identity
+# (`warrantyLifecycleEventDao`) and fails any row spelled with the chain
+# text (DB_V2_POLICY_MUTATION_NOT_FOUND -- empirically evidenced in
+# build/guard-debug/gr08e/probe-accessor-spellings.json), so NO spelling of a
+# chain-form row can pass both gates.  The batch therefore normalizes the
+# call sites to the codebase-standard constructor-property injection
+# (ReviewQueueRepository.kt precedent, GR-08d): `warrantyLifecycleEventDao`
+# is now an @Inject constructor property (provided by DaoModule) and the
+# eight rows below spell `warrantyLifecycleEventDao`.  Room caches DAO
+# instances per database, so the injected instance is the same object the
+# chained call returned; every write keeps its surrounding transaction /
+# cancellation-safe try-catch semantics and all lifecycle/privacy semantics
+# are preserved.  Callable signatures are unchanged, so every finding
+# fingerprint is unchanged.
+#
+# Closure additions (GR-08e blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in ALL mutating-callable bodies was enumerated, not just
+# the findings: the 23 findings == the 23 mutating DAO call sites, and every
+# called DAO method (WarrantyDao, ReturnWindowDao,
+# WarrantyLifecycleEventDao.insert) is an abstract Room-annotated method --
+# this file calls NO body-carrying @Transaction DAO convenience method (all
+# three DAOs are fully abstract interfaces).  The receiptRepository calls
+# (getReceiptById, insertReceipt) are repository-layer delegation through
+# the receipt lifecycle path, not DAO accessors, and carry no closure
+# obligation here.  Read-only callables (getAllWarranties,
+# getActiveWarranties, getWarrantiesByStatus, getWarrantiesExpiringSoon,
+# getWarrantyByReceiptId, getActiveWarrantyCount, getTotalProtectedValue,
+# getTotalProtectedValueAggregate, getAllReturnWindows, getActiveReturnWindows,
+# getReturnWindowsExpiringSoon, getReturnWindowByReceiptId,
+# extractWarrantyFromReceipt, extractWarrantyResult, extractReturnWindow,
+# processReceiptForWarranty) perform no mutations.
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 rows verbatim); passing only this file would
+# drop the earlier batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── addWarranty (2 rows) ─────────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: addWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: insertWarranty
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: manual warranty insert with provider-stamped createdAt/updatedAt (WRN-20), inside the addWarranty transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: addWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: WARRANTY_CREATED provenance event after the insert, inside the addWarranty transaction (cancellation-safe best-effort write); accessor normalized to the injected warrantyLifecycleEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── addWarrantyIgnoreConflicts (2 rows) ──────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: addWarrantyIgnoreConflicts
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: insertWarrantyIgnore
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: conflict-safe warranty insert (IGNORE keeps re-imports idempotent; id>0 gates all side effects), inside the addWarrantyIgnoreConflicts transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: addWarrantyIgnoreConflicts
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: WARRANTY_CREATED provenance event written only when the conflict-safe insert actually inserted a row, inside the addWarrantyIgnoreConflicts transaction (cancellation-safe best-effort write); accessor normalized to the injected warrantyLifecycleEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── updateWarranty (2 rows) ──────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: updateWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: updateWarranty
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: warranty entity update behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: updateWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: WARRANTY_UPDATED provenance event after a successful update (cancellation-safe best-effort write); accessor normalized to the injected warrantyLifecycleEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── deleteWarranty (2 rows) ──────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: deleteWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: deleteWarranty
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: warranty row delete behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: deleteWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: WARRANTY_DELETED provenance event after a successful delete (cancellation-safe best-effort write); accessor normalized to the injected warrantyLifecycleEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── rejectAutoDetectedWarranty (3 rows) ──────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: rejectAutoDetectedWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: deleteReturnWindow
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: linked return-window delete inside the S12-009 atomic-reject transaction (both deletions commit or roll back together)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: rejectAutoDetectedWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: deleteWarranty
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: auto-detected warranty delete inside the S12-009 atomic-reject transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: rejectAutoDetectedWarranty
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Warranty
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: AI_EXTRACTION_DISCARDED provenance event inside the S12-009 atomic-reject transaction (cancellation-safe best-effort write); accessor normalized to the injected warrantyLifecycleEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── markWarrantyAsClaimed (2 rows) ───────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: markWarrantyAsClaimed
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: updateWarrantyStatus
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: conditional status update to CLAIMED with provider-stamped claimedAt/updatedAt, inside the markWarrantyAsClaimed transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: markWarrantyAsClaimed
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: CLAIMED provenance event after the status update, inside the markWarrantyAsClaimed transaction (cancellation-safe best-effort write); accessor normalized to the injected warrantyLifecycleEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── reconcileExpiredItems (3 rows) ───────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: reconcileExpiredItems
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: markExpiredWarranties
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: conditional bulk expiry sweep (ACTIVE -> EXPIRED past warrantyEndDate) with provider-derived now; idempotent by status predicate"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: reconcileExpiredItems
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: markExpiredReturnWindows
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: conditional bulk expiry sweep (RETURNABLE -> EXPIRED past returnDeadline) with provider-derived now; idempotent by status predicate"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: reconcileExpiredItems
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: aggregate EXPIRED provenance event written only when at least one row expired (bounded counts in the description, no payloads; cancellation-safe best-effort write); accessor normalized to the injected warrantyLifecycleEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── toWarrantyEntityOrNull (1 row, private extension) ────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: toWarrantyEntityOrNull
+  receiver: com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+  daoAccessor: warrantyLifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: AI_EXTRACTION_DISCARDED diagnostic event (PR4-FINALGATE) written only when cloud confidence falls below the review band and the warranty is discarded (warrantyId=-1 sentinel, bounded description; cancellation-safe best-effort write); accessor normalized to the injected warrantyLifecycleEventDao constructor property by the GR-08e source change (was database-chained)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+# ── return-window writers (6 rows) ───────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: addReturnWindow
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ReturnWindow
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: insertReturnWindow
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: return-window insert with provider-stamped createdAt/updatedAt behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: updateReturnWindow
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ReturnWindow
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: updateReturnWindow
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: return-window entity update with provider-stamped updatedAt behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: deleteReturnWindow
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ReturnWindow
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: deleteReturnWindow
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: return-window row delete behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: markAsReturned
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double?
+  - String?
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: updateReturnWindow
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: RETURNED status write persisting refund amount/currency (W02 currency fallback chain: explicit -> linked expense -> home currency -> EUR last resort) behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: upsertReturnWindowForReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.Warranty?
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: insertReturnWindow
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: return-window creation branch of the receipt-driven upsert (existing==null guard keeps re-scans idempotent) behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.WarrantyTrackerRepository
+  kind: function
+  method: upsertReturnWindowForReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.Warranty?
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: updateReturnWindow
+  barrierMode: helper
+  reason: "GR-08e2 EXACT_POLICY: return-window refresh branch of the receipt-driven upsert (preserves user-visible state: status, returnedAt, refund fields, createdAt) behind the write barrier"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E

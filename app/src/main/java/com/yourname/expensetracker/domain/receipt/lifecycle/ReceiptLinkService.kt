@@ -1,9 +1,10 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
-import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.ExpenseCategoryAssignmentPort
 import com.yourname.expensetracker.domain.transaction.CategoryAssignmentOutcome
+import com.yourname.expensetracker.domain.transaction.TransactionContext
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
@@ -106,7 +107,8 @@ class ReceiptLinkService @Inject constructor(
     private val timeProvider: TimeProvider,
     private val writeBarrier: DatabaseWriteBarrier,
     private val sourceLinkWriter: SourceLinkWriter,
-    private val categoryAssignmentPort: ExpenseCategoryAssignmentPort
+    private val categoryAssignmentPort: ExpenseCategoryAssignmentPort,
+    private val transactionRunner: DomainTransactionRunner
 ) {
 
     /**
@@ -186,12 +188,16 @@ class ReceiptLinkService @Inject constructor(
         //    claim affects 0 rows and we throw ReceiptAlreadyClaimedException to roll back
         //    the just-inserted link, then convert it to a Result.failure below.
         return try {
-            database.withTransaction {
+            transactionRunner.runInTransaction(
+                correlationId = java.util.UUID.randomUUID().toString(),
+                operationId = "receipt.link_to_expense",
+                source = "ReceiptLinkService"
+            ) { ctx ->
             // For non-BANK_STATEMENT receipts: check if already linked (inside transaction)
             if (!isBankStatement && !allowRelink) {
                 val existingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
                 if (existingLinks.isNotEmpty()) {
-                    return@withTransaction Result.failure(
+                    return@runInTransaction Result.failure(
                         IllegalStateException(
                             "Receipt $receiptId is already linked to expense(s). " +
                             "Set allowRelink=true to force a new link."
@@ -212,7 +218,7 @@ class ReceiptLinkService @Inject constructor(
             )
             val linkId = receiptExpenseLinkDao.insert(link)
             if (linkId <= 0) {
-                return@withTransaction Result.failure(
+                return@runInTransaction Result.failure(
                     IllegalStateException(
                         "Duplicate link: receipt $receiptId is already linked to expense $expenseId"
                     )
@@ -277,7 +283,7 @@ class ReceiptLinkService @Inject constructor(
 
             // RCP-30: Propagate item majority category to expense if the expense
             // currently has no categoryId. Failures are logged but do not break linking.
-            runCatching {
+            try {
                 val categorizations = receiptItemCategorizationDao.getByReceiptId(receiptId)
                 if (categorizations.isNotEmpty()) {
                     val bestCategoryId = categorizations
@@ -308,19 +314,24 @@ class ReceiptLinkService @Inject constructor(
                         receiptId, expenseId, categoryFrequencies
                     )
                 }
-            }.onFailure { error ->
-                Timber.w(error, "RCP-30: Failed to propagate item category for receipt %d", receiptId)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "RCP-30: Failed to propagate item category for receipt %d", receiptId)
             }
 
             // 5. Write lifecycle event
-            receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                receiptId = receiptId,
-                sourceType = receipt.sourceType,
-                documentType = receipt.documentType,
-                eventType = "RECEIPT_LINKED_TO_EXPENSE",
-                actor = createdBy ?: "system",
-                message = "Receipt linked to expense $expenseId (type=$linkType, source=$source). Warranty/return expenseId propagated."
-            ))
+            receiptLifecycleEventWriter.write(
+                ctx,
+                ReceiptLifecycleEvent(
+                    receiptId = receiptId,
+                    sourceType = receipt.sourceType,
+                    documentType = receipt.documentType,
+                    eventType = "RECEIPT_LINKED_TO_EXPENSE",
+                    actor = createdBy ?: "system",
+                    message = "Receipt linked to expense $expenseId (type=$linkType, source=$source). Warranty/return expenseId propagated."
+                )
+            )
 
             // PR4: Write source link for provenance when enabled
             if (writeSourceLink) {
@@ -376,7 +387,11 @@ class ReceiptLinkService @Inject constructor(
 
             var affectedRows = 0
             // All operations inside a single database transaction
-            database.withTransaction {
+            transactionRunner.runInTransaction(
+                correlationId = java.util.UUID.randomUUID().toString(),
+                operationId = "receipt.unlink_from_expense",
+                source = "ReceiptLinkService"
+            ) { ctx ->
                 // 1. Delete link row and capture affected row count
                 affectedRows = receiptExpenseLinkDao.unlink(receiptId, expenseId)
 
@@ -384,7 +399,7 @@ class ReceiptLinkService @Inject constructor(
                 // clear receipt/warranty/return/item state — those mutations would
                 // be misleading because no link was actually removed.
                 if (affectedRows == 0) {
-                    return@withTransaction
+                    return@runInTransaction
                 }
 
                 // 2. Determine correct ScannedReceipt.expenseId after unlinking
@@ -429,14 +444,17 @@ class ReceiptLinkService @Inject constructor(
                 if (affectedRows > 0) {
                     val sourceType = receipt?.sourceType ?: "UNKNOWN"
                     val documentType = receipt?.documentType ?: "UNKNOWN"
-                    receiptLifecycleEventWriter.write(ReceiptLifecycleEvent(
-                        receiptId = receiptId,
-                        sourceType = sourceType,
-                        documentType = documentType,
-                        eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
-                        actor = "system",
-                        message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared."
-                    ))
+                    receiptLifecycleEventWriter.write(
+                        ctx,
+                        ReceiptLifecycleEvent(
+                            receiptId = receiptId,
+                            sourceType = sourceType,
+                            documentType = documentType,
+                            eventType = "RECEIPT_UNLINKED_FROM_EXPENSE",
+                            actor = "system",
+                            message = "Receipt unlinked from expense $expenseId. Warranty/return expenseId cleared."
+                        )
+                    )
                 }
             }
 

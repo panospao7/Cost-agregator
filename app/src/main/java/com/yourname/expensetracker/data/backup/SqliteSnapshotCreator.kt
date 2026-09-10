@@ -47,7 +47,7 @@ class SqliteSnapshotCreator @Inject constructor() {
             Timber.d("SqliteSnapshotCreator: VACUUM INTO succeeded")
             true
         } catch (e: Exception) {
-            Timber.d("SqliteSnapshotCreator: VACUUM INTO not supported, falling back: ${e.message}")
+            Timber.d("SqliteSnapshotCreator: VACUUM INTO not supported, using fallback (SQLITE_VACUUM_FALLBACK)")
             target.delete()
             false
         }

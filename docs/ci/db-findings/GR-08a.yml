@@ -1,0 +1,160 @@
+# GR-08 batch 1 (GR-08a) tracked batch manifest -- DB_UNAUTHORIZED_MUTATION
+# exact-policy authorization for NotificationProcessingPipeline.kt.
+#
+# Batch scope (plan): the two callables detectAndSaveSubscriptionCandidate
+# and handleAutoAcceptInTransaction.  Scope verification against the trusted
+# START report (build/guard-debug/gr08a/before.json, 497 findings):
+# the plan's "49 findings" figure is the WHOLE-FILE count for
+# NotificationProcessingPipeline.kt (5 callables).  The two batch callables
+# carry 19 findings collapsing to 5 UNIQUE fingerprints (dedup key:
+# callable identity + daoAccessor + daoFqcn + operation; the triage
+# fingerprint excludes line/column, so per-call-site repeats share one
+# fingerprint).  Unique count 5 <= 25, so NO batch split is required.
+# The remaining 30 file findings (processInternal,
+# handleNeedsReviewInTransaction, insertRawNotificationIfNotDuplicate)
+# stay UNAUTHORIZED and are deferred to a follow-up batch.
+schemaVersion: 1
+batchId: GR-08a
+startSha: 7f5dcf685adad1fad9ff1472fc747419e76975cc
+startReport:
+  path: build/guard-debug/gr08a/before.json
+  sha256: 2db097c51ddcdd61e5f8848f0f93ea843efcc2aace96334d9ffe77d2af2e4389
+  trusted: true
+  findingCount: 497
+activePolicySha256: 94a8bf0eaf9e463fe557ab810ca9d082c82e363201db8899e9f417cfc2bab4b4
+seedFile: docs/ci/db-findings/GR-08a-seed.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08A
+counts:
+  fileFindings: 49
+  batchCallablesFindings: 19
+  uniqueFingerprints: 5
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=detectAndSaveSubscriptionCandidate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao|identity.accessor=subscriptionCandidateDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleAutoAcceptInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markProcessed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleAutoAcceptInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markRelevance|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleAutoAcceptInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndAccepted|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleAutoAcceptInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndDuplicate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=detectAndSaveSubscriptionCandidate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22Long%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao|identity.accessor=subscriptionCandidateDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: detectAndSaveSubscriptionCandidate
+    receiver: null
+    parameterTypes:
+    - String
+    - Long?
+    kind: function
+  daoAccessor: subscriptionCandidateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+  operation: insert
+  locations: [1689]
+  disposition: EXACT_POLICY
+  rationale: "Post-commit subscription-candidate persistence writer (repository layer = legal writer layer per docs/architecture/LEGAL_PATHS.md and existing data/repository policy precedent); single insert guarded by pending-merchant dedupe; write barrier enforced at pipeline entrypoints (helper mode, no direct proof claimed)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows; finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleAutoAcceptInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markProcessed|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: handleAutoAcceptInTransaction
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RawNotification
+    - Long
+    - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+    - Long
+    - String?
+    - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markProcessed
+  locations: [1198, 1228, 1327, 1347, 1365, 1381]
+  disposition: EXACT_POLICY
+  rationale: "Terminal raw-notification state write on every auto-accept branch, atomically inside the pipeline DB transaction (P1-SLICE-D); expense creation itself goes through TransactionLifecycleCoordinator.createExpenseDbOnlyV2 per LEGAL_PATHS."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows; finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleAutoAcceptInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=markRelevance|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: handleAutoAcceptInTransaction
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RawNotification
+    - Long
+    - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+    - Long
+    - String?
+    - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: markRelevance
+  locations: [1185, 1215, 1275, 1337, 1355, 1371]
+  disposition: EXACT_POLICY
+  rationale: "Raw-notification relevance bookkeeping on every auto-accept branch inside the pipeline DB transaction; non-lifecycle bookkeeping DAO owned by the repository-layer pipeline writer."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows; finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleAutoAcceptInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndAccepted|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: handleAutoAcceptInTransaction
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RawNotification
+    - Long
+    - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+    - Long
+    - String?
+    - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndAccepted
+  locations: [1276]
+  disposition: EXACT_POLICY
+  rationale: "Per-source accepted counter increment after the coordinator reports Created; metrics-style bookkeeping owned by the pipeline writer."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows; finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationProcessingPipeline.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationProcessingPipeline|symbol.name=handleAutoAcceptInTransaction|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%2C%22Long%22%2C%22com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext%22%2C%22Long%22%2C%22String%3F%22%2C%22MutableList%3Ccom.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=incrementTotalAndDuplicate|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationProcessingPipeline.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationProcessingPipeline
+    method: handleAutoAcceptInTransaction
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RawNotification
+    - Long
+    - com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.PreDbContext
+    - Long
+    - String?
+    - MutableList<com.yourname.expensetracker.data.repository.NotificationProcessingPipeline.DeferredSourceLinkDiagnostic>
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: incrementTotalAndDuplicate
+  locations: [1186, 1216, 1338, 1356, 1372]
+  disposition: EXACT_POLICY
+  rationale: "Per-source duplicate counter increment on every auto-accept dedupe branch (canonical, pending-review, coordinator duplicate-skipped, insert-conflict, validation-failed)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08A
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows; finding absent from the after.json rescan."
+deferred:
+  note: "Remaining NotificationProcessingPipeline.kt findings NOT in this batch (stay unauthorized until their own batch): processInternal (21 findings / 6 unique fingerprints), handleNeedsReviewInTransaction (8 findings / 4 unique fingerprints), insertRawNotificationIfNotDuplicate (1 finding / 1 unique fingerprint)."
+  callables:
+  - processInternal
+  - handleNeedsReviewInTransaction
+  - insertRawNotificationIfNotDuplicate

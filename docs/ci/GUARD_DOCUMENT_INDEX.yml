@@ -1,0 +1,434 @@
+# GUARD_DOCUMENT_INDEX — machine-readable map of every guard-related document
+# (PR-GR-10D deliverable 1).
+#
+# Rules:
+# - Every document that claims a guard state, command, policy authority,
+#   baseline meaning, source scope, release status, or PR completion state
+#   appears exactly once.
+# - classification vocabulary (closed):
+#     CURRENT_ARCHITECTURE | CURRENT_OPERATIONS | CURRENT_EVIDENCE |
+#     NORMATIVE_TARGET | HISTORICAL_RECORD | PLAN_OR_BACKLOG |
+#     GENERATED_REFERENCE
+# - HISTORICAL_RECORD documents are preserved but visibly bannered; they are
+#   never current-state authority.
+# - PLAN_OR_BACKLOG documents may describe future work but must not present it
+#   as active implementation.
+# - Current documents may not rely on historical prose as authority; current
+#   status/counts come from docs/ci/GUARD_EVIDENCE_INDEX.yml via the generated
+#   references (GUARD_COMMANDS.generated.md / GUARD_STATUS.generated.md).
+# - lastReviewedSha is the exact SHA at which the entry's classification and
+#   current-state claims were last reviewed.
+# - Enforced by scripts/ci/verify_guard_docs_truth.py (registered guard
+#   guard_docs_truth).
+schemaVersion: 1
+documents:
+  # ── Generated references (renderer-owned; byte-reproducible) ────────────────
+  - id: guard-commands-generated
+    path: docs/ci/GUARD_COMMANDS.generated.md
+    classification: GENERATED_REFERENCE
+    authorityType: generated-reference
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/generate_guard_docs.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: guard-status-generated
+    path: docs/ci/GUARD_STATUS.generated.md
+    classification: GENERATED_REFERENCE
+    authorityType: generated-reference
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/generate_guard_docs.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  # ── Indexes ─────────────────────────────────────────────────────────────────
+  - id: guard-document-index
+    path: docs/ci/GUARD_DOCUMENT_INDEX.yml
+    classification: CURRENT_OPERATIONS
+    authorityType: index
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/verify_guard_docs_truth.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: guard-evidence-index
+    path: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    classification: CURRENT_EVIDENCE
+    authorityType: evidence-index
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/capture_db_guard_evidence.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  # ── DB ownership / architecture truth ───────────────────────────────────────
+  - id: db-write-ownership
+    path: docs/DB_WRITE_OWNERSHIP.md
+    classification: CURRENT_ARCHITECTURE
+    authorityType: explanatory
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/verify_db_access_boundaries.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    generatedSections:
+      - guard-status-summary
+    historicalClaimsAllowed: false
+  - id: guard-finding-protocol
+    path: docs/ci/GUARD_FINDING_PROTOCOL.md
+    classification: CURRENT_ARCHITECTURE
+    authorityType: normative-contract
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/guard_findings.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: guard-framework
+    path: docs/ci/guard-framework.md
+    classification: CURRENT_ARCHITECTURE
+    authorityType: normative-contract
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/guard_template.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: guard-policy
+    path: docs/ci/guard-policy.md
+    classification: CURRENT_ARCHITECTURE
+    authorityType: normative-contract
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/verify_guard_registry.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: db-room-inventory
+    path: docs/ci/DB_ROOM_INVENTORY.md
+    classification: CURRENT_ARCHITECTURE
+    authorityType: explanatory
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/db_guard/room_inventory.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: db-access-v2-triage-schema
+    path: docs/ci/DB_ACCESS_V2_TRIAGE_SCHEMA.md
+    classification: CURRENT_ARCHITECTURE
+    authorityType: explanatory
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/build_db_finding_triage.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: legal-paths
+    path: docs/architecture/LEGAL_PATHS.md
+    classification: CURRENT_ARCHITECTURE
+    authorityType: explanatory
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: dao-access-guardrails
+    path: docs/development/DAO_ACCESS_GUARDRAILS.md
+    classification: CURRENT_ARCHITECTURE
+    authorityType: explanatory
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/verify_db_access_boundaries.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  # ── GR-10 control-plane evidence matrices ───────────────────────────────────
+  - id: gr10a-command-authority-matrix
+    path: docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md
+    classification: CURRENT_EVIDENCE
+    authorityType: disposition-evidence
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/guard_execution_plan.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: gr10b-source-scope-matrix
+    path: docs/ci/GR-10B_SOURCE_SCOPE_MATRIX.md
+    classification: CURRENT_EVIDENCE
+    authorityType: disposition-evidence
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/guardrails/production_source_scope.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: db-access-v2-ratchet-debt
+    path: docs/ci/DB_ACCESS_V2_RATCHET_DEBT.md
+    classification: CURRENT_EVIDENCE
+    authorityType: reviewed-debt-manifest
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/guard_ratchet.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: deprecation-escalations
+    path: docs/ci/DEPRECATION_ESCALATIONS.md
+    classification: CURRENT_EVIDENCE
+    authorityType: tracked-changelog
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/verify_deprecation_escalations.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  # ── Current operations ──────────────────────────────────────────────────────
+  - id: db-guard-evidence-protocol
+    path: docs/ci/DB_GUARD_EVIDENCE_PROTOCOL.md
+    classification: CURRENT_OPERATIONS
+    authorityType: procedure
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/capture_db_guard_evidence.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: db-triage-procedure
+    path: docs/ci/DB_TRIAGE_PROCEDURE.md
+    classification: CURRENT_OPERATIONS
+    authorityType: procedure
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/build_db_finding_triage.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: db-policy-signatures
+    path: docs/ci/DB_POLICY_SIGNATURES.md
+    classification: CURRENT_OPERATIONS
+    authorityType: procedure
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/migrate_db_policy_signatures.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: migration-test-procedure
+    path: docs/ci/MIGRATION_TEST_PROCEDURE.md
+    classification: CURRENT_OPERATIONS
+    authorityType: procedure
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/verify_migration_matrix.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: gr00-gr04-validation-checklist
+    path: docs/ci/GR00-GR04_validation_checklist.md
+    classification: CURRENT_OPERATIONS
+    authorityType: checklist
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/verify_known_good_state.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  - id: developer-quickstart
+    path: docs/ci/developer-quickstart.md
+    classification: CURRENT_OPERATIONS
+    authorityType: procedure
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_registered_guard.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    generatedSections:
+      - guard-command-reference
+    historicalClaimsAllowed: false
+  - id: local-ci
+    path: docs/ci/local-ci.md
+    classification: CURRENT_OPERATIONS
+    authorityType: procedure
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    generatedSections:
+      - guard-command-reference
+    historicalClaimsAllowed: false
+  - id: readme
+    path: README.md
+    classification: CURRENT_OPERATIONS
+    authorityType: explanatory
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: false
+  # ── Normative targets (instruction authority; not evidence ledgers) ─────────
+  - id: final-ci-guard-acceptance-gate
+    path: FINAL_CI_GUARD_ACCEPTANCE_GATE.md
+    classification: NORMATIVE_TARGET
+    authorityType: acceptance-gate
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: agents-instructions
+    path: AGENTS.md
+    classification: NORMATIVE_TARGET
+    authorityType: instruction-authority
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/verify_guard_docs_truth.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  # ── Plans / backlog ─────────────────────────────────────────────────────────
+  - id: gr10d-plan
+    path: docs/guardrails/PR-GR-10D_documentation_and_evidence_truth_sync_plan.md
+    classification: PLAN_OR_BACKLOG
+    authorityType: plan
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/verify_guard_docs_truth.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  # ── Historical records (bannered; never current authority) ──────────────────
+  - id: gr00-gr04-validation-findings
+    path: docs/ci/GR00-GR04_validation_findings.md
+    classification: HISTORICAL_RECORD
+    authorityType: validation-log
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/verify_known_good_state.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: guard-finding-db-v2-ledger
+    path: docs/ci/GUARD_FINDING_DB_V2_LEDGER.md
+    classification: HISTORICAL_RECORD
+    authorityType: migration-ledger
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/guard_findings.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: db-guard-hardening-ledger
+    path: docs/ci/DB_GUARD_HARDENING_LEDGER.md
+    classification: HISTORICAL_RECORD
+    authorityType: amendment-ledger
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/capture_db_guard_evidence.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: ci-guardrails-baseline
+    path: docs/ci/CI_GUARDRAILS_BASELINE.md
+    classification: HISTORICAL_RECORD
+    authorityType: program-inventory
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: ci-guardrails-recovery-ledger
+    path: docs/ci/CI_GUARDRAILS_RECOVERY_LEDGER.md
+    classification: HISTORICAL_RECORD
+    authorityType: recovery-ledger
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: guard-violation-audit
+    path: docs/ci/GUARD_VIOLATION_AUDIT.md
+    classification: HISTORICAL_RECORD
+    authorityType: audit-snapshot
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: latest-ci-verification
+    path: docs/ci/LATEST_CI_VERIFICATION.md
+    classification: HISTORICAL_RECORD
+    authorityType: verification-snapshot
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: test-failure-ledger
+    path: TEST_FAILURE_LEDGER.md
+    classification: HISTORICAL_RECORD
+    authorityType: failure-ledger
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
+  - id: validation-findings-2026-08-09
+    path: VALIDATION_FINDINGS_2026-08-09.md
+    classification: HISTORICAL_RECORD
+    authorityType: validation-log
+    owner: "@panospao7"
+    lastReviewedSha: 9f583cc6964a888f9b51942627c2b4437d9abfcc
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/run_static_guard_suite.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true

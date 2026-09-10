@@ -51,17 +51,40 @@ Date()                                       // no-arg constructor
 
 ### Whitelisted files
 
-These files are **allowed** to call system clock APIs:
+The **canonical source of truth** for clock exceptions is
+`config/guards/time_boundary_exceptions.yml` (enforced by the `G-TIME-01`
+guard — see `docs/time/time-boundary-guard.md`). Only exact, source-verified
+entries are authorized:
 
-| File | Reason |
-|------|--------|
-| `SystemTimeProvider.kt` | Single production clock implementation |
-| `AppDatabase.kt` | Old migration code — do NOT touch |
-| `NotificationCaptureService.kt` | `SystemClock.elapsedRealtime()` for Android scheduling |
-| `SettlementCalculator.kt` | `System.nanoTime()` for DFS timeout |
-| `FinancialHealthScoreV2.kt` | `System.currentTimeMillis()` for perf timing |
-| `FinancialStressForecastEngine.kt` | `System.currentTimeMillis()` for perf timing |
-| `AppConstants.kt` | Duration constants (not calendar periods) |
+| Path | Class | Method | API | Reason | Owner | Linked Issue |
+|------|-------|--------|-----|--------|-------|--------------|
+| `domain/util/SystemTimeProvider.kt` | `SystemTimeProvider` | `now` | `System.currentTimeMillis` | Single production clock implementation | `@panospao7` | MIT-003 |
+| `domain/groups/SettlementCalculator.kt` | `SettlementCalculator` | `findMinimalTransferPlan` | `System.nanoTime` | Monotonic elapsed-duration DFS timeout | `@panospao7` | MIT-003 |
+| `data/database/AppDatabase.kt` | `MIGRATION_16_17` | `migrate` | `System.currentTimeMillis` | Room migration 16→17 data seeding during DB open (before Hilt TimeProvider injection) | `@panospao7` | MIT-003 |
+| `data/database/AppDatabase.kt` | `MIGRATION_41_42` | `migrate` | `System.currentTimeMillis` | Room migration 41→42 data seeding during DB open (before Hilt TimeProvider injection) | `@panospao7` | MIT-003 |
+
+The two AppDatabase rows are intentionally **separate exact entries** — one
+per migration lambda (`object MIGRATION_16_17 : Migration(16, 17)` /
+`object MIGRATION_41_42 : Migration(41, 42)`), so the guard never has to use a
+broad `AppDatabase.Companion`/`migrate` bucket that could mask future
+unreviewed wall-clock reads. `FRESH_INSTALL_CALLBACK` performs no direct clock
+reads and needs no entry.
+
+Each entry is an **exact, source-verified** row — one file, class, method, and API per row. The guard matches against real detected source evidence; stale or unverifiable entries cause a hard failure (exit 2).
+
+Notable non-exceptions:
+
+- `NotificationCaptureService.kt` uses `SystemClock.elapsedRealtime()` (Android
+  monotonic scheduling), which is **not** in the guarded API list and needs no
+  exception.
+- `FinancialHealthScoreV2.kt` and `FinancialStressForecastEngine.kt` previously
+  used `System.currentTimeMillis()` for perf timing; those usages are
+  **flagged** by the guard and must be migrated to
+  `TimeProvider`/`System.nanoTime()` — they are not clock adapters and get no
+  exception.
+- Temp-file names and UI identity IDs must use UUIDs (e.g.
+  `ReceiptOcrService.uniqueTempFileName`, `AssistantViewModel` conversation
+  IDs) — never `System.nanoTime()` for unique-name generation.
 
 ### New Phase 3 consumers follow the same contract
 
@@ -199,20 +222,342 @@ val range = TimePeriodUtils.getMonthRange(timeProvider.now())
 
 ---
 
+## Deferred Findings
+
+The following direct-time findings are **not authorized** by any exception or
+baseline. They are tracked for remediation in Time Batch T2–T6.
+
+### ReceiptAssetStore — deferred to T2
+
+`ReceiptAssetStore.kt:47,69` — `System.currentTimeMillis()` used directly for
+temp and persisted receipt naming. No exception or baseline authorizes these
+calls. They are deferred to **Time Batch T2** for migration to UUID-based or
+`TimeProvider`-backed naming.
+
+### Remaining guard-reported findings — pending T2–T6
+
+All other guard-reported direct-time findings outside the exact exception
+entries above remain **pending remediation** in batches T2 through T6. None
+are authorized. Do not add baselines, blanket exceptions, or source-line
+exemptions for these findings.
+
+### T1 scope (already authorized)
+
+T1 scope covers only the following authorized exceptions:
+
+1. `AppDatabase.kt` — two **separate exact exceptions** for the two Room
+   migration lambdas that seed data with `System.currentTimeMillis()` (DB
+   open, before Hilt `TimeProvider` injection): `MIGRATION_16_17.migrate`
+   (merchant_canonicals timestamps) and `MIGRATION_41_42.migrate` (default
+   exchange_rates.lastUpdated). `FRESH_INSTALL_CALLBACK` performs no direct
+   clock reads and needs no entry.
+2. `ReceiptOcrService` — `UUID.randomUUID()` for temp-file naming (not a
+   clock call; no exception entry needed).
+3. `AssistantViewModel` — `UUID.randomUUID()` for conversation IDs (not a
+   clock call; no exception entry needed).
+
+No broad exceptions or baselines extend beyond these.
+
+## Completed Batches
+
+### Time Batch T2B — DatabaseBackupRepositoryImpl (complete)
+
+`DatabaseBackupRepositoryImpl.kt` previously contained six remaining direct
+wall-clock reads used for filename / staging / restore naming. Time Batch
+**T2B** remediated all six. **No** time exception or baseline was added.
+
+Semantically timestamped, user-visible backup/safety names now derive their
+timestamp from the injected `TimeProvider.now()` via
+`Instant.ofEpochMilli(...).atZone(ZoneId.systemDefault()).toLocalDateTime()`
+(no `LocalDateTime.now()`):
+
+- `exportDatabase` (legacy debug raw DB export) — `expense_tracker_backup_<timestamp>.db` / `.enc`
+- `createCostBackup` — output bundle `expense_tracker_backup_<timestamp>_<uuid>.costbackup`;
+  `<timestamp>` comes from the same single `TimeProvider.now()` capture passed to
+  `CostbackupBundle.create` as `nowEpochMs`
+- `createSafetyBackupInternalAssumingMaintenance` — `expense_tracker_backup_SAFETY_<timestamp>.db`
+
+Uniqueness-only names now use `UUID.randomUUID()` (no
+`System.currentTimeMillis()`); prefixes, file extensions, cleanup matching,
+restore-journal `stagedDbPath`/`extractTempDirPath` persistence, and path
+safety are unchanged:
+
+- `exportDatabase` — internal `temp_export_<uuid>.db` sanitize/encrypt copy
+- `createCostBackup` — snapshot temp `costbackup_snapshot_<uuid>.db`
+- `restoreCostBackup` — staging DB `expense_tracker_db_import_stage_<uuid>`
+- `restoreCostBackup` — extract temp dir `costbackup_extract_<uuid>`
+- `importDatabase` (legacy debug import) — staging DB `expense_tracker_db_import_stage_<uuid>`
+
+A static source test in `DatabaseBackupRepositoryImplTest` asserts that no
+`System.currentTimeMillis()` / `LocalDateTime.now()` remains in the file, and
+focused tests assert the timestamped filenames are derived from a deterministic
+`FakeTimeProvider` and that staging names use UUID prefixes.
+
+Later Time Batch work (T2 ReceiptAssetStore and all T2–T6 findings listed above)
+remains **pending** — it is not marked complete by this batch.
+
+### Time Batch T3C — DefaultAiEnvironmentMonitor TTL cache (complete)
+
+`DefaultAiEnvironmentMonitor` previously used a raw
+`System.currentTimeMillis()` call to manage its TTL cache freshness check.
+Time Batch **T3C** replaced this with the injected `TimeProvider` so the cache
+is now fully testable and consistent with project time semantics.
+
+Boundary semantics:
+
+- `< 1500ms` since last check → **fresh**, cache entry reused.
+- `>= 1500ms` since last check → **refresh**, monitor re-evaluates environment.
+
+Deterministic `FakeTimeProvider` tests cover:
+
+- **fresh** — elapsed time below the 1500 ms threshold;
+- **exact boundary** — elapsed time exactly at the 1500 ms threshold (triggers refresh);
+- **past boundary** — elapsed time well beyond the threshold;
+- **advancement** — time moves forward across multiple checks, verifying the cache
+  transitions from fresh to stale.
+
+**No** time exception or baseline was added. The class obtains time exclusively
+through `TimeProvider` and the existing guard exception list is unchanged.
+
+Later time findings outside T3C scope remain **pending** in subsequent batches.
+
+### Time Batch T4A Tier 2 — Analytics weekday / DST semantics (complete)
+
+T4A replaces the analytics engines' direct `java.util.Calendar` day-of-week
+reads with `java.time` / `TimePeriodUtils` while preserving each engine's
+documented weekday convention. Tier 1 migrated the production reads; **Tier 2**
+adds boundary and DST regression coverage on the real `AdvancedAnalyticsDashboard`
+path and documents the weekday mapping each engine uses.
+
+Weekday mapping by engine:
+
+- **`SpendingPersonalityClassifier`** — `calculateWeekendSpendShare` uses
+  `TimePeriodUtils.getDayOfWeek` (Calendar style: Sunday=1 … Saturday=7) and
+  compares against `Calendar.SATURDAY`/`Calendar.SUNDAY` to preserve the
+  original weekend semantics. `calculateNightSpendShare` uses
+  `TimePeriodUtils.getHourOfDay` (0–23, system zone) for the `>= 8 PM` night
+  threshold. No wall-clock reads were introduced — both helpers are pure,
+  seeded from the transaction timestamp.
+- **`DayOfWeekAnalyzer`** — `analyze` uses `java.time.DayOfWeek.value`
+  (Monday=1 … Sunday=7); subtracting 1 yields the **Monday=0 … Sunday=6**
+  `dayIndex` that indexes `DAY_NAMES` (Mon…Sun). The stable Mon→Sun output
+  order is unchanged.
+- **`AdvancedAnalyticsDashboard`** — `getWeeklyPattern` uses
+  `java.time.DayOfWeek.value` directly for the `weeklyPattern` buckets
+  (**Monday=1 … Sunday=7**, matching `DayOfWeekSpending.dayOfWeek` and the
+  1→Monday/7→Sunday `dayNames` map). `generateInsights` compares
+  `SATURDAY`/`SUNDAY` via `java.time.DayOfWeek` to preserve the weekend
+  spending insight.
+
+Fixed DST / boundary regression tests added (Tier 2):
+
+- `AdvancedAnalyticsDashboardTest` — **Sunday purchases map to day 7 and
+  Monday to day 1 through the real weekly pattern path**: purchases on
+  2026-03-01 (Sunday) and 2026-03-02 (Monday) land in `dayOfWeek == 7` and
+  `dayOfWeek == 1` via `generateDashboardData` → `getWeeklyPattern`, and a
+  deposit does not inflate the pattern's transaction counts.
+- `AdvancedAnalyticsDashboardTest` — **DST spring-forward fixed timestamps
+  preserve Sunday/Monday mapping and insight behavior**: with the default
+  zone pinned to `America/New_York`, fixed instants before (01:30 EST) and
+  after (03:30 EDT) the Sunday 2026-03-08 02:00→03:00 transition are asserted
+  to be exactly one real hour apart (23-hour day), both still map to Sunday
+  (`dayOfWeek == 7`), the following Monday maps to `dayOfWeek == 1`, and the
+  weekend `SPENDING_PATTERN` insight still fires for the DST-day spend.
+- Existing Tier 1 boundary tests remain: `DayOfWeekAnalyzerTest`
+  (Sunday/Monday boundary → `dayIndex` 6/0, DST spring-forward) and
+  `SpendingPersonalityClassifierTest` day/hour coverage.
+
+**Explicitly still pending (T4B and later):**
+
+- Budget engine Calendar loops / `AdvancedAnalyticsEngine` weekday mapping and
+  weekend classification still read `Calendar` constants.
+- `TimePeriodUtils` internal `Calendar`-based strategy migration to
+  `java.time`.
+
+This batch is **not** a claim that all T4 time work is complete — the items
+above remain pending.
+
+### Time Batch T4 Tier 3 — Injected-clock timing + day-key migration (complete)
+
+Tier 3 removes the last direct wall-clock reads from the health-score timing
+diagnostic and the cash-flow day-key formatter:
+
+- **`FinancialHealthScoreV2.calculateHealthScore`** — the two
+  `System.currentTimeMillis()` reads behind the "calculated in Nms"
+  performance diagnostic now come from the injected `TimeProvider`:
+  `val startTime = timeProvider.now()` is captured once before the
+  calculation and the duration is `timeProvider.now() - startTime`.
+  Diagnostic text and behavior are unchanged and no raw data is logged. A
+  deterministic `FakeTimeProvider` test asserts the reported duration is the
+  injected-clock delta (exactly `0ms` for a fixed fake, never a
+  non-deterministic wall-clock elapsed figure) while preserving score
+  semantics.
+- **`CashFlowCalculator.formatDayKey`** — the `Calendar`-based day-key
+  formatter now derives the zero-padded `yyyy-MM-dd` (Locale.US) key from
+  `TimePeriodUtils.getYear` / `getMonth() + 1` / `getDayOfMonth`. The helper
+  is `internal` so focused boundary tests can assert the exact fixed format.
+  Boundary coverage was added through the real calculation path: a leap-day
+  occurrence (2024-02-29) lands on the Feb 29 entry, and occurrences due
+  2025-12-31 vs 2026-01-01 stay on distinct day keys across the month/year
+  boundary, plus direct fixed-format assertions on the helper.
+
+**Explicitly still pending (T4B and later):**
+
+- `TimePeriodUtils` internal `Calendar`-based strategy migration to
+  `java.time`.
+
+**No** time exception or baseline was added or edited: the removed calls are
+strictly decreases in direct-time usage, so the existing
+`config/guards/time_boundary_exceptions.yml` is unchanged.
+
+### Time Batch T4B-2 — CashFlowCalculator deterministic LocalDate day iteration (complete)
+
+`CashFlowCalculator.calculateDailyCashFlow` no longer iterates days with a
+`java.util.Calendar` cursor (`calendar.time = startDate; while
+(calendar.time.before(endDate)) { ... calendar.add(Calendar.DAY_OF_MONTH, 1) }`).
+It now uses a deterministic `java.time.LocalDate` cursor in the system-default
+timezone:
+
+- The first day is `Instant.ofEpochMilli(startTime).atZone(ZoneId.systemDefault()).toLocalDate()`.
+- A calendar day `D` is emitted for the half-open range `[startTime, endTime)`
+  iff `D.atStartOfDay(zone) < endTime`.
+- The cursor advances with `LocalDate.plusDays(1)` — never fixed `DAY_MS`, which
+  is wrong on 23/25-hour DST days.
+- Per-day boundaries (`dayStart`/`dayEnd`) are derived with `atStartOfDay(zone)`,
+  equivalent to `TimePeriodUtils.getStartOfDay/getEndOfDay` (half-open
+  `[start, end)`), so DST days and leap days each produce exactly one entry.
+- Historical expenses are grouped by the canonical `formatDayKey` (the T4 Tier 3
+  helper) instead of an inline `Calendar` field read; keys are unchanged
+  (`yyyy-MM-dd`, Locale.US, zero-padded).
+- `DailyCashFlow.date` is the day's start boundary (`Date(dayStart)`); for the
+  day-aligned ranges used by callers this is identical to the old cursor value.
+- Empty/invalid ranges (`startTime >= endTime`) still return an empty list
+  (explicit early return; the old cursor loop also produced zero days).
+- The detected-pattern day match uses the same `dayStart`/`dayEnd` (unchanged
+  half-open semantics against `nextExpectedDate`).
+
+Boundary regression tests added on the real calculation path
+(`CashFlowCalculatorTest`):
+
+- DST spring-forward (America/New_York 2026-03-08) — exactly one entry per day,
+  23-hour day boundary, both pre/post-transition expenses attributed to the same
+  local date key.
+- DST fall-back (America/New_York 2026-11-01) — exactly one entry per day,
+  25-hour day boundary, both occurrences of the repeated 01:30 hour attributed
+  to Nov 1.
+- Leap day / month boundary (2024-02-28 → 2024-03-02) — one entry per local date
+  including 2024-02-29.
+- Exact end-exclusive — a row at exactly `endTime` is never surfaced and never
+  emitted as a day.
+- Empty and inverted ranges — both return no daily cash flows.
+- Events around midnight — 23:59:59 vs 00:00:00 attribution on the correct local
+  date keys.
+
+**No** time exception or baseline was added or edited: the `Calendar` usage was
+strictly reduced. The separate pending item — `TimePeriodUtils` internal
+`Calendar`-based strategy migration to `java.time` — is **not** part of this
+batch.
+
+### Time Batch T4B-3 — BudgetCalculator java.time month-anchoring / day-coercion (implemented — validation pending)
+
+`BudgetCalculator.calculatePeriodWindowForTime` no longer uses
+`java.util.Calendar` for its month-anchoring and day-of-month coercion logic.
+The three Calendar sites are migrated to `TimePeriodUtils` / `java.time`
+(system-default timezone, half-open `[start, end)` contract preserved):
+
+1. **Base evaluation setup** — the `Calendar.getInstance()` anchor/eval dates
+   are replaced by a single `java.time.LocalDate` derived from the
+   caller-provided `evaluationTime` via `TimePeriodUtils.getStartOfDay` +
+   `Instant.atZone(ZoneId.systemDefault())`. The DAILY boundary (`+1 day`) and
+   the WEEKLY anchor-weekday walk (already java.time) now share this date.
+2. **MONTHLY month-anchoring / day-coercion** — the previous
+   `Calendar.DAY_OF_MONTH` / `Calendar.MONTH` add/set logic is replaced by
+   `LocalDate.withDayOfMonth(...)` / `plusMonths(...)` with explicit
+   day-of-month clamping (`coerceAtMost(lengthOfMonth())`) on both the start
+   and the exclusive end boundary. The "evaluation day before the coerced
+   anchor day → cycle started last month" rule is preserved verbatim.
+3. **YEARLY anniversary logic** — the previous `Calendar.MONTH` /
+   `Calendar.DAY_OF_MONTH` anniversary checks and `Calendar.YEAR` add/set
+   arithmetic are replaced by `LocalDate.monthValue` / `dayOfMonth` comparison
+   plus `LocalDate.of(...)` / `plusYears(1)`. A Feb 29 anchor still clamps to
+   Feb 28 in non-leap years on both boundaries.
+
+Preserved semantics (exact):
+
+- **Period start/end**: anchored-cycle boundaries at local midnight
+  (`atStartOfDay(zone)`), matching the previous `Calendar` midnight windows.
+- **Month-end coercion**: anchor day clamped to each target month's length
+  (Jan 31 → Feb 28/29, Mar 31 → Apr 30).
+- **Previous-month calculation**: evaluation before the coerced anchor day
+  shifts the cycle start to the previous month.
+- **Day-of-month clamping**: never produces an invalid day in any month.
+- **System-default timezone**: `ZoneId.systemDefault()` everywhere, matching
+  the previous `Calendar.getInstance()` behavior.
+- **Half-open boundaries**: `[startInclusiveMillis, endExclusiveMillis)`.
+- **DST**: boundaries are local midnights, so a period crossing a DST
+  transition spans 23/25-hour days; no fixed `DAY_MS` arithmetic is used
+  where calendar days/months are required.
+
+No money/currency behavior changed (pure period-boundary migration).
+
+Real-path boundary regression tests added (`BudgetCalculatorTimeBoundaryTest`):
+
+- Jan 31 previous month — leap and non-leap February ends;
+- leap February — active Feb 29 → Mar 29 cycle (anchor Feb 29 2024 evaluated
+  Mar 15 2024 keeps the current-month window anchored on Feb 29),
+  eval-before-anchor previous month with clamped start, and YEARLY
+  Feb 29 → Feb 28 non-leap clamping;
+- month-end / day-of-month coercion — Mar 31 → Apr 30 and anchor day 30 →
+  Feb 28/29;
+- DST — a MONTHLY window crossing the America/New_York 2026-03-08
+  spring-forward keeps local midnight boundaries and its wall-clock duration
+  is not a fixed `28 * DAY_MS`;
+- exact start/end — start inclusive, end exclusive, one ms before end
+  contained;
+- invalid range — an invalid `periodMode` throws a controlled
+  `IllegalArgumentException` (never silent CALENDAR fallback), and a
+  cross-product sweep of boundary anchors/evaluation dates never produces an
+  inverted window and always contains the evaluation time.
+
+**Explicitly still pending (T4B and later):**
+
+- `TimePeriodUtils` internal `Calendar`-based strategy migration to
+  `java.time`.
+- `AdvancedAnalyticsEngine` weekday mapping / weekend classification and
+  `AdvancedAnalyticsEngine.getMonthlyTrend` month cursor still read
+  `Calendar` constants.
+- Any other remaining domain time findings (for example
+  `SpendingPersonalityClassifier` / `AnomalyDetector` Calendar constant reads)
+  remain pending.
+
+**No** time exception or baseline was added or edited: the removed calls are
+strictly decreases in `Calendar` usage, so the existing
+`config/guards/time_boundary_exceptions.yml` is unchanged.
+
 ## Enforcing These Rules
 
-After changes, verify with grep scans:
+After changes, run the automated time-boundary guard:
 
 ```bash
-# Should only show whitelisted files
-rg "System\.currentTimeMillis\(\)" app/src/main/java/ --include="*.kt" -l | grep -v SystemTimeProvider | grep -v AppDatabase
-
-# Should return empty
-rg "Instant\.now\(\)" app/src/main/java/ --include="*.kt" -l
-rg "LocalDate\.now\(\)" app/src/main/java/ --include="*.kt" -l
-rg "LocalDateTime\.now\(\)" app/src/main/java/ --include="*.kt" -l
-
-# Should return empty
-rg "23:59:59" app/src/main/java/ --include="*.kt" -l
-rg "365L \* 24 \* 60 \* 60 \* 1000" app/src/main/java/ --include="*.kt" -l
+python3 scripts/verify_time_boundaries.py --root . --allowlist config/guards/time_boundary_exceptions.yml --fail-on-violation
 ```
+
+This script scans all Kotlin sources for forbidden direct-time calls
+(`System.currentTimeMillis()`, `Instant.now()`, `LocalDate.now()`,
+etc.) and compares every hit against the exception allowlist. Direct-time
+violations are **blocking** — the guard exits non-zero and CI fails.
+
+Entries in `config/guards/time_boundary_exceptions.yml` are **exact,
+source-verified** exceptions: each row names a specific file, class,
+method, and API so the guard knows precisely which usage was audited and
+approved. If your change introduces a new direct-time call, add a
+corresponding allowlist entry with all seven required fields — `path`,
+`class`, `method`, `api`, `reason`, `owner`, `linked_issue` — rather
+than disabling the guard.
+
+**Forbidden in exception entries:**
+
+- Wildcard `path`, `class`, `method`, or `api` values (`*`, `**`,
+  glob patterns) — each row must name exactly one source location.
+- Extra keys not in the seven-field schema — unknown keys cause a
+  parse error in the guard.

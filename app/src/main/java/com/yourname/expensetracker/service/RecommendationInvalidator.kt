@@ -1,7 +1,9 @@
 package com.yourname.expensetracker.service
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -19,6 +21,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class RecommendationInvalidator @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val repository: RecommendationRepository,
     private val stateManager: RecommendationStateManager,
     private val cacheService: RecommendationCacheService,
@@ -33,6 +36,7 @@ class RecommendationInvalidator @Inject constructor(
      * - User explicitly requests a refresh
      */
     suspend fun invalidateAllForUser(userId: String) {
+        writeBarrier.checkWritesAllowed("RecommendationInvalidator.invalidateAllForUser")
         withContext(ioDispatcher) {
             try {
                 // Clear cache
@@ -44,6 +48,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Trigger state refresh
                 stateManager.refreshForUser(userId)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to invalidate all recommendations for user=%s", userId)
             }
         }
@@ -55,6 +60,7 @@ class RecommendationInvalidator @Inject constructor(
      * Use this for periodic cleanup without triggering a full refresh.
      */
     suspend fun invalidateStale(userId: String) {
+        writeBarrier.checkWritesAllowed("RecommendationInvalidator.invalidateStale")
         withContext(ioDispatcher) {
             try {
                 // Expire old recommendations
@@ -66,6 +72,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Trigger state refresh to remove expired from UI
                 stateManager.refreshForUser(userId)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to invalidate stale recommendations for user=%s", userId)
             }
         }
@@ -86,6 +93,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Clear from state
                 stateManager.clearForUser(userId)
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to clear recommendations for user=%s", userId)
             }
         }
@@ -105,6 +113,7 @@ class RecommendationInvalidator @Inject constructor(
                 // Delete from database
                 repository.cleanupExpired()
             } catch (e: Exception) {
+                CancellationSafe.rethrowIfCancellation(e)
                 Timber.e(e, "Failed to cleanup expired recommendations")
                 0
             }

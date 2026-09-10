@@ -1,0 +1,446 @@
+﻿# GR-08 batch 10, part 1 (GR-08j1) tracked batch manifest -- top-density
+# files, group 1: data/database/AppDatabase.kt (structural path) +
+# domain/receipt/lifecycle/ReceiptLinkService.kt (seed path).
+#
+# Batch scope (plan): GR-08j covered FOUR top-density files as ONE batch,
+# with a forced split if the combined unique fingerprint count exceeded 25.
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08j/before.json == trusted GR-08i after.json,
+# 247 findings / 20 advisory diagnostics; reference copy SHA-256 recorded
+# below): AppDatabase.kt carries exactly 14
+# DB_FORBIDDEN_STRUCTURAL_OPERATION findings collapsing to 2 UNIQUE
+# fingerprints (MIGRATION_16_17.migrate execSQL x10 sites, MIGRATION_41_42.migrate
+# execSQL x4 sites) and ReceiptLinkService.kt carries exactly 12
+# DB_UNAUTHORIZED_MUTATION findings collapsing to 11 UNIQUE fingerprints
+# (dedup key: callable identity + daoAccessor + daoFqcn + operation; the two
+# unlinkReceiptFromExpense scannedReceiptDao.update sites share one
+# fingerprint).  Combined batch unique count 34 > the 25-fingerprint batch
+# cap, so the batch was SPLIT into GR-08j1 (this manifest: AppDatabase.kt +
+# ReceiptLinkService.kt, 26 findings / 13 unique fingerprints) and GR-08j2
+# (ExpenseWriteStore.kt + SourceStatsRepository.kt, 21 findings / 21 unique
+# fingerprints) per the GR-08c/GR-08e/GR-08i precedent; each part is within
+# the cap.
+#
+# APPDATABASE ADJUDICATION (GR-08j task-2 gate): the 14 findings are the
+# migrate(SupportSQLiteDatabase) bodies of the two NAMED-OBJECT Room
+# migrations `object MIGRATION_16_17` (merchant canonical/alias schema
+# v16->v17: CREATE TABLE merchant_canonicals + merchant_aliases, unique/
+# plain indexes, and the in-migration backfill of existing expenses into
+# both tables) and `object MIGRATION_41_42` (exchange_rates schema v41->v42:
+# CREATE TABLE exchange_rates, unique + cleanup indexes, default EUR rate
+# seeding).  Adjudicated as LEGITIMATE DB-INFRASTRUCTURE WRITERS, NOT
+# business-logic writers: execSQL on SupportSQLiteDatabase is the ONLY way
+# to perform a Room schema migration, and the data backfill/seeding must
+# stay inside the migration to keep schema + data atomic (a CODE_FIX that
+# moved the SQL out of the migration would break Room's migration contract).
+# The named-object form is deliberate (see the in-source comments: it gives
+# the G-TIME-01 time-guard scanner an exact per-migration attribution).
+# The db_access structural contract already authorizes the ANONYMOUS-object
+# migrations via the bounded `class: AppDatabase, method_pattern:
+# MIGRATION_\d+_\d+` entry, but the scanner attributes NAMED-object migrate
+# bodies to the object's OWN class (owner simple name MIGRATION_16_17 /
+# MIGRATION_41_42, method migrate), which that entry can never match.
+# Disposition: STRUCTURAL_EXCEPTION -- TWO exact tuples (class
+# MIGRATION_16_17 / MIGRATION_41_42, method_pattern migrate, operation
+# execSQL) added to config/guards/db_structural_exceptions.yml, mirrored in
+# config/guards/db_structural_exceptions_expected_methods.yml (counts
+# structural_entries 62 -> 64), and pinned in the immutable contract
+# MANIFEST_IMMUTABLE_EXPECTED_TUPLES + PINNED_STRUCTURAL_ENTRY_COUNT in
+# scripts/verify_db_access_boundaries.py.  These two tuples are NOT seed
+# rows (the findings carry no DAO identity; the v2 seed loader requires
+# daoAccessor/daoFqcn) and are NOT part of the GR-08-seeds.yml
+# concatenation.
+#
+# RECEIPTLINKSERVICE LAYER LEGALITY (LEGAL_PATHS.md, "LINK/UNLINK receipt"):
+# ReceiptLinkService.linkReceiptToExpense() / unlinkReceiptFromExpense() IS
+# the authoritative legal path -- it "Owns: join table + legacy field +
+# warranty/return/itemCategorization + event".  All 11 seed rows are
+# mutations inside that owned set, written inside the DomainTransactionRunner
+# transaction with the write barrier checked at the callable entrypoint
+# (writeBarrier.checkWritesAllowed first statement; CancellationException
+# rethrown, other barrier failures converted to Result.failure).  The S6
+# claimForAutoMatch compare-and-set is the load-bearing auto-match overlap
+# guard named by LEGAL_PATHS.md.  barrierMode is `helper` for every seed row
+# (the GR-08a..j batch convention; no direct-barrier proof is claimed).
+#
+# Chain-form census: ZERO database-chained `database.xxxDao()` call sites in
+# EITHER file.  ReceiptLinkService injects AppDatabase but never chains a
+# DAO accessor off it (every DAO call goes through an injected constructor
+# property); AppDatabase's structural findings are execSQL calls on the
+# migration's SupportSQLiteDatabase parameter, not DAO accessors.  NO
+# GR-08e accessor-normalization source change is needed for this batch.
+#
+# Closure additions (GR-08j blind-spot sweep): ZERO closure rows for BOTH
+# files.  ReceiptLinkService: every mutating DAO call in every
+# mutating-callable body is an abstract Room-annotated method already
+# covered by a finding (ReceiptExpenseLinkDao, ScannedReceiptDao,
+# WarrantyDao, ReturnWindowDao and ReceiptItemCategorizationDao carry ZERO
+# body-carrying @Transaction convenience methods; ExpenseDao's @Transaction
+# methods are read-only query composites and this file only calls the
+# read-only expenseDao.getById).  The two in-transaction port calls
+# (categoryAssignmentPort.assignCategoryIfUnset and
+# sourceLinkWriter.linkExpense) report their mutations in their OWN files
+# (DefaultExpenseCategoryAssignmentService.kt / SourceLinkWriterImpl.kt --
+# out of batch scope, still open in the 247), and
+# receiptLifecycleEventWriter.write reports in ReceiptLifecycleEventWriter.kt
+# (out of batch scope).  AppDatabase: the 14 structural findings are the
+# only unauthorized structural sites in the file (all other migrations are
+# anonymous-object form, covered by the existing bounded entry).
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 rows verbatim, 212 rows); passing
+# only GR-08j1-seed.yml would drop the earlier batches' rows from the
+# rendered candidate.
+schemaVersion: 1
+batchId: GR-08j1
+startSha: 1858260b
+startReport:
+  path: build/guard-debug/gr08j/before.json
+  # SHA-256 of the reference copy (trusted GR-08i after report; 247 findings
+  # / 20 advisory).  ORCHESTRATOR: fill this in from the reference-copy step
+  # before the generate step.  Reference copy created by the orchestrator
+  # (batch agent is command-prohibited); expected source:
+  # build/guard-debug/gr08i/after.json (trusted: true).
+  sha256: 
+  trusted: true
+  findingCount: 247
+activePolicySha256: 
+# ORCHESTRATOR: fill activePolicySha256 from the CURRENT active policy
+# (config/guards/db_ownership_policy.yml) at batch start, before generate.
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08J
+counts:
+  fileFindings: 26
+  batchCallablesFindings: 26
+  uniqueFingerprints: 13
+selectedFingerprints:
+- "v2|db_access|DB_FORBIDDEN_STRUCTURAL_OPERATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FAppDatabase.kt|symbol.owner=com.yourname.expensetracker.data.database.AppDatabase.MIGRATION_16_17|symbol.name=migrate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22androidx.sqlite.db.SupportSQLiteDatabase%22%5D|symbol.kind=function|identity.operation=execSQL"
+- "v2|db_access|DB_FORBIDDEN_STRUCTURAL_OPERATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FAppDatabase.kt|symbol.owner=com.yourname.expensetracker.data.database.AppDatabase.MIGRATION_41_42|symbol.name=migrate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22androidx.sqlite.db.SupportSQLiteDatabase%22%5D|symbol.kind=function|identity.operation=execSQL"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|identity.accessor=receiptExpenseLinkDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=claimForAutoMatch|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyDao|identity.accessor=warrantyDao|identity.operation=updateExpenseIdByReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReturnWindowDao|identity.accessor=returnWindowDao|identity.operation=updateExpenseIdByReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao|identity.accessor=receiptItemCategorizationDao|identity.operation=linkToExpense|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|identity.accessor=receiptExpenseLinkDao|identity.operation=unlink|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyDao|identity.accessor=warrantyDao|identity.operation=updateExpenseIdByReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReturnWindowDao|identity.accessor=returnWindowDao|identity.operation=updateExpenseIdByReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao|identity.accessor=receiptItemCategorizationDao|identity.operation=clearExpenseId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+# â”€â”€ AppDatabase.kt named-object migrations (2 fingerprints / 14 sites) â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_FORBIDDEN_STRUCTURAL_OPERATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FAppDatabase.kt|symbol.owner=com.yourname.expensetracker.data.database.AppDatabase.MIGRATION_16_17|symbol.name=migrate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22androidx.sqlite.db.SupportSQLiteDatabase%22%5D|symbol.kind=function|identity.operation=execSQL"
+  ruleId: DB_FORBIDDEN_STRUCTURAL_OPERATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.AppDatabase.MIGRATION_16_17
+    method: migrate
+    receiver: null
+    parameterTypes:
+    - androidx.sqlite.db.SupportSQLiteDatabase
+    kind: function
+  daoAccessor: null
+  daoFqcn: null
+  operation: execSQL
+  locations: [500, 516, 517, 518, 521, 535, 536, 537, 541, 557]
+  disposition: STRUCTURAL_EXCEPTION
+  rationale: "Named-object Room migration MIGRATION_16_17 (merchant canonical/alias schema v16->v17 with in-migration data backfill) -- legitimate DB-infrastructure writer; execSQL is the only way to perform a Room schema migration and the backfill must stay atomic with the DDL.  Resolved by an exact structural exception tuple (class MIGRATION_16_17, method_pattern migrate, operation execSQL), NOT a seed row (no DAO identity)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Exact tuple added to config/guards/db_structural_exceptions.yml + canonical manifest (counts 62 -> 64) + pinned immutable contracts; finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_FORBIDDEN_STRUCTURAL_OPERATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2FAppDatabase.kt|symbol.owner=com.yourname.expensetracker.data.database.AppDatabase.MIGRATION_41_42|symbol.name=migrate|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22androidx.sqlite.db.SupportSQLiteDatabase%22%5D|symbol.kind=function|identity.operation=execSQL"
+  ruleId: DB_FORBIDDEN_STRUCTURAL_OPERATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.AppDatabase.MIGRATION_41_42
+    method: migrate
+    receiver: null
+    parameterTypes:
+    - androidx.sqlite.db.SupportSQLiteDatabase
+    kind: function
+  daoAccessor: null
+  daoFqcn: null
+  operation: execSQL
+  locations: [1333, 1345, 1351, 1361]
+  disposition: STRUCTURAL_EXCEPTION
+  rationale: "Named-object Room migration MIGRATION_41_42 (exchange_rates schema v41->v42 with default-rate seeding) -- legitimate DB-infrastructure writer; same adjudication as MIGRATION_16_17.  Resolved by an exact structural exception tuple (class MIGRATION_41_42, method_pattern migrate, operation execSQL), NOT a seed row (no DAO identity)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Exact tuple added to config/guards/db_structural_exceptions.yml + canonical manifest (counts 62 -> 64) + pinned immutable contracts; finding absent from the after.json rescan."
+# â”€â”€ ReceiptLinkService link path (6 fingerprints / 6 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|identity.accessor=receiptExpenseLinkDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: linkReceiptToExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    - String
+    - String?
+    - Float?
+    - Boolean
+    - com.yourname.expensetracker.data.database.entity.MatchStatus?
+    - Boolean
+    - Boolean
+    kind: function
+  daoAccessor: receiptExpenseLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
+  operation: insert
+  locations: [219]
+  disposition: EXACT_POLICY
+  rationale: "Inserts the ReceiptExpenseLink join row inside the DomainTransactionRunner transaction after the in-transaction existing-links check; linkId <= 0 (unique-conflict) fails the link and rolls the transaction back."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=claimForAutoMatch|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: linkReceiptToExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    - String
+    - String?
+    - Float?
+    - Boolean
+    - com.yourname.expensetracker.data.database.entity.MatchStatus?
+    - Boolean
+    - Boolean
+    kind: function
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: claimForAutoMatch
+  locations: [242]
+  disposition: EXACT_POLICY
+  rationale: "S6 (P9-P1-07/NEW-07) atomic compare-and-set receipt claim -- only transitions while the receipt is still UNMATCHED/SUGGESTED; claimed == 0 throws ReceiptAlreadyClaimedException so the just-inserted link rolls back (concurrent auto-match runs can never double-link; LEGAL_PATHS.md names claimForAutoMatch the load-bearing overlap guard)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: linkReceiptToExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    - String
+    - String?
+    - Float?
+    - Boolean
+    - com.yourname.expensetracker.data.database.entity.MatchStatus?
+    - Boolean
+    - Boolean
+    kind: function
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  locations: [252]
+  disposition: EXACT_POLICY
+  rationale: "Legacy ScannedReceipt.expenseId back-compat update for non-BANK_STATEMENT receipts (RCP-8 updatedAt stamped, RCP-22 suggestedExpenseId cleared, resolved match status + confidence) inside the link transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyDao|identity.accessor=warrantyDao|identity.operation=updateExpenseIdByReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: linkReceiptToExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    - String
+    - String?
+    - Float?
+    - Boolean
+    - com.yourname.expensetracker.data.database.entity.MatchStatus?
+    - Boolean
+    - Boolean
+    kind: function
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: updateExpenseIdByReceiptId
+  locations: [265]
+  disposition: EXACT_POLICY
+  rationale: "I1 propagation of the expenseId to the receipt's warranties inside the link transaction (LEGAL_PATHS.md: the link service owns warranty propagation)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReturnWindowDao|identity.accessor=returnWindowDao|identity.operation=updateExpenseIdByReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: linkReceiptToExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    - String
+    - String?
+    - Float?
+    - Boolean
+    - com.yourname.expensetracker.data.database.entity.MatchStatus?
+    - Boolean
+    - Boolean
+    kind: function
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: updateExpenseIdByReceiptId
+  locations: [270]
+  disposition: EXACT_POLICY
+  rationale: "I1 propagation of the expenseId to the receipt's return windows inside the link transaction (LEGAL_PATHS.md: the link service owns return-window propagation)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=linkReceiptToExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22String%22%2C%22String%22%2C%22String%3F%22%2C%22Float%3F%22%2C%22Boolean%22%2C%22com.yourname.expensetracker.data.database.entity.MatchStatus%3F%22%2C%22Boolean%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao|identity.accessor=receiptItemCategorizationDao|identity.operation=linkToExpense|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: linkReceiptToExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - String
+    - String
+    - String?
+    - Float?
+    - Boolean
+    - com.yourname.expensetracker.data.database.entity.MatchStatus?
+    - Boolean
+    - Boolean
+    kind: function
+  daoAccessor: receiptItemCategorizationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+  operation: linkToExpense
+  locations: [278]
+  disposition: EXACT_POLICY
+  rationale: "RCP-6 propagation of the expenseId to the receipt's item categorizations inside the link transaction so per-expense category totals resolve (LEGAL_PATHS.md: the link service owns itemCategorization propagation)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ ReceiptLinkService unlink path (5 fingerprints / 6 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|identity.accessor=receiptExpenseLinkDao|identity.operation=unlink|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: unlinkReceiptFromExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: receiptExpenseLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao
+  operation: unlink
+  locations: [396]
+  disposition: EXACT_POLICY
+  rationale: "Deletes the join row and captures the affected-row count inside the unlink transaction; affectedRows == 0 takes the P3-NEW-09 no-op guard so receipt/warranty/return/item state is never cleared without a real unlink."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: unlinkReceiptFromExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  locations: [411, 419]
+  disposition: EXACT_POLICY
+  rationale: "Legacy-field reconciliation after a real unlink -- clears expenseId back to UNMATCHED when no primary links remain, or re-points expenseId to the first remaining primary link; the 2 call sites (both branches) share this one fingerprint."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.WarrantyDao|identity.accessor=warrantyDao|identity.operation=updateExpenseIdByReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: unlinkReceiptFromExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: warrantyDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.WarrantyDao
+  operation: updateExpenseIdByReceiptId
+  locations: [426]
+  disposition: EXACT_POLICY
+  rationale: "Clears the expenseId on the receipt's warranties inside the unlink transaction, after the no-op guard."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReturnWindowDao|identity.accessor=returnWindowDao|identity.operation=updateExpenseIdByReceiptId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: unlinkReceiptFromExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: returnWindowDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReturnWindowDao
+  operation: updateExpenseIdByReceiptId
+  locations: [431]
+  disposition: EXACT_POLICY
+  rationale: "Clears the expenseId on the receipt's return windows inside the unlink transaction, after the no-op guard."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLinkService.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|symbol.name=unlinkReceiptFromExpense|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao|identity.accessor=receiptItemCategorizationDao|identity.operation=clearExpenseId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService
+    method: unlinkReceiptFromExpense
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: receiptItemCategorizationDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao
+  operation: clearExpenseId
+  locations: [437]
+  disposition: EXACT_POLICY
+  rationale: "Clears the expenseId on the receipt's item categorizations inside the unlink transaction, after the no-op guard (RCP-6 reverse propagation)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08J
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for the GR-08j1 files: after the GR-08j1 promotion + structural tuple addition, AppDatabase.kt carries 0 DB_FORBIDDEN_STRUCTURAL_OPERATION findings (14/14 sites authorized across 2 structural tuples) and ReceiptLinkService.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (12/12 sites authorized across 11 fingerprints).  Out-of-batch stability: the rescan delta expectation for the WHOLE GR-08j batch is 247 -> 200 (47 = 14 AppDatabase + 12 ReceiptLinkService + 11 ExpenseWriteStore + 10 SourceStatsRepository); the remaining 200 include the still-unauthorized files deferred to future batches, which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

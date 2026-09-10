@@ -1,0 +1,352 @@
+# GR-08 batch 14, part 1 (GR-08n1) reviewed exact v2 policy seed rows --
+# DB_UNAUTHORIZED_MUTATION EXACT_POLICY authorization for
+# data/repository/AiArtifactRepositoryImpl.kt,
+# data/repository/BudgetRepository.kt and
+# data/repository/MerchantLocationRepository.kt.
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08n/before.json == trusted GR-08m after.json,
+# 92 findings / 20 advisory diagnostics): AiArtifactRepositoryImpl.kt
+# carries exactly 5 DB_UNAUTHORIZED_MUTATION findings / 5 UNIQUE
+# fingerprints, BudgetRepository.kt carries exactly 5 findings / 5 UNIQUE
+# fingerprints, and MerchantLocationRepository.kt carries exactly 4
+# findings / 4 UNIQUE fingerprints.  Every finding is its own tuple
+# (dedup key: callable identity + daoAccessor + daoFqcn + operation): the
+# two BudgetRepository deleteAll sites live in DIFFERENT callables
+# (deleteAll() line 800 and restoreDebugSnapshot() line 840), so they are
+# distinct fingerprints.  Combined batch scope (all SIX GR-08n files) is
+# 29 findings / 29 UNIQUE fingerprints > the 25-fingerprint batch cap, so
+# the batch was SPLIT into GR-08n1 (this manifest: AiArtifactRepositoryImpl.kt
+# + BudgetRepository.kt + MerchantLocationRepository.kt, 14 findings /
+# 14 unique fingerprints / 16 seed rows) and GR-08n2 (ReceiptRepository.kt +
+# InvestmentTracker.kt + SubscriptionManagerEngine.kt, 15 findings /
+# 15 unique fingerprints / 15 seed rows) per the
+# GR-08c/GR-08e/GR-08i/GR-08j/GR-08k/GR-08l/GR-08m precedent; each part is
+# within the cap.
+#
+# Layer legality:
+# * AiArtifactRepositoryImpl is the repository-layer legal writer for AI
+#   artifact persistence (the AiArtifactRepository interface impl; sole
+#   writer of AiArtifactDao per docs/architecture/dao-map.md).  Every
+#   mutating method runs writeBarrier.checkWritesAllowed at its entrypoint
+#   (upsert/markDismissed/markApplied/deleteExpired/deleteByTargetKey);
+#   observeLatest/getLatest are read-only.  upsert is the
+#   OnConflictStrategy.REPLACE artifact upsert keyed by the
+#   (targetKey, capability, promptVersion, sourceHash) unique index, so
+#   re-running a provider with the same inputs overwrites rather than
+#   accumulating duplicates; markDismissed/markApplied preserve the record
+#   for diagnostics while flipping status; deleteExpired is the TTL cleanup
+#   (SQL delete, no raw payloads materialized); deleteByTargetKey is the
+#   target-scoped cleanup (e.g. when a PendingReview is approved/rejected).
+# * BudgetRepository is the repository-layer legal writer for budgets (the
+#   legacy MIT-003 rows already cover addBudget/deleteBudget/updateBudget;
+#   THIS batch covers the maintenance/notification surface).  deleteAll is
+#   the documented bulk delete: the budget_forecasts -> budgets FK is
+#   CASCADE (schema v142), so DELETE FROM budgets purges every forecast and
+#   no orphan forecast rows can survive (P6-CURRENT-005 / P6-P1-15);
+#   restoreDebugSnapshot is BuildConfig.DEBUG-gated (returns an error in
+#   release builds) AND write-barrier-checked before any mutation, and both
+#   of its branches delete all budgets before re-inserting so the CASCADE
+#   leaves no orphans; updateExceededNotification/updateCriticalNotification/
+#   updateWarningNotification are the barrier-checked notification-timestamp
+#   stamps (lastExceededNotifiedAt/lastCriticalNotifiedAt/lastWarningNotifiedAt)
+#   written by the budget threshold notifier.
+# * MerchantLocationRepository is the repository-layer legal writer for the
+#   merchant-location cache (MerchantLocation) and user-location corrections
+#   (MerchantLocationCorrection) -- the sole MerchantLocationDao writer.
+#   Every mutating method runs writeBarrier.checkWritesAllowed at its
+#   entrypoint.  getCachedLocation/getCachedLocationForArea are cache
+#   lookups that increment the hit counter AFTER the freshness check (the
+#   hit-count write is the cache's only mutation on the read path);
+#   saveCorrection is the W13-fixed correction upsert (OnConflictStrategy.
+#   IGNORE returns 0 on conflict so callers can detect silent failures) that
+#   then mirrors the user's fix into the main cache; evictStaleCache is the
+#   TTL maintenance delete (SQL delete by cutoff, no payloads materialized).
+#
+# barrierMode is `helper` for every row (the GR-08a..m batch convention; the
+# write barrier runs at each callable entrypoint and no direct-barrier proof
+# is claimed per row).
+#
+# Closure additions (GR-08n1 blind-spot sweep): TWO closure rows for
+# body-carrying @Transaction DAO convenience methods the findings scanner
+# never reported (the GR-08b/GR-08d/GR-08l1 pattern):
+# * BudgetRepository.restoreDebugSnapshot -> budgetDao.replaceAllAndEnforceActiveScopes
+#   (the non-empty snapshot branch; the @Transaction convenience wraps
+#   deactivateAllActiveOverallBudgets/deactivateAllActiveCategoryBudgets +
+#   insertAll so scope enforcement stays atomic with the re-insert);
+# * MerchantLocationRepository.saveCorrection -> dao.upsertLocation
+#   (the cache-mirror write after the correction insert; the @Transaction
+#   convenience wraps getByNormalizedNameAndArea + updateExistingLocation/
+#   insertLocation so hitCount carry-forward stays atomic).
+# Every dao-accessor call in ALL batch callable bodies was enumerated, not
+# just the findings.  Out-of-scope blind spots (documented, NOT rowed --
+# they live in callables that carry NO findings, so they are outside this
+# batch's findings-derived scope, are invisible to the scanner for the same
+# convenience-method reason, and the coverage section either cannot see
+# them at all or lists them as observation-only): BudgetRepository.
+# toggleBudget -> budgetDao.setActiveAndEnforceScope, BudgetRepository.
+# updateBudgetOrThrow -> budgetDao.updateAndEnforceActiveScope, and
+# MerchantLocationRepository.saveLocation -> dao.upsertLocation.  All other
+# DAO-accessor calls in the batch callable bodies are read-only lookups
+# (AiArtifactDao.observeLatest/getLatest/getAll, BudgetDao.getAll/getById/
+# getActiveBudgets/getAllFlow/getActiveBudgetsFlow, CategoryDao.getAll/
+# getAllFlow, ExpenseDao.getOldestExpenseDate/observeExpenseMutationClock,
+# MerchantLocationDao.getGlobalByNormalizedName/
+# getByNormalizedNameAndArea/getCorrectionCandidates/
+# getLatestGlobalCorrection, MerchantLocationDao.count/correctionCount).
+#
+# Chain-form census AFTER review: ZERO database-chained
+# `appDatabase.xxxDao()` mutation receivers and ZERO method-local DAO
+# aliases in ALL THREE files.  None of the three files injects AppDatabase
+# at all; every DAO call goes through the injected constructor properties
+# dao (AiArtifactRepositoryImpl/MerchantLocationRepository) and budgetDao /
+# categoryDao / expenseDao / budgetForecastDao (BudgetRepository).
+# NO accessor-normalization source change is needed for this part.
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1 +
+# GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 rows verbatim, 353 rows
+# after GR-08n); passing only GR-08n1-seed.yml would drop the earlier
+# batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ─── AiArtifactRepositoryImpl.kt (5 findings-derived rows) ──────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: upsert
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.dto.AiArtifactRecord
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: upsert
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked AI artifact insert-or-replace behind the write barrier; the (targetKey, capability, promptVersion, sourceHash) unique index makes re-running a provider with the same inputs overwrite instead of accumulating duplicates"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: markDismissed
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: markDismissed
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked artifact dismissal -- flips status to DISMISSED so the UI does not resurface it while the record is preserved for diagnostics; updatedAt comes from the injected TimeProvider"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: markApplied
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: markApplied
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked artifact application -- flips status to APPLIED with a TimeProvider-supplied updatedAt so applied suggestions stay auditable"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: deleteExpired
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: deleteExpired
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked TTL cleanup -- SQL delete of artifacts whose expiresAt has passed (no raw payloads materialized into Kotlin memory); called by the artifact cleanup path with a TimeProvider-supplied now"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/AiArtifactRepositoryImpl.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.AiArtifactRepositoryImpl
+  kind: function
+  method: deleteByTargetKey
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
+  operation: deleteByTargetKey
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked target-scoped artifact cleanup (e.g. when a PendingReview is approved/rejected) -- SQL delete by targetKey, no payloads materialized"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+# ─── BudgetRepository.kt (5 findings-derived rows + 1 closure row) ──────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: deleteAll
+  receiver: null
+  parameterTypes: []
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked delete-every-budget maintenance; the budget_forecasts -> budgets FK is CASCADE (schema v142) so the single parent-table delete purges every forecast and no orphan forecast rows survive (P6-CURRENT-005 / P6-P1-15)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.BudgetRepository.DebugBudgetSnapshot
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: empty-snapshot branch of the debug-only budget restore -- BuildConfig.DEBUG-gated (errors in release) AND write-barrier-checked before any mutation; the CASCADE FK purge keeps forecasts consistent with the empty restore"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateExceededNotification
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateExceededNotification
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked lastExceededNotifiedAt stamp written by the budget threshold notifier so exceeded-budget notifications are not re-fired in a loop"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateCriticalNotification
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateCriticalNotification
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked lastCriticalNotifiedAt stamp written by the budget threshold notifier (dedup for critical-threshold notifications)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: updateWarningNotification
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: updateWarningNotification
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked lastWarningNotifiedAt stamp written by the budget threshold notifier (dedup for warning-threshold notifications)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/BudgetRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.BudgetRepository
+  kind: function
+  method: restoreDebugSnapshot
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.repository.BudgetRepository.DebugBudgetSnapshot
+  daoAccessor: budgetDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetDao
+  operation: replaceAllAndEnforceActiveScopes
+  barrierMode: helper
+  reason: "GR-08n1 CLOSURE: non-empty-snapshot branch of the debug-only budget restore, evidenced in this repository-layer class with no findings-report row (body-carrying @Transaction BudgetDao convenience method wrapping the scope deactivations + insertAll so active-scope enforcement stays atomic with the re-insert; GR-08b/GR-08d/GR-08l1 scanner blind-spot pattern)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+# ─── MerchantLocationRepository.kt (4 findings-derived rows + 1 closure row) ──
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: getCachedLocation
+  receiver: null
+  parameterTypes:
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: incrementHitCount
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked global cache-lookup hit-counter increment (areaKey = 'global') -- the cache's only mutation on the read path, written after the TTL freshness check so stale entries are not counted"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: getCachedLocationForArea
+  receiver: null
+  parameterTypes:
+  - String
+  - String
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: incrementHitCountForArea
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked area-scoped (v30) cache-lookup hit-counter increment -- written after the TTL freshness check on the normalized-name + areaKey lookup"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: saveCorrection
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: upsertCorrection
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked user-correction persistence -- OnConflictStrategy.IGNORE insert whose 0 return surfaces W13 conflicts to the caller instead of failing silently; the correction's normalizedMerchantName is already normalized (Bug #12: never double-normalized)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: saveCorrection
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.MerchantLocationCorrection
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: upsertLocation
+  barrierMode: helper
+  reason: "GR-08n1 CLOSURE: cache-mirror write that applies the user's fix to the main location cache immediately after the correction insert, evidenced in this repository-layer class with no findings-report row (body-carrying @Transaction MerchantLocationDao convenience method wrapping the get-or-update/insert so hitCount carry-forward stays atomic; GR-08b/GR-08d/GR-08l1 scanner blind-spot pattern)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/MerchantLocationRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.MerchantLocationRepository
+  kind: function
+  method: evictStaleCache
+  receiver: null
+  parameterTypes: []
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.MerchantLocationDao
+  operation: deleteStaleEntries
+  barrierMode: helper
+  reason: "GR-08n1 EXACT_POLICY: barrier-checked TTL maintenance -- SQL delete of cache entries older than the CACHE_TTL cutoff (called by the backfill/maintenance worker; no payloads materialized)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N

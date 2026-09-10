@@ -1,0 +1,92 @@
+# GR-14g — break the recursion-root SCC: analytics period-range pair.
+#
+# Scope: the GR-14f block-map probe (build/guard-debug/gr14f/blockmap.out)
+# attributed ALL 23 remaining recursion rows across 15 policy callables to
+# ONE exact-SCC: AdvancedAnalyticsEngine.getPeriodRange <->
+# getPreviousPeriodRange (flag-guarded mutual recursion, no DB mutations of
+# its own).  The other cyclic utilities (EventMetadataSanitizer, Cloud JSON
+# extractor pairs, LegacyDataMigrationService get*, BKTree.searchRecursive,
+# AndroidSpeechInputGateway.destroy) block ZERO policy rows and are
+# deliberately NOT touched (minimal diff; they stay cyclic and harmless to
+# the proof program).
+#
+# Remediation (Pattern A shape, pure period math, no mutation involved):
+# extract the non-recursive leaf `calculatePeriodRange` (single window,
+# comparisonRange always null); getPeriodRange now = leaf + optional
+# comparison via getPreviousPeriodRange, and getPreviousPeriodRange calls
+# the leaf instead of getPeriodRange(computeComparison=false).  Call graph:
+# getPeriodRange -> getPreviousPeriodRange -> calculatePeriodRange -> leaf
+# calculators; acyclic.
+#
+# Behavior preservation (characterization tests FIRST, run green on the
+# recursive code before the refactor, green after):
+#   app/src/test/.../AdvancedAnalyticsEnginePeriodRangeTest.kt (5 tests):
+#   base window independent of computeComparison; exactly one comparison
+#   level ever; null when disabled; week -7d / month -1m / quarter -3m /
+#   year -1y previous-window arithmetic.
+#   Existing AdvancedAnalyticsEngineTest.getPeriodRange-for-WEEK: green.
+#
+# Shadow delta (same tree, before = post-GR-14f state):
+#   unproven_recursion: 23 -> 0   (FAMILY ELIMINATED)
+#   unproven_async_or_escaping_callback: 305 -> 328
+#     (all 23 rows reclassified to their true remaining blocker:
+#      caller-side async dispatch — same surface as the async family)
+#   every other proof state, diagnostics, mutation-key sets: unchanged.
+schemaVersion: 1
+batchId: GR-14g
+startSha: 6e2d692d
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (GR-14e/f debt carried)
+mediationReportSha256Before: 6bf538b4129c33e136065ddd31f0a552a11a618aa78a3b94a606e83ac919442f # shadow_before.json (== post-GR-14f after-report)
+mediationReportSha256After: 08ed7ddb2792b2a67b8cfc47a7e830a9bd7f1d2ff744b199c8e570ece5c89aa0 # shadow_after.json
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsEngine.kt:
+    - new private leaf calculatePeriodRange(period, referenceDate)
+    - getPeriodRange delegates to leaf + optional comparison attach
+    - getPreviousPeriodRange computes previousRef then calls the leaf
+      (was: getPeriodRange(..., computeComparison = false))
+
+tests:
+  - app/src/test/java/com/yourname/expensetracker/domain/analytics/AdvancedAnalyticsEnginePeriodRangeTest.kt
+    (5 characterization tests, run green BEFORE the refactor on the
+    recursive implementation, green AFTER)
+  - focused run: :app:testDebugUnitTest --tests "*AdvancedAnalyticsEnginePeriodRangeTest*"
+    --tests "*AdvancedAnalyticsEngineTest*" -> 8 PASSED, 0 failed
+    (build/guard-debug/gr14g/test_before.log, test_after.log)
+
+validation:
+  - mediation shadow before/after: recursion 23 -> 0, no other category
+    moved, diagnostics none, mutation-key sets identical
+  - Kotlin compile+test via focused unit-test run: BUILD SUCCESSFUL
+  - Gradle DB task + GATE-00R double capture: OWED at merge (carried with
+    GR-14e/f debt; this record is conditional on them)
+
+status: PARTIAL # code+tests+shadow green; merge gates owed
+
+rootCause: RECURSION
+selectedPattern: A # local direct leaf; no mediated layering needed
+selectedMutationKeys: # family released by this batch (23 rows over 15 callables)
+  - DiagnosticEventWriter.emit
+  - ExpenseWriteStore.insert
+  - MerchantCategoryRepository.insert
+  - MerchantNormalizationRepository.insertCanonical
+  - MerchantNormalizationRepository.linkAliasToCanonical
+  - PrivacyAuditLoggerImpl.logDecision
+  - ReceiptLifecycleEventWriter.write
+  - RecurringOccurrenceMaterializer.materializeInCurrentTransaction
+  - RecurringPlanProjectionService.projectFromOccurrencesInCurrentTransaction
+  - RecurringRuleLifecycleCoordinator.createRule
+  - TransactionLifecycleEventWriter.write
+  - UserCorrectionRepository.insert
+  - WarrantyTrackerRepository.addWarrantyIgnoreConflicts
+  - WarrantyTrackerRepository.toWarrantyEntityOrNull
+  - WarrantyTrackerRepository.upsertReturnWindowForReceipt
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch changes source architecture to satisfy proof requirements
+  (one mediation graph, well under the batch cap).  It is not a baseline,
+  exception, or authorization document.

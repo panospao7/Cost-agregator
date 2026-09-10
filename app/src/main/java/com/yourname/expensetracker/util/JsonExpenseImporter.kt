@@ -7,12 +7,15 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
+import com.yourname.expensetracker.domain.util.TimeProvider
+import org.json.JSONException
 import org.json.JSONObject
 import javax.inject.Inject
 
 class JsonExpenseImporter @Inject constructor(
     private val coordinator: TransactionLifecycleCoordinator,
-    private val categoryDao: CategoryDao
+    private val categoryDao: CategoryDao,
+    private val timeProvider: TimeProvider
 ) {
     suspend fun importFromContent(
         jsonContent: String,
@@ -52,7 +55,7 @@ class JsonExpenseImporter @Inject constructor(
         val merchant = row.getString("merchant")
         val amount = row.optDouble("amount", row.optDouble("effectiveAmount", 0.0))
         val currency = row.optString("currency", "EUR")
-        val date = row.optLong("date", row.optLong("timestamp", System.currentTimeMillis()))
+        val date = resolveDate(row)
         val notes = row.optString("notes", null)
         val sourceStr = row.optString("source", null)
         val txTypeStr = row.optString("transactionType", "PURCHASE")
@@ -85,7 +88,7 @@ class JsonExpenseImporter @Inject constructor(
             merchant = row.getString("merchant"),
             amount = row.optDouble("amount", 0.0),
             currency = row.optString("currency", "EUR"),
-            date = row.optLong("date", row.optLong("timestamp", System.currentTimeMillis())),
+            date = resolveDate(row),
             transactionType = TransactionType.PURCHASE, source = ExpenseSource.CSV_IMPORT,
             categoryId = categoryId,
             notes = row.optString("notes", "").takeIf { it.isNotBlank() },
@@ -93,5 +96,41 @@ class JsonExpenseImporter @Inject constructor(
             idempotencyKey = row.optLong("id", i.toLong()).let { if (it > 0) "import:json:$it" else null },
             fileImportRunId = fileImportRunId
         )
+    }
+
+    /**
+     * Resolves the expense timestamp from a JSON row.
+     *
+     * Contract:
+     * - A present, valid `date` field is always preferred.
+     * - Otherwise a present, valid `timestamp` field is used.
+     * - Only when both fields are absent, null, or invalid is the time provider
+     *   consulted, and it is consulted exactly once, so imports stay deterministic.
+     *
+     * Validity mirrors [JSONObject.optLong]: numeric values (and numeric strings)
+     * are accepted; missing, null, or non-numeric values are treated as invalid.
+     * Parsing is collision-free: every `Long` value, including [Long.MIN_VALUE],
+     * is a legitimate parsed result and never a marker for "no value".
+     */
+    private fun resolveDate(row: JSONObject): Long {
+        parseEpochMillis(row, "date")?.let { return it }
+        parseEpochMillis(row, "timestamp")?.let { return it }
+        return timeProvider.now()
+    }
+
+    /**
+     * Parses `key` from `row` as epoch millis.
+     *
+     * Returns `null` when the field is absent, null, or not numeric, so callers
+     * can fall through to the next resolution step. A successfully parsed value
+     * is returned as-is even when it equals [Long.MIN_VALUE].
+     */
+    private fun parseEpochMillis(row: JSONObject, key: String): Long? {
+        if (!row.has(key) || row.isNull(key)) return null
+        return try {
+            row.getLong(key)
+        } catch (e: JSONException) {
+            null
+        }
     }
 }

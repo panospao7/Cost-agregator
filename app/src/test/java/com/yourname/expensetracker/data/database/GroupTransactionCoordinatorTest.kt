@@ -20,6 +20,7 @@ import com.yourname.expensetracker.domain.groups.GroupCreationResult
 import com.yourname.expensetracker.domain.groups.GroupExpenseCreationResult
 import com.yourname.expensetracker.domain.groups.GroupValidationError
 import com.yourname.expensetracker.domain.groups.Result
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -133,7 +134,8 @@ class GroupTransactionCoordinatorTest {
             database, groupDao, memberDao, groupExpenseDao, expenseDao,
             mockk(relaxed = true), transactionLifecycleCoordinator,
             transactionSideEffectPlanner, postCommitActionRunner,
-            writeBarrier, timeProvider, Dispatchers.Unconfined
+            writeBarrier, timeProvider, Dispatchers.Unconfined,
+            transactionRunner = mockk(relaxed = true)
         )
     }
 
@@ -216,7 +218,8 @@ class GroupTransactionCoordinatorTest {
             database, mockGroupDao, mockMemberDao, mockGroupExpenseDao, expenseDao,
             mockk(relaxed = true), transactionLifecycleCoordinator,
             mockk(relaxed = true), mockk<PostCommitActionRunner>(relaxed = true),
-            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined
+            mockk<DatabaseWriteBarrier>(relaxed = true), timeProvider, Dispatchers.Unconfined,
+            transactionRunner = mockk(relaxed = true)
         )
 
         // Act - Should throw exception

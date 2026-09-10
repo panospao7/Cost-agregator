@@ -43,6 +43,9 @@ class P7BugFixesTest {
 
     private lateinit var context: Context
 
+    /** Deterministic epoch-millis injected via FakeTimeProvider for all time-dependent code. */
+    private val fixedTime = 1716163200000L // 2024-05-20 00:00 UTC
+
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -65,7 +68,8 @@ class P7BugFixesTest {
         // mode, reason, AND timestamp in a single commit. A crash after
         // writing any subset must leave NO partial state.
         val reason = "P7BugFixesTest simulated critical failure"
-        val mode = RestoreMaintenanceMode(context)
+        val timeProvider = com.yourname.expensetracker.domain.util.FakeTimeProvider(fixedTime)
+        val mode = RestoreMaintenanceMode(context, timeProvider)
         mode.enterCriticalRecoveryRequired(reason)
 
         // Read the underlying SharedPreferences directly to verify all keys
@@ -89,9 +93,11 @@ class P7BugFixesTest {
         assertEquals(reason, savedReason)
 
         val savedTimestamp = prefs.getLong("critical_recovery_timestamp", 0L)
-        assertTrue(
-            "critical_recovery_timestamp must be written atomically and be > 0",
-            savedTimestamp > 0L
+        assertEquals(
+            "critical_recovery_timestamp must be written atomically and equal the " +
+                "injected TimeProvider time exactly",
+            fixedTime,
+            savedTimestamp
         )
 
         // The mode flow must also reflect the critical state
@@ -109,7 +115,7 @@ class P7BugFixesTest {
         // journalLock so concurrent calls do not interleave their
         // read-modify-write sequences and lose events.
 
-        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
+        val journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(fixedTime))
         val entry = journal.beginJournal(
             sourceBackupPath = "/tmp/src.costbackup",
             stagedDbPath = "/tmp/staged.db",
@@ -193,7 +199,8 @@ class P7BugFixesTest {
         val result1 = CostbackupBundle.extract(
             bundleFile = emptyFile,
             outputDir = tmp.newFolder("out_empty"),
-            password = "password"
+            password = "password",
+            nowEpochMs = fixedTime
         )
         assertTrue("Empty file must be rejected", result1.isFailure)
         assertTrue(
@@ -207,7 +214,8 @@ class P7BugFixesTest {
         val result2 = CostbackupBundle.extract(
             bundleFile = badMagicFile,
             outputDir = tmp.newFolder("out_badmagic"),
-            password = "password"
+            password = "password",
+            nowEpochMs = fixedTime
         )
         assertTrue("Bad magic must be rejected", result2.isFailure)
         assertTrue(
@@ -225,7 +233,8 @@ class P7BugFixesTest {
         val result3 = CostbackupBundle.extract(
             bundleFile = garbledFile,
             outputDir = tmp.newFolder("out_garbled"),
-            password = "password"
+            password = "password",
+            nowEpochMs = fixedTime
         )
         assertTrue("Garbled ciphertext must be rejected", result3.isFailure)
         // Should be one of: WrongBackupPasswordException, InvalidBackupFormatException,
@@ -246,7 +255,8 @@ class P7BugFixesTest {
             val result = CostbackupBundle.extract(
                 bundleFile = garbledFile,
                 outputDir = tmp.newFolder("out_stress_$i"),
-                password = "password"
+                password = "password",
+                nowEpochMs = fixedTime
             )
             assertTrue("Iteration $i must fail cleanly", result.isFailure)
         }

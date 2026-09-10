@@ -2,13 +2,15 @@ package com.yourname.expensetracker.domain.debug
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class ServiceDiagnostics @Inject constructor(
-    @ApplicationContext context: Context
+    @ApplicationContext context: Context,
+    private val timeProvider: TimeProvider
 ) {
     private val prefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -32,7 +34,7 @@ class ServiceDiagnostics @Inject constructor(
         synchronized(lock) {
             prefs.edit().apply {
                 putInt(KEY_SERVICE_START_COUNT, prefs.getInt(KEY_SERVICE_START_COUNT, 0) + 1)
-                putLong(KEY_LAST_RESTART_TIME, System.currentTimeMillis())
+                putLong(KEY_LAST_RESTART_TIME, timeProvider.now())
             }.commit()
         }
     }
@@ -41,7 +43,7 @@ class ServiceDiagnostics @Inject constructor(
         synchronized(lock) {
             prefs.edit().apply {
                 putInt(KEY_SERVICE_KILLED_COUNT, prefs.getInt(KEY_SERVICE_KILLED_COUNT, 0) + 1)
-                putLong(KEY_LAST_KILL_TIME, System.currentTimeMillis())
+                putLong(KEY_LAST_KILL_TIME, timeProvider.now())
             }.commit()
         }
     }

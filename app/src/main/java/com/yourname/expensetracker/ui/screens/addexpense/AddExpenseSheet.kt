@@ -839,13 +839,20 @@ fun DateSelector(
                 TextButton(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { selectedDate ->
-                            // Preserve time of day, just change the date
-                            val calOld = Calendar.getInstance().apply { timeInMillis = dateMs }
-                            val calNew = Calendar.getInstance().apply { timeInMillis = selectedDate }
-                            calNew.set(Calendar.HOUR_OF_DAY, calOld.get(Calendar.HOUR_OF_DAY))
-                            calNew.set(Calendar.MINUTE, calOld.get(Calendar.MINUTE))
-                            calNew.set(Calendar.SECOND, calOld.get(Calendar.SECOND))
-                            onDateSelected(calNew.timeInMillis)
+                            // Preserve time of day, just change the date.
+                            // G-TIME-01: pure derivation from the two existing
+                            // timestamps (java.time, system default timezone) —
+                            // same H/M/S carry-over and zero milliseconds the
+                            // Calendar version produced.
+                            val zone = ZoneId.systemDefault()
+                            val oldTime = Instant.ofEpochMilli(dateMs).atZone(zone)
+                            val newDate = Instant.ofEpochMilli(selectedDate).atZone(zone).toLocalDate()
+                            val newMillis = newDate
+                                .atTime(oldTime.hour, oldTime.minute, oldTime.second)
+                                .atZone(zone)
+                                .toInstant()
+                                .toEpochMilli()
+                            onDateSelected(newMillis)
                         }
                         showDatePicker = false
                     }

@@ -1,0 +1,165 @@
+# GR-08 batch 9, part 2 (GR-08i2) reviewed exact v2 policy seed rows (MIT-DB-08I).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt --
+# 15 DB_UNAUTHORIZED_MUTATION findings collapsing to 6 UNIQUE fingerprints
+# (dedup key: callable identity + daoAccessor + daoFqcn + operation; ALL 15
+# sites live in the single mutating callable
+# materializeInCurrentTransaction(List<ResolvedOccurrence>,
+# MaterializationOptions): 8x lifecycleEventDao.insert,
+# 2x plannedExpenseDao.fulfillByOccurrenceKey,
+# 2x reminderDeliveryDao.suppressByOccurrenceId, and one site each for
+# occurrenceDao.insert, occurrenceDao.update, reminderDeliveryDao.insert).
+# Unique count 6 <= the 25-fingerprint batch cap, so this part needed NO
+# further split.  This is the recurring occurrence persistence layer -- the
+# AUTHORITATIVE writer for materialized occurrences per
+# docs/architecture/LEGAL_PATHS.md ("GENERATE occurrences":
+# RecurringLifecycleCoordinator.generateOccurrences() uses
+# OccurrenceGenerationOptions and "materializeInCurrentTransaction() for use
+# inside existing transactions"; "UPDATE occurrence status" flows through the
+# coordinator; terminal statuses (PAID, CANCELLED, SKIPPED, MISSED, IGNORED)
+# never auto-downgraded -- the materializer enforces exactly that downgrade
+# protection) -- so every row is a legal-writer EXACT_POLICY authorization.
+#
+# barrierMode is `helper` for every row: the write barrier runs in the
+# CALLING coordinator entrypoints (RecurringLifecycleCoordinator.
+# generateOccurrences opens with writeBarrier.checkWritesAllowed before
+# invoking materializer.materialize(...), which delegates to
+# materializeInCurrentTransaction inside database.withTransaction), NOT
+# directly before each mutation in this body, and no direct-barrier proof is
+# claimed.
+#
+# Closure additions (GR-08i2 blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in the mutating-callable body was enumerated, not just
+# the findings: the 15 findings == the 15 mutating DAO call sites, and every
+# called mutating DAO method (RecurringOccurrenceDao.insert/update,
+# RecurringLifecycleEventDao.insert, PlannedExpenseDao.fulfillByOccurrenceKey,
+# RecurringReminderDeliveryDao.insert/suppressByOccurrenceId) is an abstract
+# Room-annotated method.  All four touched DAOs (RecurringOccurrenceDao,
+# RecurringLifecycleEventDao, PlannedExpenseDao,
+# RecurringReminderDeliveryDao) carry ZERO @Transaction methods at all --
+# fully abstract interfaces -- so no convenience-method closure row exists
+# for this batch.  The only other DAO-accessor calls in the body are the
+# read-only lookups occurrenceDao.getByKey (2 sites) and
+# reminderDeliveryDao.getByOccurrenceAndWindow (1 site).  The
+# database.withTransaction call in materialize() is the
+# androidx.room.withTransaction extension on the injected AppDatabase, not a
+# DAO accessor, and carries no closure obligation.  Constructor-property DAO
+# aliases (GR-08a pattern): all four DAO accessors (occurrenceDao,
+# reminderDeliveryDao, lifecycleEventDao, plannedExpenseDao) are direct
+# @Inject constructor properties resolved natively by the evidence verifier;
+# there are NO alias indirections and NO database-chained
+# `database.xxxDao()` call sites (chain-form census: 0 -- the injected
+# `database: AppDatabase` constructor property is only ever used as the
+# withTransaction receiver, so NO GR-08e accessor-normalization source
+# change is needed for this batch).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 rows verbatim); passing only this file would drop the
+# earlier batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── occurrence persistence (occurrenceDao, 2 tuples) ─────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
+  kind: function
+  method: materializeInCurrentTransaction
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i2 EXACT_POLICY: persists each resolved occurrence with INSERT IGNORE (occurrenceKey unique constraint dedups; the -1 return drives the existing-row branch); LEGAL_PATHS.md GENERATE occurrences names the materializer as the persistence writer inside the coordinator's barrier-checked generateOccurrences flow"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
+  kind: function
+  method: materializeInCurrentTransaction
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08i2 EXACT_POLICY: updates the existing occurrence only when the status changed AND the existing status is non-terminal (terminal statuses PAID/CANCELLED/SKIPPED/MISSED/IGNORED are never auto-downgraded -- LEGAL_PATHS.md downgrade protection, enforced via RecurringOccurrenceStatus.terminalDbValues)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── lifecycle provenance (lifecycleEventDao, 1 tuple / 8 sites) ──────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
+  kind: function
+  method: materializeInCurrentTransaction
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i2 EXACT_POLICY: writes the durable recurring lifecycle events (OCCURRENCE_STATUS_CHANGED, PLANNED_FULFILLED, PLANNED_FULFILLMENT_SKIPPED, OCCURRENCE_GENERATED, REMINDER_SCHEDULE_SKIPPED, REMINDER_SCHEDULED) inside the same transaction as the mutations they audit; the 8 call sites share this one fingerprint (identical callable + DAO + operation identity)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── planned-expense fulfillment (plannedExpenseDao, 1 tuple / 2 sites) ───────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
+  kind: function
+  method: materializeInCurrentTransaction
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: fulfillByOccurrenceKey
+  barrierMode: helper
+  reason: "GR-08i2 EXACT_POLICY: fulfills the planned-expense row when the materializer auto-transitions an occurrence to PAID with a linked expense (P4-CURRENT-003), atomic with the PLANNED_FULFILLED / PLANNED_FULFILLMENT_SKIPPED lifecycle event; the 2 call sites (existing-row and newly-created branches) share this one fingerprint"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+# ── reminder deliveries (reminderDeliveryDao, 2 tuples) ──────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
+  kind: function
+  method: materializeInCurrentTransaction
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: suppressByOccurrenceId
+  barrierMode: helper
+  reason: "GR-08i2 EXACT_POLICY: suppresses open reminder deliveries when an occurrence auto-transitions to PAID so no bill reminder ever fires for a paid occurrence; the 2 call sites (existing-row and newly-created branches) share this one fingerprint"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
+  kind: function
+  method: materializeInCurrentTransaction
+  receiver: null
+  parameterTypes:
+  - List<com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver.ResolvedOccurrence>
+  - com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer.MaterializationOptions
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08i2 EXACT_POLICY: creates the SCHEDULED reminder delivery per configured window for PLANNED occurrences when the caller opted in via MaterializationOptions.createReminderDeliveries (past-due windows skipped unless allowPastDueReminderDeliveries; delivery-row insert counted only on a positive row-id)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08I

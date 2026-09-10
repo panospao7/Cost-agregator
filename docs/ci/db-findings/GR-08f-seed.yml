@@ -1,0 +1,358 @@
+# GR-08 batch 6 (GR-08f) reviewed exact v2 policy seed rows (MIT-DB-08F).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: RecurringRuleLifecycleCoordinator.kt -- 21 DB_UNAUTHORIZED_MUTATION
+# findings collapsing to 21 UNIQUE fingerprints (dedup key: callable identity
+# + daoAccessor + daoFqcn + operation; every finding in this file is a
+# distinct tuple -- no per-call-site repeats).  Unique count 21 <= the
+# 25-fingerprint batch cap, so NO split was required.  This is the DOMAIN
+# lifecycle layer -- the MOST authoritative writer for recurring rule rows
+# per docs/architecture/LEGAL_PATHS.md ("Recurring Rule Mutations": CREATE /
+# UPDATE / ACTIVATE / DEACTIVATE / DELETE rule all route through
+# RecurringRuleLifecycleCoordinator; the file's own KDoc: "Single writer for
+# all recurring rule lifecycle mutations ... no direct DAO mutation outside
+# this class") -- so every row is a legal-writer EXACT_POLICY authorization.
+#
+# barrierMode is `helper` for every row: the write barrier runs at the
+# coordinator public entrypoints (every mutating callable opens with
+# writeBarrier.checkWritesAllowed), not directly before each individual
+# mutation, and no direct-barrier proof is claimed.
+#
+# Closure additions (GR-08f blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in ALL mutating-callable bodies was enumerated, not just
+# the findings: the 21 findings == the 21 mutating DAO call sites, and every
+# called DAO method (ManualRecurringExpenseDao, RecurringOccurrenceDao,
+# RecurringReminderDeliveryDao, PlannedExpenseDao,
+# RecurringLifecycleEventDao) is an abstract Room-annotated method -- all
+# five DAOs are fully abstract interfaces with NO body-carrying @Transaction
+# convenience methods.  The sixth constructor-property accessor,
+# expenseDao (ExpenseDao), is called ONLY read-only
+# (getExpensesBetween -- a plain SELECT; none of ExpenseDao's own
+# @Transaction convenience methods is reached from this file).  The
+# materializer / planProjectionService / expander / resolver calls are
+# domain-layer delegation whose own writes live in already-authorized
+# scopes (GR-08c1/GR-08c2 RecurringLifecycleCoordinator.kt and the
+# materializer/projection services), not DAO accessors, and carry no
+# closure obligation here.  Constructor-property DAO aliases (GR-08a
+# pattern): all six DAO accessors are direct @Inject constructor properties
+# resolved natively by the evidence verifier; there are NO alias
+# indirections and NO database-chained `database.xxxDao()` call sites
+# (chain-form census: 0 -- no GR-08e accessor-normalization source change
+# is needed for this batch).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f rows verbatim); passing only this
+# file would drop the earlier batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ── activateRule (2 rows) ────────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: activateRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: manualRecurringExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: setActiveStatus
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: re-activates a previously deactivated rule (isActive=true) as the first write of the atomic activate+regenerate transaction; if generation fails the whole transaction rolls back"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: activateRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: RULE_ACTIVATED_REGENERATED provenance event after successful regeneration, inside the activateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+# ── advanceNextDate (2 rows) ─────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: advanceNextDate
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: manualRecurringExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: updateNextDate
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: advances the rule's nextDate behind the write barrier, inside the advanceNextDate transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: advanceNextDate
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: NEXT_DATE_ADVANCED provenance event after the nextDate update, inside the advanceNextDate transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+# ── createRule (2 rows) ──────────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: createRule
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+  daoAccessor: manualRecurringExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: inserts the new rule (provider-stamped createdAt when missing) as the first write of the atomic create+generate transaction; the returned id anchors occurrence/reminder/planned generation"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: createRule
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: RULE_CREATED_GENERATED provenance event after successful occurrence/reminder/planned generation, inside the createRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+# ── deactivateRule (5 rows) ──────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deactivateRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: manualRecurringExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: setActiveStatus
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deactivates the rule (isActive=false) as the first write of the atomic deactivate transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deactivateRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: deleteByOccurrenceIds
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes reminder deliveries for the rule's future PLANNED occurrences (guarded by non-empty plannedIds), inside the deactivateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deactivateRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: deleteOpenPlannedBySource
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: DELETES (not cancels) open PLANNED occurrences so reactivation can freely regenerate them (cancelled rows would be skipped by the materializer's terminal-status protection), inside the deactivateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deactivateRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: deleteOpenPlannedByRecurringRuleId
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes open generated planned rows so reactivation can freely project new rows by sourceOccurrenceKey, inside the deactivateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deactivateRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: RULE_DEACTIVATED provenance event (bounded metadata: ruleId + merchant only), inside the deactivateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+# ── deleteRule (5 rows) ──────────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deleteRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: deleteByOccurrenceIds
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes reminder deliveries for ALL occurrences of the rule (guarded by non-empty occurrenceIds), inside the deleteRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deleteRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: deleteByRecurringRuleId
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes all planned expenses sourced from the rule, inside the deleteRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deleteRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: deleteBySource
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes all occurrences sourced from the rule, inside the deleteRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deleteRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: manualRecurringExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: deleteById
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes the rule row itself after its reminders/planned/occurrences are gone, inside the deleteRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: deleteRule
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: RULE_DELETED provenance event (bounded metadata: ruleId + merchant + amount only), inside the deleteRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+# ── updateRule (5 rows) ──────────────────────────────────────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: updateRule
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+  daoAccessor: reminderDeliveryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
+  operation: deleteByOccurrenceIds
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes reminder deliveries for the rule's open PLANNED occurrences before regeneration (guarded by non-empty openIds), inside the updateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: updateRule
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+  daoAccessor: occurrenceDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
+  operation: deleteOpenPlannedBySource
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes open PLANNED occurrences before regeneration (terminal PAID/SKIPPED/CANCELLED/MISSED occurrences are preserved), inside the updateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: updateRule
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+  daoAccessor: plannedExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+  operation: deleteOpenPlannedByRecurringRuleId
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: deletes open planned expenses before the regeneration re-projects them, inside the updateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: updateRule
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+  daoAccessor: manualRecurringExpenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: persists the normalized rule entity (createdAt backfilled from the loaded row when missing) after the open-row cleanup, inside the updateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F
+- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt
+  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator
+  kind: function
+  method: updateRule
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+  daoAccessor: lifecycleEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08f EXACT_POLICY: RULE_UPDATED_REGENERATED provenance event (bounded metadata: ruleId + old/new amount + old/new frequency only) after successful regeneration, inside the updateRule transaction"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08F

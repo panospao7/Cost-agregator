@@ -1,0 +1,615 @@
+﻿# GR-08 batch 17 (GR-08p2 -- the FINAL GR-08 triage batch) tracked batch
+# manifest -- FIFTEEN files with ONE finding each:
+# data/database/dao/ExpenseGroupDao.kt (the DAO-default-method special case),
+# data/privacy/PrivacyAuditLoggerImpl.kt (THE sanctioned privacy audit
+# logger), data/repository/DatabaseBackupRepositoryImpl.kt (backup/restore
+# path; RestoreInternalWriteScope barrier verified),
+# data/repository/GroupsRepositoryImpl.kt (repository group writer; soft
+# delete), data/repository/ReceiptInsertResolver.kt (P3-BLOCKER-11
+# centralized receipt-insert conflict resolver),
+# domain/bank/BankConnectionLifecycleCoordinator.kt (the bank-connection
+# lifecycle coordinator), domain/budget/BudgetForecastingEngine.kt
+# (forecasting engine accuracy write), domain/diagnostics/
+# DiagnosticEventWriter.kt (THE sanctioned pipeline-diagnostics event
+# writer), domain/groups/SettlementCalculator.kt (domain settlement
+# calculator persistence entry point),
+# domain/notification/capture/NotificationIntakeRecoveryScheduler.kt (intake
+# recovery scheduler), domain/provenance/SourceLinkWriterImpl.kt (THE
+# sanctioned provenance source-link writer), domain/receipt/lifecycle/
+# ReceiptLifecycleEventWriter.kt and domain/transaction/lifecycle/
+# TransactionLifecycleEventWriter.kt (THE sanctioned receipt/transaction
+# lifecycle event writers -- the event-writer layer the architecture
+# mandates), service/debug/LegacyDataMigrationService.kt (legacy one-time
+# migration) and util/CsvExpenseImporter.kt (CSV import path).
+#
+# Batch scope (plan): GR-08p2 covers the fifteen 1-finding files left after
+# the GR-08p1 batch as ONE batch -- the FINAL triage batch of the GR-08
+# program.  Scope verification against the trusted START report
+# (build/guard-debug/gr08q/before.json == trusted GR-08p after.json, 15
+# findings / 20 advisory diagnostics; reference-copy SHA-256 recorded
+# below): each of the FIFTEEN files carries exactly 1
+# DB_UNAUTHORIZED_MUTATION finding and each finding is its own distinct
+# (callable, daoAccessor, daoFqcn, operation) tuple, so the combined batch
+# scope is 15 findings / 15 UNIQUE fingerprints <= the 25-fingerprint batch
+# cap and NO split was required.
+#
+# LAYER ADJUDICATIONS:
+# * ExpenseGroupDao.insertGroupWithMembers is THE DAO-default-method special
+#   case: a body-carrying @Transaction convenience ON the DAO itself whose
+#   flagged mutation is the CROSS-DAO `memberDao.insertAll` inside its body
+#   (the GroupMemberDao arrives as an explicit DAO-typed method parameter --
+#   the Room-recommended shape for cross-DAO @Transaction conveniences).
+#   The method is the atomic group+members creation path (insert group ->
+#   remap members to the new groupId -> insertAll -> throw when any rowId
+#   <= 0, rolling back the whole @Transaction).  The self-DAO
+#   `insert(group)` call in the same body is the DAO's OWN abstract @Insert
+#   -- DAO-owned by definition and never scanner-flagged (only the cross-DAO
+#   accessor fires).  Census note: zero production call sites today; the
+#   convenience is the sanctioned atomic path whenever used and the scanner
+#   flags it regardless of callers.
+# * PrivacyAuditLoggerImpl is THE sanctioned privacy audit logger
+#   (Hilt-bound PrivacyAuditLogger via PrivacyModule): its writes ARE the P8
+#   privacy decision audit trail itself.  Context maps are sanitized through
+#   the allowlist (allowedContextKeys, 200-char per-value cap) before
+#   persistence; decision strings are controlled constants
+#   (ALLOWED/DENIED/NOT_APPLICABLE/DENIED_FAIL_CLOSED) and reason comes from
+#   the typed PrivacyDecision -- never raw payloads.
+# * DatabaseBackupRepositoryImpl.restoreReceiptAssets is the backup/RESTORE
+#   path: the flagged `dao.update(receipt.copy(imagePath = ...))` runs
+#   inside `restoreInternalWriteScope.run("restoreReceiptAssets.updateImagePath")`
+#   -- the formal RestoreInternalWriteScope gate that `require`s the restore
+#   maintenance mode to be ASSETS_RESTORING or RESTORE_VERIFYING (fail-closed
+#   otherwise; only DatabaseBackupRepositoryImpl may inject the scope), so
+#   restore-internal writes are explicit and auditable rather than silently
+#   bypassing the global write barrier.  The update retargets the restored
+#   receipt's imagePath after the asset copy (copy -> DB update -> rename,
+#   temp-file cleanup on failure, CancellationException rethrown).  The
+#   accessor is the method-local alias `val dao = db.scannedReceiptDao()`
+#   (line 1182) -- the row spells the SOURCE local alias `dao` (the GR-08p1
+#   DataRetentionWorker auditDao precedent; the GR-08a alias bridge resolves
+#   the ScannedReceiptDao identity for the evidence verifier's daoFqcn
+#   cross-check).
+# * GroupsRepositoryImpl.deleteMember is a repository-layer legal group
+#   writer: barrier-checked at entry (writeBarrier.checkWritesAllowed),
+#   pre-flight member/split-reference checks, then inside
+#   database.withTransaction the re-checks plus the
+#   groupExpenseDao.countExpensesPaidByMember guard and the SOFT delete
+#   (`memberDao.update(member.copy(leftAt = timeProvider.now()))` -- the
+#   member row is retained with a leftAt timestamp, never hard-deleted).
+#   SQLiteConstraintException is mapped to typed results.
+# * ReceiptInsertResolver.insertOrResolve is the P3-BLOCKER-11/P3-P1-06
+#   centralized receipt-insert conflict resolver: attempts
+#   scannedReceiptDao.insert and, when the insert is ignored/conflicted
+#   (id <= 0), deterministically resolves the pre-existing receipt by
+#   fingerprint order (imageHash > sourceFingerprint > textFingerprint >
+#   semanticFingerprint -- all read-only lookups).  Invoked ONLY from the
+#   barrier-checked receipt-lifecycle writers (ReceiptRecordWriter.
+#   insertOrResolve checks writes allowed; ReceiptLifecycleCoordinator;
+#   BankStatementLifecycleProcessor.processBankStatement; ReceiptRepository
+#   delegates) -- the resolver is the shared low-level insert surface of the
+#   receipt lifecycle layer and the insert IS the sanctioned receipt
+#   creation path.
+# * BankConnectionLifecycleCoordinator.disconnectConnection is the
+#   bank-connection lifecycle COORDINATOR (the legal path for connection
+#   mutations): barrier-checked at entry, existence-checked first (getById
+#   -> NotFound), then the targeted `disconnect` mutating query (clears
+#   isConnected/isActive/access/refresh tokens).  CancellationException is
+#   rethrown; failures map to RetryableFailure.
+# * BudgetForecastingEngine.updateForecastAccuracy is the forecasting
+#   engine's post-period accuracy write: barrier-checked at entry,
+#   get-if-missing guard, then the accuracy ratio
+#   1 - |predicted-actual| / max(predicted, actual) clamped to [-1, 1]
+#   (a dimensionless metric -- not currency math) persisted with the
+#   targeted entity update.
+# * DiagnosticEventWriter (RoomDiagnosticEventWriter.emit) is THE sanctioned
+#   pipeline-diagnostics event writer (Hilt-bound; CompositeDiagnosticEvent
+#   Writer fronts it): its writes ARE the diagnostics trail itself.  All
+#   payloads pass EventMetadataSanitizer (metadata JSON sanitized;
+#   exceptionClass = javaClass.simpleName only; exceptionMessage sanitized);
+#   reasonCode is a typed DiagnosticReasonCode enum name.
+# * SettlementCalculator.recordSettlement is the domain settlement
+#   calculator's persistence entry point (KDoc: "Record a settlement
+#   transaction for a group, persisting it to the database"): validates
+#   amount > 0 and from != to, barrier-checked at entry, then inserts the
+#   GroupSettlementEntity via the `settlementDao` PARAMETER (caller-supplied
+#   DAO -- the same explicit-parameter pattern as ExpenseGroupDao.
+#   insertGroupWithMembers' memberDao).  Census note: zero production call
+#   sites today -- the LEGAL settlement path per LEGAL_PATHS.md ("RECORD
+#   settlement: GroupLifecycleCoordinator.recordSettlement ->
+#   GroupSettlementDao.insert") performs its own barrier-checked insert
+#   inside database.withTransaction (GR-08k2-authorized) and does NOT
+#   delegate to the calculator; the FORBIDDEN rule targets arbitrary
+#   uncoordinated callers, and this row authorizes the calculator's own
+#   validated, barrier-checked entry point with this adjudication on record.
+# * NotificationIntakeRecoveryScheduler.recoverPending is the intake
+#   RECOVERY scheduler (invoked from NotificationCaptureService at listener
+#   startup; KDoc: call on app start / listener connected / restore
+#   complete): releases stale PROCESSING rows via the targeted
+#   `releaseStaleProcessing` mutating query (status/lockedAt-guarded SQL
+#   UPDATE -- no payloads materialized) and re-enqueues ready rows through
+#   WorkManager (unique work, KEEP policy).  The processing side is the
+#   GR-08i3-authorized NotificationIntakeWorker; this callable is the
+#   crash-recovery counterpart on the capture side.
+# * SourceLinkWriterImpl.linkTarget is THE sanctioned provenance source-link
+#   writer (Hilt-bound SourceLinkWriter via ProvenanceModule.
+#   bindSourceLinkWriter): exists-check first (idempotent dedup), external
+#   IDs/fingerprints/account IDs HMAC-hashed via SensitiveHashingService
+#   before persistence (raw external identifiers never stored), insert with
+#   OnConflictStrategy.IGNORE (rowId <= 0 -> AlreadyExists).  Deliberately
+#   opens NO transaction of its own -- callers wrap in a Room transaction
+#   for atomicity with expense/event insertion (KDoc-documented contract).
+# * ReceiptLifecycleEventWriter (RoomReceiptLifecycleEventWriter.write) is
+#   THE sanctioned receipt lifecycle event writer -- the event-writer layer
+#   the architecture mandates (LEGAL_PATHS "Each operation:
+#   DatabaseWriteBarrier check -> withTransaction -> ReceiptEvent"): its own
+#   writes ARE the ReceiptEvent audit trail emitted by the barrier-checked
+#   receipt lifecycle services through the Hilt-bound interface.
+#   errorDetails pass sanitizer.sanitizeExceptionMessage; the
+#   DeprecationLevel.ERROR legacy write(event) overload delegates to this
+#   (context) overload -- a single insert site.
+# * TransactionLifecycleEventWriter (RoomTransactionLifecycleEventWriter.
+#   write) is THE sanctioned transaction lifecycle event writer (the same
+#   event-writer layer): its writes ARE the TransactionEvent audit trail
+#   emitted by the GR-08l2-authorized TransactionLifecycleCoordinator and
+#   the other lifecycle callers through the Hilt-bound interface.
+#   beforeSnapshot/afterSnapshot are explicitly null (no expense payloads);
+#   metadata carries correlation/operation/transaction ids only.  The
+#   ERROR-deprecated legacy overload delegates here -- a single insert site.
+# * LegacyDataMigrationService.migrateCategories is the legacy one-time
+#   migration path (debug service; migrates an old any-version backup
+#   database into the current Room DB): opens the legacy DB READ-ONLY,
+#   pre-loads existing categories by lowercased name, and inserts ONLY
+#   missing categories (case-insensitive skip -- idempotent re-runs create
+#   nothing), building the old->new id map for downstream tables.  Expense
+#   mutations of the migration route through
+#   TransactionLifecycleCoordinator.createExpense (the authoritative expense
+#   path); budgets/recurring/planned/savings go through their repository
+#   writers.  CancellationException is rethrown at both catch sites;
+#   per-row failures are counted and the batch continues.
+# * CsvExpenseImporter.getOrCreateCategory is the CSV import path: ALL
+#   expense mutations route through TransactionLifecycleCoordinator.
+#   createExpense (the authoritative expense path); the audited
+#   categoryDao.insert is the get-or-create category convenience (getByName
+#   first; default icon + hash-derived color insert only when the named
+#   category does not exist) -- the exact GR-08p1 JsonExpenseImporter
+#   parseV1Row/parseV2Row pattern.
+#
+# barrierMode is `helper` for every row (the GR-08a..p1 batch convention):
+# the barrier runs at the callable entrypoint (GroupsRepositoryImpl,
+# BankConnectionLifecycleCoordinator, BudgetForecastingEngine,
+# SettlementCalculator), at the barrier-checked transactional/lifecycle
+# callers (ReceiptInsertResolver, CsvExpenseImporter,
+# LegacyDataMigrationService, SourceLinkWriterImpl), the write is the
+# sanctioned audit/diagnostics/event surface itself (PrivacyAuditLoggerImpl,
+# DiagnosticEventWriter, ReceiptLifecycleEventWriter,
+# TransactionLifecycleEventWriter), the write is guarded by the formal
+# restore-mode scope (DatabaseBackupRepositoryImpl) or the intake recovery
+# surface (NotificationIntakeRecoveryScheduler), or the write is the DAO's
+# own @Transaction convenience body (ExpenseGroupDao) -- no direct-barrier
+# proof is claimed per row.  NO row is workerMediated: none of the fifteen
+# callables runs inside a WorkerExecutionGuard.runGuardedWithContext context.
+#
+# Chain-form census AFTER review: ZERO database-chained
+# `appDatabase.xxxDao()` / `database.xxxDao()` mutation receivers existed at
+# batch start in any of the FIFTEEN files.  The only Room accessor call is
+# DatabaseBackupRepositoryImpl's `val dao = db.scannedReceiptDao()` (line
+# 1182) -- an ASSIGNMENT to a method-local, not a chained mutation receiver;
+# the scanner reports the local alias `dao`, the row spells the source
+# alias, and NO accessor-normalization source change is needed (the GR-08e
+# normalization rule does not trigger).  ZERO method-local DAO aliases remain
+# as mutation receivers EXCEPT the intentional source-alias spelling
+# (DatabaseBackupRepositoryImpl's `dao` local) and the two explicit DAO-typed
+# method parameters (ExpenseGroupDao's `memberDao`, SettlementCalculator's
+# `settlementDao`), which the rows spell verbatim.  No other
+# accessor-normalization source change is needed.
+#
+# Closure additions (GR-08p2 blind-spot sweep): ZERO closure rows.  No
+# body-carrying @Transaction DAO convenience method is invoked from any
+# batch callable (the GR-08b/GR-08d/GR-08l1/GR-08n1/GR-08o closure pattern
+# does not recur).  Census of the touched DAOs: EntitySourceLinkDao,
+# PipelineDiagnosticEventDao, PrivacyAuditDao, BankConnectionDao,
+# GroupSettlementDao, ScannedReceiptDao, ReceiptEventDao,
+# TransactionEventDao and NotificationIntakeDao carry ZERO @Transaction
+# methods; CategoryDao's body-carrying conveniences
+# (getOrInsertByNameNoCase/seedDefaultsIfEmpty/mergeCategories/delete) are
+# NOT called from CsvExpenseImporter (getByName + insert) or
+# LegacyDataMigrationService (getAll + insert); GroupMemberDao's
+# setCurrentUser is NOT called from any batch callable; BudgetForecastDao's
+# insertWithDeactivation IS called from BudgetForecastingEngine -- but from
+# insertForecast (line 277), a callable with NO finding: the
+# deactivate-then-insert mutations are self-DAO calls inside the DAO's own
+# @Transaction default body, which the scanner attributes to the DAO itself
+# and never flags, so no closure row is required and the rescan delta is
+# unaffected.  ExpenseGroupDao.insertGroupWithMembers' self-call
+# insert(group) is the DAO's own abstract @Insert -- DAO-owned by
+# definition, not flagged (only the cross-DAO memberDao.insertAll fires).
+# Every dao-accessor call in ALL fifteen batch callable bodies was
+# enumerated, not just the findings; all other DAO-accessor calls in the
+# batch callable bodies are read-only lookups (memberDao.getById/
+# getAllForGroup, groupExpenseDao.countExpensesPaidByMember/
+# getExpensesForGroupOnce, scannedReceiptDao.getById/getByImageHash/
+# getBySourceFingerprint/getByTextFingerprint/getBySemanticFingerprint,
+# bankConnectionDao.getById, budgetForecastDao.getById,
+# intakeDao.getReadyForProcessing, sourceLinkDao.exists, categoryDao.getAll/
+# getByName) or delegated coordinator/repository writes
+# (transactionLifecycleCoordinator.createExpense in the import/migration
+# paths).
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1 +
+# GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 + GR-08o + GR-08p1 +
+# GR-08p2 rows verbatim, 415 rows after this batch); passing only
+# GR-08p2-seed.yml would drop the earlier batches' rows from the rendered
+# candidate.
+schemaVersion: 1
+batchId: GR-08p2
+startSha: 82ec5ce6
+startReport:
+  path: build/guard-debug/gr08q/before.json
+  # SHA-256 of the reference copy (trusted GR-08p after.json; 15 findings /
+  # 20 advisory).  ORCHESTRATOR: create the reference copy in the permitted
+  # probe area from build/guard-debug/gr08p/after.json (trusted: true) at
+  # batch start -- byte-identical (same SHA-256) -- and fill sha256 below
+  # before generate.
+  sha256: 
+  trusted: true
+  findingCount: 15
+activePolicySha256: 
+# ORCHESTRATOR: fill activePolicySha256 from the CURRENT active policy
+# (config/guards/db_ownership_policy.yml) at batch start, before generate.
+# NOTE: the active policy at START SHA 82ec5ce6 carries 457 `- path:`
+# entries under `entries:` (the batch brief said 455 -- confirm the current
+# count when filling this field; none of the fifteen GR-08p2 files appear
+# in the active policy, verified by path census at batch start).
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08P2
+counts:
+  fileFindings: 15
+  batchCallablesFindings: 15
+  uniqueFingerprints: 15
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2Fdao%2FExpenseGroupDao.kt|symbol.owner=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|symbol.name=insertGroupWithMembers|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ExpenseGroup%22%2C%22com.yourname.expensetracker.data.database.dao.GroupMemberDao%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fprivacy%2FPrivacyAuditLoggerImpl.kt|symbol.owner=com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl|symbol.name=logDecision|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.privacy.PrivacyCapability%22%2C%22com.yourname.expensetracker.domain.privacy.PrivacyDecision%22%2C%22Map%3CString%2C%20String%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PrivacyAuditDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FDatabaseBackupRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl|symbol.name=restoreReceiptAssets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22java.io.File%22%2C%22com.yourname.expensetracker.data.backup.CostbackupBundle.BackupManifest%22%2C%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.data.backup.RestoreJournal.JournalEntry%3F%22%2C%22com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=dao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FGroupsRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.GroupsRepositoryImpl|symbol.name=deleteMember|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FReceiptInsertResolver.kt|symbol.owner=com.yourname.expensetracker.data.repository.ReceiptInsertResolver|symbol.name=insertOrResolve|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ScannedReceipt%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fbank%2FBankConnectionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.bank.BankConnectionLifecycleCoordinator|symbol.name=disconnectConnection|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankConnectionDao|identity.accessor=bankConnectionDao|identity.operation=disconnect|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fbudget%2FBudgetForecastingEngine.kt|symbol.owner=com.yourname.expensetracker.domain.budget.BudgetForecastingEngine|symbol.name=updateForecastAccuracy|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BudgetForecastDao|identity.accessor=budgetForecastDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FDiagnosticEventWriter.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomDiagnosticEventWriter|symbol.name=emit|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FSettlementCalculator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.SettlementCalculator|symbol.name=recordSettlement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22Long%22%2C%22Double%22%2C%22String%22%2C%22com.yourname.expensetracker.data.database.dao.GroupSettlementDao%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupSettlementDao|identity.accessor=settlementDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fnotification%2Fcapture%2FNotificationIntakeRecoveryScheduler.kt|symbol.owner=com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler|symbol.name=recoverPending|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Int%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|identity.accessor=intakeDao|identity.operation=releaseStaleProcessing|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fprovenance%2FSourceLinkWriterImpl.kt|symbol.owner=com.yourname.expensetracker.domain.provenance.SourceLinkWriterImpl|symbol.name=linkTarget|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.provenance.TargetEntityType%22%2C%22Long%22%2C%22com.yourname.expensetracker.domain.provenance.SourceLinkPayload%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao|identity.accessor=sourceLinkDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleEventWriter.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter|symbol.name=write|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.transaction.TransactionContext%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptEventDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleEventWriter.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter|symbol.name=write|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.transaction.TransactionContext%22%2C%22com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fdebug%2FLegacyDataMigrationService.kt|symbol.owner=com.yourname.expensetracker.service.debug.LegacyDataMigrationService|symbol.name=migrateCategories|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.database.sqlite.SQLiteDatabase%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.CategoryDao|identity.accessor=categoryDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Futil%2FCsvExpenseImporter.kt|symbol.owner=com.yourname.expensetracker.util.CsvExpenseImporter|symbol.name=getOrCreateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.CategoryDao|identity.accessor=categoryDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+findings:
+# â”€â”€ ExpenseGroupDao.kt (1 fingerprint / 1 site; DAO-default-method case) â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fdatabase%2Fdao%2FExpenseGroupDao.kt|symbol.owner=com.yourname.expensetracker.data.database.dao.ExpenseGroupDao|symbol.name=insertGroupWithMembers|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ExpenseGroup%22%2C%22com.yourname.expensetracker.data.database.dao.GroupMemberDao%22%2C%22List%3Ccom.yourname.expensetracker.data.database.entity.GroupMember%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseGroupDao.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
+    method: insertGroupWithMembers
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.ExpenseGroup
+    - com.yourname.expensetracker.data.database.dao.GroupMemberDao
+    - List<com.yourname.expensetracker.data.database.entity.GroupMember>
+    kind: function
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: insertAll
+  locations: [88]
+  disposition: EXACT_POLICY
+  rationale: "THE DAO-default-method special case -- body-carrying @Transaction convenience ON the DAO whose flagged mutation is the cross-DAO memberDao.insertAll inside its body (GroupMemberDao arrives as an explicit DAO-typed method parameter); atomic group+members creation whose rowId<=0 throw rolls back the whole @Transaction; the self-DAO insert(group) call is the DAO's own abstract @Insert and is never flagged; zero production callers today (census)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ PrivacyAuditLoggerImpl.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fprivacy%2FPrivacyAuditLoggerImpl.kt|symbol.owner=com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl|symbol.name=logDecision|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.privacy.PrivacyCapability%22%2C%22com.yourname.expensetracker.domain.privacy.PrivacyDecision%22%2C%22Map%3CString%2C%20String%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PrivacyAuditDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacyAuditLoggerImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl
+    method: logDecision
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.privacy.PrivacyCapability
+    - com.yourname.expensetracker.domain.privacy.PrivacyDecision
+    - Map<String, String>
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
+  operation: insert
+  locations: [51]
+  disposition: EXACT_POLICY
+  rationale: "THE sanctioned privacy audit logger (Hilt-bound PrivacyAuditLogger) -- its writes ARE the P8 privacy decision audit trail itself; context sanitized through the allowlist (allowedContextKeys, 200-char cap), decision strings are controlled constants, reason from the typed PrivacyDecision -- never raw payloads."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ DatabaseBackupRepositoryImpl.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FDatabaseBackupRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl|symbol.name=restoreReceiptAssets|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22java.io.File%22%2C%22com.yourname.expensetracker.data.backup.CostbackupBundle.BackupManifest%22%2C%22com.yourname.expensetracker.data.database.AppDatabase%22%2C%22com.yourname.expensetracker.data.backup.RestoreJournal.JournalEntry%3F%22%2C%22com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=dao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.DatabaseBackupRepositoryImpl
+    method: restoreReceiptAssets
+    receiver: null
+    parameterTypes:
+    - java.io.File
+    - com.yourname.expensetracker.data.backup.CostbackupBundle.BackupManifest
+    - com.yourname.expensetracker.data.database.AppDatabase
+    - com.yourname.expensetracker.data.backup.RestoreJournal.JournalEntry?
+    - com.yourname.expensetracker.data.backup.RestoreDiagnosticsSink?
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  locations: [1255]
+  disposition: EXACT_POLICY
+  rationale: "Backup/restore path -- the imagePath retarget update runs inside restoreInternalWriteScope.run (the formal RestoreInternalWriteScope gate requiring ASSETS_RESTORING or RESTORE_VERIFYING mode, fail-closed otherwise), after the asset copy with temp-file cleanup and CancellationException rethrow; accessor spelled as the source method-local alias dao (val dao = db.scannedReceiptDao(); the alias bridge resolves the ScannedReceiptDao identity)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ GroupsRepositoryImpl.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FGroupsRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.GroupsRepositoryImpl|symbol.name=deleteMember|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupMemberDao|identity.accessor=memberDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/GroupsRepositoryImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.GroupsRepositoryImpl
+    method: deleteMember
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    kind: function
+  daoAccessor: memberDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
+  operation: update
+  locations: [226]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked repository-layer member SOFT delete -- pre-flight and in-transaction member/split-reference/expense guards, then memberDao.update(member.copy(leftAt = timeProvider.now())) inside database.withTransaction (the member row is retained with a leftAt timestamp, never hard-deleted); SQLiteConstraintException mapped to typed results."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ ReceiptInsertResolver.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FReceiptInsertResolver.kt|symbol.owner=com.yourname.expensetracker.data.repository.ReceiptInsertResolver|symbol.name=insertOrResolve|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.ScannedReceipt%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|identity.accessor=scannedReceiptDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptInsertResolver.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptInsertResolver
+    method: insertOrResolve
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+    kind: function
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: insert
+  locations: [32]
+  disposition: EXACT_POLICY
+  rationale: "P3-BLOCKER-11/P3-P1-06 centralized receipt-insert conflict resolver -- attempts the insert and, when it is ignored/conflicted (id <= 0), deterministically resolves the pre-existing receipt by fingerprint order (all read-only); invoked ONLY from the barrier-checked receipt-lifecycle writers (ReceiptRecordWriter/ReceiptLifecycleCoordinator/BankStatementLifecycleProcessor/ReceiptRepository)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ BankConnectionLifecycleCoordinator.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fbank%2FBankConnectionLifecycleCoordinator.kt|symbol.owner=com.yourname.expensetracker.domain.bank.BankConnectionLifecycleCoordinator|symbol.name=disconnectConnection|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BankConnectionDao|identity.accessor=bankConnectionDao|identity.operation=disconnect|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/bank/BankConnectionLifecycleCoordinator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.bank.BankConnectionLifecycleCoordinator
+    method: disconnectConnection
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: bankConnectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BankConnectionDao
+  operation: disconnect
+  locations: [63]
+  disposition: EXACT_POLICY
+  rationale: "The bank-connection lifecycle COORDINATOR (the legal path for connection mutations) -- barrier-checked at entry, existence-checked first (getById -> NotFound), then the targeted disconnect mutating query clearing isConnected/isActive/access/refresh tokens; CancellationException rethrown, failures map to RetryableFailure."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ BudgetForecastingEngine.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fbudget%2FBudgetForecastingEngine.kt|symbol.owner=com.yourname.expensetracker.domain.budget.BudgetForecastingEngine|symbol.name=updateForecastAccuracy|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Double%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BudgetForecastDao|identity.accessor=budgetForecastDao|identity.operation=update|identity.mutation_kind=ROOM_UPDATE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
+    method: updateForecastAccuracy
+    receiver: null
+    parameterTypes:
+    - Long
+    - Double
+    kind: function
+  daoAccessor: budgetForecastDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetForecastDao
+  operation: update
+  locations: [674]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked post-period forecast accuracy write -- get-if-missing guard, accuracy = 1 - |predicted-actual| / max(predicted, actual) clamped to [-1, 1] (a dimensionless metric, not currency math), then the targeted entity update."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ DiagnosticEventWriter.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FDiagnosticEventWriter.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomDiagnosticEventWriter|symbol.name=emit|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DiagnosticEventWriter.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomDiagnosticEventWriter
+    method: emit
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
+  operation: insert
+  locations: [45]
+  disposition: EXACT_POLICY
+  rationale: "THE sanctioned pipeline-diagnostics event writer (Hilt-bound; CompositeDiagnosticEventWriter fronts it) -- its writes ARE the diagnostics trail itself; all payloads pass EventMetadataSanitizer (metadata JSON sanitized, exceptionClass = simpleName only, exceptionMessage sanitized), reasonCode is a typed DiagnosticReasonCode enum name."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ SettlementCalculator.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fgroups%2FSettlementCalculator.kt|symbol.owner=com.yourname.expensetracker.domain.groups.SettlementCalculator|symbol.name=recordSettlement|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22Long%22%2C%22Long%22%2C%22Double%22%2C%22String%22%2C%22com.yourname.expensetracker.data.database.dao.GroupSettlementDao%22%2C%22com.yourname.expensetracker.domain.util.TimeProvider%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.GroupSettlementDao|identity.accessor=settlementDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/groups/SettlementCalculator.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.groups.SettlementCalculator
+    method: recordSettlement
+    receiver: null
+    parameterTypes:
+    - Long
+    - Long
+    - Long
+    - Double
+    - String
+    - com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+    - com.yourname.expensetracker.domain.util.TimeProvider
+    kind: function
+  daoAccessor: settlementDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupSettlementDao
+  operation: insert
+  locations: [179]
+  disposition: EXACT_POLICY
+  rationale: "The domain settlement calculator's persistence entry point -- validates amount > 0 and from != to, barrier-checked at entry, then inserts via the caller-supplied settlementDao PARAMETER (the explicit-parameter pattern); adjudication on record: zero production call sites today -- the LEGAL settlement path (GroupLifecycleCoordinator.recordSettlement, GR-08k2-authorized) performs its own barrier-checked insert inside database.withTransaction and does not delegate here; the LEGAL_PATHS FORBIDDEN rule targets arbitrary uncoordinated callers, not this validated barrier-checked entry point."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ NotificationIntakeRecoveryScheduler.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fnotification%2Fcapture%2FNotificationIntakeRecoveryScheduler.kt|symbol.owner=com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler|symbol.name=recoverPending|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Int%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.NotificationIntakeDao|identity.accessor=intakeDao|identity.operation=releaseStaleProcessing|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakeRecoveryScheduler.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler
+    method: recoverPending
+    receiver: null
+    parameterTypes:
+    - Int
+    kind: function
+  daoAccessor: intakeDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
+  operation: releaseStaleProcessing
+  locations: [31]
+  disposition: EXACT_POLICY
+  rationale: "The intake RECOVERY scheduler (invoked from NotificationCaptureService at listener startup; app start / listener connected / restore complete) -- releases stale PROCESSING rows via the status/lockedAt-guarded releaseStaleProcessing SQL UPDATE (no payloads materialized) and re-enqueues ready rows through WorkManager unique work with KEEP policy; the crash-recovery counterpart of the GR-08i3-authorized NotificationIntakeWorker processing side."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ SourceLinkWriterImpl.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fprovenance%2FSourceLinkWriterImpl.kt|symbol.owner=com.yourname.expensetracker.domain.provenance.SourceLinkWriterImpl|symbol.name=linkTarget|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.provenance.TargetEntityType%22%2C%22Long%22%2C%22com.yourname.expensetracker.domain.provenance.SourceLinkPayload%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao|identity.accessor=sourceLinkDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkWriterImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.provenance.SourceLinkWriterImpl
+    method: linkTarget
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.provenance.TargetEntityType
+    - Long
+    - com.yourname.expensetracker.domain.provenance.SourceLinkPayload
+    - String?
+    kind: function
+  daoAccessor: sourceLinkDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao
+  operation: insert
+  locations: [85]
+  disposition: EXACT_POLICY
+  rationale: "THE sanctioned provenance source-link writer (Hilt-bound SourceLinkWriter) -- exists-check first (idempotent dedup), external IDs/fingerprints/account IDs HMAC-hashed via SensitiveHashingService before persistence (raw external identifiers never stored), insert with OnConflictStrategy.IGNORE (rowId <= 0 -> AlreadyExists); deliberately opens NO transaction of its own -- callers wrap in a Room transaction for atomicity with expense/event insertion."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ ReceiptLifecycleEventWriter.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Freceipt%2Flifecycle%2FReceiptLifecycleEventWriter.kt|symbol.owner=com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter|symbol.name=write|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.transaction.TransactionContext%22%2C%22com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ReceiptEventDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleEventWriter.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter
+    method: write
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.transaction.TransactionContext
+    - com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  locations: [49]
+  disposition: EXACT_POLICY
+  rationale: "THE sanctioned receipt lifecycle event writer -- the event-writer layer the architecture mandates (LEGAL_PATHS: barrier check -> withTransaction -> ReceiptEvent); its own writes ARE the ReceiptEvent audit trail emitted by the barrier-checked receipt lifecycle services through the Hilt-bound interface; errorDetails pass sanitizer.sanitizeExceptionMessage; the ERROR-deprecated legacy write(event) overload delegates to this context overload (a single insert site)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ TransactionLifecycleEventWriter.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Ftransaction%2Flifecycle%2FTransactionLifecycleEventWriter.kt|symbol.owner=com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter|symbol.name=write|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.domain.transaction.TransactionContext%22%2C%22com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleEventWriter.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter
+    method: write
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.domain.transaction.TransactionContext
+    - com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  locations: [48]
+  disposition: EXACT_POLICY
+  rationale: "THE sanctioned transaction lifecycle event writer (the same event-writer layer) -- its writes ARE the TransactionEvent audit trail emitted by the GR-08l2-authorized TransactionLifecycleCoordinator and the other lifecycle callers through the Hilt-bound interface; beforeSnapshot/afterSnapshot explicitly null (no expense payloads), metadata carries correlation/operation/transaction ids only; the ERROR-deprecated legacy overload delegates here (a single insert site)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ LegacyDataMigrationService.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fservice%2Fdebug%2FLegacyDataMigrationService.kt|symbol.owner=com.yourname.expensetracker.service.debug.LegacyDataMigrationService|symbol.name=migrateCategories|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22android.database.sqlite.SQLiteDatabase%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.CategoryDao|identity.accessor=categoryDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/service/debug/LegacyDataMigrationService.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.service.debug.LegacyDataMigrationService
+    method: migrateCategories
+    receiver: null
+    parameterTypes:
+    - android.database.sqlite.SQLiteDatabase
+    kind: function
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: insert
+  locations: [177]
+  disposition: EXACT_POLICY
+  rationale: "Legacy one-time migration path (debug service; legacy DB opened READ-ONLY) -- pre-loads existing categories by lowercased name and inserts ONLY missing categories (case-insensitive skip, idempotent re-runs create nothing), building the old->new id map for downstream tables; expense mutations route through TransactionLifecycleCoordinator.createExpense (the authoritative expense path); CancellationException rethrown, per-row failures counted and the batch continues."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ CsvExpenseImporter.kt (1 fingerprint / 1 site) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Futil%2FCsvExpenseImporter.kt|symbol.owner=com.yourname.expensetracker.util.CsvExpenseImporter|symbol.name=getOrCreateCategory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.CategoryDao|identity.accessor=categoryDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/util/CsvExpenseImporter.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.util.CsvExpenseImporter
+    method: getOrCreateCategory
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: categoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.CategoryDao
+  operation: insert
+  locations: [248]
+  disposition: EXACT_POLICY
+  rationale: "CSV import get-or-create category convenience -- getByName first, default icon + hash-derived color insert only when the named category does not exist; ALL expense mutations of the import route through TransactionLifecycleCoordinator.createExpense (the authoritative expense path) -- the exact GR-08p1 JsonExpenseImporter parseV1Row/parseV2Row pattern."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08P2
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+closureRows: []
+deferred:
+  note: "NONE program-wide: GR-08p2 is the FINAL GR-08 triage batch.  After the GR-08p2 promotion, each of the fifteen batch files carries 0 DB_UNAUTHORIZED_MUTATION findings (1/1 site authorized per file), and the rescan delta expectation for the WHOLE GR-08p2 batch is 15 -> 0 -- ZERO DB_UNAUTHORIZED_MUTATION findings program-wide (the 20 DB_SIGNATURE_UNRESOLVED advisory diagnostics are non-blocking and outside the findings count).  Out-of-batch stability: no other files carry findings at START (the trusted GR-08p after.json reports exactly these 15), so the rescan must be byte-stable apart from the fifteen disappearing findings.  Future policy work must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

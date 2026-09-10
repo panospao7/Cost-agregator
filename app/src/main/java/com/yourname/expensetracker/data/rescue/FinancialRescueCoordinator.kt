@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.domain.util.TimeProvider
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -21,7 +22,10 @@ import java.io.FileWriter
  * 6. Imports recovered financial rows via SupportSQLiteDatabase (INSERT OR REPLACE)
  * 7. Writes a done-marker so rescue only runs once
  */
-class FinancialRescueCoordinator(private val context: Context) {
+class FinancialRescueCoordinator(
+    private val context: Context,
+    private val timeProvider: TimeProvider
+) {
 
     companion object {
         private const val TAG = "FinancialRescue"
@@ -583,7 +587,7 @@ class FinancialRescueCoordinator(private val context: Context) {
     private fun backupDatabaseFiles(dbFile: File) {
         val backupDir = File(context.filesDir, "db_backups")
         backupDir.mkdirs()
-        val timestamp = System.currentTimeMillis()
+        val timestamp = timeProvider.now()
 
         for (ext in listOf("", "-wal", "-shm", "-journal")) {
             val src = File(dbFile.absolutePath + ext)
@@ -604,7 +608,7 @@ class FinancialRescueCoordinator(private val context: Context) {
      * rescue fails.
      */
     private fun moveDatabaseFilesAside(dbFile: File) {
-        moveTimestamp = System.currentTimeMillis()
+        moveTimestamp = timeProvider.now()
         for (ext in listOf("", "-wal", "-shm", "-journal")) {
             val src = File(dbFile.absolutePath + ext)
             if (src.exists()) {
@@ -754,7 +758,7 @@ class FinancialRescueCoordinator(private val context: Context) {
     }
 
     private fun markRescueDone() {
-        File(context.filesDir, DONE_MARKER).writeText("Rescue completed at ${System.currentTimeMillis()}")
+        File(context.filesDir, DONE_MARKER).writeText("Rescue completed at ${timeProvider.now()}")
     }
 
     // ──────────────────────────────────────────────────────────────

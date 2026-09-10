@@ -78,10 +78,10 @@ class OverpassNearbyService @Inject constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
-            Log.w(TAG, "Overpass network error: ${e.message}")
+            Log.w(TAG, "GEOCODE_NETWORK_ERROR", e)
             NearbyPoiResult.Failure(GeocodingError.NetworkError)
         } catch (e: JSONException) {
-            Log.w(TAG, "Overpass parse error: ${e.message}")
+            Log.w(TAG, "GEOCODE_PARSE_ERROR", e)
             NearbyPoiResult.Failure(GeocodingError.ParseError)
         }
     }

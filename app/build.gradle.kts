@@ -6,6 +6,130 @@ plugins {
     id("com.google.dagger.hilt.android") version "2.57"
 }
 
+// Resolve the Python interpreter for guard tasks. Prefers an explicit
+// -PpythonExecutable property, then python3, then python (Windows has no
+// python3 by default). A project property always wins so CI can pin it.
+fun pythonInterpreter(): String {
+    findProperty("pythonExecutable")?.toString()?.takeIf { it.isNotBlank() }?.let { return it }
+    val candidates = listOf("python3", "python")
+    for (candidate in candidates) {
+        try {
+            exec {
+                workingDir = rootDir
+                commandLine(candidate, "--version")
+                isIgnoreExitValue = true
+            }.let { if (it.exitValue == 0) return candidate }
+        } catch (_: Exception) {
+            // Candidate not on PATH; try the next one.
+        }
+    }
+    return "python3"
+}
+
+// ── PR-GR-10A Slice 3: registered-runner Gradle bridge ──────────────────────
+// The guard tasks below are THIN WRAPPERS around
+// scripts/ci/run_registered_guard.py.  Gradle owns ONLY:
+//   - the configured Python executable (above) and its preflight;
+//   - the repository root;
+//   - task name/description identity;
+//   - fail-closed validation of the runner script itself;
+//   - test-only override forwarding (typed, root-contained, gated behind a
+//     dedicated test-mode property);
+//   - exit-to-GradleException mapping (0 pass / 1 violation / 2 infra).
+// Gradle does NOT own: the guard child command, ratchet argv, baseline or
+// policy/allowlist paths, finding protocol, timeout arithmetic, or source-
+// root semantics — those are owned by the registry execution schema
+// (scripts/ci/guard_registry.py), compiled by
+// scripts/ci/guard_execution_plan.py, and executed by the runner bridge.
+// See docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md.
+
+// The one input the Gradle plane still owns: the runner bridge script.
+// Every other guard input (entrypoint, policies, baseline, allowlist) is
+// validated fail-closed by the plan compiler BEFORE any child process is
+// launched.
+fun validateRegisteredRunnerInput(taskName: String, runnerFile: File) {
+    val rootCanonical = rootDir.canonicalFile
+    val canonical = runnerFile.canonicalFile
+    if (!canonical.path.startsWith(rootCanonical.path + File.separator, ignoreCase = true)) {
+        throw GradleException(
+            "$taskName: runner script points outside the repository root: " +
+            canonical.absolutePath
+        )
+    }
+    if (!canonical.exists()) {
+        throw GradleException(
+            "$taskName: registered-runner script not found: ${canonical.absolutePath} " +
+            "(scripts/ci/run_registered_guard.py)"
+        )
+    }
+    if (!canonical.isFile) {
+        throw GradleException(
+            "$taskName: registered-runner script is not a regular file: ${canonical.absolutePath}"
+        )
+    }
+    if (!canonical.canRead()) {
+        throw GradleException(
+            "$taskName: registered-runner script is not readable: ${canonical.absolutePath}"
+        )
+    }
+}
+
+// Preflight: launch the interpreter with --version. Failure to launch Python
+// (or a non-zero --version exit) is an infrastructure error, not a policy
+// violation.
+fun pythonPreflightOrThrow(taskName: String, pythonExecutable: String) {
+    val preflightExit: Int = try {
+        exec {
+            workingDir = rootDir
+            commandLine(pythonExecutable, "--version")
+            isIgnoreExitValue = true
+        }.exitValue
+    } catch (_: Exception) {
+        throw GradleException(
+            "$taskName: Python preflight failed — could not launch '$pythonExecutable' " +
+            "(infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
+        )
+    }
+    if (preflightExit != 0) {
+        throw GradleException(
+            "$taskName: Python preflight failed — '$pythonExecutable --version' exited " +
+            "$preflightExit (infrastructure error). Pass -PpythonExecutable=/path/to/python3 to specify the interpreter."
+        )
+    }
+}
+
+// Execute one registered guard through the canonical runner bridge with an
+// argument list (shell=False), never a shell string, and map the universal
+// exit codes onto GradleException.
+fun runRegisteredGuardFromGradle(
+    taskName: String,
+    guardId: String,
+    pythonExecutable: String,
+    runnerFile: File,
+    extraArgs: List<String>,
+    onViolation: () -> Unit,
+    onInfra: () -> Unit,
+) {
+    val commandArgs = listOf(
+        pythonExecutable,
+        runnerFile.absolutePath,
+        "--guard-id", guardId,
+        "--context", "gradle",
+        "--root", rootDir.canonicalFile.absolutePath,
+    ) + extraArgs
+    val result = exec {
+        workingDir = rootDir
+        commandLine(commandArgs)
+        isIgnoreExitValue = true
+    }
+    when (result.exitValue) {
+        0 -> { /* pass: no violations */ }
+        1 -> onViolation()
+        2 -> onInfra()
+        else -> throw GradleException("$taskName: unexpected exit code ${result.exitValue}")
+    }
+}
+
 android {
     namespace = "com.yourname.expensetracker"
     compileSdk = 35
@@ -24,8 +148,26 @@ android {
         // Keys are now stored in SecureKeyStorage (encrypted at rest)
     }
 
+    signingConfigs {
+        getByName("debug") {
+            // Uses default debug keystore — sufficient for CI verification
+        }
+    }
+
     buildTypes {
         release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            // CI signing: ephemeral debug keystore for verification only.
+            // Production release signing uses a separate protected configuration.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        debug {
+            // Keep debug build fast for development
             isMinifyEnabled = false
         }
     }
@@ -51,7 +193,9 @@ android {
         }
     }
     sourceSets {
+        getByName("debug").assets.srcDirs("$projectDir/schemas")
         getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+        getByName("test").assets.srcDirs("$projectDir/schemas")
     }
 
     testOptions {
@@ -71,9 +215,13 @@ android {
                 showStackTraces = true
                 exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
     }
-}
-
     }
+
+    lint {
+        // Baseline captures pre-existing MissingTranslation issues only.
+        // All lint rules are fully active; baselined issues are suppressed by the XML.
+        baseline = file("lint-baseline.xml")}
+}
 }
 
 ksp {
@@ -352,13 +500,13 @@ tasks.named("check") {
     dependsOn("verifyRoomSchemaSnapshots")
 }
 
-// HIGH-6: Ignored-test count guard — fails if @Ignore annotations grow
+// HIGH-6: Ignored-test count guard — fails if @Ignore annotations grow (wired to :app:check in PR 2)
 tasks.register("verifyNoIgnoredGrowth") {
     group = "verification"
     description = "Fails if the number of @Ignore-annotated test methods grows beyond the threshold"
 
     doLast {
-        val maxAllowed = (findProperty("maxIgnoredTests")?.toString()?.toIntOrNull()) ?: 310
+        val maxAllowed = (findProperty("maxIgnoredTests")?.toString()?.toIntOrNull()) ?: 29
         val testDirs = listOf(
             file("$projectDir/src/test/java"),
             file("$projectDir/src/test/kotlin"),
@@ -386,170 +534,216 @@ tasks.register("verifyNoIgnoredGrowth") {
     }
 }
 
-// CI guard: fails if production code calls deprecated raw aggregation DAO methods
-// TODO: Add CI guard that fails if production code calls deprecated raw aggregation
-// methods (e.g., getTotalSpentBetween, getTotalSpent) via grep/lint rule.
+// Deprecated raw-aggregation DAO methods (e.g., getTotalSpentBetween,
+// getTotalSpentFlow) are guarded at the source: each carries
+// @Deprecated(level = DeprecationLevel.ERROR), so any production call
+// without an explicit @Suppress("DEPRECATION_ERROR") fails the build.
+// Remaining call sites (ExpenseRepository, SpendingChallengeManager, ...)
+// are individually suppressed with migration TODOs. No separate grep/lint
+// rule is needed — the compiler-level ERROR deprecation is the guard.
 
-// ARCH-01: Lifecycle bypass guard — wired into check lifecycle
-tasks.register("checkLifecycleBypasses") {
-    group = "verification"
-    description = "Fails if production code contains direct ExpenseDao calls that bypass TransactionLifecycleCoordinator"
+// PR-GR-10A Slice 3 — SUBSUMED_AND_RETIRED: the inline ARCH-01 lifecycle
+// scanner task ``checkLifecycleBypasses`` (14 textual ``expenseDao.updateXxx(``
+// patterns with a file-name allowlist) has been retired.  The canonical
+// ``db_access`` D4 guard (scripts/db_guard/scanner.py + the ownership policy +
+// the db_access_v2 ratchet baseline) discovers every direct DAO mutation by
+// receiver TYPE via the Room inventory and authorizes it by exact policy
+// identity — a strict superset of the retired receiver-NAME textual rules.
+// Subsumption proof: scripts/test_lifecycle_scanner_subsumption.py and
+// docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md (inline lifecycle scanner row).
 
-    doLast {
-        val script = file("$rootDir/scripts/guards/check_lifecycle_bypasses.kts")
-        if (!script.exists()) {
-            logger.warn("Lifecycle bypass guard script not found at ${script.absolutePath}")
-            return@doLast
-        }
-        try {
-            exec {
-                workingDir = rootDir
-                commandLine("kotlin", script.absolutePath)
-            }
-        } catch (e: Exception) {
-            throw GradleException("Lifecycle bypass guard failed: ${e.message}")
-        }
-    }
-}
-
-// Wire both guards into the check lifecycle
-tasks.named("check") {
-    dependsOn("checkLifecycleBypasses")
-}
-
-// PR-E23: Wire check_raw_money_aggregates.kts CI guard for raw Double financial totals.
-// Flags: sumOf { it.amount }, sumOf { it.effectiveAmount }, total: Double in public engine results.
+// PR-E23: raw Double financial totals are now enforced by the REGISTERED
+// guard ``raw_money_aggregates`` (scripts/verify_raw_money_aggregates.py,
+// G-MONEY-RAW-01..07) — EXTRACTED_AND_REGISTERED from the former inline KTS
+// scanner.  The task below is the thin Gradle bridge; the rules are owned by
+// the registry execution schema.
 tasks.register("checkRawMoneyAggregates") {
     group = "verification"
-    description = "Fails if production code uses raw Double financial aggregates without MoneyAggregate"
+    description = "Fails if production code uses raw Double financial aggregates without MoneyAggregate (registered guard raw_money_aggregates via run_registered_guard.py)"
     doLast {
-        val script = file("$rootDir/scripts/guards/check_raw_money_aggregates.kts")
-        if (!script.exists()) {
-            logger.warn("Raw money aggregates guard script not found at ${script.absolutePath}")
-            return@doLast
-        }
-        try {
-            exec {
-                workingDir = rootDir
-                commandLine("kotlin", script.absolutePath)
-            }
-        } catch (e: Exception) {
-            throw GradleException("Raw money aggregates guard failed: ${e.message}")
-        }
+        val taskName = "checkRawMoneyAggregates"
+        val runnerFile = file("$rootDir/scripts/ci/run_registered_guard.py")
+        validateRegisteredRunnerInput(taskName, runnerFile)
+        val pythonExecutable = pythonInterpreter()
+        pythonPreflightOrThrow(taskName, pythonExecutable)
+        runRegisteredGuardFromGradle(
+            taskName = taskName,
+            guardId = "raw_money_aggregates",
+            pythonExecutable = pythonExecutable,
+            runnerFile = runnerFile,
+            extraArgs = listOf("--ci-mode"),
+            onViolation = {
+                throw GradleException(
+                    "RAW MONEY AGGREGATE: raw Double financial aggregate violations found " +
+                    "(G-MONEY-RAW-01..07). Route totals through MoneyAggregate / normalized " +
+                    "money primitives. See docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md."
+                )
+            },
+            onInfra = {
+                throw GradleException(
+                    "checkRawMoneyAggregates: infrastructure error (missing registry, guard " +
+                    "script, or source root — validated fail-closed by the plan compiler " +
+                    "before child execution). Check that scripts/ci/run_registered_guard.py " +
+                    "and scripts/verify_raw_money_aggregates.py are present and valid."
+                )
+            },
+        )
     }
 }
 
-// PR-E24: Wire check_direct_time_calls.kts CI guard.
-// Flags: System.currentTimeMillis(), Date(), Calendar.getInstance(), Instant.now(), LocalDate.now()
-// Allowlist: TimeProvider implementations, platform adapters, tests.
+// PR-GR-02 / PR-GR-10A Slice 3: canonical direct-time boundary guard
+// (G-TIME-01) as a THIN WRAPPER around the registered runner bridge.
+// The command, allowlist path, and exit semantics are owned by the registry
+// execution schema (guard id ``time_boundaries``) and compiled by
+// scripts/ci/guard_execution_plan.py — Gradle owns only the interpreter,
+// the root, and exit-to-GradleException mapping.
 tasks.register("checkDirectTimeCalls") {
     group = "verification"
-    description = "Fails if production code calls System.currentTimeMillis() or Date() outside TimeProvider"
+    description = "Fails if production code calls wall-clock APIs outside the exact time-boundary exceptions (fail closed; canonical registry plan via run_registered_guard.py)"
     doLast {
-        val script = file("$rootDir/scripts/guards/check_direct_time_calls.kts")
-        if (!script.exists()) {
-            logger.warn("Direct time calls guard script not found at ${script.absolutePath}")
-            return@doLast
-        }
-        try {
-            exec {
-                workingDir = rootDir
-                commandLine("kotlin", script.absolutePath)
-            }
-        } catch (e: Exception) {
-            throw GradleException("Direct time calls guard failed: ${e.message}")
-        }
+        val taskName = "checkDirectTimeCalls"
+        val runnerFile = file("$rootDir/scripts/ci/run_registered_guard.py")
+        validateRegisteredRunnerInput(taskName, runnerFile)
+        val pythonExecutable = pythonInterpreter()
+        pythonPreflightOrThrow(taskName, pythonExecutable)
+        runRegisteredGuardFromGradle(
+            taskName = taskName,
+            guardId = "time_boundaries",
+            pythonExecutable = pythonExecutable,
+            runnerFile = runnerFile,
+            extraArgs = listOf("--ci-mode"),
+            onViolation = {
+                throw GradleException(
+                    "DIRECT TIME: direct wall-clock time boundary violations found. " +
+                    "Route the call through TimeProvider (timeProvider.now()) or add an exact exception entry " +
+                    "to config/guards/time_boundary_exceptions.yml with a reason, owner, and linked issue. " +
+                    "See docs/development/TIME_SEMANTICS.md."
+                )
+            },
+            onInfra = {
+                throw GradleException(
+                    "checkDirectTimeCalls: infrastructure error (missing/malformed registry, exceptions " +
+                    "policy, or guard inputs — validated fail-closed by the plan compiler before child " +
+                    "execution). Check that scripts/ci/run_registered_guard.py, " +
+                    "scripts/verify_time_boundaries.py and config/guards/time_boundary_exceptions.yml " +
+                    "are present and valid."
+                )
+            },
+        )
     }
 }
 
-/**
- * CI-enforced boundary guard.
- *
- * FAILS BUILD on direct ExpenseDao insert/update/delete mutations
- * outside the lifecycle allowlist. Any new class that needs direct
- * ExpenseDao access MUST be added to [allowlistForGuard] with a
- * documented rationale in docs/expense-mutation-inventory.md.
- *
- * Allowlist (approved bypasses):
- * - TransactionLifecycleCoordinator — the canonical mutation entry point
- * - LocationBackfillWorker — background column backfill (1-2 cols, low-value events)
- * - MerchantKeyBackfillWorker — background column backfill (1 col, low-value events)
- * - GroupTransactionCoordinator — atomic group-expense creation within outer tx
- * - DebugExpenseRepository — BuildConfig.DEBUG guarded debug methods
- * - AppDatabase — Room infrastructure
- * - ReceiptLinkService — circular dependency constraint (RCP-30)
- * - ExpenseRepository — delegated to coordinator for all user paths
- * - MultiCurrencyRepository — analytics-only read path with conversion inserts
- * - NotificationRepository — notification capture, not expense mutation
- */
-val srcDirForGuard = layout.projectDirectory.dir("src/main/java").asFile
-val allowlistForGuard = setOf(
-    "TransactionLifecycleCoordinator", "LocationBackfillWorker", "MerchantKeyBackfillWorker",
-    "GroupTransactionCoordinator", "DebugExpenseRepository", "AppDatabase",
-    "ReceiptLinkService", "ExpenseRepository", "MultiCurrencyRepository",
-    "NotificationRepository"
-)
-tasks.register("checkLifecycleBypass") {
-    group = "verification"
-    description = "Fails if ExpenseDao.insert/update/delete called outside TransactionLifecycleCoordinator"
-    doLast {
-        val violations = mutableListOf<String>()
-        srcDirForGuard.walk().forEach { f ->
-            if (!f.name.endsWith(".kt") || f.isDirectory) return@forEach
-            val className = f.name.removeSuffix(".kt")
-            if (allowlistForGuard.any { className.contains(it) }) return@forEach
-            val text = f.readText()
-            val patterns = listOf("expenseDao\\.insert", "expenseDao\\.update", "expenseDao\\.delete")
-            for (pattern in patterns) {
-                if (Regex(pattern).containsMatchIn(text)) {
-                    violations.add("${f.path}: matches ${pattern}")
-                }
-            }
-        }
-        if (violations.isNotEmpty()) {
-            throw GradleException("LIFECYCLE BYPASS: Direct ExpenseDao mutations outside allowlist:\n  ${violations.joinToString("\n  ")}")
-        }
-    }
-}
+// PR-GR-10A Slice 3 — SUBSUMED_AND_RETIRED: the inline CI guard task
+// ``checkLifecycleBypass`` (textual ``expenseDao.insert|update|delete``
+// regexes with a class-name allowlist) has been retired.  Its positive
+// surface (direct ExpenseDao entity mutations) is a strict subset of the
+// canonical ``db_access`` D4 guard's discovery space, which authorizes every
+// direct DAO mutation by exact policy identity and fails closed on
+// unresolved scopes.  Subsumption proof:
+// scripts/test_lifecycle_scanner_subsumption.py and
+// docs/ci/GR-10A_COMMAND_AUTHORITY_MATRIX.md (inline lifecycle scanner row).
 
-// Wire both new guards into the check lifecycle
-// VERIFIED (PR-E24): Both checkRawMoneyAggregates and checkDirectTimeCalls are
-// registered (above) AND wired to the "check" lifecycle via dependsOn.
+// Wire the registered-runner guard bridges into the check lifecycle.
+// checkRawMoneyAggregates and checkDirectTimeCalls are thin wrappers over
+// scripts/ci/run_registered_guard.py (registry-owned commands); the inline
+// lifecycle scanners they formerly accompanied are retired (see above).
 tasks.named("check") {
     dependsOn("checkRawMoneyAggregates")
     dependsOn("checkDirectTimeCalls")
-    dependsOn("checkLifecycleBypass")
 }
 
-// TODO (M10): Add CI guard for direct System.currentTimeMillis/Instant.now/Date()
-// calls outside approved TimeProvider implementations
+// checkDirectTimeCalls runs the registered ``time_boundaries`` guard through
+// the runner bridge and is fail-closed: any missing/malformed registry,
+// policy, or guard input is rejected by the plan compiler before child
+// execution, and any direct wall-clock call outside the exact exceptions in
+// config/guards/time_boundary_exceptions.yml produces a hard GradleException.
+// The guard is fully wired into the "check" lifecycle (see dependsOn block
+// above).
 
-// PR 10 — DB access boundary guard in CI failure mode.
+// PR-GR-01 / PR-GR-10A Slice 3: DB access boundary guard as a THIN WRAPPER
+// around the registered runner bridge (guard id ``db_access``, ratchet-
+// enforced, fail closed).  The ratchet child command, the tokenized
+// --command-arg argv, the baseline/policy/structural-manifest paths, the
+// explicit --finding-protocol=2 intent, and the D4 timeout profile are owned
+// by the registry execution schema and compiled by
+// scripts/ci/guard_execution_plan.py — Gradle no longer rebuilds any of them.
+//
+// Test-only typed input overrides (plan Step 6): the four policy/manifest
+// inputs are the only declared requiredInputs of the db_access guard, so
+// they are the only overridable keys.  The ratchet script, guard entrypoint,
+// and baseline are compiler-owned ratchet metadata and are deliberately NOT
+// overridable (an override must never change guard ID, mode, baseline mode,
+// or protocol).  Overrides require the dedicated test-mode property
+// -PdbGuardTestOverrides=true and are rejected outright by the runner in
+// --ci-mode production enforcement; relative override paths resolve against
+// the repository root (rootDir), absolute paths are used as-is.
+//
+// Python interpreter (defaults to python3):
+//   -PpythonExecutable=/path/to/python3
 tasks.register("verifyDbAccessBoundaries") {
     group = "verification"
-    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer allowlist"
+    description = "Fails build if unauthorized direct DAO mutations are found outside the approved writer policy (canonical registry plan via run_registered_guard.py; ratchet-enforced, fail closed)"
     doLast {
-        val script = file("$rootDir/scripts/verify_db_access_boundaries.py")
-        if (!script.exists()) {
-            logger.warn("verifyDbAccessBoundaries: script not found at ${script.absolutePath}")
-            return@doLast
+        val taskName = "verifyDbAccessBoundaries"
+        val runnerFile = file("$rootDir/scripts/ci/run_registered_guard.py")
+        validateRegisteredRunnerInput(taskName, runnerFile)
+        val pythonExecutable = pythonInterpreter()
+        pythonPreflightOrThrow(taskName, pythonExecutable)
+
+        val dbGuardOverrideInputs = listOf(
+            "dbGuardOwnershipPolicyPath" to "config/guards/db_ownership_policy.yml",
+            "dbGuardStructuralExceptionsPath" to "config/guards/db_structural_exceptions.yml",
+            "dbGuardStructuralManifestPath" to "config/guards/db_structural_exceptions_expected_methods.yml",
+            "dbGuardSourceRootsManifestPath" to "config/guards/production_source_roots.yml"
+        )
+        val testOverridesEnabled = findProperty("dbGuardTestOverrides")?.toString() == "true"
+        val overrideArgs = mutableListOf<String>()
+        for ((overrideProp, inputKey) in dbGuardOverrideInputs) {
+            val raw = findProperty(overrideProp)?.toString()?.takeIf { it.isNotBlank() } ?: continue
+            if (!testOverridesEnabled) {
+                throw GradleException(
+                    "$taskName: override property '$overrideProp' requires " +
+                    "-PdbGuardTestOverrides=true (dedicated test-only mode; " +
+                    "overrides are rejected in production CI)."
+                )
+            }
+            val overrideFile = File(raw)
+            val resolved = if (overrideFile.isAbsolute) overrideFile else file("$rootDir/$raw")
+            overrideArgs += "--input-override"
+            overrideArgs += "$inputKey=${resolved.absolutePath}"
         }
-        val result = exec {
-            workingDir = rootDir
-            commandLine("python3", script.absolutePath, "--fail-on-violation")
-            isIgnoreExitValue = true
-        }
-        if (result.exitValue != 0) {
-            throw GradleException(
-                "DB access boundary violations found. " +
-                "Add the class to config/db_access_allowlist.yml with a reason, " +
-                "or route the write through the approved lifecycle coordinator. " +
-                "See docs/DB_WRITE_OWNERSHIP.md."
-            )
-        }
+        // Production CI enforcement (--ci-mode) unless dedicated test-only
+        // overrides are active; the runner rejects the combination fail-closed.
+        val ciArgs = if (overrideArgs.isEmpty()) listOf("--ci-mode") else emptyList()
+
+        runRegisteredGuardFromGradle(
+            taskName = taskName,
+            guardId = "db_access",
+            pythonExecutable = pythonExecutable,
+            runnerFile = runnerFile,
+            extraArgs = ciArgs + overrideArgs,
+            onViolation = {
+                throw GradleException(
+                    "New DB access boundary violations found. " +
+                    "Add an exact entry to config/guards/db_ownership_policy.yml with a reason, " +
+                    "or a structural exception to config/guards/db_structural_exceptions.yml, " +
+                    "or route the write through the approved lifecycle coordinator. " +
+                    "See docs/DB_WRITE_OWNERSHIP.md."
+                )
+            },
+            onInfra = {
+                throw GradleException(
+                    "verifyDbAccessBoundaries: infrastructure error (missing baseline, malformed config, " +
+                    "registry/plan-compiler failure, or ratchet failure). The plan compiler validates every " +
+                    "required input (config/baselines/db_access_v2.json, the config/guards/ policy and " +
+                    "manifest files, and the guard scripts) fail-closed before child execution."
+                )
+            },
+        )
     }
 }
 
 tasks.named("check") {
     dependsOn("verifyDbAccessBoundaries")
+    dependsOn("verifyNoIgnoredGrowth")
 }

@@ -1,0 +1,174 @@
+# GR-14u — entry family tranche 2: Pattern E dead-writer removal (471 -> 461)
+# + COUNTEREXAMPLE CLASS ELIMINATED PROGRAM-WIDE (2 -> 0).
+#
+# Removal set (each independently triple-proven dead: engine zero-inbound on
+# the GR-14r board + repo grep zero call sites in main AND test, with
+# same-name DAO-layer collisions ruled out per site + compile success after
+# removal as the final caller-inventory proof):
+#   1. RoomOperationRunRecorder.recoverStaleRunningOperationRuns (2 keys:
+#      OperationRunDao.finalizeIfRunning, OperationRunEventDao.insert —
+#      THE LAST 2 COUNTEREXAMPLE ROWS).  Family removal: interface member
+#      on OperationRunRecorder, the RoomOperationRunRecorder override, the
+#      delegating CompositeOperationRunRecorder override (the counterexample
+#      path root), the anonymous no-op override in
+#      DatabaseBackupRepositoryImpl's secondary ctor, 2 test-fake overrides
+#      (BankApiIntegrationTest, PR5PrivacyContractTest), and the now-unused
+#      DEFAULT_STALE_OPERATION_AGE_MS constant.  Zero production callers
+#      (the "Call on app startup" contract was never wired).
+#   2. EnhancedSplitManager.assignItemsToParticipants (2 keys:
+#      SplitItemAssignmentDao.deleteAllForExpense + insertAssignments)
+#   3. EnhancedSplitManager.markAssignmentAsPaid (SplitItemAssignmentDao.markAsPaid)
+#   4. EnhancedSplitManager.useTemplate (SplitTemplateDao.incrementUseCount)
+#   5. EnhancedSplitManager.updateTemplate (SplitTemplateDao.updateTemplate)
+#   6. SubscriptionManagementRepository.insertSubscription
+#      (ManualRecurringExpenseDao.insert)
+#   7. SubscriptionManagementRepository.insertPriceHistory
+#      (SubscriptionPriceHistoryDao.insert)
+#   8. SubscriptionManagementRepository.markCandidateAsConverted
+#      (SubscriptionCandidateDao.markAsConverted)
+#   (10 policy keys — within the GR-14H_PLAN tranche cap.)
+#
+# Policy handling (EXACT_IDENTITY removal, GR-14c/GR-14h precedent):
+#   - generation input edited: 10 seed blocks out of
+#     docs/ci/db-findings/GR-08-seeds.yml (418 -> 408); legacy input
+#     UNTOUCHED (no v1 rows exist for these writers; stays 93);
+#   - tracked candidate/accounting pair regenerated via the sanctioned
+#     `migrate_db_policy_signatures.py --generate` and `--verify
+#     --seed-rows` FULL MATCH (all sections, incl. accounting seedRecords
+#     crosswalk and candidate sha pair; fold distribution UNCHANGED
+#     resolved=53 unresolved=40 keeper=43);
+#   - mutation-key delta vs the active policy: EXACTLY -10 (the removal
+#     set), zero additions;
+#   - active policy realigned by direct reviewed edit per the GR-14c/GR-14h
+#     dead-row precedent (the promote CLI's archive target would clobber
+#     the legacy migration input); active == candidate == 461 entries.
+#   NEW active policy sha256:
+#   5d3b394dfe0c8c37beaac753b21a3a4a5bb5d30d66812a7d407466f5bdbb096d
+#   (was 51f7d40a...).
+#
+# Pins updated with drift notes: known-good-state validator
+# (_CANDIDATE_ENTRIES 471 -> 461), current-repo tripwire
+# (test_db_guard_policy_v2_current_repo 471 -> 461, 3/3 PASS).  Migration
+# suite 85/85 with NO fold-pin drift (fold groups unchanged).
+#
+# Shadow delta (before = post-GR-14s, sha 234cc95c — zero drift; policy
+# bytes changed by GR-14t? NO — GR-14t landed no code, only documentation):
+#   entries 443 -> 433; counterexample_unguarded_call_path 2 -> 0 (the
+#   definite-violation class is eliminated program-wide for the second
+#   time — first was GR-14i); entry family 72 -> 64; every other proof
+#   bucket byte-stable; diagnostics unchanged; deterministic double-run
+#   BYTE-IDENTICAL (970403d360f04c63a93720cb0082c251475a9ba0e5480c2aa4994
+#   325039a39d7).
+#
+# Entry-family remainder (64 rows), classified this batch — GR-14u2 queue:
+#   - further dead candidates (grep-zero, collision-verified): SourceStats
+#     Repository x9 (callers bypass the wrapper and call SourceStatsDao
+#     directly), SavingsGoalRepository x4, MerchantNormalizationRepository
+#     x3, WarrantyTrackerRepository x3, MerchantCategoryRepository.deleteAll,
+#     ExpenseWriteStore.deleteAll/insertAll/updateCategoryNullable,
+#     ReceiptRepository.writeReceiptEvent/clearMatchForReceipt,
+#     ReceiptMatchLifecycleService.approveMatchSuggestion (2),
+#     ManualRecurring/RecurringExpenseRepository.writeLifecycleEvent x2.
+#   - production-dead BUT test-covered (owner decision needed — feature-
+#     level removals or Pattern A scopes): GroupLifecycleCoordinator
+#     archiveGroup/removeMember/recordSettlement/deleteGroupPermanently
+#     (contract/scenario suites only; the GroupTransactionCoordinator
+#     routing they document was never built), InvestmentTracker
+#     addHolding/updatePrice, NotificationRepository.deleteAllNotifications,
+#     BankApiIntegration.completeConnection, SubscriptionManagerEngine.
+#     recordPriceChange, AiArtifactRepositoryImpl.deleteByTargetKey
+#     (interface-declared).
+#   - ALIVE-with-callers (engine visibility gaps — do NOT remove;
+#     engine investigation owed): ReviewQueueRepository.recoverStuckReviews
+#     (real caller ReviewViewModel.kt:218), ExpenseWriteStore.
+#     conditionallySetLocation/incrementBackfillAttempts/updateMerchantKey/
+#     updateCategory (LocationBackfillWorker/MerchantKeyBackfillWorker ->
+#     ExpenseRepository facade chains).
+#   - name-match noise floor (Room/Activity onCreate collisions): NOT
+#     addressed — engine admission is owner-gated per the handoff's
+#     closed-set rule; does not affect the zero-inbound entry rows.
+#
+# Validation:
+#   - :app:compileDebugKotlin + compileDebugUnitTestKotlin BUILD
+#     SUCCESSFUL — caller-inventory proof (one daemon native-OOM crash
+#     en route, infra-only, retried clean after ./gradlew --stop);
+#   - migration 85/85 (no pin drift); current-repo tripwire 3/3;
+#   - python batteries: fixture_runner 58/58; mediation+fixtures 32/32;
+#     carrier/launch/composable/finality+CLI 49/49;
+#   - targeted tests (PR5PrivacyContract, BankApiIntegration,
+#     DirectEventDaoInsertGuard, CancellationSafetyArchitectureGuard,
+#     SplitCalculationPrecision, VisualSplitViewModel,
+#     SubscriptionManagementViewModel): 75 passed; 5 FAILED — stash A/B
+#     reproduces the IDENTICAL failure set at the pre-batch state
+#     (AndroidKeyStore unavailable in unit JVM; time-expired
+#     DirectEventDaoInsertGuard allowlist entries for untouched files;
+#     CancellationSafety KNOWN_VIOLATIONS stale entry DebugDataStorage.kt
+#     + BankConnectionLifecycleCoordinator broad-catch violations; split
+#     percentage float rounding) — all pre-existing, none caused by this
+#     batch;
+#   - GATE-00R double capture + Gradle DB task: OWED at merge — MANDATORY
+#     for this batch (active policy bytes changed, new sha 5d3b394d...).
+schemaVersion: 1
+batchId: GR-14u
+startSha: ba353d69
+gateEvidenceSha256: null # GATE-00R recapture MANDATORY at merge (policy changed)
+mediationReportSha256Before: 234cc95c177188c65af24a1e4cf3b25f66f2ae589f099f4414ef026b3d42c7b5
+mediationReportSha256After: 970403d360f04c63a93720cb0082c251475a9ba0e5480c2aa4994325039a39d7
+activePolicySha256: 5d3b394dfe0c8c37beaac753b21a3a4a5bb5d30d66812a7d407466f5bdbb096d
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt:
+      removed dead recoverStaleRunningOperationRuns (interface member +
+      RoomOperationRunRecorder override + unused constant)
+  - app/src/main/java/com/yourname/expensetracker/domain/diagnostics/CompositeOperationRunRecorder.kt:
+      removed dead delegating override (counterexample path root)
+  - app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt:
+      removed anonymous no-op override (secondary-ctor test seam)
+  - app/src/main/java/com/yourname/expensetracker/domain/split/EnhancedSplitManager.kt:
+      removed dead updateTemplate/useTemplate/assignItemsToParticipants/
+      markAssignmentAsPaid
+  - app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt:
+      removed dead insertSubscription/insertPriceHistory/markCandidateAsConverted
+  - app/src/test/java/com/yourname/expensetracker/domain/bank/BankApiIntegrationTest.kt:
+      fake override line removed (interface narrowed)
+  - app/src/test/java/com/yourname/expensetracker/domain/privacy/PR5PrivacyContractTest.kt:
+      fake override line removed (interface narrowed)
+
+policyFixes:
+  - docs/ci/db-findings/GR-08-seeds.yml: 10 dead seed blocks removed (418 -> 408)
+  - config/guards/db_ownership_policy.signatures.candidate.yml: regenerated 471 -> 461
+  - config/guards/db_ownership_policy.signatures.accounting.json: regenerated (paired)
+  - config/guards/db_ownership_policy.yml: active realigned 471 -> 461
+    (GR-14c/GR-14h dead-row precedent; direct reviewed edit, key sets == candidate)
+  - legacy input untouched (93; no v1 rows for these writers)
+
+selectedMutationKeys:
+  - RoomOperationRunRecorder.recoverStaleRunningOperationRuns -> OperationRunDao.finalizeIfRunning
+  - RoomOperationRunRecorder.recoverStaleRunningOperationRuns -> OperationRunEventDao.insert
+  - EnhancedSplitManager.assignItemsToParticipants -> SplitItemAssignmentDao.deleteAllForExpense
+  - EnhancedSplitManager.assignItemsToParticipants -> SplitItemAssignmentDao.insertAssignments
+  - EnhancedSplitManager.markAssignmentAsPaid -> SplitItemAssignmentDao.markAsPaid
+  - EnhancedSplitManager.useTemplate -> SplitTemplateDao.incrementUseCount
+  - EnhancedSplitManager.updateTemplate -> SplitTemplateDao.updateTemplate
+  - SubscriptionManagementRepository.insertSubscription -> ManualRecurringExpenseDao.insert
+  - SubscriptionManagementRepository.insertPriceHistory -> SubscriptionPriceHistoryDao.insert
+  - SubscriptionManagementRepository.markCandidateAsConverted -> SubscriptionCandidateDao.markAsConverted
+rootCause: DIRECT_COUNTEREXAMPLE # recoverStale pair; remainder GR13_ZERO_INBOUND_CALL_SITES
+selectedPattern: E # remove dead/unreachable writer (triple-proven)
+tests:
+  - migration 85/85 (no fold drift); current-repo tripwire 3/3 (461 pin)
+  - targeted touched-area suites 75 passed / 5 pre-existing failures
+    (stash A/B identical at pre-batch state)
+
+status: PARTIAL # GATE-00R recapture + Gradle DB task MANDATORY at merge (policy changed)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch removes dead code and its now-meaningless authorization rows.
+  It is not a baseline, exception, or authorization document.  The
+  candidate/active pair stays key-set aligned at 461; every removal was
+  triple-proven dead (engine + grep + compile) before and after; the
+  counterexample class is eliminated program-wide with honest
+  classifications preserved everywhere else.

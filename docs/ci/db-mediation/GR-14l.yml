@@ -1,0 +1,83 @@
+# GR-14l — Compose boundary admission: composable context inheritance.
+#
+# PROBLEM (taint-traced in this batch): after GR-14j, the async family's
+# remaining uncertain edges concentrate in the Compose UI boundary —
+# layout/content lambdas (Surface, Box, Scaffold, AnimatedContent, ...),
+# onClick handlers, and the setContent composition root.  These execute in
+# composition context (context none, never a guard source), so under the
+# owner-approved GR-14j principle (caller context irrelevant; the writer's
+# own canonical scope decides) they are admitted as context-inherited.
+#
+# Engine changes:
+#   - CallableModel.is_composable (annotation detection incl. annotation
+#     lines above the fun — own-line prefix check + upward walk);
+#   - _lambda_regions: inside a @Composable callable, every non-launch
+#     lambda region is context-inherited (transparent); launch-family
+#     carriers keep their own admission rule (unknown receivers stay
+#     async-uncertain even inside composables);
+#   - _propagate_nested_transparency: a non-launch, unknown-carrier lambda
+#     nested inside an admitted transparent region inherits transparency
+#     to arbitrary depth (themed wrappers inside setContent, etc.);
+#     assigned-literal escapes are never unlocked;
+#   - inline carrier set += setContent (androidx composition root).
+#   - defect fixed en route: the GR-14l annotation pattern initially
+#     carried a mangled escape (literal backspace) that disabled detection
+#     entirely — caught by the empty first shadow delta, root-caused, and
+#     fixed before any conclusion was drawn.
+#
+# Shadow delta (before = post-GR-14k): updateType x2 cleared its Compose
+# boundary taint (async 305 -> 303); entry 69 -> 71 (two rows reclassified
+# as their calls now resolve exactly through the boundary).  Net unproven
+# unchanged (386) — the boundary taint handed off to the next blockers:
+# two genuine assigned-lambda escapes in UI code
+# (SharedExpenseGroupsScreen.CreateGroupDialog, TransactionsScreen) now
+# precisely identified as the GR-14m production-remediation queue.
+#
+# Validation:
+#   - composable module 4/4 (setContent pin, scoped-writer-behind-boundary
+#     proves, unscoped-writer-behind-boundary = definite counterexample —
+#     the strictness inversion extended to the Compose boundary, unknown
+#     launch inside composable stays uncertain);
+#   - carrier module 12/12, structured-launch module 7/7, CLI battery
+#     23/23, mediation suite 32/32, fixture battery 55/55;
+#   - no production Kotlin changed (engine + fixtures + tests only);
+#   - GATE-00R double capture + Gradle DB task: OWED at merge (carried).
+schemaVersion: 1
+batchId: GR-14l
+startSha: dd9cf5f1
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: e8abe47baef9400d8fe6aa5df07423cd5f86a8a60d29f508f686d2f58fdc54ac
+mediationReportSha256After: 7bba5ffff2fe2fd0b64cbf865b81590e4f5e38555b62c07fb27abc55750cf77f
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+engineFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+    - CallableModel.is_composable + _has_annotation_above (own-line +
+      upward annotation walk)
+    - _lambda_regions composable context inheritance (non-launch lambdas)
+    - _propagate_nested_transparency fixpoint (nested unknown carriers
+      inside admitted transparent regions; launch families and assigned
+      escapes excluded)
+    - PRODUCTION_TRANSPARENT_INLINE_METHODS += setContent
+  - fixtures/tests: scripts/ci/test_gr14l_composables.py (4)
+
+knownFollowUps:
+  - GR-14m: inline the two UI assigned-lambda escapes
+    (SharedExpenseGroupsScreen.CreateGroupDialog, TransactionsScreen) or
+    refactor per GR-14 Step 3; then re-shadow
+  - .PostCommitAction (9 edges) and .finally (19 edges) census labels
+    still evidence-unclear — investigate before any admission decision
+  - runWrite pass-through stubs will be needed in test fakes for every
+    newly scoped writer (see RecommendationRepositoryTest precedent)
+
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+rootCause: ESCAPING_CALLBACK # Compose-boundary context uncertainty
+selectedPattern: engine-enablement
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch changes engine classification per the owner-approved
+  structured-launch design principle, extending it to the Compose
+  boundary.  It is not a baseline, exception, or authorization document.

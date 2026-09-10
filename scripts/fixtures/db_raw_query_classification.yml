@@ -1,0 +1,13 @@
+# Test fixture only. This exact RepairDao policy is not a production policy.
+version: 1
+methods:
+  - dao: com.example.RepairDao
+    method: executeRepair
+    signature:
+      receiver: null
+      parameters:
+        - androidx.sqlite.db.SupportSQLiteQuery
+    classification: write
+    reason: "Controlled repair query"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"

@@ -1,0 +1,558 @@
+# DB Structural Exceptions — Expected Method Manifest
+#
+# Purpose
+# -------
+# Semantic-equivalence contract for the exact-operation split of
+# `config/guards/db_structural_exceptions.yml`.
+#
+# The pre-split (approved) method set used class-level `.*` patterns for the
+# structural classes.  This manifest records, per structural class, the EXACT
+# approved method(s) and operation category that were covered by the approved
+# prior coverage — nothing more, nothing less.
+#
+# This file now contains EXACT OPERATION TUPLES ONLY — no generic
+# authorization.  Every entry is a concrete (path, class, method_pattern,
+# operation) tuple where:
+#   - method_pattern is an exact Kotlin identifier or the single bounded
+#     migration form `MIGRATION_\d+_\d+`;
+#   - operation is one of the supported exact operation names:
+#     `execSQL`, `openDatabase`, `getDatabasePath`, `deleteRecursively`,
+#     `writableDatabase`.
+# No raw_ values (raw_sqlite / raw_db_file), no wildcard method patterns, no
+# generic operation categories, no basenames, and no permanent expiry are
+# present in this file or in the structural exceptions YAML it contracts.
+#
+# Sections
+# --------
+#   expected:  the pre-split approved method set expressed as exact
+#              method_pattern values (or the single bounded migration form
+#              `MIGRATION_\d+_\d+`) with their exact operation tuples.  Every
+#              entry here MUST be present in the current structural
+#              exceptions YAML.
+#   fixtures:  explicit records of why additional (unexpected) methods are
+#              present in the current YAML.  The validation suite requires a
+#              fixture entry before any method outside `expected` is accepted.
+#
+# This file is consumed by `scripts/test_verify_db_access_boundaries.py`:
+#   - semantic set equivalence (no missing expected methods, no unexpected
+#     methods without a fixture, no duplicate/overlapping entries);
+#   - operation evidence (each expected method exists in its exact source
+#     class and its operation token occurs in that exact method body);
+#   - fixture existence (each fixture method exists in its source class).
+#
+# Baseline
+# --------
+# The pre-split approved set is the structural exceptions YAML at commit
+# c891c3bb ("feat(ci): H2 — separate DB ownership policy from architecture
+# debt").  All structural source classes referenced below are unchanged
+# between that baseline and the current working tree (verified via git status).
+
+baseline:
+  commit: "c891c3bb"
+  description: >
+    Pre-split approved set — class-level `.*` method_pattern entries plus the
+    bounded migration form for DatabaseMigrations.  This manifest rewrites that
+    approved set as exact operation tuples only (execSQL, openDatabase,
+    getDatabasePath, deleteRecursively, writableDatabase).  No generic
+    authorization remains: every approved method is enumerated with the exact
+    operation token(s) that appear in its method body.
+  source_note: >
+    Structural source classes are unchanged between the pre-split baseline
+    and the current working tree.
+
+# Canonical structural entry-count contract for the DB policy gate.
+#
+# `verify_db_access_boundaries.py` enforces this EXACT count at load time.
+# Changing the number of entries in `config/guards/db_structural_exceptions.yml`
+# WITHOUT updating this contract is a configuration error (exit 2) — a silent
+# count change is never accepted.  This manifest governs structural exceptions
+# only; ownership cardinality is an observational migration metric and is not
+# pinned here.
+counts:
+  structural_entries: 64
+
+expected:
+
+  # ── Room migrations (DatabaseMigrations.kt) ─────────────────────────
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/DatabaseMigrations.kt
+    class: DatabaseMigrations
+    method_pattern: "MIGRATION_\\d+_\\d+"
+    operation: execSQL
+    reason: "Room migration SQL — canonical migration file (v145+ baseline)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Room database builder (AppDatabase.kt) ─────────────────────────
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: AppDatabase
+    method_pattern: "MIGRATION_\\d+_\\d+"
+    operation: execSQL
+    reason: "Room database builder — historical migration objects (v6–v108) in companion (exact declarations only)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: AppDatabase
+    method_pattern: "FRESH_INSTALL_CALLBACK"
+    operation: execSQL
+    reason: "Room database builder — FRESH_INSTALL_CALLBACK raw SQL that rebuilds tables for fresh installs (exact declaration only)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: AppDatabase
+    method_pattern: "onCreate"
+    operation: execSQL
+    reason: "Room database builder — FRESH_INSTALL_CALLBACK.onCreate raw SQL that rebuilds tables for fresh installs (exact declaration only)"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Room database builder (AppDatabase.kt — NAMED migration objects,
+  #    GR-08j): the scanner attributes `object MIGRATION_X_Y` migrate bodies
+  #    to the object's own class, so these exact tuples are required alongside
+  #    the bounded `class: AppDatabase` entry above. ─────────────────────────
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: MIGRATION_16_17
+    method_pattern: migrate
+    operation: execSQL
+    reason: "Room migration SQL — named migration object MIGRATION_16_17 (merchant canonical/alias schema v16→v17 with in-migration data backfill)"
+    owner: "@panospao7"
+    linked_issue: "MIT-DB-08J"
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: MIGRATION_41_42
+    method_pattern: migrate
+    operation: execSQL
+    reason: "Room migration SQL — named migration object MIGRATION_41_42 (exchange_rates schema v41→v42 with default-rate seeding)"
+    owner: "@panospao7"
+    linked_issue: "MIT-DB-08J"
+
+  # ── Financial rescue (FinancialRescueCoordinator.kt) ───────────────
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "runRescueIfNeeded"
+    operation: getDatabasePath
+    reason: "Exclusive maintenance rescue — resolves live DB path for corruption check"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "readOldDatabaseSnapshot"
+    operation: openDatabase
+    reason: "Exclusive maintenance rescue — opens legacy DB file for snapshot read"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "readUserVersion"
+    operation: openDatabase
+    reason: "Exclusive maintenance rescue — opens legacy DB file to read user_version"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "createFreshRoomDatabaseAndImport"
+    operation: getDatabasePath
+    reason: "Exclusive maintenance rescue — resolves live DB path before fresh import"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "createFreshRoomDatabaseAndImport"
+    operation: writableDatabase
+    reason: "Exclusive maintenance rescue — writable DB access for fresh import target"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "importCategories"
+    operation: execSQL
+    reason: "Exclusive maintenance rescue — raw SQL row import into fresh database"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "importExpenses"
+    operation: execSQL
+    reason: "Exclusive maintenance rescue — raw SQL row import into fresh database"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "importExpenseGroups"
+    operation: execSQL
+    reason: "Exclusive maintenance rescue — raw SQL row import into fresh database"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "importGroupMembers"
+    operation: execSQL
+    reason: "Exclusive maintenance rescue — raw SQL row import into fresh database"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "importGroupExpenses"
+    operation: execSQL
+    reason: "Exclusive maintenance rescue — raw SQL row import into fresh database"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/rescue/FinancialRescueCoordinator.kt
+    class: FinancialRescueCoordinator
+    method_pattern: "importSplitItemAssignments"
+    operation: execSQL
+    reason: "Exclusive maintenance rescue — raw SQL row import into fresh database"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Backup / restore infrastructure (DatabaseBackupRepositoryImpl.kt) ─
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "verifyStagedImportWithRoom"
+    operation: writableDatabase
+    reason: "File-level backup/restore — writableDatabase row-count verification"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "reopenAndVerifyLiveImport"
+    operation: writableDatabase
+    reason: "File-level backup/restore — writableDatabase row-count verification"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "queryRoomCountsForVerification"
+    operation: writableDatabase
+    reason: "File-level backup/restore — writableDatabase row-count verification"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "verifyDatabaseFileStateForVerification"
+    operation: openDatabase
+    reason: "File-level backup/restore — read-only open for integrity verification"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "exportDatabase"
+    operation: getDatabasePath
+    reason: "File-level backup/restore — resolves live DB path for export"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "createCostBackup"
+    operation: writableDatabase
+    reason: "File-level backup/restore — writable DB access for WAL checkpoint before snapshot"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "createCostBackup"
+    operation: getDatabasePath
+    reason: "File-level backup/restore — resolves live DB path for backup source"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "createCostBackup"
+    operation: openDatabase
+    reason: "File-level backup/restore — opens DB snapshot for copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "restoreCostBackup"
+    operation: getDatabasePath
+    reason: "File-level backup/restore — resolves live and staged DB paths for restore"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "restoreCostBackup"
+    operation: deleteRecursively
+    reason: "File-level backup/restore — cleans staged temp directory during restore"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "restoreCostBackup"
+    operation: writableDatabase
+    reason: "File-level backup/restore — writable DB access for post-restore verification"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "importDatabase"
+    operation: getDatabasePath
+    reason: "File-level backup/restore — resolves live DB path for import"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "validateSourceDatabase"
+    operation: openDatabase
+    reason: "File-level backup/restore — read-only open for source validation"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "preflightImportedFile"
+    operation: openDatabase
+    reason: "File-level backup/restore — read-only open for preflight check"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "repairBudgetsSchemaToV86"
+    operation: execSQL
+    reason: "File-level backup/restore — execSQL repair of imported budgets schema"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "restoreFromSafetyBackup"
+    operation: writableDatabase
+    reason: "File-level backup/restore — writable DB access to restore safety backup"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "checkpointWal"
+    operation: writableDatabase
+    reason: "File-level backup/restore — writable DB access for WAL checkpoint"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "createSafetyBackupInternalAssumingMaintenance"
+    operation: getDatabasePath
+    reason: "File-level backup/restore — resolves live DB path for safety backup"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/repository/DatabaseBackupRepositoryImpl.kt
+    class: DatabaseBackupRepositoryImpl
+    method_pattern: "resetDatabase"
+    operation: getDatabasePath
+    reason: "File-level backup/restore — resolves live DB path for reset"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Startup DB checks / crash recovery (AppStartupCoordinator.kt) ──
+  - path: app/src/main/java/com/yourname/expensetracker/startup/AppStartupCoordinator.kt
+    class: AppStartupCoordinator
+    method_pattern: "verifySafetyRestoredDb"
+    operation: openDatabase
+    reason: "Startup database checks — read-only open to verify restored DB"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/startup/AppStartupCoordinator.kt
+    class: AppStartupCoordinator
+    method_pattern: "verifySafetyRestoredDb"
+    operation: writableDatabase
+    reason: "Startup database checks — writable access to verify restored DB integrity"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Diagnostics / integrity (DatabaseIntegrityScanner.kt) ──────────
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkDuplicateActiveOverallBudgets"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkDuplicateActiveCategoryBudgets"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkMultipleCurrentUsersPerGroup"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkDuplicateGroupExpenseLinks"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkDuplicatePlannedExpenseOccurrenceKeys"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkRawNotificationFingerprintDupes"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkExpensesWithNullDedupeKey"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkPartialLatLonRows"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkInvalidCurrencyValues"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkOrphanedWarranties"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DatabaseIntegrityScanner.kt
+    class: DatabaseIntegrityScanner
+    method_pattern: "checkOrphanedReceiptLinks"
+    operation: writableDatabase
+    reason: "Database integrity diagnostics — intrinsic low-level writableDatabase access"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Privacy / export (ExportAnonymizer.kt) ─────────────────────────
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeExport"
+    operation: openDatabase
+    reason: "Privacy export anonymization — opens export DB copy for sanitization"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeScannedReceipts"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeRawNotifications"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeNotificationIntake"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeAiArtifacts"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeAiChatMessages"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeMerchantLocations"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeEmailReceiptSources"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizePendingReviews"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/privacy/ExportAnonymizer.kt
+    class: ExportAnonymizer
+    method_pattern: "sanitizeBankStatementImportItems"
+    operation: execSQL
+    reason: "Privacy export anonymization — execSQL null-out of sensitive columns on export copy"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+  # ── Legacy data migration (LegacyDataMigrationService.kt) ──────────
+  - path: app/src/main/java/com/yourname/expensetracker/service/debug/LegacyDataMigrationService.kt
+    class: LegacyDataMigrationService
+    method_pattern: "migrateFromBackup"
+    operation: openDatabase
+    reason: "Debug-only legacy data migration — opens raw SQLite file for read-only migration"
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+
+fixtures:
+
+  # ── Backup restore verification / SQLite snapshot creation ─────────
+  # These classes were added during the exact-method split as structural
+  # necessities for restore-verification and snapshot infrastructure
+  # (MIT-003 backup/restore).  They carry exact operation tuples only.
+  - path: app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt
+    class: BackupVerifier
+    method_pattern: "verify"
+    operation: openDatabase
+    reason: >
+      Restore verification infrastructure — read-only SQLite open for integrity
+      and row-count checks after restore.
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/backup/BackupVerifier.kt
+    class: BackupVerifier
+    method_pattern: "verifyQuick"
+    operation: openDatabase
+    reason: >
+      Restore verification infrastructure — read-only SQLite open for fast
+      pre-swap integrity check.
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/backup/SqliteSnapshotCreator.kt
+    class: SqliteSnapshotCreator
+    method_pattern: "tryVacuumInto"
+    operation: openDatabase
+    reason: >
+      SQLite snapshot creation via VACUUM INTO — read-only open of the source
+      database.
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
+  - path: app/src/main/java/com/yourname/expensetracker/data/backup/SqliteSnapshotCreator.kt
+    class: SqliteSnapshotCreator
+    method_pattern: "tryVacuumInto"
+    operation: execSQL
+    reason: >
+      SQLite snapshot creation via VACUUM INTO — VACUUM INTO SQL executed on
+      the source database.
+    owner: "@panospao7"
+    linked_issue: "MIT-003"
