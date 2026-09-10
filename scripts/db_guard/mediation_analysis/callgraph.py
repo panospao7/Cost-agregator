@@ -1283,6 +1283,8 @@ class CallGraphBuilder:
             if model is not None and model.owner_fqcn in self.owners:
                 return model.owner_fqcn, True
             return "", False
+        if receiver == "super" or receiver.startswith("super@"):
+            return self._super_receiver_fqcn(call, model)
         file_model = self.file_models[call.file]
         local_type = self._local_val_type(call)
         if local_type is not None:
@@ -1311,6 +1313,47 @@ class CallGraphBuilder:
         fqcn, origin = self._resolve_type(file_model, receiver)
         if origin != "unknown":
             return fqcn, True
+        return "", False
+
+    def _super_receiver_fqcn(
+        self, call: CallRecord, model: CallableModel | None
+    ) -> tuple[str, bool]:
+        """(receiver FQCN, known) for a ``super.<member>()`` call.
+
+        Kotlin ``super.foo()`` dispatches to the supertype chain and can never
+        reach an arbitrary same-named corpus method, so the generic name-match
+        fallback would be a wrong taint.  Nearest corpus supertype declaring
+        the method wins; otherwise a resolved EXTERNAL supertype means the call
+        leaves the corpus (``EXACT_SYNCHRONOUS`` external, no targets); an
+        unresolvable supertype keeps the fail-closed unknown path.
+        """
+        if model is None or model.owner_fqcn not in self.owners:
+            return "", False
+        file_model = self.file_models[call.file]
+        seen: set[str] = set()
+        current = model.owner_fqcn
+        while current and current not in seen and current in self.owners:
+            seen.add(current)
+            next_hop = ""
+            for text in self.owners[current].supertype_texts:
+                fqcn, origin = self._resolve_type(file_model, text)
+                if origin == "corpus" and fqcn and self._members_named(fqcn, call.name):
+                    return fqcn, True
+                if origin == "corpus" and fqcn and fqcn in self.owners and not next_hop:
+                    next_hop = fqcn
+            current = next_hop
+        seen = set()
+        current = model.owner_fqcn
+        while current and current not in seen and current in self.owners:
+            seen.add(current)
+            next_hop = ""
+            for text in self.owners[current].supertype_texts:
+                fqcn, origin = self._resolve_type(file_model, text)
+                if origin == "external" and fqcn:
+                    return fqcn, True
+                if origin == "corpus" and fqcn and fqcn in self.owners and not next_hop:
+                    next_hop = fqcn
+            current = next_hop
         return "", False
 
     def _local_val_type(self, call: CallRecord) -> str | None:

@@ -278,19 +278,48 @@ taints the ancestor closure of essentially every writer reachable from the
 app-startup root (`MainApplication.onCreate` is itself one of the matched
 `onCreate` callables → self-taint).
 
-Implication for prioritization: a `super.<override>()` receiver-resolution
-fix (resolve to the corpus supertype member, or external when the supertype
-is external — `Application`/`Activity`/`Service`/`RoomDatabase.Callback` are
-all external here) would drain ~137 ambiguous rows in one batch — ~79% of
-the ambiguous mass and ~45% of the whole 307-row ambiguous+async mass.  The
-previously-hypothesized "ViewModel default-DI owner-property initializer
-type inference" shape is NOT dominant: the census shows only ~9 rows of
+Implication for prioritization (CORRECTED by the GR-14u6 Step-0 projection —
+see below): a `super.<member>()` receiver-resolution fix removes the WRONG
+edge (~137 rows), but the taint is LAYERED: removing it just promotes the next
+uncertain edge for ~132 of those rows, so the batch proved only 5 rows, not
+137.  The previously-hypothesized "ViewModel default-DI owner-property
+initializer type inference" shape is NOT dominant: only ~9 rows of
 `initializer-ctor` shape (all `tempZip`/`File`).  The async half (123
 `async_dispatch`) is spread thin across lambda carriers (`coroutineScope` 37,
 a privacy-gate lambda 23, `PostCommitAction` 19, `navigation.launch` 17,
 `confirmQuickApprove` 9, `photon.coroutineScope` 6) with no single dominant
-fix — each carrier would be its own closed reviewed admission.  This is an
-ENGINE change → fixture-first plan + shadow delta + owner sign-off.
+fix — each carrier would be its own closed reviewed admission.
+
+**RESOLVED in GR-14u6** (docs/ci/db-mediation/GR-14u6.yml).  The `super`
+resolution was implemented (`CallGraphBuilder._super_receiver_fqcn`), and its
+Step-0 projection HARD-STOPPED on 5 counterexample flips — revealing that the
+false `super.onCreate`/`super.onListenerConnected` taint had been HIDING 5
+genuinely unguarded notification-capture DB writers.  Those writers were fixed
+(production: `DatabaseWriteBarrier` guards added to NotificationIntakeCoordinator,
+NotificationIntakePayloadRepairer, NotificationIntakeRecoveryScheduler), after
+which the gate passed and all 5 rows proved.  Board delta: proven_helper
+49 -> 54, ambiguous 174 -> 169.
+
+### D5. Direct-site prover never sees bare `checkWritesAllowed` at a subject
+###     mutation site (GR-14u6 finding — root-caused)
+While fixing D3, adding `writeBarrier.checkWritesAllowed("...")` at the TOP of a
+writer did NOT register as local-direct in the mediation proof.  Root cause:
+`_DirectSiteProver._compute` (scripts/ci/inspect_db_mediation_proof.py:177-208)
+populates `self._results[callable_key]` ONLY for the offsets explicitly
+REQUESTED via `request()` — the CLI requests `edge.name_start` for each exact
+edge of a barrier-text callable — while `MediationProver._local_site_context`
+queries `subject.site_start`, which comes from the D4 observation's
+`source_start`.  Those two offsets differ, so `as_callback` returns False and a
+bare `checkWritesAllowed` guard stays invisible.  Wrapping the mutation in
+`writeBarrier.runWrite { ... }` works because the callgraph classifies the
+`runWrite` lambda as a `canonical_direct` region (offset-independent), so
+`local == "direct"` directly.  **Consequence**: `runWrite` is currently the only
+reliable local-direct form for a subject mutation; writers whose only guard is a
+dominating `checkWritesAllowed` may be under-proven (fail-closed, but noisy).
+Candidate fix: make `_compute` also register the callable's real mutation-site
+offsets in `_results` (they are already passed to
+`prove_callable_direct_barriers`).  This is an ENGINE change → fixture-first
+plan + shadow delta, like D1/D3.
 
 ### D4. Interface-dispatch residue after the GR-14t negative (17 rows)
 Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
@@ -345,17 +374,21 @@ Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
    RetentionModule.provideRetentionTargets (DI module pattern).
 5. GR-15 must NOT start until the GR-14 zero gate (§8 of the handoff).
 
-**GR-14u5 census priority (measured, see §D3).**  The ambiguous+async census
-(`build/guard-debug/gr14u5/census.py`, tier-5 replay exact on 307/307 rows)
-reorders the queue: the highest-leverage next engine batch is the
-`super.<override>()` receiver-resolution fix (~137 rows, §D3), NOT the
-async-lambda carriers (123 rows, thin across many carriers, each a separate
-closed admission) and NOT the hypothesized ViewModel-DI shape (~9 rows).
-The 31 interface_dispatch/function_reference rows are the §D4 residue.
-Recommended order: (a) `super` resolution batch, (b) dead-writer tail
-(mechanical), (c) async-carrier admissions one carrier at a time.
+**GR-14u6 census outcome (measured, see §D3).**  The `super` resolution batch
+is DONE: it removed the wrong edge, hard-stopped on 5 counterexamples the taint
+was hiding, and — after the notification-capture writers were guarded — proved
+those 5.  Board now: proven_helper 54 / proven_worker_mediated 14 / ambiguous
+169 / async 133 / external_entry 36.  The `super` fix did NOT prove 137 (the
+taint is layered; the other ~132 rows have secondary uncertain edges).
+Recommended order from here:
+  (a) §D5 direct-site-prover offset fix — likely proves other already-guarded
+      writers cheaply (fail-closed today, so pure noise reduction);
+  (b) dead-writer tail (mechanical, steady movement);
+  (c) interface_dispatch/function_reference residue (§D4);
+  (d) async-carrier admissions one carrier at a time (each a closed admission).
 
 Artifacts this arc: build/guard-debug/{gr14s,gr14t,gr14u,gr14u2,gr14u3,
-gr14u4,gr14u5}/ (shadows before/after + double-runs, compile logs,
+gr14u4,gr14u5,gr14u6}/ (shadows before/after + double-runs, compile logs,
 targeted-test logs, A/B failure lists, the abandoned GR-14t patch, edit
-scripts; gr14u5 adds the ambiguous/async census + super probe).
+scripts; gr14u5 adds the ambiguous/async census + super probe; gr14u6 adds the
+Step-0 super projection gate + live shadow delta).

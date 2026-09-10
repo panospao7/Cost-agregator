@@ -1,0 +1,145 @@
+# GR-14u6 — notification-capture write-barrier guards + `super.<member>`
+# resolution (ambiguous 174 -> 169; proven_helper 49 -> 54).
+#
+# This batch is a JOINT fix discovered by the GR-14u5 census and gated by a
+# mandatory Step-0 projection.  It has two parts that MUST ship together:
+#
+# (A) PRODUCTION (the real bug): the notification-capture coordinator/service
+#     writers were unguarded at the mutation site and reachable from framework
+#     callbacks (`NotificationCaptureService.onListenerConnected` /
+#     `onNotificationPosted`).  Note the honest scope: the SERVICE already
+#     pre-checked `restoreMaintenanceMode.isWritesAllowed()` for the
+#     captureNotification path (`NotificationCaptureService.kt:379-392`,
+#     pre-existing), so this was NOT a total absence of a check for
+#     capture/captureForRetry — but the writer methods themselves carried no
+#     canonical barrier, the onListenerConnected repairer/recovery path
+#     (`:292-297`) had no check at all, and every path had a TOCTOU window
+#     between any pre-check and the actual write.  The unguarded writers:
+#       - NotificationIntakeCoordinator.capture / captureForRetry  -> intakeDao.insertOrIgnore
+#       - NotificationIntakePayloadRepairer.repairLegacyPlaintextTransientRows
+#                                                                  -> intakeDao.purgeVisiblePayload
+#                                                                  -> intakeDao.encryptAndClearVisiblePayload
+#       - NotificationIntakeRecoveryScheduler.recoverPending       -> intakeDao.releaseStaleProcessing
+#     Their worker sibling `NotificationIntakeWorker` already guards every
+#     intake DAO write via `executionGuard.runGuardedWithContext(...)`, and all
+#     5 rows are `barrierMode: helper` in the policy — so the unguarded service
+#     path was a genuine gap that could interleave writes with a restore.
+#     Fix: inject `DatabaseWriteBarrier` into the 3 @Singleton classes; wrap the
+#     DAO mutations in `writeBarrier.runWrite(DatabaseAccessOperation(...)) { }`
+#     (the canonical direct scope) and catch `DatabaseAccessBlockedException`
+#     BOTH at an early `checkWritesAllowed` and around the `runWrite` itself
+#     (skip-on-block: capture returns `Dropped`; captureForRetry/repairer/
+#     scheduler log-and-return).  Catching at the runWrite is required — the
+#     call sites have no enclosing try / CoroutineExceptionHandler, so an
+#     uncaught block in the TOCTOU window would crash the process.
+#
+# (B) ENGINE: `CallGraphBuilder.receiver_fqcn_for_call` handled `this`/`this@X`
+#     but had NO `super`/`super@X` case, so `super.onCreate()` in
+#     MainApplication.onCreate fell through to `_name_match_targets("onCreate")`
+#     (targets = every corpus `onCreate`, including itself) and self-tainted the
+#     startup closure -> 137 rows read `unproven_ambiguous_call`.  Kotlin
+#     `super.foo()` dispatches deterministically to the supertype chain and can
+#     NEVER reach an arbitrary same-named corpus method, so the name-match was a
+#     WRONG edge, not conservative.  Fix (`_super_receiver_fqcn`): nearest
+#     corpus supertype declaring the member wins; else a resolved EXTERNAL
+#     supertype means the call leaves the corpus (`EXACT_SYNCHRONOUS` external,
+#     no targets); else fail closed (unchanged `UNRESOLVED_TARGET` name-match).
+#
+# STEP-0 PROJECTION GATE (mandatory, ran BEFORE the engine edit):
+#   build/guard-debug/gr14u6/project_super_fix.py monkey-patches the super fix
+#   and diffs the whole board.
+#     - run 1 (pre-guard): 5 rows flipped `unproven_ambiguous_call ->
+#       counterexample_unguarded_call_path` (GR13_UNGUARDED_CALL_PATH, root
+#       framework_callback, local none) -> VERDICT: HARD STOP / escalate.
+#       This is what exposed part (A): the false taint was HIDING 5 real
+#       unguarded paths.
+#     - after part (A): 5 rows flipped to `proven_helper` / GR13_ALL_PATHS_GUARDED
+#       (local direct), 0 counterexamples -> VERDICT: PROCEED.
+#   Honesty note: the census headline "137 rows decided by super.onCreate" was
+#   misleading — removing the edge only promotes the NEXT uncertain edge for
+#   ~132 rows (the taint is layered), so this batch proves 5, not 137.
+#
+# Shadow delta (baseline = committed GR-14u5 board b8f701e1.../290b582e...):
+#   entries 406 -> 406 (key sets EQUAL); summary moves EXACTLY:
+#     proven_helper        49 -> 54
+#     unproven_ambiguous_call 174 -> 169
+#   changed rows: EXACTLY 5 (all `unproven_ambiguous_call -> proven_helper`,
+#   localGuard none -> direct, reason GR13_UNCERTAIN_CALL_EDGE ->
+#   GR13_ALL_PATHS_GUARDED): the 5 capture writers above.
+#   proven->unproven regressions: 0.  Deterministic double-run BYTE-IDENTICAL
+#   (ec94b8b2feb0688c491eb5bd5f276739c4b9b6542002de3f6e6a180b69e4d15e).
+#   The final board's `callEdgeStates` moves by +4 exact_synchronous / +1
+#   unresolved_target versus the pre-catch run purely because the added
+#   catch/log calls are extra corpus edges; proof states and every entry are
+#   byte-identical, so this is not a semantics change.
+#
+# Validation:
+#   - Step-0 gate: PROCEED (0 counterexample flips).
+#   - `:app:compileDebugKotlin` BUILD SUCCESSFUL (production guard compiles;
+#     `DatabaseWriteBarrier` is @Singleton @Inject and already injected
+#     elsewhere, so the Hilt binding exists).  A full KSP/Hilt
+#     `:app:kspDebugKotlin` check is recommended at merge (not run here).
+#   - engine battery: 59 passed (gr14u6 new pins 6/6 + gr14u5 + gr14f/j/r/l +
+#     shadow-CLI); fixture_runner 58/58; mediation direct-run units OK.
+#   - NotificationIntakeRestoreBarrierTest (JVM) 6/6 PASS via a focused
+#     `:app:testDebugUnitTest --tests ...NotificationIntakeRestoreBarrierTest`.
+#   - policy bytes UNCHANGED (7851adc2...) so no migration/tripwire/known-good
+#     drift; GATE-00R remains owed at merge exactly as before.
+#
+# Downstream note: the GR-13 planning seed
+# docs/ci/db-mediation/GR-13_UNPROVEN_WRITERS.yml is not gate-validated and is
+# already stale; left untouched (same call as GR-14u5).
+schemaVersion: 1
+batchId: GR-14u6
+startSha: da69e0d6
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: 290b582ea2215ae041c17aebd3ecda68136eeaf60a44f02b3d563baae95d0965
+mediationReportSha256After: ec94b8b2feb0688c491eb5bd5f276739c4b9b6542002de3f6e6a180b69e4d15e
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakeCoordinator.kt:
+      inject DatabaseWriteBarrier; guard capture/captureForRetry DAO writes
+      (runWrite + skip-on-block)
+  - app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakePayloadRepairer.kt:
+      inject DatabaseWriteBarrier; guard purgeVisiblePayload /
+      encryptAndClearVisiblePayload
+  - app/src/main/java/com/yourname/expensetracker/domain/notification/capture/NotificationIntakeRecoveryScheduler.kt:
+      inject DatabaseWriteBarrier; guard releaseStaleProcessing
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+      receiver_fqcn_for_call + _super_receiver_fqcn — Kotlin super dispatch
+  - scripts/ci/test_gr14u6_super_resolution.py:
+      new pins (external / corpus / fail-closed / this-unchanged)
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - NotificationIntakeCoordinator.capture -> NotificationIntakeDao.insertOrIgnore
+  - NotificationIntakeCoordinator.captureForRetry -> NotificationIntakeDao.insertOrIgnore
+  - NotificationIntakePayloadRepairer.repairLegacyPlaintextTransientRows -> NotificationIntakeDao.purgeVisiblePayload
+  - NotificationIntakePayloadRepairer.repairLegacyPlaintextTransientRows -> NotificationIntakeDao.encryptAndClearVisiblePayload
+  - NotificationIntakeRecoveryScheduler.recoverPending -> NotificationIntakeDao.releaseStaleProcessing
+rootCause: GR13_UNCERTAIN_CALL_EDGE # plus the unguarded service path it hid
+selectedPattern: ENGINE+GAP
+tests:
+  - test_gr14u6_super_resolution.py 6/6 (incl. multi-level chain + qualified-super fail-closed)
+  - NotificationIntakeRestoreBarrierTest (JVM) 6/6 PASS — blocked-mode for all
+    four writers plus normal-mode controls for capture and recoverPending
+  - engine battery 59 passed; fixture_runner 58/58; direct units OK
+  - :app:compileDebugKotlin BUILD SUCCESSFUL
+  - live shadow before/after delta: 5 rows, 0 regressions, deterministic
+
+status: COMPLETE # policy unchanged; GATE-00R owed at merge as before
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch guards the previously unguarded notification-capture writer methods
+  and corrects a wrong `super` call edge in the mediation call graph.  It changes
+  no policy, baseline, exception or authorization bytes, and it is shadow-only
+  (reportOnly: true).  The reclassification is evidence-backed: 5 policy rows
+  move from a false ambiguity to proven_helper only after their writer bodies
+  gained a canonical write barrier, and the Step-0 projection hard-stopped and
+  escalated the 5 counterexamples the wrong edge had been hiding.
