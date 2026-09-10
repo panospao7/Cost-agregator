@@ -2202,19 +2202,28 @@ class CallGraphBuilder:
         return False
 
     def _inherits_from(self, owner_fqcn: str, base_fqcn: str) -> bool:
+        """True when ``owner_fqcn`` inherits from ``base_fqcn``.
+
+        Traverses ALL resolvable supertypes transitively.  The earlier
+        first-hop-only walk returned False whenever the base was listed as a
+        non-first supertype (``class Impl : Other, Iface``), which under-counted
+        implementors in ``_override_targets`` and could make
+        ``_has_override_named`` miss an override — the latter letting
+        ``_resolve_invocation`` fall through to an EXACT edge on an overridden
+        member, i.e. a fail-OPEN under-approximation.
+        """
         seen: set[str] = set()
-        current = owner_fqcn
-        while current and current not in seen:
+        stack = [owner_fqcn]
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
             seen.add(current)
             if current == base_fqcn:
                 return True
-            supertypes = self.owner_supertypes.get(current, ())
-            nxt = ""
-            for supertype in supertypes:
-                if supertype and supertype in self.owners:
-                    nxt = supertype
-                    break
-            current = nxt
+            for supertype in self.owner_supertypes.get(current, ()):
+                if supertype in self.owners:
+                    stack.append(supertype)
         return False
 
     def _override_targets(self, base_fqcn: str, method: str) -> set[str]:

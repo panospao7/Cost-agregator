@@ -738,6 +738,43 @@ Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
  --include=*.kt | grep -i binds`), then the remaining interfaces per row
  (CurrencySettingsRepository is also interface-typed in several closures).
 
+ **GR-14w2 INVESTIGATION — the engine-side rule is UNSOUND without two
+ prerequisites, and one of them is already fixed.**  Measured with
+ `build/guard-debug/gr14w0/probe_iface*.py`, `probe_iface_safety4.py` and
+ `probe_anon.py`:
+
+ * Every one of the 20 deciding `interface_dispatch` edges already has exactly
+ ONE override target, and a COMPLETE implementor walk AGREES (1 == 1) for all
+ six receivers — so the shape really is "single implementation", and an
+ engine-side rule (no production change, so the A1 test-mocking blocker does
+ NOT apply) is the attractive route.
+ * BUT a general "exactly one implementor => exact dispatch" rule is UNSOUND,
+ for two measured reasons:
+ 1. `_override_targets` used to under-count.  The decisive false-unique is
+    `WorkerDrainController.requestStopAndAwaitDrain`: engine 1 target
+    (`NoOpWorkerDrainController`), complete walk 2 (`+ WorkerLeaseRegistryImpl`).
+    A rule built on the old count would have claimed exactness on a
+    two-implementor interface.  **This is fixed in GR-14u21** (the traversal is
+    now complete and transitive; 11 under-count pairs, projected and verified
+    to move 0 rows, so it is landed as a latent fail-OPEN fix, not a proving
+    batch).
+ 2. **Anonymous `object : Iface { }` implementors are NOT owners.**  The owner
+    table contains ZERO anonymous entries, yet the corpus has 12
+    `object : PrivacyGate` and `object : WorkerLeaseRegistry`
+    (RestoreMaintenanceMode.kt:36) expressions.  So even a COMPLETE owner walk
+    cannot see them, and `WorkerLeaseRegistry` is a second false-unique by this
+    route.  (`PrivacyGate` looks safe only because it has 6 named implementors
+    anyway; it would not be safe if it had one.)
+ * Therefore the remaining work for this bucket is: (a) DONE in GR-14u21;
+ (b) teach the engine to recognise `object : T { }` expressions as
+ implementations of a resolved corpus interface T (a new capability, with its
+ own fixture corpus and projection); (c) THEN an exactness rule requiring
+ exactly one implementor across named AND anonymous implementations, with no
+ generic/unknown caveat.  For the six row receivers specifically, a textual
+ scan shows ZERO anonymous implementors, so step (c) would resolve all 20 rows
+ — but it must not be built before (b), or it will be unsound on other
+ interfaces.
+
 ---
 
 ## E. Queue state & how to resume
