@@ -422,8 +422,9 @@ change (report byte-identical, da296160...).  With the D6 multi-star patch it
 discards 8 of the 15 false counterexamples (15 -> 7), +12 proven_helper, 0
 regressions.
 
-**GR-14u16 — THE BARRIER-SCOPE FORM DOES NOT MATCH THE REAL API (NEW, and the
-single largest cause: 47 of the 82 unmodelable bodies).**
+**GR-14u16 — THE BARRIER-SCOPE FORM DID NOT MATCH THE REAL API — FIXED
+(GR-14u16, docs/ci/db-mediation/GR-14u16.yml).  Largest single cause: 47 of the
+82 unmodelable bodies.**
 `DatabaseWriteBarrier.runWrite` is declared
 `suspend fun <T> runWrite(operation: DatabaseAccessOperation, block: suspend () -> T): T`
 (DatabaseWriteBarrier.kt:33) — the operation argument is REQUIRED.  So the only
@@ -452,52 +453,62 @@ includes the notification-capture writers guarded in GR-14u6
 NotificationIntakeCoordinator.kt:140 and :248) and
 `TransactionLifecycleCoordinator.createExpenseMutation`.
 
-CANDIDATE FIX: teach the barrier-scope branch the real form — mirror
-`_RE_WORKER_GUARD`'s optional parenthesised argument list, with enough nesting
-tolerance for `runWrite(\n  DatabaseAccessOperation("...") \n) {`.  CAUTION: this
-edits the SHARED tokenizer consumed by the D4 gate as well, so it needs a
-fixture-first pin per form + a projection over BOTH the D4 gate and the mediation
-board + a shadow delta, and it must not start accepting genuinely-escaping lambdas
-(the existing `lambda-before-barrier-scope` guard at tokenizer.py:731 must stay).
-Expected to be the highest-value remaining engine fix: 47 bodies.
+CANDIDATE FIX (LANDED): the barrier-scope branch now accepts the optional
+parenthesised argument list, mirroring `_RE_WORKER_GUARD`'s existing precedent,
+with one level of nesting for `runWrite(DatabaseAccessOperation("...")) {`.  Every
+safety guard is untouched (canonical receiver only, `lambda-before-barrier-scope`
+escape check, like-barrier tripwire for other receivers), and the
+`runWrite(op, { ... })` argument-list shape remains deliberately fail-closed.
+MEASURED: unmodelable observed callables **82 -> 59**; D4 gate **0 changed
+entries** (28/28 identical); mediation board **0 rows** (byte-identical,
+da296160...); 5 new pins (the real form was RED pre-fix).  With GR-14u15 the D6
+projection is proven_helper +12, NEW counterexamples 15 -> **7**, 0 regressions.
 
-**SUB-CAUSE 2b-ii — locally-delegated guard helpers are invisible (STILL OPEN).**
+**SUB-CAUSE 2b-ii — locally-delegated guard helpers are invisible (STILL OPEN —
+the last blocker for D6, 6 of the 7 rows).**
 `TransactionLifecycleCoordinator` defines
 `private fun checkWritesAllowed(operation: String)` (TransactionLifecycleCoordinator.kt:102)
 forwards to `writeBarrier.checkWritesAllowed(...)`, and its mutating methods call it
 UNQUALIFIED (`:1560`, `:1830`).  `canonical_barrier_call_sites` matches
 `receiver.method(` only (`_CALL_RE`), so an intra-class delegating guard is
 invisible to both the direct proof and the barrier-presence evidence.  Accounts for
-6 of the 7 remaining D6 counterexamples; the 7th (`migrateCategories`) looks
-genuinely unguarded and is correctly retained.
+6 of the 7 remaining D6 counterexamples.
 
-**OWNER DECISION REQUIRED.**  This changes the gate's definition of a violation
-(a false-positive fix, but it converts some current counterexamples into a new
-unproven state).  It touches proof.py's tier structure and must not be read as
-"relaxing assertions to make findings disappear" — hence sign-off before landing,
-plus a projection showing exactly which rows move and confirmation that no
-genuinely-unguarded row (like the 16) is downgraded.
+**The 7th is a REAL FINDING, not noise:** `LegacyDataMigrationService.migrateCategories`
+(`:143`) writes `categoryDao.insert(...)` inside nested try/catch with NO guard —
+that file contains ZERO occurrences of `checkWritesAllowed` / `runWrite` /
+`writeBarrier`.  D6 exposes it correctly, and it should be handled as its own
+finding (guard it, or document why a debug-only legacy migration may write
+unguarded) rather than suppressed.
 
-(ALSO NOTE: the projected tri-state run ALSO carries the D6 multi-star change, so
-its "+12 proven_helper" mixes both effects; a clean landing should separate the
-mediator change from the multi-star change, or land them as one reviewed batch
-with the D6 gate evidence.)
+OWNER SIGN-OFF was given for the tri-state change and it LANDED as GR-14u15; its
+projection was reviewed first, and the safety property is pinned (an unknown
+callable still reads `unguarded`, and a mutation that precedes every barrier is
+never excused — that pin is verified RED when the rule is weakened).
+
+(NOTE: the projected tri-state run also carried the D6 multi-star change, so its
+"+12 proven_helper" mixes both effects; the two were landed separately, D6 still
+held back.)
 
 (NOTE: the `withLock`-as-transparent-scope idea was considered and set aside: it
 fixes 1 row, needs a shared-contract V2->V3 bump, AND needs the resolver extended
 for untyped constructor-initialised properties — `_PROP_RE` requires a type
 annotation but `private val categoryUpdateMutex = Mutex()` has none, so admission
-would fail even after a contract bump.)
+would fail even after a contract bump.  GR-14u16 addresses the same body by fixing
+the recognized `runWrite` form instead, which is cheaper and broader.)
 
-**Consequence for the plan.**  D6 (multi-star) remains BLOCKED, now on Bug 2b
-alone: 15 counterexample flips remain, false positives from the
-unmodelable/local-`none` conflation described above.  The fix is the tri-state
-local proof in the MEDIATOR (not a parser feature and not a contract bump), and it
-needs owner sign-off because it redefines when a row counts as a violation.
-Needs its own fixture-first pin + projection + shadow delta, per GR-14f/j/l
-precedent.  Reproduce:
-`build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`
-and `build/guard-debug/gr14u12/probe_after_bug13.py`.
+**Consequence for the plan.**  D6 (multi-star) remains BLOCKED, on 2b-ii alone:
+7 counterexample flips remain (6 false positives from the locally-delegated helper,
+1 genuine unguarded migration write).  Next: fix 2b-ii (teach the engine that a
+local method delegating to the canonical receiver is a barrier form, or follow one
+level of intra-class delegation in the CFG) — that is a pure DETECTION improvement
+with no violation-semantics change, so it needs only its own fixture pin +
+projection + shadow delta, per GR-14f/j/l precedent.  Then re-run the D6 projection
+and expect the 6 to clear, leaving the single genuine `migrateCategories` finding
+to be dispositioned on its own.  Reproduce:
+`build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`,
+`build/guard-debug/gr14u12/probe_after_bug13.py`,
+`build/guard-debug/gr14u15/project_d6.py`.
 
 ### D2. ExpenseWriteStore — OWNER DECISION (designed-but-unwired layer)
 The only reference outside its own file is a stale doc comment in

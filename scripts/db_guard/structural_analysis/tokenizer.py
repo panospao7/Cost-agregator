@@ -37,7 +37,13 @@ _RE_COROUTINE = re.compile(
     r"(?:^|[^\w$.])(?:launch|async|withContext|runBlocking)\s*[\(\{]"
 )
 _RE_BARRIER_SCOPE = re.compile(
-    r"\bwriteBarrier\s*\.\s*runWrite\s*\{"
+    # `DatabaseWriteBarrier.runWrite(operation, block)` REQUIRES the operation,
+    # so the canonical call is `runWrite(op) { ... }`.  The optional argument
+    # list (mirroring _RE_WORKER_GUARD below) is what makes real guarded bodies
+    # modelable; without it they fell through to _RE_LIKE_BARRIER and failed the
+    # whole body with BARRIER_FORM_UNRECOGNIZED (GR-14u16).  One level of
+    # parenthesis nesting covers `runWrite(DatabaseAccessOperation("...")) {`.
+    r"\bwriteBarrier\s*\.\s*runWrite\s*(?:\((?:[^()]|\([^()]*\))*\))?\s*\{"
 )
 _RE_BARRIER_CHECK = re.compile(
     r"\bwriteBarrier\s*\.\s*checkWritesAllowed\s*\("

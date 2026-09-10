@@ -6,9 +6,9 @@ where a canonical barrier call actually PRECEDES the mutation.  A mutation that
 comes before any barrier stays "unguarded", so a second, genuinely unguarded
 mutation in the same body is never silently excused.
 
-The unmodelable case is the REAL one: `DatabaseWriteBarrier.runWrite` requires
-an `operation` argument, so callers write `runWrite(op) { ... }`, which the
-tokenizer's barrier-scope form does not accept (GR-14u16 target).
+The unmodelable case is a real one: the tokenizer still refuses the
+parenthesised-lambda `runWrite(op, { ... })` shape, so such a body cannot be
+modeled even though a canonical barrier call is plainly present.
 """
 from __future__ import annotations
 
@@ -34,22 +34,17 @@ _SOURCE = (
     "class Repo(private val dao: Dao) {\n"
     "    private val writeBarrier: DatabaseWriteBarrier = TODO()\n"
     "\n"
-    "    suspend fun guardedViaRunWrite() {\n"
-    "        writeBarrier.runWrite(DatabaseAccessOperation(\"runWrite\")) {\n"
+    "    suspend fun guardedViaUnmodelableForm() {\n"
+    "        writeBarrier.runWrite(DatabaseAccessOperation(\"op\"), {\n"
     "            dao.delete()\n"
-    "        }\n"
+    "        })\n"
     "    }\n"
     "\n"
-    "    suspend fun writeBeforeLateGuard() {\n"
+    "    suspend fun writeBeforeLateUnmodelableForm() {\n"
     "        dao.delete()\n"
-    "        writeBarrier.checkWritesAllowed(\"late\")\n"
-    "    }\n"
-    "\n"
-    "    suspend fun writeBeforeLateRunWrite() {\n"
-    "        dao.delete()\n"
-    "        writeBarrier.runWrite(DatabaseAccessOperation(\"late\")) {\n"
+    "        writeBarrier.runWrite(DatabaseAccessOperation(\"late\"), {\n"
     "            dao.delete()\n"
-    "        }\n"
+    "        })\n"
     "    }\n"
     "\n"
     "    suspend fun modeledWithGuard() {\n"
@@ -100,7 +95,7 @@ class TestLocalGuardTriState:
     def test_preceding_barrier_with_unmodelable_body_is_not_unguarded(self):
         """The Bug 2b case: guard present, body unmodelable, mutation covered."""
         builder, masked, keys = _setup()
-        key = keys["guardedViaRunWrite"]
+        key = keys["guardedViaUnmodelableForm"]
         prover, observation = _prover_for(builder, masked, key)
 
         assert prover.local_status(key, observation.source_start) == "unmodelable"
@@ -108,13 +103,14 @@ class TestLocalGuardTriState:
     def test_mutation_before_any_barrier_stays_unguarded(self):
         """Position matters: a LATER barrier does not cover this mutation.
 
-        The body is deliberately UNMODELABLE (the trailing-lambda runWrite form)
-        so this exercises the position filter itself: were the rule "a barrier
-        exists anywhere in the body", this site would wrongly become
-        "unmodelable" and an unguarded write would be excused.
+        The body is deliberately UNMODELABLE (the parenthesised-lambda runWrite
+        form, which the tokenizer refuses) so this exercises the position filter
+        itself: were the rule "a barrier exists anywhere in the body", this site
+        would wrongly become "unmodelable" and an unguarded write would be
+        excused.
         """
         builder, masked, keys = _setup()
-        key = keys["writeBeforeLateRunWrite"]
+        key = keys["writeBeforeLateUnmodelableForm"]
         model = builder.callables[key]
         body = callable_body_span(masked, model)
         mutation = _mutation_offset(builder, masked, key)
@@ -147,9 +143,9 @@ class TestLocalGuardTriState:
 
 
 class TestBarrierOffsetsSurviveAnUnmodelableBody:
-    def test_runwrite_body_is_unmodelable_but_reports_its_barrier(self):
+    def test_unmodelable_body_still_reports_its_barrier(self):
         builder, masked, keys = _setup()
-        key = keys["guardedViaRunWrite"]
+        key = keys["guardedViaUnmodelableForm"]
         model = builder.callables[key]
         body = callable_body_span(masked, model)
         mutation = _mutation_offset(builder, masked, key)
@@ -171,7 +167,7 @@ class TestBarrierOffsetsSurviveAnUnmodelableBody:
 
     def test_late_guard_offsets_are_after_the_mutation(self):
         builder, masked, keys = _setup()
-        key = keys["writeBeforeLateGuard"]
+        key = keys["writeBeforeLateUnmodelableForm"]
         model = builder.callables[key]
         body = callable_body_span(masked, model)
         mutation = _mutation_offset(builder, masked, key)
