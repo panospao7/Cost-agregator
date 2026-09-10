@@ -704,10 +704,24 @@ that the largest carrier is the largest win: each is capped the same way, and
 each costs a pinned-set change plus fixture coverage for ~0 rows.  The remaining
 210 rows are gated on **receiver/target RESOLUTION** — which is exactly where
 every recent win came from (GR-14u6 `super`, GR-14u19 multi-star, GR-14u20 the
-arrow).  Triage the residual by deciding-edge *resolution*, not by carrier name:
+arrow).  Triage the residual by deciding-edge *resolution*, not by carrier name
+(`build/guard-debug/gr14w0/triage_resolution.py`, full bucket listing):
+133 `async_dispatch` (carrier-decided, see above — capped),
+27 `external_entry` (the §E item-3 dead/owner-decision tail: ExpenseWriteStore,
+GroupLifecycleCoordinator, InvestmentTracker, BankApiIntegration.completeConnection,
+ExpenseGroupDao.insertGroupWithMembers, RecurringLifecycleEventWriter.writeDiagnostic),
+24 `exact_synchronous` (unproven through CLOSURE/exact reasoning rather than one
+uncertain call — BankStatementLifecycleProcessor.processBankStatement,
+ReceiptLinkService.unlinkReceiptFromExpense, CategoryRepository.ensureDefaultCategories,
+SubscriptionManagerEngine.acceptCandidate/validateAndCreate, ExpenseRepository.updateExpenseCategoryBulk),
 20 `interface_dispatch` (§D4 — blocked on the A1 interface/impl concretization),
-19 `unresolved_target`, 14 `function_reference`, and the 34 rows whose deciding
-edge is a closure/exact edge rather than a single uncertain call.
+19 `unresolved_target` (RecurringRuleLifecycleCoordinator activate/deactivate/advanceNextDate,
+RestoreJournalImporter, JsonExpenseImporter.parseV1Row/V2Row,
+NotificationRepository.save, RecommendationRepository.save, OperationRunRecorder.increment,
+CsvExpenseImporter.getOrCreateCategory),
+14 `function_reference` (ReviewQueueRepository.approveReview, AiChatRepositoryImpl,
+AiArtifactRepositoryImpl.markDismissed, MerchantNormalizationRepository.updateAlias,
+SpendingChallengeRepository.deactivateChallenges, BankConnectionLifecycleCoordinator.disconnectConnection).
 
 ### D4. Interface-dispatch residue after the GR-14t negative (20 rows)
 Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
