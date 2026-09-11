@@ -743,6 +743,23 @@ def _parse_sequence(
             idx += 1
             continue
 
+        # GR-14u31: a transparent-scope candidate is owned by its HEAD
+        # method, whatever its lambda body contains.  The barrier branches
+        # below match barrier text ANYWHERE in the statement, so a
+        # `withContext(...) { checkWritesAllowed(...); ... }` body used to
+        # be captured and refused there (unknown-construct) before the
+        # transparent-scope branch was ever reached.  Here the wrapper's
+        # lambda parses recursively and an embedded check proves as its own
+        # DIRECT_CHECK part; inner statements keep their own fail-closed
+        # handling.
+        ts_match = _match_transparent_scope(stripped, cur.transparent_scope_methods)
+        if ts_match is not None:
+            region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
+            if region is not None:
+                out.append(region)
+            idx += 1
+            continue
+
         if _RE_BARRIER_SCOPE.search(stripped):
             m = _RE_BARRIER_SCOPE.search(stripped)
             assert m is not None
@@ -872,14 +889,6 @@ def _parse_sequence(
                 stmt_e,
                 "barrier-form-unrecognized",
             )
-            idx += 1
-            continue
-
-        ts_match = _match_transparent_scope(stripped, cur.transparent_scope_methods)
-        if ts_match is not None:
-            region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
-            if region is not None:
-                out.append(region)
             idx += 1
             continue
 

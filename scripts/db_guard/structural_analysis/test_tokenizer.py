@@ -584,6 +584,53 @@ class TestReturnConstructs:
         assert braced_if.kind == RegionKind.IF
         assert braced_if.children[0].children[0].kind == RegionKind.LAMBDA_RETURN
 
+    def test_transparent_scope_with_embedded_barrier_check_supported(self):
+        # GR-14u31: the campaign guard idiom inside a wrapper — the barrier
+        # branches match barrier text ANYWHERE in a statement, so a
+        # `withContext(...) { checkWritesAllowed(...); ... }` statement was
+        # captured by the barrier-check branch and refused on its trailing
+        # lambda instead of being owned by the transparent-scope branch.
+        result = parse(
+            "withContext(ioDispatcher) {\n"
+            '  writeBarrier.checkWritesAllowed("m")\n'
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_scope_methods=("withContext",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert [child.kind for child in wrapper.children] == [
+            RegionKind.DIRECT_CHECK,
+            RegionKind.STATEMENT,
+        ]
+
+    def test_transparent_scope_with_try_catch_and_nested_wrapper_supported(self):
+        # GR-14u31: production shape (BankApiIntegration.syncTransactions /
+        # GroupTransactionCoordinator) — a withContext wrapper whose body
+        # carries the guarded try/catch + nested withTransaction.
+        result = parse(
+            "withContext(ioDispatcher) {\n"
+            "  try {\n"
+            '    writeBarrier.checkWritesAllowed("m")\n'
+            "    database.withTransaction {\n"
+            "      dao.insert(x)\n"
+            "    }\n"
+            "  } catch (e: Exception) {\n"
+            "    throw e\n"
+            "  }\n"
+            "}\n",
+            transparent_scope_methods=("withContext", "withTransaction"),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        try_region = result.regions[0].children[0]
+        assert try_region.kind == RegionKind.TRY
+        assert [child.kind for child in try_region.children] == [
+            RegionKind.TRY,
+            RegionKind.CATCH,
+        ]
+
 
 class TestValConstructInitializers:
     """GR-12 extension: `val x = if/when/try ...` construct initializers."""
