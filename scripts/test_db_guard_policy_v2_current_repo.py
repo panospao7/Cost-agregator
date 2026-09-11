@@ -16,7 +16,7 @@ The signatures candidate
 ``config/guards/db_ownership_policy.signatures.candidate.yml`` is a valid
 v2 document (``schemaVersion: 2``).  Post-GR-08 (and post-GR-14c truth
 sync, 2026-09-06) it carried the 475 entries; post-GR-14h Pattern E
-removals plus the GR-14u34 dead-writer singles (2026-09-11) plus the GR-14u35 ExpenseWriteStore removal it carries the 421 entries
+removals plus the GR-14u34 dead-writer singles (2026-09-11) plus the GR-14u35/u36 removals it carries the 412 entries
 of the activated v2 policy (one entry per canonical mutation key); the v2
 loader must accept it with zero errors.
 
@@ -87,13 +87,13 @@ def test_archived_v1_policy_rejected_by_v2_loader():
 
 
 def test_candidate_signatures_accepted_by_v2_loader():
-    """The tracked signatures candidate is a valid v2 document with 421 entries.
+    """The tracked signatures candidate is a valid v2 document with 412 entries.
 
-    Derivation of the 421 pin: the candidate is the activation artifact that
+    Derivation of the 412 pin: the candidate is the activation artifact that
     was promoted over the active path (scripts/ci/promote_db_policy_v2.py),
     so it carries the same entries as the activated v2 policy document
     ``config/guards/db_ownership_policy.yml`` — 475 entries post-GR-08,
-    471 post-GR-14h, 461 post-GR-14u, 451 post-GR-14u2, 441 post-GR-14u3, 434 post-GR-14u4 (dead-writer tranche 5), 432 post-GR-14u34 (zero-caller singles), 421 post-GR-14u35 (ExpenseWriteStore x11, owner-approved delete),
+    471 post-GR-14h, 461 post-GR-14u, 451 post-GR-14u2, 441 post-GR-14u3, 434 post-GR-14u4 (dead-writer tranche 5), 432 post-GR-14u34 (zero-caller singles), 421 post-GR-14u35 (ExpenseWriteStore x11), 412 post-GR-14u36 (GroupLifecycleCoordinator x9, owner-approved delete),
     one per canonical mutation key.  Drift history: the GR-14b
     EXACT_IDENTITY_MOVE regenerated the candidate 472 -> 471 (sanctioned
     --generate path); the post-GR-14c truth sync (2026-09-06) closed the
@@ -114,8 +114,8 @@ def test_candidate_signatures_accepted_by_v2_loader():
     assert document is not None, (
         "tracked signatures candidate must be accepted by the v2 loader"
     )
-    assert len(document) == 421, (
-        "candidate must carry exactly the 421 current signature entries"
+    assert len(document) == 412, (
+        "candidate must carry exactly the 412 current signature entries"
     )
     assert not errors, "acceptance must report zero errors"
 

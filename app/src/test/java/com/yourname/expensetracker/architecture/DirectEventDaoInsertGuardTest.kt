@@ -95,11 +95,6 @@ class DirectEventDaoInsertGuardTest {
                 LocalDate.of(2026, 12, 31)
             ),
             DirectEventAllowlistEntry(
-                "GroupLifecycleCoordinator.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "COORDINATOR",
-                "Transaction", "P2 group lifecycle coordinator", "MIT-031",
-                LocalDate.of(2026, 12, 31)
-            ),
-            DirectEventAllowlistEntry(
                 "WarrantyTrackerRepository.kt", "DIRECT_TRANSACTION_EVENT_DAO_INSERT", "LEGACY_REPOSITORY",
                 "Transaction", "Warranty tracking writes lifecycle events", "MIT-031",
                 LocalDate.of(2026, 11, 20)
