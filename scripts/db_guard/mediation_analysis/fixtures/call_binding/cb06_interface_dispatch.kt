@@ -1,5 +1,6 @@
 // CB-06: call goes through an interface-typed reference.
-// Expected resolution: INTERFACE_DISPATCH.
+// Expected resolution: INTERFACE_DISPATCH — TWO corpus implementors exist, so
+// the GR-14u24 single-implementor exactness rule does not apply.
 
 package fixtures.callbinding
 
@@ -8,6 +9,12 @@ interface Cb06Sink {
 }
 
 class Cb06ConsoleSink : Cb06Sink {
+    override fun accept(value: Int) {
+        // no-op fixture body
+    }
+}
+
+class Cb06FileSink : Cb06Sink {
     override fun accept(value: Int) {
         // no-op fixture body
     }

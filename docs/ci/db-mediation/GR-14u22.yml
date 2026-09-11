@@ -1,0 +1,112 @@
+# GR-14u22 — DI wrapper receivers (`dagger.Lazy` / `Provider`) resolve through
+# the wrapped type; `<ident>.get().member()` chains become exact member calls.
+#
+# ROOT CAUSE (engine): production repositories inject collaborators as
+#   `dagger.Lazy<T>` (13 production files).  The `.get` accessor is a control
+#   keyword and never becomes a call record, so
+#       ruleLifecycleCoordinator.get().activateRule(id)
+#   arrived at the resolver as a CHAINED call with an untracked receiver and
+#   failed closed to UNRESOLVED_TARGET (`_resolve_invocation`, chained branch).
+#   That uncertain edge stops the tier-5 proof for every mutation inside the
+#   wrapped collaborator — 9 policy rows of
+#   RecurringRuleLifecycleCoordinator (activateRule / advanceNextDate /
+#   deactivateRule), all of which are guard-in-body.  Triaged 2026-09-10
+#   (GUARDRAIL_STATE_REPORT §3.3.1); this batch is the fix.
+#
+# CHANGE (callgraph.py, receiver typing only — no proof-tier changes):
+#   1. `receiver_fqcn_for_call` unwraps `Wrapper<Inner>` declared texts for the
+#      three closed wrapper FQCNs (dagger.Lazy, javax.inject.Provider,
+#      jakarta.inject.Provider) at the local/param/property lookup sites, so a
+#      wrapper-typed receiver types as the wrapped corpus/external type.
+#   2. `_resolve_invocation`'s chained branch first tries
+#      `_resolve_di_get_chain`: `<ident>.get().member()` re-resolves as a
+#      member call with receiver `ident` (reusing `_resolve_member_call` and
+#      all name-match/override protections).  Every non-matching shape keeps
+#      the previous fail-closed untracked-chain edge.
+#   Soundness: `get()` on these wrappers yields an instance of the wrapped
+#   type, so exact dispatch to the wrapped corpus member is what the language
+#   guarantees.  Everything not matching the closed wrapper set or the chain
+#   shape fails closed exactly as before.
+#
+# STEP-0 GATE (build/guard-debug/gr14w0/project_lazyget.py — same monkeypatch
+#   semantics as the landed edit, projected against board fe40d369):
+#       changed rows: 9, ALL unproven_ambiguous_call -> proven_helper
+#       new counterexamples: 0 ; proven -> unproven: 0 ; total CE 0
+#   Pin: CB-16 `call_binding/cb16_lazy_get_chain.kt` — RED pre-fix
+#   (fixture_runner 58/59, exit 1: expected EXACT_SYNCHRONOUS, got
+#   unresolved_target), GREEN post-fix.
+#
+# Validation:
+#   - fixture scenarios 59 / 59 (CB-16 RED before, GREEN after the fix)
+#   - scripts/db_guard unit tests 235 passed (test_models.py excluded as usual)
+#   - engine battery 99 passed
+#   - live board double run BYTE-IDENTICAL; delta vs fe40d369 is exactly the
+#     9 projected rows; policy sha 7851adc2... and source-root manifest
+#     unchanged; counterexamples 0
+#
+# NOTES
+#   - Found during review of the first landed edit: the property branch of
+#     `receiver_fqcn_for_call` returns unconditionally on a name match even
+#     when resolution is unknown, so an end-of-function unwrap fallback is
+#     unreachable for property-typed receivers.  The unwrap is therefore
+#     applied AT the three declared-type lookup sites (this is also the
+#     semantics the projection validated).
+schemaVersion: 1
+batchId: GR-14u22
+startSha: d534b648
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: fe40d36915c153dc4894acf0905dc572cee8767bc9d49284f85c9b6082b7133a
+mediationReportSha256After: 6a18b4bf4f2fd5a1c5cf824c782f0ae90c1e8c51b9cb3f05fcde7a40d770a169
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+      receiver typing unwraps dagger.Lazy / javax.inject.Provider /
+      jakarta.inject.Provider declared types to the wrapped type, and
+      `<ident>.get().member()` chains re-resolve as member calls on `ident`
+      (_unwrap_di_wrapper_type, _declared_receiver_type_text,
+      _resolve_di_get_chain)
+  - scripts/db_guard/mediation_analysis/fixtures/call_binding/cb16_lazy_get_chain.kt:
+      new pin (CB-16, RED pre-fix)
+  - fixtures/call_binding_manifest.yml + fixtures/expected_manifest.yml +
+    test_fixtures.py: CB-16 row, consolidated rows 66 -> 67
+  - scripts/db_guard/mediation_analysis/fixture_runner.py: CB-16 subject call
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|activateRule|null|Long|lifecycleEventDao|com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|insert
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|activateRule|null|Long|manualRecurringExpenseDao|com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|setActiveStatus
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|advanceNextDate|null|Long,Long|lifecycleEventDao|com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|insert
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|advanceNextDate|null|Long,Long|manualRecurringExpenseDao|com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|updateNextDate
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|deactivateRule|null|Long|lifecycleEventDao|com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|insert
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|deactivateRule|null|Long|manualRecurringExpenseDao|com.yourname.expensetracker.data.database.dao.ManualRecurringExpenseDao|setActiveStatus
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|deactivateRule|null|Long|occurrenceDao|com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao|deleteOpenPlannedBySource
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|deactivateRule|null|Long|plannedExpenseDao|com.yourname.expensetracker.data.database.dao.PlannedExpenseDao|deleteOpenPlannedByRecurringRuleId
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator|function|deactivateRule|null|Long|reminderDeliveryDao|com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao|deleteByOccurrenceIds
+
+rootCause: GR13_CHAINED_DI_WRAPPER_RECEIVER
+selectedPattern: ENGINE
+tests:
+  - fixture CB-16 (RED pre-fix, GREEN post-fix); fixture_runner 59/59
+  - engine battery 99 passed; scripts/db_guard 235 passed
+  - live board double run byte-identical; delta vs fe40d369 = exactly the 9
+    projected rows (ambiguous -> helper)
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  Collaborator receivers declared as dagger.Lazy or Provider were typed as the
+  wrapper spelling, which resolves to nothing in the corpus, so every
+  accessor chain through them failed closed to an uncertain edge and blocked
+  the proof of all mutations inside the wrapped collaborator.  The engine now
+  types such receivers as the wrapped type and resolves the accessor chain as
+  an ordinary member call, reusing the existing dispatch and name-match
+  protections; every other chained shape keeps its fail-closed edge.  Nine
+  RecurringRuleLifecycleCoordinator rows move from unproven_ambiguous_call to
+  proven_helper; the live board double run is byte-identical, counterexamples
+  remain 0, and policy, baseline and exception bytes are unchanged.

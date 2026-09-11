@@ -197,8 +197,9 @@ class MediationProver:
     def _local_site_context(self, callable_key: str, site_start: int) -> tuple[str, ResolutionState | None]:
         """(context, uncertain-state) at one site, innermost lambda first.
 
-        Context: none|direct|worker (a waived worker scope contributes none
-        but is reported via the returned waiver flag through context
+        Context: none|direct|worker|restore_internal (GR-14u25: the mode-gated
+        restore-internal scope; a waived worker scope contributes none but is
+        reported via the returned waiver flag through context
         ``waived``→none and a dedicated marker in ``local_guard`` strings).
         """
         regions = self.builder.lambda_regions_by_callable.get(callable_key, ())
@@ -216,6 +217,8 @@ class MediationProver:
                 return "worker", None, False
             if best.carrier == "canonical_direct":
                 return "direct", None, False
+            if best.carrier == "canonical_restore":
+                return "restore_internal", None, False
             if best.carrier == "transparent":
                 rest = tuple(r for r in region_list if r is not best)
                 return _walk(rest)
@@ -300,6 +303,13 @@ class MediationProver:
                         delivered = set(caller_facts.entry_contexts)
                     elif local == "direct":
                         delivered = {"direct"}
+                    elif local == "restore_internal":
+                        # GR-14u25: the restore-internal context must propagate
+                        # as itself, not be collapsed into the worker default,
+                        # or a callee reached out of a restore scope proves
+                        # under the wrong state (GR13_ALL_PATHS_GUARDED instead
+                        # of GR13_ALL_PATHS_RESTORE_INTERNAL_GUARDED).
+                        delivered = {"restore_internal"}
                     else:
                         delivered = {"worker"}
                     target_facts = facts[target]
@@ -355,6 +365,9 @@ class MediationProver:
                 return
             if best.carrier == "canonical_direct":
                 context = "direct"
+                return
+            if best.carrier == "canonical_restore":
+                context = "restore_internal"
                 return
             if best.carrier == "transparent":
                 _walk(tuple(r for r in region_list if r is not best))
@@ -556,11 +569,15 @@ class MediationProver:
             # GR-14u5: a self-scoped helper (its mutation sits inside the
             # writer's own canonical direct scope, e.g. DatabaseWriteBarrier
             # .runWrite) proves INDEPENDENT of callers — any caller, detected
-            # or not, reaches a guarded mutation (the GR-14j principle).  This
-            # exemption covers ONLY the zero-inbound case; an uncertain inbound
-            # edge still stops the proof below (step 5), preserving the GR-14f
-            # inline-carrier invariant.
-            self_scoped_helper = mode == "helper" and local == "direct"
+            # or not, reaches a guarded mutation (the GR-14j principle).  The
+            # GR-14u25 restore-internal scope has the same self-scoping
+            # property.  This exemption covers ONLY the zero-inbound case; an
+            # uncertain inbound edge still stops the proof below (step 5),
+            # preserving the GR-14f inline-carrier invariant.
+            self_scoped_helper = mode == "helper" and local in (
+                "direct",
+                "restore_internal",
+            )
             if (mode == "workerMediated" and model.method == "doWork") or self_scoped_helper:
                 pass  # doWork: root path starts at itself; helper: self-guarded
             else:
@@ -615,6 +632,8 @@ class MediationProver:
             effective = {"direct"}
         elif local == "worker":
             effective = {"worker"}
+        elif local == "restore_internal":
+            effective = {"restore_internal"}
         else:
             effective = set(entry_contexts)
         convertible = local == "direct" and mode == "helper" and "none" in entry_contexts
@@ -699,17 +718,28 @@ class MediationProver:
                     reaching_root_kinds=ancestor_kinds,
                     convertible_to_direct=convertible,
                 )
+            # GR-14u25: a path covered by the restore-internal scope proves
+            # under its own state; mixed coverage (direct/worker/restore)
+            # reports the restore state, which is the distinctive form.
+            if "restore_internal" in effective:
+                proven_state = ProofState.PROVEN_RESTORE_INTERNAL
+                proven_reason = "GR13_ALL_PATHS_RESTORE_INTERNAL_GUARDED"
+                proven_context = "restore_internal"
+            else:
+                proven_state = ProofState.PROVEN_HELPER
+                proven_reason = "GR13_ALL_PATHS_GUARDED"
+                proven_context = "worker" if "worker" in effective else "direct"
             return SubjectProof(
                 mutation_key=subject.mutation_key,
                 callable_key=subject.callable_key,
                 barrier_mode=mode,
-                proof_state=ProofState.PROVEN_HELPER,
-                reason_code="GR13_ALL_PATHS_GUARDED",
+                proof_state=proven_state,
+                reason_code=proven_reason,
                 deciding_resolution=ResolutionState.EXACT_CANONICAL_SCOPE,
                 local_guard=local_guard,
                 bounded_path=self._reconstruct_path(
                     subject.callable_key,
-                    "worker" if "worker" in effective else "direct",
+                    proven_context,
                 ),
                 reaching_root_kinds=ancestor_kinds,
             )

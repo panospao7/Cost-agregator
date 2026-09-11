@@ -87,6 +87,12 @@ class AnalysisContract:
     transparent_scope_methods: tuple[str, ...] = ()
     transparent_inline_methods: tuple[str, ...] = ()
     structured_launch_receivers: tuple[str, ...] = ()
+    # GR-14u25 / contract V3: the mode-gated restore-internal scope
+    # (RestoreInternalWriteScope.run).  Admission is RECEIVER-EXACT; the
+    # method name `run` intentionally overlaps transparent_inline_methods —
+    # a non-restore receiver keeps the transparent treatment.
+    restore_scope_receiver_fqcn: str = ""
+    restore_scope_methods: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not isinstance(self.transparent_inline_methods, tuple):
@@ -112,6 +118,18 @@ class AnalysisContract:
             raise ValueError(
                 "transparent_inline_methods overlaps the structured launch methods"
             )
+        if set(self.restore_scope_methods) & (
+            set(self.worker_guard_scope_methods)
+            | set(self.direct_scope_methods)
+            | set(self.transparent_scope_methods)
+        ):
+            raise ValueError(
+                "restore_scope_methods overlaps the worker/direct/transparent scope sets"
+            )
+        # NOTE: restore_scope_methods ∩ transparent_inline_methods is ALLOWED
+        # by design (`run`): restore admission is receiver-exact and the
+        # carrier classification claims receiver-exact matches before the
+        # transparent fallback.
         disjoint_groups = (
             ("worker_guard_scope_methods", self.worker_guard_scope_methods),
             ("direct_scope_methods", self.direct_scope_methods),
@@ -133,6 +151,9 @@ class AnalysisContract:
 
     def is_direct_scope_method(self, method: str) -> bool:
         return method in self.direct_scope_methods
+
+    def is_restore_scope_method(self, method: str) -> bool:
+        return method in self.restore_scope_methods
 
     def is_transparent_scope_method(self, method: str) -> bool:
         return method in self.transparent_scope_methods
@@ -409,6 +430,26 @@ ROOT_KIND_REASON_CODES = {
 }
 
 _KNOWN_EXTERNAL_ROOTS = ("java", "javax", "kotlin", "android", "androidx")
+# GR-14u22: DI wrapper types whose accessor yields the wrapped instance, so a
+# receiver declared as `Wrapper<X>` types as X for dispatch resolution.  Only
+# these exact FQCNs unwrap; anything else fails closed.
+_DI_PROVIDER_WRAPPER_FQCNS = frozenset({
+    "dagger.Lazy",
+    "javax.inject.Provider",
+    "jakarta.inject.Provider",
+})
+# `<ident>.get().` immediately before a member name: the shape of a DI-wrapper
+# chain (`storeProvider.get().put(...)`).  `.get` itself never becomes a call
+# (control keyword), so the member call arrives as a chained call.
+_DI_GET_CHAIN_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*get\s*\(\s*\)\s*\.\s*$"
+)
+# GR-14u23: anonymous object expressions.  The colon must follow `object`
+# directly (only whitespace), so NAMED `object Name : T` declarations never
+# match — those are owners already.  Captures the supertype list up to the
+# body brace or end of line.
+_ANON_OBJECT_RE = re.compile(r"(?<![A-Za-z0-9_])object\s*:\s*([^{\n]*)")
+_IDENT_HEAD_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_.]*)")
 _CONTROL_KEYWORDS = frozenset({
     "if", "for", "while", "when", "return", "catch", "synchronized", "try",
     "else", "do", "init", "get", "set",
@@ -1175,6 +1216,11 @@ class CallGraphBuilder:
                     continue
                 self.owners[owner.fqcn] = owner
         self.corpus_type_fqcns = frozenset(self.owners)
+        # GR-14u23: anonymous `object : T { }` sites per corpus type, filled by
+        # _scan_anonymous_implementors() in build().  Zero entries here means
+        # "not scanned yet", not "no anonymous implementors".
+        self.anonymous_implementor_counts: dict[str, int] = {}
+        self._implementors_cache: dict[str, list[str]] = {}
         self.corpus_types_by_simple: dict[str, tuple[str, ...]] = {}
         by_simple: dict[str, list[str]] = {}
         for fqcn in sorted(self.owners):
@@ -1321,12 +1367,18 @@ class CallGraphBuilder:
         file_model = self.file_models[call.file]
         local_type = self._local_val_type(call)
         if local_type is not None:
-            fqcn, origin = self._resolve_type(file_model, local_type)
+            fqcn, origin = self._resolve_type(
+                file_model,
+                self._unwrap_di_wrapper_type(file_model, local_type) or local_type,
+            )
             return fqcn, origin != "unknown"
         if model is not None:
             for param_name, param_type in model.params_named:
                 if param_name == receiver:
-                    fqcn, origin = self._resolve_type(file_model, param_type)
+                    fqcn, origin = self._resolve_type(
+                        file_model,
+                        self._unwrap_di_wrapper_type(file_model, param_type) or param_type,
+                    )
                     return fqcn, origin != "unknown"
             owner_fqcn = model.owner_fqcn
             seen_owners: set[str] = set()
@@ -1335,7 +1387,10 @@ class CallGraphBuilder:
                 owner = self.owners[owner_fqcn]
                 for prop_name, prop_type in owner.properties:
                     if prop_name == receiver:
-                        fqcn, origin = self._resolve_type(file_model, prop_type)
+                        fqcn, origin = self._resolve_type(
+                            file_model,
+                            self._unwrap_di_wrapper_type(file_model, prop_type) or prop_type,
+                        )
                         return fqcn, origin != "unknown"
                 nxt = ""
                 for supertype in self.owner_supertypes.get(owner_fqcn, ()):
@@ -1346,7 +1401,72 @@ class CallGraphBuilder:
         fqcn, origin = self._resolve_type(file_model, receiver)
         if origin != "unknown":
             return fqcn, True
+        # GR-14u22: a receiver declared as a DI wrapper (`dagger.Lazy<X>` /
+        # `Provider<X>`) types as the wrapped X; the plain resolution above
+        # sees only the wrapper spelling and fails closed.
+        declared = self._declared_receiver_type_text(call, model, receiver)
+        inner = self._unwrap_di_wrapper_type(file_model, declared)
+        if inner:
+            fqcn, origin = self._resolve_type(file_model, inner)
+            if origin != "unknown":
+                return fqcn, origin != "unknown"
         return "", False
+
+    def _unwrap_di_wrapper_type(self, file_model: FileModel, type_text: str) -> str:
+        """Inner type text of `Wrapper<Inner>` when Wrapper is a DI provider.
+
+        The dotted wrapper spellings are accepted by exact FQCN match (the
+        exact spelling IS the binding); a simple `Lazy<X>` spelling resolves
+        through imports first.  Everything else returns "" (fail closed).
+        """
+        collapsed = re.sub(r"\s+", "", type_text or "")
+        head, sep, tail = collapsed.partition("<")
+        if not sep or not tail.endswith(">"):
+            return ""
+        if "." in head:
+            if head not in _DI_PROVIDER_WRAPPER_FQCNS:
+                return ""
+        else:
+            fqcn, origin = self._resolve_type(file_model, head)
+            if origin != "external" or fqcn not in _DI_PROVIDER_WRAPPER_FQCNS:
+                return ""
+        return tail[:-1]
+
+    def _declared_receiver_type_text(
+        self, call: CallRecord, model: CallableModel | None, name: str
+    ) -> str:
+        """Raw declared type text for a receiver name.
+
+        Mirrors the lookup order of ``receiver_fqcn_for_call``: nearest
+        preceding local val binding, enclosing callable parameters, owner
+        properties (supertype walk).  Returns "" when nothing binds.
+        """
+        best: tuple[int, str] | None = None
+        for bname, type_text, offset in self._local_vals.get(call.caller_key, ()):
+            if bname == name and offset < call.name_start:
+                if best is None or offset > best[0]:
+                    best = (offset, type_text)
+        if best is not None:
+            return best[1]
+        if model is None:
+            return ""
+        for param_name, param_type in model.params_named:
+            if param_name == name:
+                return param_type
+        owner_fqcn = model.owner_fqcn
+        seen_owners: set[str] = set()
+        while owner_fqcn and owner_fqcn in self.owners and owner_fqcn not in seen_owners:
+            seen_owners.add(owner_fqcn)
+            for prop_name, prop_type in self.owners[owner_fqcn].properties:
+                if prop_name == name:
+                    return prop_type
+            nxt = ""
+            for supertype in self.owner_supertypes.get(owner_fqcn, ()):
+                if supertype and supertype in self.owners:
+                    nxt = supertype
+                    break
+            owner_fqcn = nxt
+        return ""
 
     def _super_receiver_fqcn(
         self, call: CallRecord, model: CallableModel | None
@@ -1463,6 +1583,17 @@ class CallGraphBuilder:
                         carrier = "canonical_direct"
                     else:
                         carrier = "unresolved_scope"
+                elif (
+                    self.contract.is_restore_scope_method(call.name)
+                    and receiver_known
+                    and receiver_fqcn == self.contract.restore_scope_receiver_fqcn
+                ):
+                    # GR-14u25 / contract V3: restore-internal scope.  The
+                    # method name `run` is shared with the stdlib inline
+                    # scope function, so admission is receiver-exact and a
+                    # non-restore receiver FALLS THROUGH to the transparent
+                    # treatment instead of becoming unresolved.
+                    carrier = "canonical_restore"
                 elif self.contract.is_transparent_scope_method(
                     call.name
                 ) or self.contract.is_inline_transparent_method(call.name):
@@ -1604,6 +1735,8 @@ class CallGraphBuilder:
             return "direct"
         if region.carrier == "canonical_worker":
             return "worker"
+        if region.carrier == "canonical_restore":
+            return "restore_internal"
         if region.carrier == "transparent":
             return self._edge_context(
                 tuple(r for r in regions if r is not region), offset
@@ -1631,6 +1764,7 @@ class CallGraphBuilder:
     # ── graph construction ──
 
     def build(self) -> "CallGraph":
+        self._scan_anonymous_implementors()
         edge_lists: list[CallEdge] = []
         for key in sorted(self.callables):
             model = self.callables[key]
@@ -1654,6 +1788,51 @@ class CallGraphBuilder:
             scc_exact=self.scc_exact,
             roots=dict(sorted(self.roots.items())),
         )
+
+    @staticmethod
+    def _split_top_level(text: str) -> list[str]:
+        """Split on commas not nested inside parentheses or generics."""
+        parts: list[str] = []
+        current: list[str] = []
+        depth = 0
+        for ch in text:
+            if ch in "(<":
+                depth += 1
+            elif ch in ")>":
+                depth -= 1
+            if ch == "," and depth == 0:
+                parts.append("".join(current))
+                current = []
+            else:
+                current.append(ch)
+        parts.append("".join(current))
+        return parts
+
+    def _scan_anonymous_implementors(self) -> None:
+        """Count anonymous `object : T { }` implementor sites per corpus type.
+
+        GR-14u23: anonymous objects never enter the owner table, so implementor
+        enumeration over named owners alone under-counts — the fail-OPEN
+        direction for any single-implementor exactness rule.  Each `object :`
+        expression site counts once per CORPUS supertype it lists; external
+        supertypes are not implementors of anything here.  Named `object Name
+        : T` declarations never match (a name sits between `object` and `:`).
+        """
+        counts: dict[str, int] = {}
+        for path in sorted(self.file_models):
+            file_model = self.file_models[path]
+            masked = file_model.masked
+            if "object" not in masked:
+                continue
+            for match in _ANON_OBJECT_RE.finditer(masked):
+                for token in self._split_top_level(match.group(1)):
+                    head = _IDENT_HEAD_RE.match(token.strip())
+                    if head is None:
+                        continue
+                    fqcn, origin = self._resolve_type(file_model, head.group(1))
+                    if origin == "corpus" and fqcn in self.owners:
+                        counts[fqcn] = counts.get(fqcn, 0) + 1
+        self.anonymous_implementor_counts = dict(sorted(counts.items()))
 
     def _resolve_call(
         self, model: CallableModel, call: CallRecord, regions
@@ -1737,9 +1916,14 @@ class CallGraphBuilder:
     def _resolve_invocation(
         self, model: CallableModel, call: CallRecord, context: str
     ) -> list[CallEdge]:
-        scope_shaped = self.contract.is_worker_guard_method(
-            call.name
-        ) or self.contract.is_direct_scope_method(call.name)
+        # GR-14u25: restore-scope shaping is RECEIVER-EXACT (`run` is shared
+        # with the stdlib inline scope function) — a non-restore receiver is
+        # never scope-shaped and resolves as an ordinary member call.
+        scope_shaped = (
+            self.contract.is_worker_guard_method(call.name)
+            or self.contract.is_direct_scope_method(call.name)
+            or self._is_canonical_restore_scope_call(call)
+        )
         if scope_shaped:
             if not self._is_canonical_scope_call(call):
                 return [
@@ -1767,6 +1951,9 @@ class CallGraphBuilder:
                 )
             ]
         if call.chained:
+            unwrapped = self._resolve_di_get_chain(model, call, context)
+            if unwrapped is not None:
+                return unwrapped
             # `.name(...)` on an untracked expression chain: the receiver
             # expression type is not statically bound here — fail closed.
             return [
@@ -1787,6 +1974,53 @@ class CallGraphBuilder:
             return self._resolve_member_call(model, call, context)
         return self._resolve_unqualified_call(model, call, context)
 
+    def _resolve_di_get_chain(
+        self, model: CallableModel, call: CallRecord, context: str
+    ) -> list[CallEdge] | None:
+        """`<ident>.get().member()` on a DI wrapper-typed ident (GR-14u22).
+
+        `dagger.Lazy<X>` / `Provider<X>` accessors yield the wrapped X, so the
+        chain re-resolves as a member call with receiver `ident`.  None when
+        the source shape or the declared type does not match — the caller then
+        keeps its fail-closed untracked-chain edge.
+        """
+        file_model = self.file_models[call.file]
+        window_start = max(0, call.name_start - 160)
+        m = _DI_GET_CHAIN_RE.search(file_model.masked, window_start, call.name_start)
+        if m is None or m.end() != call.name_start:
+            return None
+        base = m.group(1)
+        declared = self._declared_receiver_type_text(call, model, base)
+        inner = self._unwrap_di_wrapper_type(file_model, declared)
+        if not inner:
+            return None
+        fqcn, origin = self._resolve_type(file_model, inner)
+        if origin == "corpus" and fqcn:
+            member_call = CallRecord(
+                call_id=call.call_id,
+                caller_key=model.key,
+                file=call.file,
+                name=call.name,
+                name_start=call.name_start,
+                line=call.line,
+                receiver_text=base,
+                qualification="",
+            )
+            return self._resolve_member_call(model, member_call, context)
+        if origin == "external":
+            return [
+                CallEdge(
+                    caller_key=model.key,
+                    state=ResolutionState.EXACT_SYNCHRONOUS,
+                    line=call.line,
+                    file=call.file,
+                    name_start=call.name_start,
+                    external=True,
+                    context_kind=context,
+                )
+            ]
+        return None
+
     def _is_canonical_scope_call(self, call: CallRecord) -> bool:
         if self.contract.is_worker_guard_method(call.name):
             receiver_fqcn, receiver_known = self.receiver_fqcn_for_call(call)
@@ -1796,7 +2030,27 @@ class CallGraphBuilder:
                 return True
             receiver_fqcn, receiver_known = self.receiver_fqcn_for_call(call)
             return receiver_known and receiver_fqcn == self.contract.direct_scope_receiver_fqcn
+        if self.contract.is_restore_scope_method(call.name):
+            receiver_fqcn, receiver_known = self.receiver_fqcn_for_call(call)
+            return (
+                receiver_known
+                and receiver_fqcn == self.contract.restore_scope_receiver_fqcn
+            )
         return False
+
+    def _is_canonical_restore_scope_call(self, call: CallRecord) -> bool:
+        if not self.contract.is_restore_scope_method(call.name):
+            return False
+        if self.contract.is_worker_guard_method(call.name) or (
+            self.contract.is_direct_scope_method(call.name)
+        ):
+            return False
+        receiver_fqcn, receiver_known = self.receiver_fqcn_for_call(call)
+        return (
+            receiver_known
+            and bool(receiver_fqcn)
+            and receiver_fqcn == self.contract.restore_scope_receiver_fqcn
+        )
 
     def _resolve_qualified_call(
         self, model: CallableModel, call: CallRecord, context: str
@@ -1914,6 +2168,22 @@ class CallGraphBuilder:
                         uncertain=True,
                     )
                 ]
+            # GR-14u24: interface dispatch with exactly ONE corpus implementor
+            # (complete named walk, GR-14u21) and ZERO anonymous implementor
+            # sites (transitively, GR-14u23) has exactly one runtime target in
+            # the corpus — decidable.  Overloads on the implementor stay
+            # uncertain: static overload selection is not modelled here.
+            if not self._anonymous_implementors_of(receiver_fqcn):
+                implementors = self._corpus_implementors(receiver_fqcn)
+                if len(implementors) == 1:
+                    member, member_owner = self._member_in_scope(
+                        implementors[0], call.name
+                    )
+                    if (
+                        member is not None
+                        and len(self._members_named(member_owner, call.name)) == 1
+                    ):
+                        return [self._exact_edge(model, call, context, (member.key,))]
             return [
                 CallEdge(
                     caller_key=model.key,
@@ -2233,6 +2503,39 @@ class CallGraphBuilder:
             if member.is_override and self._inherits_from(member.owner_fqcn, base_fqcn):
                 targets.add(key)
         return targets
+
+    def _corpus_implementors(self, base_fqcn: str) -> list[str]:
+        """Named corpus classes/objects inheriting from base_fqcn (GR-14u24).
+
+        Interfaces extending the base are NOT implementors (no instances);
+        abstract classes count — an unimplemented abstract member simply
+        yields no provable mutation, which is fail-closed.
+        """
+        cached = self._implementors_cache.get(base_fqcn)
+        if cached is not None:
+            return cached
+        implementors = [
+            owner_fqcn
+            for owner_fqcn in sorted(self.owners)
+            if owner_fqcn != base_fqcn
+            and self.owners[owner_fqcn].kind != "interface"
+            and self._inherits_from(owner_fqcn, base_fqcn)
+        ]
+        self._implementors_cache[base_fqcn] = implementors
+        return implementors
+
+    def _anonymous_implementors_of(self, base_fqcn: str) -> int:
+        """Anonymous implementor sites for base_fqcn, transitively (GR-14u23).
+
+        A site listing a SUB-interface (or subclass) of the base is also an
+        implementor of the base — the counts are per LISTED type, so the
+        transitive walk here is what keeps the exactness rule fail-closed.
+        """
+        total = 0
+        for type_fqcn, count in self.anonymous_implementor_counts.items():
+            if self._inherits_from(type_fqcn, base_fqcn):
+                total += count
+        return total
 
     def _extension_target(self, receiver_fqcn: str, method: str) -> str | None:
         candidates = []

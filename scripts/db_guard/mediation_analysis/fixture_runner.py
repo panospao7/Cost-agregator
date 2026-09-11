@@ -74,6 +74,13 @@ FIXTURE_CONTRACT = AnalysisContract(
     # fixture-local receiver name stands in for the production set, and the
     # negative fixture proves unlisted receivers stay async.
     structured_launch_receivers=("viewModelScope", "fixtureScope"),
+    # HP-23 exercises the V3 restore-internal scope form (receiver-exact, like
+    # the worker guard).  A fixture-local scope class stands in for the
+    # production `RestoreInternalWriteScope`; the method name `run` is
+    # deliberately the same as the stdlib inline transparent method, because
+    # restore admission is receiver-exact and must not widen to other receivers.
+    restore_scope_receiver_fqcn="fixtures.helperproof.Hp23RestoreScope",
+    restore_scope_methods=("run",),
 )
 
 # CB rows: every listed (caller method, callee name) pair must resolve to
@@ -94,6 +101,8 @@ CB_SUBJECT_CALLS = {
     "CB-13": (("exercise", "uniqueNormalize"),),
     "CB-14": (("exerciseCb14", "qualifiedTopLevel"),),
     "CB-15": (("exerciseCb15", "accept"),),
+    "CB-16": (("exerciseCb16", "put"),),
+    "CB-17": (("exerciseCb17", "push"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.
@@ -123,6 +132,7 @@ HP_SUBJECT_HELPERS = {
     "SL-03": "writeRow",
     "HP-21": "writeRow",
     "HP-22": "writeRow",
+    "HP-23": "writeRow",
 }
 
 # WP rows: (owner simple name, callable method, site selector).

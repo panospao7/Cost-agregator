@@ -47,3 +47,9 @@ fixtures:
   - id: CB-15
     file: call_binding/cb15_final_class_override_member.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-16
+    file: call_binding/cb16_lazy_get_chain.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-17
+    file: call_binding/cb17_single_implementor_exact.kt
+    expectedResolution: EXACT_SYNCHRONOUS

@@ -1,10 +1,13 @@
 # GR-13 consolidated expected manifest (shadow corpus).
-# Copies all rows from the per-group manifests: 15 call-binding (CB),
-# 25 helper-proof (HP; HP-13..HP-20 are the GR-14f inline-carrier rows,
-# SL-01..SL-03 the GR-14j structured-launch rows, HP-21 the GR-14m named-argument-lambda regression row, HP-22 the
-# GR-14n default-parameter-DI regression row), the
-# GR-14m named-argument-lambda regression row), 18 worker-proof (WP;
-# WP-15a/WP-15b separate), and 8 protocol (PR) rows = 66 rows total.
+# Copies all rows from the per-group manifests: 17 call-binding (CB;
+# CB-16 is the GR-14u22 dagger.Lazy chain row, CB-17 the GR-14u24
+# single-implementor exactness row),
+# 26 helper-proof (HP; HP-13..HP-20 are the GR-14f inline-carrier rows,
+# SL-01..SL-03 the GR-14j structured-launch rows, HP-21 the GR-14m
+# named-argument-lambda regression row, HP-22 the GR-14n default-parameter-DI
+# regression row, HP-23 the GR-14u25 restore-internal-scope row),
+# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows = 69
+# rows total.
 # CB/HP/WP rows use expectedResolution/expectedProof(/expectedRoot);
 # PR rows use expectation. All values use closed vocabularies only.
 fixtures:
@@ -101,6 +104,12 @@ fixtures:
   - id: CB-15
     file: call_binding/cb15_final_class_override_member.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-16
+    file: call_binding/cb16_lazy_get_chain.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-17
+    file: call_binding/cb17_single_implementor_exact.kt
+    expectedResolution: EXACT_SYNCHRONOUS
   - id: HP-13
     file: helper_proof/hp13_let_inline_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
@@ -153,6 +162,10 @@ fixtures:
     file: helper_proof/hp22_default_parameter_di_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
     expectedProof: PROVEN_HELPER
+  - id: HP-23
+    file: helper_proof/hp23_restore_scope_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_RESTORE_INTERNAL
   - id: WP-01
     file: worker_proof/wp01_direct_worker_guard_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE

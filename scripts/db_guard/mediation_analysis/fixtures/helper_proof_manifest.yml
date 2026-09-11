@@ -103,3 +103,7 @@ fixtures:
     file: helper_proof/hp22_default_parameter_di_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
     expectedProof: PROVEN_HELPER
+  - id: HP-23
+    file: helper_proof/hp23_restore_scope_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_RESTORE_INTERNAL

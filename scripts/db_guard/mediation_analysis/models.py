@@ -41,6 +41,9 @@ class GuardContext(Enum):
 class ProofState(Enum):
     PROVEN_HELPER = "proven_helper"
     PROVEN_WORKER_MEDIATED = "proven_worker_mediated"
+    # GR-14u25 / contract V3: guarded by the mode-gated restore-internal
+    # scope (RestoreInternalWriteScope.run) — restore-window-locked writes.
+    PROVEN_RESTORE_INTERNAL = "proven_restore_internal"
     COUNTEREXAMPLE_UNGUARDED_CALL_PATH = "counterexample_unguarded_call_path"
     COUNTEREXAMPLE_NON_WORKER_ROOT = "counterexample_non_worker_root"
     COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE = "counterexample_outside_worker_scope"

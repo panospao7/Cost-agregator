@@ -30,6 +30,7 @@ __all__ = [
     "CanonicalBarrierContract",
     "CANONICAL_BARRIER_CONTRACT_V1",
     "CANONICAL_BARRIER_CONTRACT_V2",
+    "CANONICAL_BARRIER_CONTRACT_V3",
     "TransparentScopeWrapper",
     "ProofStatus",
     "DirectBarrierProofResult",
@@ -113,6 +114,8 @@ class CanonicalBarrierContract:
         "guarded_scope_methods",
         "transparent_scope_wrappers",
         "transparent_scope_by_method",
+        "restore_scope_receiver_fqcn",
+        "restore_scope_methods",
     )
 
     def __init__(
@@ -123,6 +126,8 @@ class CanonicalBarrierContract:
         direct_check_methods: tuple[str, ...],
         guarded_scope_methods: tuple[str, ...],
         transparent_scope_wrappers: tuple[TransparentScopeWrapper, ...] = (),
+        restore_scope_receiver_fqcn: str | None = None,
+        restore_scope_methods: tuple[str, ...] = (),
     ) -> None:
         if not isinstance(contract_version, int) or isinstance(contract_version, bool):
             raise TypeError("contract_version must be an int")
@@ -140,6 +145,25 @@ class CanonicalBarrierContract:
         for name in direct_check_methods:
             if name in guarded_scope_methods:
                 raise ValueError("a method cannot be both a check and a scope")
+        if not isinstance(restore_scope_methods, tuple):
+            raise TypeError("restore_scope_methods must be a tuple of identifiers")
+        for item in restore_scope_methods:
+            if not isinstance(item, str) or not item or not item.isidentifier():
+                raise ValueError("restore_scope_methods entries must be plain identifiers")
+        if restore_scope_methods:
+            if not isinstance(restore_scope_receiver_fqcn, str) or "." not in restore_scope_receiver_fqcn:
+                raise ValueError(
+                    "restore_scope_methods requires a dotted restore_scope_receiver_fqcn"
+                )
+            for name in restore_scope_methods:
+                if name in direct_check_methods or name in guarded_scope_methods:
+                    raise ValueError(
+                        "a restore scope method cannot double as a check or guarded scope"
+                    )
+        elif restore_scope_receiver_fqcn is not None:
+            raise ValueError(
+                "restore_scope_receiver_fqcn without restore_scope_methods is invalid"
+            )
         if not isinstance(transparent_scope_wrappers, tuple):
             raise TypeError("transparent_scope_wrappers must be a tuple of TransparentScopeWrapper")
         for wrapper in transparent_scope_wrappers:
@@ -163,6 +187,8 @@ class CanonicalBarrierContract:
         object.__setattr__(self, "guarded_scope_methods", tuple(guarded_scope_methods))
         object.__setattr__(self, "transparent_scope_wrappers", tuple(transparent_scope_wrappers))
         object.__setattr__(self, "transparent_scope_by_method", by_method)
+        object.__setattr__(self, "restore_scope_receiver_fqcn", restore_scope_receiver_fqcn)
+        object.__setattr__(self, "restore_scope_methods", tuple(restore_scope_methods))
 
     @property
     def transparent_scope_methods(self) -> tuple[str, ...]:
@@ -175,6 +201,8 @@ class CanonicalBarrierContract:
             and self.direct_check_methods == other.direct_check_methods
             and self.guarded_scope_methods == other.guarded_scope_methods
             and self.transparent_scope_wrappers == other.transparent_scope_wrappers
+            and self.restore_scope_receiver_fqcn == other.restore_scope_receiver_fqcn
+            and self.restore_scope_methods == other.restore_scope_methods
         )
 
     def __hash__(self) -> int:
@@ -185,6 +213,8 @@ class CanonicalBarrierContract:
                 self.direct_check_methods,
                 self.guarded_scope_methods,
                 self.transparent_scope_wrappers,
+                self.restore_scope_receiver_fqcn,
+                self.restore_scope_methods,
             )
         )
 
@@ -225,6 +255,26 @@ CANONICAL_BARRIER_CONTRACT_V2 = CanonicalBarrierContract(
     ),
 )
 
+# V3 (GR-14u25): the restore-internal scope form.  The restore flow must write
+# the restore database DURING restore windows; a canonical checkWritesAllowed
+# throws in those modes by design, so production formalised
+# RestoreInternalWriteScope.run(operation) { ... } — a mode-gated scope
+# (`require(mode == ASSETS_RESTORING || mode == RESTORE_VERIFYING)`) whose
+# writes are restore-window-locked by construction.  Admission is
+# RECEIVER-EXACT: `run` is also a stdlib inline transparent method name, and
+# every non-restore receiver keeps the transparent treatment.
+CANONICAL_BARRIER_CONTRACT_V3 = CanonicalBarrierContract(
+    contract_version=3,
+    receiver_fqcn="com.yourname.expensetracker.data.backup.DatabaseWriteBarrier",
+    direct_check_methods=("checkWritesAllowed",),
+    guarded_scope_methods=("runWrite",),
+    transparent_scope_wrappers=CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_wrappers,
+    restore_scope_receiver_fqcn=(
+        "com.yourname.expensetracker.data.backup.RestoreInternalWriteScope"
+    ),
+    restore_scope_methods=("run",),
+)
+
 
 class ProofStatus(str, Enum):
     PROVEN = "PROVEN"
@@ -243,7 +293,7 @@ class DirectBarrierProofResult:
     proof_version: int
     mutation_site: SourceSpan
     barrier_site: SourceSpan | None
-    barrier_form: str | None  # DIRECT_CHECK | GUARDED_SCOPE
+    barrier_form: str | None  # DIRECT_CHECK | GUARDED_SCOPE | RESTORE_INTERNAL_SCOPE
     counterexample_node_kinds: tuple[str, ...]
     counterexample_line_sequence: tuple[int, ...]
     diagnostic_code: str | None
@@ -335,9 +385,14 @@ def canonical_barrier_call_sites(
         seen.add(span)
         receiver_name = match.group("receiver")
         method = match.group("method")
+        is_restore = (
+            contract.restore_scope_receiver_fqcn is not None
+            and method in contract.restore_scope_methods
+        )
         if (
             method not in contract.direct_check_methods
             and method not in contract.guarded_scope_methods
+            and not is_restore
         ):
             continue
         fqcn, resolution = resolver.resolve(receiver_name)
@@ -517,6 +572,7 @@ def prove_direct_barrier(
     sites = canonical_barrier_call_sites(masked_text, body_span, contract, resolver)
     canonical_check_spans: list[tuple[int, int]] = []
     canonical_scope_spans: list[tuple[int, int]] = []
+    restore_scope_spans: list[tuple[int, int]] = []
     receiver_unresolved = False
     for call in sites:
         if call.receiver_resolution == "AMBIGUOUS":
@@ -526,13 +582,33 @@ def prove_direct_barrier(
             # UNRESOLVED / NOT_A_PROPERTY: a barrier-shaped call whose
             # receiver cannot be proven canonical is never a barrier, and
             # per the plan the direct writer takes the exit-2 route.
+            # Exception (GR-14u25): restore-shaped `run` calls are name-shared
+            # with the stdlib inline `run` — a non-restore or unresolved
+            # receiver is simply not a restore scope (the mediation layer
+            # treats it as transparent); it must NOT poison this callable.
+            if (
+                contract.restore_scope_receiver_fqcn is not None
+                and call.method in contract.restore_scope_methods
+            ):
+                continue
             receiver_unresolved = True
             continue
         if call.receiver_fqcn != contract.receiver_fqcn:
             # Same-name method on another receiver: not a barrier.
+            if (
+                contract.restore_scope_receiver_fqcn is not None
+                and call.method in contract.restore_scope_methods
+            ):
+                continue
             continue
         if call.method in contract.direct_check_methods:
             canonical_check_spans.append((call.span.start, call.span.end))
+        elif (
+            contract.restore_scope_receiver_fqcn is not None
+            and call.method in contract.restore_scope_methods
+            and call.receiver_fqcn == contract.restore_scope_receiver_fqcn
+        ):
+            restore_scope_spans.append((call.span.start, call.span.end))
         else:
             canonical_scope_spans.append((call.span.start, call.span.end))
     if receiver_unresolved:
@@ -663,6 +739,40 @@ def prove_direct_barrier(
                     mutation_site=site.span,
                     barrier_site=barrier_node.span,
                     barrier_form=barrier_nodes[barrier_node.id],
+                    counterexample_node_kinds=(),
+                    counterexample_line_sequence=(),
+                    diagnostic_code=None,
+                )
+            )
+            continue
+
+        # GR-14u25: a reachable mutation lexically inside a restore-internal
+        # scope span is guarded by that mode-gated scope (the CFG models the
+        # scope lambda's children as ordinary nodes, so dominance alone would
+        # call it unguarded).  Containment is the scope's own semantics.
+        restore_span = next(
+            (
+                (span_start, span_end)
+                for span_start, span_end in restore_scope_spans
+                if span_start <= site.span.start < span_end
+            ),
+            None,
+        )
+        if restore_span is not None:
+            results.append(
+                DirectBarrierProofResult(
+                    callable_key=callable_key,
+                    mutation_key=_mutation_identity(site),
+                    status=ProofStatus.PROVEN,
+                    proof_version=_PROOF_VERSION,
+                    mutation_site=site.span,
+                    barrier_site=SourceSpan(
+                        start=restore_span[0],
+                        end=restore_span[1],
+                        line=masked_text.count("\n", 0, restore_span[0]) + 1,
+                        column=1,
+                    ),
+                    barrier_form="RESTORE_INTERNAL_SCOPE",
                     counterexample_node_kinds=(),
                     counterexample_line_sequence=(),
                     diagnostic_code=None,

@@ -1,0 +1,170 @@
+# GR-14u25 — Contract V3: `RestoreInternalWriteScope.run` is a THIRD canonical
+# scope form (mode-gated, restore-internal).  Resolves the GR-14u24 HARD STOP
+# by making the sanctioned restore guard expressible instead of disposable.
+#
+# WHY V3 EXISTS: the restore flow MUST write the restore database during
+#   restore windows, and a canonical `checkWritesAllowed` throws in restore
+#   modes BY DESIGN — so the V2 contract could not express this guard and the
+#   GR-14u24 projection reported `DatabaseBackupRepositoryImpl.restoreReceiptAssets`
+#   as a counterexample.  Triage (GR-14u24.yml) established that verdict was
+#   TRUE under V2 and simultaneously NOT a defect: the write targets the fresh
+#   restore DB (`freshDb`) inside a formal mode-gated scope
+#   (`require(mode == ASSETS_RESTORING || RESTORE_VERIFYING)`).  Owner chose
+#   Option A: recognise the form (this batch).
+#
+# CHANGE:
+#   barrier_proof.py: CANONICAL_BARRIER_CONTRACT_V3 (v2 -> 3; restore_scope_* /
+#     restore_scope_methods ("run",) / validation / eq / hash; V1 and V2 objects
+#     UNTOUCHED).  `canonical_barrier_call_sites` collects restore methods.
+#     GR-12 bucketing: a restore-shaped `run` on a NON-restore or unresolved
+#     receiver is SKIPPED rather than poisoning `receiver_unresolved`.
+#     Reachable-mutation proof via lexical RESTORE_INTERNAL_SCOPE containment;
+#     `barrier_form` vocabulary extended.
+#   callgraph.py: `AnalysisContract.restore_scope_*` + `is_restore_scope_method`
+#     + validation (disjoint from worker/direct/transparent-scope; the
+#     intentional overlap with the transparent-inline `run` is documented and
+#     permitted because restore admission is RECEIVER-EXACT).  Carrier
+#     `canonical_restore` (receiver-exact, falls through to transparent);
+#     `_edge_context` -> "restore_internal"; `_is_canonical_restore_scope_call`.
+#   models.py: `ProofState.PROVEN_RESTORE_INTERNAL` (closed vocabulary 11 -> 12).
+#   proof.py: `_local_site_context` + the facts-edge walk map `canonical_restore`
+#     -> "restore_internal"; tier-7 `effective` handling; the proven branch
+#     selects PROVEN_RESTORE_INTERNAL / GR13_ALL_PATHS_RESTORE_INTERNAL_GUARDED;
+#     the GR-14u5 zero-inbound self-scoped exemption covers `restore_internal`.
+#   inspect_db_mediation_proof.py: `_production_contract` wired to V3.
+#
+# THREE FIXES MADE WHILE COMPLETING THIS BATCH (all recorded, none cosmetic):
+#   1. NAMEERROR (blocking): `inspect_db_mediation_proof.py` still referenced
+#      `CANONICAL_BARRIER_CONTRACT_V2` after the import switched to V3, so the
+#      next board run would have crashed while building the infrastructure
+#      dict.  Fixed to V3.  V2 and V3 share `receiver_fqcn`, so board bytes are
+#      unaffected — CONFIRMED by the byte-identical captures below.
+#   2. PROPAGATION GAP (the actual reason the last pin failed):
+#      `_compute_propagation` collapsed EVERY non-none/non-direct edge context
+#      into `{"worker"}`:
+#          if local == "none": ... elif local == "direct": {"direct"}
+#          else: {"worker"}          # <-- "restore_internal" landed here
+#      so a callee reached out of a restore scope proved as PROVEN_HELPER /
+#      GR13_ALL_PATHS_GUARDED instead of PROVEN_RESTORE_INTERNAL.  Step 7
+#      (`effective`) already handled `restore_internal` explicitly; this
+#      parallel switch had not been updated.  Fixed with an explicit branch.
+#   3. PIN CORRECTNESS: the propagation pin's corpus named the callee `put`
+#      while its body called `backing.put(...)` — the unresolved stdlib receiver
+#      name-matched the subject callable ITSELF, so the subject's own mutation
+#      site was tier-5 uncertain before context could be considered.  Renamed
+#      the callee to `write` (needle unchanged) so the pin tests propagation
+#      rather than a name-collision artifact.  Also dropped a dead first
+#      `_build(...)` in that test.
+#
+# LATENT ON ITS OWN — MEASURED, both baselines:
+#   B. u25 ALONE with the u24 exactness rule neutralised: board BYTE-IDENTICAL
+#      to 6a18b4bf (0 changed rows, 164 proven_helper, no restore state).  u25's
+#      engine work is inert until u24 makes the production edge exact.
+#      -> build/guard-debug/gr14u25/verify_baselines.py (VERDICT B: PASS)
+#
+# BOARD (u24 + u25 together, the landed state), captured twice:
+#   sha256 35de3592eaedbc2e90d7da33ca9bcc0ffdef8b8863805f14b03dd0e7b5933106
+#   (deterministic double-run, byte-identical)
+#   summary: proven_helper 173 / proven_restore_internal 1 /
+#            proven_worker_mediated 14 / unproven_ambiguous_call 58 /
+#            unproven_async 133 / unproven_external_entry 27
+#            counterexamples 0
+#   A. vs fe40d369 (GR-14u21): EXACTLY 19 rows —
+#        18  unproven_ambiguous_call -> proven_helper
+#         1  unproven_ambiguous_call -> proven_restore_internal
+#      0 counterexamples, 0 proven->unproven.  (VERDICT A: PASS)
+#      This is what the GR-14u24 manifest's HELD projection becomes once V3
+#      expresses the restore guard: the counterexample is now a PROOF.
+#   vs the GR-14u24 HELD projection (94bbf1b5): EXACTLY 1 row —
+#        restoreReceiptAssets  counterexample_unguarded_call_path
+#                              -> proven_restore_internal
+#   NOTE ON BASELINES: the handoff stated item 5 as "byte-identical to
+#   6a18b4bf" and item 6 as "18 + 1".  Those are DIFFERENT baselines — 6a18b4bf
+#   is the pre-u24 board, while 18+1 is fe40d369 -> now.  Both facts are true
+#   and both are verified above with the correct baseline for each.
+#
+# PINS: scripts/ci/test_gr14u25_restore_scope.py — 10 pins (RED-verified):
+#   V3 field pinning; V1/V2 untouched; production wiring; the receiver-exact
+#   overlap with transparent-inline `run`; disjointness from direct/worker
+#   (rejection case); receiver-exact canonical_restore carrier; stdlib `run` on
+#   other receivers stays transparent (NO widening); a mutation inside the scope
+#   proves restore-internal; context PROPAGATES across an exact call edge; and a
+#   mutation with no scope anywhere still never proves (soundness).
+#
+# FIXTURE CORPUS (closed-set rule): HP-23 added
+#   (helper_proof/hp23_restore_scope_positive.kt — writer reached only from
+#   inside the scope, so it pins the PROPAGATION path end-to-end and yields
+#   actualProof `proven_restore_internal`); `PROVEN_RESTORE_INTERNAL` added to
+#   the PROOFS closed vocabulary in test_fixtures.py; FIXTURE_CONTRACT gains the
+#   fixture-local restore receiver/method; consolidated rows 68 -> 69.
+#   fixture_runner 61/61.
+#
+# Validation:
+#   - test_gr14u25_restore_scope.py 10/10; fixture_runner 61/61; test_fixtures 5/5.
+#   - engine battery: 1220 passed, 13 failed — and those 13 are PRE-EXISTING and
+#     A/B-PROVEN so: stashing this session's work and re-running the same files
+#     at HEAD d535.../d534b648 yields the identical 13 failures (§B4
+#     verify_known_good_state x11, freshness, production-source-roots).  Exactly
+#     ONE failure was attributable to this work (the ProofState closed-vocabulary
+#     pin, 11 -> 12) and it is fixed.
+#   - scripts/db_guard 235 passed.
+#   - policy bytes unchanged (7851adc2...); baseline/exception bytes unchanged.
+schemaVersion: 1
+batchId: GR-14u25
+startSha: d534b648
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: 6a18b4bf4f2fd5a1c5cf824c782f0ae90c1e8c51b9cb3f05fcde7a40d770a169
+mediationReportSha256After: 35de3592eaedbc2e90d7da33ca9bcc0ffdef8b8863805f14b03dd0e7b5933106
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/structural_analysis/barrier_proof.py: CANONICAL_BARRIER_CONTRACT_V3,
+    restore-scope call-site collection, GR-12 restore bucketing + lexical
+    containment proof, barrier_form vocabulary
+  - scripts/db_guard/mediation_analysis/callgraph.py: restore_scope_* contract
+    fields + validation, canonical_restore carrier, restore_internal context
+  - scripts/db_guard/mediation_analysis/models.py: ProofState.PROVEN_RESTORE_INTERNAL
+  - scripts/db_guard/mediation_analysis/proof.py: restore context mapping,
+    tier-7 effective, proven branch, self-scoped exemption, AND the
+    propagation fix (restore_internal no longer collapsed to worker)
+  - scripts/ci/inspect_db_mediation_proof.py: V3 wiring + the V2 NameError fix
+  - scripts/ci/test_gr14u25_restore_scope.py: 10 pins (new)
+  - scripts/ci/test_inspect_db_mediation_proof.py: closed vocabulary 11 -> 12
+  - fixtures: HP-23 new; PROOFS += PROVEN_RESTORE_INTERNAL; FIXTURE_CONTRACT
+    restore fields; consolidated rows 68 -> 69
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - (latent alone) 0 rows; together with u24 it converts the u24 counterexample
+    DatabaseBackupRepositoryImpl.restoreReceiptAssets into proven_restore_internal
+rootCause: GR13_RESTORE_INTERNAL_GUARD_UNEXPRESSIBLE
+selectedPattern: ENGINE
+
+tests:
+  - test_gr14u25_restore_scope.py 10/10 (RED-verified)
+  - fixture_runner 61/61; test_fixtures 5/5
+  - engine battery 1220 passed / 13 pre-existing (A/B-proven) / 14 skipped
+  - scripts/db_guard 235 passed
+  - board 35de3592 deterministic double-run; 0 counterexamples; policy unchanged
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  A restore-internal database write is deliberately exempt from the global write
+  barrier, because the restore must write the restore database during a restore
+  window; the previous contract had no way to express that, so such a write was
+  reported as an unguarded call path.  This batch adds a third canonical scope
+  form for it - receiver-exact and mode-gated, with its own proof state,
+  PROVEN_RESTORE_INTERNAL - without touching the V1 or V2 contracts, and proves
+  the guard from the scope's lexical containment of the mutation plus
+  propagation of restore-internal context across exact call edges.  On its own
+  the change moves no row; combined with the single-implementor exactness rule it
+  turns the one restore-internal counterexample into a proof, so the board gains
+  eighteen proven helpers and one restore-internal proof with zero
+  counterexamples, zero regressions, a deterministic board, and policy, baseline
+  and exception bytes unchanged.

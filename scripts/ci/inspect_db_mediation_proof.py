@@ -41,7 +41,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from scripts.db_guard.structural_analysis.barrier_proof import (  # noqa: E402
-    CANONICAL_BARRIER_CONTRACT_V2,
+    CANONICAL_BARRIER_CONTRACT_V3,
     ProofStatus,
 )
 from scripts.db_guard.declaration_scanner import (  # noqa: E402
@@ -126,7 +126,7 @@ def _production_contract() -> AnalysisContract:
     """The production contract, derived from the GR-12 + GR-13 records.
 
     The direct-scope receiver/methods come from the immutable
-    ``CANONICAL_BARRIER_CONTRACT_V2`` (single source of truth); the worker
+    ``CANONICAL_BARRIER_CONTRACT_V3`` (single source of truth); the worker
     guard identity comes from the recorded GR-13 worker-guard contract; the
     inline-carrier table comes from the reviewed GR-14f closed set
     (``PRODUCTION_TRANSPARENT_INLINE_METHODS`` — carrier classification
@@ -135,15 +135,19 @@ def _production_contract() -> AnalysisContract:
     return AnalysisContract(
         worker_guard_receiver_fqcn=_WORKER_GUARD_RECEIVER_FQCN,
         worker_guard_scope_methods=_WORKER_GUARD_SCOPE_METHODS,
-        direct_scope_receiver_fqcn=CANONICAL_BARRIER_CONTRACT_V2.receiver_fqcn,
-        direct_scope_methods=CANONICAL_BARRIER_CONTRACT_V2.guarded_scope_methods,
+        direct_scope_receiver_fqcn=CANONICAL_BARRIER_CONTRACT_V3.receiver_fqcn,
+        direct_scope_methods=CANONICAL_BARRIER_CONTRACT_V3.guarded_scope_methods,
         worker_base_fqcns=_WORKER_BASE_FQCNS,
         transparent_scope_methods=tuple(
             wrapper.method
-            for wrapper in CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_wrappers
+            for wrapper in CANONICAL_BARRIER_CONTRACT_V3.transparent_scope_wrappers
         ),
         transparent_inline_methods=PRODUCTION_TRANSPARENT_INLINE_METHODS,
         structured_launch_receivers=_PRODUCTION_STRUCTURED_LAUNCH_RECEIVERS,
+        restore_scope_receiver_fqcn=(
+            CANONICAL_BARRIER_CONTRACT_V3.restore_scope_receiver_fqcn
+        ),
+        restore_scope_methods=CANONICAL_BARRIER_CONTRACT_V3.restore_scope_methods,
     )
 
 
@@ -713,7 +717,7 @@ def build_mediation_shadow(
         "workerGuardContract": {
             "receiverFqcn": _WORKER_GUARD_RECEIVER_FQCN,
             "scopeMethods": list(_WORKER_GUARD_SCOPE_METHODS),
-            "directBarrierReceiverFqcn": CANONICAL_BARRIER_CONTRACT_V2.receiver_fqcn,
+            "directBarrierReceiverFqcn": CANONICAL_BARRIER_CONTRACT_V3.receiver_fqcn,
         },
         "summary": {
             "helperWorkerEntryCount": len(helper_worker_entries),

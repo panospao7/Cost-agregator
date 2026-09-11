@@ -1,7 +1,7 @@
 # GUARDRAIL STATE REPORT — database write-barrier proof engine
 
-**Status date:** 2026-09-10
-**Branch:** `gr-14f-wip` @ `0f5cd860`
+**Status date:** 2026-09-11
+**Branch:** `gr-14f-wip` @ `d534b648` (GR-14u22…u25 + money fix uncommitted on top)
 **Audience:** anyone continuing the GR-14 guardrail campaign, and anyone looking for
 production database-write bugs.  This document is a *state* report: what the guardrails
 are, what the measured state is, every known issue with its status, and the production-code
@@ -43,8 +43,16 @@ pins, immutably:
 - `transparent_scope_wrappers` = `withTransaction` (Room `RoomDatabase`/`AppDatabase`),
   `runInTransaction` (`DomainTransactionRunner`), `withContext` (`kotlinx.coroutines`)
 
-**Contract changes require a version bump (V2 → V3) and a dedicated reviewed diff.**  No
-batch in this arc has needed one.
+**Contract changes require a version bump and a dedicated reviewed diff.**
+
+- **V3 (current, GR-14u25)** supersedes V2 to add a **third** canonical scope form:
+  `restore_scope_receiver_fqcn` = `...data.backup.RestoreInternalWriteScope` and
+  `restore_scope_methods` = `("run",)`.  This form is **receiver-exact** (like the worker
+  guard), mode-gated to restore windows, and deliberately overlaps the transparent-inline
+  method name `run` — which is safe precisely because admission is receiver-exact.  Its
+  proof state is `PROVEN_RESTORE_INTERNAL`.  V1 and V2 objects are left untouched.
+- V2 = V1 plus the transparent-scope wrappers above.  Both are still exported and pinned so
+  the older contracts cannot silently drift.
 
 ### 1.3 The proof engine (the guardrail *on* the guardrails)
 
@@ -64,6 +72,7 @@ Tier-5 proof assigns each policy row one **proof state**:
 |---|---|---|
 | `proven_helper` | Guarded by its own canonical barrier call. | ✅ |
 | `proven_worker_mediated` | Worker path, guard via `WorkerExecutionGuard`. | ✅ |
+| `proven_restore_internal` | Inside the receiver-exact, mode-gated `RestoreInternalWriteScope` (V3); the write is sanctioned *because* a canonical barrier throws during restore by design. | ✅ |
 | `unproven_ambiguous_call` | Some call edge in the path is not exact. | ⚠️ unknown |
 | `unproven_async_or_escaping_callback` | Reached only through an async/escaping lambda. | ⚠️ unknown |
 | `unproven_external_entry` | Zero inbound call sites (dead or externally entered). | ⚠️ unknown |
@@ -121,22 +130,23 @@ single most valuable practice in this campaign — do not skip it for "obvious" 
 
 ---
 
-## 2. Measured state (2026-09-10)
+## 2. Measured state (2026-09-11)
 
 ### 2.1 Board
 
-Report sha256 **`fe40d36915c153dc4894acf0905dc572cee8767bc9d49284f85c9b6082b7133a`**
+Report sha256 **`35de3592eaedbc2e90d7da33ca9bcc0ffdef8b8863805f14b03dd0e7b5933106`**
 (deterministic across a double run).  406 policy rows.
 
 | Bucket | Count |
 |---|---|
-| `proven_helper` | **155** |
+| `proven_helper` | **173** |
+| `proven_restore_internal` | **1** |
 | `proven_worker_mediated` | 14 |
-| `unproven_ambiguous_call` | 77 |
+| `unproven_ambiguous_call` | 58 |
 | `unproven_async_or_escaping_callback` | 133 |
 | `unproven_external_entry` | 27 |
 | **`counterexample_unguarded_call_path`** | **0** |
-| **proven / unproven** | **169 / 237** |
+| **proven / unproven** | **188 / 218** |
 
 Policy sha256 `7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31` —
 434 entries, 0 load errors.  Baseline/exception bytes unchanged.  Report is shadow-only
@@ -151,22 +161,36 @@ Policy sha256 `7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31`
 | GR-14u19 | multi-star resolution | helper 69 → 87 |
 | GR-14u20 | arrow-aware parameter split + 2 guards | helper 87 → **155** |
 | GR-14u21 | complete supertype traversal (latent, 0 rows) | helper 155 |
+| GR-14u22 (2026-09-11) | DI-wrapper receiver unwrap | helper 155 → **164** |
+| GR-14u23 (2026-09-11) | anonymous-implementor counting (latent, 0 rows) | helper 164 |
+| GR-14u24 (2026-09-11) | single-implementor interface exactness | 9 rows → helper (vs u22/u23) |
+| GR-14u25 (2026-09-11) | **contract V3**: restore-internal scope | restore row → **proven_restore_internal** |
 
-Net this session: **proven_helper 69 → 155** (proven 83 → 169), counterexamples **0
+Net through GR-14u21: **proven_helper 69 → 155** (proven 83 → 169), counterexamples **0
 throughout** — the live board never carried one.  (The "18 counterexamples" seen during
 GR-14u19 were a *projection* of the unlanded change, which is what triggered the D7
 investigation.)
 
-Campaign-wide, GR-14u5 → u21: proven_helper **48 → 155**.
+GR-14u22 → u25 (the last four batches) move the board from `fe40d369` to `35de3592` by
+**exactly 19 rows**: 18 `unproven_ambiguous_call → proven_helper` and 1
+`unproven_ambiguous_call → proven_restore_internal`, with 0 counterexamples and 0
+proven→unproven.  Two of those four batches (u23, and u25 on its own) are **latent** —
+verified byte-identical with their activator neutralised.
+
+Campaign-wide, GR-14u5 → u25: proven_helper **48 → 173**.
+
+The u24 Step-0 HARD STOP is **resolved**: the single counterexample became a proof rather
+than being suppressed.  See §4.D4 and §5.1.1.
 
 ### 2.2 Validation status
 
 | Check | Result |
 |---|---|
-| engine battery (`scripts/ci/test_gr14*.py`, …) | **99 passed** |
+| engine battery (`scripts/ci/`) | **1220 passed / 13 failed / 14 skipped** |
+| ↳ of the 13 | **all PRE-EXISTING and A/B-proven** — stashing this session's work and re-running the same files at HEAD yields the identical 13 (§6.B4) |
 | `scripts/db_guard` unit tests | **235 passed** |
-| fixture scenarios | **58 / 58** |
-| board determinism (double run) | byte-identical |
+| fixture scenarios | **61 / 61** (consolidated rows 69) |
+| board determinism (double run) | byte-identical (`35de3592`) |
 | Kotlin `:app:compileDebugKotlin` | PASS (last run GR-14u20) |
 
 **The full Kotlin test suite is NOT a usable gate** — see §6.  Prefer targeted
@@ -174,7 +198,8 @@ Campaign-wide, GR-14u5 → u21: proven_helper **48 → 155**.
 
 ### 2.3 Batch history
 
-39 manifests in `docs/ci/db-mediation/` (GR-12, GR-13 ×2, GR-14a–t, GR-14u ×1 + u2–u21).
+41 manifests through GR-14u25 (`docs/ci/db-mediation/`:
+GR-12, GR-13 ×2, GR-14a–t, GR-14u ×1 + u2–u25).
 Each newer manifest carries its delta, evidence and validation status.
 
 ---
@@ -183,6 +208,8 @@ Each newer manifest carries its delta, evidence and validation status.
 
 Post-GR-14u20 census (`build/guard-debug/gr14w0/census_u20.log`, exact reconstruction
 fidelity: report status reproduced for **every** row).  Buckets sum: 133 + 27 + 77 = 237.
+GR-14u22 (§3.3.1) then proved 9 of those 77 ambiguous rows, leaving 229 unproven on the
+live board `6a18b4bf`.
 
 ### 3.1 `unproven_async_or_escaping_callback` — 133 rows
 
@@ -205,14 +232,48 @@ Decided by `external_entry`: zero inbound call sites. Domain:
 - *Called only from an `init {}` block* (engine invisible): **active but unprovable** —
   do NOT delete.  See §5.2 Defect II.
 
-### 3.3 `unproven_ambiguous_call` — 77 rows, by deciding resolution
+### 3.3 `unproven_ambiguous_call` — 58 rows (post-GR-14u25)
 
-| Deciding resolution | Rows | What it means |
+| Deciding resolution | Rows (live board) | What it means |
 |---|---|---|
 | `exact_synchronous` | **24** | Guard present, body **unmodelable** — see §3.4 |
-| `interface_dispatch` | 20 | Interface-typed receiver; see §4.D4 |
-| `unresolved_target` | 19 | Receiver or target not resolved |
-| `function_reference` | 14 | `::method` callbacks |
+| `unresolved_target` | 10 | Receiver or target not resolved — triaged §3.3.1; 9 of the original 19 proved by GR-14u22 |
+| `function_reference` | 14 | `::method` callbacks — triaged §3.3.1; next natural batch (§9 item 2b) |
+| ~`interface_dispatch` | **0** | **DRAINED** by GR-14u23/u24/u25 (§4.D4) — was 20 |
+
+#### 3.3.1 The 19 `unresolved_target` + 14 `function_reference` rows — triaged 2026-09-10
+
+Every deciding edge was recovered with the engine's own tier-5 selection
+(`build/guard-debug/gr14w0/probe_deciding_edges_u21.log`, board `fe40d369`).  Results:
+
+- **11 rows are guarded in their own body and stuck on engine limitations only:**
+  - 9 × `RecurringRuleLifecycleCoordinator` (activateRule / advanceNextDate /
+    deactivateRule) — every caller goes through
+    `ruleLifecycleCoordinator.get().method(...)`, a **`dagger.Lazy` chained receiver**
+    the engine cannot unwrap (`ManualRecurringExpenseRepository.kt:33/36/40`).  A
+    transparent-unwrap rule for `dagger.Lazy.get()` (closed-set change, Step-0 gated)
+    would move all 9.  **→ DONE as GR-14u22 (2026-09-11): all 9 proved `proven_helper`
+    (board `6a18b4bf`), projection clean, 0 counterexamples, manifest
+    `docs/ci/db-mediation/GR-14u22.yml`.**
+  - 2 × `NotificationRepository.save` / `RecommendationRepository.save` — blocked by a
+    **same-name uncertain edge** `debugDataStorage.save(data)`
+    (`ReviewViewModel.kt:1020`, an unrelated `DebugDataStorage`).  Name-collision noise;
+    both real methods are guard-first.
+- **14 `function_reference` rows are all guarded in-body.**  The deciding edges are
+  `viewModel::method` callbacks in composables (`ReviewScreen.kt:542` alone blocks all 7
+  `ReviewQueueRepository.approveReview` rows).  Resolving `expr::name` alone would only
+  re-label these rows `interface_dispatch` — the probe shows those interface edges
+  already waiting behind the references — so real movement requires the §4.D4 chain
+  (anonymous-object tracking + exactness rule) as well.
+- **8 rows are genuine unguarded-at-site writers** (no canonical barrier in the file):
+  `RestoreJournalImporter` ×4, `OperationRunRecorder.increment` ×1,
+  `CsvExpenseImporter.getOrCreateCategory` / `JsonExpenseImporter.parseV1Row/parseV2Row`
+  ×3.  Mitigations exist but are non-canonical: the restore-journal importer runs only
+  behind `restoreMaintenanceMode.isWritesAllowed()` in `AppStartupCoordinator.initialize`,
+  the CSV/JSON importers are reachable only from the debug import UI, and the
+  OperationRun handle is worker-gated upstream.  Same hardening class as the GR-14u18
+  `migrateCategories` fix (which moved 0 rows alone — the inbound edges stay uncertain
+  regardless).  Owner decision whether to add canonical guards.
 
 ### 3.4 The 24 `exact_synchronous` rows — CORRECTLY unproven, not a defect
 
@@ -261,33 +322,45 @@ change, not a quick fix.
 | D7 | The 18 D6 counterexample flips → 3 engine bugs + 1 real write | mixed | ✅ **FIXED** GR-14u11–u17 |
 | D8 | Kotlin arrow (`->`) counted as a generic close bracket | hid 91 rows | ✅ **FIXED** GR-14u20 |
 | D9 | Carrier admissions capped at ~0 rows | methodology | ✅ **MEASURED**, plan corrected |
-| D4 | `interface_dispatch` residue (20 rows) | proof only | 🔶 **PARTIAL** — see below |
+| D4 | `interface_dispatch` residue (20 rows) | proof only | ✅ **RESOLVED** u23/u24/u25 |
 | D10 | `_inherits_from` followed only the first supertype | **latent fail-OPEN** | ✅ **FIXED** GR-14u21 |
+| D13 | restore-internal scope inexpressible in the contract | proof only | ✅ **FIXED** GR-14u25 (V3) |
+| D14 | `restore_internal` collapsed to `worker` in context propagation | proof only | ✅ **FIXED** GR-14u25 |
 
-### 4.D4 — `interface_dispatch` (20 rows) — the most interesting OPEN item
+### 4.D4 — `interface_dispatch` — RESOLVED ACROSS u23 / u24 / u25 (LANDED)
 
-Every one of the 20 deciding edges already has exactly **one** override target, and a
-complete implementor walk agrees (1 == 1) for all six receivers.  So an engine rule
-"exactly one implementor ⇒ exact dispatch" would resolve all 20 **with no production
-change** (so the A1 test-mocking blocker does not apply).
+**GR-14u23 (landed, latent, 0 rows):** anonymous `object : T { }` implementor sites are
+now counted per corpus type (`_scan_anonymous_implementors`).  The owner table holds
+zero anonymous entries, and the corpus carries such sites for 10 interfaces
+(PrivacyGate ×12, RetentionTarget ×10, WorkerLeaseRegistry ×1, …) — the exact
+false-unique shape that made a naive exactness rule unsound.
 
-**It is unsound as-is, for two measured reasons:**
+**GR-14u24 (landed):** the single-implementor exactness rule (complete named walk +
+transitive anonymous counts + overload guard) resolves a single-implementor
+interface dispatch as an exact edge.  Its projection moved 18 rows to `proven_helper`
+and surfaced **1 counterexample** — `DatabaseBackupRepositoryImpl.restoreReceiptAssets`
+— which is why it was HELD at the Step-0 gate instead of landed.
 
-1. `_override_targets` under-counted implementors — **now fixed** (GR-14u21, D10).  The
-   decisive false-unique was `WorkerDrainController.requestStopAndAwaitDrain`: engine
-   reported 1 target, the complete walk finds 2.  A rule built on the old count would have
-   claimed exactness on a two-implementor interface.
-2. **Anonymous `object : Iface { }` implementors are not owners at all.**  The owner table
-   holds **zero** anonymous entries, yet the corpus has 12 `object : PrivacyGate` and one
-   `object : WorkerLeaseRegistry` (`RestoreMaintenanceMode.kt:36`).  So even a *complete*
-   owner walk cannot see them; `WorkerLeaseRegistry` is a second false-unique by this route.
+**GR-14u25 (landed, contract V3) — the resolution.**  The counterexample was triaged as
+**not a production defect** (§5.1.1): the write targets the *restore* database (`freshDb`)
+inside the formal mode-gated `RestoreInternalWriteScope`
+(`require(mode ∈ {ASSETS_RESTORING, RESTORE_VERIFYING})`), which V2 could not express.
+Rather than suppress the finding, V3 makes the second guard form expressible, so the
+counterexample becomes an explicit **`proven_restore_internal`** proof.  With that, the
+flip no longer exists and u24 lands under the never-land-through-a-flip invariant.
 
-**Remaining work is now precisely scoped:** (a) ✅ done (GR-14u21); (b) teach the engine to
-recognise `object : T { }` expressions as implementations of a resolved corpus interface —
-a new capability needing its own fixture corpus and projection; (c) *then* the exactness
-rule over named **and** anonymous implementors.  For the six row receivers a textual scan
-shows zero anonymous implementors, so (c) would fix all 20 — but (b) must come first or it
-is unsound elsewhere.
+**Landed effect (vs `fe40d369`):** exactly 19 rows — 18 `unproven_ambiguous_call →
+proven_helper` plus 1 `unproven_ambiguous_call → proven_restore_internal`; 0 counterexamples,
+0 proven→unproven.  The 20th row of the original bucket stays unproven for an unrelated
+reason.  Verified: `build/guard-debug/gr14u25/verify_baselines.py` (VERDICT A PASS).
+
+**Latency, measured both ways.**  u25 *alone*, with the u24 rule neutralised, is
+byte-identical to `6a18b4bf` (0 changed rows) — u25 is inert until u24 makes the production
+edge exact.  And u24's effect vs the pre-u24 board is 10 rows (9 helper + 1 restore), the
+other 9 of the "19" belonging to u22.  Both baselines are recorded because conflating them
+was itself a source of confusion in the handoff (`verify_baselines.py`, VERDICT B PASS).
+
+Full triage and options: `docs/ci/db-mediation/GR-14u24.yml`, `GR-14u25.yml`.
 
 ### 4.D9 — why carrier admissions are NOT the next win
 
@@ -312,11 +385,11 @@ Regex call-graph parsing attaches calls to `fun` callables only, so a call insid
 `init {}` block belongs to no callable and never enters the graph (zero inbound rather than
 async-uncertain).  Measured (GR-14u8, read-only, 1073 files):
 
-- **0** of that era's `unproven_external_entry` rows were called from an `init {}` block — so
-  there is **no live fail-open instance**.  All of them are zero-inbound for other reasons.
-  ⚠️ *This was measured at GR-14u8 when the bucket held 29 rows; the current bucket is 27 and
-  the zero-instance conclusion has not been re-measured against it.  Re-run
-  `build/guard-debug/gr14u8/census_init_broad.py` before relying on it.*
+- ✅ **Re-measured 2026-09-10** against the current board (`fe40d369`, 27 rows → 22
+  distinct zero-inbound methods, 1073 production files):
+  `build/guard-debug/gr14w0/census_init_u21.py` found **0** init-block calls into
+  zero-inbound methods.  The no-live-fail-open-instance conclusion holds at the current
+  state.
 - **Latent surface = 6 rows** whose method *is* called from an `init {}`:
   `ReviewViewModel.recoverStuckReviews` (proven helper), 4×
   `CategoryViewModel.ensureDefaultCategories` (already ambiguous), 1×
@@ -370,6 +443,21 @@ confirmed by `:app:compileDebugKotlin`.
 `DatabaseWriteBarrier` and guarded its other methods.  The gap was always in one branch, one
 wrapper form, or one cross-table side effect.
 
+### 5.1.1 GR-14u24 flag, RESOLVED as NOT a defect — the restore-internal writer
+
+The exactness-rule projection flagged `DatabaseBackupRepositoryImpl.restoreReceiptAssets`
+(`scannedReceiptDao.update` on the **fresh restore database**) as a counterexample.
+Triage: the write sits inside the formal mode-gated `RestoreInternalWriteScope`
+(`require(mode ∈ {ASSETS_RESTORING, RESTORE_VERIFYING})`), targets `freshDb` — never the
+live DB — and the method is only reachable inside the restore flow.  A canonical barrier
+**cannot** be added (it throws in restore modes by design).  This is a *second, sanctioned
+guard form* the V2 contract could not express.
+
+**RESOLVED 2026-09-11 by contract V3 (GR-14u25):** the owner chose option A, so the form is
+now *modelled* rather than excused — the row lands as **`proven_restore_internal`**, not as
+a counterexample and not as a suppressed finding.  No policy exception, no per-row
+disposition.  See §4.D4 and `GR-14u25.yml`.
+
 ### 5.2 OPEN — needs an owner decision (real code, unproven or dead)
 
 | # | Finding | Nature | Evidence |
@@ -394,6 +482,14 @@ defects.  Listed here so they are not lost.
    **AGENTS.md money rules apply**: analyse the rounding mode and the sum-of-parts invariant;
    do NOT fix by weakening the tolerance.  Likely needs largest-remainder allocation.  *This
    is the most likely real production money bug on this list.*
+   **→ FIXED 2026-09-11** (worktree, uncommitted): `EnhancedSplitManager` now allocates
+   percentage splits by largest remainder in integer cents (mirroring
+   `SplitCalculator.calculateAmountsFromPercentages`), in both `calculatePercentageSplit`
+   and the `generateVisualSplitData` PERCENTAGE branch; the test mirror and two exact-sum
+   assertions were tightened, not weakened.  Targeted run: `*SplitCalculationPrecisionTest*`
+   **23 / 23 PASSED** (RED baseline before the fix: 1 failed, exit 1).  Strict review
+   verdict: PASS (money-math rules checked; termination guard added for the
+   negative-remainder branch on inputs outside the validated non-negative domain).
 2. **`BankApiIntegrationTest` — 2 failures that look like stale expectations** vs the current
    `STRICT_EXTERNAL_ID` hashing behaviour (`same provider transaction id yields stable strict
    dedupe identity` expected 1 got 2; `low confidence …` expected `low-conf-1` got a hex
@@ -426,7 +522,7 @@ These block broad test runs and therefore the merge gate.  Pre-existing; A/B-pro
 | A4 | `WarrantyTrackerRepositoryTest` executor OOM/JPLIS crash | same family as A1 | same owner decision as A1 |
 | B1 | `ReceiptLifecycleCoordinatorTest` 7 failures | listed in §5.3 | stub `createExpenseDbOnlyV2`; `null()` vs `isNull()` matcher |
 | B2 | `SavingsGoalsViewModelTest` 3 failures | — | per handoff §B2 |
-| B3 | `SplitCalculationPrecisionTest` | **see §5.3.1** | money-safe rounding |
+| B3 | `SplitCalculationPrecisionTest` | **FIXED 2026-09-11 — see §5.3.1** | largest-remainder allocation |
 | B4 | `verify_known_good_state` 11 failures | freshness "stamp=missing" → **GATE-00R debt**, not a code bug | goes green once the merge-time recapture runs |
 
 **Measured scale:** `TEST_FAILURE_LEDGER.md` records **121 pre-existing `domain.*` + 53
@@ -482,17 +578,28 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
 
 ## 9. Prioritized backlog
 
-1. **§5.3.1 `SplitCalculationPrecisionTest` rounding** — the most likely *real production
-   money bug* here.  Money rules apply; needs the sum-of-parts invariant.  Independent of the
-   guardrail work.
-2. **§4.D4 interface bucket (20 rows)** — concrete, bounded: build anonymous-`object`
-   implementor tracking, then the exactness rule.  No production change needed.
-3. **§5.3.2 `BankApiIntegrationTest`** — run it alone at HEAD; stale-test vs regression.
-4. **§5.2 dead/owner-decision tail** — mechanical row movement, needs owner sign-off.
-5. **GATE-00R** — the actual "done" gate; blocked by §6.
-6. **§4.D1-II `init {}` invisibility** — measured latent (0 live instances); fixture-first
-   engine change when taken.
-7. **§4.D9 carrier admissions** — last, and only if a census shows one whose calls already
+1. ~~**§5.3.1 `SplitCalculationPrecisionTest` rounding**~~ — **FIXED 2026-09-11** (§5.3.1;
+   largest-remainder allocation, 23/23 targeted green, strict review PASS).
+2. ~~**§4.D4 interface bucket (20 rows)**~~ — **DONE 2026-09-11** across GR-14u23
+   (anonymous-implementor counting, landed latent), GR-14u24 (single-implementor exactness
+   rule) and GR-14u25 (**contract V3**, which turned the batch's one counterexample into a
+   `proven_restore_internal` proof instead of suppressing it).  Landed effect vs `fe40d369`:
+   18 rows → `proven_helper` + 1 → `proven_restore_internal`, 0 counterexamples.
+   See §4.D4, §5.1.1, `GR-14u24.yml`, `GR-14u25.yml`.
+
+2b. **NEW — `function_reference` (14 rows)** — now the largest *resolution* bucket and
+   unblocked by the D4 chain: `expr::name` callables are still emitted as one uncertain
+   `FUNCTION_REFERENCE` edge with name-matched targets (callgraph.py `_resolve_call`).  A
+   natural next batch (GR-14u26): resolve the receiver expression of `::` and bind the
+   reference to the single corpus member, keeping ambiguity fail-closed.  Pins first.
+3. ~~**§3.3.1 `dagger.Lazy.get()` transparent unwrap**~~ — **DONE as GR-14u22
+   (2026-09-11)**: 9 rows ambiguous → proven_helper, board `6a18b4bf`, 0 counterexamples.
+4. **§5.3.2 `BankApiIntegrationTest`** — run it alone at HEAD; stale-test vs regression.
+5. **§5.2 dead/owner-decision tail** — mechanical row movement, needs owner sign-off.
+6. **GATE-00R** — the actual "done" gate; blocked by §6.
+7. **§4.D1-II `init {}` invisibility** — measured latent (0 live instances, re-confirmed
+   2026-09-10 §4.D1-II); fixture-first engine change when taken.
+8. **§4.D9 carrier admissions** — last, and only if a census shows one whose calls already
    resolve exactly.
 
 **Do not start with** the async/carrier bucket despite its size (133 rows) — measured at ~0
@@ -505,7 +612,12 @@ rows per admission.
 - **Fail closed.** Never up-rank to proven on uncertainty. Unproven ≠ bug; only
   `counterexample_*` asserts a violation.
 - **Never land through a Step-0 flip.** Triage first.
-- **Contract changes require a version bump** (V2 → V3) and a reviewed diff.
+- **Contract changes require a version bump** (V1 → V2 → V3, GR-14u25) and a reviewed diff;
+  older versions stay exported and pinned.
+- **A sanctioned guard form must be MODELLED, not excused.**  GR-14u25 is the precedent: the
+  restore-internal writer was neither forced through the global barrier nor given a policy
+  exception — the contract learned the form, so the row became a *proof*.  Prefer this over
+  a per-row disposition whenever a whole class of writers shares the shape.
 - **Closed sets** (inline carriers, structured-launch receivers, worker guards) change only
   with fixture coverage + shadow delta.
 - **Pins must be RED before the fix** — otherwise they are not load-bearing.
@@ -521,7 +633,7 @@ rows per admission.
 | Concept | Where |
 |---|---|
 | Production barrier | `data/backup/DatabaseWriteBarrier.kt` |
-| Canonical contract V2 | `scripts/db_guard/structural_analysis/barrier_proof.py:199` |
+| Canonical contract **V3** (current) | `scripts/db_guard/structural_analysis/barrier_proof.py` (V2 at :229, V3 at :266) |
 | Inline carrier set | `scripts/db_guard/mediation_analysis/callgraph.py:172` |
 | Structured launch receivers | `scripts/ci/inspect_db_mediation_proof.py:110` |
 | Tier-5 proof + states | `scripts/db_guard/mediation_analysis/proof.py` |

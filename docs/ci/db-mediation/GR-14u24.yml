@@ -1,0 +1,150 @@
+# GR-14u24 — LANDED.  Interface dispatch with exactly ONE corpus implementor and
+# ZERO anonymous implementor sites resolves exact.
+#
+# RESOLUTION OF THE STEP-0 HARD STOP: the projection's single counterexample was
+# triaged (below) as a SANCTIONED restore-internal writer, and the owner chose
+# Option A — express the second guard form in the contract.  That is GR-14u25
+# (CANONICAL_BARRIER_CONTRACT_V3), which turns the counterexample into
+# proven_restore_internal.  This batch is therefore landable under the
+# never-land-through-a-flip invariant: the flip no longer exists.
+#
+# CHANGE (callgraph.py, interface branch of _resolve_member_call):
+#   `_corpus_implementors` (complete named walk, excludes interfaces, cached)
+#   + `_anonymous_implementors_of` (transitive application of the GR-14u23
+#   counts) + overload guard: a single-implementor dispatch re-resolves as an
+#   exact edge to the member found in scope (own or inherited); every other
+#   shape keeps INTERFACE_DISPATCH.
+#
+# STEP-0 GATE RESULT — HARD STOP TRIGGERED (board fe40d369 -> projection):
+#       changed rows: 19
+#         18  unproven_ambiguous_call -> proven_helper
+#          1  unproven_ambiguous_call -> counterexample_unguarded_call_path
+#       proven -> unproven: 0
+#
+# TRIAGE OF THE COUNTEREXAMPLE (complete, evidence-backed — NOT a production
+# bug; this is the contract model meeting a second, sanctioned guard form):
+#
+#   Row: DatabaseBackupRepositoryImpl.restoreReceiptAssets
+#        (scannedReceiptDao.update inside restoreReceiptAssets.updateImagePath)
+#
+#   1. The write targets the RESTORE database, not the live DB: the dao is
+#      `db.scannedReceiptDao()` where `db` is the `freshDb` parameter, opened
+#      by `restoreDatabaseOpener.openFreshDatabase()` at the call site
+#      (DatabaseBackupRepositoryImpl.kt:990/1023).
+#   2. The write is inside `restoreInternalWriteScope.run("...") { }`
+#      (data/backup/RestoreInternalWriteScope.kt) — a formal, mode-gated
+#      scope: `require(mode == ASSETS_RESTORING || mode == RESTORE_VERIFYING)`.
+#      Its documented purpose: "makes restore-internal writes explicit and
+#      auditable rather than implicitly bypassing the global write barrier".
+#   3. The method is private with both call sites inside the restore flow, so
+#      the mutation is restore-window-locked AND fresh-DB-targeted.
+#
+#   Conclusion: a canonical `checkWritesAllowed` CANNOT be added here (it
+#   throws in restore modes by design — the restore must write its own DB).
+#   The counterexample is TRUE under the V2 contract (the write is not
+#   canonical-barrier-guarded) and simultaneously NOT a defect.  The V2
+#   contract models one guard form; RestoreInternalWriteScope is a second,
+#   sanctioned one that V2 cannot express.
+#
+# WHY LANDING WAS BLOCKED, AND HOW IT WAS RESOLVED: §10 invariant — never land
+#   through a flip.  The disposition was an architecture decision (see OPTIONS),
+#   not an engine patch.  The owner chose Option A (contract V3, GR-14u25), which
+#   makes the restore guard expressible; the flip is gone and the batch lands.
+#   The u24 rule itself is unchanged from the HELD state.
+#
+# OPTIONS THAT WERE ON THE TABLE:
+#   A. Contract V3: recognise RestoreInternalWriteScope.run as a third
+#      canonical scope form (mode-gated, restore-internal) with its own
+#      proof-state treatment.  ← CHOSEN, delivered as GR-14u25.
+#   B. Mutation-level disposition for this exact row (sanctioned
+#      restore-internal writer), recorded in the policy/baseline layer.
+#      Rejected: the mediation policy has no per-row exception field today
+#      (db_structural_exceptions.yml is a different layer), so this would have
+#      needed a new mechanism for one row.
+#   C. Accept the counterexample as the standing verdict per V2 and keep u24
+#      unlanded.  Rejected: loses the proofs and leaves every future
+#      restore-internal writer noisy.
+#
+# PINS: scripts/ci/test_gr14u24_interface_exactness.py — 6 pins; the two
+#   proving pins RED pre-fix, the four soundness pins (second anonymous site,
+#   second named implementor, overloads, anonymous SUB-interface implementor)
+#   stay uncertain before and after.  Fixture CB-17 (single implementor ->
+#   EXACT_SYNCHRONOUS) added; CB-06 given a second implementor so it keeps
+#   pinning INTERFACE_DISPATCH; fixture_runner 60/60.
+#
+# Validation at HELD state:
+#   - engine battery 112 passed (99 + 7 u23 + 6 u24); scripts/db_guard 235
+#     passed; fixture scenarios 60/60.
+#   - Projection diff vs fe40d369 (the GR-14u21 board) was exactly the 19 rows
+#     above.  NB that baseline is fe40d369, NOT 6a18b4bf: the 19 rows span the
+#     u22 dagger.Lazy effect too (9 rows), so vs 6a18b4bf this batch is 10 rows.
+validationAtHold:
+  - Projection diff vs fe40d369 was exactly the 19 rows above (18 helper + 1
+    counterexample); recorded while the disposition was open.
+validationLanded:
+  - Board captured with GR-14u25: sha256
+    35de3592eaedbc2e90d7da33ca9bcc0ffdef8b8863805f14b03dd0e7b5933106,
+    deterministic double-run, 0 counterexamples.
+  - vs fe40d369: exactly 19 rows — 18 unproven_ambiguous_call -> proven_helper
+    and 1 unproven_ambiguous_call -> proven_restore_internal; 0 regressions.
+  - vs the HELD projection (94bbf1b5): exactly 1 row (the restore row,
+    counterexample -> proven_restore_internal) — i.e. GR-14u25 changed nothing
+    else about this batch's effect.
+  - engine battery 1220 passed / 13 pre-existing (A/B-proven) / 14 skipped;
+    scripts/db_guard 235 passed; fixture_runner 61/61.
+schemaVersion: 1
+batchId: GR-14u24
+startSha: d534b648
+gateEvidenceSha256: null
+mediationReportSha256Before: 6a18b4bf4f2fd5a1c5cf824c782f0ae90c1e8c51b9cb3f05fcde7a40d770a169
+mediationReportSha256After: 35de3592eaedbc2e90d7da33ca9bcc0ffdef8b8863805f14b03dd0e7b5933106
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+      interface-dispatch exactness rule (_corpus_implementors,
+      _anonymous_implementors_of, _implementors_cache)
+  - scripts/ci/test_gr14u24_interface_exactness.py: 6 pins
+  - fixtures: CB-17 new (exact single-implementor); CB-06 gains a second
+    implementor so it keeps pinning INTERFACE_DISPATCH; consolidated rows
+    67 -> 68
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - 18 rows proven_helper (activateRule/advanceNextDate/deactivateRule,
+    SavingsGoalRepository create/delete/increment,
+    SharedExpenseDataPortAdapter archive/remove/restore,
+    GroupTransactionCoordinator createGroupWithMembersAtomic /
+    createSystemExpenseAndLinkToGroup)
+  - 1 row counterexample (HELD): DatabaseBackupRepositoryImpl
+    .restoreReceiptAssets — triaged sanctioned restore-internal writer
+
+rootCause: GR13_SINGLE_IMPLEMENTOR_INTERFACE_UNCERTAINTY
+selectedPattern: ENGINE
+tests:
+  - test_gr14u24_interface_exactness.py 6/6 (2 RED pre-fix)
+  - engine battery 1220 passed / 13 pre-existing (A/B-proven) / 14 skipped;
+    scripts/db_guard 235 passed; fixture_runner 61/61
+  - landed board 35de3592, deterministic double-run, 0 counterexamples
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  A call through an interface-typed receiver was always uncertain, even when the
+  corpus contains exactly one implementation and no anonymous implementation
+  sites, so eighteen rows that have exactly one possible runtime target could not
+  be proven.  This batch resolves such a dispatch as an exact edge to the member
+  found in scope, guarded by a complete implementor walk, an anonymous-site count
+  and an overload check, while every ambiguous shape keeps its uncertainty.  Its
+  projection surfaced one counterexample - a restore-internal write against the
+  fresh restore database, exempt from the global barrier by design - which was
+  triaged as a second sanctioned guard form rather than a defect; with contract V3
+  (GR-14u25) expressing that form, the batch lands: eighteen rows become proven
+  helpers and the restore write becomes an explicit restore-internal proof, with
+  zero counterexamples, zero regressions, a deterministic board, and policy,
+  baseline and exception bytes unchanged.

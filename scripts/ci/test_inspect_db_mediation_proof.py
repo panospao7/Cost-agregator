@@ -352,7 +352,11 @@ class TestProtocolRows:
         )
         report, _exit = shadow_cli.build_mediation_shadow(str(tmp_path), None)
         vocabulary = {state.value for state in ProofState}
-        assert len(vocabulary) == 11  # closed set, no OTHER escape hatch
+        # Closed set, no OTHER escape hatch.  11 -> 12 in GR-14u25 (V3): the
+        # restore-internal scope form needs its own state, because a
+        # restore-window write is neither a normal helper guard nor a worker.
+        assert len(vocabulary) == 12
+        assert "proven_restore_internal" in vocabulary
         for row in report["entries"]:
             assert row["proofStatus"] in vocabulary
         for state in report["summary"]["proofStates"]:
