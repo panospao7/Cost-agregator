@@ -15,11 +15,16 @@
 #   exact edge to the member found in scope (own or inherited); every other
 #   shape keeps INTERFACE_DISPATCH.
 #
-# STEP-0 GATE RESULT — HARD STOP TRIGGERED (board fe40d369 -> projection):
-#       changed rows: 19
-#         18  unproven_ambiguous_call -> proven_helper
+# STEP-0 GATE RESULT — HARD STOP TRIGGERED (board 6a18b4bf -> projection 94bbf1b5):
+#       changed rows: 10
+#          9  unproven_ambiguous_call -> proven_helper
 #          1  unproven_ambiguous_call -> counterexample_unguarded_call_path
 #       proven -> unproven: 0
+#   NB this was originally recorded as "19 rows / 18 helper" against fe40d369,
+#   but fe40d369 is the PRE-u22 board.  The projection board already contained
+#   GR-14u22's 9 rows, so u24's own contribution is 9 (+1 counterexample).
+#   Measured per batch: fe40d369 helper 155 -> u22 164 (+9) -> u24 173 (+9).
+#   See build/guard-debug/gr14u25/transition_check.py.
 #
 # TRIAGE OF THE COUNTEREXAMPLE (complete, evidence-backed — NOT a production
 # bug; this is the contract model meeting a second, sanctioned guard form):
@@ -75,18 +80,20 @@
 # Validation at HELD state:
 #   - engine battery 112 passed (99 + 7 u23 + 6 u24); scripts/db_guard 235
 #     passed; fixture scenarios 60/60.
-#   - Projection diff vs fe40d369 (the GR-14u21 board) was exactly the 19 rows
-#     above.  NB that baseline is fe40d369, NOT 6a18b4bf: the 19 rows span the
-#     u22 dagger.Lazy effect too (9 rows), so vs 6a18b4bf this batch is 10 rows.
+#   - Projection diff vs the pre-u24 board 6a18b4bf was exactly the 10 rows
+#     above (9 helper + 1 counterexample).  Measured per batch: u22 moved 9
+#     rows and u24 a further 9; the often-quoted "18" is the sum and counts
+#     against fe40d369, NOT against u24's own predecessor.
 validationAtHold:
-  - Projection diff vs fe40d369 was exactly the 19 rows above (18 helper + 1
+  - Projection diff vs 6a18b4bf was exactly 10 rows (9 helper + 1
     counterexample); recorded while the disposition was open.
 validationLanded:
   - Board captured with GR-14u25: sha256
     35de3592eaedbc2e90d7da33ca9bcc0ffdef8b8863805f14b03dd0e7b5933106,
     deterministic double-run, 0 counterexamples.
-  - vs fe40d369: exactly 19 rows — 18 unproven_ambiguous_call -> proven_helper
-    and 1 unproven_ambiguous_call -> proven_restore_internal; 0 regressions.
+  - vs 6a18b4bf (this batch's own predecessor): exactly 10 rows — 9
+    unproven_ambiguous_call -> proven_helper and 1 unproven_ambiguous_call ->
+    proven_restore_internal; 0 regressions.
   - vs the HELD projection (94bbf1b5): exactly 1 row (the restore row,
     counterexample -> proven_restore_internal) — i.e. GR-14u25 changed nothing
     else about this batch's effect.
@@ -114,13 +121,17 @@ policyFixes:
   - none (policy bytes unchanged)
 
 selectedMutationKeys:
-  - 18 rows proven_helper (activateRule/advanceNextDate/deactivateRule,
+  - 9 rows proven_helper (activateRule/advanceNextDate/deactivateRule,
     SavingsGoalRepository create/delete/increment,
     SharedExpenseDataPortAdapter archive/remove/restore,
     GroupTransactionCoordinator createGroupWithMembersAtomic /
     createSystemExpenseAndLinkToGroup)
-  - 1 row counterexample (HELD): DatabaseBackupRepositoryImpl
-    .restoreReceiptAssets — triaged sanctioned restore-internal writer
+  - 1 row counterexample, later proven_restore_internal via GR-14u25:
+    DatabaseBackupRepositoryImpl.restoreReceiptAssets — triaged sanctioned
+    restore-internal writer
+  - 10 rows of the 20-strong bucket stay UNPROVEN (8 -> exact_synchronous,
+    2 -> unresolved_target): resolving the interface edge only promoted the
+    next uncertain edge.  Do not expect 20 rows from this bucket.
 
 rootCause: GR13_SINGLE_IMPLEMENTOR_INTERFACE_UNCERTAINTY
 selectedPattern: ENGINE
@@ -137,14 +148,16 @@ linkedIssue: GR-14
 manifestStatement: >
   A call through an interface-typed receiver was always uncertain, even when the
   corpus contains exactly one implementation and no anonymous implementation
-  sites, so eighteen rows that have exactly one possible runtime target could not
-  be proven.  This batch resolves such a dispatch as an exact edge to the member
+  sites, so rows that have exactly one possible runtime target could not be
+  proven.  This batch resolves such a dispatch as an exact edge to the member
   found in scope, guarded by a complete implementor walk, an anonymous-site count
-  and an overload check, while every ambiguous shape keeps its uncertainty.  Its
-  projection surfaced one counterexample - a restore-internal write against the
-  fresh restore database, exempt from the global barrier by design - which was
-  triaged as a second sanctioned guard form rather than a defect; with contract V3
-  (GR-14u25) expressing that form, the batch lands: eighteen rows become proven
-  helpers and the restore write becomes an explicit restore-internal proof, with
-  zero counterexamples, zero regressions, a deterministic board, and policy,
-  baseline and exception bytes unchanged.
+  and an overload check, while every ambiguous shape keeps its uncertainty.  Nine
+  of the twenty rows in the bucket become proven helpers and ten stay unproven -
+  making the interface edge exact merely promotes the next uncertain edge, and for
+  eight of them that edge is an unmodelable local guard that was already there.
+  The projection also surfaced one counterexample - a restore-internal write
+  against the fresh restore database, exempt from the global barrier by design -
+  which was triaged as a second sanctioned guard form rather than a defect; with
+  contract V3 (GR-14u25) expressing that form, the batch lands with zero
+  counterexamples, zero regressions, a deterministic board, and policy, baseline
+  and exception bytes unchanged.

@@ -73,11 +73,15 @@
 #        18  unproven_ambiguous_call -> proven_helper
 #         1  unproven_ambiguous_call -> proven_restore_internal
 #      0 counterexamples, 0 proven->unproven.  (VERDICT A: PASS)
-#      This is what the GR-14u24 manifest's HELD projection becomes once V3
-#      expresses the restore guard: the counterexample is now a PROOF.
+#      THIS IS A COMBINED FIGURE and must not be attributed to u24/u25 alone:
+#      measured per batch, GR-14u22 contributed 9 of the 18 helper rows.  u24
+#      contributed 9 and u25 the 1 restore row.  u25's own contribution is
+#      exactly 1 row.  See build/guard-debug/gr14u25/transition_check.py.
 #   vs the GR-14u24 HELD projection (94bbf1b5): EXACTLY 1 row —
 #        restoreReceiptAssets  counterexample_unguarded_call_path
 #                              -> proven_restore_internal
+#      i.e. u25's entire effect is that one conversion, which is why it is
+#      "latent on its own" in the sense measured under (B) below.
 #   NOTE ON BASELINES: the handoff stated item 5 as "byte-identical to
 #   6a18b4bf" and item 6 as "18 + 1".  Those are DIFFERENT baselines — 6a18b4bf
 #   is the pre-u24 board, while 18+1 is fe40d369 -> now.  Both facts are true

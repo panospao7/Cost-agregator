@@ -1,7 +1,7 @@
 # GUARDRAIL STATE REPORT — database write-barrier proof engine
 
 **Status date:** 2026-09-11
-**Branch:** `gr-14f-wip` @ `d534b648` (GR-14u22…u25 + money fix uncommitted on top)
+**Branch:** `gr-14f-wip` @ `20fb4278` (GR-14u22…u25 + money fix committed)
 **Audience:** anyone continuing the GR-14 guardrail campaign, and anyone looking for
 production database-write bugs.  This document is a *state* report: what the guardrails
 are, what the measured state is, every known issue with its status, and the production-code
@@ -93,7 +93,7 @@ Within one callable, `_DirectSiteProver` returns one of:
 
 This tri-state exists because "not proven" in the body model is *absence of evidence*, not
 evidence of absence.  Before it (pre-GR-14u15) every unmodelable body was reported as an
-unguarded call path.  **This is why 24 current rows read `unproven` — see §3.4.**
+unguarded call path.  **This is why 32 current rows read `unproven` — see §3.4.**
 
 ### 1.5 Carrier classification
 
@@ -236,10 +236,27 @@ Decided by `external_entry`: zero inbound call sites. Domain:
 
 | Deciding resolution | Rows (live board) | What it means |
 |---|---|---|
-| `exact_synchronous` | **24** | Guard present, body **unmodelable** — see §3.4 |
-| `unresolved_target` | 10 | Receiver or target not resolved — triaged §3.3.1; 9 of the original 19 proved by GR-14u22 |
+| `exact_synchronous` | **32** | Guard present, body **unmodelable** — see §3.4 |
 | `function_reference` | 14 | `::method` callbacks — triaged §3.3.1; next natural batch (§9 item 2b) |
+| `unresolved_target` | 12 | Receiver or target not resolved — triaged §3.3.1 |
 | ~`interface_dispatch` | **0** | **DRAINED** by GR-14u23/u24/u25 (§4.D4) — was 20 |
+
+**Where the 20 `interface_dispatch` rows actually went** (measured per row, not inferred —
+`build/guard-debug/gr14u25/transition_check.py`):
+
+| Outcome | Rows |
+|---|---|
+| `interface_dispatch → proven_helper` | **9** |
+| `interface_dispatch → proven_restore_internal` | **1** |
+| `interface_dispatch → exact_synchronous` (still ambiguous) | **8** |
+| `interface_dispatch → unresolved_target` (still ambiguous) | **2** |
+
+Only **10 of the 20 proved.** The other 10 stayed unproven because making the interface edge
+exact merely **promoted the next uncertain edge** — and for all 8 that landed on
+`exact_synchronous` the newly-deciding edge is `GR13_LOCAL_GUARD_UNMODELABLE`, i.e. those
+rows were *always* unmodelable and the interface edge had been masking it. That is the same
+"the taint is layered" effect documented in §4.D6/D7, and it is why this bucket's 20 rows
+were never going to yield 20 proofs.
 
 #### 3.3.1 The 19 `unresolved_target` + 14 `function_reference` rows — triaged 2026-09-10
 
@@ -275,20 +292,24 @@ Every deciding edge was recovered with the engine's own tier-5 selection
   `migrateCategories` fix (which moved 0 rows alone — the inbound edges stay uncertain
   regardless).  Owner decision whether to add canonical guards.
 
-### 3.4 The 24 `exact_synchronous` rows — CORRECTLY unproven, not a defect
+### 3.4 The 32 `exact_synchronous` rows — CORRECTLY unproven, not a defect
 
 **Investigated this session; hypothesis falsified.**  These rows read
 `unproven_ambiguous_call` *with* an exact deciding edge, which looks contradictory.  It is
-not.  All 24 are the **GR-14u15 tri-state** working as designed
+not.  All 32 are the **GR-14u15 tri-state** working as designed
 (`GR13_LOCAL_GUARD_UNMODELABLE`, `barrierMode=helper`, `localGuard=none`):
 
-- **24 / 24 contain a canonical `checkWritesAllowed` call** — the guard *is* present.
-- **20 / 24 contain `try` / `catch`**, which the GR-12 body model refuses (exception flow
+- **32 / 32 contain a canonical `checkWritesAllowed` call** — the guard *is* present.
+- **24 / 32 contain `try` / `catch`**, which the GR-12 body model refuses (exception flow
   above all).
-- The other 4 (`ExpenseRepository.updateExpenseCategoryBulk`,
+- The other **8** (4 distinct methods — `ExpenseRepository.updateExpenseCategoryBulk`,
+  `GroupTransactionCoordinator.deleteGroupAtomic`,
   `SubscriptionManagerEngine.acceptCandidate` / `validateAndCreate`) place the guard first
   and mutate inside `withLock` / `database.withTransaction` lambdas — the CFG does not wire
   scope children, so the mutation node is disconnected and the body is unmodelable.
+  Measured: 16 of the 32 carry `withContext`, 1 carries `withLock`.
+  (`deleteGroupAtomic` is one of the 8 that arrived from the `interface_dispatch` bucket —
+  see §3.3: the interface edge was masking an already-unmodelable body.)
 
 Representative (`BankStatementLifecycleProcessor.processBankStatement:139`):
 
@@ -302,7 +323,7 @@ try {
 ```
 
 Because a barrier call **precedes** the mutation, "definitely unguarded" is not established,
-so the engine correctly reports *unproven* rather than inventing a violation.  **These 24
+so the engine correctly reports *unproven* rather than inventing a violation.  **These 32
 rows are the lowest-risk unproven rows on the board** and should not be triaged as suspicious.
 To ever prove them, the GR-12 model would have to handle exception flow — a large engine
 change, not a quick fix.
@@ -337,9 +358,12 @@ false-unique shape that made a naive exactness rule unsound.
 
 **GR-14u24 (landed):** the single-implementor exactness rule (complete named walk +
 transitive anonymous counts + overload guard) resolves a single-implementor
-interface dispatch as an exact edge.  Its projection moved 18 rows to `proven_helper`
+interface dispatch as an exact edge.  Its projection moved **9** rows to `proven_helper`
 and surfaced **1 counterexample** — `DatabaseBackupRepositoryImpl.restoreReceiptAssets`
 — which is why it was HELD at the Step-0 gate instead of landed.
+*(The u24 manifest's "18 rows" figure counts against `fe40d369`, which is the pre-u22 board;
+9 of those 18 belong to GR-14u22. Against u24's actual predecessor the delta is 9. See
+"Attribution" below.)*
 
 **GR-14u25 (landed, contract V3) — the resolution.**  The counterexample was triaged as
 **not a production defect** (§5.1.1): the write targets the *restore* database (`freshDb`)
@@ -351,8 +375,25 @@ flip no longer exists and u24 lands under the never-land-through-a-flip invarian
 
 **Landed effect (vs `fe40d369`):** exactly 19 rows — 18 `unproven_ambiguous_call →
 proven_helper` plus 1 `unproven_ambiguous_call → proven_restore_internal`; 0 counterexamples,
-0 proven→unproven.  The 20th row of the original bucket stays unproven for an unrelated
-reason.  Verified: `build/guard-debug/gr14u25/verify_baselines.py` (VERDICT A PASS).
+0 proven→unproven.  Verified: `build/guard-debug/gr14u25/verify_baselines.py` (VERDICT A PASS).
+
+**Attribution — read this before quoting any per-batch number.**  The 19 rows of the landed
+effect are **not** all u24/u25's.  Measured per batch (helper counts, and the per-row
+transition in `build/guard-debug/gr14u25/transition_check.py`):
+
+| Batch | Rows | Of which |
+|---|---|---|
+| GR-14u22 | 9 | `unresolved_target` (the `dagger.Lazy.get()` chain) |
+| GR-14u24 | 9 | `interface_dispatch → proven_helper` |
+| GR-14u25 | 1 | `interface_dispatch → proven_restore_internal` |
+| **total** | **19** | |
+
+And **10 of the 20 `interface_dispatch` rows did NOT prove** — 8 moved to
+`exact_synchronous` and 2 to `unresolved_target`, all still unproven (§3.3).  So this bucket
+was never worth 20 proofs; the honest yield is 10.  Two separate conflations produced
+inflated figures earlier in the campaign (both now corrected here and in the manifests):
+`fe40d369` vs `6a18b4bf` are different baselines, and u24's projection board already
+contained u22's effect.
 
 **Latency, measured both ways.**  u25 *alone*, with the u24 rule neutralised, is
 byte-identical to `6a18b4bf` (0 changed rows) — u25 is inert until u24 makes the production
@@ -482,7 +523,7 @@ defects.  Listed here so they are not lost.
    **AGENTS.md money rules apply**: analyse the rounding mode and the sum-of-parts invariant;
    do NOT fix by weakening the tolerance.  Likely needs largest-remainder allocation.  *This
    is the most likely real production money bug on this list.*
-   **→ FIXED 2026-09-11** (worktree, uncommitted): `EnhancedSplitManager` now allocates
+   **→ FIXED 2026-09-11** (commit `53b825a6`): `EnhancedSplitManager` now allocates
    percentage splits by largest remainder in integer cents (mirroring
    `SplitCalculator.calculateAmountsFromPercentages`), in both `calculatePercentageSplit`
    and the `generateVisualSplitData` PERCENTAGE branch; the test mirror and two exact-sum
@@ -504,7 +545,7 @@ defects.  Listed here so they are not lost.
 
 ### 5.4 NOT a bug — but worth knowing
 
-The 24 `exact_synchronous` rows (§3.4) are all "guard present at the top, body unmodelable".
+The 32 `exact_synchronous` rows (§3.4) are all "guard present at the top, body unmodelable".
 They are **low risk**.  Conversely, `checkWritesAllowed` placed *after* a mutation does not
 cover it (the tri-state is position-aware) — a real ordering requirement for new code.
 
