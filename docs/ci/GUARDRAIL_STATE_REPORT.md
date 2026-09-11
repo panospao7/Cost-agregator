@@ -432,13 +432,59 @@ Verified in full for two of them; the decorator family is larger than these two:
 | `PrivacyAuditLoggerImpl.kt` | 1 | ⚠️ bound **directly** (`PrivacyModule.providePrivacyAuditLogger`) — no decorator.  Likely deliberate for the same reason (the audit record of a fail-closed decision must survive), but **unverified as intent** |
 | `RecurringLifecycleEventWriter` / `ReceiptLifecycleEventWriter` / `TransactionLifecycleEventWriter` | 4 | ⚠️ observational event sinks.  `TransactionLifecycleEventWriter.write(context, event)` is explicitly designed to be called **inside** `DomainTransactionRunner.runInTransaction`, i.e. it rides the same transaction as the write it describes — so the operation's guard already covers it |
 | `RestoreJournalImporter.kt` | 4 | 🔴 restore-path: `checkWritesAllowed` **throws** outside `NORMAL`, so a guard would break the restore.  Needs a modelled sanctioned form (the GR-14u25 precedent), not a guard |
-| `JsonExpenseImporter` (2) / `CsvExpenseImporter` (1) | 3 | 🔴 genuine candidates, but reachable only from the **debug** import UI |
-| `SourceLinkWriterImpl.linkTarget`, `ReceiptInsertResolver.insertOrResolve`, `ExpenseGroupDao.insertGroupWithMembers` | 3 | 🔴 genuine candidates — the only rows needing a real decision |
+| `JsonExpenseImporter` (2) / `CsvExpenseImporter` (1) | 3 | reachable only from the **debug** import UI |
+| `SourceLinkWriterImpl.linkTarget` (MIXED, 2/4), `ExpenseGroupDao.insertGroupWithMembers` (zero-inbound) | 2 | the only rows not yet explained by a legitimate category — see §3.5.1 |
 
-**Net: of 22 rows, ~7 are already guarded in production (engine modelling gap), ~5 are
-observational sinks whose record must survive a block, 4 are restore-path (contract-modelled
-form), and ≈6 are genuine candidates — 3 of which are debug-only.**  See §10 for the resulting
-invariant.
+**Net — superseded by the sweep in §3.5.1, which finds the production vector is ≈0–2 rows:**
+of the 22, ~7 are already guarded in production (engine modelling gap), 3 are collaborators
+reached only from guarding callers (`ReceiptInsertResolver`, `OperationRunRecorder.increment`,
+`RecurringLifecycleEventWriter.writeCritical`), the rest are observational sinks, restore/backup/
+export paths that are *supposed* to write during maintenance, audit, or debug-only importers.
+See §10 for the resulting invariant.
+
+#### 3.5.1 Decorator/guard sweep — 2026-09-11 (result: the production vector is ≈0–2 rows)
+
+Probe `build/guard-debug/gr14w0/sweep_decorators.py` asked the decisive question — not "does the
+writer's file contain a barrier" but **"is the writer reached only from a caller that guards?"**
+(20 rows in scope; the 2 zero-inbound rows are excluded and already sit in the §3.2 owner bucket).
+
+| Verdict at 1 hop | Rows | Reading |
+|---|---|---|
+| **ALL callers guard** | **3** | `ReceiptInsertResolver.insertOrResolve` (7/7), `OperationRunRecorder.increment` (1/1), `RecurringLifecycleEventWriter.writeCritical` (1/1) — **collaborators covered by the operation's guard → analysis artifact, not a gap** |
+| **MIXED** | 7 | ≥1 inbound path does not pass a guarding file |
+| **NO caller guards** | 8 | see below |
+| **ZERO-INBOUND** | 2 | §3.2 dead-code bucket (owner decision) |
+
+**Reading the MIXED and NO-CALLER sets, the callers are recognisable categories, and three of
+them are *supposed* to write during maintenance:**
+
+- **Backup / restore / export components** — `CostbackupBundle.buildZip`, `RestoreJournal.writeTextSynced`,
+  `BackupEncryptionService.encrypt`, `AccountingExportRepository.exportExpenses`,
+  `DatabaseBackupRepositoryImpl.{createCostBackup,importDatabase,restoreCostBackup,resetDatabase}`,
+  `RestoreDiagnosticsSink.event`.  These run *inside* maintenance windows by design, so "no
+  barrier on this path" is expected, not a defect.
+- **Self-call / sibling helpers** — `OperationRunRecorder.finalizeNonCancellable` and
+  `WorkerRunLogger.terminal` are called only by sibling methods in the same class; the 1-hop
+  verdict is therefore uninformative, and the class's real entry (`WorkerExecutionGuard.startRunSafely`,
+  `CompositeOperationRunRecorder.start`) **does** guard.
+- **Audit** — `PrivacyAuditLoggerImpl.logDecision` ← `CompositePrivacyGate.check`.  The audit
+  record of a fail-closed decision must survive; blocking it on the barrier would lose exactly
+  the record you want.
+- **Debug-only import** — `JsonExpenseImporter.parseV1Row/parseV2Row`, `CsvExpenseImporter.getOrCreateCategory`
+  (callers: their own `importFromContent` / `parseAndImportLine`), reachable only from the debug UI.
+
+**Caveat, stated deliberately:** this sweep uses a 1-hop, file-level "does the caller's file
+reference the barrier" heuristic.  It can be wrong in both directions — a file may guard an
+unrelated method, and a guard may live two hops up.  It is strong enough to *retract* the alarm
+and to order the remaining work; it is not a substitute for reading a specific path end to end
+before changing it.
+
+**Conclusion: the production-code vector is ≈0–2 rows, not 20.**  The only rows not yet explained
+by a legitimate category are the two zero-inbound ones (`ExpenseGroupDao.insertGroupWithMembers`,
+`RecurringLifecycleEventWriter.writeDiagnostic`), which were already in the §3.2 owner-decision
+bucket.  **No production guard batch is warranted on current evidence.**  If one is ever wanted,
+it must begin by reading the specific path end to end (transitively) rather than trusting either
+the file-level check above or the earlier "no barrier in file" count.
 
 **Owner decision required per file.**  AGENTS.md forbids adding a canonical guard to a
 **privacy-cleanup path that must be able to run during maintenance** — the guard would block the
