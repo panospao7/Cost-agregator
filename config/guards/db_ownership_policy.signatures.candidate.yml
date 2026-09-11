@@ -399,28 +399,6 @@ entries:
     inside the same transaction'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08I
-- path: app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseGroupDao.kt
-  ownerFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
-  kind: function
-  method: insertGroupWithMembers
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.ExpenseGroup
-  - com.yourname.expensetracker.data.database.dao.GroupMemberDao
-  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
-  daoAccessor: memberDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
-  operation: insertAll
-  barrierMode: helper
-  reason: 'GR-08p2 EXACT_POLICY: THE DAO-default-method special case -- body-carrying
-    @Transaction convenience ON the DAO whose flagged mutation is the cross-DAO memberDao.insertAll
-    inside its body (GroupMemberDao arrives as an explicit DAO-typed method parameter);
-    atomic group+members creation (insert -> remap members to the new groupId -> insertAll
-    -> throw when any rowId <= 0 rolls back the whole @Transaction); the self-DAO
-    insert(group) call is the DAO''s own abstract @Insert and is never flagged; zero
-    production callers today (census)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P2
 - path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
   ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
   kind: function
@@ -5878,28 +5856,6 @@ entries:
     by the GR-08c1 RecurringLifecycleCoordinator and GR-08f RecurringRuleLifecycleCoordinator
     through the Hilt-bound interface); critical events are never swallowed; occurredAt
     defaults to TimeProvider.now() only when the caller passes 0'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt
-  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter
-  kind: function
-  method: writeDiagnostic
-  receiver: null
-  parameterTypes:
-  - Long?
-  - String
-  - String?
-  - String?
-  - String?
-  - Long
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: best-effort diagnostic event branch of the sanctioned
-    lifecycle event writer -- non-cancellation failures are logged and swallowed so
-    diagnostics can never regress a lifecycle transition; CancellationException is
-    rethrown'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt

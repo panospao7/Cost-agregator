@@ -8,7 +8,6 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import com.yourname.expensetracker.data.database.entity.ExpenseGroup
-import com.yourname.expensetracker.data.database.entity.GroupMember
 import com.yourname.expensetracker.data.database.model.ExpenseGroupWithDetails
 import kotlinx.coroutines.flow.Flow
 
@@ -71,28 +70,6 @@ interface ExpenseGroupDao {
     
     @Query("UPDATE expense_groups SET isActive = :isActive WHERE id = :groupId")
     suspend fun setActiveStatus(groupId: Long, isActive: Boolean)
-    
-    // Atomic transaction operations
-    @Transaction
-    suspend fun insertGroupWithMembers(
-        group: ExpenseGroup,
-        memberDao: GroupMemberDao,
-        members: List<GroupMember>
-    ): Long {
-        val groupId = insert(group)
-        if (groupId <= 0) {
-            throw IllegalStateException("Failed to create group")
-        }
-        
-        val membersWithGroupId = members.map { it.copy(groupId = groupId) }
-        val memberIds = memberDao.insertAll(membersWithGroupId)
-        
-        if (memberIds.any { it <= 0 }) {
-            throw IllegalStateException("Failed to add some members")
-        }
-        
-        return groupId
-    }
     
     // Legacy methods - deprecated
     @Deprecated(

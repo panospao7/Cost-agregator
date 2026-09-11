@@ -127,6 +127,19 @@ writers:
 # sign-off per writer is still owed before any deletion batch (plan §2 A9
 # protocol); deletions themselves are separate production batches under
 # the PR-GR-14 batch cap.
+# DISPOSITIONS (owner-approved in session 2026-09-11; executed across
+# GR-14u34+ tranches):
+#   DELETE (executed GR-14u34, board 0ab27b26):
+#     ExpenseGroupDao.insertGroupWithMembers (1 row)
+#     RoomRecurringLifecycleEventWriter.writeDiagnostic (1 row)
+#   DELETE (pending tranches): ExpenseWriteStore class (8 rows),
+#     GroupLifecycleCoordinator remaining 5 rows + scenario suites,
+#     TransactionLifecycleCoordinator.deleteExpense ID overload (retarget
+#     test), InvestmentTracker.updatePrice, BudgetForecastingEngine.
+#     updateForecastAccuracy
+#   KEEP (residual, no action): BankApiIntegration.completeConnection
+#     (consistent stub-mode scaffolding; wire when bank sync ships)
+#
 # POST-u29 UPDATE (GR-14u29.yml): the 2 TransactionLifecycleCoordinator
 # deleteExpense rows moved unproven_external_entry -> proven_helper when
 # the labelled-return misclassification fix landed.  The writer is still
