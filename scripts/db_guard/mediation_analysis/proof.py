@@ -489,6 +489,21 @@ class MediationProver:
             subject.callable_key, subject.site_start
         )
         local_guard = "waived" if local_waived else local
+        # GR-14u27: a mutation whose LOCAL guard is ``direct`` (the dominance
+        # engine proved a canonical barrier dominates the mutation inside the
+        # callable's own body, or the mutation sits in a canonical direct scope
+        # region) or ``restore_internal`` is guarded on EVERY execution.  The
+        # canonical barrier is evaluated at the mutation site against app-global
+        # maintenance state, so the identity of the caller cannot change the
+        # outcome.  Step 7 already encodes exactly this — ``effective`` is
+        # collapsed to the single local context when ``local`` is one of these —
+        # so caller-side uncertainty must not stop the proof either.  This is the
+        # GR-14j principle on which the zero-inbound exemption below was already
+        # granted: it is a property of the mutation site, not of the call graph.
+        self_guarded_helper = mode == "helper" and local in (
+            "direct",
+            "restore_internal",
+        )
 
         # 1. Recursion: any EXACT-edge cycle in the ancestor closure stops
         # the proof (uncertain-edge cycles are uncertainty, tier 5).
@@ -571,9 +586,9 @@ class MediationProver:
             # .runWrite) proves INDEPENDENT of callers — any caller, detected
             # or not, reaches a guarded mutation (the GR-14j principle).  The
             # GR-14u25 restore-internal scope has the same self-scoping
-            # property.  This exemption covers ONLY the zero-inbound case; an
-            # uncertain inbound edge still stops the proof below (step 5),
-            # preserving the GR-14f inline-carrier invariant.
+            # property.  This exemption covers the zero-inbound case; the
+            # GR-14u27 widening below additionally covers the uncertain-inbound
+            # case, but only for a guard the dominance PROVER established.
             self_scoped_helper = mode == "helper" and local in (
                 "direct",
                 "restore_internal",
@@ -590,8 +605,10 @@ class MediationProver:
                     deciding_resolution=ResolutionState.EXTERNAL_ENTRY,
                     local_guard=local_guard,
                 )
-        # 5. Uncertain edges reaching the subject stop the proof.
-        if deduped_uncertain:
+        # 5. Uncertain edges reaching the subject stop the proof — unless the
+        # mutation is self-guarded, in which case the caller side is irrelevant
+        # (see GR-14u27 above) and the row proves on its local evidence.
+        if deduped_uncertain and not self_guarded_helper:
             first = deduped_uncertain[0]
             if first.state in _UNCERTAIN_ASYNC_STATES:
                 state = ProofState.UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
@@ -609,13 +626,19 @@ class MediationProver:
                 local_guard=local_guard,
                 reaching_root_kinds=ancestor_kinds,
             )
-        # 6. No exact production path (S empty) — honest external entry.
+        # 6. No exact production path (S empty) — honest external entry.  A
+        # self-guarded mutation does not depend on a discoverable path at all
+        # (GR-14u27), so it proceeds to the local-evidence proof instead of
+        # being mislabelled zero-inbound: its uncertain inbound edges are real
+        # evidence and must not be reported as absence of callers.
         subject_facts = self._facts.get(subject.callable_key)
         entry_contexts: set[str] = set()
         if subject_facts is not None:
             entry_contexts = set(subject_facts.entry_contexts)
-        if not entry_contexts and not (
-            mode == "workerMediated" and model.method == "doWork"
+        if (
+            not entry_contexts
+            and not (mode == "workerMediated" and model.method == "doWork")
+            and not self_guarded_helper
         ):
             return SubjectProof(
                 mutation_key=subject.mutation_key,

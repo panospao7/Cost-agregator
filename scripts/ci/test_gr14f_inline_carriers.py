@@ -228,10 +228,14 @@ class TestInlineCarrierProofBehavior:
     def test_inline_carrier_site_keeps_uncertain_evidence_when_unbindable(self):
         """GR-14f resolution-preservation rule: a call inside an inline
         carrier whose receiver cannot be exactly bound (untracked chain)
-        must keep uncertain corpus evidence — the subject stays fail-closed
-        unproven (async or ambiguous, matching plain-body resolution of an
-        unbindable receiver) and must NEVER degrade to a zero-inbound
-        external-entry misdiagnosis."""
+        must keep uncertain corpus evidence — the subject must NEVER degrade
+        to a zero-inbound external-entry misdiagnosis.
+
+        GR-14u27 note: the subject here is self-guarded (its mutation sits in
+        the writer's own canonical scope), so the proof now succeeds on that
+        local evidence rather than staying unproven.  The reachability
+        assertion below is the invariant this test exists to protect and is
+        unchanged: the uncertain inbound edge is still present."""
         source = (
             "package com.example\n"
             "import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier\n"
@@ -286,8 +290,6 @@ class TestInlineCarrierProofBehavior:
                 site_start=source.index("dao.insert("),
             )
         )
-        assert proof.proof_state in (
-            ProofState.UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK,
-            ProofState.UNPROVEN_AMBIGUOUS_CALL,
-        )
+        assert proof.proof_state is ProofState.PROVEN_HELPER
+        assert proof.local_guard == "direct"
         assert proof.reason_code != "GR13_ZERO_INBOUND_CALL_SITES"

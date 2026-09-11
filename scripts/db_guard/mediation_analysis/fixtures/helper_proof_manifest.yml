@@ -107,3 +107,11 @@ fixtures:
     file: helper_proof/hp23_restore_scope_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
     expectedProof: PROVEN_RESTORE_INTERNAL
+  - id: HP-24
+    file: helper_proof/hp24_self_guarded_async_only.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-25
+    file: helper_proof/hp25_self_guarded_mixed_callers.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER

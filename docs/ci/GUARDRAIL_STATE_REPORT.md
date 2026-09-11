@@ -1,7 +1,7 @@
 # GUARDRAIL STATE REPORT — database write-barrier proof engine
 
 **Status date:** 2026-09-11
-**Branch:** `gr-14f-wip` @ `89844c7f` + GR-14u26 (uncommitted)
+**Branch:** `gr-14f-wip` @ `afc56d28` + GR-14u27 (owner-approved 2026-09-11)
 **Audience:** anyone continuing the GR-14 guardrail campaign, and anyone looking for
 production database-write bugs.  This document is a *state* report: what the guardrails
 are, what the measured state is, every known issue with its status, and the production-code
@@ -134,19 +134,19 @@ single most valuable practice in this campaign — do not skip it for "obvious" 
 
 ### 2.1 Board
 
-Report sha256 **`04e6a21a976bad3f3dfb93a9529250761cb963afb1f06c1d35f33f4a8c58d986`**
+Report sha256 **`8d813a2553d45bce2a6a62350970804838a26b8be9c9e9e2b3325134ebea20bc`**
 (deterministic across a double run).  406 policy rows.
 
 | Bucket | Count |
 |---|---|
-| `proven_helper` | **186** |
+| `proven_helper` | **280** |
 | `proven_restore_internal` | **1** |
 | `proven_worker_mediated` | 14 |
-| `unproven_ambiguous_call` | 45 |
-| `unproven_async_or_escaping_callback` | 133 |
+| `unproven_ambiguous_call` | 40 |
+| `unproven_async_or_escaping_callback` | 44 |
 | `unproven_external_entry` | 27 |
 | **`counterexample_unguarded_call_path`** | **0** |
-| **proven / unproven** | **201 / 205** |
+| **proven / unproven** | **295 / 111** |
 
 Policy sha256 `7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31` —
 434 entries, 0 load errors.  Baseline/exception bytes unchanged.  Report is shadow-only
@@ -166,6 +166,7 @@ Policy sha256 `7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31`
 | GR-14u24 (2026-09-11) | single-implementor interface exactness | 9 rows → helper (vs u22/u23) |
 | GR-14u25 (2026-09-11) | **contract V3**: restore-internal scope | restore row → **proven_restore_internal** |
 | GR-14u26 (2026-09-11) | receiver-aware `::` reference resolution | helper 173 → **186** |
+| GR-14u27 (2026-09-11) | self-guarded mutations prove on local evidence | helper 186 → **280**, unproven 205 → **111** |
 
 Net through GR-14u21: **proven_helper 69 → 155** (proven 83 → 169), counterexamples **0
 throughout** — the live board never carried one.  (The "18 counterexamples" seen during
@@ -178,7 +179,15 @@ GR-14u22 → u25 (the last four batches) move the board from `fe40d369` to `35de
 proven→unproven.  Two of those four batches (u23, and u25 on its own) are **latent** —
 verified byte-identical with their activator neutralised.
 
-Campaign-wide, GR-14u5 → u26: proven_helper **48 → 186**.
+Campaign-wide, GR-14u5 → u27: proven_helper **48 → 280**, unproven **205 → 111**.
+
+GR-14u27 is the largest single batch of the campaign and it was found by **disproving this
+report's own §3.1 conclusion** ("async is spread with no dominant fix, ceiling ~0").  The
+carrier-admission ceiling is real, but it was never the binding constraint: **89 of the 133
+async rows already had `localGuard == "direct"`** — the dominance engine had *already proved*
+their guard dominates the mutation, and steps 5/6 discarded that proof because a caller was
+uncertain.  See §4.D17.  Expected-yield lesson: when a bucket looks capped, check whether the
+rows are blocked by *missing evidence* or by *evidence the prover refuses to use*.
 
 GR-14u26 drained the `function_reference` bucket: 13 of its 14 rows proved and the 14th
 moved to `unresolved_target` and stayed unproven — the bucket is emptied without
@@ -193,11 +202,11 @@ than being suppressed.  See §4.D4 and §5.1.1.
 
 | Check | Result |
 |---|---|
-| engine battery (`scripts/ci/`) | **1227 passed / 13 failed / 14 skipped** |
-| ↳ of the 13 | **all PRE-EXISTING and A/B-proven** — identical set at HEAD and after GR-14u26 (§6.B4) |
+| engine battery (`scripts/ci/`) | **1234 passed / 13 failed / 14 skipped** |
+| ↳ of the 13 | **all PRE-EXISTING and A/B-proven** — identical set before and after GR-14u26/u27 (§6.B4) |
 | `scripts/db_guard` unit tests | **235 passed** |
-| fixture scenarios | **62 / 62** (consolidated rows 70) |
-| board determinism (double run) | byte-identical (`04e6a21a`) |
+| fixture scenarios | **64 / 64** (consolidated rows 72) |
+| board determinism (double run) | byte-identical (`8d813a25`) |
 | Kotlin `:app:compileDebugKotlin` | PASS (last run GR-14u20) |
 
 **The full Kotlin test suite is NOT a usable gate** — see §6.  Prefer targeted
@@ -218,13 +227,32 @@ fidelity: report status reproduced for **every** row).  Buckets sum: 133 + 27 + 
 GR-14u22 (§3.3.1) then proved 9 of those 77 ambiguous rows, leaving 229 unproven on the
 live board `6a18b4bf`.
 
-### 3.1 `unproven_async_or_escaping_callback` — 133 rows
+### 3.1 `unproven_async_or_escaping_callback` — 44 rows (post-GR-14u27)
 
-All 133 are decided by an **async carrier**.  Spread across carriers with no dominant fix:
-`coroutineScope`-region 37, privacy-gate lambda 23, `PostCommitAction` 19,
-`navigation.launch` 17, `confirmQuickApprove` 9, `photon`-region 6, plus a long tail.
+**This section previously claimed the bucket was "spread across carriers with no dominant fix"
+with a "measured ceiling of ~0 rows".  That was wrong in its reasoning and badly wrong about
+the ceiling**, and GR-14u27 disproved it.  Corrected measurements (2026-09-11):
 
-**Not the next win** — measured ceiling is ~0 rows, see §4.D9.
+- The rows are **highly concentrated, not long-tailed.**  Reconstructing the engine's own
+  tier-5 deciding edge per row showed ~6 sites producing the bulk: `coroutineScope` in
+  `ReceiptRepository.processBatch`, a `PostCommitAction` batch in `ReceiptSideEffectPlanner`,
+  `coroutineScope.launch` in `MainActivity.MainScreen`, `PrivacyGate`, `safeSearch`, and the
+  `RetentionTarget` object expression.
+- The **carrier-admission ceiling is real** — re-measured, not assumed: admitting
+  `coroutineScope` yields +0 proven and 1 counterexample; the project suspend wrappers
+  (`runWithRetry`, `withRateLimit`, `safeExecute`, `safeLookup`, `guardTerminal`,
+  `withBoundedTerminalWrite`) yield +0 rows.  So "admit more carriers" really is a dead end.
+- But carrier admission was **never the binding constraint**.  `localGuard` was `"direct"` for
+  **89 of the 133 rows**: the GR-12 dominance engine had already proved those guards dominate
+  their mutations, and the prover discarded that proof because some caller was uncertain.
+  That is §4.D17, and it is where the rows actually came from.
+
+What remains after GR-14u27 (44 rows) is the genuine residue: rows whose writers have **no
+locally-provable guard** (`localGuard == "none"`) and whose inbound paths are async.  These are
+the rows that need either a canonical guard added to the writer or a modelled async carrier —
+a real hardening backlog, not an engine artifact.  Note that 173 of the 205 pre-u27 unproven
+rows live in files that already reference the canonical barrier, so the writers are in
+barrier-participating classes; the gap is local provability, not missing participation.
 
 ### 3.2 `unproven_external_entry` — 27 rows
 
@@ -239,14 +267,18 @@ Decided by `external_entry`: zero inbound call sites. Domain:
 - *Called only from an `init {}` block* (engine invisible): **active but unprovable** —
   do NOT delete.  See §5.2 Defect II.
 
-### 3.3 `unproven_ambiguous_call` — 45 rows (post-GR-14u26)
+### 3.3 `unproven_ambiguous_call` — 40 rows (post-GR-14u27)
 
 | Deciding resolution | Rows (live board) | What it means |
 |---|---|---|
-| `exact_synchronous` | **32** | Guard present, body **unmodelable** — see §3.4 |
+| `exact_synchronous` | **27** | Guard present, body **unmodelable** — see §3.4 |
 | `unresolved_target` | 13 | Receiver or target not resolved — triaged §3.3.1 |
 | ~`function_reference` | **0** | **DRAINED** by GR-14u26 — 13 proved, 1 re-decided as `unresolved_target` |
 | ~`interface_dispatch` | **0** | **DRAINED** by GR-14u23/u24/u25 (§4.D4) |
+
+GR-14u27 additionally proved 5 of the `direct`-local rows that were sitting in this bucket
+(they were decided by an ambiguous rather than an async inbound edge, but the same
+`GR13_LOCAL_GUARD_UNMODELABLE`-adjacent suppression applied).  §3.4's count drops 32 → 27.
 
 **Where the 20 `interface_dispatch` rows actually went** (measured per row, not inferred —
 `build/guard-debug/gr14u25/transition_check.py`):
@@ -299,24 +331,27 @@ Every deciding edge was recovered with the engine's own tier-5 selection
   `migrateCategories` fix (which moved 0 rows alone — the inbound edges stay uncertain
   regardless).  Owner decision whether to add canonical guards.
 
-### 3.4 The 32 `exact_synchronous` rows — CORRECTLY unproven, not a defect
+### 3.4 The 27 `exact_synchronous` rows — CORRECTLY unproven, not a defect
 
 **Investigated this session; hypothesis falsified.**  These rows read
 `unproven_ambiguous_call` *with* an exact deciding edge, which looks contradictory.  It is
-not.  All 32 are the **GR-14u15 tri-state** working as designed
+not.  All 27 are the **GR-14u15 tri-state** working as designed
 (`GR13_LOCAL_GUARD_UNMODELABLE`, `barrierMode=helper`, `localGuard=none`):
 
-- **32 / 32 contain a canonical `checkWritesAllowed` call** — the guard *is* present.
-- **24 / 32 contain `try` / `catch`**, which the GR-12 body model refuses (exception flow
+- **27 / 27 contain a canonical `checkWritesAllowed` call** — the guard *is* present.
+- Most contain `try` / `catch`, which the GR-12 body model refuses (exception flow
   above all).
-- The other **8** (4 distinct methods — `ExpenseRepository.updateExpenseCategoryBulk`,
+- A few (4 distinct methods — `ExpenseRepository.updateExpenseCategoryBulk`,
   `GroupTransactionCoordinator.deleteGroupAtomic`,
   `SubscriptionManagerEngine.acceptCandidate` / `validateAndCreate`) place the guard first
   and mutate inside `withLock` / `database.withTransaction` lambdas — the CFG does not wire
   scope children, so the mutation node is disconnected and the body is unmodelable.
-  Measured: 16 of the 32 carry `withContext`, 1 carries `withLock`.
-  (`deleteGroupAtomic` is one of the 8 that arrived from the `interface_dispatch` bucket —
-  see §3.3: the interface edge was masking an already-unmodelable body.)
+
+**Note the distinction from GR-14u27.**  These rows are `localGuard == "none"`: the dominance
+engine could **not** prove the guard, so the row is genuinely unproven and GR-14u27 does not
+touch it.  (`GR13_LOCAL_GUARD_UNMODELABLE` means "a barrier call precedes the mutation but the
+body could not be modelled" — absence of evidence, not evidence of a guard.)  To prove them the
+GR-12 model would have to handle exception flow — a large engine change, not a quick fix.
 
 Representative (`BankStatementLifecycleProcessor.processBankStatement:139`):
 
@@ -356,6 +391,65 @@ change, not a quick fix.
 | D14 | `restore_internal` collapsed to `worker` in context propagation | proof only | ✅ **FIXED** GR-14u25 |
 | D15 | scan coverage excludes the `debug`/`release` source sets | — | ✅ **NOT A DEFECT** — deliberate, enforced 3 ways, already tested (§5.5). Do not widen. |
 | D16 | `::` references carried no receiver, so bound references name-matched | hid 14 rows | ✅ **FIXED** GR-14u26 |
+| D17 | a **proved** local guard was discarded whenever any inbound edge was uncertain | hid **94 rows** | ✅ **FIXED** GR-14u27 (§4.D17) |
+
+### 4.D17 — local-guard evidence discarded by an earlier check (FIXED, 94 rows)
+
+**The largest defect of the campaign, and it was an ordering bug, not a modelling gap.**
+
+A mutation whose local guard is `direct` — either the GR-12 dominance engine proved a canonical
+barrier dominates the mutation *inside the callable's own body*, or the mutation sits inside a
+canonical barrier scope region — is guarded on **every** execution.  The barrier is evaluated at
+the mutation site against app-global maintenance state, so the caller's identity cannot change
+the outcome.  The prover already knew this: step 7 collapses `effective` to `{"direct"}`
+whenever `local == "direct"` (`proof.py`), and the GR-14u5 zero-inbound exemption was granted on
+exactly that GR-14j principle.
+
+But two earlier checks returned first:
+
+| Step | Condition | Effect |
+|---|---|---|
+| 5 | *any* uncertain edge reaches the subject | return UNPROVEN (async/ambiguous) |
+| 6 | no discoverable exact production path | return UNPROVEN_EXTERNAL_ENTRY |
+
+So an uncertain caller, or merely the absence of a path we could resolve, suppressed a proof the
+local evidence had **already established**.  Measured on the u26 board: **89 rows with
+`localGuard == "direct"` sat in `unproven_async_or_escaping_callback`**, plus 5 in
+`unproven_ambiguous_call`.
+
+**Fix (GR-14u27):** compute `self_guarded_helper = mode == "helper" and local in ("direct",
+"restore_internal")` once, and use it to keep step 4's exemption and to skip steps 5 and 6, so
+step 7 proves from the local guard.
+
+**Fail-closed, and pinned:** step 3 still rejects a mutation whose *site* is inside an
+async/escaping lambda before this point; `_local_site_context` only reports `direct` for
+`ProofStatus.PROVEN` from the dominance prover (`unmodelable` and `unguarded` both leave `local
+== "none"`); worker mediation is excluded by `mode == "helper"`; the counterexample machinery is
+untouched.  Each of those is pinned in `test_gr14u27_self_guarded.py`.
+
+**Policy reversal — flag this when reviewing.**  Two pre-existing pins asserted the old step-5
+policy (`test_gr14u5_self_scoped_helper.py`,
+`test_gr14f_inline_carriers.py::test_inline_carrier_site_keeps_uncertain_evidence_when_unbindable`).
+They were **amended, not deleted**, and the safety-relevant half of each is preserved verbatim:
+the uncertain inbound edge must still be recorded (the GR-14f resolution-preservation invariant)
+and the row must never degrade to a zero-inbound external-entry misdiagnosis.  Only the
+proof-state expectation changed.  The old policy contradicted step 7 of the very same function;
+this batch makes the function self-consistent rather than relaxing a check.
+
+**Credited lesson.**  §3.1 had declared the async bucket capped.  The ceiling was real for
+*carrier admission* but irrelevant: the rows were blocked by evidence the prover **refused to
+use**, not by missing evidence.  When a bucket looks capped, measure `localGuard` before
+concluding.
+
+**Independent review (strict-reviewer-deep, 2026-09-11).**  The reviewer confirmed soundness
+(traced `DatabaseWriteBarrier.kt` → `callgraph.py` → `inspect_db_mediation_proof.py` →
+`barrier_proof.py`: no caller shape exists in which a `local == "direct"` mutation executes
+without the barrier having passed), confirmed fail-closed (and noted that
+counterexample→proven flips are *impossible* here, because step 7 already made the
+`GR13_UNGUARDED_CALL_PATH` branch unreachable for these rows), found **no other** test, guard,
+ratchet, baseline or doc depending on the old policy, and reproduced the board byte-identically.
+Verdict FAIL only on three documentation/evidence issues, all fixed.  Its binding condition is
+the owner sign-off below — **status: conditional; do not merge without that decision**.
 
 ### 4.D4 — `interface_dispatch` — RESOLVED ACROSS u23 / u24 / u25 (LANDED)
 
@@ -693,6 +787,27 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
    *reachable*, so an unguarded writer reached only via `::` becomes a definite
    counterexample — the fixture corpus shows this (HP-04, expectations updated) while the
    live board stays at 0 counterexamples because all 13 moved rows are guarded.
+2c. ~~**§3.1 async bucket (133 rows)**~~ — **LARGELY DONE as GR-14u27 (2026-09-11)** via §4.D17,
+   *not* via carrier admission: 89 async + 5 ambiguous rows already had `localGuard == "direct"`
+   and were suppressed by steps 5/6.  `unproven_async_or_escaping_callback` 133 → **44**.
+   Board `8d813a25`.  The remaining 44 are `localGuard == "none"` rows — the genuine async
+   hardening backlog (add a canonical guard to the writer, or model the carrier).
+   **Credit the lesson:** this bucket was declared capped in §3.1; the cap was real for
+   *carrier admission* and irrelevant to the rows.  Measure `localGuard` before declaring a
+   ceiling.
+2d. ✅ **OWNER SIGN-OFF — GRANTED (2026-09-11).**  GR-14u27 changed a **pinned** policy: a
+   self-guarded row with an uncertain caller used to stay unproven
+   (`test_gr14u5_self_scoped_helper.py`, `test_gr14f_inline_carriers.py`).  Both pins were
+   amended with their reachability and no-external-entry assertions preserved, and the change
+   makes the prover self-consistent with its own step 7.  `GR-14u5.yml:34-40` had recorded the
+   old step-5 behaviour as deliberate, so this was escalated as an owner decision rather than
+   merged silently; the owner approved it on the grounds above.  **Superseded rule:** the
+   zero-inbound exemption now covers the uncertain-inbound case **for locally-guarded
+   mutations only** (`local in ("direct","restore_internal")`, helper mode).  Do not extend it
+   to any other `local` value — see §10.
+   Measured declined-fallback for the record: reverting the widening entirely gives `unproven`
+   205 → **171**; evidence `board_fallback_step5.json` (sha `513fa69b…`).  The fallback is a
+   revert of this whole batch (it re-amends the pins), not a one-line change.
 3. ~~**§3.3.1 `dagger.Lazy.get()` transparent unwrap**~~ — **DONE as GR-14u22
    (2026-09-11)**: 9 rows ambiguous → proven_helper, board `6a18b4bf`, 0 counterexamples.
 4. **§5.3.2 `BankApiIntegrationTest`** — run it alone at HEAD; stale-test vs regression.
@@ -708,10 +823,16 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
 7. **§4.D1-II `init {}` invisibility** — measured latent (0 live instances, re-confirmed
    2026-09-10 §4.D1-II); fixture-first engine change when taken.
 8. **§4.D9 carrier admissions** — last, and only if a census shows one whose calls already
-   resolve exactly.
+   resolve exactly.  Re-measured 2026-09-11: still ~0 rows.
+9. **The 44 residual async rows** — the real hardening backlog: writers with
+   `localGuard == "none"` reached through async paths.  Each needs either a canonical guard in
+   the writer (a production change, and the GR-14j reasoning says a self-guarded writer proves
+   regardless of callers) or the carrier modelled.  Triage per row before acting: some are
+   privacy-cleanup deletions that must NOT be gated (see AGENTS.md).
+10. **GR-12 exception-flow modelling** — the 27 §3.4 rows.  Large; fixture-first.
 
-**Do not start with** the async/carrier bucket despite its size (133 rows) — measured at ~0
-rows per admission.
+**Do not start with** "admit more async carriers" — measured at ~0 rows per admission
+(§4.D9, re-confirmed 2026-09-11 for `coroutineScope` and the project suspend wrappers).
 
 ---
 
@@ -727,6 +848,16 @@ rows per admission.
   from an oversight.
 - **Fail closed.** Never up-rank to proven on uncertainty. Unproven ≠ bug; only
   `counterexample_*` asserts a violation.
+- **Local evidence outranks caller uncertainty — but only when it is a real proof.**
+  GR-14u27: a mutation whose site is `direct` (`restore_internal`) is guarded on every
+  execution because the barrier is checked at the site against app-global state, so an
+  uncertain inbound edge cannot change the outcome.  This is the GR-14j principle.  It is
+  *only* sound because `local` is `direct` for a **proved** barrier dominance or a canonical
+  scope region: `unmodelable` and `unguarded` both leave `local == "none"`, a site inside an
+  async/escaping lambda is rejected earlier (step 3), and worker mediation is excluded.  Do
+  not extend the bypass to any other `local` value.  Corollary: an uncertain edge is still
+  *recorded* (the GR-14f reachability-preservation rule is untouched) and a self-guarded row
+  must never degrade to a zero-inbound external-entry verdict.
 - **Never land through a Step-0 flip.** Triage first.
 - **Contract changes require a version bump** (V1 → V2 → V3, GR-14u25) and a reviewed diff;
   older versions stay exported and pinned.

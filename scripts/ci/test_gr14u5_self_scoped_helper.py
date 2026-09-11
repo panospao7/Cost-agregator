@@ -9,10 +9,17 @@ not a zero-inbound external entry.  This is the D1 shape —
 ``init {}`` block the parser cannot see, so it registers zero-inbound and
 was misreported as ``unproven_external_entry``.
 
-The exemption added in ``MediationProver.prove`` is deliberately scoped to
-the ZERO-INBOUND case only.  An uncertain inbound edge still stops the
-proof (the GR-14f inline-carrier invariant), so the fail-closed neighbours
-below cannot silently regress.  Pinned against the REAL production
+The exemption added in ``MediationProver.prove`` began as the ZERO-INBOUND
+case only.  **GR-14u27 widened it to the uncertain-inbound case**: a mutation
+whose local guard is ``direct``/``restore_internal`` is guarded on every
+execution (the barrier is checked at the mutation site against app-global
+state), so an uncertain caller cannot change the outcome — which is what step 7
+of the prover already assumed.  The GR-14f reachability guarantee is *not*
+relaxed: the uncertain inbound edge is still recorded, and a self-guarded row
+still never degrades to a zero-inbound external entry.  The engine-level
+fail-closed neighbours of that widening (unproven / unmodelable local status,
+no prover wired, worker mediation) live in
+``scripts/ci/test_gr14u27_self_guarded.py``.  Pinned against the REAL production
 contract.
 """
 from __future__ import annotations
@@ -93,13 +100,22 @@ class TestSelfScopedHelperZeroInbound:
 
 
 class TestSelfScopedHelperInvariants:
-    def test_self_scoped_helper_with_uncertain_caller_stays_unproven(self):
-        """Step-5 invariant: an uncertain inbound edge still stops the proof.
+    def test_self_scoped_helper_with_uncertain_caller_proves_on_local_evidence(self):
+        """GR-14u27: a self-guarded mutation proves regardless of its callers.
 
-        Co-locates the guard proven by
+        The canonical guard is evaluated at the mutation site against app-global
+        maintenance state, so an uncertain inbound edge cannot change the
+        outcome; the prover's step 7 already collapses ``effective`` to
+        ``{"direct"}`` for exactly this reason.  The uncertain edge itself is
+        still recorded — co-located with
         ``test_gr14f_inline_carriers.py::
-        test_inline_carrier_site_keeps_uncertain_evidence_when_unbindable``:
-        the zero-inbound exemption must NOT widen into the uncertain case.
+        test_inline_carrier_site_keeps_uncertain_evidence_when_unbindable``, which
+        guards the GR-14f reachability-preservation invariant and the ban on a
+        zero-inbound external-entry misdiagnosis.
+
+        GR-14u27 deliberately reversed the earlier step-5 policy that kept this
+        row unproven; that policy contradicted step 7 and withheld proofs for 94
+        locally-guarded production rows.
         """
         source = (
             _HEADER
@@ -117,10 +133,8 @@ class TestSelfScopedHelperInvariants:
             "}\n"
         )
         proof = _prove_write_row(source)
-        assert proof.proof_state in (
-            ProofState.UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK,
-            ProofState.UNPROVEN_AMBIGUOUS_CALL,
-        )
+        assert proof.proof_state is ProofState.PROVEN_HELPER
+        assert proof.local_guard == "direct"
         assert proof.reason_code != "GR13_ZERO_INBOUND_CALL_SITES"
 
     def test_guarded_caller_path_still_proves(self):
