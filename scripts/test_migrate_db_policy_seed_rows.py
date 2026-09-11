@@ -1274,6 +1274,11 @@ def _seed_removal_key(entry):
 #     observability test, and its allowlist entry are gone)
 #   GR-14u36: GroupLifecycleCoordinator x9 (owner-approved delete; routing was
 #     never built, class + scenario suites removed)
+#   GR-14u37: deleteExpense ID overload x2, updatePrice x2,
+#     updateForecastAccuracy x1 (owner-approved deletes), PLUS the entity
+#     deleteExpense seed rows x2 - after the ID overload's deletion the
+#     legacy fold resolves the entity overload directly, so its seed rows
+#     would shadow legacy-resolved keys (duplicate check, GR-14b precedent)
 _SEED_REMOVAL_LEDGER = frozenset({
     "EnhancedSplitManager.kt|EnhancedSplitManager|assignItemsToParticipants|SplitItemAssignmentDao|deleteAllForExpense|Long,List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>",
     "EnhancedSplitManager.kt|EnhancedSplitManager|assignItemsToParticipants|SplitItemAssignmentDao|insertAssignments|Long,List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>",
@@ -1339,6 +1344,14 @@ _SEED_REMOVAL_LEDGER = frozenset({
     "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|recordSettlement|GroupSettlementDao|insert|Long,Long,Long,Double,String,String?,Long?",
     "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|removeMember|GroupLifecycleEventDao|insert|Long,Long",
     "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|removeMember|GroupMemberDao|update|Long,Long",
+
+    "BudgetForecastingEngine.kt|BudgetForecastingEngine|updateForecastAccuracy|BudgetForecastDao|update|Long,Double",
+    "InvestmentTracker.kt|InvestmentTracker|updatePrice|InvestmentDao|updatePrice|Long,Double",
+    "InvestmentTracker.kt|InvestmentTracker|updatePrice|InvestmentValueDao|insert|Long,Double",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|deleteExpense|ExpenseDao|delete|Long,String,String?,String?,String?",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|deleteExpense|ExpenseDao|delete|com.yourname.expensetracker.data.database.entity.Expense,String,String?,String?,String?",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|deleteExpense|TransactionEventDao|insert|Long,String,String?,String?,String?",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|deleteExpense|TransactionEventDao|insert|com.yourname.expensetracker.data.database.entity.Expense,String,String?,String?,String?",
 })
 
 
@@ -7324,12 +7337,12 @@ def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
     assert len(gr08p2) == 15
     assert len(gr14) == 6
     # GR-14u34: the combined doc is the living --seed-rows input and the
-    # GR-14 dead-writer tranches pruned it (421 -> 379 through GR-14u34 -> 368 through GR-14u35 -> 359 through GR-14u36);
+    # GR-14 dead-writer tranches pruned it (421 -> 379 through GR-14u34 -> 368 through GR-14u35 -> 359 through GR-14u36 -> 352 through GR-14u37);
     # the frozen per-batch files above keep their historical counts.  The
     # contract is now: combined == concat(batch files) MINUS the
     # documented removal ledger, with the ledger itself validated against
     # both sides so it can rot in neither direction.
-    assert len(combined) == 359
+    assert len(combined) == 352
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_all = (
         list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
@@ -7341,7 +7354,7 @@ def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
         + list(gr08p1) + list(gr08p2) + list(gr14)
     )
     ledger_keys = _seed_ledger_keys(batch_all)
-    assert len(_SEED_REMOVAL_LEDGER) == 62
+    assert len(_SEED_REMOVAL_LEDGER) == 69
     # every ledger row is a real frozen-batch row (no invented removals)
     assert _SEED_REMOVAL_LEDGER <= ledger_keys, sorted(
         _SEED_REMOVAL_LEDGER - ledger_keys

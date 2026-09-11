@@ -3755,78 +3755,6 @@ entries:
   reason: "GR-08l2 EXACT_POLICY: single aggregate BULK_UPDATED TransactionEvent (merchant + affectedCount metadata) written in the same transaction, only when rows were affected -- the atomic audit-trail requirement"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-  kind: function
-  method: deleteExpense
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - String?
-  - String?
-  - String?
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: by-id hard delete, audit half -- writes the DELETED TransactionEvent with the full beforeSnapshot loaded INSIDE the transaction (P2-08 TOCTOU-safe) before the row is removed"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-  kind: function
-  method: deleteExpense
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - String?
-  - String?
-  - String?
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: delete
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: by-id hard delete, mutation half -- removes the expense row in the same transaction after the DELETED event (the documented LEGAL_PATHS delete path; post-delete side effects run best-effort after commit via runBestEffortAfterCommit)"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-  kind: function
-  method: deleteExpense
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.Expense
-  - String
-  - String?
-  - String?
-  - String?
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: by-entity hard delete overload, audit half -- re-reads the fresh row inside the transaction (P2-08) and writes the DELETED event with its snapshot; authorized separately because the overload's callable identity differs"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-  kind: function
-  method: deleteExpense
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.Expense
-  - String
-  - String?
-  - String?
-  - String?
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: delete
-  barrierMode: helper
-  reason: "GR-08l2 EXACT_POLICY: by-entity hard delete overload, mutation half -- removes the freshly re-read row in the same transaction after the DELETED event; authorized separately because the overload's callable identity differs"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
 - path: app/src/main/java/com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt
   ownerFqcn: com.yourname.expensetracker.data.repository.SubscriptionManagementRepository
   kind: function
@@ -4612,36 +4540,6 @@ entries:
   operation: insert
   barrierMode: helper
   reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS ADD HOLDING -- PR-I1 BUY transaction record (cost-basis tracking) inside the same database.withTransaction as the holding insert; InvestmentTransactionDao.insert outside the addHolding transaction is FORBIDDEN"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08N
-- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
-  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
-  kind: function
-  method: updatePrice
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: investmentDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentDao
-  operation: updatePrice
-  barrierMode: helper
-  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS UPDATE PRICE -- barrier-checked, require(newPrice finite && > 0) validated price update inside database.withTransaction (atomic with the value-history snapshot); InvestmentDao.updatePrice outside the tracker validation + value history is FORBIDDEN"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08N
-- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
-  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
-  kind: function
-  method: updatePrice
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: investmentValueDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentValueDao
-  operation: insert
-  barrierMode: helper
-  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS UPDATE PRICE -- InvestmentValue snapshot with dayChange/dayChangePercent inside the same database.withTransaction as the price update; InvestmentValueDao.insert outside the updatePrice/addHolding transactions is FORBIDDEN"
   owner: '@panospao7'
   linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
@@ -5520,21 +5418,6 @@ entries:
   owner: '@panospao7'
   linkedIssue: MIT-DB-08P2
 # -- BudgetForecastingEngine.kt (1 fingerprint / 1 site) ---------------------------
-- path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
-  ownerFqcn: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
-  kind: function
-  method: updateForecastAccuracy
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: budgetForecastDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetForecastDao
-  operation: update
-  barrierMode: helper
-  reason: "GR-08p2 EXACT_POLICY: barrier-checked post-period forecast accuracy write -- get-if-missing guard, accuracy = 1 - |predicted-actual| / max(predicted, actual) clamped to [-1, 1] (a dimensionless metric, not currency math), then the targeted entity update"
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P2
 # -- DiagnosticEventWriter.kt (1 fingerprint / 1 site) -----------------------------
 - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DiagnosticEventWriter.kt
   ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomDiagnosticEventWriter

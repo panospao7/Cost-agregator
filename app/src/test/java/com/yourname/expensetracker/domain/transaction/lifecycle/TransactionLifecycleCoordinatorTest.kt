@@ -250,15 +250,16 @@ class TransactionLifecycleCoordinatorTest {
     @Test
     fun `deleteExpense runner cancellation rethrows`() = runTest {
         val expenseId = 1L
-        coEvery { expenseDao.getById(expenseId) } returns Expense(
+        val expense = Expense(
             id = expenseId, amount = 10.0, merchant = "Test",
             transactionType = TransactionType.PURCHASE, date = now,
             currency = "EUR", dedupeKey = "old-dk", merchantKey = "mk"
         )
+        coEvery { expenseDao.getById(expenseId) } returns expense
         coEvery { planner.planDeleted(any(), any(), any()) } returns nonEmptyBatch()
         coEvery { runner.run(any()) } throws CancellationException("Cancelled")
 
-        val result = coordinator.deleteExpense(expenseId)
+        val result = coordinator.deleteExpense(expense)
         assertTrue("Expected failure, got $result", result.isFailure)
         assertTrue("Expected CancellationException", result.exceptionOrNull() is CancellationException)
         coVerify(exactly = 1) { expenseDao.delete(any()) }
