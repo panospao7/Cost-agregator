@@ -27,10 +27,14 @@ from scripts.db_guard.structural_analysis.tokenizer import (
 )
 
 
-def parse(body: str):
+def parse(body: str, transparent_scope_methods=()):
     masked = mask_kotlin_source(body)
     assert len(masked) == len(body), "masking must preserve offsets"
-    return parse_callable_body(masked, SourceSpan(0, len(masked), 1, 1))
+    return parse_callable_body(
+        masked,
+        SourceSpan(0, len(masked), 1, 1),
+        transparent_scope_methods=tuple(transparent_scope_methods),
+    )
 
 
 def kinds(parse_result):
@@ -521,6 +525,64 @@ class TestReturnConstructs:
         assert result.is_supported
         assert kinds(result) == [RegionKind.STATEMENT, RegionKind.RETURN]
         assert result.regions[1].children == ()
+
+    def test_return_try_with_labelled_return_inside_wrapper_supported(self):
+        # GR-14u29: the campaign guard idiom — `return try { ... }` whose
+        # rest text merely CONTAINS a `@label` inside a nested wrapper
+        # lambda.  The `@` is not a label on the return itself, so the
+        # statement must reach the try-construct parser instead of failing
+        # as an unsupported labelled return.
+        result = parse(
+            "return try {\n"
+            "  database.withTransaction {\n"
+            "    return@withTransaction\n"
+            "    dao.delete(id)\n"
+            "  }\n"
+            "  Result.success(Unit)\n"
+            "} catch (e: E) {\n"
+            "  Result.failure(e)\n"
+            "}\n",
+            transparent_scope_methods=("withTransaction",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.RETURN]
+        try_children = result.regions[0].children[0].children
+        assert [child.kind for child in try_children] == [
+            RegionKind.TRY,
+            RegionKind.CATCH,
+        ]
+        wrapper = try_children[0].children[0]
+        assert wrapper.kind == RegionKind.TRANSPARENT_SCOPE
+        assert wrapper.children[0].kind == RegionKind.LAMBDA_RETURN
+
+    def test_return_try_named_arg_transaction_wrapper_supported(self):
+        # GR-14u29: ReceiptLinkService shape — a named-argument
+        # `runInTransaction(...) { ctx -> ... }` wrapper with a label-led
+        # return inside a braced if, inside `return try { ... }`.
+        result = parse(
+            "return try {\n"
+            "  runner.runInTransaction(\n"
+            "    correlationId = id.toString(),\n"
+            "    operationId = op\n"
+            "  ) { ctx ->\n"
+            "    if (bad) {\n"
+            "      return@runInTransaction Result.failure(err)\n"
+            "    }\n"
+            "    dao.insert(link)\n"
+            "    Result.success(Unit)\n"
+            "  }\n"
+            "} catch (e: E) {\n"
+            "  Result.failure(e)\n"
+            "}\n",
+            transparent_scope_methods=("runInTransaction",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.RETURN]
+        wrapper = result.regions[0].children[0].children[0].children[0]
+        assert wrapper.kind == RegionKind.TRANSPARENT_SCOPE
+        braced_if = wrapper.children[0]
+        assert braced_if.kind == RegionKind.IF
+        assert braced_if.children[0].children[0].kind == RegionKind.LAMBDA_RETURN
 
 
 class TestValConstructInitializers:

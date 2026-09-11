@@ -614,12 +614,17 @@ def _parse_sequence(
                     # (the callable stays unmodelable).
                     idx += 1
                     continue
-            if "@" in rest:
-                label_match = _RE_LABEL_NAME.match(rest_s)
-                label = label_match.group(1) if label_match else None
+            # A labelled return is one whose label LEADS the rest
+            # (`return@scope expr`).  An `@` anywhere else in the rest text
+            # (an annotation, or a label inside a nested wrapper lambda of a
+            # `return try { ... }` statement) is not a labelled return: the
+            # statement must fall through to the construct/plain-return
+            # handling below instead of refusing as unsupported.
+            label_match = _RE_LABEL_NAME.match(rest_s)
+            if label_match is not None:
+                label = label_match.group(1)
                 if (
                     word == "return"
-                    and label is not None
                     and cur.scope_label == label
                     and cur.transparent_scope_methods
                 ):
