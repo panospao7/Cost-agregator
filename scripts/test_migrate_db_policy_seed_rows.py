@@ -1268,8 +1268,10 @@ def _seed_removal_key(entry):
 #     MerchantCategoryRepository.deleteAll, UserCorrectionRepository.deleteAll
 #   pre-u tranche (combined 421 -> 418, see GR-08-seeds.yml history):
 #     TransactionLifecycleCoordinator.bulkUpdateCategory x2
-#   GR-14u34 (this batch): ExpenseGroupDao.insertGroupWithMembers,
+#   GR-14u34: ExpenseGroupDao.insertGroupWithMembers,
 #     RoomRecurringLifecycleEventWriter.writeDiagnostic
+#   GR-14u35: ExpenseWriteStore x11 (owner-approved delete; the class, its
+#     observability test, and its allowlist entry are gone)
 _SEED_REMOVAL_LEDGER = frozenset({
     "EnhancedSplitManager.kt|EnhancedSplitManager|assignItemsToParticipants|SplitItemAssignmentDao|deleteAllForExpense|Long,List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>",
     "EnhancedSplitManager.kt|EnhancedSplitManager|assignItemsToParticipants|SplitItemAssignmentDao|insertAssignments|Long,List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>",
@@ -1313,6 +1315,18 @@ _SEED_REMOVAL_LEDGER = frozenset({
     "WarrantyTrackerRepository.kt|WarrantyTrackerRepository|deleteReturnWindow|ReturnWindowDao|deleteReturnWindow|com.yourname.expensetracker.data.database.entity.ReturnWindow",
     "WarrantyTrackerRepository.kt|WarrantyTrackerRepository|markAsReturned|ReturnWindowDao|updateReturnWindow|Long,Double?,String?",
     "WarrantyTrackerRepository.kt|WarrantyTrackerRepository|updateReturnWindow|ReturnWindowDao|updateReturnWindow|com.yourname.expensetracker.data.database.entity.ReturnWindow",
+
+    "ExpenseWriteStore.kt|ExpenseWriteStore|conditionallySetLocation|ExpenseDao|conditionallySetLocation|Long,Double,Double,String,String?,String?",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|deleteAll|ExpenseDao|deleteAll|",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|delete|ExpenseDao|delete|com.yourname.expensetracker.data.database.entity.Expense",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|incrementBackfillAttempts|ExpenseDao|incrementBackfillAttempts|Long",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|insertAll|ExpenseDao|insertAll|List<com.yourname.expensetracker.data.database.entity.Expense>",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|insert|ExpenseDao|insert|com.yourname.expensetracker.data.database.entity.Expense",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|updateCategoryNullable|ExpenseDao|updateCategoryNullable|Long,Long?",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|updateCategory|ExpenseDao|updateCategory|Long,Long",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|updateMerchantKey|ExpenseDao|updateMerchantKey|Long,String",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|updateMerchant|ExpenseDao|updateMerchant|Long,String",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|update|ExpenseDao|update|com.yourname.expensetracker.data.database.entity.Expense",
 })
 
 
@@ -7298,12 +7312,12 @@ def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
     assert len(gr08p2) == 15
     assert len(gr14) == 6
     # GR-14u34: the combined doc is the living --seed-rows input and the
-    # GR-14 dead-writer tranches pruned it (421 -> 379 through GR-14u34);
+    # GR-14 dead-writer tranches pruned it (421 -> 379 through GR-14u34 -> 368 through GR-14u35);
     # the frozen per-batch files above keep their historical counts.  The
     # contract is now: combined == concat(batch files) MINUS the
     # documented removal ledger, with the ledger itself validated against
     # both sides so it can rot in neither direction.
-    assert len(combined) == 379
+    assert len(combined) == 368
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
     batch_all = (
         list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
@@ -7315,7 +7329,7 @@ def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
         + list(gr08p1) + list(gr08p2) + list(gr14)
     )
     ledger_keys = _seed_ledger_keys(batch_all)
-    assert len(_SEED_REMOVAL_LEDGER) == 42
+    assert len(_SEED_REMOVAL_LEDGER) == 53
     # every ledger row is a real frozen-batch row (no invented removals)
     assert _SEED_REMOVAL_LEDGER <= ledger_keys, sorted(
         _SEED_REMOVAL_LEDGER - ledger_keys
