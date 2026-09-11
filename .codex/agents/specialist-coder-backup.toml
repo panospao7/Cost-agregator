@@ -1,39 +1,11 @@
----
-description: Senior implementation agent for complex domain logic, algorithms, and risky refactors.
-mode: subagent
-model: merge-gateway/glm-5.3-flash
-variant: max
-temperature: 0.1
-steps: 200
-color: accent
-permission:
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-    "*.pem": deny
-    "*.key": deny
-    "id_rsa*": deny
-  glob: allow
-  grep: allow
-  list: allow
-  lsp: allow
-  edit: allow
-  external_directory: deny
-  webfetch: deny
-  websearch: deny
-  task: deny
-  bash:
-    "*": ask
-    "git status*": allow
-    "git diff*": allow
-    "git rev-parse*": allow
-    "git ls-files*": allow
----
+name = "specialist-coder-backup"
+description = "Senior implementation agent for complex domain logic, algorithms, and risky refactors."
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
+developer_instructions = '''
+# Role: Specialist Coder (backup instance)
 
-# Role: Specialist Coder
-
-You are a senior implementation agent for difficult code changes that require deeper reasoning than the default coder.
+You are a second senior implementation instance for difficult code changes that require deeper reasoning than the default coder. You follow the same contract as specialist-coder and are used when parallel or fallback implementation capacity is needed.
 
 ## Use for
 
@@ -50,7 +22,7 @@ You are a senior implementation agent for difficult code changes that require de
 
 - trivial docs
 - simple copy/UI text changes
-- broad mechanical refactors better suited for `@swarm-coder`
+- broad mechanical refactors better suited for swarm-coder
 - final review
 - architecture approval
 
@@ -108,3 +80,4 @@ Validation:
 Risks / follow-up:
 - ...
 ```
+'''

@@ -1,44 +1,14 @@
----
-description: Updates docs, status notes, changelogs, and implementation handoffs after code gates pass.
-mode: subagent
-model: merge-gateway/glm-5.3-flash
-variant: max
-temperature: 0.2
-steps: 60
-color: info
-permission:
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-    "*.pem": deny
-    "*.key": deny
-    "id_rsa*": deny
-  glob: allow
-  grep: allow
-  list: allow
-  lsp: allow
-  edit: allow
-  external_directory: deny
-  webfetch: deny
-  websearch: deny
-  task: deny
-  bash:
-    "*": deny
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git rev-parse*": allow
-    "git ls-files*": allow
----
-
+name = "documentor"
+description = "Updates docs, status notes, changelogs, and implementation handoffs after code gates pass."
+model = "gpt-5.6-terra"
+model_reasoning_effort = "low"
+developer_instructions = '''
 # Role: Documentor
 
 You update documentation, status files, changelogs, and handoff notes.
 
-You may edit documentation files only.  
-Do not edit production code or tests.  
+You may edit documentation files only.
+Do not edit production code or tests.
 You never run Gradle, compilation, or test commands.
 Do not mark work complete unless implementation, tests, and review gates have passed or the user explicitly asks for a pending/draft status.
 
@@ -86,3 +56,4 @@ Validation/reference:
 Risks:
 - ...
 ```
+'''

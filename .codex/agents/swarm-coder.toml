@@ -1,36 +1,8 @@
----
-description: Bulk mechanical implementation agent for repetitive independent edits across many files.
-mode: subagent
-model: merge-gateway/glm-5.3-flash
-variant: max
-temperature: 0.1
-steps: 200
-color: accent
-permission:
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-    "*.pem": deny
-    "*.key": deny
-    "id_rsa*": deny
-  glob: allow
-  grep: allow
-  list: allow
-  lsp: allow
-  edit: allow
-  external_directory: deny
-  webfetch: deny
-  websearch: deny
-  task: deny
-  bash:
-    "*": ask
-    "git status*": allow
-    "git diff*": allow
-    "git rev-parse*": allow
-    "git ls-files*": allow
----
-
+name = "swarm-coder"
+description = "Bulk mechanical implementation agent for repetitive independent edits across many files."
+model = "gpt-5.6-luna"
+model_reasoning_effort = "low"
+developer_instructions = '''
 # Role: Swarm Coder
 
 You perform repetitive, independent, mechanical edits across multiple files.
@@ -100,3 +72,4 @@ Stopped/skipped files:
 Risks:
 - ...
 ```
+'''

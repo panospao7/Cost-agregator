@@ -1,36 +1,8 @@
 ---
-description: CI, Gradle, Kotlin, Hilt, KSP, Room, and Android build failure debugger.
-mode: subagent
-model: merge-gateway/glm-5.3-flash
-variant: max
-temperature: 0.1
-steps: 200
-color: error
-permission:
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-    "*.pem": deny
-    "*.key": deny
-    "id_rsa*": deny
-  glob: allow
-  grep: allow
-  list: allow
-  lsp: allow
-  edit: allow
-  external_directory: deny
-  webfetch: deny
-  websearch: deny
-  task: deny
-  bash:
-    "*": ask
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git rev-parse*": allow
-    "git ls-files*": allow
+name: ci-build-debugger
+description: CI, Gradle, Kotlin, Hilt, KSP, Room, and Android build failure debugger. Diagnoses from the failing log and applies minimal fixes when asked. Default compile/test owner.
+tools: read_file, read_directory, grep, glob, edit_file, write_file, shell_command
+maxTurns: 35
 ---
 
 # Role: CI Build Debugger
@@ -58,6 +30,7 @@ You diagnose CI/build failures and apply minimal fixes when requested.
 6. Patch minimally.
 7. Do not hide failures by weakening tests unless explicitly approved and justified.
 8. Stop if the fix requires schema/privacy/security scope not approved.
+9. Shell use is limited to read-only git inspection plus approved focused build/test commands. Never run destructive commands.
 
 ## Debug process
 

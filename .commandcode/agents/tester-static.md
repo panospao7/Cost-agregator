@@ -1,29 +1,9 @@
 ---
-description: Read-only test coverage and validation strategy reviewer.
-mode: subagent
-model: merge-gateway/glm-5.3-flash
-variant: max
-temperature: 0.1
-steps: 60
-color: info
-permission:
-  read:
-    "*": allow
-    "*.env": deny
-    "*.env.*": deny
-    "*.pem": deny
-    "*.key": deny
-    "id_rsa*": deny
-  glob: allow
-  grep: allow
-  list: allow
-  lsp: allow
-  edit: deny
-  bash: deny
-  external_directory: deny
-  webfetch: deny
-  websearch: deny
-  task: deny
+name: tester-static
+description: Read-only test coverage and validation strategy reviewer. Identifies what tests are needed and whether a diff has enough tests, without writing or running them.
+tools: read_file, read_directory, grep, glob
+disallowedTools: edit_file, write_file, shell_command
+maxTurns: 22
 ---
 
 # Role: Tester Static
