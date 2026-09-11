@@ -93,7 +93,7 @@ Within one callable, `_DirectSiteProver` returns one of:
 
 This tri-state exists because "not proven" in the body model is *absence of evidence*, not
 evidence of absence.  Before it (pre-GR-14u15) every unmodelable body was reported as an
-unguarded call path.  **This is why 32 current rows read `unproven` — see §3.4.**
+unguarded call path.  **This is why 29 current rows read `unproven` — see §3.4.**
 
 ### 1.5 Carrier classification
 
@@ -385,10 +385,50 @@ try {
 ```
 
 Because a barrier call **precedes** the mutation, "definitely unguarded" is not established,
-so the engine correctly reports *unproven* rather than inventing a violation.  **These 32
+so the engine correctly reports *unproven* rather than inventing a violation.  **These 29
 rows are the lowest-risk unproven rows on the board** and should not be triaged as suspicious.
 To ever prove them, the GR-12 model would have to handle exception flow — a large engine
 change, not a quick fix.
+
+### 3.5 Remediation map for the residual 105 (measured 2026-09-11)
+
+Every remaining unproven row is classified by **what would actually prove it** (probe
+`build/guard-debug/gr14w0/triage_remediation.py`), and by whether its file participates in the
+barrier model at all.  This is the hand-off list for the remaining work.
+
+| # rows | What would prove it | File references the barrier? |
+|---|---|---|
+| **24** | **engine: exception flow** — body unmodelable solely because of `try`/`catch` (§3.4) | 24/24 yes |
+| **24** | **owner decision** — zero inbound; likely dead, verify by hand (§3.2) | 22/24 yes |
+| **22** | **engine: body/path unmodelable** — async-decided, local guard unprovable | 22/22 yes |
+| **20** | 🔴 **PRODUCTION: add a canonical guard** — the file has **no barrier reference at all** | **0/20** |
+| **10** | `GR13_SITE_INSIDE_UNRESOLVED_LAMBDA` — the D19 anonymous-object blind spot | 0/10 |
+| **5** | engine: CFG scope wiring — evidenced in §4.D18, take only bundled | 5/5 yes |
+
+**The 20 `A` rows are the finding that matters for the real codebase.**  They sit in files that
+never call `checkWritesAllowed` or `runWrite` — i.e. writers that do **not participate in the
+mediation model at all**.  This is the same shape as the GR-14u18 `migrateCategories` bug (five
+such writers were found and fixed earlier in the campaign; §5.1), and unlike the ~70 engine-side
+rows these are actionable as *production* changes today.  The files, with counts:
+
+| File | Rows | Notes |
+|---|---|---|
+| `RestoreJournalImporter.kt` | 4 | restore-journal import; mitigation is `restoreMaintenanceMode.isWritesAllowed()` in `AppStartupCoordinator` — non-canonical |
+| `OperationRunRecorder.kt` | 4 | the run handle is worker-gated upstream — non-canonical |
+| `WorkerRunLogger.kt` | 2 | |
+| `JsonExpenseImporter.kt` | 2 | `parseV1Row` / `parseV2Row`; reachable only from debug import UI |
+| `CsvExpenseImporter.kt` | 1+ | `getOrCreateCategory` |
+| `PrivacyAuditLoggerImpl.kt`, `ReceiptInsertResolver.kt`, `DiagnosticEventWriter.kt`, `SourceLinkWriterImpl.kt`, … | 1 each | |
+
+**Owner decision required per file.**  AGENTS.md forbids adding a canonical guard to a
+**privacy-cleanup path that must be able to run during maintenance** — the guard would block the
+cleanup (the rule "privacy cleanup workers must be able to run so they can delete raw data").
+So triage each: a normal writer gets the canonical guard; a cleanup/restore path needs a
+sanctioned form **modelled in the contract** (the GR-14u25 precedent), not a guard.
+
+**Summary of what remains, by owner:** ~46 engine rows (24 exception flow + 22 body/path — one
+GR-12 workstream), 24 dead-code decisions, 20 production guards, 10 blocked on D19, 5 on a
+contract bundle.
 
 ---
 
@@ -755,7 +795,7 @@ defects.  Listed here so they are not lost.
 
 ### 5.4 NOT a bug — but worth knowing
 
-The 32 `exact_synchronous` rows (§3.4) are all "guard present at the top, body unmodelable".
+The 29 `exact_synchronous` rows (§3.4) are all "guard present at the top, body unmodelable".
 They are **low risk**.  Conversely, `checkWritesAllowed` placed *after* a mutation does not
 cover it (the tri-state is position-aware) — a real ordering requirement for new code.
 
