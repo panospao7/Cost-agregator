@@ -1,0 +1,14 @@
+test/java/com/yourname/expensetracker/data/backup/AppOperationalStateTest.kt	95
+test/java/com/yourname/expensetracker/data/backup/AssetRestoreAtomicityTest.kt	232
+test/java/com/yourname/expensetracker/data/backup/BackupVerifierManifestTest.kt	155
+test/java/com/yourname/expensetracker/data/backup/CostbackupBundleLimitsTest.kt	255
+test/java/com/yourname/expensetracker/data/backup/DataStoreMaintenanceSafeDiagnosticSinkTimeProviderTest.kt	215
+test/java/com/yourname/expensetracker/data/backup/DatabaseBarrierTest.kt	195
+test/java/com/yourname/expensetracker/data/backup/ExportReadBarrierTest.kt	143
+test/java/com/yourname/expensetracker/data/backup/MaintenanceOperationRunnerTest.kt	167
+test/java/com/yourname/expensetracker/data/backup/MaintenanceSafeDiagnosticSinkTest.kt	91
+test/java/com/yourname/expensetracker/data/backup/P7BugFixesTest.kt	429
+test/java/com/yourname/expensetracker/data/backup/RestoreJournalDurabilityTest.kt	80
+test/java/com/yourname/expensetracker/data/backup/RestoreJournalImporterFailureTest.kt	127
+test/java/com/yourname/expensetracker/data/backup/RestoreJournalTimeProviderTest.kt	145
+test/java/com/yourname/expensetracker/data/currency/ExchangeRateStoreAdapterTest.kt	195

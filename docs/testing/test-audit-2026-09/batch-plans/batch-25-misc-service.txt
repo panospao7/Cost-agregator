@@ -1,0 +1,17 @@
+test/java/com/yourname/expensetracker/service/NavigationTargetResolverTest.kt	424
+test/java/com/yourname/expensetracker/service/NotificationCaptureServiceCleanupTest.kt	185
+test/java/com/yourname/expensetracker/service/NotificationCaptureServiceFallbackTest.kt	69
+test/java/com/yourname/expensetracker/service/NotificationFilterTest.kt	345
+test/java/com/yourname/expensetracker/service/RecommendationCacheServiceTest.kt	383
+test/java/com/yourname/expensetracker/service/RecommendationDeduplicatorTest.kt	203
+test/java/com/yourname/expensetracker/service/RecommendationDismissalHandlerTest.kt	387
+test/java/com/yourname/expensetracker/service/RecommendationLifecycleManagerTest.kt	473
+test/java/com/yourname/expensetracker/service/RecommendationStateManagerTest.kt	830
+test/java/com/yourname/expensetracker/service/TransactionFilterSerializerTest.kt	236
+test/java/com/yourname/expensetracker/service/receiptmatching/ReceiptMatchingWorkerTest.kt	686
+test/java/com/yourname/expensetracker/service/reminder/BillReminderWorkerTest.kt	255
+test/java/com/yourname/expensetracker/service/reminder/BillReminderWorkerTimeProviderTest.kt	133
+test/java/com/yourname/expensetracker/service/reminder/DismissReminderActionWorkerTest.kt	71
+test/java/com/yourname/expensetracker/service/reminder/SnoozeReminderActionWorkerTest.kt	71
+test/java/com/yourname/expensetracker/service/warranty/WarrantyExpirationWorkerTest.kt	342
+test/java/com/yourname/expensetracker/startup/AppStartupCoordinatorRecoveryTest.kt	204

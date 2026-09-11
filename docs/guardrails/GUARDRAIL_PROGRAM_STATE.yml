@@ -1,0 +1,129 @@
+# Intended location: docs/ci/GUARDRAIL_PROGRAM_STATE.yml
+# Orchestrator-owned. This is a current-state index, not a historical ledger.
+
+schemaVersion: 1
+
+asOf:
+  targetSha: "<full-40-character-sha>"
+  targetTreeSha: "<full-40-character-tree-sha>"
+  baseSha: "<full-40-character-protected-base-sha>"
+  mergeBaseSha: "<full-40-character-merge-base-sha>"
+  evidenceId: "<gate-00r-or-final-evidence-id>"
+  workingTreeClean: true
+
+program:
+  status: "DISCOVERY" # DISCOVERY | ACTIVE | BLOCKED | VERIFIED_AT_SHA | SUPERSEDED
+  currentRoute: "<next approved plan>"
+  blockingReasons: []
+  notes: []
+
+ownershipLocks:
+  ACTIVE_DB_POLICY: null
+  DB_BASELINE: null
+  DB_SCANNER_AND_REPORT_PROTOCOL: null
+  STRUCTURAL_PROOF_ENGINE: null
+  SOURCE_SCOPE_MANIFEST_AND_RESOLVER: null
+  REGISTRY_SUITE_RATCHET_GRADLE_CONTROL_PLANE: null
+  TIME_POLICY: null
+  MIGRATION_POLICY_AND_PROOF: null
+  RELEASE_POLICY_AND_ARTIFACT_VERIFIER: null
+  CI_WORKFLOW_AND_REQUIRED_CHECKS: null
+  DOCUMENTATION_AND_EVIDENCE_INDEX: null
+  PRODUCTION_KOTLIN: null
+  GRADLE_EXECUTION: null
+
+plans:
+  - id: "GATE-00R"
+    state: "READY" # NOT_READY | READY | ACTIVE | BLOCKED | COMPLETE_AT_SHA | SUPERSEDED
+    prerequisites: []
+    evidenceRequired: []
+    allowedAuthoritySurfaces:
+      - DOCUMENTATION_AND_EVIDENCE_INDEX
+    forbiddenAuthoritySurfaces:
+      - ACTIVE_DB_POLICY
+      - DB_BASELINE
+      - PRODUCTION_KOTLIN
+    owner: null
+    reviewer: null
+    startSha: null
+    completionEvidenceId: null
+    blocker: null
+
+  - id: "TIME-01"
+    state: "NOT_READY"
+    prerequisites:
+      - "GATE-00R"
+    allowedAuthoritySurfaces:
+      - PRODUCTION_KOTLIN
+      - TIME_POLICY
+    owner: null
+    reviewer: null
+    startSha: null
+    completionEvidenceId: null
+    blocker: null
+
+  - id: "GR-08q"
+    state: "CONDITIONAL"
+    condition: "Create only when current DB CLI exits 1 with trusted true and blocking diagnostics zero."
+    prerequisites:
+      - "GATE-00R"
+    allowedAuthoritySurfaces:
+      - ACTIVE_DB_POLICY
+      - PRODUCTION_KOTLIN
+    forbiddenAuthoritySurfaces:
+      - DB_BASELINE
+    owner: null
+    reviewer: null
+    startSha: null
+    completionEvidenceId: null
+    blocker: null
+
+  - id: "GR-10A"
+    state: "NOT_READY"
+    prerequisites:
+      - "GATE-00R"
+    allowedAuthoritySurfaces:
+      - REGISTRY_SUITE_RATCHET_GRADLE_CONTROL_PLANE
+    owner: null
+    reviewer: null
+    startSha: null
+    completionEvidenceId: null
+    blocker: null
+
+  - id: "GR-10B"
+    state: "NOT_READY"
+    prerequisites:
+      - "GR-10A"
+    allowedAuthoritySurfaces:
+      - SOURCE_SCOPE_MANIFEST_AND_RESOLVER
+    owner: null
+    reviewer: null
+    startSha: null
+    completionEvidenceId: null
+    blocker: null
+
+  - id: "GR-10D"
+    state: "NOT_READY"
+    prerequisites:
+      - "GR-10A"
+      - "GR-10B"
+    allowedAuthoritySurfaces:
+      - DOCUMENTATION_AND_EVIDENCE_INDEX
+    owner: null
+    reviewer: null
+    startSha: null
+    completionEvidenceId: null
+    blocker: null
+
+  - id: "FIN-00"
+    state: "NOT_READY"
+    prerequisites:
+      - "CI-11"
+      - "REL-00"
+      - "MIG-01"
+    allowedAuthoritySurfaces: []
+    owner: null
+    reviewer: null
+    startSha: null
+    completionEvidenceId: null
+    blocker: null
