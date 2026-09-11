@@ -1,0 +1,52 @@
+# GR-14u32 — post-u31 subject census, engine-exact (scoping record; NO code
+# change).  Supersedes the GR-14u30 refusal mix, which was measured through a
+# probe parse WITHOUT the transparent-scope set and therefore showed the
+# outer-capture symptom (BARRIER_CHECK swallowing whole wrapper statements)
+# instead of the engine's inner refusals.
+#
+# Method note (probe fidelity): the mediation engine determines
+# GR13_LOCAL_GUARD_UNMODELABLE via prove_callable_direct_barriers
+# (direct_barrier_bridge), whose parse passes
+# CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_methods =
+# ('withTransaction','runInTransaction','withContext') plus the opacity
+# predicate over real mutation sites.  Probes of the remaining subjects
+# MUST pass the V2 set; the no-set probe differs whenever a wrapper
+# statement contains barrier text.
+#
+# Remaining unmodelable subjects after GR-14u31 (board 8b634e35, 15 rows
+# over 7 callables), with the engine-view refusal families:
+#
+#   processBankStatement (7 rows):
+#     lambda-escape x10 - stdlib carrier lambdas in statements/initializers:
+#       val x = y.mapIndexed { }, x.count { }, require(x) { },
+#       x.associateBy { }, CancellationSafe.runCatchingCancellable { },
+#       call-with-trailing-lambda inserts
+#     unknown-construct x1 - 'duplicatesSkipped++' increment statement
+#     coroutine-builder x1 - 'withContext(NonCancellable) { withTimeout...'
+#     elvis-block x1 - 'runId?.let { rid -> ... }' (safe-call + lambda)
+#   syncTransactions (1), addExpenseToGroup (1): same carrier-lambda family
+#     (runOperation/mapIndexed/count/require shapes inside the wrappers)
+#   migrateCategories (1): carrier lambdas + db.rawQuery(...).use { }
+#   ensureDefaultCategories (4): statement boundary starts mid-token
+#     ('ithContext') - a _split_statements off-by-one to diagnose
+#   updateExpenseCategoryBulk (1): withLock - the ledger §B3 declined row
+#
+# THE NEXT BATCH (by yield): structural admission of carrier-lambda
+# statements.  The structural parse refuses ANY statement whose expression
+# carries a trailing lambda (lambda-escape), which blanks entire guarded
+# writers over ordinary stdlib idioms (map/count/require/let/use).  The
+# closed reviewed name set already exists as PRODUCTION_TRANSPARENT_INLINE_METHODS
+# (contract V3); the batch would teach the structural parse to admit
+# trailing-lambda statements headed by that closed set, parsing the lambda
+# body recursively (fail-closed for unlisted names), fixture-first, with a
+# Step-0 projection.  Ledger §B5 (carrier admission ~0 rows) does NOT apply:
+# that measured EDGE admission; this is STRUCTURAL parseability of bodies
+# the model currently refuses wholesale.
+#
+# Smaller adjacent items, deliberately not bundled:
+#   - 'duplicatesSkipped++' (STATEMENT region; trivially sound, no yield alone)
+#   - ensureDefaultCategories splitter off-by-one (needs _split_statements
+#     diagnosis; likely moves its 4 rows once fixed)
+#   - 'runId?.let' elvis-block detection (diagnose why a safe-call + lambda
+#     triggers the elvis refusal)
+status: SCOPED - awaiting batch execution (carrier-lambda admission first)
