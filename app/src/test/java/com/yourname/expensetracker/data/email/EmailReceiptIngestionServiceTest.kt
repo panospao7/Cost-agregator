@@ -814,6 +814,140 @@ class EmailReceiptIngestionServiceTest {
         )
     }
 
+    // -------------------------------------------------------------------------
+    // NEW-P11-2026-002: two distinct Apple orders with identical amount, currency,
+    // merchant, and hour bucket but different orderNumbers must NOT collapse into
+    // a Duplicate — orderNumber is the strongest distinguishing token in the
+    // content fingerprint.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `two distinct Apple orders same amount same hour different orderNumber not duplicate`() = runTest {
+        val fingerprints = mutableListOf<String>()
+        every { appleParser.parse(any(), any()) } returnsMany listOf(
+            ParsedEmailReceipt(
+                merchant = "Apple",
+                amount = 9.99,
+                currency = "USD",
+                date = FIXED_NOW,
+                items = emptyList(),
+                orderNumber = "MT111111111",
+                confidence = 0.9
+            ),
+            ParsedEmailReceipt(
+                merchant = "Apple",
+                amount = 9.99,
+                currency = "USD",
+                date = FIXED_NOW,
+                items = emptyList(),
+                orderNumber = "MT222222222",
+                confidence = 0.9
+            )
+        )
+
+        coEvery {
+            receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any())
+        } answers {
+            fingerprints.add(secondArg())
+            EmailReceiptProcessResult.Success(receiptId = 1L, expenseIds = emptyList())
+        }
+
+        val result1 = service.processEmailReceipt(
+            emailBody = "Total \$9.99 Order ID: MT111111111 Date: March 03, 2026",
+            sender = "do_not_reply@apple.com",
+            subject = "Your receipt from Apple.",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-apple-order-a"
+        )
+        val result2 = service.processEmailReceipt(
+            emailBody = "Total \$9.99 Order ID: MT222222222 Date: March 03, 2026",
+            sender = "do_not_reply@apple.com",
+            subject = "Your receipt from Apple.",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-apple-order-b"
+        )
+
+        assertTrue("First Apple order should succeed, got $result1", result1 is EmailReceiptResult.Success)
+        assertTrue(
+            "Second distinct Apple order must NOT be Duplicate, got $result2",
+            result2 is EmailReceiptResult.Success
+        )
+        assertEquals(2, fingerprints.size)
+        assertNotEquals(
+            "Distinct Apple order numbers must produce distinct fingerprints",
+            fingerprints[0],
+            fingerprints[1]
+        )
+    }
+
+    // -------------------------------------------------------------------------
+    // NEW-P11-2026-002 RESIDUAL PIN (PARTIAL): canParse is sender-gated, but the
+    // pipeline can still route non-Apple-sender mail to appleParser.parse via
+    // (a) detectProvider's body fallback (apple.com/itunes in body → provider
+    // "apple") and (b) the unknown-provider try-all path. Full gating is deferred
+    // to a follow-up forwarder-design pass. This test PINS the current end-to-end
+    // behavior so a future gating change fails loudly here instead of silently
+    // changing routing.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `non-Apple sender with Apple signals in body still reaches apple parser via fallback routes (residual pin)`() = runTest {
+        // canParse behaves like the real parser for a non-Apple sender: rejected.
+        every { appleParser.canParse(any(), any(), any()) } returns false
+        every { amazonParser.parse(any(), any()) } returns null
+        every { uberParser.parse(any(), any()) } returns null
+        every { appleParser.parse(any(), any()) } returns ParsedEmailReceipt(
+            merchant = "Apple",
+            amount = 4.99,
+            currency = "USD",
+            date = FIXED_NOW,
+            items = emptyList(),
+            orderNumber = "MT333333333",
+            confidence = 0.9
+        )
+
+        val routedProviders = mutableListOf<String>()
+        coEvery {
+            receiptLifecycleCoordinator.processEmailReceipt(any(), any(), any(), any(), any(), any(), any(), any())
+        } answers {
+            routedProviders.add(args[6] as String)
+            EmailReceiptProcessResult.Success(receiptId = 1L, expenseIds = emptyList())
+        }
+
+        // (a) Body fallback: non-Apple sender + apple.com in body → provider "apple"
+        val bodyFallbackResult = service.processEmailReceipt(
+            emailBody = "Thanks for your order. Manage it anytime at apple.com. Total \$4.99",
+            sender = "orders@thirdparty-shop.example",
+            subject = "Your order is confirmed",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-residual-pin-body-fallback"
+        )
+
+        // (b) Unknown-provider try-all: no provider signals anywhere → provider
+        // "unknown" → parseEmailReceipt tries all parsers including appleParser.parse
+        val tryAllResult = service.processEmailReceipt(
+            emailBody = "Total \$4.99 for your purchase. Order MT333333333.",
+            sender = "orders@thirdparty-shop.example",
+            subject = "Your order is confirmed",
+            receivedAt = FIXED_NOW,
+            messageId = "msg-residual-pin-try-all"
+        )
+
+        assertTrue(
+            "Body fallback route must still produce Success (documented residual), got $bodyFallbackResult",
+            bodyFallbackResult is EmailReceiptResult.Success
+        )
+        assertTrue(
+            "Unknown-provider try-all route must still produce Success (documented residual), got $tryAllResult",
+            tryAllResult is EmailReceiptResult.Success
+        )
+        assertEquals(
+            "Non-Apple-sender mail must currently route to provider apple via body fallback (residual)",
+            listOf("apple", "unknown"),
+            routedProviders
+        )
+    }
+
     companion object {
         private const val FIXED_NOW = 1_730_000_000_000L
     }
