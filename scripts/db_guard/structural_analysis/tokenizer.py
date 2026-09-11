@@ -70,7 +70,12 @@ _RE_LAMBDA_PARAMS = re.compile(
     r"\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*\s*->"
 )
 _RE_TS_SCOPE = re.compile(
-    r"^(?:(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?"
+    # GR-14g: an optional `val/var name[: Type] = ` assignment prefix is
+    # admitted before the wrapper call (`val id = database.withTransaction
+    # { ... }`); admission is still method-gated in _match_transparent_scope
+    # and the match still ends exactly at the opening brace.
+    r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*\s*(?::\s*[^\n=]*?)?=\s*)?"
+    r"(?:(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?"
     r"(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*"
     r"(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{"
 )
@@ -814,44 +819,77 @@ def _parse_sequence(
                 idx += 1
                 continue
             if tail:
-                cur.fail(
-                    "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
-                    base,
-                    stmt_e,
-                    "unknown-construct",
+                # GR-14g: a canonical direct check embedded inside the
+                # trailing lambda of a transparent-scope candidate
+                # (`withContext(...) { writeBarrier.checkWritesAllowed(...);
+                # ... }`) is owned by the transparent-scope branch below —
+                # the lambda body parses recursively and the check statement
+                # then proves as its own DIRECT_CHECK part.  Fall through
+                # only for that exact canonical shape with v2 transparent
+                # scopes enabled; every other embedded-check shape keeps the
+                # strict unknown-construct failure (fail closed).  The
+                # fall-through must skip the DIRECT_CHECK append below.
+                embedded_in_ts = (
+                    bool(cur.transparent_scope_methods)
+                    and m.group(0) == "writeBarrier.checkWritesAllowed("
+                    and _match_transparent_scope(
+                        stripped, cur.transparent_scope_methods
+                    )
+                    is not None
+                )
+                if not embedded_in_ts:
+                    cur.fail(
+                        "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                        base,
+                        stmt_e,
+                        "unknown-construct",
+                    )
+                    idx += 1
+                    continue
+            else:
+                if "{" in cur.text[base + paren_rel : close]:
+                    cur.fail(
+                        "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+                        base,
+                        stmt_e,
+                        "lambda-in-barrier-check",
+                    )
+                    idx += 1
+                    continue
+                out.append(
+                    ParsedRegion(
+                        kind=RegionKind.DIRECT_CHECK,
+                        span=cur.span(base, close),
+                        barrier=BarrierMarkerKind.DIRECT_CHECK,
+                    )
                 )
                 idx += 1
                 continue
-            if "{" in cur.text[base + paren_rel : close]:
-                cur.fail(
-                    "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
-                    base,
-                    stmt_e,
-                    "lambda-in-barrier-check",
-                )
-                idx += 1
-                continue
-            out.append(
-                ParsedRegion(
-                    kind=RegionKind.DIRECT_CHECK,
-                    span=cur.span(base, close),
-                    barrier=BarrierMarkerKind.DIRECT_CHECK,
-                )
-            )
-            idx += 1
-            continue
 
         if _RE_LIKE_BARRIER.search(stripped):
             m = _RE_LIKE_BARRIER.search(stripped)
             assert m is not None
-            cur.fail(
-                "DB_STRUCTURAL_MODEL_BARRIER_FORM_UNRECOGNIZED",
-                base + m.start(),
-                stmt_e,
-                "barrier-form-unrecognized",
+            # GR-14g: the embedded direct check inside a transparent-scope
+            # candidate statement fell through the branch above; defer to the
+            # transparent-scope handling below.  Every other barrier-like
+            # call keeps the strict failure.
+            deferred_to_ts = (
+                bool(cur.transparent_scope_methods)
+                and m.group(0).startswith("writeBarrier.checkWritesAllowed")
+                and _match_transparent_scope(
+                    stripped, cur.transparent_scope_methods
+                )
+                is not None
             )
-            idx += 1
-            continue
+            if not deferred_to_ts:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_BARRIER_FORM_UNRECOGNIZED",
+                    base + m.start(),
+                    stmt_e,
+                    "barrier-form-unrecognized",
+                )
+                idx += 1
+                continue
 
         ts_match = _match_transparent_scope(stripped, cur.transparent_scope_methods)
         if ts_match is not None:
