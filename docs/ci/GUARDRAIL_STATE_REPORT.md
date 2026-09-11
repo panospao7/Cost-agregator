@@ -1,7 +1,7 @@
 # GUARDRAIL STATE REPORT — database write-barrier proof engine
 
 **Status date:** 2026-09-11
-**Branch:** `gr-14f-wip` @ `20fb4278` (GR-14u22…u25 + money fix committed)
+**Branch:** `gr-14f-wip` @ `89844c7f` + GR-14u26 (uncommitted)
 **Audience:** anyone continuing the GR-14 guardrail campaign, and anyone looking for
 production database-write bugs.  This document is a *state* report: what the guardrails
 are, what the measured state is, every known issue with its status, and the production-code
@@ -134,19 +134,19 @@ single most valuable practice in this campaign — do not skip it for "obvious" 
 
 ### 2.1 Board
 
-Report sha256 **`35de3592eaedbc2e90d7da33ca9bcc0ffdef8b8863805f14b03dd0e7b5933106`**
+Report sha256 **`04e6a21a976bad3f3dfb93a9529250761cb963afb1f06c1d35f33f4a8c58d986`**
 (deterministic across a double run).  406 policy rows.
 
 | Bucket | Count |
 |---|---|
-| `proven_helper` | **173** |
+| `proven_helper` | **186** |
 | `proven_restore_internal` | **1** |
 | `proven_worker_mediated` | 14 |
-| `unproven_ambiguous_call` | 58 |
+| `unproven_ambiguous_call` | 45 |
 | `unproven_async_or_escaping_callback` | 133 |
 | `unproven_external_entry` | 27 |
 | **`counterexample_unguarded_call_path`** | **0** |
-| **proven / unproven** | **188 / 218** |
+| **proven / unproven** | **201 / 205** |
 
 Policy sha256 `7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31` —
 434 entries, 0 load errors.  Baseline/exception bytes unchanged.  Report is shadow-only
@@ -165,6 +165,7 @@ Policy sha256 `7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31`
 | GR-14u23 (2026-09-11) | anonymous-implementor counting (latent, 0 rows) | helper 164 |
 | GR-14u24 (2026-09-11) | single-implementor interface exactness | 9 rows → helper (vs u22/u23) |
 | GR-14u25 (2026-09-11) | **contract V3**: restore-internal scope | restore row → **proven_restore_internal** |
+| GR-14u26 (2026-09-11) | receiver-aware `::` reference resolution | helper 173 → **186** |
 
 Net through GR-14u21: **proven_helper 69 → 155** (proven 83 → 169), counterexamples **0
 throughout** — the live board never carried one.  (The "18 counterexamples" seen during
@@ -177,7 +178,13 @@ GR-14u22 → u25 (the last four batches) move the board from `fe40d369` to `35de
 proven→unproven.  Two of those four batches (u23, and u25 on its own) are **latent** —
 verified byte-identical with their activator neutralised.
 
-Campaign-wide, GR-14u5 → u25: proven_helper **48 → 173**.
+Campaign-wide, GR-14u5 → u26: proven_helper **48 → 186**.
+
+GR-14u26 drained the `function_reference` bucket: 13 of its 14 rows proved and the 14th
+moved to `unresolved_target` and stayed unproven — the bucket is emptied without
+over-claiming.  Worth noting for expectation-setting: this batch yielded **13 of 14**, a much
+better rate than the `interface_dispatch` bucket's 10 of 20, because here the receiver type
+was already declared and only the reference path was blind to it.
 
 The u24 Step-0 HARD STOP is **resolved**: the single counterexample became a proof rather
 than being suppressed.  See §4.D4 and §5.1.1.
@@ -186,11 +193,11 @@ than being suppressed.  See §4.D4 and §5.1.1.
 
 | Check | Result |
 |---|---|
-| engine battery (`scripts/ci/`) | **1220 passed / 13 failed / 14 skipped** |
-| ↳ of the 13 | **all PRE-EXISTING and A/B-proven** — stashing this session's work and re-running the same files at HEAD yields the identical 13 (§6.B4) |
+| engine battery (`scripts/ci/`) | **1227 passed / 13 failed / 14 skipped** |
+| ↳ of the 13 | **all PRE-EXISTING and A/B-proven** — identical set at HEAD and after GR-14u26 (§6.B4) |
 | `scripts/db_guard` unit tests | **235 passed** |
-| fixture scenarios | **61 / 61** (consolidated rows 69) |
-| board determinism (double run) | byte-identical (`35de3592`) |
+| fixture scenarios | **62 / 62** (consolidated rows 70) |
+| board determinism (double run) | byte-identical (`04e6a21a`) |
 | Kotlin `:app:compileDebugKotlin` | PASS (last run GR-14u20) |
 
 **The full Kotlin test suite is NOT a usable gate** — see §6.  Prefer targeted
@@ -198,8 +205,8 @@ than being suppressed.  See §4.D4 and §5.1.1.
 
 ### 2.3 Batch history
 
-41 manifests through GR-14u25 (`docs/ci/db-mediation/`:
-GR-12, GR-13 ×2, GR-14a–t, GR-14u ×1 + u2–u25).
+41 manifests through GR-14u25, **42** with GR-14u26 (`docs/ci/db-mediation/`:
+GR-12, GR-13 ×2, GR-14a–t, GR-14u ×1 + u2–u26).
 Each newer manifest carries its delta, evidence and validation status.
 
 ---
@@ -232,14 +239,14 @@ Decided by `external_entry`: zero inbound call sites. Domain:
 - *Called only from an `init {}` block* (engine invisible): **active but unprovable** —
   do NOT delete.  See §5.2 Defect II.
 
-### 3.3 `unproven_ambiguous_call` — 58 rows (post-GR-14u25)
+### 3.3 `unproven_ambiguous_call` — 45 rows (post-GR-14u26)
 
 | Deciding resolution | Rows (live board) | What it means |
 |---|---|---|
 | `exact_synchronous` | **32** | Guard present, body **unmodelable** — see §3.4 |
-| `function_reference` | 14 | `::method` callbacks — triaged §3.3.1; next natural batch (§9 item 2b) |
-| `unresolved_target` | 12 | Receiver or target not resolved — triaged §3.3.1 |
-| ~`interface_dispatch` | **0** | **DRAINED** by GR-14u23/u24/u25 (§4.D4) — was 20 |
+| `unresolved_target` | 13 | Receiver or target not resolved — triaged §3.3.1 |
+| ~`function_reference` | **0** | **DRAINED** by GR-14u26 — 13 proved, 1 re-decided as `unresolved_target` |
+| ~`interface_dispatch` | **0** | **DRAINED** by GR-14u23/u24/u25 (§4.D4) |
 
 **Where the 20 `interface_dispatch` rows actually went** (measured per row, not inferred —
 `build/guard-debug/gr14u25/transition_check.py`):
@@ -348,6 +355,7 @@ change, not a quick fix.
 | D13 | restore-internal scope inexpressible in the contract | proof only | ✅ **FIXED** GR-14u25 (V3) |
 | D14 | `restore_internal` collapsed to `worker` in context propagation | proof only | ✅ **FIXED** GR-14u25 |
 | D15 | scan coverage excludes the `debug`/`release` source sets | — | ✅ **NOT A DEFECT** — deliberate, enforced 3 ways, already tested (§5.5). Do not widen. |
+| D16 | `::` references carried no receiver, so bound references name-matched | hid 14 rows | ✅ **FIXED** GR-14u26 |
 
 ### 4.D4 — `interface_dispatch` — RESOLVED ACROSS u23 / u24 / u25 (LANDED)
 
@@ -677,11 +685,14 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
    18 rows → `proven_helper` + 1 → `proven_restore_internal`, 0 counterexamples.
    See §4.D4, §5.1.1, `GR-14u24.yml`, `GR-14u25.yml`.
 
-2b. **NEW — `function_reference` (14 rows)** — now the largest *resolution* bucket and
-   unblocked by the D4 chain: `expr::name` callables are still emitted as one uncertain
-   `FUNCTION_REFERENCE` edge with name-matched targets (callgraph.py `_resolve_call`).  A
-   natural next batch (GR-14u26): resolve the receiver expression of `::` and bind the
-   reference to the single corpus member, keeping ambiguity fail-closed.  Pins first.
+2b. ~~**`function_reference` (14 rows)**~~ — **DONE as GR-14u26 (2026-09-11)**: the `::`
+   reference scan now captures the receiver and binds a typed receiver with a unique
+   member exactly; fail-closed for bare/chained/unresolved/generic/overloaded shapes.
+   13 rows → `proven_helper`, 1 → `unresolved_target` (still unproven); the bucket is
+   drained.  Board `04e6a21a`.  **Side effect worth knowing:** a referenced member is now
+   *reachable*, so an unguarded writer reached only via `::` becomes a definite
+   counterexample — the fixture corpus shows this (HP-04, expectations updated) while the
+   live board stays at 0 counterexamples because all 13 moved rows are guarded.
 3. ~~**§3.3.1 `dagger.Lazy.get()` transparent unwrap**~~ — **DONE as GR-14u22
    (2026-09-11)**: 9 rows ambiguous → proven_helper, board `6a18b4bf`, 0 counterexamples.
 4. **§5.3.2 `BankApiIntegrationTest`** — run it alone at HEAD; stale-test vs regression.

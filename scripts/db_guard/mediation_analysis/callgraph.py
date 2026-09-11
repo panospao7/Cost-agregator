@@ -489,7 +489,10 @@ _CALL_CANDIDATE_RE = re.compile(
     r"(?P<qual>(?:%s\s*\.\s*)*)"
     r"(?P<name>%s)\s*(?=\(|\{)" % (r"[A-Za-z_][A-Za-z0-9_]*", _ID)
 )
-_REFERENCE_RE = re.compile(r"::\s*([A-Za-z_][A-Za-z0-9_]*)")
+_REFERENCE_RE = re.compile(
+    r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)?[ \t]*::[ \t]*"
+    r"([A-Za-z_][A-Za-z0-9_]*)"
+)
 _BUILTIN_TYPE_NAMES = frozenset({
     "String", "Int", "Long", "Boolean", "Double", "Float", "Char", "Byte",
     "Short", "Any", "Unit", "Nothing", "Number", "List", "MutableList", "Set",
@@ -1160,15 +1163,19 @@ def extract_calls(
     # Function references (`::name`, `this::name`, `Type::name`) with no
     # argument list or trailing lambda are invisible to the call-candidate
     # regex; scan them separately (`::class` property references excluded).
+    # GR-14u26: the receiver spelling is captured too, so a BOUND member
+    # reference (`viewModel::confirmQuickApprove`) can be resolved through the
+    # normal receiver-typing machinery instead of falling back to a name match.
     for match in _REFERENCE_RE.finditer(
         masked, callable_model.body_start, callable_model.body_end
     ):
-        name = match.group(1)
+        name = match.group(2)
         if name == "class":
             continue
-        name_start = match.start(1)
+        name_start = match.start(2)
         if any(call.name_start == name_start for call in calls):
             continue
+        reference_receiver = match.group(1) or ""
         line = masked.count(chr(10), 0, name_start) + 1
         calls.append(
             CallRecord(
@@ -1179,6 +1186,7 @@ def extract_calls(
                 name_start=name_start,
                 line=line,
                 is_reference=True,
+                receiver_text=reference_receiver,
             )
         )
         call_id += 1
@@ -1838,6 +1846,25 @@ class CallGraphBuilder:
         self, model: CallableModel, call: CallRecord, regions
     ) -> list[CallEdge]:
         if call.is_reference:
+            # GR-14u26: a BOUND member reference with a resolvable receiver and
+            # a single member of that name in the receiver's declaring owner
+            # binds to exactly one corpus callable, so the edge is exact.  Every
+            # other reference shape (no receiver, unresolved receiver, chained
+            # receiver, absent/generic/overloaded member) keeps the historical
+            # name-matched uncertain edge — fail closed.
+            bound = self._bound_reference_target(model, call)
+            if bound is not None:
+                return [
+                    CallEdge(
+                        caller_key=model.key,
+                        state=ResolutionState.EXACT_SYNCHRONOUS,
+                        line=call.line,
+                        file=call.file,
+                        name_start=call.name_start,
+                        targets=(bound,),
+                        context_kind=self._edge_context(regions, call.name_start),
+                    )
+                ]
             return [
                 CallEdge(
                     caller_key=model.key,
@@ -1889,6 +1916,36 @@ class CallGraphBuilder:
                     )
                 ]
         return resolved
+
+    def _bound_reference_target(
+        self, model: CallableModel, call: CallRecord
+    ) -> str | None:
+        """Corpus callable key bound by a member reference, or ``None``.
+
+        ``receiver::name`` binds to ``name`` in the receiver's type when that
+        type is a corpus owner declaring exactly one member of that name.  The
+        receiver is resolved through the same machinery as an invocation
+        receiver (local binding, enclosing parameter, owner property, corpus
+        type), so the rule inherits its fail-closed behaviour.  A chained
+        receiver (``a.b::name``) is deliberately not resolved here: the
+        qualification path is not modelled for references and guessing it would
+        be unsound.  Anything unresolved, absent, generic or overloaded returns
+        ``None`` and the caller falls back to the historical uncertain edge.
+        """
+        receiver = call.receiver_text
+        if not receiver:
+            return None
+        if "." in receiver:
+            return None
+        fqcn, known = self.receiver_fqcn_for_call(call)
+        if not known or not fqcn or fqcn not in self.owners:
+            return None
+        member, member_owner = self._member_in_scope(fqcn, call.name)
+        if member is None or member.is_generic:
+            return None
+        if len(self._members_named(member_owner, call.name)) != 1:
+            return None
+        return member.key
 
     def _chain_admitted_by_engine_carriers(self, regions, offset: int) -> bool:
         """True when the transparent region chain at ``offset`` includes a

@@ -53,3 +53,6 @@ fixtures:
   - id: CB-17
     file: call_binding/cb17_single_implementor_exact.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-18
+    file: call_binding/cb18_bound_reference_exact.kt
+    expectedResolution: EXACT_SYNCHRONOUS

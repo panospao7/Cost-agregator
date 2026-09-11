@@ -103,6 +103,7 @@ CB_SUBJECT_CALLS = {
     "CB-15": (("exerciseCb15", "accept"),),
     "CB-16": (("exerciseCb16", "put"),),
     "CB-17": (("exerciseCb17", "push"),),
+    "CB-18": (("exerciseCb18", "save"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.
