@@ -401,24 +401,44 @@ barrier model at all.  This is the hand-off list for the remaining work.
 | **24** | **engine: exception flow** — body unmodelable solely because of `try`/`catch` (§3.4) | 24/24 yes |
 | **24** | **owner decision** — zero inbound; likely dead, verify by hand (§3.2) | 22/24 yes |
 | **22** | **engine: body/path unmodelable** — async-decided, local guard unprovable | 22/22 yes |
-| **20** | 🔴 **PRODUCTION: add a canonical guard** — the file has **no barrier reference at all** | **0/20** |
+| **22** | 🔎 **analysis artifact — surveyed 2026-09-11**; ~7 guarded by a decorator, ~5 observational sinks, 4 restore-path, ≈6 genuine (§3.5) | 0/22 raw, by design |
 | **10** | `GR13_SITE_INSIDE_UNRESOLVED_LAMBDA` — the D19 anonymous-object blind spot | 0/10 |
 | **5** | engine: CFG scope wiring — evidenced in §4.D18, take only bundled | 5/5 yes |
 
-**The 20 `A` rows are the finding that matters for the real codebase.**  They sit in files that
-never call `checkWritesAllowed` or `runWrite` — i.e. writers that do **not participate in the
-mediation model at all**.  This is the same shape as the GR-14u18 `migrateCategories` bug (five
-such writers were found and fixed earlier in the campaign; §5.1), and unlike the ~70 engine-side
-rows these are actionable as *production* changes today.  The files, with counts:
+**The 22 `A` rows: do NOT add 22 guards.**  An earlier draft of this section called these
+"writers that do not participate in the mediation model" and recommended a production guard per
+file.  **That was wrong, and following it would have added redundant guards to correctly-guarded
+code — and, for the diagnostic writers, duplicated a safety mechanism that already exists.**
+Reading the implementations (2026-09-11) shows a third explanation, and it is the dominant one:
 
-| File | Rows | Notes |
+> **The maintenance-safety obligation for diagnostic/audit/event writes is discharged in a
+> maintenance-safe DECORATOR, deliberately — so that the record of a *block* is never itself
+> lost.**  The decorator checks the mode, calls `checkWritesAllowed`, and on
+> `DatabaseAccessBlockedException` falls back to a non-DB sink (`MaintenanceSafeDiagnosticSink`,
+> a DataStore ring buffer) instead of Room.
+
+The engine resolves the mutation to the **raw `Room*` implementation** (`RoomDiagnosticEventWriter.emit`,
+`RoomOperationRunRecorder.start`, …), which legitimately contains no barrier — the guard lives in
+the composite that production actually injects.  **"No barrier in that file" therefore does NOT
+mean "unguarded in production".**
+
+Verified in full for two of them; the decorator family is larger than these two:
+
+| Row source | Rows | Status |
 |---|---|---|
-| `RestoreJournalImporter.kt` | 4 | restore-journal import; mitigation is `restoreMaintenanceMode.isWritesAllowed()` in `AppStartupCoordinator` — non-canonical |
-| `OperationRunRecorder.kt` | 4 | the run handle is worker-gated upstream — non-canonical |
-| `WorkerRunLogger.kt` | 2 | |
-| `JsonExpenseImporter.kt` | 2 | `parseV1Row` / `parseV2Row`; reachable only from debug import UI |
-| `CsvExpenseImporter.kt` | 1+ | `getOrCreateCategory` |
-| `PrivacyAuditLoggerImpl.kt`, `ReceiptInsertResolver.kt`, `DiagnosticEventWriter.kt`, `SourceLinkWriterImpl.kt`, … | 1 each | |
+| `OperationRunRecorder.kt` | 4 | ✅ guarded by `CompositeOperationRunRecorder` (mode check + `checkWritesAllowed` + safe-sink fallback) |
+| `DiagnosticEventWriter.kt` | 1 | ✅ guarded by `CompositeDiagnosticEventWriter` (same shape) |
+| `WorkerRunLogger.kt` | 2 | ✅ `WorkerExecutionGuard` holds the logger, guards, and calls the barrier (it is in the 67-file barrier list) |
+| `PrivacyAuditLoggerImpl.kt` | 1 | ⚠️ bound **directly** (`PrivacyModule.providePrivacyAuditLogger`) — no decorator.  Likely deliberate for the same reason (the audit record of a fail-closed decision must survive), but **unverified as intent** |
+| `RecurringLifecycleEventWriter` / `ReceiptLifecycleEventWriter` / `TransactionLifecycleEventWriter` | 4 | ⚠️ observational event sinks.  `TransactionLifecycleEventWriter.write(context, event)` is explicitly designed to be called **inside** `DomainTransactionRunner.runInTransaction`, i.e. it rides the same transaction as the write it describes — so the operation's guard already covers it |
+| `RestoreJournalImporter.kt` | 4 | 🔴 restore-path: `checkWritesAllowed` **throws** outside `NORMAL`, so a guard would break the restore.  Needs a modelled sanctioned form (the GR-14u25 precedent), not a guard |
+| `JsonExpenseImporter` (2) / `CsvExpenseImporter` (1) | 3 | 🔴 genuine candidates, but reachable only from the **debug** import UI |
+| `SourceLinkWriterImpl.linkTarget`, `ReceiptInsertResolver.insertOrResolve`, `ExpenseGroupDao.insertGroupWithMembers` | 3 | 🔴 genuine candidates — the only rows needing a real decision |
+
+**Net: of 22 rows, ~7 are already guarded in production (engine modelling gap), ~5 are
+observational sinks whose record must survive a block, 4 are restore-path (contract-modelled
+form), and ≈6 are genuine candidates — 3 of which are debug-only.**  See §10 for the resulting
+invariant.
 
 **Owner decision required per file.**  AGENTS.md forbids adding a canonical guard to a
 **privacy-cleanup path that must be able to run during maintenance** — the guard would block the
@@ -427,8 +447,8 @@ So triage each: a normal writer gets the canonical guard; a cleanup/restore path
 sanctioned form **modelled in the contract** (the GR-14u25 precedent), not a guard.
 
 **Summary of what remains, by owner:** ~46 engine rows (24 exception flow + 22 body/path — one
-GR-12 workstream), 24 dead-code decisions, 20 production guards, 10 blocked on D19, 5 on a
-contract bundle.
+GR-12 workstream), 24 dead-code decisions, ≈6 genuine production guards (not 20), 10 blocked on
+D19, 5 on a contract bundle.
 
 ---
 
@@ -1082,6 +1102,17 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
   not extend the bypass to any other `local` value.  Corollary: an uncertain edge is still
   *recorded* (the GR-14f reachability-preservation rule is untouched) and a self-guarded row
   must never degrade to a zero-inbound external-entry verdict.
+- **"No barrier in this file" is NOT "unguarded in production".**  Diagnostic/audit/event writes
+  discharge their maintenance-safety obligation in a **maintenance-safe decorator**
+  (`CompositeDiagnosticEventWriter`, `CompositeOperationRunRecorder`, `WorkerExecutionGuard`, …)
+  that checks the mode, calls `checkWritesAllowed`, and falls back to a non-DB sink on block.
+  The raw `Room*` implementation legitimately contains no barrier.  The engine resolves the
+  mutation to the raw implementation, so such rows read `unproven` — **that is an analysis
+  limitation, not a missing guard.**  Before adding a guard anywhere on the strength of this
+  report, check for a decorator: `grep -l CompositeDiagnosticEventWriter` / look for a
+  `MaintenanceSafeDiagnosticSink` injection on the interface.  Conversely, do not *add* a guard to
+  a diagnostic sink that a decorator already covers — the decorator's `catch
+  (DatabaseAccessBlockedException)` is what routes the record to the safe sink.
 - **Never delete a writer on an `external_entry` label alone.**  After GR-14u27 a
   self-guarded zero-inbound writer *proves* rather than reporting zero-inbound (so the bucket
   is no longer a dead-code enumeration), and two known blind spots produce the same false
