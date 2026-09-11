@@ -27,13 +27,14 @@ from scripts.db_guard.structural_analysis.tokenizer import (
 )
 
 
-def parse(body: str, transparent_scope_methods=()):
+def parse(body: str, transparent_scope_methods=(), transparent_inline_methods=()):
     masked = mask_kotlin_source(body)
     assert len(masked) == len(body), "masking must preserve offsets"
     return parse_callable_body(
         masked,
         SourceSpan(0, len(masked), 1, 1),
         transparent_scope_methods=tuple(transparent_scope_methods),
+        transparent_inline_methods=tuple(transparent_inline_methods),
     )
 
 
@@ -630,6 +631,81 @@ class TestReturnConstructs:
             RegionKind.TRY,
             RegionKind.CATCH,
         ]
+
+    def test_carrier_lambda_statement_admitted(self):
+        # GR-14u33: a bare call headed by an admitted inline carrier name
+        # parses its trailing lambda recursively instead of refusing the
+        # whole statement as a lambda escape.
+        result = parse(
+            "items.forEach { item ->\n"
+            "  dao.insert(item)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].children[0].kind == RegionKind.STATEMENT
+
+    def test_val_init_carrier_lambda_admitted(self):
+        result = parse(
+            "val n = items.count { it > 0 }\n",
+            transparent_inline_methods=("count",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
+    def test_receiver_carrier_lambda_admitted(self):
+        result = parse(
+            "CancellationSafe.runCatchingCancellable {\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("runCatchingCancellable",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
+    def test_unlisted_carrier_still_fails_closed(self):
+        # Pin: only the closed reviewed carrier set is admitted.
+        result = parse(
+            "mysteryCarrier {\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_chained_carrier_still_fails_closed(self):
+        # Pin (batch limitation): a carrier reached through a call CHAIN
+        # (`...().use { }`) is not a head match yet and keeps refusing.
+        result = parse(
+            "db.rawQuery(q, null).use { cursor ->\n"
+            "  val oldId = cursor.getLong(0)\n"
+            "  oldId\n"
+            "}\n",
+            transparent_inline_methods=("use",),
+        )
+        assert not result.is_supported
+
+    def test_labelled_return_inside_carrier_supported(self):
+        result = parse(
+            "withContext(ioDispatcher) {\n"
+            "  items.forEach { item ->\n"
+            "    if (item == 0) return@forEach\n"
+            "    dao.insert(item)\n"
+            "  }\n"
+            "}\n",
+            transparent_scope_methods=("withContext",),
+            transparent_inline_methods=("forEach",),
+        )
+        assert result.is_supported
+        wrapper = result.regions[0]
+        assert wrapper.kind == RegionKind.TRANSPARENT_SCOPE
+        carrier = wrapper.children[0]
+        assert carrier.kind == RegionKind.TRANSPARENT_SCOPE
+        guarded_if = carrier.children[0]
+        assert guarded_if.kind == RegionKind.IF
+        assert guarded_if.children[0].children[0].kind == RegionKind.LAMBDA_RETURN
 
 
 class TestValConstructInitializers:

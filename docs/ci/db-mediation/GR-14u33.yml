@@ -1,0 +1,68 @@
+# GR-14u33 — A-carrier: structural admission of inline-carrier lambda
+# statements (GR-14u32 scoping; plan track A follow-up).
+#
+# DEFECT: the structural parse refused ANY statement whose expression
+# carries a trailing lambda (lambda-escape / unknown-construct via the
+# opacity gate), blanking entire guarded bodies over ordinary stdlib
+# idioms (mapIndexed/count/require/associateBy/runCatchingCancellable).
+# Post-u31 subject census (GR-14u32): 15 rows / 7 callables, dominated by
+# this family.
+#
+# FIX (three pieces, one feature):
+#   1. tokenizer.parse_callable_body gains transparent_inline_methods=()
+#      (closed reviewed set; empty default preserves pre-u33 behavior).
+#      A statement whose HEAD method is in the set and whose trailing
+#      lambda cleanly ENDS the statement parses recursively via
+#      _parse_transparent_scope (kind TRANSPARENT_SCOPE, head-ownership
+#      per GR-14u31).  Unlisted names keep refusing; chained or
+#      argument-position shapes (a.map { }.toSet(), f(x.map { })) are NOT
+#      claimed — they keep falling to the generic opacity-gated
+#      absorption (exact pre-u33 behavior).
+#   2. direct_barrier_bridge threads PRODUCTION_TRANSPARENT_INLINE_METHODS
+#      (callgraph.py, single source of truth) into the parse.
+#   3. The bridge adds carrier-region spans to admitted_transparent_spans:
+#      carrier lambdas execute inline, so their children join the
+#      enclosing flow — restoring the pre-u33 effective semantics (absorbed
+#      leaf, write dominated by a preceding barrier) while the children are
+#      now individually modeled instead of hidden.  Proof-layer scope
+#      ADMISSION still requires the canonical scope contract; a carrier is
+#      never a canonical scope, and mutations inside unadmitted scopes stay
+#      disconnected (fail closed).
+#
+# HARD STOP (during the batch, resolved): the first implementation claimed
+# chained carrier statements and refused them on the tail check ->
+# RecommendationRepository.saveAll regressed 2 rows proven -> unproven
+# (previously opacity-absorbed statements became refusals).  Triage: not a
+# real unguarded write; an over-claim by the carrier branch.  Fixed by the
+# trailing-lambda-ends-the-statement guard above; saveAll restored to
+# proven_helper in the re-projection.
+#
+# OUTCOME (board diff, pre 8b634e35... -> post 99a87537...):
+#   proven_helper 314 -> 316 (+2):
+#     ExpenseRepository.updateExpenseCategoryBulk (the ledger §B3 "declined
+#       withLock row" — withLock is in the reviewed carrier set, so the
+#       contract bump the ledger declined is NOT needed)
+#     BankApiIntegration.syncTransactions
+#   unproven 77 -> 75; counterexamples 0; 0 regressions.
+#   LEDGER §B3 NOW FULLY CLOSED (deleteGroupAtomic x4 via u31 +
+#     updateExpenseCategoryBulk here) — plan item A8's decision (bundle a
+#     withLock wrapper or carry an owner residual) is MOOT.
+#
+# KNOWN LIMITATIONS (deliberately not bundled):
+#   - chained/argument-position carrier lambdas remain opacity-absorbed
+#     (parseable-but-opaque), not structurally modeled
+#   - ensureDefaultCategories: _split_statements off-by-one ('ithContext')
+#   - 'runId?.let' safe-call triggering the elvis-block refusal
+#   - processBankStatement (7 rows) awaits those three
+#
+# VALIDATION:
+#   - structural_analysis pytest: 218 passed (6 new carrier fixtures)
+#   - scripts/db_guard pytest (excl. test_models.py pre-existing): 245 passed
+#   - fixture corpus: 64/64
+#   - test_inspect_db_mediation_proof.py + test_gr14*.py: 141 passed
+#   - verify_db_access_boundaries.py --fail-on-violation: exit 0
+#   - Board determinism: post run1 == run2, byte-identical
+#     sha256 99a87537cb75a63ee4bf63425e664b49f07f38ccb65a9b2b1dbbb12a2f6d0892
+#   - Pre-baseline: u31 board 8b634e35... (deterministic, GR-14u31.yml)
+#   - Kotlin: not run (no production change)
+status: COMPLETE_AT_BOARD_99a87537

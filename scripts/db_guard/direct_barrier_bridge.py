@@ -46,6 +46,7 @@ from .structural_analysis.cfg import build_callable_cfg
 from .structural_analysis.model import MutationSite, SourceSpan
 from .structural_analysis.shadow_report import _default_opacity_predicate
 from .structural_analysis.tokenizer import parse_callable_body
+from .mediation_analysis.callgraph import PRODUCTION_TRANSPARENT_INLINE_METHODS
 
 __all__ = [
     "CallableDirectBarrierProof",
@@ -246,6 +247,12 @@ def prove_callable_direct_barriers(
         body_span,
         lambda_opacity_predicate=opacity,
         transparent_scope_methods=CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_methods,
+        # GR-14u33: closed inline-carrier names make guarded bodies
+        # parseable over ordinary stdlib lambda idioms.  Parseability only:
+        # admission below still refuses every name outside the canonical
+        # scope contract, so mutations inside carrier lambdas stay
+        # disconnected (fail closed).
+        transparent_inline_methods=PRODUCTION_TRANSPARENT_INLINE_METHODS,
     )
     if parse_result.unsupported:
         return CallableDirectBarrierProof(
@@ -259,6 +266,23 @@ def prove_callable_direct_barriers(
     admitted = admit_transparent_scope_candidates(
         parse_result, CANONICAL_BARRIER_CONTRACT_V2, resolver
     )
+
+    def _walk_carrier_spans(regions):
+        for region in regions:
+            if (
+                region.kind.value == "TRANSPARENT_SCOPE"
+                and (region.scope_method or "") in PRODUCTION_TRANSPARENT_INLINE_METHODS
+            ):
+                yield (region.span.start, region.span.end)
+            yield from _walk_carrier_spans(region.children)
+
+    # GR-14u33: inline-carrier regions (closed reviewed name set) execute
+    # their lambda body inline, so their children join the enclosing flow.
+    # This restores the pre-u33 effective semantics, where such statements
+    # were modeled as opaque sequence leaves and their inner writes were
+    # dominated by any preceding barrier; now the children are individually
+    # modeled instead of hidden.  Name-exact from the closed set only.
+    admitted = frozenset(admitted | set(_walk_carrier_spans(parse_result.regions)))
     try:
         cfg, _cfg_diagnostics = build_callable_cfg(
             parse_result,

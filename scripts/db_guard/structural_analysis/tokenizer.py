@@ -222,6 +222,14 @@ class _Cursor:
         # transparent-scope candidacy.  Empty (default) preserves exact v1
         # behavior; admission happens in the proof layer.
         self.transparent_scope_methods: tuple[str, ...] = ()
+        # GR-14u33: closed inline-carrier method names (e.g. the reviewed
+        # PRODUCTION_TRANSPARENT_INLINE_METHODS set) whose trailing-lambda
+        # statements parse recursively as context-preserving regions.  This
+        # makes bodies parseable; it authorizes nothing — the proof layer
+        # never admits these as canonical scopes, so mutations inside them
+        # stay disconnected (fail closed).  Empty (default) preserves exact
+        # pre-u33 behavior.
+        self.transparent_inline_methods: tuple[str, ...] = ()
         # While parsing the direct child sequence of a transparent-scope
         # candidate, holds the wrapper method name (the implicit label for
         # `return@label`); None inside any nested lambda.
@@ -752,7 +760,34 @@ def _parse_sequence(
         # lambda parses recursively and an embedded check proves as its own
         # DIRECT_CHECK part; inner statements keep their own fail-closed
         # handling.
+        #
+        # GR-14u33: the same head-ownership applies to statements headed by
+        # an admitted inline-carrier name (closed reviewed set) — ordinary
+        # `val x = y.count { }` / `require(x) { }` idioms no longer blank
+        # the whole body.  Carrier regions still carry kind
+        # TRANSPARENT_SCOPE, but the proof layer only admits names from the
+        # canonical scope contract, so carrier children stay disconnected
+        # in the CFG (fail closed).  Chained forms (`...().use { }`) are
+        # NOT head matches and keep refusing.
         ts_match = _match_transparent_scope(stripped, cur.transparent_scope_methods)
+        if ts_match is None:
+            # GR-14u33: a carrier candidate claims the statement ONLY when
+            # its trailing lambda cleanly ends the statement.  Chained or
+            # argument-position shapes (`a.map { }.toSet()`,
+            # `f(x.map { })`) must keep falling through to the generic
+            # opacity-gated absorption below — claiming and then rejecting
+            # them on the tail check would regress bodies that parsed
+            # before (GR-14u33 saveAll hard stop).
+            carrier_match = _match_transparent_scope(
+                stripped, cur.transparent_inline_methods
+            )
+            if carrier_match is not None:
+                close = _match_forward(
+                    cur.text, base + carrier_match.end() - 1, stmt_e
+                )
+                tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                if close > 0 and not tail:
+                    ts_match = carrier_match
         if ts_match is not None:
             region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
             if region is not None:
@@ -1737,6 +1772,7 @@ def parse_callable_body(
     *,
     lambda_opacity_predicate=None,
     transparent_scope_methods: tuple[str, ...] = (),
+    transparent_inline_methods: tuple[str, ...] = (),
 ) -> CallableBodyParse:
     if not isinstance(masked_text, str):
         raise TypeError("masked_text must be a string")
@@ -1749,9 +1785,17 @@ def parse_callable_body(
         raise TypeError(
             "transparent_scope_methods must be a tuple of plain identifiers"
         )
+    if not isinstance(transparent_inline_methods, tuple) or not all(
+        isinstance(item, str) and item.isidentifier()
+        for item in transparent_inline_methods
+    ):
+        raise TypeError(
+            "transparent_inline_methods must be a tuple of plain identifiers"
+        )
     cur = _Cursor(masked_text)
     cur.opacity_predicate = lambda_opacity_predicate
     cur.transparent_scope_methods = tuple(transparent_scope_methods)
+    cur.transparent_inline_methods = tuple(transparent_inline_methods)
     if '"' in masked_text or "'" in masked_text:
         cur.fail(
             "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
