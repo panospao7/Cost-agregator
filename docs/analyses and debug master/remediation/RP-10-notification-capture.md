@@ -1,100 +1,179 @@
-# RP-10 — Notification capture hardening (Pipeline 1)
+# RP-10 - Notification capture hardening (Pipeline 1)
 
-> **Scope class:** pipeline-isolated, privacy-adjacent. **Mode:** strict (notification capture + privacy modes).
-> **Files:** `NotificationIntakeCoordinator` ⟂ (domain/notification/ or data/repository/ — locate by class), `NotificationIntakeWorker` (worker/), `NotificationIntakeDao` (data/database/dao/), `NotificationCaptureService` (service/), `NotificationCaptureGate` (domain/notification/capture/), `NotificationCaptureDeduper` (domain/notification/capture/), `NotificationTransientPayloadCrypto` ⟂, `TimeModule` ⟂ (di/), `SystemMonotonicTimeProvider` ⟂.
-> **PR shape:** 3 PRs — (10a) deferred-intake identity = P1-001 + P1-002 + P1-007-adjacent; (10b) lifecycle gaps = P1-003 + P1-004 + REVAL-4; (10c) hygiene = P1-005 + P1-006 + P1-008.
-> **Note:** the uncommitted `NotificationFilter.kt` `pos`-regex change is *not* part of this package (correct as-is; commit independently).
+> **Status:** FAIL in the previous draft; this rewrite is implementation-ready only after the
+> legacy-row write-boundary contract below is approved.
+> **Mode:** strict (privacy, durable state machine, WorkManager enqueue, and cancellation).
+> **Source facts:** `notification_intake.dedupeFingerprint` has a unique index; deferred capture
+> currently uses `DEFERRED_<notificationKeyHash>`, hardcodes `STORE_METADATA_ONLY`, returns `Unit`,
+> and its enqueue operation is not awaited. Retention purges payload columns but does not remove the
+> intake row.
 
----
-
-## 10a — Deferred-intake identity & storage mode
-
-### P1-001 — Content-blind deferred fingerprint → silent permanent drop + double-ingest (HIGH)
-
-**Problem.** `NotificationIntakeCoordinator.captureForRetry` (`:197`) stores `dedupeFingerprint = "DEFERRED_" + notificationKeyHash` while the live path fingerprints **content+postTime** (`RawNotificationFingerprint.compute`). The intake table's unique index on `dedupeFingerprint` + the fact that **no code path ever deletes intake rows** (retention only nulls payload columns) produce two failure modes: (a) Android reuses the `pkg|user|tag|id` key during a later gate-unavailable window → `insertOrIgnore` returns −1 → silent return (only `Timber.d`, no terminal diagnostic, no enqueue) — the notification is **permanently dropped**, defeating the exact scenario the deferred path exists for; (b) the same content captured live after warm-up → different fingerprint → second raw row/expense outside the 5-min dedupe window.
-
-**Fix design.**
-1. **Use the content fingerprint on deferred rows**: at `captureForRetry`, all inputs for `RawNotificationFingerprint.compute` are available (parts + postTime are in scope where the service calls it). Compute and store the *same* fingerprint format as the live path; drop the `DEFERRED_` prefix scheme entirely (no migration needed — the old rows' fingerprints simply never match new-format ones; they age out via payload purge. Note this in the PR: historical deferred rows become inert, acceptable since their payloads were encrypted-transient anyway).
-2. **Make the −1 branch honest**: on conflict, emit a terminal diagnostic (reuse the live `Duplicate` branch's emitter at `:56-70`) and return a typed `Duplicate(existingIntakeId)`; additionally enqueue a worker for the *existing* row if its status is still `RECEIVED` (cheap re-drive; `claimForProcessing`'s CAS makes it safe).
-3. **Double-ingest closure**: with fingerprints unified, a live re-capture of the same content hits `existsByFingerprint` → existing duplicate path → done. Add a unit test proving deferred-then-live dedupes.
-
-**What it solves.** No silent drops during gate-unavailable windows; no duplicate ingestion after warm-up.
-
-**Guardrails.**
-- Privacy: the fingerprint is already a hash — unchanged format, no new persisted content.
-- WorkManager enqueue stays inside the NonCancellable region (current structure preserved).
-- Diagnostics use controlled reason codes (`DUPLICATE_INTAKE`, `INTAKE_DEFERRED`) — no notification text in events.
-
-**Tests.** `NotificationIntakeCoordinatorTest` (create): key-reuse scenario → Duplicate + re-enqueue + diagnostic; deferred-then-live same content → single pipeline row.
-
-### P1-002 — Deferred rows hardcode `STORE_METADATA_ONLY`, overriding the user's mode (MED-HIGH)
-
-**Problem.** `:207` stores `rawStorageMode = "STORE_METADATA_ONLY"`; the worker builds both the storage notification (`:457`) and the persistence context (`:227-236`) **exclusively** from the stored mode and never re-reads settings → a STORE_RAW user permanently loses title/text/bigText for anything captured during warm-up. Also inconsistent: no `DO_NOT_STORE` early-return on the deferred path (unlike `capture()` at `:75`).
-
-**Fix design.**
-1. At `captureForRetry`, resolve the *real* mode with a bounded one-shot read (the gate's self-heal already loads settings within 300ms — reuse the same loader/repository snapshot; if the read fails, **fail closed to METADATA_ONLY**, matching the sanitizer's fail-closed convention — never STORE_RAW on uncertainty).
-2. Add the `DO_NOT_STORE` early-return mirroring `capture()`: if the resolved mode is DO_NOT_STORE → return a typed `NotStored` outcome without persisting an intake row (the transient payload is never durably written in that mode — verify the encrypt-then-insert ordering makes this clean).
-3. Worker side unchanged (it honors the stored mode — now the user's actual mode).
-
-**What it solves.** Storage-mode contract holds on every capture path; DO_NOT_STORE users get no durable artifacts from deferred captures.
-
-**Guardrails.** Privacy fail-closed is the deciding rule: uncertain → most-restrictive. The bounded read must not add unbounded latency to the service path (same 300ms budget as the gate). **Tests:** STORE_RAW user + gate-unavailable → deferred row carries STORE_RAW, worker persists text; settings-read failure → METADATA_ONLY; DO_NOT_STORE → no row.
+The revalidated `REPLACE/orphan` theory is not an independent defect: an identical legacy key hits
+the insert conflict and returns before enqueue. Do not reintroduce that claim. The live defects are
+legacy identity retention, privacy-mode loss, unchecked enqueue, and cancellation accounting.
 
 ---
 
-## 10b — Lifecycle gaps
+## 10a - Deferred identity and privacy mode
 
-### P1-003 — Enqueue result unchecked; orphaned RECEIVED rows (MED)
+### P1-001 - Canonical identity with an atomic legacy-row transition
 
-**Problem.** `enqueueUniqueWork`'s `Operation` is never awaited (`:142-146`, `:232-236`); process death or async enqueue failure leaves a RECEIVED row with no worker. Recovery exists only via `onListenerConnected` (`NotificationCaptureService.kt:291-298`); the RecoveryScheduler KDoc (`:26`) claims app-start and restore-complete sweeps that **don't exist** (REVAL-4).
+Use the exact same `RawNotificationFingerprint.compute` inputs and body construction as the live
+path: `packageName`, `title`, `text`, the live `parts.combinedBody` value passed as `bigText`, and
+`postTime`. Do not substitute deferred `bigText` or add `subText` only to deferred rows. Change the
+deferred capture contract to carry the same effective combined body (or the exact source fields
+needed to reconstruct it) and persist enough bounded metadata to compare legacy rows. If an old row
+does not contain enough fields to prove the canonical identity, treat it as **unverifiable** rather
+than guessing. `notificationKey` is used only to locate a legacy row, never as the new dedupe
+identity.
 
-**Fix design.**
-1. Await inside the NonCancellable region: `operation.result.await()` (kotlinx-coroutines-play-services or the `Operation` suspend extension already available — check which WorkManager Kotlin artifacts the module uses; if none, poll `operation.state.isBlocked/isFailed` via `withTimeout`). On failure → mark the row `FAILED_RETRYABLE` with `nextAttemptAt = now + backoff` (reuses the existing retry machinery) + diagnostic event.
-2. Add the missing sweeps the KDoc promises: call `NotificationIntakeRecoveryScheduler.recoverPending()` (a) from `AppStartupCoordinator.initialize` (cheap bounded query; runs behind the existing startup scope) and (b) on restore-complete (the maintenance-mode exit path already has a hook where workers reschedule — `RestoreMaintenanceMode.exit` → add the recovery call alongside `WorkerRegistry.scheduleAll`). Now the KDoc is true.
-3. Keep `onListenerConnected` sweep as-is (primary).
+New deferred rows use this canonical fingerprint, not `DEFERRED_<hash>`. The live and deferred
+capture paths must call the same coordinator/DAO operation so a deferred row followed by a live
+capture cannot bypass the legacy check. Before inserting either kind of canonical row, execute one
+database transaction that:
 
-**What it solves.** No permanently orphaned intake rows for any failure mode; documented behavior matches reality.
+1. looks up the legacy row by the deterministic old `DEFERRED_<notificationKeyHash>` value;
+2. compares its canonical payload when the payload is still available;
+3. returns the existing row as `Duplicate(existingIntakeId)` when it represents the same content,
+   including a comparable terminal row; a terminal row with comparable different content may be
+   superseded, while an unverifiable terminal row follows the explicit bounded policy below;
+4. otherwise atomically marks the legacy row terminal/inert using the existing state machine
+   (`FAILED_FINAL` with controlled failure code `LEGACY_DEFERRED_SUPERSEDED`, `terminalAt`, and
+   cleared claims) before inserting the new canonical row.
 
-**Guardrails.** Startup-path addition must be non-blocking (fire-and-forget in the existing startup coroutine) and must not run Gradle-visible heavy work — it's a status query + enqueue. Worker rules: the sweep itself performs no DB writes except status transitions via the existing CAS claim.
+The DAO/coordinator operation must specify these edge cases and remain idempotent:
 
-**Tests.** Enqueue-fails fixture → row FAILED_RETRYABLE + diagnostic; startup invokes recovery (assert via fake scheduler).
+| Legacy row | Required behavior |
+| --- | --- |
+| `RECEIVED` or `FAILED_RETRYABLE`, payload available | decrypt/compare; duplicate and re-drive the old row when equal, otherwise supersede then insert the new row |
+| `RECEIVED`/`FAILED_RETRYABLE`, payload purged | mark inert with `LEGACY_DEFERRED_PAYLOAD_UNAVAILABLE`, then allow the new canonical row |
+| `PROCESSING`/claimed, payload available and same content | if the claim is active, do not overwrite it; return duplicate and let the claimed worker finish/re-drive |
+| `PROCESSING`/claimed, payload available but changed content | leave the active claim untouched and insert the new canonical row; do not drop the new notification |
+| stale `PROCESSING`/claimed, payload purged | first use the existing stale-claim CAS release; only after release, terminalize as unrecoverable and allow the new row |
+| already terminal with comparable payload (`PROCESSED`, duplicate/policy/final failure/cancelled) | same canonical content returns `Duplicate`; comparable different content may insert a new canonical row |
+| already terminal but payload purged/unverifiable | return a bounded `LEGACY_IDENTITY_UNVERIFIABLE` outcome; do not silently reprocess or store content until the caller's explicit recapture policy is applied |
 
-### P1-004 — Cancellation window before the NonCancellable region (MED)
+Do not delete or mutate an active claim blindly, and do not invent a new persisted status. The unique index can
+remain unchanged because new fingerprints no longer occupy the legacy namespace; the transaction
+above is the required compatibility migration at the write boundary. Add a migration test only if
+the chosen implementation changes the Room schema/index; otherwise add DAO transaction tests for
+all rows in the table above.
 
-**Problem.** In `captureNotification` (`:412-511`), only the `TemporarilyUnavailable` branch (`:454`) and Step 5+ (`:517`) are NonCancellable. Steps 1–4 (RECEIVED emit → `captureGate.decide` with up to 2–3 × 300ms self-heal loads → dedupe → filter) are cancellable with no try/finally terminal: `onDestroy`'s `serviceJob.cancel()` (`:855`) kills in-flight work leaving a dangling RECEIVED event or nothing at all; the notification is never re-captured (rebind refresh requires an explicit `ACTION_REFRESH`). Dead constant `SHUTDOWN_DRAIN_TIMEOUT_MS` (`:188`) shows a drain was planned then dropped.
+When a canonical insert conflicts, look up the conflicting row and return `Duplicate` (with its
+intake id) rather than `Dropped`. Re-drive only `RECEIVED`/`FAILED_RETRYABLE` rows using the existing
+CAS claim; never enqueue a terminal row. The operation must be atomic with the legacy lookup and
+insert so two listener/deferred callers cannot each decide to replace the same legacy row.
 
-**Fix design.**
-1. Do **not** wrap everything in NonCancellable (the gate's bounded loads should remain cancellable — AGENTS: workers/services must not swallow CE; and a draining service shouldn't be hostage to 900ms of I/O).
-2. Instead, close the *accounting* gap: wrap the pre-NonCancellable steps in `try/catch(CancellationException)` that emits a terminal `CANCELLED` diagnostic via `notificationDiagnosticEmitter` inside a `withContext(NonCancellable)` emit (the emitter call is cheap), then rethrows. This mirrors the pattern already used at `:764-777` for the post-capture cancellation path.
-3. `onDestroy` ordering: emit `SHUTDOWN` *before* `serviceJob.cancel()` (already the case? verify) so the diagnostic ledger shows the shutdown preceding the CANCELLED events — keeps the timeline interpretable.
-4. Delete the dead `SHUTDOWN_DRAIN_TIMEOUT_MS` constant (or wire it — deleting is smaller; the drain design was explicitly rejected in the onDestroy comment re: `ForegroundServiceDidNotStopInTimeException`).
+### P1-002 - Preserve the resolved RawStorageMode and fail closed when unknown
 
-**What it solves.** Every accepted notification ends in exactly one terminal diagnostic; no dangling RECEIVED events on shutdown; no misleading dead constants.
+Change `captureForRetry` to accept a bounded privacy-policy snapshot (`RawStorageMode`, app name,
+the exact effective combined body, and any storage-safe extras value needed by the live path). The
+gate and deferred branch must share one bounded policy resolver; do not add an unbounded second
+settings read. If the gate/settings policy is unavailable and no immutable snapshot is available,
+return `NotStored` (or a retryable policy-unavailable result with **no extracted/encrypted payload**)
+before parsing, encryption, or insert. `STORE_METADATA_ONLY` is valid only when that mode was
+actually resolved; it is not a safe substitute for an unknown `DO_NOT_STORE` policy. Only include
+extras JSON after the same STORE_RAW sanitization used by the live path.
 
-**Guardrails.** CE rethrow is mandatory (never swallow); the NonCancellable emit must be bounded (single emit, no loops). **Tests:** cancel during gate-decide (fake gate suspends) → CANCELLED diagnostic present, CE propagates, no intake row.
+Behavior is explicit:
+
+- `DO_NOT_STORE`: return `NotStored` before encryption/insert; emit a terminal controlled diagnostic
+  and do not create an intake row or durable payload;
+- `STORE_RAW`: persist the same visible/raw fields and `payloadMode` contract as `capture()`;
+- `STORE_REDACTED`/`STORE_METADATA_ONLY`: encrypt the transient payload, persist no visible text,
+  and let the worker honor the stored mode.
+
+Extend the existing `NotificationIntakeCaptureResult` rather than creating a parallel result type.
+It must distinguish at least `Enqueued`, `Duplicate(existingIntakeId?)`, `NotStored`,
+`StorageFailure(reasonCode)`, and `Cancelled`; retain `RequiresSynchronousProcessing` for the live
+DO_NOT_STORE path if its callers still require it. Update every caller and diagnostic branch in
+`NotificationCaptureService` and tests. No diagnostic contains notification text, paths, exception
+messages, or stack traces.
+
+### P1-001/P1-002 tests
+
+- old deferred row followed by a new deferred capture for the same key and same content;
+- old row followed by changed content;
+- each legacy status in the table above, including purged and claimed rows;
+- deferred-then-live capture dedupes to one pipeline row;
+- STORE_RAW, REDACTED, METADATA_ONLY, and DO_NOT_STORE mode matrix;
+- unresolved settings/policy returns no-storage/no-payload and never stores raw text;
+- comparable terminal legacy row with same content returns duplicate; purged/unverifiable terminal
+  row follows `LEGACY_IDENTITY_UNVERIFIABLE` policy;
+- canonical fingerprint inputs match live capture exactly.
 
 ---
 
-## 10c — Hygiene
+## 10b - Enqueue, retry, and cancellation state machine
 
-### P1-005 — Missing sensitive extras keys (LOW, STORE_RAW-gated)
+### P1-003 - Await enqueue and transition failures atomically
 
-**Fix design.** Add to `SENSITIVE_EXTRAS_KEYS` (`NotificationCaptureService.kt:192-206`): `android.messages`, `android.textLines`, `android.remoteInputHistory`, `android.conversationTitle`. Defense-in-depth only (extrasJson persists solely under STORE_RAW, where the same text already reaches `bigText` via `combinedBody`). Extend the pinned key-set test in `NotificationCaptureServiceCleanupTest` with the four keys.
+Inside the existing `NonCancellable` write/enqueue region, await the WorkManager `Operation` using
+the dependency-supported suspend API; if that dependency is unavailable, use a bounded state wait.
+On enqueue failure, call one DAO transition that atomically:
 
-### P1-006 — Deduper on wall clock (LOW)
+- increments `attempts` exactly once;
+- sets `FAILED_RETRYABLE` and `nextAttemptAt` using the existing backoff, or `FAILED_FINAL` when
+  `maxAttempts` is reached;
+- stores only a controlled `lastFailureCode`/safe hash;
+- clears `lockedAt`/`lockedBy` and updates `updatedAt`;
+- is conditional on the expected `RECEIVED`/enqueue-attempt state so repeated failure handling is
+  idempotent.
 
-**Fix design.** `NotificationCaptureDeduper` (`:28`) — inject the existing `MonotonicTimeProvider` binding (swap the `TimeProvider` constructor dependency to the monotonic interface; `SystemMonotonicTimeProvider` exists in the same package family). If the deduper's constructor type is `TimeProvider` (wall), introduce/verify a `MonotonicTimeProvider` supertype binding in `TimeModule` and depend on that. Blast radius confirmed narrow: dedupe key is content+key, so only identical re-post suppression timing changes. **Tests:** backward-jump fixture (monotonic fake) → duplicate still suppressed; forward-jump → window intact.
+Emit a terminal/retryable diagnostic that identifies only the controlled reason code and intake id.
+The recovery scheduler must use the existing `WorkerRegistry`/`WorkerSpecScheduler` architecture;
+do not create a second WorkManager scheduling path. Verify the concrete app-start and restore-
+complete hooks before adding calls. If a promised hook is absent, add it through the central
+coordinator and update the KDoc; keep the listener-connected recovery as-is.
 
-### P1-008 — NUL delimiter in transient payload (LOW)
+Tests: operation failure, max-attempt transition, repeated failure, and recovery after process death.
 
-**Fix design.** `NotificationTransientPayloadCrypto.encrypt/decrypt` (`:45-56, :70-77`): replace `\u0000`-join/split with a length-prefixed frame (`DataOutputStream.writeUTF`-style or manual `Int` length + bytes per field) before encryption — framing survives any content. Preserve the null-vs-empty distinction via a presence byte (fixes the `takeIf { isNotEmpty() }` erasure noted in re-validation). Wire format is transient-only (encrypted at rest, re-derived per capture) — no migration concerns. **Tests:** round-trip fixture with `\u0000` inside text, empty vs null fields.
+### P1-004 - Account for cancellation without swallowing it
+
+Keep gate self-healing and extraction cancellable. Wrap the pre-enqueue work in
+`catch (CancellationException)` only to emit one bounded terminal `CANCELLED` diagnostic from a
+`NonCancellable` emission, then rethrow the cancellation. Do not turn caller cancellation into a
+retry or success and do not create a partial intake row. Preserve shutdown ordering (`SHUTDOWN`
+diagnostic before cancelling the service job) and remove the unused `SHUTDOWN_DRAIN_TIMEOUT_MS`
+constant.
+
+Test cancellation during gate self-heal, extraction, and deferred capture: exactly one cancellation
+diagnostic, cancellation propagates, and no durable row is left in `RECEIVED`.
 
 ---
 
-## Validation (when Gradle re-enables)
+## 10c - Hygiene (unchanged scope, corrected contracts)
+
+### P1-005 - Sensitive extras key set
+
+Add `android.messages`, `android.textLines`, `android.remoteInputHistory`, and
+`android.conversationTitle` to `SENSITIVE_EXTRAS_KEYS`. Keep the existing STORE_RAW gate and extend
+the pinned key-set test. Never log the values.
+
+### P1-006 - Monotonic dedupe window
+
+Inject the existing `MonotonicTimeProvider` into `NotificationCaptureDeduper` through the existing
+time module binding. Add backward- and forward-clock-jump tests; the dedupe key and TTL semantics do
+not otherwise change.
+
+### P1-008 - Collision-safe transient framing
+
+Replace NUL-delimited transient serialization with length-prefixed framing (including a presence
+bit so null and empty remain distinct) before encryption. This is a transient-only wire-format
+change, so no Room migration is required. Add round-trip tests containing embedded NULs and empty/
+null fields.
+
+---
+
+## Validation and gates
+
+```text
+./gradlew :app:testDebugUnitTest --tests "*NotificationIntake*" --tests "*NotificationCaptureService*" \
+  --tests "*NotificationCaptureDeduper*" --tests "*NotificationTransientPayload*" --tests "*NotificationFilter*"
 ```
-./gradlew :app:testDebugUnitTest --tests "*NotificationIntake*" --tests "*NotificationCaptureService*" --tests "*NotificationCaptureDeduper*" --tests "*NotificationTransientPayload*" --tests "*NotificationFilter*"
-```
 
-## Sequencing & risk
-- Order: 10a → 10b → 10c. 10a changes the intake fingerprint format (inert-history note required in PR). Risk: low-medium; all paths covered by the existing intake-worker test family plus new coordinator tests.
+Tests were not run while this plan was rewritten. Strict review must inspect the final DAO transition,
+all result callers, privacy diagnostics, and the legacy-row tests before this plan is marked ready.
+The plan must stop if source inspection reveals that the chosen legacy transition cannot preserve an
+active claimed row or if a schema/index change is introduced without a Room migration and schema
+snapshot.

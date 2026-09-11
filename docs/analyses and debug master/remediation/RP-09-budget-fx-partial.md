@@ -1,124 +1,195 @@
-# RP-09 — Budget partial-data handling & FX-basis consistency (Pipeline 6 ↔ stress engine)
+# RP-09 - Budget partial-data handling and FX-basis consistency (Pipeline 6)
 
-> **Scope class:** engine crossover (BudgetRepository, BudgetForecastingEngine, BudgetMonitor, FinancialStressForecastEngine, CashFlowCalculator). **Mode:** strict (money).
-> **Files:** `FinancialStressForecastEngine` (domain/forecasting/), `BudgetRepository` (data/repository/), `BudgetMonitor` (domain/budget/), `BudgetForecastingEngine` (domain/budget/), `CashFlowCalculator` (domain/cashflow/), `MergedRecurringPatternsProvider` (domain/forecasting/ ⟂), stress-forecast UI consumer ⟂ (ViewModel/screen that renders `StressForecast`).
-> **PR shape:** 3 PRs — (9a) stress engine = P6-001, 008, 009, 010, NEW-P6-010, P6-P1-13(UI half); (9b) budget partial-data = P6-005, 006; (9c) forecast basis = P6-007; NEW-P6-015 = documentation-only decision.
-> **Depends on:** RP-08 (builder semantics shared with `BudgetForecastingEngine`), RP-06 (exclusion conventions in the synthesis/forecast family).
-
----
-
-## 9a — Stress engine correctness
-
-### P6-001 — Failed-rule fallback double-counts materialized occurrences (HIGH)
-
-**Problem.** `FinancialStressForecastEngine.kt:307-394`: `ruleIds` (all manual rules) filters the materialized-occurrence read (`:337-340`); when a rule's `projectOccurrences` throws, the rule stays in `ruleIds` **and** enters `failedPatterns`; the fallback (`:388-394`) then re-expands the same rule over the same window with **no dedup** → each materialized PLANNED/OVERDUE occurrence counted twice in `recurringObligations` → inflated crunch probability, false HIGH/CRITICAL. The sibling implementation (`CashFlowCalculator.kt:236-244`) survives only because of its content-dedup pass (`:334-363`).
-
-**Fix design.**
-1. In the materialized-occurrence merge loop, skip occurrences whose `(sourceType, sourceId, dueDate-bucket)` key matches a fallback-expanded occurrence — implement exactly as the fix, not the sibling's fuzzy content match: build `expandedKeys: Set<String>` from the fallback expansion (sourceType|sourceId|dayStart — the same components as `occurrenceKey`) and filter the materialized rows: `materialized.filter { key(it) !in expandedKeys }`.
-2. Order of operations: expand failed patterns **first** (collect keys), then merge materialized rows with the filter — this prefers *projected* amounts for failed rules on dates where both exist and keeps materialized rows where the projection didn't reach (partial materialization), each obligation exactly once.
-3. Add a comment contrasting with `CashFlowCalculator`'s approach and why key-based (not content-based) dedup is sufficient here (same source identity, exact date bucket).
-
-**What it solves.** Stress forecasts stop doubling recurring obligations after a transient projection failure.
-
-**Guardrails.** Do not change the fallback trigger semantics (`failedRuleIds` from caught projection errors); do not touch `CashFlowCalculator` in this PR. Money rule: obligation totals only deduplicate — no arithmetic changes.
-
-**Tests.** `FinancialStressForecastEngineTest`: fixture where one rule has a materialized PLANNED occurrence in-window **and** its projection throws (fake provider) → obligation counted once; a rule with materialized rows *outside* the fallback's expansion range still counted once.
-
-### P6-008 — Overdue detected patterns contribute zero; 90-day staleness dead (LOW)
-
-**Problem.** `:418-433`: `while (nextDate >= startDate && nextDate < endDate)` executes zero iterations when `nextExpectedDate < startDate` — a pattern 5 days overdue contributes nothing until its date advances, making the 90-day stale allowance unreachable for exactly the patterns it exists for. (`CashFlowCalculator.expandPatternDueDates:612-619` does catch up correctly.)
-
-**Fix design.** Before the window loop, advance the anchor: `while (nextDate < startDate) nextDate = advance(nextDate)` (same recurrence step the loop uses), *then* apply the 90-day staleness check against the **original** `nextExpectedDate` (stale = original date older than 90d — preserve the current staleness semantics), then emit dates in `[startDate, endDate)`. This mirrors the sibling's catch-up.
-
-**Tests.** Overdue-by-5-days detected pattern → contributes its in-window occurrences; 100-day-stale pattern → still excluded.
-
-### P6-009 — Currency-blind fallback constants (LOW)
-
-**Problem.** `:512-516`: empty purchase history fabricates `daysAhead * 20.0 ± 5` spend in home-currency units (negligible for JPY, dominant for PHP); `CashFlowCalculator.kt:426-431` risk bands `500/100/0` are absolute home-currency numerals.
-
-**Fix design.**
-1. FSFE: when purchase history is empty, do **not** fabricate — set a `lowData: Boolean` flag on the forecast result and run the simulation with obligations-only burn (recurring obligations are real data; discretionary = 0 with the flag). The UI (P6-P1-13 consumer) renders the low-data marker.
-2. CFC bands: replace absolute thresholds with ratio-to-income bands when income data exists (e.g. LOW < 10% of monthly normalized income, MED < 25%, HIGH above); when no income, degrade to ordinal labels without thresholds (LOW/MED/HIGH computed from the day-expense distribution's own quantiles). Keep the enum values; change band assignment only.
-
-**Guardrails.** Both engines feed UI text — check string resources for "%"-based band labels; no user-visible regression for single-currency EUR-typical users should occur (ratio bands reproduce similar classifications at typical income levels — verify with a EUR fixture in tests).
-
-**Tests.** JPY-user empty-history fixture → no fabricated crunch (low-data flag); CFC band assignment by ratio fixture.
-
-### P6-010 — "Earliest crunch" is the horizon end; no-op math (LOW)
-
-**Problem.** `findEarliestCrunchDate` (`:622-630`) returns `now + daysAhead` of the first at-risk horizon — the horizon's **end**; `:647` `recurringObligations / 30.0 * 30.0` is a literal no-op labelled "monthly rate".
-
-**Fix design.** Rename the result field to `atRiskHorizonEnd` (or keep the field name and fix the label/doc + all UI strings reading it — search string resources). If a true "earliest plausible crunch day" is wanted, compute the first simulated day where the median balance crosses zero within the at-risk horizon (the simulation already produces daily paths — cheap median extraction); otherwise document the semantic honestly. **Recommendation:** rename + document (UI copy change), skip the interpolation unless the UI demands a day-level answer. Delete the `/30.0*30.0` line and use per-day obligations directly at its consumer.
-
-### NEW-P6-010 — Hardcoded risk thresholds (tracked)
-
-**Fix design.** `:76-81` `RISK_THRESHOLD_*` → move into a `StressRiskThresholds` data class with Hilt-provided defaults (`@Provides fun defaults() = StressRiskThresholds(...)`) injected into the engine. No AppConfig infra exists — this injection point *is* the configurability fix; delete the `TODO: Migrate to AppConfig` comment. Behavior identical.
-
-### P6-P1-13 (UI half) — `StressForecastMode` never rendered (tracked)
-
-**Problem.** The engine honestly labels degraded outputs (`NET_CASHFLOW_ESTIMATE` vs `ESTIMATED_INDEX`, `:169, :202, :786-796`) but **zero UI consumers** read `StressForecastMode` — the honesty exists only as an unused field.
-
-**Fix design.** Find the stress-forecast render site (the ViewModel/screen consuming `computeStressForecast` via `ComputeDashboardWidgetsUseCase`); render a small qualifier when `mode != ESTIMATED_INDEX` (string resource: "estimate based on 90-day net cash flow", plus the P6-009 low-data marker). Pure UI addition; engine unchanged.
+> **Status:** CONDITIONAL. The correctness work below is executable after the stated contracts are
+> verified. The risk-threshold redesign is deliberately a separate product decision, not a hidden
+> side effect of a currency bug fix.
+> **Mode:** strict (money, forecasting, recurring occurrence state, and UI data quality).
+> **Depends on:** RP-08 for shared history-builder semantics. Do not change the same forecast file
+> concurrently without reconciling the rate-basis contract.
 
 ---
 
-## 9b — Budget partial-data semantics
+## 9a - Stress-engine occurrence correctness
 
-### P6-005 — BudgetMonitor ignores `isPartial` → false-safe alerts (MED)
+### P6-001 - Failed-rule fallback must be status-aware
 
-**Problem.** `status.isPartial` (set by `BudgetRepository.kt:221, :348` when limit or spend aggregation dropped data) appears only in diagnostic metadata (`BudgetMonitor.kt:301`); the alert switch (`:318-352`) and notification text (`:400-435`) never see it → understated spend (missing rates) never reaches `notifyAtWarning` → no alert while data is incomplete. Related: full limit-conversion failure sets `percent = 0f` (`BudgetRepository.kt:309-314`), which also suppresses alerts.
+The current fallback can add a projected occurrence for a rule that also has a materialized row.
+The old plan's blanket `source/date` filter is unsafe: it can discard lifecycle state that the
+projection does not contain.
 
-**Fix design.**
-1. `BudgetMonitor`: when `status.isPartial` → append a bounded qualifier to the notification body ("some transactions excluded — rates unavailable"; string resource, no amounts) and include `partialData = true` in the alert diagnostic event.
-2. Surface a `PARTIAL_DATA` state to the budget UI (the status snapshot already flows to the list screen) → small badge/"data incomplete" chip. Alert thresholds keep firing as computed (we cannot alert on unknowable spend); the honest signal replaces the silent gap.
-3. In `BudgetRepository`, stop zeroing `percent` on limit-conversion failure when spend is known: emit `percent = null` (unknown) and let the monitor treat null-percent as PARTIAL_DATA rather than "0% healthy". Check percent consumers for null-handling (`BudgetStatus` consumers in UI/tests — make the field nullable or add `percentKnown: Boolean`).
+Implement this precedence:
 
-**Guardrails.** Controlled reason codes only in diagnostics; no raw exception text. UI: no new colors for partial — reuse existing informational chip styles. **Tests:** `BudgetMonitorTest` partial fixture → qualifier + diagnostic flag; null-percent fixture → PARTIAL_DATA not 0%.
+1. Reuse the persisted `RecurringOccurrence.occurrenceKey` identity
+   (`sourceType|sourceId|dueDate|frequency`), including the existing timezone/day normalization;
+   do not invent a source/date-only key that can collapse distinct frequencies.
+2. Read reminder-delivery state through an explicit repository projection/join with
+   `RecurringReminderDelivery` (claimed/sent/dismissed/snoozed), or an authoritative set of
+   occurrence ids. If that read fails, mark the forecast partial and do not discard materialized
+   rows. A claimed delivery makes the materialized occurrence authoritative.
+3. For a matching materialized row with a terminal status (`PAID`, `SKIPPED`, `MISSED`,
+   `CANCELLED`, or `IGNORED`), keep one merged occurrence identity and count **zero future
+   obligations**. A linked expense also makes it terminal for counting. For `PLANNED` (the only
+   currently open status; verify any additional status before coding), preserve linked/reminder
+   metadata and count the occurrence once.
+4. If no matching fallback key exists, keep the materialized row. If a fallback key has no
+   materialized row, add the projection once. Never delete/recreate rows in this read-only path.
 
-### P6-006 — Rollover skipped on any limit-conversion partial (MED)
+Do not use merchant/amount fuzzy matching and do not delete or recreate occurrence rows in this
+read-only forecast path.
 
-**Problem.** `BudgetRepository.kt:258` gates the entire rollover loop on `!initialLimitAggregate.isPartial`; the benign latest-rate fallback (`:500-512`) sets `isPartial = true` while still producing a usable home-currency limit → historical-as-of misses (pruned rates) silently disable rollover: surplus vanishes, `effectiveLimit = baseLimit`, monitor can immediately alert "Exceeded" against the un-rolled limit.
+Tests must cover the same persisted occurrence key with `PLANNED`, `PAID`, `SKIPPED`, `MISSED`, a
+linked expense, an already-claimed reminder from the delivery join, no fallback output, and a
+projection failure. Assert one merged record; assert one counted obligation only for `PLANNED`, and
+zero counted future obligations for terminal/linked rows.
 
-**Fix design.** Replace the gate with a value-preserving one:
-```kotlin
-val homeLimit = initialLimitAggregate.homeCurrencyTotal  // or equivalent non-null check
-if (budget.rollover && homeLimit != null) { /* rollover loop */ }
+### P6-008 - Catch up overdue detected patterns
+
+Advance a detected pattern's working date with the same recurrence function until it reaches the
+window start, then emit dates in `[startDate, endDate)`. Apply the 90-day stale check to the
+original `nextExpectedDate`, not the advanced cursor. Add overdue-by-five-days and older-than-90-
+days tests, including month-end recurrence boundaries.
+
+### P6-009a - Remove fabricated empty-history spend
+
+When `FinancialStressForecastEngine` has no purchase history, do not generate
+`daysAhead * 20.0 +/- 5` home-currency amounts. Simulate real recurring obligations with zero
+discretionary spend and mark the result using the existing `StressForecastResult.isPartial` and
+`qualityWarnings` fields (controlled code such as `LOW_PURCHASE_HISTORY`). The UI must render this
+quality marker alongside the existing `StressForecastMode`; do not invent a currency-specific
+numeric fallback.
+
+Test JPY/EUR fixtures to prove the empty-history path is currency-neutral and visibly degraded.
+
+### P6-010 - Name the horizon result honestly
+
+`earliestCrunchDate` currently returns the end of the at-risk horizon. Either rename the model field
+to `atRiskHorizonEnd` and update all readers/string resources, or retain the old field name with an
+explicit deprecation/documentation note. Do not claim a day-level crunch date without implementing
+the first simulated zero-balance crossing. Remove the `/30.0 * 30.0` no-op and use the actual
+per-day obligation value.
+
+### NEW-P6-010 - Injectable thresholds without changing behavior
+
+Move the existing stress probability constants into a Hilt-provided `StressRiskThresholds` value
+object, preserving the current defaults and enum behavior. This is configuration hygiene only;
+it is not the product risk-band redesign below.
+
+### P6-P1-13 - Render degraded stress output
+
+Locate the real `StressForecast` render consumer before editing. When `mode != ESTIMATED_INDEX`,
+render a bounded string-resource qualifier; when `isPartial`/`qualityWarnings` is set, render the
+existing data-quality chip. If no production consumer exists, record that as a wiring blocker rather
+than adding a second, bypassing UI path.
+
+---
+
+## 9b - Budget partial-data semantics
+
+### P6-005 - Reuse the existing `BudgetStatus` quality contract
+
+`BudgetStatus` already exposes `isPartial`, `conversionWarning`, and `BudgetHealthStatus.UNKNOWN`,
+and the budget screen already renders a partial warning. Do not add a parallel `PARTIAL_DATA` enum
+without mapping it to those fields. Do not make `percentUsed` nullable in a local patch: it is a
+non-null `Float` consumed by the monitor, UI, dashboard adapters, AI prompt builders, and forecast
+assemblers.
+
+Use one of these source-compatible contracts, chosen before coding:
+
+- preferred: add `percentKnown: Boolean = true` to `BudgetStatus`, keep the non-null field as a
+  compatibility value, and require every consumer to gate display/alerts on `percentKnown`; or
+- perform a complete nullable-percent migration across every listed consumer with compile/test
+  coverage in the same batch.
+
+The preferred path sets `percentKnown == false`, `healthStatus == UNKNOWN`, and a controlled
+`conversionWarning` when the budget limit cannot be converted. The value `0f` is never presented as
+0% healthy and never enters threshold comparisons. If spend is partially converted but the limit is
+known, keep `percentKnown == true`, preserve `isPartial == true`, and allow threshold checks while
+adding a bounded "some transactions excluded" notification qualifier and a `partialData` diagnostic
+field. No amounts or exception text go into diagnostics.
+
+Tests must cover full conversion failure, partial spend with a usable limit, every existing
+`percentUsed` consumer, UI warning text, and notification diagnostics.
+
+### P6-006 - Distinguish usable fallback from unavailable limit in rollover
+
+`initialLimitAggregate.isPartial` currently conflates a latest-rate fallback with a total conversion
+failure. Use `conversionQuality`/an equivalent explicit outcome:
+
+- historical conversion succeeded: apply rollover;
+- historical rate missing but latest-rate fallback produced a usable home-currency limit: apply
+  rollover, keep `isPartial` and the warning;
+- no conversion possible (`ConversionQuality.UNAVAILABLE`): skip rollover, set `percentKnown` false
+  and `healthStatus.UNKNOWN`; never subtract home-currency spend from a source-currency limit.
+
+Keep rollover arithmetic and period ordering unchanged. Add tests for exact historical rate, usable
+latest fallback, total failure, and a partial prior-period aggregate.
+
+---
+
+## 9c - Forecast FX basis
+
+### P6-007 - Use one basis for current-period risk math
+
+The forecast compares a budget limit converted at `PERIOD_END` with current-period spend normalized
+at `TRANSACTION_DATE`. That makes the risk ratio move solely because rates changed after a purchase.
+
+1. Add/use a repository-owned method on the already-injected `BudgetRepository` that returns the
+   bounded current-period purchase aggregate at `RateBasis.PERIOD_END` and the period-end timestamp.
+   The domain engine must not reach directly into a DAO for this operation.
+2. Use that aggregate for `spentToDate`, risk level, overspend probability, and predicted remaining.
+   Keep transaction-date rates for historical series/analytics only.
+3. Persist `BudgetForecast.rateBasis = PERIOD_END` for the persisted risk calculation and update
+   readers/docs that interpret the field. If a caller needs historical-series basis, expose that as
+   a separate in-memory contract rather than overloading this field.
+4. Missing-rate results remain partial/unavailable; they must reduce confidence or return the
+   existing typed unavailable result, never fall back to a fabricated currency.
+
+Golden tests must cover rate appreciation/depreciation mid-period, mixed currencies, missing rates,
+single-currency parity, and the period/timezone boundary.
+
+---
+
+## 9d - Explicitly deferred product decisions
+
+### CFC absolute risk bands
+
+`CashFlowCalculator` currently maps `500/100/0` absolute home-currency balances to risk bands. A
+ratio-to-income policy is a product/model change, not a narrow FX fix. Do not silently replace those
+bands in this RP. Before implementation, a separate approved spec must define:
+
+- normalized income source and period;
+- zero, negative, missing, and multi-currency income;
+- partial conversion behavior;
+- historical comparability and UI copy;
+- golden fixtures for EUR, JPY, missing income, and partial income.
+
+Until that spec exists, preserve the current enum contract but mark low-data/unsupported quality
+explicitly where the existing model permits; never claim the absolute values are currency-neutral.
+
+### NEW-P6-015 - Unsupported recurring income
+
+The current `ManualRecurringExpense`/`RecurringPattern` contract has no direction field. Do not
+pretend the engine can selectively identify income rules. Choose one explicit product/schema path:
+
+* treat all existing manual recurring rows as expenses and expose a global
+  `UNSUPPORTED_INCOME_RECURRING` capability/status; or
+* add a typed direction/transaction-type field, provider mapping, Room migration/schema snapshot,
+  and then exclude only rows explicitly marked income.
+
+In either case, do not infer income from a negative amount. Record the capability gap and add a
+regression test for the selected contract; no selective “income rule” fixture is valid until a
+source field exists.
+
+---
+
+## Validation and sequencing
+
+```text
+./gradlew :app:testDebugUnitTest --tests "*FinancialStressForecastEngine*" --tests "*CashFlowCalculator*" \
+  --tests "*BudgetMonitor*" --tests "*BudgetRollover*" --tests "*BudgetRepository*" \
+  --tests "*BudgetForecastingEngine*"
 ```
-i.e. rollover proceeds whenever a home-currency limit exists (exact or latest-fallback); only a *total* conversion failure (null) skips rollover — and in that case the P6-005 PARTIAL_DATA/unknown-percent path reports it instead of pretending the base limit is authoritative. The `isPartial` flag continues to flow into status for the badge.
 
-**What it solves.** Foreign-currency budgets keep their accumulated surplus; no false "Exceeded" alerts after rate pruning.
-
-**Guardrails.** Rollover arithmetic unchanged (cap, ArrayDeque semantics verified earlier); money rule: per-period conversion basis untouched. **Tests:** `BudgetRolloverTest` + `BudgetRepositoryHistoricalStatusTest`: fallback-partial limit → rollover applied with isPartial badge; total failure → skipped + PARTIAL_DATA.
-
----
-
-## 9c — Forecast FX basis
-
-### P6-007 — `BudgetForecastingEngine` mixes rate bases (MED, regression vs the repo's own fix)
-
-**Problem.** Limit converted at `RateBasis.PERIOD_END, atMillis = periodEnd` (`:122-129`); spend normalized at `TRANSACTION_DATE` (`:185-186`, persisted `:206`). `determineRiskLevel`/`calculateOverspendProbability` divide the two (`:549-561, :578`). A ~10% home-currency move mid-period flips HIGH→MEDIUM and shifts probability bands. `BudgetRepository` fixed exactly this class (P6-CURRENT-001, `:202-206, :393-399` — both sides at period-end); the engine never mirrored it.
-
-**Fix design.**
-1. Convert spend at the same period-end basis: reuse the repository's approach — either expose the existing bounded grouped spend-bucket query/normalization as a repository API (preferred; the engine already injects or can inject `BudgetRepository`) or replicate the `convertBudgetAmountToHomeCurrencyAsOf(periodEnd)` basis for each currency bucket in the engine.
-2. Keep `RateBasis.TRANSACTION_DATE` for any *historical analytics* the engine reports (history series), and switch only the **current-period** `spentToDate` used against the limit. Record the basis on the forecast row (`:206` area already records a basis field — update the value and its readers).
-3. Golden: `BudgetCalculatorGoldenTest` + forecast fixtures with a mid-period rate change — assert risk level stable under a spend-currency appreciation that previously flipped it.
-
-**Guardrails.** Money rule: basis change alters forecast numbers for multi-currency users — golden deltas enumerated; single-currency unaffected. Land after RP-08 (same file).
-
----
-
-## NEW-P6-015 — Income recurring patterns (tracked) → documentation-only decision
-
-**Problem.** `CashFlowCalculator.isIncomePattern()` (`:647-651`) unconditionally `false` + `MergedRecurringPatternsProvider` (`:23-24`) sources only expense rules — recurring **income** cannot be represented in the cashflow forecast.
-
-**Fix design (decision, not code).** Check the `ManualRecurringExpense` entity for an income/direction field. If none exists, income-recurring is a **feature gap** (entity + UI + engine), not a bug — record it as such in the registry (update the row: "blocked-by-feature: income recurring rules") and leave the TODO pointing at the feature request. If a direction field exists but is unwired, wire `isIncomePattern` to it and route income patterns into the income side of the day map (`:412-416` shape). **Do not invent a heuristic** (e.g. negative amounts) — misclassified income as expense is worse than absent income.
-
----
-
-## Validation (when Gradle re-enables)
-```
-./gradlew :app:testDebugUnitTest --tests "*FinancialStressForecastEngine*" --tests "*CashFlowCalculator*" --tests "*BudgetMonitor*" --tests "*BudgetRollover*" --tests "*BudgetRepository*" --tests "*BudgetForecastingEngine*"
-```
-
-## Sequencing & risk
-- Order: RP-08 → 9a → 9b → 9c. Risk: 9c changes forecast numbers for multi-currency users (intended correction); 9b changes alert copy (string review); 9a is engine-internal. All money changes carry golden updates in-PR.
+Tests were not run while this plan was rewritten. Land in order: RP-08, 9a, 9b, then 9c. Stop if
+the repository reveals a different occurrence-status or conversion-quality contract; do not widen
+the batch by inventing a new risk product.

@@ -1,63 +1,118 @@
-# RP-07 — Runway/trend polish (Pipeline 5, low-severity cluster)
+# RP-07 - Runway, calendar, insight, and historical-status semantics
 
-> **Scope class:** pipeline-isolated. **Mode:** standard (display-edge semantics; no engine arithmetic changes beyond guards/rounding edges).
-> **Files:** `ComputeDashboardWidgetsUseCase` (domain/usecase/dashboard/), `TotalsAggregationEngine` (domain/analytics/), `TimePeriodUtils` (domain/util/), `HomeViewModel` (ui/screens/home/) — read-only consumer checks.
-> **PR shape:** one small PR; all four items touch the same use case file except P5-014.
+> **Status:** corrected implementation plan; documentation only.
+> **Mode:** strict for the runway model migration, standard for the display-only trend/status fixes.
+> **Depends on:** RP-05 dashboard windows and RP-06 normalized pace/synthesis contracts.
+> **Owns:** dashboard runway edge behavior, DST-safe block-party lookup, month-over-month insight wording, and completed-history status baselines.
+> **Does not own:** currency conversion, pace construction, budget autopilot, or a broad redesign of status thresholds.
 
----
+The prior draft called this a small use-case change, but `FinancialRunway.daysRemaining` is currently a non-null `Int` consumed by a Compose card and by several dashboard tests. A no-burn state therefore requires an explicit model, adapter, and UI migration. Each `excludeCurrent` caller also needs an individual classification; this plan does not change all callers by search-and-replace.
 
-## P5-010 — Runway edge cases: day-1 CRITICAL, truncation, undeducted commitments (LOW-MED)
+## Verified source contracts
 
-**Problem.** `computeRunwayAndForecast`:
-- `:603` `averageDailyBurn = monthSpent / dayOfMonth` → on day 1 with no purchases, burn = 0 → `runwayDays = 0` (`:617-621`) → status CRITICAL (`:623-627`) despite a full budget remaining.
-- `:618` `(totalRemaining / averageDailyBurn).toInt()` truncates (13.99 → 13), flipping the CAUTION/HEALTHY boundary.
-- `committedExpenses`/`likelyExpenses` are displayed but never deducted from `totalRemaining` (`:609-615` subtracts only `monthSpent`).
+- `ComputeDashboardWidgetsUseCase.computeRunwayAndForecast` computes `averageDailyBurn = monthSpent / dayOfMonth`, uses `.toInt()` for the runway, and currently subtracts only month spend from the budget/income remainder. `totalCommitted` and `totalLikely` are displayed but not deducted.
+- `DashboardWidget.FinancialRunway.daysRemaining` and `FinancialRunwayCard.daysRemaining` are non-null `Int`. The card treats zero as exhausted except for `NO_INCOME`.
+- The block-party fallback currently probes `monthStart + dayIndex * DAY_IN_MILLIS`, while dashboard day keys are zone-aware `TimePeriodUtils.getStartOfDay` values.
+- `buildNaturalLanguageInsight` compares current MTD directly with the full previous month and receives no projected-total argument. RP-06 supplies the canonical pace projection.
+- `TotalsAggregationEngine.getAverageForPeriodType` already has an `excludeCurrent` flag. Several totals and `HomeViewModel` status callers currently pass `false`, including comparison surfaces.
 
-**Fix design.**
-1. Zero-burn guard: when `averageDailyBurn <= 0`: if `totalRemaining > 0` → `runwayDays = null` and render "30+" (capped at days-to-period-end; pick the smaller of period-end and 30 for honesty) with status derived from budget utilization instead of runway; only if `totalRemaining <= 0` keep the CRITICAL path.
-2. Replace `.toInt()` with `.roundToInt()` (kotlin.math) — one-char semantic fix, note in PR.
-3. Deduct committed (certain) outflows: `effectiveRemaining = totalRemaining - committedTotal`; keep `likelyTotal` informational (displayed as context, not deducted — uncertain by definition). Guard `effectiveRemaining >= 0` (committed can exceed remaining → clamp to 0, runway null, status from utilization).
-4. Keep the existing status thresholds untouched — only inputs become correct.
+## P5-010 - Correct runway edge cases without inventing a number
 
-**What it solves.** No more fake day-1 CRITICAL; rounding no longer flips tiers; bill-heavy users see honest runway.
+### Domain contract
 
-**Guardrails.** `FinancialRunway` widget consumers (`HomeScreen`/`ForecastRunwayIntegrationTest`) read `runwayDays` as non-null Int today — introduce `runwayDays: Int?` + a display string, or keep Int with a sentinel `Int.MAX_VALUE`… **prefer nullable** and update the widget + test in this PR (small, explicit). Money rule: no formatting changes.
+Extend the dashboard runway model deliberately:
 
-**Tests.** Day-1-empty fixture → no CRITICAL, "30+"; 13.99-day fixture → 14; committed > remaining → clamped + utilization status.
-
-## P5-011 — Block-party history keys ignore DST (LOW)
-
-**Problem.** `:671-673` probes `monthStart + dayIndex * DAY_IN_MILLIS` while `dailySpending` is keyed by zone-aware `getStartOfDay` (`TimePeriodUtils.kt:452-459`, whose own docs warn days can be 23/25h) → after an in-month DST shift, probes miss by 1h → day reads 0/neighbor-day.
-
-**Fix design.** Iterate days with `TimePeriodUtils.addDays(monthStart, dayIndex)` (LocalDate-based, DST-safe — same utility the rest of the dashboard uses) instead of fixed-millis multiplication. No key-map changes.
-
-**Guardrails.** Post-RP-06b the raw-expense path takes precedence; this fixes the normalized fallback — keep it correct anyway (fallback fires for zero-raw days). **Tests:** fixture across a spring-forward day → each day's value resolves.
-
-## P5-013 — MoM insight degeneracies (LOW)
-
-**Problem.** `buildNaturalLanguageInsight` (`:1115-1135`): with `previousMonthTotal == 0` the MoM branch either skips (null aggregate) or, when conversion made it 0.0, fires trivially-true "higher"; mid-month, `diff = MTD − fullPrevMonth` is negative most of the month → premature "spent less".
-
-**Fix design.**
-1. When `previousMonthTotal <= 0` → emit no MoM insight (or an explicit "no comparison available" insight if the UI needs a placeholder — check how other unavailable insights render).
-2. Project the current month before comparing: `projected = monthSpent / daysElapsed * daysInMonth` (guard `daysElapsed >= 1`; both already computed in the use case). Compare `projected` vs `previousMonthTotal`; threshold text unchanged ("on pace to spend X% more/less").
-3. Keep the >20% spike rule; it now applies to the projection.
-
-**Tests.** Prev-empty → no insight; day-3 underspend-but-on-pace-to-overspend → no false "spent less".
-
-## P5-014 — Monthly status average includes the partial current month (LOW)
-
-**Problem.** `TotalsAggregationEngine.getMonthlyTotals` (`:91`) calls `getAverageForPeriodType(MONTH, excludeCurrent = false)`; only the YEAR caller passes `true` (`:257`). Comparing MTD against an average that includes the partial current month biases every month UNDER_AVERAGE early on. The exclusion machinery (`:373-383`, DSH-13) exists and is tested — just not selected.
-
-**Fix design.** At `:91` pass `excludeCurrent = true` for the MONTH status baseline. Audit the other `getAverageForPeriodType(MONTH/WEEK, false)` callers (`HomeViewModel:597/659/708/718/729`) — each is a "compare current vs typical" surface and should also pass `true`; add a KDoc on `getAverageForPeriodType` stating: `excludeCurrent = true` for *comparisons*, `false` only for "total including current" displays. Keep WEEK behavior consistent with whatever each surface displays (verify per call site; do not blanket-change displays that legitimately include the current week).
-
-**Guardrails.** This shifts status badges users see — expected and desired; golden/`TotalsAggregationEngineTest:499-515` pins include-current for a purchase-only case, not the exclusion flag — add explicit excludeCurrent assertions. **Tests:** partial-current fixture → average excludes it; day-2 month no longer auto UNDER_AVERAGE.
-
----
-
-## Validation (when Gradle re-enables)
-```
-./gradlew :app:testDebugUnitTest --tests "*ComputeDashboardWidgets*" --tests "*TotalsAggregationEngine*" --tests "*ForecastRunway*" --tests "*DashboardProjectionSafety*"
+```text
+FinancialRunway(
+    daysRemaining: Int?,
+    zeroBurnHorizonDays: Int?,
+    ...,
+    status: RunwayStatus
+)
+RunwayStatus = HEALTHY | CAUTION | CRITICAL | NO_INCOME | NO_BURN
 ```
 
-## Sequencing & risk
-- Land after RP-05/RP-06 (consumes their corrected inputs). Risk: low — guards and selection flags; the only API shape change is the nullable runway field (widget + tests updated in-PR).
+`zeroBurnHorizonDays` is non-null only for `NO_BURN` and is the honest display cap `min(daysUntilPeriodEnd, 30)`. When the period has no days left it is `0` and the UI says “No remaining period” rather than displaying `0+`. It is not a calculated runway and must not be used in threshold comparisons. If adding a second field is rejected by the existing UI model, use an equivalent typed `RunwayAvailability` sealed value; do not use `Int.MAX_VALUE` or a magic negative sentinel.
+
+### Calculation rules
+
+1. Resolve the spending basis and remaining budget in home currency, preserving RP-05/RP-06 partial/unavailable quality. Compute `remainingBeforeCommitments` from the existing budget-or-income policy.
+2. Deduct only `totalCommitted` (certain future outflows):
+
+   `effectiveRemaining = (remainingBeforeCommitments - totalCommitted).coerceAtLeast(0.0)`.
+
+   Keep `totalLikely` informational; it is shown but not deducted because it is probabilistic. If the committed amount exceeds the remainder, keep the remainder at zero and use the critical/exhausted status path.
+3. If there is a valid positive remainder and `averageDailyBurn <= 0`, return `daysRemaining = null`, `zeroBurnHorizonDays = min(daysUntilPeriodEnd, 30)`, and `status = NO_BURN`. This state means “no observed burn”; it does not mean infinite money. Preserve `NO_INCOME` when neither a usable income source nor an explicit budget exists.
+4. If burn is positive, calculate `(effectiveRemaining / averageDailyBurn).roundToInt().coerceAtLeast(0)`. Keep the existing 14/7 thresholds unchanged. Do not use truncation, which makes 13.99 days look like 13.
+5. If the remainder is zero/non-positive, return a non-null zero day count and `CRITICAL` (unless the existing no-income contract applies). Do not label a zero-burn, positive-remainder user critical.
+
+### Complete consumer migration
+
+- Update `DashboardWidget.FinancialRunway`, `RunwayResult.Available` construction, the unavailable fallback, and every `copy`/fixture.
+- Update `FinancialRunwayCard` to accept nullable days and the no-burn cap. For `NO_BURN`, show `"{cap}+"` when the cap is positive or “No remaining period” at zero, suppress the exhausted message, and use a bounded progress value based on the cap. For all other statuses, retain the existing numeric/day presentation.
+- Update `HomeScreen` mapping and any accessibility/test semantics. The UI must not call `.coerceAtLeast` on a nullable value before handling `NO_BURN`.
+- Audit `DashboardWidgetRenderCoverageTest`, `DashboardProjectionSafetyTest`, `ComputeDashboardWidgetsUseCaseDaysRemainingBoundaryTest`, `DashboardWidgetConsistencyTest`, and integration fixtures. `SafeToSpend.daysRemaining` is a separate non-null field and is not part of this migration.
+
+### Tests
+
+- Day one, no purchases, positive budget -> `NO_BURN`, nullable days, cap no greater than 30, never `CRITICAL`.
+- Positive burn with a 13.99-day quotient -> 14 and `HEALTHY`/`CAUTION` classification according to the unchanged thresholds.
+- Committed obligations greater than remaining -> zero remainder, `CRITICAL`, committed amount still visible, likely amount not deducted.
+- No budget and no income -> `NO_INCOME` and no fabricated runway.
+- Last day/month boundary and DST fixtures preserve the existing `SafeToSpend` day semantics.
+
+## P5-011 - DST-safe block-party history keys
+
+Replace fixed-millisecond day construction with `TimePeriodUtils.addDays(monthStart, dayIndex)` (or the repository's equivalent calendar-safe helper). Keep the map keyed by `getStartOfDay` and do not change rate or money semantics. A spring-forward and fall-back fixture must prove that each calendar day reads its own value and that no neighboring day is duplicated or skipped.
+
+This is a fallback-path fix even after RP-06 makes normalized daily values authoritative. Do not reintroduce raw daily sums to compensate for a missing key.
+
+## P5-013 - MoM insight must compare like with like
+
+Change `buildNaturalLanguageInsight` to receive the canonical `SpendingPace.projectedTotal` (or an equivalent explicitly supplied projection from RP-06), `previousMonthTotal`, and the existing today/count values.
+
+- If `previousMonthTotal <= 0` or is unavailable/partial in a way that cannot support comparison, skip the MoM branch and retain the existing “today spent” fallback.
+- Compare projected current-month spend with the completed previous-month total. Do not compare MTD with a full month; that produces a false “spent less” message early in every month.
+- Keep the existing greater-than-20-percent spike threshold and text keys. Do not duplicate a projection formula in this use case.
+- If the projection is unavailable, do not coerce it to zero; skip the comparison.
+
+Tests must include: no previous baseline, day-three MTD below last month but projection above it, a genuine under-pace projection, and the >20% spike.
+
+## P5-014 - Completed-history averages, caller by caller
+
+Document `getAverageForPeriodType(periodType, excludeCurrent)` as follows: `true` is required for a historical comparison/status baseline; `false` is allowed only for a surface explicitly labelled as including the current partial period.
+
+Apply and verify the following matrix rather than changing every call blindly:
+
+| Caller | Use | Required policy |
+|---|---|---|
+| `TotalsAggregationEngine.getMonthlyTotals` | Monthly status badge vs typical history | `excludeCurrent = true` |
+| `TotalsAggregationEngine.getWeeklyTotals` | Weekly status badge vs typical history | `true` if current week is in the returned list |
+| `HomeViewModel.loadTotalsForYear` | Month status labels in the drill-down | `true` |
+| `HomeViewModel.drillDownToPeriod` | New month/week comparison level | `true` for the comparison level |
+| `HomeViewModel.drillUp` | Year/month/week status labels | `true` for completed-history comparison; retain `false` only where UI copy explicitly says “including current” |
+| Explicit total/summary displays | Include-current total, not a comparison | keep `false` and add a test proving that intent |
+
+The implementation must preserve calendar-safe month keys and partial-data warnings from `TotalsAggregationEngine`; an excluded current month is not the same as a missing rate. Add a KDoc and use named booleans at call sites so future changes are reviewable.
+
+Tests must cover a partial current month, a day-two month, a zero-spend completed month, an incomplete/missing-rate month, and a display intentionally including current data. Update the existing tests that pin the old include-current behavior; do not weaken assertions by deleting status checks.
+
+## Sequencing, ownership, and stop conditions
+
+1. Land the nullable/no-burn runway model and UI migration with focused tests.
+2. Land DST-safe block-party keying.
+3. Land projected MoM insight using RP-06's pace result.
+4. Audit and change completed-history status callers individually.
+
+Stop for architecture review if a caller uses a magic runway sentinel, a no-burn state is rendered as exhausted/critical, likely expenses are silently deducted, a fixed-millis date key remains in the block-party path, a MoM message compares MTD to a full month, or an `excludeCurrent` change alters a surface that explicitly promises current-period totals. Stop for any Room/schema change; none is authorized here.
+
+## Validation (not run for this documentation change)
+
+After implementation and strict review, run sequentially with output captured:
+
+```text
+./gradlew :app:testDebugUnitTest --tests "*ComputeDashboardWidgets*" --tests "*DashboardProjectionSafety*" --tests "*ForecastRunwayIntegration*" --tests "*FinancialRunway*" --tests "*TotalsAggregationEngine*" --tests "*HomeViewModel*" --console=plain
+./gradlew :app:compileDebugKotlin --console=plain
+```
+
+No Gradle command was run while preparing this plan. RP-08 and later remediation documents were intentionally not changed in this continuation.

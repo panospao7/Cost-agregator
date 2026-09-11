@@ -1,119 +1,139 @@
-# RP-03 — Backup/restore integrity (Pipeline 7)
+# RP-03 - Backup/restore integrity (Pipeline 7)
 
-> **Scope class:** pipeline-isolated + one crossover (encryption service shared with P12). **Mode:** strict (backup/restore is on the strict list).
-> **Files (all ⟂-verify dirs by class name):** `DatabaseBackupRepositoryImpl` (data/repository/), `RestoreJournal`, `RestoreMaintenanceMode`, `MaintenanceOperationRunner`, `BackupVerifier`, `CostbackupBundle`, `BackupEncryptionService` (data/privacy/), `RestoreDatabaseOpener`, `AppStartupCoordinator` (startup/), `BackupRestoreViewModel` + `BackupRestoreScreen` (ui/screens/backup/), `MainActivity` (ui/), `ExportAnonymizer` (data/privacy/), `AiChatSessionEntity` (data/database/entity/).
-> **Recommended split:** 3 PRs — (3a) save path & durability = P7-003, P7-005, P12-008; (3b) state machine = P7-001, P7-002, P7-008, P7-004, P7-006; (3c) smalls = P7-009, P7-010, P7-011.
+> **Scope:** Segment 18 (Export & Backup), with startup/runtime, receipt lifecycle, privacy, and shared encryption crossover. **Mode:** strict.
+>
+> **Source baseline:** `DatabaseBackupRepositoryImpl`, `data/backup/*`, `ReceiptAssetStore`, `AppStartupCoordinator`, and the four audit reports reviewed on 2026-09-08. The current code has journaled staging/swap/recovery, worker drain, encrypted `.costbackup` bundles, checksum/extraction limits, fresh-DB verification, and Tier 1 exact table counts. The remaining implementation work below must not be inferred from the stale 2026-05-31 tracker.
 
----
+## 1. Non-negotiable contracts
 
-## P7-003 — Backup saving fails on every supported device (HIGH)
+1. Production `.costbackup` backup/restore remains the only supported user backup path. Preserve the encryption envelope and `BackupEncryptionService`; do not add plaintext receipt or database output. If the envelope is changed, retain legacy decrypt compatibility and add golden vectors before release.
+2. Every backup/restore/reset operation enters through `MaintenanceOperationRunner.enterAndDrain`, persists `RestoreMaintenanceMode`, and exits in `finally`. `BACKUP_EXPORTING` blocks writes while the snapshot is made. Restore modes block reads/writes according to `DatabaseReadBarrier` and `DatabaseWriteBarrier`; no caller may bypass them.
+3. The live database is never modified before pre-swap staging, manifest validation, Room migration/open, integrity/FK checks, and safety-backup creation succeed. After file swap, use a fresh `RestoreDatabaseOpener` instance. Do not resume ordinary app writes against a stale injected `AppDatabase`; retain forced restart unless a separately approved reopenable database-provider design lands.
+4. After the swap, Room operation-run writes are forbidden by the existing F6 rule. Restore journal/event files are the authoritative post-swap progress channel. Receipt-row repair may use only the existing `RestoreInternalWriteScope` in `ASSETS_RESTORING`.
+5. Diagnostics and journals contain controlled stage/reason/error codes, receipt IDs, asset kind, byte counts, and booleans only. Never persist/log raw filenames, source paths, URI strings, exception messages, stack traces, receipt/OCR/notification text, or financial payloads. `CancellationException` always propagates.
 
-**Problem.** `DatabaseBackupRepositoryImpl.kt:657-665` writes the `.costbackup` via `java.io.File` into `Environment.getExternalStoragePublicDirectory(DIRECTORY_DOCUMENTS)`; manifest lacks `MANAGE_EXTERNAL_STORAGE`/`requestLegacyExternalStorage` (targetSdk 35); on API 26–28 `WRITE_EXTERNAL_STORAGE` (maxSdk 28) is a runtime permission never requested. `mkdirs()` silently returns false; `CostbackupBundle`'s `FileOutputStream` throws.
+## 2. Work packages and order
 
-**Fix design (SAF save, consistent with the app's existing CreateDocument usage for CSV/text export — `ExportOptionsScreen.kt:58-59` uses `CreateDocument("text/plain")`, launched `:237`, and copies into the SAF sink via `contentResolver.openOutputStream(uri)` at `:70-76`).**
-1. Split bundle creation from destination: add `CostbackupBundle.create(output: OutputStream, ...): Result<Unit>` — verified feasible because `BackupEncryptionService.encrypt(plaintextFile: File, outputStream: OutputStream, password)` already exists (`data/privacy/BackupEncryptionService.kt:80-99`). **Two mechanical notes:** (a) `buildZip` takes a `File` (`CostbackupBundle.kt:489-495`) and the current temp ZIP is staged in `outputFile.parentFile` (`:290-292`) — a SAF stream has no parent dir, so the stream overload must stage the temp ZIP in `context.cacheDir`; (b) keep the existing `create(outputFile: File, ...): Result<File>` as a thin delegate for tests/legacy callers.
-2. `BackupRestoreViewModel`: register `ActivityResultContracts.CreateDocument("application/octet-stream")` (suggested name `costbackup-<yyyyMMdd-HHmm>.costbackup`); on URI result, run the existing create flow but hand the resolver `contentResolver.openOutputStream(uri)!!` as the destination. (The repo interface `DatabaseBackupRepository.createCostBackup` has defaults and ~6 call sites/tests — prefer the `BackupDestination` sealed type (`Stream(Uri)` / `File(path)`) over changing the parameter type in place.)
-3. `DatabaseBackupRepositoryImpl.createCostBackup`: change the destination parameter to `BackupDestination`; final name/journal/verify flow unchanged — the destination is only opened after verification succeeds, exactly where the current code opens the FileOutputStream (`:657+`).
-4. `BackupRestoreScreen`: wire the launcher (mirror `ExportOptionsScreen`'s `rememberLauncherForActivityResult`) around the existing backup button (`:174-192`); keep progress/error UI identical.
-5. Remove the public-Documents dir construction entirely (no fallback to it). The user picks the location, which is what makes the file retrievable after uninstall.
+### RP-03A - Save path, snapshot, and envelope
 
-**What it solves.** Backup creation works on API 26–35 with a user-chosen location; no new permissions.
+- Keep `BACKUP_EXPORTING` entry/drain, WAL checkpoint, `SqliteSnapshotCreator`, strict required-table counts, and destination verification ordering.
+- Add the SAF destination path to `CostbackupBundle`/repository without opening the destination until bundle encryption and verification have succeeded. `contentResolver.openOutputStream(uri)` is nullable and may throw; handle null/open/write/close failures as a failed export.
+- On a SAF failure, close the stream exactly once, best-effort delete the provider document with `DocumentsContract.deleteDocument`, and return the existing generic error. Do not damage the restore journal or claim backup success. The file destination overload remains a test/legacy delegate only; remove public-Documents fallback and permissions.
+- Preserve the current encrypted envelope. If the versioned KDF envelope in the approved encryption change is not already present in the branch, land it separately with legacy fallback, wrong-password mapping, truncation handling, and vectors. Do not mix an untested encryption-format rewrite into asset recovery.
 
-**Guardrails.**
-- Do **not** add `MANAGE_EXTERNAL_STORAGE` (Play policy; unnecessary).
-- Privacy gates (`ENCRYPTED_BACKUP`) and maintenance-mode enter/drain run **before** any destination I/O — gates at `DatabaseBackupRepositoryImpl.kt:533-543`, `enterAndDrain` `:545+`, destination `:657+` (note: `:366-420` is `exportDatabase`'s gate block, a different method). Order unchanged.
-- Restore input uses `ActivityResultContracts.GetContent()` with `"application/octet-stream"` (`BackupRestoreScreen.kt:55`, `:222`) — do not touch restore.
-- Stream must be closed on all paths; partial destination file: SAF-managed (CreateDocument creates an empty target — on failure, delete via `DocumentsContract.deleteDocument` best-effort; log sanitized failure).
-- Crossover: `CostbackupBundle` signature change is used by restore's extract path too — the old File overload delegates to the new one, so restore is untouched.
-- Safety backups never go through `CostbackupBundle` (plain DB copy at `:2339-2344` into `filesDir/safety_backups`) — unaffected by this change.
+### RP-03B - Restore state machine and database recovery
 
-**Tests.** `BackupRestoreRoundtripGoldenTest` gains a stream-sink variant (write to ByteArrayOutputStream → read back); ViewModel test: launcher delivers uri → repository called with stream; failure path (sink throws) → destination deleted + generic error, no journal damage.
+- Keep the journal sequence `PREPARING -> STAGED -> SAFETY_BACKUP_CREATED -> SWAPPING -> VERIFYING -> ASSETS_RESTORING -> COMPLETE`, with `ROLLING_BACK`/`FAILED` recovery paths.
+- Fix outer post-swap failure handling: track `swapped`; post-swap failure/cancellation must leave writes blocked and require restart. Pre-swap failure may exit normally only after staging cleanup and a terminal failed journal.
+- Cancellation in the asset loop must run a `withContext(NonCancellable)` journal-only checkpoint/finalization, preserve resumable `ASSETS_RESTORING`, clean only temporary asset outputs, exit with `forceRestartRequired = true`, then rethrow. Never call Room operation-run finalization after swap.
+- Startup handling of `RestoreJournal.RecoveryResult.AssetsIncomplete` must execute the asset recovery algorithm below, not unconditionally lock forever. If the swapped DB fails fresh verification, use the existing safety-backup rollback/critical-recovery path. If only receipt assets are missing, keep the verified DB and mark those asset tasks `FAILED`; do not roll back a valid DB for best-effort image loss.
+- `resetDatabase` must journal `SAFETY_BACKUP_CREATED` before destructive deletion and `SWAPPING` before deleting live files; its existing startup safety recovery remains mandatory.
+- Keep `.pre_restore` recovery ordering: safety backup, verified `.pre_restore`, then `CRITICAL_RECOVERY_REQUIRED`; clean it after successful consumption, successful commit, swap failure, and rollback.
 
-## P7-005 — Safety backup not fsynced (MED)
+### RP-03C - Receipt asset integrity and privacy
 
-**Problem.** `createSafetyBackupInternalAssumingMaintenance` (`:2342-2344`, stream `input.copyTo(output)` — not `File.copyTo`) uses a plain stream copy; the journal write that records `SAFETY_BACKUP_CREATED` **is** fsynced (`RestoreJournal.writeTextSynced:531-540`) → power loss can durably record a backup that is still partially in page cache.
+Implement one idempotent per-asset state machine. The journal must be written durably (temp file, flush/fsync, atomic rename) before each externally observable step. Extend the journal task record as an additive file-format change:
 
-**Fix design.** Copy via explicit streams and sync: `FileInputStream(src).use { input -> FileOutputStream(dst).use { out -> input.copyTo(out); out.fd.sync() } }`; on any exception delete the partial dst before rethrowing. Reuse/extract the `writeTextSynced` sync pattern into a small `FileUtil.syncedCopy(src, dst)` ⟂ (next to `RestoreJournal`'s helper).
-
-**Solves.** Durable journal implies durable safety copy; worst case stays fail-closed CRITICAL instead of restoring a truncated file. **Guardrails:** WAL checkpoint already precedes the copy (`wal_checkpoint(TRUNCATE)`) — keep order. **Tests:** hard to unit-test fsync; assert partial-file deletion on a forced failure (mock stream throwing mid-copy).
-
-## P12-008 — `.enc` envelope has no version/KDF header (MED, forward-compat) — **crossover, land in 3a**
-
-**Problem.** `BackupEncryptionService`: prefix = `salt(16)+IV(12)+ciphertext`; `ITERATION_COUNT = 600_000` compile-time. Any future KDF change bricks every existing encrypted export **and DB backup** (same service).
-
-**Fix design.**
-1. New envelope: `"EENC1".toByteArray()` magic (5B) + `kdfAlgoId: Byte` (1 = PBKDF2WithHmacSHA256) + `iterations: Int` (4B BE) + `saltLen: Byte` + salt + `ivLen: Byte` + IV + ciphertext.
-2. `decryptStream`: if input starts with the magic → parse params; **else** legacy path (16+12 fixed) — legacy stays readable forever.
-3. `encrypt*` always writes the new envelope. Never persist the raw passphrase; params are not secret.
-4. Use the same service for both DB-backup encryption and `.enc` exports (it already is) — one change covers P7-007 and P12-008.
-
-**Guardrails.** Wrong password on legacy files must still map to the existing "Incorrect password or corrupt backup" UX (`AEADBadTagException` path). Do not make iterations attacker-visible-configurable at runtime. **Tests:** golden vectors — legacy bytes decrypt via fallback; new-format roundtrip; magic-present-but-truncated → clean failure.
-
----
-
-## P7-002 — Cancelled asset restore → infinite restart lock (HIGH)
-
-**Problem.** `AppStartupCoordinator.kt:71-78` handles `AssetsIncomplete` by entering RESTART_REQUIRED and returning — before the auto-reset block — on **every** startup; nothing consumes the journaled `assetTasks`, so there is no exit. Reachable without a crash: `restoreCostBackup`'s outer catch rethrows `CancellationException` (`:1106-1108`) *before* any cleanup when the user leaves the screen mid-asset-restore (`viewModelScope`), leaving journal ASSETS_RESTORING + mode ASSETS_RESTORING persisted.
-
-**Fix design (two halves).**
-1. **Cancellation half** (`DatabaseBackupRepositoryImpl.kt:1105-1112`): **there is no existing NonCancellable finalize on this path** — `restoreCostBackup` calls `run.start()` directly (`:710`), not `runOperation` (whose NonCancellable CANCELLED finalize at `OperationRunRecorder.kt:135` is the only one in the codebase), and the `:838-867` range is staged-DB Room migration, not finalization. Add a new `catch (e: CancellationException)` around the asset-restore loop that, inside `withContext(NonCancellable)`, writes a **terminal journal event only** (journal/safe sink — the code's own F6 rule at `:985-986` forbids run-handle Room writes after the swap, so do **not** call `run.cancelled()` here; the orphaned run row is reclaimed by stale-run recovery), keeps the journal at ASSETS_RESTORING (resumable), then `exit(forceRestartRequired = true)` (a swapped DB exists — writes must not resume), then rethrows. Today's behavior on CE: inner catch `:1066` rethrows → outer `:1106` rethrows → **no exit, no failJournal** → journal + mode stay ASSETS_RESTORING — the leak this half closes.
-2. **Resume half** (`AppStartupCoordinator` AssetsIncomplete branch, `:71-78`): instead of unconditional lock:
-   - Load `assetTasks` + `extractTempDirPath` from the journal — `RestoreJournal.readJournal()` (`:482`) already exists; **note** JSON persists `assetTasks[].targetPath` as a **basename only** (`:89`, parsed `:144-145`) — derive final paths fresh during resume (consistent with P7-009's rename-first flow), never from the persisted value.
-   - Resume: for tasks still PENDING, copy/rename from tempDir (if missing → mark task FAILED, continue — assets are best-effort per the documented idempotency contract, `:1145-1158`); then re-verify the swapped DB via `RestoreDatabaseOpener`, transition journal → COMPLETE, `restoreMaintenanceMode.exit(forceRestartRequired = true)`, continue startup.
-   - If tempDir is gone and tasks are PENDING: still COMPLETE the journal (DB itself is verified good; missing receipt images are the documented best-effort loss) + exit with restart. Do **not** roll back from safety on missing images.
-   - Only if the swapped DB **fails** verification → existing CRITICAL path.
-3. `MainActivity` RESTART_REQUIRED screen stays as-is (`:397-406`; it now only appears for genuine failures).
-
-**Solves.** No user-reachable permanent lock; asset restore becomes resumable/cancel-safe.
-
-**Guardrails.** Never leave writes enabled against a swapped-but-unverified DB (`forceRestartRequired = true` on every post-swap exit — matches the code's own rationale at `:2269-2271`). Journal transitions must stay single-writer (`synchronized(journalLock)`). **Tests:** `AssetRestoreAtomicityTest` extensions — (a) cancel mid-restore → relaunch resumes tasks, journal COMPLETE, mode NORMAL(+restart flag); (b) cancel + tempDir deleted → completes with FAILED tasks; (c) swapped DB verify-fail → CRITICAL (existing behavior preserved).
-
-## P7-001 — `resetDatabase` crash window → empty DB (MED-HIGH, debug-caller)
-
-**Problem.** `resetDatabase` (`:2356-2454`) journals only PREPARING→(delete live DB + WAL/SHM)→COMPLETE. Crash in the window leaves PREPARING, which `RestoreJournal.checkAndRecover:705-711` classifies non-destructive and deletes → empty DB, NORMAL mode, safety backup unreferenced.
-
-**Fix design.** Mirror `restoreCostBackup`'s state machine: after `createSafetyBackup...` → `transitionTo(SAFETY_BACKUP_CREATED, safetyBackupPath = …)`; before the deletes → `transitionTo(SWAPPING)`; then delete + reopen + `transitionTo(COMPLETE)`. The existing `RecoveredFromSwap` startup branch then restores the safety backup automatically. Additionally gate the debug entry (`DebugViewModel:511`) behind a confirmation dialog (destructive action).
-
-**Guardrails.** No new journal states needed (reuse SWAPPING — its recovery semantics are exactly "restore safety backup"). Debug-only caller keeps severity bounded but fix the state machine regardless. **Tests:** journal-sequence unit test (states observed per step); simulated "crash" (run to SWAPPING, skip COMPLETE, run `checkAndRecover` + startup recovery) → DB restored from safety.
-
-## P7-008 — Post-swap outer catch exits to NORMAL (MED)
-
-**Problem.** `:1105-1112` — any exception escaping the inner handlers after the swap exits maintenance with `forceRestartRequired = false` while the journal says SWAPPING.
-
-**Fix design.** Track `swapped: Boolean` (set right after the swap block); in the outer catch: `failJournal(...)` then `exit(forceRestartRequired = swapped)`. Pre-swap failures keep the current non-restart exit.
-
-**Guardrails.** Don't alter inner handlers' behavior (verification-failure rollback path already handles its own cleanup after P7-006's fix). **Tests:** exception thrown at the `:983` Room rebuild (injectable failing opener) → mode RESTART_REQUIRED, journal failed, staged files cleaned.
-
-## P7-004 — `.pre_restore` never consulted/cleaned (MED)
-
-**Fix design.** (a) In `AppStartupCoordinator` `RecoveredFromSwap` recovery: order of recovery sources = safety backup → **`.pre_restore`** (verify by opening via `RestoreDatabaseOpener` + integrity check before swapping in) → CRITICAL. (b) Delete `.pre_restore` on: successful restore commit (already, `:1029`), swap-failed path (`:962-979`), rollback path (`:1096-1104`), and after it is consumed by recovery. **Solves.** Missed recovery source + DB-sized leak. **Guardrails.** `.pre_restore` is pre-swap state — only valid when the journal says a swap happened; never use it when the live DB is healthy. **Tests:** recovery-unit test with all three sources present/partial combinations.
-
-## P7-006 — Rollback leaks staged DB + WAL/SHM (MED)
-
-**Fix design.** In the verification-failure rollback (`:1096-1103`) and swap-failed (`:962-979`) paths: delete `stagedDbFile`/`-wal`/`-shm` explicitly (extract the success path's `:1030-1032` cleanup into `deleteStagedFiles()`) — place it *before* `failJournal` so an exception in cleanup still lands in a consistent journal state, but delete unconditionally via `runCatching`. **Tests:** rollback unit test asserts zero `import_stage_*` files remain.
-
-## P7-009 — Asset restore commits DB row before file exists (LOW)
-
-**Fix design.** In `restoreReceiptAssets` (`:1248-1268`): perform `tempFile.renameTo(finalFile)` (with existing-dir mkdirs) **first**; on success → `dao.update(receipt.copy(imagePath = finalFile...))`; on failure → delete only `tempFile` and record the task FAILED (do **not** touch the row; keep the old path). **Tests:** `AssetRestoreAtomicityTest` — rename failure leaves DB row untouched.
-
-## P7-010 — `commitJournal` clobbers per-task asset ledger (LOW)
-
-**Fix design.** `restoreReceiptAssets` returns (or mutates via a holder) its `currentJournalEntry.assetTasks`; the outer flow merges them into `journalEntry.copy(assetTasks = merged)` before `transitionTo(COMPLETE)`/`commitJournal` (`:1039-1040`). **Tests:** golden — success journal contains per-task PENDING/COMPLETED/FAILED records.
-
-## P7-011 — `ai_chat_sessions.title` survives anonymization (LOW)
-
-**Fix design.** In `ExportAnonymizer` add a step nulling `UPDATE ai_chat_sessions SET title = NULL` (same style as the `ai_chat_messages` step at `:216-224`); extend the anonymizer unit test's sink list; note `RawStoragePolicyAuditTest`'s tautological coverage (REVAL-3, RP-21) — do not rely on it. **Guardrails.** Retention worker does **not** need this target (titles are low-sensitivity; only the *redacted export* must be clean — matches the P7-011 finding scope).
-
-## P7-P1-05 (tracked) — semantic-equivalence verification
-Stays **deferred-by-design** (documented 5-item plan in `BackupVerifier.kt:20-33`). Out of remediation scope; revisit after 3a/3b land.
-
-## Validation & sequencing (when Gradle re-enables)
+```text
+AssetTask {
+  assetId: stable deterministic ID,
+  receiptId: database receipt ID,
+  sourceEntry: validated bundle-relative entry (no user filename),
+  expectedSha256: manifest checksum,
+  expectedSizeBytes: manifest size,
+  tempName: operation-scoped generated name,
+  finalName: operation-scoped generated name,
+  status: PENDING | TEMP_WRITTEN | FINAL_DURABLE | DB_UPDATED | COMPLETED | FAILED,
+  failureCode: controlled code or null
+}
 ```
-./gradlew :app:testDebugUnitTest --tests "*BackupRestore*" --tests "*RestoreJournal*" --tests "*AssetRestore*" --tests "*CostbackupBundle*" --tests "*BackupEncryption*"
-./gradlew :app:testDebugUnitTest --tests "*DatabaseBackupRepositoryImpl*" --tests "*AppStartupCoordinatorRecovery*" --tests "*MaintenanceOperationRunner*"
-```
-PR order: 3a (save path + envelope) → 3b (state machine) → 3c (smalls). 3a touches `CostbackupBundle`/`BackupEncryptionService` — RP-19 must rebase on it.
 
-## Verification addendum (2026-09-07 re-evaluation)
+#### Stable identity
 
-All 36 concrete claims re-verified against HEAD; corrections above applied (restore uses `GetContent` not `OpenDocument`; privacy-gate ref `:366-420` belongs to `exportDatabase` — createCostBackup's gates are `:533-543`; the stream overload stages its temp ZIP in `cacheDir`; the P7-002 cancellation finalize is **new** code — none exists today, and it must be journal-only per the F6 no-Room-writes-post-swap rule at `:985-986`). Resolved paths: `BackupEncryptionService` → data/privacy/; `ExportAnonymizer` → data/privacy/; `BackupRestoreViewModel`/`Screen` → ui/screens/backup/; `CostbackupBundle`/`RestoreJournal`/`RestoreMaintenanceMode`/`MaintenanceOperationRunner`/`BackupVerifier`/`RestoreDatabaseOpener` → data/backup/; `AiChatSessionEntity` → data/database/entity/. The six cited test files all exist. Wrong-password UX mapping (AEADBadTagException → `WrongBackupPasswordException` → "Incorrect password or corrupt backup file", VM `:205-206`) verified for the P12-008 envelope change.
+- During backup, derive `assetId = SHA-256(canonical asset key)` where the canonical key is the stable receipt ID plus a fixed asset-kind token, for example `receipt:<receiptId>:image`. Encode as lowercase hex. Do not use UUIDs, original filenames, absolute paths, timestamps, or `String.hashCode()`.
+- The manifest entry must carry the asset ID, relative ZIP entry, SHA-256, and exact byte size. The ZIP entry is accepted only under the existing extraction limits and only after path normalization/zip-slip checks.
+- On restore, derive the destination directory from `context.filesDir`, and derive `finalName` from the asset ID plus a validated extension selected from a fixed allowlist. Never trust `targetPath` from an old journal; derive final paths again. Reject duplicate asset IDs, duplicate receipt/kind keys, missing checksum/size, invalid IDs, or mismatched manifest-to-DB receipt references before any DB path update.
+
+#### Required ordering and crash recovery
+
+For each task, process and persist these transitions in order:
+
+1. `PENDING`: journal the complete task ledger before copying any asset.
+2. `TEMP_WRITTEN`: stream the bundle entry to `tempName`, count bytes, compute SHA-256, flush/fsync, and require exact size/hash. On mismatch, delete temp and mark `FAILED(INTEGRITY_MISMATCH)`; never touch the DB.
+3. `FINAL_DURABLE`: atomically rename temp to `finalName` (or use an exclusive durable replacement primitive), fsync the containing directory where supported, verify final exists/is-file and re-check size/hash. If rename/write fails, delete only this task's temp/final candidates and mark failed; leave the old DB path unchanged.
+4. `DB_UPDATED`: only after final validation, update the matching receipt row from its pre-restore snapshot to the deterministic final path inside `RestoreInternalWriteScope`; journal the transition after the write returns. The update must be conditional on the receipt ID and must not overwrite an unrelated newer path.
+5. `COMPLETED`: verify the row points to `finalName`, journal completion, and only then allow cleanup of operation temp state.
+
+Recovery must be deterministic and idempotent:
+
+| Crash/relaunch observation | Recovery action |
+|---|---|
+| `PENDING`, no temp/final | Re-run from bundle entry. |
+| `TEMP_WRITTEN`, valid temp only | Validate it, rename to final, continue; invalid/missing temp is re-copied if source exists, otherwise `FAILED(SOURCE_MISSING)`. |
+| `TEMP_WRITTEN`, invalid temp | Delete temp, keep DB row untouched, re-copy once; repeated failure becomes `FAILED(INTEGRITY_MISMATCH)`. |
+| `FINAL_DURABLE`, final valid, DB has old/null path | Perform conditional DB update, then continue. |
+| `FINAL_DURABLE`, final missing/invalid | Delete residue and re-copy; do not update DB. |
+| `DB_UPDATED`, row points to valid final | Mark `COMPLETED`; do not copy or update again. |
+| `DB_UPDATED`, row points elsewhere or final invalid | Do not overwrite the row; mark `FAILED(DB_PATH_CONFLICT)` and delete only the operation-owned output. |
+| `COMPLETED` | Verify identity/hash/size and leave it complete; no duplicate file or DB mutation. |
+| any state with missing temp directory/source | Mark pending work `FAILED(SOURCE_MISSING)`, preserve the verified DB, and finish the journal. |
+
+The algorithm must use a single journal writer (`synchronized(journalLock)`), merge task updates instead of replacing the ledger, and tolerate a repeated startup run. Cleanup is scoped by operation ID/asset ID, never by a broad receipts-directory delete. Cancellation deletes temp outputs in `NonCancellable`, preserves pending tasks for resume, exits restart-required, and rethrows.
+
+### RP-03D - Semantic-equivalence verification (P7-P1-05)
+
+This is an in-scope correctness gate, not deferred-by-design. Do not mark RP-03 complete while it is absent. If implementation cannot be landed in this change set, **block RP-03 release/sign-off pending a separate approved P7-P1-05 plan**; do not ship a plan that claims counts-only verification is sufficient.
+
+- Extend `CostbackupBundle.BackupManifest` with a versioned, canonical `semanticCheckpoint` object. It must contain deterministic, privacy-safe aggregates sufficient to compare: total purchase amount by currency and home currency, category totals, monthly totals, budget spent/remaining inputs, receipt-to-expense link counts and orphan count, investment value totals by currency, exchange-rate coverage/version inputs, and counts for included lifecycle/event tables. Use integer minor units/decimal strings, currency codes, stable sorted keys, and explicit calculation period boundaries; never floating-point JSON or raw rows.
+- Collect the checkpoint from the same frozen snapshot used for table counts, before bundle creation. Verify it against both the migrated staged DB (pre-swap) and the fresh live DB (post-swap). The live checkpoint comparison is mandatory before `ASSETS_RESTORING`; mismatch triggers existing rollback and `CRITICAL_RECOVERY_REQUIRED` on rollback failure.
+- Reuse canonical production calculators (`MultiCurrencyRepository`/`AnalyticsCurrencyNormalizer`/budget and receipt-link services) or add a backup-specific read-only adapter with exactly documented rounding and home-currency policy. Do not duplicate business rules in UI or mutate data while calculating.
+- Define compatibility behavior: a manifest without a checkpoint is rejected before destructive swap for the current format, or is accepted only under an explicitly versioned legacy format with a blocked/unsupported result. Never silently downgrade to counts-only.
+
+## 3. Room, schema, and lifetime implications
+
+- The semantic checkpoint, asset hashes/sizes, and task status are bundle/journal metadata, not Room entities; no Room schema version or migration is required for those fields. Update manifest/journal serializers with additive parsing tests and preserve legacy decrypt/read behavior.
+- A database file swap does not invalidate Hilt-held `AppDatabase` references. Keep `RESTORE_COMPLETE_RESTART_REQUIRED` and do not let a dismiss action return to `NORMAL` until process restart is real. If product requires in-process continuation, stop and obtain a separate approved `DatabaseProvider`/singleton invalidation design covering every Room consumer, workers, and DI binding; a repository-local reassignment is insufficient.
+- Asset path updates remain the narrowly approved restore-internal mutation and must be guarded by `RestoreInternalWriteScope` plus the restore journal. Do not route restore file replacement through ordinary receipt/expense lifecycle creation, and do not add direct DAO writers.
+- Preserve schema v148 and the active migration policy. Any future manifest checkpoint that depends on a schema/entity change must update `DatabaseSchemaPolicy`, version, migration, exported schema snapshot, migration matrix, and migration tests before being accepted.
+
+## 4. Exact validation
+
+Add or update these tests with the names/coverage below:
+
+- `BackupRestoreRoundtripGoldenTest`: encrypted bundle round trip, deterministic semantic checkpoint, category/month/currency/budget/link/investment checkpoint equality, and changed amount with unchanged row count fails before commit and after live verification.
+- `BackupRestoreViewModelTest`: SAF URI success; null `openOutputStream`; open exception; write exception; close exception; best-effort document deletion; generic error; no success metric/journal damage.
+- `BackupEncryptionServiceTest`: current envelope round trip, legacy envelope decrypt, wrong password maps to existing UX exception, magic-present truncation/unsupported parameters fail cleanly.
+- `CostbackupBundleLimitsTest`: manifest asset ID/entry path validation, duplicate identity rejection, exact byte-size/hash validation, zip-slip and decompression limits, and no raw filename in diagnostics.
+- `AssetRestoreAtomicityTest`: every state in the crash table above; crash after temp fsync, after rename before journal, after journal before DB update, after DB update before completion; repeated resume creates one final file and one path update; hash/size mismatch leaves old row unchanged; DB path conflict does not overwrite; missing source marks failed; cancellation deletes temp but preserves pending journal; final path is deterministic across retries.
+- `RestoreJournalDurabilityTest`: atomic temp/fsync/rename, merged task ledger, concurrent append serialization, additive JSON round trip, and diagnostics JSON contains no internal paths, source names, or target names.
+- `AppStartupCoordinatorRecoveryTest`: `ASSETS_RESTORING` resumes pending tasks, completes with failed missing assets without rollback, re-verifies swapped DB, and enters critical recovery on verification failure; stale `AppDatabase` consumers remain blocked until restart.
+- `DatabaseBackupRepositoryImplTest`: safety backup fsync/partial-copy cleanup; pre/post-swap cancellation; post-swap exception leaves restart-required; rollback deletes staged DB/WAL/SHM; `.pre_restore` recovery ordering; journal task merge.
+- `BackupVerifierManifestTest`: all required counts/checkpoint fields are present, checkpoint comparison uses canonical rounding/sorting, legacy/no-checkpoint policy is enforced, and Tier 1 `privacy_audit_events` remains required.
+- `RestoreBlocksAllWritesTest` and `WorkerRestoreRegressionTest`: all maintenance modes block writes, worker drain/checkpoint behavior remains intact, and no notification permission denial blocks unrelated cleanup/recovery.
+- `BackupRestoreIntegrityE2ETest`: create encrypted bundle with receipt assets, kill/relaunch at each DB and asset boundary, verify journal/mode/recovery, semantic equivalence, hashes/sizes, no broken receipt paths, and restart-required lifetime.
+- Architecture/static tests: `BackupRestoreArchitectureGuardTest` must reject direct restore DAO writes, raw asset/path/filename diagnostics, missing write-barrier checks, non-cancellable swallowing, and use of repository-local Room after swap.
+
+Do not run Gradle as part of this documentation change. Before implementation sign-off, run focused tests first, then the relevant module test/check commands under the repository's single-Gradle-owner rule; record exit code and log path. No test result may be reported as passed from file existence alone.
+
+## 5. Stop conditions
+
+Stop the batch and obtain architecture/privacy review if any of these occur:
+
+- the source differs from the baseline contracts above, a required class/test is absent, or a proposed change bypasses a lifecycle coordinator/barrier;
+- any path can write the destination or live DB before encryption/verification, safety backup, or required journal transition;
+- any cancellation is caught without rethrow, cleanup is not `NonCancellable`, or cleanup can delete another operation's asset;
+- asset identity, hash, size, journal, temp/final/DB ordering, or SAF failure behavior cannot be proven by tests;
+- semantic checkpoint collection/comparison cannot use canonical money/currency semantics, or only counts-only verification remains;
+- stale Room consumers could become writable without a real restart/reopenable provider;
+- any diagnostic contains raw exception text, URI/path, filename, OCR/receipt text, or financial payload;
+- a Room/entity/schema change is discovered without an approved migration, exported schema, and migration-test update;
+- any focused test fails, any static guard fails, or rollback/critical-recovery behavior is not fail-closed.
+
+## 6. Sequencing and acceptance gate
+
+1. **3a:** SAF destination handling, safety-copy durability, and approved encryption-envelope compatibility. Run stream/encryption/safety tests.
+2. **3b:** state machine, stable asset identity, hash/size validation, journal format/merge, cancellation cleanup, startup resume, stale-DB restart contract, and rollback cleanup. Run all journal/asset/repository/startup tests.
+3. **3c:** semantic checkpoint (P7-P1-05), verifier wiring, cross-currency/budget/receipt/investment tests, then architecture/privacy/static guards and E2E kill/relaunch tests.
+4. Update this remediation document and trackers only after implementation, focused tests, strict review, and required guardian gates pass. Until then status is **pending**, not green/complete.
+
+Acceptance requires: encrypted verified backup output; no SAF failure leak; deterministic idempotent asset restore across every crash ordering; exact hash/size checks; cancellation-safe scoped cleanup; preserved maintenance/drain/read/write barriers; fresh-DB/restart safety; fail-closed rollback; privacy-safe diagnostics; and passing P7-P1-05 semantic-equivalence verification.

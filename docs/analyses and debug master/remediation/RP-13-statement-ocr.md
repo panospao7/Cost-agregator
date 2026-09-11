@@ -1,102 +1,141 @@
-# RP-13 — Statement import & OCR robustness (Pipeline 3/10 shared processor)
+# RP-13 — Statement import and OCR robustness
 
-> **Scope class:** shared engine (`BankStatementLifecycleProcessor` serves both PDF/statement import and bank-sync statement flows) + OCR service. **Mode:** strict (transaction creation paths).
-> **Files:** `BankStatementLifecycleProcessor` (domain/receipt/lifecycle/), `ValidateBankStatementTransactionsUseCase` (domain/ai/usecase/), `ReceiptOcrService` (domain/receipt/), `ReceiptRepository` (data/repository/), `ScannedReceiptDao` + `BankStatementImportRunDao`/`BankStatementImportItemDao` (data/database/dao/).
-> **PR shape:** 2 PRs — (13a) AI merge & retry semantics = P3-002 + P3-010 + P3-003; (13b) run lifecycle = P3-005 + P3-006.
-> **Depends on:** RP-12 (same processor file — sequence after; 13's changes are in different methods but rebase cleanly).
+> **Status:** BLOCKED at two contract gates; not implementation-ready until they are approved.
+> **Mode:** strict (AI identity, statement lifecycle, OCR cancellation, and Room state).
+> **Depends on:** RP-12 for shared receipt-processing outcomes.
 
----
+## Scope and source facts
 
-## 13a — AI merge & OCR retry semantics
+The shared owner is `BankStatementLifecycleProcessor`, used by statement OCR/import and bank-sync
+statement flows. Supporting code is `ValidateBankStatementTransactionsUseCase`,
+`ReceiptOcrService`, `ReceiptRepository`, and the `BankStatementImportRun`/`BankStatementImportItem`
+entities and DAOs.
 
-### P3-002 — AI-merge pairs by index after skipped entries (HIGH)
+The current `CleanTransaction` has no source-row identity. AI output is shortened when invalid
+entries are skipped and the processor merges it positionally. The current item ledger is unique
+only on `(runId, itemIndex)`; `existsByRunAndFingerprint` is scoped to one run. `BankStatementImportRun`
+has no resume cursor or cross-run source identity. These are design constraints, not details to be
+papered over in implementation.
 
-**Problem.** `ValidateBankStatementTransactionsUseCase.parseAiResponse` (`:228-235`) `continue`s past invalid AI entries (blank merchant, `amount <= 0`, non-finite, unparseable date) returning a **shorter** list (`:264`); `BankStatementLifecycleProcessor` merges `parsedTransactions.mapIndexed { i, cleanTx -> val originalTx = parsedTransactions[i] }` (`:245-246`) with **no size recheck** → after a skip, every subsequent row pairs with the wrong parser row: `type = originalTx.type` (`:254`) and date fallback (`:252`) shift by one — a DEPOSIT stamped PURCHASE defeats the type-aware dedupe (`:537/:545`) and tail rows are silently dropped. If AI returns *more* entries, `:246` throws `IndexOutOfBounds` → whole run `WORKER_UNHANDLED_EXCEPTION`.
+## Gate A — AI response identity (must be approved first)
 
-**Fix design.**
-1. Carry identity through the pipeline: in `parseAiResponse`, attach the **candidate index** to each surviving `CleanTransaction` (add `candidateIndex: Int` — captured before the skip checks). Rejecting an entry no longer shifts anyone.
-2. Merge by `candidateIndex`: `val originalTx = parsedTransactions[cleanTx.candidateIndex]` (with an explicit bounds re-check that fails the single item, not the run).
-3. Size guards: `require(cleanTx.candidateIndex < parsedTransactions.size)` per item → mismatch = structured per-item failure (`AI_MERGE_INDEX_INVALID`) counted as skipped, run continues.
-4. Ledger: skipped-because-invalid AI entries already surface as `STATUS_SKIPPED` items downstream of validation — verify the skip reason distinguishes "AI rejected row N" (informational for the user's import review list).
+### P3-002 — Never treat response position as source identity
 
-**What it solves.** Row type/date/amount integrity for statements where the AI model skips any line; no more wrong-type dedupe bypasses or dropped tails.
+The old proposal to add `candidateIndex` from the surviving JSON position is invalid: an omitted
+middle element and a reordered response make that index point at the wrong parser row. Select one
+contract before changing `CleanTransaction` or the prompt:
 
-**Guardrails.** `CleanTransaction` is a domain type used by the AI-validation tests — additive field, update fixtures. No privacy change (indices are not PII). Crossover: bank-sync's low-confidence path consumes the same validated list (`BankApiIntegration` side untouched — it uses per-transaction confidence, not this merge).
+1. **Explicit stable candidate id (preferred):** prompt for and require an immutable `candidateId`
+   generated from the parser's source-line identity. Validate integer/range, uniqueness, and
+   one-to-one ownership before applying any correction.
+2. **One result per candidate:** require an array with exactly one object per candidate, in the
+   documented order, including an explicit `accepted`/`rejected` status. Cardinality and order are
+   validated; rejected entries become ledger skips.
+3. **Untrusted AI corrections:** if the provider cannot satisfy either contract, discard the AI
+   corrections and use parser-only rows. Do not merge by position or fuzzy merchant/amount data.
 
-**Tests.** `ValidateBankStatementTransactionsUseCaseTest` + processor test: 5 candidates, AI skips #2 → rows 1,3,4,5 pair correctly, #2 surfaces as skipped; AI returns 7 entries for 5 candidates → per-item failure not crash; type-aware dedupe verified against correctly-typed DEPOSIT.
+For explicit ids, reject duplicate, missing, malformed, out-of-range, omitted, reordered, and
+extra ids. On any identity/cardinality failure, return a structured `AI_IDENTITY_MISMATCH` outcome
+and fall back to parser-only for the affected statement (or the affected rows only if the contract
+proves the remaining ids). Never throw an index exception or silently pair a correction with a
+different row. A rejected AI row is recorded as a skipped ledger item only when its source identity
+is proven; otherwise the parser row remains the authoritative candidate.
 
-### P3-010 — AI blank currency hardcodes "EUR" (LOW-MED)
+The chosen contract must be represented in the prompt, response schema/model, validator, processor,
+and tests before coding. Tests cover omitted middle candidate, reordered output, duplicate id,
+out-of-range id, extra entry, malformed/missing id, and one-output-per-candidate rejection.
 
-**Problem.** `:223` `.ifBlank { "EUR" }` — blank AI currency becomes EUR wholesale when `confidence > 0.5` (`:247-251` adopts it), flowing into `PendingReview.suggestedCurrency` (`:625`) and currency-scoped dedupe (`:530-546, :582-591`) → USD statements get EUR reviews; duplicates never match.
+### P3-010 — Unknown currency is typed, never fabricated
 
-**Fix design.** Replace the hardcode: `currency = obj.optString("currency").trim().ifBlank { homeCurrency }` — `homeCurrency` is already a parameter of `validateTransactions` (verify signature; it is threaded for other purposes). If blank and home-currency also unavailable (shouldn't happen — the processor resolves it earlier), skip the item as `STATUS_SKIPPED` with reason `CURRENCY_UNKNOWN` rather than inventing one.
+The current parser uses a hard-coded `EUR` when AI currency is blank. Replace that with a validated
+source policy: use the statement/source currency only when it is explicitly known and validated.
+If neither the source nor the approved home-currency policy supplies a currency, produce a typed
+`CURRENCY_UNKNOWN` skip/identity failure and do not put a guessed currency in a review or dedupe
+key. A home-currency fallback is permitted only if product explicitly defines it as the statement
+currency policy; it must not be an accidental default.
 
-**What it solves.** Reviews/dedupe carry the real (or home) currency; no phantom-EUR artifacts. **Tests:** blank AI currency + USD home → suggested currency USD; both blank → skip with reason.
+Tests cover blank AI currency with USD source, blank source with available home currency, and both
+unknown/unavailable. No test should assert an implicit EUR default.
 
-### P3-003 — OCR timeout aborts the whole batch, never retries (HIGH)
+## 13a — OCR timeout and per-item isolation
 
-**Problem.** `ReceiptOcrService.recognizeText` wraps MLKit in `withTimeout(15_000)` (`:587-603`); `TimeoutCancellationException` **is a** `CancellationException`, so `runWithRetry`'s `catch (CancellationException) { throw }` (`:781`) fires before the generic retry catch → timeouts never retry despite `maxAttempts = 3`; the exception then propagates through the coordinator's `rethrowIfCancellation` (by design) into `processBatch`'s `coroutineScope { async }.awaitAll()` (`ReceiptRepository.kt:595-631`) — **one slow page cancels every sibling OCR** and fails the batch.
+### P3-003 — Retry timeouts without swallowing caller cancellation
 
-**Fix design.**
-1. In `runWithRetry`, distinguish timeout from caller cancellation: catch `TimeoutCancellationException` **first** and treat it as retryable **only when** the coroutine is still active (`currentCoroutineContext().isActive` — if the caller was cancelled, rethrow). Concretely:
-   ```kotlin
-   catch (e: TimeoutCancellationException) {
-       if (!currentCoroutineContext().isActive) throw e
-       lastError = e; continue // retry with a fresh withTimeout
-   }
-   catch (e: CancellationException) { throw e }
-   ```
-2. After exhausting retries on timeout, throw a **typed non-CE** failure (`OcrTimeoutException` — new, extends the service's existing failure type) so upstream `catch(CancellationException)` handlers don't misclassify it and the batch scope treats it as a per-item failure.
-3. `processBatch`: switch `awaitAll` to per-item result collection (each `async` returns `Result`-style; item failures recorded, siblings continue) — this is the structural fix for "one bad page fails the batch" and matches the per-item ledger philosophy used everywhere else. Cancelled scope (user cancel) still propagates normally to all children.
+`TimeoutCancellationException` is a `CancellationException`, so the current retry catch exits on
+the first timeout. Catch timeout first and retry only while the parent coroutine remains active;
+rethrow genuine caller cancellation. After the bounded attempts, convert the timeout to a typed,
+non-cancellation OCR failure code so an individual item can be marked failed without cancelling
+the whole import.
 
-**What it solves.** Slow pages retry then fail *individually*; batches complete with per-item outcomes.
+Change batch collection from `awaitAll()` that fails the entire scope to per-item result collection.
+Each item records the existing `OCR_FAILED`/failed-ledger status and a controlled reason; sibling
+items continue. A cancelled parent still cancels all children and propagates `CancellationException`.
+Do not log or persist OCR text, paths, exception messages, or stack traces.
 
-**Guardrails.**
-- Worker/service rule: genuine cancellation must still propagate — the `isActive` check is the boundary; test both directions.
-- `CancellationSafe.rethrowIfCancellation` callers (coordinator `:560`) rely on CE semantics — the typed exception keeps them honest (non-CE passes through as a normal failure).
-- Per-item isolation must not swallow per-item exceptions into silence — each failure records the existing `OCR_FAILED`-family status + diagnostic.
+Tests: timeout twice then success; exhausted timeout; non-timeout OCR failure; one failed page among
+three; caller cancellation; no zombie writes after cancellation.
 
-**Tests.** `ReceiptOcrService` fake: page times out twice, succeeds third → retried; times out N times → typed failure, not CE. `ReceiptRepository.processBatch`: one failing item among three → two succeed with rows, one recorded failed, scope completes; scope cancel → CE propagates, no zombie writes.
+## Gate B — Statement resume identity/state machine (must be approved before 13b)
 
----
+### P3-005 — Choose same-run resume or add a schema-backed cross-run key
 
-## 13b — Statement run lifecycle
+The previous “new run, no schema change, natural-key lookup” proposal is not implementable: the
+current DAO cannot find an item across runs, and `(runId,itemIndex)` is not a cross-run identity.
+Choose exactly one design:
 
-### P3-005 — Cancelled statement import is unretryable (MED)
+* **Same-run continuation (minimal migration if source identity is stable):** retain the cancelled/
+  failed run, persist a resume cursor/state, and resume only when the exact statement source
+  fingerprint and parser candidate identity/version match. Existing `(runId,itemIndex)` rows are
+  authoritative; completed item statuses are not reprocessed. Add a CAS transition from
+  `CANCELLED`/`FAILED` to `RUNNING`, persist cursor updates transactionally with each item, and
+  finalize the same run. A changed parser output or source fingerprint starts a fresh run and is
+  treated as a new statement. Because the current run entity lacks cursor/parser-version fields,
+  this option also requires a Room version increment, non-destructive migration, schema snapshot,
+  and migration tests unless an existing column is proven to carry the same typed state (free-text
+  `errorSummary` must not be repurposed).
+* **New-run resume:** add a stable statement-line identity (source fingerprint + canonical line id)
+  to `BankStatementImportItem`, a unique cross-run index, and DAO queries that atomically claim or
+  return an existing item. Define canonicalization of merchant/date/amount/currency, collision
+  handling, and whether parser line index is stable across OCR/parser versions. Increment the Room
+  version, add a non-destructive migration and schema snapshot, and migration tests.
 
-**Problem.** The statement receipt (with `imageHash`) commits at step 4 (`:309-347`) **before** per-item processing; cancellation mid-items finalizes the run `STATUS_CANCELLED` (`:838-867`) but nothing clears the hash; re-importing the same file hard-fails at the pre-OCR `EXACT_HASH` check (`:162-176`, `getByImageHash` unfiltered by status) before the graceful `ReceiptRecordWriter` duplicate path can run → items 6-20 permanently unimportable.
+The selected state machine must define old run statuses (`RUNNING`, stale/failed, cancelled,
+completed), process death, duplicate completed import, changed source, and concurrent resume. A
+completed run remains a duplicate; a cancelled/failed run is resumable only under the selected
+identity proof. No fuzzy natural-key matching is allowed.
 
-**Fix design.**
-1. At the hash-check branch (`:169-175`), before failing, look up the associated `BankStatementImportRun` (by source receipt id — the linkage exists in the run table) and allow re-import when the prior run is terminal-but-incomplete (`STATUS_CANCELLED` or `STATUS_FAILED`): proceed into the duplicate path (the writer's resolution handles the existing receipt) and **create a new run** whose item processing re-checks each item's existing ledger row (`BankStatementImportItem` by natural key) — already-committed items come back as duplicates/skips, unprocessed ones proceed. This reuses the per-item idempotency that already exists.
-2. A prior **COMPLETED** run still hard-fails (true duplicate) — unchanged semantics.
-3. Diagnostic: the re-import path emits `IMPORT_RESUMED_AFTER_CANCEL` (controlled constant) so the behavior is auditable.
+Required tests: cancel after item N then resume; process death and stale recovery; concurrent resume
+claim; changed source/parser version; completed re-import; partial item creation; all item outcomes.
 
-**What it solves.** Users can retry a cancelled/failed statement import; no permanently stuck files.
+### P3-006 — Separate failed items from skipped items
 
-**Guardrails.** Item-level dedupe must rely on the ledger's natural key (statement-line identity), not fuzzy matching — verify the item DAO has a unique/stable key per line (amount+date+merchant hash or line index); if only run-scoped ids exist, add per-item natural-key lookup by query (no schema change if a composite query suffices — **stop and flag** if it requires an index/migration). Crossover: bank-sync statement flow shares this processor — its runs also get resume semantics (desirable; note in PR).
+After the identity/state-machine decision, finalize status using ledger counts: any true `FAILED`
+item yields `FAILED`; no failed items plus one or more validation/duplicate/identity-proven skips
+yields `COMPLETED_WITH_SKIPS`; only zero failures and zero skips yields `COMPLETED`. Persist
+`failedItemCount` as failed rows only. On `COMPLETED_WITH_SKIPS`, update the receipt to the existing
+review-created/partial status when reviews exist and return a structured success summary. An all-
+skipped statement is still `COMPLETED_WITH_SKIPS` with zero created rows, never a misleading clean
+success. UI/result mapping must be verified rather than assumed.
 
-**Tests.** Cancel at item 5/20 → re-import → items 1-5 skipped-as-existing, 6-20 processed, run COMPLETED; completed-run re-import → duplicate failure (unchanged).
+Tests cover mixed valid/skip/duplicate, all-invalid, one true failure, receipt status, event type,
+and result summary.
 
-### P3-006 — Skips counted as run failures (MED)
+## Validation and sequencing
 
-**Problem.** Final status (`:725-729`): `(finalFailedItemCount + skippedItemCount) > 0 → STATUS_FAILED` → `PROCESSING_FAILED` event, receipt stuck PARSED, `Result.failure` (`:820`) — even when 20 valid PendingReviews committed. Duplicate-skips correctly yield `COMPLETED_WITH_SKIPS`; validation-skips (bad amount/currency/date rows in the file) are lumped into FAILED.
+Implementation is gated: approve Gate A, then Gate B, then land OCR retry/isolation and final-state
+semantics. No Room schema claim may be made until the selected resume design is known.
 
-**Fix design.**
-1. Split the predicate: `finalFailedItemCount > 0 → STATUS_FAILED`; else `(any skips incl. validation + duplicates) → STATUS_FAILED? No —` `COMPLETED_WITH_SKIPS`; else `COMPLETED`. I.e. validation-skips join duplicate-skips in the with-skips bucket.
-2. Receipt status on the with-skips path: set `REVIEW_CREATED` when `createdCount > 0` (the current FAILED branch skips that update, `:762-768` — now only genuinely failed runs leave PARSED).
-3. `Result`: `COMPLETED_WITH_SKIPS` returns success with a skip summary (counts already tracked); the error message on true failure now counts only failures (message currently conflates — fix the copy).
-4. UI surface: the import result screen presumably keys off the Result — verify it can show "completed with N skipped rows" (string resource; likely exists for duplicates).
+Targeted tests (not run while editing this plan):
 
-**What it solves.** Partially-invalid statements import their valid rows and report honestly; no more false FAILED events or stuck-PARSED receipts with committed reviews.
-
-**Guardrails.** A run where **every** item skipped-validations (zero created, zero failed) → `COMPLETED_WITH_SKIPS` with a clear skip breakdown — do not report success-as-COMPLETED (user must see the file was entirely invalid). **Tests:** mixed fixture (valid + validation-skip + duplicate) → COMPLETED_WITH_SKIPS, receipt REVIEW_CREATED, reviews committed; all-invalid → with-skips + zero created; any true failure → FAILED path intact.
-
----
-
-## Validation (when Gradle re-enables)
+```text
+*BankStatement*
+*ValidateBankStatement*
+*ReceiptOcrService*
+*ReceiptRepository*
+*ReceiptMatching*
+*Migration*
 ```
-./gradlew :app:testDebugUnitTest --tests "*BankStatement*" --tests "*ValidateBankStatement*" --tests "*ReceiptOcrService*" --tests "*ReceiptRepository*" --tests "*ReceiptMatching*"
-```
 
-## Sequencing & risk
-- After RP-12 (processor file shared; different methods). 13a is the user-facing correctness core (index merge + batch isolation); 13b changes run-state semantics — the import screen's result mapping must be reviewed together. No schema changes planned; the P3-005 natural-key check is the one place to stop if a query isn't sufficient.
+Strict review must inspect the AI contract, parser-only fallback, cancellation propagation, ledger
+CAS/resume behavior, privacy diagnostics, and any Room migration/schema snapshot. This plan remains
+blocked if either identity gate is unresolved.
