@@ -76,7 +76,18 @@ _RE_LAMBDA_PARAMS = re.compile(
     r"\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*\s*->"
 )
 _RE_TS_SCOPE = re.compile(
-    r"^(?:(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?"
+    # GR-14u28: an optional declaration/assignment prefix.  A transparent scope is
+    # just as transparent when its result is bound (`val id = db.withTransaction { }`)
+    # as when the call stands alone — but the pattern used to be anchored straight
+    # onto `receiver.method`, so a bound scope never matched, its lambda took the
+    # escape path, and the ENTIRE callable became UNSUPPORTED (hiding an already-
+    # dominating barrier).  Recognising the candidate here grants nothing: admission
+    # stays receiver-exact / import-exact in the proof layer, so a bound scope that
+    # fails admission is still fail-closed.
+    r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+    r"(?:\s*:\s*[A-Za-z_][A-Za-z0-9_<>,.?\s]*)?\s*=\s*"
+    r"|[A-Za-z_][A-Za-z0-9_]*\s*=\s*)?"
+    r"(?:(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?"
     r"(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*"
     r"(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{"
 )

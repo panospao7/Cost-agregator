@@ -1,7 +1,7 @@
 # GUARDRAIL STATE REPORT — database write-barrier proof engine
 
 **Status date:** 2026-09-11
-**Branch:** `gr-14f-wip` @ `afc56d28` + GR-14u27 (owner-approved 2026-09-11)
+**Branch:** `gr-14f-wip` @ `0cf8b653` + GR-14u28 (uncommitted)
 **Audience:** anyone continuing the GR-14 guardrail campaign, and anyone looking for
 production database-write bugs.  This document is a *state* report: what the guardrails
 are, what the measured state is, every known issue with its status, and the production-code
@@ -134,19 +134,19 @@ single most valuable practice in this campaign — do not skip it for "obvious" 
 
 ### 2.1 Board
 
-Report sha256 **`8d813a2553d45bce2a6a62350970804838a26b8be9c9e9e2b3325134ebea20bc`**
+Report sha256 **`a997620894f506a568dec19da7cf6e66d1ae6a7665f67064096dbb5bae2a8d37`**
 (deterministic across a double run).  406 policy rows.
 
 | Bucket | Count |
 |---|---|
-| `proven_helper` | **280** |
+| `proven_helper` | **286** |
 | `proven_restore_internal` | **1** |
 | `proven_worker_mediated` | 14 |
-| `unproven_ambiguous_call` | 40 |
+| `unproven_ambiguous_call` | 37 |
 | `unproven_async_or_escaping_callback` | 44 |
-| `unproven_external_entry` | 27 |
+| `unproven_external_entry` | 24 |
 | **`counterexample_unguarded_call_path`** | **0** |
-| **proven / unproven** | **295 / 111** |
+| **proven / unproven** | **301 / 105** |
 
 Policy sha256 `7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31` —
 434 entries, 0 load errors.  Baseline/exception bytes unchanged.  Report is shadow-only
@@ -167,6 +167,7 @@ Policy sha256 `7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31`
 | GR-14u25 (2026-09-11) | **contract V3**: restore-internal scope | restore row → **proven_restore_internal** |
 | GR-14u26 (2026-09-11) | receiver-aware `::` reference resolution | helper 173 → **186** |
 | GR-14u27 (2026-09-11) | self-guarded mutations prove on local evidence | helper 186 → **280**, unproven 205 → **111** |
+| GR-14u28 (2026-09-11) | bound transparent scope is a scope candidate (parser) | helper 280 → **286**, unproven 111 → **105** |
 
 Net through GR-14u21: **proven_helper 69 → 155** (proven 83 → 169), counterexamples **0
 throughout** — the live board never carried one.  (The "18 counterexamples" seen during
@@ -179,7 +180,14 @@ GR-14u22 → u25 (the last four batches) move the board from `fe40d369` to `35de
 proven→unproven.  Two of those four batches (u23, and u25 on its own) are **latent** —
 verified byte-identical with their activator neutralised.
 
-Campaign-wide, GR-14u5 → u27: proven_helper **48 → 280**, unproven **205 → 111**.
+Campaign-wide, GR-14u5 → u28: proven_helper **48 → 286**, unproven **205 → 105**.
+
+GR-14u28 is a **parser** fix, not a policy one: `_RE_TS_SCOPE` was anchored straight onto
+`receiver.method {`, so a *bound* scope (`val id = db.withTransaction { }`) was never seen as a
+scope candidate, its lambda escaped, and the whole callable was rejected as unmodelable —
+discarding a barrier that already dominated the mutation.  Allowing a declaration/assignment
+prefix fixed 6 rows (including 3 previously mislabelled `unproven_external_entry`) with **no**
+contract or policy change, because admission stays exact.
 
 GR-14u27 is the largest single batch of the campaign and it was found by **disproving this
 report's own §3.1 conclusion** ("async is spread with no dominant fix, ceiling ~0").  The
@@ -202,11 +210,11 @@ than being suppressed.  See §4.D4 and §5.1.1.
 
 | Check | Result |
 |---|---|
-| engine battery (`scripts/ci/`) | **1234 passed / 13 failed / 14 skipped** |
-| ↳ of the 13 | **all PRE-EXISTING and A/B-proven** — identical set before and after GR-14u26/u27 (§6.B4) |
-| `scripts/db_guard` unit tests | **235 passed** |
+| engine battery (`scripts/ci/`) | **1244 passed / 13 failed / 14 skipped** |
+| ↳ of the 13 | **all PRE-EXISTING and A/B-proven** — identical set before and after GR-14u26/u27/u28 (§6.B4) |
+| `scripts/db_guard` unit tests | **235 passed** (incl. 208 in `structural_analysis`) |
 | fixture scenarios | **64 / 64** (consolidated rows 72) |
-| board determinism (double run) | byte-identical (`8d813a25`) |
+| board determinism (double run) | byte-identical (`a9976208`) |
 | Kotlin `:app:compileDebugKotlin` | PASS (last run GR-14u20) |
 
 **The full Kotlin test suite is NOT a usable gate** — see §6.  Prefer targeted
@@ -214,8 +222,8 @@ than being suppressed.  See §4.D4 and §5.1.1.
 
 ### 2.3 Batch history
 
-41 manifests through GR-14u25, **42** with GR-14u26 (`docs/ci/db-mediation/`:
-GR-12, GR-13 ×2, GR-14a–t, GR-14u ×1 + u2–u26).
+42 manifests through GR-14u27, **43** with GR-14u28 (`docs/ci/db-mediation/`:
+GR-12, GR-13 ×2, GR-14a–t, GR-14u ×1 + u2–u28).
 Each newer manifest carries its delta, evidence and validation status.
 
 ---
@@ -254,32 +262,42 @@ a real hardening backlog, not an engine artifact.  Note that 173 of the 205 pre-
 rows live in files that already reference the canonical barrier, so the writers are in
 barrier-participating classes; the gap is local provability, not missing participation.
 
-### 3.2 `unproven_external_entry` — 27 rows
+### 3.2 `unproven_external_entry` — 24 rows
 
-Decided by `external_entry`: zero inbound call sites. Domain:
-`ExpenseWriteStore` (6), `GroupLifecycleCoordinator` (6), `InvestmentTracker` (2),
-`TransactionLifecycleCoordinator.deleteExpense`, `ExpenseGroupDao.insertGroupWithMembers`,
-`BankApiIntegration.completeConnection`, `BudgetForecastingEngine.updateForecastAccuracy`,
-`RecurringLifecycleEventWriter.writeDiagnostic`, others.
+Decided by `external_entry`: zero inbound call sites.  Domain (counts from the pre-u28 board;
+the bucket has since shrunk, see below): `ExpenseWriteStore` (6), `GroupLifecycleCoordinator` (6),
+`InvestmentTracker`, `TransactionLifecycleCoordinator.deleteExpense`,
+`ExpenseGroupDao.insertGroupWithMembers`, `BankApiIntegration.completeConnection`,
+`BudgetForecastingEngine.updateForecastAccuracy`, `RecurringLifecycleEventWriter.writeDiagnostic`,
+others.
+
+**⚠️ This bucket is NO LONGER a reliable dead-code enumeration.**  GR-14u27 made a
+self-guarded zero-inbound writer *prove* (reason `GR13_ALL_PATHS_GUARDED`) instead of being
+reported as zero-inbound, and GR-14u28 removed three `InvestmentTracker.addHolding` rows whose
+`external_entry` label had been an artefact of an unmodelable body.  The list shrank 27 → 24
+without any of those writers changing.  **Re-derive "is this dead?" from source, not from this
+label** — the §4.D1-II rule for `init {}` blockers generalises.
 
 **Two sub-meanings** — a reader must not conflate them:
-- *Genuinely dead code* (never called): safe to delete, but **owner decision** (§5.3).
+- *Genuinely dead code* (never called): safe to delete, but **owner decision** (§5.3), and
+  **verify by hand first** given the caveat above.
 - *Called only from an `init {}` block* (engine invisible): **active but unprovable** —
   do NOT delete.  See §5.2 Defect II.
 
-### 3.3 `unproven_ambiguous_call` — 40 rows (post-GR-14u27)
+### 3.3 `unproven_ambiguous_call` — 37 rows (post-GR-14u28)
 
 | Deciding resolution | Rows (live board) | What it means |
 |---|---|---|
-| `exact_synchronous` | **32** | Guard present, body **unmodelable** — see §3.4 |
+| `exact_synchronous` | **29** | Guard present, body **unmodelable** — see §3.4 |
 | `unresolved_target` | 8 | Receiver or target not resolved — triaged §3.3.1 |
 | ~`function_reference` | **0** | **DRAINED** by GR-14u26 — 13 proved, 1 re-decided as `unresolved_target` |
 | ~`interface_dispatch` | **0** | **DRAINED** by GR-14u23/u24/u25 (§4.D4) |
 
 GR-14u27 proved 5 of this bucket's rows (45 → 40).  **Those 5 were the
 `unresolved_target` population, which fell 13 → 8** — they had a proved local guard and an
-unresolved inbound edge, exactly the §4.D17 shape.  `exact_synchronous` is **unchanged at
-32**: those rows have `localGuard == "none"`, so GR-14u27 does not reach them.
+unresolved inbound edge, exactly the §4.D17 shape.  GR-14u28 then proved 3 more (40 → 37), all
+`exact_synchronous` rows whose bodies became modelable once bound transparent scopes were
+recognised (`SubscriptionManagerEngine`), so that count dropped 32 → 29.
 
 **Where the 20 `interface_dispatch` rows actually went** (measured per row, not inferred —
 `build/guard-debug/gr14u25/transition_check.py`):
@@ -332,23 +350,22 @@ Every deciding edge was recovered with the engine's own tier-5 selection
   `migrateCategories` fix (which moved 0 rows alone — the inbound edges stay uncertain
   regardless).  Owner decision whether to add canonical guards.
 
-### 3.4 The 32 `exact_synchronous` rows — CORRECTLY unproven, not a defect
+### 3.4 The 29 `exact_synchronous` rows — CORRECTLY unproven, not a defect
 
 **Investigated this session; hypothesis falsified.**  These rows read
 `unproven_ambiguous_call` *with* an exact deciding edge, which looks contradictory.  It is
-not.  All 32 are the **GR-14u15 tri-state** working as designed
+not.  All 29 are the **GR-14u15 tri-state** working as designed
 (`GR13_LOCAL_GUARD_UNMODELABLE`, `barrierMode=helper`, `localGuard=none`):
 
-- **32 / 32 contain a canonical `checkWritesAllowed` call** — the guard *is* present.
-- **24 / 32 contain `try` / `catch`**, which the GR-12 body model refuses (exception flow
-  above all).  Measured construct mix: `try/catch` 24, `withContext` 16, `withTransaction` 14,
-  `for`/`while` 9, `withTimeout` 7, `withLock` 1.
-- The other **8 rows (4 distinct methods)** contain **no `try`/`catch`** and are blocked by
-  scoping alone — the guard precedes the mutation but the mutation sits inside a
-  `withTransaction` / `withLock` lambda the CFG does not wire as a scope child, so the
-  mutation node is disconnected: `GroupTransactionCoordinator.deleteGroupAtomic` ×4,
-  `SubscriptionManagerEngine.acceptCandidate` ×2, `SubscriptionManagerEngine.validateAndCreate`,
-  `ExpenseRepository.updateExpenseCategoryBulk` (`withLock`).
+- **29 / 29 contain a canonical `checkWritesAllowed` call** — the guard *is* present.
+- **Most contain `try` / `catch`**, which the GR-12 body model refuses (exception flow
+  above all).  Measured construct mix across the bucket: `try/catch` 24, `withContext` 16,
+  `withTransaction` 14, `for`/`while` 9, `withTimeout` 7, `withLock` 1 (pre-u28 measurements;
+  GR-14u28 removed 3 rows whose only blocker was the bound-scope pattern).
+- The remainder are blocked by scoping alone — the guard precedes the mutation but the mutation
+  sits inside a lambda the CFG does not wire, so the mutation node is disconnected:
+  `GroupTransactionCoordinator.deleteGroupAtomic` ×4 (inside `group?.let` /
+  `linkedExpenses.forEach`), `ExpenseRepository.updateExpenseCategoryBulk` (`withLock`).
 
 **Note the distinction from GR-14u27.**  These rows are `localGuard == "none"`: the dominance
 engine could **not** prove the guard, so the row is genuinely unproven and GR-14u27 does not
@@ -395,6 +412,45 @@ change, not a quick fix.
 | D15 | scan coverage excludes the `debug`/`release` source sets | — | ✅ **NOT A DEFECT** — deliberate, enforced 3 ways, already tested (§5.5). Do not widen. |
 | D16 | `::` references carried no receiver, so bound references name-matched | hid 14 rows | ✅ **FIXED** GR-14u26 |
 | D17 | a **proved** local guard was discarded whenever any inbound edge was uncertain | hid **94 rows** | ✅ **FIXED** GR-14u27 (§4.D17) |
+| D18 | a **bound** transparent scope (`val x = db.withTransaction { }`) was not a scope candidate, so its lambda escaped and the whole callable was rejected as unmodelable | hid 6 rows | ✅ **FIXED** GR-14u28 |
+
+### 4.D18 — bound transparent scopes were not scope candidates (FIXED, 6 rows)
+
+`_RE_TS_SCOPE` (`tokenizer.py:78`) was anchored straight onto `receiver.method`:
+
+```
+^(?:(?P<receiver>IDENT)\s*\.\s*)?(?P<method>IDENT)\s*(\(...\))?\s*\{
+```
+
+so `db.withTransaction { ... }` **standing alone** was recognised as a TRANSPARENT_SCOPE
+candidate, but `val id = db.withTransaction { ... }` was **not** — the statement begins with
+`val`, the pattern fails, the lambda falls to the lambda-escape path, and because the opacity
+gate refuses to treat a mutation-carrying lambda as opaque, the *entire callable* becomes
+UNSUPPORTED.  A barrier that already dominated the mutation was discarded with it.
+
+Three shapes were measured as blockers: `SubscriptionManagerEngine.acceptCandidate`
+(`val subscriptionId = database.withTransaction {`), `validateAndCreate`
+(`val id = database.withTransaction {`), and `InvestmentTracker.addHolding`.
+
+**Fix (GR-14u28):** allow an optional declaration/assignment prefix (`val x = `,
+`var x: T = `, `x = `).  This only makes the tokenizer *see* the candidate — admission stays
+receiver-exact/import-exact, so a bound scope whose receiver does not resolve is still
+fail-closed.  No contract change, no policy byte change.
+
+**Measured side effect: the `external_entry` bucket is no longer a dead-code enumeration.**
+`InvestmentTracker.addHolding` had been reported `unproven_external_entry` and listed in §5.2
+as "production-dead, test-covered" — that label was an artefact of the unmodelable body, not
+evidence of dead code.  Combined with GR-14u27 (a self-guarded zero-inbound writer now *proves*
+rather than reporting zero-inbound), the bucket shrank 27 → 24 with **no** writer changing.
+Re-derive deadness from source before deleting anything.
+
+**Adjacent options measured and DECLINED (do not re-open without new evidence):**
+
+| Option | Projected | Why not taken |
+|---|---|---|
+| Admit `let`/`forEach`/`run`/`map`/… at the CFG layer (12 names) | **+1 net row** | Requires removing the anti-shadowing guard: these are *default-imported*, so there is no exact import to check. Name-exact admission of 12 common names is real fail-open surface for one row. |
+| Add one `withLock` wrapper (receiverless + exact import `kotlinx.coroutines.sync.withLock`) | **+1 row** (`ExpenseRepository.updateExpenseCategoryBulk`) | Clean — the import guard stays intact — but a **contract version bump** for one row is disproportionate. Available and evidenced if ever bundled with another contract change. |
+| Handle `group?.let { … }` (safe-call receiver) | 0 alone | `?.` is not matched by the scope pattern, but this buys nothing: `let` is not an admitted wrapper (see row 1). |
 
 ### 4.D17 — local-guard evidence discarded by an earlier check (FIXED, 94 rows)
 
@@ -611,9 +667,15 @@ disposition.  See §4.D4 and `GR-14u25.yml`.
 |---|---|---|---|
 | 1 | `ExpenseWriteStore` — a designed-but-unwired write layer | Entire class has **no** inbound caller outside itself; only reference is a stale doc comment | D2, engine zero-inbound |
 | 2 | `GroupLifecycleCoordinator` — `archiveGroup`, `removeMember`, `recordSettlement`, `deleteGroupPermanently`; `SettlementCalculator.recordSettlement` | Covered by contract/scenario tests only; the `GroupTransactionCoordinator` routing was **never built** | GR-14u21 measurement + handoff §E.3 |
-| 3 | `InvestmentTracker` (`addHolding`, `updatePrice`) | Production-dead, test-covered | §E.3 |
+| 3 | `InvestmentTracker` (`addHolding`, `updatePrice`) | Production-dead, test-covered — **RE-VERIFY** | §E.3 |
 | 4 | `NotificationRepository.deleteAllNotifications`, `BankApiIntegration.completeConnection`, `SubscriptionManagerEngine.recordPriceChange`, `AiArtifactRepositoryImpl.deleteByTargetKey` | Production-dead, test-covered | §E.3 |
 | 5 | `ExpenseGroupDao.insertGroupWithMembers`, `RecurringLifecycleEventWriter.writeDiagnostic`, `BudgetForecastingEngine.updateForecastAccuracy` | Zero inbound | §3.2 |
+
+**⚠️ Row 3 is no longer trustworthy.**  GR-14u28 proved its three `addHolding` rows, which had
+been reported `unproven_external_entry`.  That label came from an *unmodelable body*, not from
+dead code, so "production-dead" was never established for `addHolding`.  Re-derive it from
+source (call-site search) before deleting.  The same caution now applies to every row that left
+the `external_entry` bucket via GR-14u27/u28.
 
 **Do not delete these on the engine's word alone.**  A zero-inbound verdict is only
 trustworthy now that receiver resolution works (post GR-14u19/u20) — but §5.3 Defect II means
@@ -832,18 +894,23 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
    the writer (a production change, and the GR-14j reasoning says a self-guarded writer proves
    regardless of callers) or the carrier modelled.  Triage per row before acting: some are
    privacy-cleanup deletions that must NOT be gated (see AGENTS.md).
-10. **GR-12 exception-flow modelling** — the 32 §3.4 rows.  Large; fixture-first.
+10. **GR-12 exception-flow modelling** — the 29 §3.4 rows.  Large; fixture-first.
 
-11. **CFG scope-wiring for `withTransaction` / `withLock` mutations** — **8 rows, 4 methods**,
-   newly attractive because of GR-14u27.  These rows already carry a preceding
-   `checkWritesAllowed`; the only reason they are unproven is that the mutation node sits in a
-   scope lambda the CFG does not connect.  Wiring scope children would let the dominance prover
-   see the barrier, making them `localGuard == "direct"` — which under GR-14u27 then proves
-   them *outright*, regardless of their async callers.  Small, bounded, and it does **not**
-   require the exception-flow work.  Candidates: `GroupTransactionCoordinator.deleteGroupAtomic`
-   (×4), `SubscriptionManagerEngine.acceptCandidate` (×2) / `validateAndCreate`,
-   `ExpenseRepository.updateExpenseCategoryBulk`.  **Step-0 gate applies** — CFG changes are
-   fail-open-sensitive, so project it first.
+11. ~~**CFG scope-wiring for `withTransaction` / `withLock` mutations" (8 rows)**~~ —
+   **DONE as GR-14u28 (2026-09-11), but NOT for the reason this item predicted.**
+   The estimate of 8 rows was **wrong**: the real defect was a *parser* bug, not missing
+   scope-wiring.  `_RE_TS_SCOPE` was anchored on `receiver.method {`, so a **bound** scope
+   (`val x = db.withTransaction { }`) was not a candidate, its lambda escaped, and the whole
+   callable was rejected as unmodelable.  Allowing a declaration/assignment prefix fixed **6**
+   rows (3 `SubscriptionManagerEngine`, 3 `InvestmentTracker` — the latter previously
+   *mis*labelled `external_entry`).  No contract change was needed.
+   Two adjacent options were projected and **declined** (see §4.D18 for the table): the
+   name-exact relaxation for default-imported inline names buys **+1 row** for real fail-open
+   surface, and a single `withLock` wrapper buys **+1 row** for a contract version bump.
+   **Remaining under this heading: 5 rows** — `deleteGroupAtomic` ×4 (blocked by
+   `group?.let` / `linkedExpenses.forEach`, unadmitted wrappers) and
+   `updateExpenseCategoryBulk` ×1 (`withLock`, contract bump).  Both are evidenced above;
+   take them only bundled with other work.
 
 12. **Anonymous-object member modelling** — **~10 rows mislabelled today.**  `object : T { ... }`
    bodies are parsed as if the supertype were a call with a **lambda**, so the object's members

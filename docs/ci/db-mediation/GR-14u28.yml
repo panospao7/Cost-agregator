@@ -1,0 +1,127 @@
+# GR-14u28 — a bound transparent scope is a scope candidate.
+# unproven 111 -> 105; proven 295 -> 301.  0 counterexamples; 0 regressions.
+#
+# ROOT CAUSE (parser, not design): `_RE_TS_SCOPE` (tokenizer.py:78) was anchored
+#   straight onto `receiver.method {`:
+#
+#       ^(?:(?P<receiver>IDENT)\s*\.\s*)?(?P<method>IDENT)\s*(\(...\))?\s*\{
+#
+#   so `db.withTransaction { ... }` standing alone WAS recognised as a
+#   TRANSPARENT_SCOPE candidate, but `val id = db.withTransaction { ... }` was NOT
+#   — the statement begins with `val`, the pattern fails, the lambda falls to the
+#   lambda-escape path, and because the opacity gate refuses to treat a
+#   mutation-carrying lambda as opaque, the ENTIRE callable becomes UNSUPPORTED.
+#   A barrier that already dominated the mutation was therefore discarded.
+#
+#   Measured blockers before the fix (probe `probe_residual_escapes.py`):
+#     * SubscriptionManagerEngine.acceptCandidate  — `val subscriptionId = database.withTransaction {`
+#     * SubscriptionManagerEngine.validateAndCreate — `val id = database.withTransaction {`
+#     * InvestmentTracker.addHolding                — same shape
+#
+# FIX (tokenizer.py): allow an optional declaration/assignment prefix —
+#   `val name = `, `var name: Type = `, `name = ` — before the receiver/method.
+#   This only lets the tokenizer SEE the candidate.  ADMISSION IS UNCHANGED: it
+#   stays receiver-exact / import-exact in `admit_transparent_scope_candidates`,
+#   so a bound scope whose receiver does not resolve is still fail-closed
+#   (excluded -> disconnected scope -> UNSUPPORTED).  No contract change, no new
+#   fails-open surface, no policy byte change.
+#
+# DELIBERATE NON-GOALS (measured and declined, so they are not re-opened):
+#   * `let` / `forEach` carrying mutations (e.g. `group?.let { dao.delete(it) }`)
+#     remain lambda-escapes.  Admitting them at the CFG layer needs a NAME-EXACT
+#     relaxation of the anti-shadowing guard (they are default-imported, so there
+#     is no exact import to check) — a real fail-open surface.  Projected cost of
+#     that relaxation: it moves **1 net row** even when admitting 12 common inline
+#     names (`let`, `forEach`, `run`, `map`, `withLock`, …), because the remaining
+#     rows are blocked by other constructs.  Poor value; declined.
+#   * Adding `withLock` alone (receiverless + exact import
+#     `kotlinx.coroutines.sync.withLock`, the guard intact) moves exactly **1 row**
+#     (`ExpenseRepository.updateExpenseCategoryBulk`) and needs a contract version
+#     bump.  Projected clean, but a contract revision for 1 row is disproportionate;
+#     left as an available, evidenced option in the backlog rather than taken here.
+#   * `group?.let` (safe-call receiver) is still not matched by the scope pattern;
+#     that is fine because `let` is not an admitted wrapper anyway (see above).
+#
+# BOARD: 8d813a25 -> a9976208 (deterministic double-run).
+#   provenance 295 -> 301; unproven 111 -> 105; counterexamples 0 -> 0.
+#   changed rows: EXACTLY 6, all -> proven_helper
+#     3  unproven_external_entry -> proven_helper   InvestmentTracker.addHolding
+#     3  unproven_ambiguous_call -> proven_helper   SubscriptionManagerEngine
+#                                                   .acceptCandidate (x2) / .validateAndCreate
+#   Policy bytes UNCHANGED (7851adc2); baseline/exception bytes unchanged.
+#
+# DOC CONSEQUENCE worth flagging (do not let it mislead):
+#   `InvestmentTracker.addHolding` was previously reported `unproven_external_entry`
+#   and appeared in §5.2's "production-dead, test-covered" list.  That label was an
+#   artefact of the unmodelable body, not evidence of dead code: the row now proves
+#   locally.  §5.2 must be re-derived before anything is deleted on the strength of
+#   it.  More generally, after GR-14u27 a self-guarded zero-inbound writer PROVES
+#   (reason GR13_ALL_PATHS_GUARDED) instead of being reported as zero-inbound, so
+#   `unproven_external_entry` alone no longer enumerates the dead-code population.
+#
+# PINS (scripts/ci/test_gr14u28_bound_scope.py, 10; 6 RED pre-fix):
+#   regex: bare call matches (regression); `val x = ` matches; `val x: Long = `
+#   matches; plain `x = ` matches; `x = {` and `val x = {` are NOT candidates
+#   (lambda literals); the wrapper-method filter still rejects a non-wrapper.
+#   end-to-end parse: bound scope becomes a TRANSPARENT_SCOPE region; bare scope
+#   still does (regression); the region span covers the whole statement; a bound
+#   call to a non-wrapper method still escapes (fail closed).
+#
+# Validation:
+#   - test_gr14u28_bound_scope.py 10/10 (6 RED pre-fix).
+#   - engine battery 1244 passed / 13 failed / 14 skipped — the 13 are the
+#     IDENTICAL pre-existing set; the +10 over the u27 run is exactly this batch's
+#     pins, i.e. zero new failures.
+#   - scripts/db_guard 235 passed; scripts/db_guard/structural_analysis 208 passed;
+#     fixture_runner 64/64.
+#   - board a9976208 deterministic double-run; 0 counterexamples; policy unchanged.
+schemaVersion: 1
+batchId: GR-14u28
+startSha: 0cf8b653
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: 8d813a2553d45bce2a6a62350970804838a26b8be9c9e9e2b3325134ebea20bc
+mediationReportSha256After: a997620894f506a568dec19da7cf6e66d1ae6a7665f67064096dbb5bae2a8d37
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/structural_analysis/tokenizer.py:
+      `_RE_TS_SCOPE` accepts an optional declaration/assignment prefix so a bound
+      transparent scope is a candidate; admission unchanged (still exact)
+  - scripts/ci/test_gr14u28_bound_scope.py: 10 pins (new)
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - (6 rows) unproven_* -> proven_helper — see the board delta above
+rootCause: GR13_BOUND_TRANSPARENT_SCOPE_UNMATCHED
+selectedPattern: ENGINE
+
+tests:
+  - test_gr14u28_bound_scope.py 10/10 (6 RED pre-fix)
+  - engine battery 1244 passed; the 13 failures are the identical pre-existing set
+  - db_guard 235 passed; structural_analysis 208 passed; fixture_runner 64/64
+  - board a9976208 deterministic double-run; 0 counterexamples; policy unchanged
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  A transparent scope is just as transparent when its result is bound as when the
+  call stands alone, but the tokenizer only recognised the standalone form: its
+  scope pattern was anchored directly onto the receiver and method, so a statement
+  beginning with val never matched, the lambda took the escape path, and because
+  the opacity gate refuses to model a mutation-carrying lambda as opaque the whole
+  callable became unsupported.  A barrier that already dominated the mutation was
+  thrown away with it.  Allowing a declaration or assignment prefix lets the
+  tokenizer see these candidates without granting anything: admission is still
+  receiver-exact and import-exact, so a bound scope that cannot be resolved stays
+  fail-closed, and no contract or policy byte changes.  Six rows move to proven
+  helper, three of which had been reported as zero-inbound dead code, so that list
+  needs re-deriving rather than acting on.  Two adjacent options were measured and
+  declined as disproportionate: relaxing the anti-shadowing guard to admit
+  default-imported inline names buys one net row, and adding a single withLock
+  wrapper is clean but would cost a contract revision for one row.  The board is
+  deterministic with zero counterexamples and zero regressions.
