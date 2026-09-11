@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.service
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -20,16 +21,117 @@ class NotificationFilterTest {
         assertFalse(NotificationFilter.shouldCapture("com.instagram.android", "Amount 5.00", "spent", ""))
     }
 
-    // ── Finance packages — always captured ─────────────────────────────
+    // ── Finance packages — content-gated since P2-09 ─────────────────────
+    // P2-09: finance packages no longer capture unconditionally. Content must
+    // pass the finance path (deny checks + expense/transaction signal +
+    // amount). Empty content therefore falls through to NO_AMOUNT → not
+    // captured. (These tests were stale: they asserted pre-P2-09 semantics.)
 
     @Test
-    fun `finance packages return true regardless of content`() {
-        assertTrue(NotificationFilter.shouldCapture("com.revolut.revolut", "", "", ""))
-        assertTrue(NotificationFilter.shouldCapture("gr.nbg.mobilebanking", "Title", "Text", ""))
-        assertTrue(NotificationFilter.shouldCapture("com.eurobank.mobile", "Random", "Content", ""))
-        assertTrue(NotificationFilter.shouldCapture("com.google.android.apps.walletnfcrel", "", "", ""))
-        assertTrue(NotificationFilter.shouldCapture("gr.alpha.mobile", "", "", ""))
-        assertTrue(NotificationFilter.shouldCapture("com.winbank.mobile", "", "", ""))
+    fun `finance packages with empty content are NOT captured (P2-09 NO_AMOUNT)`() {
+        for (pkg in NotificationFilter.FINANCE_PACKAGES) {
+            val decision = NotificationFilter.decide(pkg, "", "", "")
+            assertFalse("package $pkg with empty content should not capture", decision.capture)
+            assertEquals(NotificationFilterReason.NO_AMOUNT, decision.reason)
+        }
+    }
+
+    @Test
+    fun `finance packages with benign amount content are NOT captured (NO_TRANSACTION_SIGNAL)`() {
+        val decision = NotificationFilter.decide("com.revolut.revolut", "Title", "Random 12.50", "Content")
+        assertFalse(decision.capture)
+        assertEquals(NotificationFilterReason.NO_TRANSACTION_SIGNAL, decision.reason)
+    }
+
+    // ── NEW-P1-2026-001: bare "pos" substring false positives ───────────
+    // "pos" was an EXPENSE_SIGNAL_KEYWORDS substring match, so "deposit(ed)",
+    // "purpose", "suppose", "position", "positive", "post" all counted as a
+    // strong expense signal, defeating the incoming/deposit deny.
+
+    @Test
+    fun `salary deposited is denied INCOMING_ONLY despite pos inside deposited`() {
+        val decision = NotificationFilter.decide(
+            "com.revolut.revolut",
+            "Salary",
+            "Salary deposited €2000",
+            ""
+        )
+        assertFalse(decision.capture)
+        assertEquals(NotificationFilterReason.INCOMING_ONLY, decision.reason)
+        assertEquals(TransactionDirection.CREDIT, decision.direction)
+        assertTrue(decision.hasMoneySignal)
+    }
+
+    @Test
+    fun `pos payment is captured as strong expense`() {
+        val decision = NotificationFilter.decide(
+            "com.revolut.revolut",
+            "Card used",
+            "POS payment €12.50",
+            ""
+        )
+        assertTrue(decision.capture)
+        assertEquals(NotificationFilterReason.ALLOW_STRONG_EXPENSE, decision.reason)
+    }
+
+    @Test
+    fun `bare pos token alone is a strong expense signal (whole-word regex)`() {
+        // Discriminates the NEW-P1-2026-001 fix: no keyword other than the
+        // whole-word "pos" regex matches here (pre-fix "pos payment" would
+        // also match via the "payment" keyword, hiding a broken regex).
+        val decision = NotificationFilter.decide(
+            "com.revolut.revolut",
+            "POS",
+            "POS €4.80",
+            ""
+        )
+        assertTrue(decision.capture)
+        assertEquals(NotificationFilterReason.ALLOW_STRONG_EXPENSE, decision.reason)
+    }
+
+    @Test
+    fun `deposit for savings purpose is denied - purpose must not be expense signal`() {
+        val decision = NotificationFilter.decide(
+            "gr.nbg.mobilebanking",
+            "Deposit",
+            "Deposit for savings purpose €100",
+            ""
+        )
+        assertFalse(decision.capture)
+        assertEquals(NotificationFilterReason.INCOMING_ONLY, decision.reason)
+        assertEquals(TransactionDirection.CREDIT, decision.direction)
+    }
+
+    @Test
+    fun `deposit fee is denied INCOMING_ONLY - pinned NEW-P1-2026-001 decision`() {
+        // Pinned decision: "Deposit fee €2.50" was captured pre-fix ONLY via the
+        // "pos"-in-"deposit" bug. Direction is CREDIT (a fee is not a strong
+        // expense signal the filter can prove), so the incoming/deposit deny is
+        // accepted as the correct behavior going forward.
+        val decision = NotificationFilter.decide(
+            "gr.nbg.mobilebanking",
+            "Deposit",
+            "Deposit fee €2.50",
+            ""
+        )
+        assertFalse(decision.capture)
+        assertEquals(NotificationFilterReason.INCOMING_ONLY, decision.reason)
+        assertEquals(TransactionDirection.CREDIT, decision.direction)
+        assertTrue(decision.hasMoneySignal)
+    }
+
+    @Test
+    fun `Greek salary deposit is denied INCOMING_ONLY`() {
+        // "κατατέθηκε" (deposited) must not trip any expense keyword.
+        val decision = NotificationFilter.decide(
+            "gr.nbg.mobilebanking",
+            "Μισθός",
+            "Μισθός κατατέθηκε €2000",
+            ""
+        )
+        assertFalse(decision.capture)
+        assertEquals(NotificationFilterReason.INCOMING_ONLY, decision.reason)
+        assertEquals(TransactionDirection.CREDIT, decision.direction)
     }
 
     // ── Communication packages — must go through heuristics ─────────────

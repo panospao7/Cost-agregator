@@ -97,12 +97,30 @@ object NotificationFilter {
     /**
      * P2-09: Strong expense signals — these keywords indicate an actual
      * debit/purchase/expense transaction, not just any financial activity.
+     *
+     * NEW-P1-2026-001: bare "pos" was removed from this list. These are
+     * substring matches, so "pos" also matched inside "deposited", "purpose",
+     * "suppose", "position", "positive", and "post" — which defeated the
+     * incoming/deposit deny (e.g. "Salary deposited €2000" was captured as
+     * ALLOW_STRONG_EXPENSE). "pos" is now matched as a whole word via
+     * [EXPENSE_SIGNAL_REGEXES] instead. The remaining entries must stay
+     * substring keywords: Greek stems ("πληρωμ" family via inflections) and
+     * the multi-word "card payment" rely on substring semantics.
      */
     private val EXPENSE_SIGNAL_KEYWORDS: Set<String> = setOf(
         "paid", "spent", "purchase", "purchased", "charged", "card payment",
-        "pos", "contactless", "debit", "withdrawn", "withdrawal", "payment",
+        "contactless", "debit", "withdrawn", "withdrawal", "payment",
         "πληρωμή", "πληρωμη", "αγορά", "αγορα", "χρέωση", "χρεωση",
         "κάρτα", "καρτα", "αναληψη", "ανάληψη", "ανάληψ"
+    )
+
+    /**
+     * NEW-P1-2026-001: whole-word strong-signal patterns, checked in addition
+     * to [EXPENSE_SIGNAL_KEYWORDS]. Used for short tokens like "pos" where
+     * substring matching produces false positives (deposit, purpose, post...).
+     */
+    private val EXPENSE_SIGNAL_REGEXES: List<Regex> = listOf(
+        Regex("""\bpos\b""", RegexOption.IGNORE_CASE)
     )
 
     /**
@@ -234,8 +252,15 @@ object NotificationFilter {
 
             // 5. Incoming-only / deposit deny
             // P1-PR3 (NEW-P1-005): Only deny deposit when NO expense signal keywords present.
-            // "Deposit fee €2.50" should be captured; "Salary deposited €2000" should not.
-            val hasExpenseSignal = EXPENSE_SIGNAL_KEYWORDS.any { combined.contains(it) }
+            // Superseded by NEW-P1-2026-001: "Salary deposited €2000" must not capture
+            // (it previously did via "pos" inside "deposited"). "pos" is matched
+            // whole-word (regex), not as a substring.
+            // Pinned decision: "Deposit fee €2.50" is now denied as INCOMING_ONLY/CREDIT —
+            // pre-fix it was captured ONLY via the "pos"-in-"deposit" bug.
+            // Out-of-scope note (do not fix here): the same substring issue exists in the
+            // paid/unpaid guard at the balance-only check.
+            val hasExpenseSignal = EXPENSE_SIGNAL_KEYWORDS.any { combined.contains(it) } ||
+                EXPENSE_SIGNAL_REGEXES.any { it.containsMatchIn(combined) }
             if (!hasExpenseSignal && (combined.contains("incoming") || combined.contains("credited") ||
                 combined.contains("salary") || combined.contains("εισερχόμενο") ||
                 combined.contains("μισθός") || combined.contains("μισθο") ||
