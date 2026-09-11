@@ -446,6 +446,78 @@ def _parse_transparent_scope(cur: _Cursor, base: int, stmt_e: int, match) -> Par
     )
 
 
+def _match_chained_carrier(stripped: str, methods: tuple[str, ...]):
+    """GR-14u39: `chain.name(args?) { ... }` trailing-lambda candidate.
+
+    The carrier is reached through a balanced call chain instead of
+    leading the statement.  Conservative charset: the prefix may contain
+    no brace, semicolon, question mark, or assignment (an earlier lambda,
+    elvis, or assignment target disqualifies — same fail-closed family as
+    the u31 head rules).  Purely syntactic; admission happens in the
+    proof layer.
+    """
+    if not methods:
+        return None
+    names = "|".join(re.escape(m) for m in methods)
+    m = re.match(
+        r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*\s*(?::\s*[^=\n{};]+)?=\s*)?"
+        r"(?P<prefix>[^{};?=]+?)"
+        r"\.(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names,
+        stripped,
+    )
+    if m is None or m.group("method") not in methods:
+        return None
+    return m
+
+
+def _parse_chained_carrier(cur: _Cursor, base: int, stmt_e: int, match):
+    """Build the TRANSPARENT_SCOPE region for a chained carrier candidate.
+
+    Mirrors _parse_transparent_scope's fail-closed body handling (param
+    header skip, recursive parse, scope-label save/restore); the receiver
+    is a whole chain, so scope_receiver stays None (carrier regions are
+    never canonical scopes — the proof layer admits by contract only).
+    """
+    method = match.group("method")
+    brace_rel = match.end() - 1
+    brace_abs = base + brace_rel
+    prefix = cur.text[base:brace_abs]
+    if "{" in prefix:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            base,
+            stmt_e,
+            "lambda-before-transparent-scope",
+        )
+        return None
+    close = _match_forward(cur.text, brace_abs, stmt_e)
+    tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unknown-construct",
+        )
+        return None
+    saved = cur.scope_label
+    cur.scope_label = method
+    try:
+        body_start = brace_abs + 1
+        param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+        if param_match is not None:
+            body_start += param_match.end()
+        inner = _parse_sequence(cur, body_start, close - 1, True)
+    finally:
+        cur.scope_label = saved
+    return ParsedRegion(
+        kind=RegionKind.TRANSPARENT_SCOPE,
+        span=cur.span(base, close),
+        children=tuple(inner),
+        scope_method=method,
+    )
+
+
 def _parse_block(
     cur: _Cursor, abs_start: int, rel_open: int, abs_end: int, in_lambda: bool
 ) -> tuple[ParsedRegion | None, list[ParsedRegion]]:
@@ -788,6 +860,27 @@ def _parse_sequence(
                 tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
                 if close > 0 and not tail:
                     ts_match = carrier_match
+            if ts_match is None:
+                # GR-14u39: same trailing-lambda-ends-the-statement rule
+                # for a carrier reached through a balanced call chain.
+                chained = _match_chained_carrier(
+                    stripped, cur.transparent_inline_methods
+                )
+                if chained is not None:
+                    close = _match_forward(
+                        cur.text, base + chained.end() - 1, stmt_e
+                    )
+                    tail = (
+                        cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                    )
+                    if close > 0 and not tail:
+                        region = _parse_chained_carrier(
+                            cur, base, stmt_e, chained
+                        )
+                        if region is not None:
+                            out.append(region)
+                        idx += 1
+                        continue
         if ts_match is not None:
             region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
             if region is not None:

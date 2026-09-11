@@ -676,10 +676,13 @@ class TestReturnConstructs:
         assert result.unsupported[0].reason == "lambda-escape"
 
     def test_chained_carrier_still_fails_closed(self):
-        # Pin (batch limitation): a carrier reached through a call CHAIN
-        # (`...().use { }`) is not a head match yet and keeps refusing.
+        # u33 pinned chained shapes as a batch limitation; GR-14u39
+        # lifted it for carriers reached through a balanced call chain
+        # whose trailing lambda ends the statement.  This pin keeps the
+        # boundary honest from the other side: an UNLISTED chain name
+        # still refuses (only the closed reviewed set is admitted).
         result = parse(
-            "db.rawQuery(q, null).use { cursor ->\n"
+            "db.rawQuery(q, null).unknownScope { cursor ->\n"
             "  val oldId = cursor.getLong(0)\n"
             "  oldId\n"
             "}\n",
@@ -726,6 +729,63 @@ class TestReturnConstructs:
         )
         assert result.is_supported
         assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
+    def test_chained_carrier_head_admitted(self):
+        # GR-14u39: `x().forEach { }` — the carrier is reached through a
+        # balanced call chain; the trailing lambda ends the statement.
+        result = parse(
+            "dao.getMappings().forEach { mapping ->\n"
+            "  dao.update(mapping)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "forEach"
+        assert result.regions[0].children[0].kind == RegionKind.STATEMENT
+
+    def test_chained_carrier_with_args_admitted(self):
+        # GR-14u39: `db.rawQuery(q, null).use { cursor -> }` — production
+        # shape from LegacyDataMigrationService.migrateCategories.
+        result = parse(
+            "db.rawQuery(query, null).use { cursor ->\n"
+            "  val oldId = cursor.getLong(0)\n"
+            "  oldId\n"
+            "}\n",
+            transparent_inline_methods=("use",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "use"
+
+    def test_chained_carrier_unlisted_name_fails_closed(self):
+        result = parse(
+            "dao.getMappings().mysteryCarrier { m ->\n"
+            "  dao.update(m)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert not result.is_supported
+
+    def test_chained_carrier_with_lambda_in_prefix_fails_closed(self):
+        # An earlier lambda in the chain escapes before the carrier —
+        # never a chained-carrier candidate (same rule as u31 heads).
+        result = parse(
+            "dao.query { q -> q }.forEach { m ->\n"
+            "  dao.update(m)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert not result.is_supported
+
+    def test_chained_carrier_not_ending_statement_not_claimed(self):
+        # u33 rule preserved: a carrier whose lambda does not END the
+        # statement is not claimed (falls to generic opacity handling).
+        result = parse(
+            "dao.getX().map { it.id }.toSet()\n",
+            transparent_inline_methods=("map",),
+        )
+        assert not result.is_supported
 
 
 class TestValConstructInitializers:
