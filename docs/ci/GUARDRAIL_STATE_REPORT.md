@@ -347,7 +347,7 @@ change, not a quick fix.
 | D10 | `_inherits_from` followed only the first supertype | **latent fail-OPEN** | ✅ **FIXED** GR-14u21 |
 | D13 | restore-internal scope inexpressible in the contract | proof only | ✅ **FIXED** GR-14u25 (V3) |
 | D14 | `restore_internal` collapsed to `worker` in context propagation | proof only | ✅ **FIXED** GR-14u25 |
-| D15 | scan coverage excludes the `debug`/`release` source sets | **latent blind spot** | ⏸️ OPEN — needs projection + owner call (§5.5) |
+| D15 | scan coverage excludes the `debug`/`release` source sets | — | ✅ **NOT A DEFECT** — deliberate, enforced 3 ways, already tested (§5.5). Do not widen. |
 
 ### 4.D4 — `interface_dispatch` — RESOLVED ACROSS u23 / u24 / u25 (LANDED)
 
@@ -550,33 +550,44 @@ The 32 `exact_synchronous` rows (§3.4) are all "guard present at the top, body 
 They are **low risk**.  Conversely, `checkWritesAllowed` placed *after* a mutation does not
 cover it (the tri-state is position-aware) — a real ordering requirement for new code.
 
-### 5.5 Production audit of UNSCANNED source sets (2026-09-11) — one gap, one privacy note
+### 5.5 Production audit of UNSCANNED source sets (2026-09-11) — NOT a blind spot
 
 Run because the guardrails only ever see what the scanner reads, and a writer outside that
-set is invisible no matter how the engine behaves.  Method: enumerate the Gradle source sets,
-compare against `config/guards/production_source_roots.yml` (which lists exactly one root —
-`app/src/main/java`), and inspect everything in the difference.
+set would be invisible no matter how the engine behaves.  Method: enumerate the Gradle source
+sets, compare against `config/guards/production_source_roots.yml` (which lists exactly one
+root — `app/src/main/java`), and inspect everything in the difference.
 
-**Hypothesis tested and FALSIFIED.**  The only files in a non-scanned source set are one
-`DebugDataStorage.kt` in `app/src/debug/` and its twin in `app/src/release/`.  It does **not**
-write the database — it writes a **file** (`File(context.filesDir, "last_debug_data.json")`),
-and `DatabaseWriteBarrier` governs database writes, not file writes.  So this is **not** an
-unguarded DB write, and the `migrateCategories` pattern does **not** have a source-set sibling.
-Recording the negative result so it is not re-investigated.  (The release variant is a
-compiled no-op stub — `save`/`clear` do nothing, `load` returns null — so that class is inert
-in shipped builds.)
+**Two hypotheses tested, BOTH FALSIFIED.**  Recording the negative results so neither is
+re-opened without new evidence.
 
-**Finding A — guardrail scan coverage excludes `debug` and `release` (latent blind spot).**
-`production_source_roots.yml` covers `app/src/main/java` only.  Any DB write in a
-debug/release *variant* would therefore never be seen by the engine: no policy row, no
-diagnostic, no counterexample.  `LegacyDataMigrationService.migrateCategories` was a
-debug-**only** path but lived in `main`, which is why GR-14u18 could find it at all.  Closing
-this is a one-line manifest change, but it **changes what the board sees** (new roots can
-surface uncorrelated mutations), so it needs a projection and an owner call rather than a
-silent config edit.  Recorded as §4.D15.
+**1. "The `migrateCategories` pattern has a source-set sibling."**  The only files outside
+the scanned root are one `DebugDataStorage.kt` in `app/src/debug/` and its twin in
+`app/src/release/`.  It does **not** write the database — it writes a **file**
+(`File(context.filesDir, "last_debug_data.json")`), and `DatabaseWriteBarrier` governs
+database writes, not file writes.  Verified: neither file references any DB-layer marker
+(`Dao`, `AppDatabase`, `RoomDatabase`, `@Dao`/`@Query`/`@Entity`, `DatabaseWriteBarrier`,
+`checkWritesAllowed`, `runWrite`, `withTransaction`, `RestoreMaintenanceMode`).  The release
+variant is a compiled no-op stub.  **Not an unguarded DB write.**
 
-**Finding B — the debug variant persists financial payload unencrypted (low severity,
-debug-only, by design).**  `DebugDataStorage.save` (debug only) writes JSON containing parsed
+**2. "Scan coverage of `debug`/`release` is an accidental blind spot worth closing."**
+It is not accidental and it must **not** be widened.  The main-only scope is a deliberate
+boundary, enforced independently in three places — this is now a *confirmed* design property,
+not a gap:
+
+| Enforcement | Evidence |
+|---|---|
+| Manifest schema rejects it | `sourceSet` must be exactly `main`; the path must end `/src/main/java` or `/src/main/kotlin`, and `test`/`debug`/`release`/`androidTest`/`generated`/`build` segments are **explicitly rejected** (`production_source_scope.py:494-499`). A `debug` root returns `DB_SOURCE_ROOT_MANIFEST_INVALID` with reason `unsupported-tail`. |
+| Policy paths cannot reach it | The legacy approved-roots contract is `("app/src/main/java",)`; an `app/src/debug/...` or `app/src/release/...` policy path is rejected `POLICY_ERROR_PATH_OUTSIDE_APPROVED_ROOT` (`db_guard/source_roots.py`). So a variant file could not be granted a policy row even if it were scanned. |
+| A test already pins it | `scripts/test_db_guard_room_inventory.py`: `test_production_root_includes_only_production_dao` writes a `@Dao DebugDao` and `@Dao ReleaseDao` into those roots and asserts they are **never inventoried**; a sibling test asserts no inventoried path starts with `app/src/{test,androidTest,debug,release}/`. |
+
+So the residual risk is real but already **designed for and mechanically tested**: the
+mitigation is the existing boundary, and the standing rule is *do not put database access in
+a variant source set*.  No config change is warranted.  (Also worth knowing: every
+Kotlin architecture guard under `app/src/test/.../architecture/` likewise scans
+`src/main/java` only — the guarded production surface is main-only by design.)
+
+**Separate, still-open item — the debug variant persists financial payload unencrypted (low
+severity, debug-only).**  `DebugDataStorage.save` (debug only) writes JSON containing parsed
 transaction rows (amount, currency, merchant, date), the parsing logs, and a **200-character
 preview** of the raw statement text (`DebugData.toJson` emits `rawText.take(200)`), to
 app-private storage in cleartext.  Mitigations that make this low severity: the release
@@ -584,9 +595,8 @@ variant is a no-op, the location is app-private (`filesDir`), and only a preview
 the full statement is persisted.  What still deserves an explicit decision: AGENTS.md forbids
 persisting raw statement text and user financial payloads at all, the file survives until
 `clear()` is called explicitly, and nothing encrypts it even though `BackupEncryptionService`
-exists for the backup path.  **Not** a new bug and **not** user-reachable in release — but the
-"never persist" rule and the debug convenience are in tension, and that should be a decision
-rather than an accident.
+exists for the backup path.  This is a **privacy-posture question, not a guardrail gap** —
+it is not a new bug and not user-reachable in release.
 
 ---
 
@@ -675,12 +685,13 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
 3. ~~**§3.3.1 `dagger.Lazy.get()` transparent unwrap**~~ — **DONE as GR-14u22
    (2026-09-11)**: 9 rows ambiguous → proven_helper, board `6a18b4bf`, 0 counterexamples.
 4. **§5.3.2 `BankApiIntegrationTest`** — run it alone at HEAD; stale-test vs regression.
-4b. **NEW (§5.5) — close the scan-coverage blind spot**, or document why not: add
-   `debug`/`release` (and any future variant source set) to
-   `config/guards/production_source_roots.yml`.  Cheap, but it **widens what the board sees**,
-   so it needs a Step-0 projection first and an owner call: newly scanned files may surface
-   uncorrelated mutations, which is the point, but also new policy work.  Related, lower
-   priority: decide the debug-variant plaintext financial payload (§5.5 Finding B).
+4b. **DO NOT "close" the main-only scan scope (§5.5).**  Audited 2026-09-11 and confirmed a
+   deliberate, triply-enforced, already-tested design boundary — not a blind spot.  Widening
+   `production_source_roots.yml` is impossible under the schema (`sourceSet` must be `main`)
+   and would defeat the boundary that `test_production_root_includes_only_production_dao`
+   exists to pin.  The only residual item here is a **privacy decision** on the debug-only
+   plaintext `DebugDataStorage` payload (§5.5), which is a posture question, not a guardrail
+   gap.
 5. **§5.2 dead/owner-decision tail** — mechanical row movement, needs owner sign-off.
 6. **GATE-00R** — the actual "done" gate; blocked by §6.
 7. **§4.D1-II `init {}` invisibility** — measured latent (0 live instances, re-confirmed
@@ -695,6 +706,14 @@ rows per admission.
 
 ## 10. Invariants to preserve
 
+- **The guarded production surface is `app/src/main` ONLY — by design.**  Variant source sets
+  (`debug`/`release`) and test roots (`test`/`androidTest`) are deliberately outside the scan
+  scope, enforced by the manifest schema, the approved-roots contract, and
+  `test_production_root_includes_only_production_dao`.  Do not widen it; put database access
+  in `main`, never in a variant (§5.5).
+- **A negative result is a deliverable.**  Record what was tested and falsified, with the
+  evidence, so it is not re-investigated — and so a later reader can tell a designed boundary
+  from an oversight.
 - **Fail closed.** Never up-rank to proven on uncertainty. Unproven ≠ bug; only
   `counterexample_*` asserts a violation.
 - **Never land through a Step-0 flip.** Triage first.
