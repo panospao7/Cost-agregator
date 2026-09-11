@@ -271,14 +271,15 @@ Decided by `external_entry`: zero inbound call sites. Domain:
 
 | Deciding resolution | Rows (live board) | What it means |
 |---|---|---|
-| `exact_synchronous` | **27** | Guard present, body **unmodelable** — see §3.4 |
-| `unresolved_target` | 13 | Receiver or target not resolved — triaged §3.3.1 |
+| `exact_synchronous` | **32** | Guard present, body **unmodelable** — see §3.4 |
+| `unresolved_target` | 8 | Receiver or target not resolved — triaged §3.3.1 |
 | ~`function_reference` | **0** | **DRAINED** by GR-14u26 — 13 proved, 1 re-decided as `unresolved_target` |
 | ~`interface_dispatch` | **0** | **DRAINED** by GR-14u23/u24/u25 (§4.D4) |
 
-GR-14u27 additionally proved 5 of the `direct`-local rows that were sitting in this bucket
-(they were decided by an ambiguous rather than an async inbound edge, but the same
-`GR13_LOCAL_GUARD_UNMODELABLE`-adjacent suppression applied).  §3.4's count drops 32 → 27.
+GR-14u27 proved 5 of this bucket's rows (45 → 40).  **Those 5 were the
+`unresolved_target` population, which fell 13 → 8** — they had a proved local guard and an
+unresolved inbound edge, exactly the §4.D17 shape.  `exact_synchronous` is **unchanged at
+32**: those rows have `localGuard == "none"`, so GR-14u27 does not reach them.
 
 **Where the 20 `interface_dispatch` rows actually went** (measured per row, not inferred —
 `build/guard-debug/gr14u25/transition_check.py`):
@@ -331,21 +332,23 @@ Every deciding edge was recovered with the engine's own tier-5 selection
   `migrateCategories` fix (which moved 0 rows alone — the inbound edges stay uncertain
   regardless).  Owner decision whether to add canonical guards.
 
-### 3.4 The 27 `exact_synchronous` rows — CORRECTLY unproven, not a defect
+### 3.4 The 32 `exact_synchronous` rows — CORRECTLY unproven, not a defect
 
 **Investigated this session; hypothesis falsified.**  These rows read
 `unproven_ambiguous_call` *with* an exact deciding edge, which looks contradictory.  It is
-not.  All 27 are the **GR-14u15 tri-state** working as designed
+not.  All 32 are the **GR-14u15 tri-state** working as designed
 (`GR13_LOCAL_GUARD_UNMODELABLE`, `barrierMode=helper`, `localGuard=none`):
 
-- **27 / 27 contain a canonical `checkWritesAllowed` call** — the guard *is* present.
-- Most contain `try` / `catch`, which the GR-12 body model refuses (exception flow
-  above all).
-- A few (4 distinct methods — `ExpenseRepository.updateExpenseCategoryBulk`,
-  `GroupTransactionCoordinator.deleteGroupAtomic`,
-  `SubscriptionManagerEngine.acceptCandidate` / `validateAndCreate`) place the guard first
-  and mutate inside `withLock` / `database.withTransaction` lambdas — the CFG does not wire
-  scope children, so the mutation node is disconnected and the body is unmodelable.
+- **32 / 32 contain a canonical `checkWritesAllowed` call** — the guard *is* present.
+- **24 / 32 contain `try` / `catch`**, which the GR-12 body model refuses (exception flow
+  above all).  Measured construct mix: `try/catch` 24, `withContext` 16, `withTransaction` 14,
+  `for`/`while` 9, `withTimeout` 7, `withLock` 1.
+- The other **8 rows (4 distinct methods)** contain **no `try`/`catch`** and are blocked by
+  scoping alone — the guard precedes the mutation but the mutation sits inside a
+  `withTransaction` / `withLock` lambda the CFG does not wire as a scope child, so the
+  mutation node is disconnected: `GroupTransactionCoordinator.deleteGroupAtomic` ×4,
+  `SubscriptionManagerEngine.acceptCandidate` ×2, `SubscriptionManagerEngine.validateAndCreate`,
+  `ExpenseRepository.updateExpenseCategoryBulk` (`withLock`).
 
 **Note the distinction from GR-14u27.**  These rows are `localGuard == "none"`: the dominance
 engine could **not** prove the guard, so the row is genuinely unproven and GR-14u27 does not
@@ -829,7 +832,37 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
    the writer (a production change, and the GR-14j reasoning says a self-guarded writer proves
    regardless of callers) or the carrier modelled.  Triage per row before acting: some are
    privacy-cleanup deletions that must NOT be gated (see AGENTS.md).
-10. **GR-12 exception-flow modelling** — the 27 §3.4 rows.  Large; fixture-first.
+10. **GR-12 exception-flow modelling** — the 32 §3.4 rows.  Large; fixture-first.
+
+11. **CFG scope-wiring for `withTransaction` / `withLock` mutations** — **8 rows, 4 methods**,
+   newly attractive because of GR-14u27.  These rows already carry a preceding
+   `checkWritesAllowed`; the only reason they are unproven is that the mutation node sits in a
+   scope lambda the CFG does not connect.  Wiring scope children would let the dominance prover
+   see the barrier, making them `localGuard == "direct"` — which under GR-14u27 then proves
+   them *outright*, regardless of their async callers.  Small, bounded, and it does **not**
+   require the exception-flow work.  Candidates: `GroupTransactionCoordinator.deleteGroupAtomic`
+   (×4), `SubscriptionManagerEngine.acceptCandidate` (×2) / `validateAndCreate`,
+   `ExpenseRepository.updateExpenseCategoryBulk`.  **Step-0 gate applies** — CFG changes are
+   fail-open-sensitive, so project it first.
+
+12. **Anonymous-object member modelling** — **~10 rows mislabelled today.**  `object : T { ... }`
+   bodies are parsed as if the supertype were a call with a **lambda**, so the object's members
+   are not modelled as callables and their inbound edges are invisible.  Dropping the phantom
+   call reclassifies 10 `RetentionModule.provideRetentionTargets` rows async → **external
+   entry** — i.e. it makes *live privacy-cleanup deletions* look like zero-inbound dead code.
+   Landing the parser fix therefore requires modelling the members as callables in the same
+   change, or the rows become deletable-looking.  **Safety-relevant**: AGENTS.md forbids
+   believing an `external_entry` label for privacy-cleanup code.  Same defect class as
+   D1-II (`init {}`), which has the identical "audit manually before deleting" rule.
+
+13. **Latent parser gaps found but NOT landed** (each measured at 0 proven/unproven movement, so
+   they are correctness/hygiene, not yield): declaration-shaped "calls" (`fun name(` recorded as
+   a call — 50 phantom records corpus-wide, incl. `override suspend fun check(` inside an
+   anonymous object); eager stdlib operators creating bogus `async` regions (`update` ×144,
+   `sumOf` ×117, `require` ×82, `groupBy` ×76, `sortedBy` ×45, `joinToString` ×60 — ~1185 such
+   regions corpus-wide, of which `finally` ×27 is a keyword parsed as a call).  Recording them
+   as backlog rather than dismissing them: the D8 precedent (arrow `->` read as a bracket) hid
+   91 rows, so a parser gap is not automatically harmless — these measured 0 only *today*.
 
 **Do not start with** "admit more async carriers" — measured at ~0 rows per admission
 (§4.D9, re-confirmed 2026-09-11 for `coroutineScope` and the project suspend wrappers).
