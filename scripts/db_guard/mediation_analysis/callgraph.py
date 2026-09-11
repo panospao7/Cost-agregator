@@ -218,6 +218,8 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     "count",
     "first",
     "firstOrNull",
+    "find",
+    "associate",
     "associateBy",
     "buildSet",
     "buildList",

@@ -32,7 +32,7 @@ class TestInlineCarrierSet:
             "runCatching", "getOrElse", "onFailure", "use", "repeat",
             "forEach", "forEachIndexed", "map", "mapNotNull", "mapIndexed",
             "filter", "any", "none", "count", "first", "firstOrNull",
-            "associateBy", "buildSet", "buildList",
+            "find", "associate", "associateBy", "buildSet", "buildList",
             "withLock", "withTimeout", "withTimeoutOrNull",
             "collect", "withPermit",
             "runOperation", "runCatchingCancellable", "runPostCommitSafely",

@@ -1,0 +1,33 @@
+# GR-14u38 — A-carrier: 'associate' + 'find' join the closed inline-carrier
+# set (owner-approved set extension 2026-09-12; GR-14u38_SCOPING.yml;
+# GR-14j precedent).
+#
+# CHANGE: PRODUCTION_TRANSPARENT_INLINE_METHODS (callgraph.py) extended
+# with 'associate' and 'find' (eager, synchronous stdlib collection
+# operators - same family as the admitted map/filter/firstOrNull/
+# associateBy).  Corpus census evidence: 35 '.associate {' + 60 '.find {'
+# head call sites in app/src/main.  Pin amended in
+# test_gr14f_inline_carriers.py; tokenizer fixtures added documenting the
+# mechanism for both names (mechanism is name-generic, so the fixtures
+# pass pre-change by construction - the pin amendment IS the change).
+#
+# OUTCOME (board, pre 48012557... -> post 52445e8d...):
+#   ZERO gate-row movement (proofStates identical: 308/1/14 proven,
+#   20 ambiguous, 36 async; counterexamples 0; 0 regressions).  Honest
+#   Step-0 result: ensureDefaultCategories' two head-shaped statements
+#   now parse, but its third refusal - the CHAINED
+#   merchantCategoryDao.getX().forEach { } head (u33 deliberate
+#   limitation, correctly refused by the opacity gate) - still makes the
+#   whole body unmodelable, so its 4 rows did not move.  Corpus-wide,
+#   95 statements (35 + 60 sites) are now structurally modeled.
+#
+# NEXT (separate batch, one-feature rule): chained-carrier head matching
+# (`x().forEach { }` / `rawQuery(...).use { }`) - the remaining blocker
+# for ensureDefaultCategories (4 rows) and migrateCategories (1 row).
+#
+# VALIDATION:
+#   - structural_analysis: 232 passed (2 new fixtures)
+#   - scripts/db_guard: 247 passed; fixture corpus 64/64
+#   - test_inspect_db_mediation_proof + test_gr14*: 141 passed
+#   - board double run byte-identical 52445e8d...
+status: COMPLETE_AT_BOARD_52445e8d (0 gate rows; corpus parseability +95 statements)

@@ -707,6 +707,26 @@ class TestReturnConstructs:
         assert guarded_if.kind == RegionKind.IF
         assert guarded_if.children[0].children[0].kind == RegionKind.LAMBDA_RETURN
 
+    def test_associate_carrier_lambda_admitted(self):
+        # GR-14u38: 'associate' joined the closed carrier set (corpus
+        # census: 35 head call sites; eager synchronous stdlib operator,
+        # same family as the admitted map/filter/associateBy).
+        result = parse(
+            "val categoryIdMap = categories.associate { it.name to it.id }\n",
+            transparent_inline_methods=("associate",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
+    def test_find_carrier_lambda_admitted(self):
+        # GR-14u38: 'find' joined the closed carrier set (60 head sites).
+        result = parse(
+            'val uncategorized = defaults.find { it.name == "Uncategorized" }\n',
+            transparent_inline_methods=("find",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
 
 class TestValConstructInitializers:
     """GR-12 extension: `val x = if/when/try ...` construct initializers."""
