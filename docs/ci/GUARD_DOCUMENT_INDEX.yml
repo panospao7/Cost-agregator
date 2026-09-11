@@ -332,6 +332,17 @@ documents:
       implementation: scripts/ci/verify_guard_docs_truth.py
       evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
     historicalClaimsAllowed: true
+  - id: guardrail-issues-ledger
+    path: docs/ci/GUARDRAIL_ISSUES_LEDGER.md
+    classification: PLAN_OR_BACKLOG
+    authorityType: issue-registry
+    owner: "@panospao7"
+    lastReviewedSha: 2742e54700000000000000000000000000000000
+    currentStateSource:
+      registry: scripts/ci/guard_registry.py
+      implementation: scripts/ci/inspect_db_mediation_proof.py
+      evidence: docs/ci/GUARD_EVIDENCE_INDEX.yml
+    historicalClaimsAllowed: true
   # ── Historical records (bannered; never current authority) ──────────────────
   - id: gr00-gr04-validation-findings
     path: docs/ci/GR00-GR04_validation_findings.md

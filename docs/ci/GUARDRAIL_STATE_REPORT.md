@@ -1,13 +1,15 @@
 # GUARDRAIL STATE REPORT — database write-barrier proof engine
 
 **Status date:** 2026-09-11
-**Branch:** `gr-14f-wip` @ `0cf8b653` + GR-14u28 (uncommitted)
+**Branch:** `gr-14f-wip` — measured at `2742e547` (GR-14u26/u27/u28 landed)
 **Audience:** anyone continuing the GR-14 guardrail campaign, and anyone looking for
 production database-write bugs.  This document is a *state* report: what the guardrails
 are, what the measured state is, every known issue with its status, and the production-code
-findings the guardrails have surfaced.  The companion `DEFERRED_ISSUES_AND_DEBUG_HANDOFF.md`
-holds the full narrative detail per defect (sections A–E, D1–D9); this report is the index
-into it and the summary that stands alone.
+findings the guardrails have surfaced.  Two companions: `GUARDRAIL_ISSUES_LEDGER.md` is the
+**detailed issue registry** (one entry per open issue, its evidence, what would close it, and the
+retracted claims so they are not re-raised), and `DEFERRED_ISSUES_AND_DEBUG_HANDOFF.md` holds the
+original per-defect narrative (sections A–E, D1–D9); this report is the index into both and the
+summary that stands alone.
 
 Everything numeric below is **measured**, not estimated.  Where something is inferred or
 unverified it says so explicitly.
