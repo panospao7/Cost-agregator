@@ -824,6 +824,22 @@ These block broad test runs and therefore the merge gate.  Pre-existing; A/B-pro
 | B3 | `SplitCalculationPrecisionTest` | **FIXED 2026-09-11 — see §5.3.1** | largest-remainder allocation |
 | B4 | `verify_known_good_state` 11 failures | freshness "stamp=missing" → **GATE-00R debt**, not a code bug | goes green once the merge-time recapture runs |
 
+**⚠️ CORRECTION (2026-09-11): A1 does NOT block GATE-00R.**  An earlier backlog entry claimed
+that fixing A1 would unblock the merge gate.  That is **wrong**, and the distinction matters for
+sequencing.  A1 affects broad *Kotlin unit-test* runs; the GATE-00R capture runs a different set
+of components (§7), none of which is the mockk path: `gradle-db` / `gradle-task-graph` exit 1
+(the protocol's documented config-cache observation), `static-suite` / `focused-python-tests`
+exit 1 (the Python reds above flow in), `room/db-inventory` exit 2
+`INVENTORY_DURABILITY_UNCONFIRMED`, and the B4 freshness stamps.  So A1 is a **real but separate**
+problem whose only identified consumer (GR-14t) was abandoned as zero-row, and whose fix the
+handoff records as an **owner decision requiring its own A/B batch** — deliberately NOT taken
+here.
+
+**What actually blocks a trusted capture**, in dependency order: (1) B4 freshness stamps require
+the Gradle DB task to run and stamp; (2) the Python reds must be paid or formally dispositioned
+so `focused-python-tests` stops exiting 1; (3) `room/db-inventory` must confirm inventory
+durability.  That is owner-level work, not a config tweak.
+
 **Measured scale:** `TEST_FAILURE_LEDGER.md` records **121 pre-existing `domain.*` + 53
 `data.*` failures** plus a JVM instrumentation-agent crash that suppressed result XMLs.  The
 `scenarios` package was never run.
@@ -973,6 +989,14 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
    regions corpus-wide, of which `finally` ×27 is a keyword parsed as a call).  Recording them
    as backlog rather than dismissing them: the D8 precedent (arrow `->` read as a bracket) hid
    91 rows, so a parser gap is not automatically harmless — these measured 0 only *today*.
+
+14. **Test-infra A1 (mockk cannot mock final classes) — OWNER DECISION, separate from the gate.**
+   Fix is one line in `app/build.gradle.kts` (`unitTests.all { it.jvmArgs("-Djdk.attach.allowAttachSelf=true", "-XX:+EnableDynamicAgentLoading") }`,
+   hook at :206).  **It does NOT unblock GATE-00R** (§6 correction): it fixes broad Kotlin
+   unit-test runs, and its only identified consumer, GR-14t, was abandoned as zero-row.  The
+   handoff requires its own A/B batch plus a check that it causes no timing/memory side effects
+   on other suites.  Take it only if broad Kotlin test runs are wanted for their own sake.
+   **GATE-00R's real blockers are listed in §6 — none of them is this.**
 
 **Do not start with** "admit more async carriers" — measured at ~0 rows per admission
 (§4.D9, re-confirmed 2026-09-11 for `coroutineScope` and the project suspend wrappers).
