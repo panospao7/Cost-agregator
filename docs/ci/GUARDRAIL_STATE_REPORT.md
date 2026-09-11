@@ -413,6 +413,48 @@ change, not a quick fix.
 | D16 | `::` references carried no receiver, so bound references name-matched | hid 14 rows | ✅ **FIXED** GR-14u26 |
 | D17 | a **proved** local guard was discarded whenever any inbound edge was uncertain | hid **94 rows** | ✅ **FIXED** GR-14u27 (§4.D17) |
 | D18 | a **bound** transparent scope (`val x = db.withTransaction { }`) was not a scope candidate, so its lambda escaped and the whole callable was rejected as unmodelable | hid 6 rows | ✅ **FIXED** GR-14u28 |
+| D19 | `object : T { }` bodies parsed as call-with-lambda; members declared inside *function bodies* are not callables | 10 rows misclassified, 44 member fns unmodelled | ⏸️ **MEASURED, DECLINED standalone** (§4.D19) |
+
+### 4.D19 — anonymous-object expressions: measured, and deliberately NOT fixed alone
+
+**The defect.**  `object : T { ... }` is a *declaration*, but the call regex reads it as a **call to the
+supertype with a trailing lambda**.  Two consequences:
+
+1. the object body becomes a phantom `async` lambda region (measured: **16** such regions corpus-wide —
+   `RetentionTarget` ×10, `WorkerLease` ×2, `PrivacyGate`, `Callback`, `RecognitionListener`,
+   `PrivacySettingsRepository`, `AiSettingsRepository` ×1 each);
+2. the object's members are not modelled as callables when the object expression sits inside a
+   **function body**.  Corpus census: **283** object expressions, **114** declaring `fun`s, **207**
+   member functions total — **163 are modelled, 44 are not**, and every unmodelled one is nested
+   inside a function (`RetentionModule.provideRetentionTargets` ×10, `failClosedGate`,
+   `RestoreMaintenanceMode`, `CancellableHttpCall`, `AndroidSpeechInputGateway` ×9,
+   `EffectiveCloudAiPolicy` ×3, …).
+
+**Projected on the committed u28 board — and this is why it is not shipped alone:**
+
+```
+dropping the phantom call:  10 rows  unproven_async_or_escaping_callback -> unproven_external_entry
+                            0 rows   -> proven_helper
+                            0 counterexamples, 0 regressions
+```
+
+So the "stop treating the body as a lambda" half buys **zero proofs** and reclassifies 10 *live*
+privacy-cleanup targets (`RetentionModule.provideRetentionTargets`, which performs the raw-notification
+and other retention purges) as **`external_entry`** — i.e. as zero-inbound code that looks safe to
+delete.  That is exactly the failure mode AGENTS.md warns about for privacy-cleanup paths, and the same
+trap as D1-II (a `init {}`-only caller reads as zero-inbound rather than async-uncertain).
+
+**Therefore: it is an ALL-OR-NOTHING change.**  The member-modelling half must land in the same diff —
+the object's members have to become callables (with inbound edges from the object-construction site) so
+the rows land as *guarded* rather than *dead*.  That means making callable discovery descend into
+function bodies and deciding the owner FQCN of an anonymous member, which is a fixture-first engine
+change, not a parser tweak.  **Current state is conservative and therefore safe**: the phantom region
+leaves these rows *unproven*, not mislabelled safe.
+
+**Interim rule for humans (same as D1-II):** do not delete a writer on the strength of an
+`external_entry` label alone, and specifically do **not** treat
+`RetentionModule.provideRetentionTargets` as dead — it is live retention-cleanup code whose inbound
+edges the engine cannot yet see.
 
 ### 4.D18 — bound transparent scopes were not scope candidates (FIXED, 6 rows)
 
@@ -912,15 +954,16 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
    `updateExpenseCategoryBulk` ×1 (`withLock`, contract bump).  Both are evidenced above;
    take them only bundled with other work.
 
-12. **Anonymous-object member modelling** — **~10 rows mislabelled today.**  `object : T { ... }`
-   bodies are parsed as if the supertype were a call with a **lambda**, so the object's members
-   are not modelled as callables and their inbound edges are invisible.  Dropping the phantom
-   call reclassifies 10 `RetentionModule.provideRetentionTargets` rows async → **external
-   entry** — i.e. it makes *live privacy-cleanup deletions* look like zero-inbound dead code.
-   Landing the parser fix therefore requires modelling the members as callables in the same
-   change, or the rows become deletable-looking.  **Safety-relevant**: AGENTS.md forbids
-   believing an `external_entry` label for privacy-cleanup code.  Same defect class as
-   D1-II (`init {}`), which has the identical "audit manually before deleting" rule.
+12. ⏸️ **Anonymous-object member modelling** — **MEASURED, NOT TAKEN (§4.D19).**
+   `object : T { }` bodies are parsed as a call-with-lambda, so the body becomes a phantom async
+   region and members nested inside *function bodies* are not callables (283 object expressions,
+   44 unmodelled member functions, 16 phantom regions).  Projected on the u28 board: dropping the
+   phantom alone moves **10 rows `async` → `external_entry` and proves nothing** — it would make
+   `RetentionModule.provideRetentionTargets` (live retention-cleanup code) look like deletable dead
+   code.  It is therefore **all-or-nothing**: the member-modelling half (callable discovery must
+   descend into function bodies; anonymous-member owner FQCN must be decided) has to land in the
+   same diff.  Fixture-first engine change.  **Interim rule: do not treat `provideRetentionTargets`
+   as dead, and do not delete on an `external_entry` label alone.**
 
 13. **Latent parser gaps found but NOT landed** (each measured at 0 proven/unproven movement, so
    they are correctness/hygiene, not yield): declaration-shaped "calls" (`fun name(` recorded as
@@ -958,6 +1001,13 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
   not extend the bypass to any other `local` value.  Corollary: an uncertain edge is still
   *recorded* (the GR-14f reachability-preservation rule is untouched) and a self-guarded row
   must never degrade to a zero-inbound external-entry verdict.
+- **Never delete a writer on an `external_entry` label alone.**  After GR-14u27 a
+  self-guarded zero-inbound writer *proves* rather than reporting zero-inbound (so the bucket
+  is no longer a dead-code enumeration), and two known blind spots produce the same false
+  "dead" reading: a caller inside an `init {}` block (§4.D1-II) and members of an anonymous
+  `object : T { }` declared inside a function body (§4.D19).  Verify by call-site search in
+  source first.  **Privacy-cleanup paths are the sharpest case** — `RetentionModule.
+  provideRetentionTargets` is live code the engine currently cannot see inbound edges for.
 - **Never land through a Step-0 flip.** Triage first.
 - **Contract changes require a version bump** (V1 → V2 → V3, GR-14u25) and a reviewed diff;
   older versions stay exported and pinned.
