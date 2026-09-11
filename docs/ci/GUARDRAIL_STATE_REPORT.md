@@ -992,7 +992,24 @@ via artifact timestamps.  Do not run two Gradle commands concurrently.
    the writer (a production change, and the GR-14j reasoning says a self-guarded writer proves
    regardless of callers) or the carrier modelled.  Triage per row before acting: some are
    privacy-cleanup deletions that must NOT be gated (see AGENTS.md).
-10. **GR-12 exception-flow modelling** — the 29 §3.4 rows.  Large; fixture-first.
+10. **GR-12 control-flow modelling — the 29 §3.4 rows.  SCOPED 2026-09-11: this is NOT one
+   change.**  Probe `build/guard-debug/gr14w0/probe_exception_flow.py` ran the real tokenizer over
+   all 29 bodies and enumerated the refusals.  Supporting "exception flow" alone would move almost
+   nothing, because the refusals are four-plus distinct features:
+
+   | Refusal code | Findings | Reasons |
+   |---|---|---|
+   | `DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED` | **19** | `labelled-return` 14, `coroutine-builder` 4, `elvis-block` 1 |
+   | `DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED` | **14** | `dangling-clause` 14 |
+   | `DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE` | 10 | `lambda-escape` 10 (the D19 blind spot) |
+   | `DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED` | 5 | `unknown-construct` 5 |
+
+   The common shape is the campaign's most-repeated guard idiom — `try { checkWritesAllowed(...) }
+   catch (e) { if (e is CancellationException) throw e; return Result.failure(e) }` — which needs
+   **both** `labelled-return`/`dangling-clause` handling (the `return` inside `catch`) **and**
+   exception-flow modelling, before the barrier-precedes-mutation dominance can even be computed.
+   **Do each as its own fixture-first batch** with its own Step-0 projection; do not attempt them
+   as one diff.  10 of the 29 are the D19 anonymous-object case and are blocked on item 12 instead.
 
 11. ~~**CFG scope-wiring for `withTransaction` / `withLock` mutations" (8 rows)**~~ —
    **DONE as GR-14u28 (2026-09-11), but NOT for the reason this item predicted.**
