@@ -48,6 +48,109 @@ class TestGraphShapeMatrix:
         assert result.is_supported
         assert kinds(result) == [RegionKind.STATEMENT] * 3
 
+    def test_postfix_increment_terminates_statement(self):
+        # GR-14u41: a statement-ending `++` must terminate the statement
+        # like a `;` instead of gluing the following lines into one
+        # composite (the `+` of `++` is a _CONT_END continuation char).
+        result = parse("x++\ny = 1\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+
+    def test_postfix_decrement_terminates_statement(self):
+        result = parse("x--\ny = 1\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+
+    def test_increment_glued_with_runInTransaction_now_parses(self):
+        # GR-14u41: the real BankStatementLifecycleProcessor L594-L613
+        # shape — `duplicatesSkipped++` followed by a masked-comment gap
+        # and the multi-line runInTransaction(...) { checkWritesAllowed()
+        # } call.  Pre-fix the glued composite hit the barrier tail check
+        # and refused unknown-construct; post-fix the increment is its
+        # own statement and the scope is claimed separately.
+        result = parse(
+            "duplicatesSkipped++\n"
+            "// P3-BLOCKER-H2: Wrap duplicate decision + item insert.\n"
+            "transactionRunner.runInTransaction(\n"
+            "  correlationId = java.util.UUID.randomUUID().toString(),\n"
+            "  operationId = \"op\",\n"
+            "  source = \"src\"\n"
+            ") { context ->\n"
+            "  writeBarrier.checkWritesAllowed(\"tx\")\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_scope_methods=("runInTransaction",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.STATEMENT,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+        scope = result.regions[1]
+        assert scope.scope_method == "runInTransaction"
+        assert [child.kind for child in scope.children] == [
+            RegionKind.DIRECT_CHECK,
+            RegionKind.STATEMENT,
+        ]
+
+    def test_plus_plus_inside_expression_not_terminator(self):
+        # GR-14u41: the binary/unary continuation path must survive — a
+        # single `+` at end of line followed by a line starting with a
+        # unary `+` stays ONE statement (adjacency, not next-non-ws
+        # peek, is the increment discriminator).
+        result = parse("val y = a +\n +b\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT]
+        result = parse("val z = a + b\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT]
+
+    def test_plus_eq_not_terminator(self):
+        # GR-14u41: `+=`/`-=` never match the adjacent-doubled-char rule
+        # (the char after `+` is `=`).  `x +=\n 1` splits into two plain
+        # leaves because the line ends with `=`, which is NOT in
+        # _CONT_END, so the newline terminates the statement — no
+        # continuation glue is involved (pinned as-is, historical shape);
+        # `x += 1` on one line terminates the same way.
+        result = parse("x +=\n 1\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+        result = parse("x += 1\ny = 2\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+
+    def test_mid_statement_increment_not_terminator(self):
+        # GR-14u41 refinement: a mid-statement `++` (`if (cond) x++ else
+        # y`, the SourceLinkBackfillWorker shape) must NOT terminate — the
+        # line-remainder guard keeps the one-line if/else glued so
+        # _parse_if handles it exactly as before this batch (IF region
+        # with an unbraced then-BLOCK and an else STATEMENT).
+        result = parse("if (cond) x++ else y\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.IF]
+        assert [child.kind for child in result.regions[0].children] == [
+            RegionKind.BLOCK,
+            RegionKind.STATEMENT,
+        ]
+
+    def test_prefix_increment_not_terminator(self):
+        # GR-14u41 refinement: a statement-INITIAL prefix `++x` must NOT
+        # fire the terminator (the `stmt_start < i` guard) — the line
+        # splits at the newline into the same two plain leaves as before
+        # this batch.
+        result = parse("++x\ny = 1\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+
     def test_nested_blocks(self):
         # A leading brace pair is the callable's own body braces, so a plain
         # nested block is observed inside the if's braced body: the then-body

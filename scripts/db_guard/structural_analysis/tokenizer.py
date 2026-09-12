@@ -322,6 +322,46 @@ def _split_statements(cur: _Cursor, start: int, end: int) -> list[tuple[int, int
             if ch == ";":
                 parts.append((stmt_start, i))
                 stmt_start = None
+            elif (
+                ch in "+-"
+                and stmt_start < i
+                and i + 1 < end
+                and text[i + 1] == ch
+                and _line_remainder_blank(text, i + 2, end)
+            ):
+                # GR-14u41: a STATEMENT-ENDING postfix increment/decrement
+                # (`duplicatesSkipped++`) must terminate the statement like
+                # a `;`.  `+`/`-` sit in _CONT_END for binary-operator line
+                # continuations (`val x = a +\n b`), so without this branch
+                # the `++` glued the statement with every following line
+                # until a line ended without a continuation char — in
+                # processBankStatement the glued composite swallowed the
+                # next runInTransaction(...) { checkWritesAllowed(...) }
+                # call and refused unknown-construct at the barrier tail
+                # check.  TWO guards keep every other shape on its pre-fix
+                # path: `stmt_start < i` excludes statement-INITIAL prefix
+                # forms (`++x` opens the statement, so the branch cannot
+                # fire and the line still splits at the newline as the one
+                # `++x` leaf it was before), and the line-remainder check
+                # excludes MID-STATEMENT forms (`if (c) x++ else y` keeps
+                # gluing into the one if/else statement _parse_if handled
+                # before, and `a++ + b` stays a continuation composite).
+                # ADJACENCY remains the increment discriminator, NOT a
+                # next-non-whitespace peek: `val y = a +\n +b` (single `+`
+                # at end of line, unary `+` leading the next line) keeps
+                # the continuation path as ONE statement.  Masked text
+                # contains no strings or comments (mask_kotlin_source
+                # guarantee), so a doubled `+`/`-` inside a literal can
+                # never reach this scan.  A single `+`/`-` followed by any
+                # other char keeps the existing continuation behavior —
+                # including `+=`/`-=` assignment continuations (the `=`
+                # never matches), intentionally unchanged.  The scan
+                # position jumps past the second operator char so it
+                # cannot re-trigger.
+                parts.append((stmt_start, i + 2))
+                stmt_start = None
+                i += 2
+                continue
             elif ch == "\n":
                 prev = text[stmt_start:i].rstrip(_WS)
                 nxt = cur.non_ws(i + 1, end)
@@ -346,6 +386,13 @@ def _split_statements(cur: _Cursor, start: int, end: int) -> list[tuple[int, int
 
 def _strip(stmt: str) -> str:
     return stmt.strip(_WS)
+
+
+def _line_remainder_blank(text: str, pos: int, end: int) -> bool:
+    """True when text[pos:next-newline-or-end] strips to empty (GR-14u41)."""
+    nl = text.find("\n", pos, end)
+    stop = nl if nl >= 0 else end
+    return not text[pos:stop].strip(_WS)
 
 
 def _leading_kw(stmt: str, word: str) -> bool:
