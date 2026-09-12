@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.util
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -15,12 +16,33 @@ import javax.inject.Inject
 class JsonExpenseImporter @Inject constructor(
     private val coordinator: TransactionLifecycleCoordinator,
     private val categoryDao: CategoryDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     suspend fun importFromContent(
         jsonContent: String,
         fileImportRunId: Long? = null
     ): ImportResult {
+        // GR-14u44b: canonical write-barrier admission BEFORE the outer
+        // try/catch — a check inside the try would be swallowed by the
+        // generic `catch (e: Exception)` below and misreported as a
+        // parse error.  Mirrors the
+        // BankStatementLifecycleProcessor.processBankStatement entry
+        // pattern: CancellationException propagates, everything else
+        // becomes a controlled-constant failure (never e.message).
+        try {
+            writeBarrier.checkWritesAllowed("JsonExpenseImporter.importFromContent")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            return ImportResult(
+                success = false,
+                importedCount = 0,
+                skippedCount = 0,
+                errorCount = 1,
+                errors = listOf("Import blocked: database maintenance in progress"),
+                expenseIds = emptyList()
+            )
+        }
         return try {
             val json = JSONObject(jsonContent)
             val rows = json.optJSONArray("rows") ?: return ImportResult(false, 0, 0, 1, listOf("No rows array found"), emptyList())

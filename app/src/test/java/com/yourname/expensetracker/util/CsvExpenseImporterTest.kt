@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.util
 
 import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
@@ -10,6 +12,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Before
@@ -21,18 +24,82 @@ class CsvExpenseImporterTest {
 
     private val categoryDao = mockk<CategoryDao>(relaxed = true)
     private val coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+    private val maintenanceMode = mockk<RestoreMaintenanceMode>()
+
+    private fun writeBarrier(mode: RestoreMaintenanceMode.Mode): DatabaseWriteBarrier {
+        val barrier = DatabaseWriteBarrier(maintenanceMode)
+        io.mockk.every { maintenanceMode.currentMode() } returns mode
+        io.mockk.every { maintenanceMode.isWritesAllowed() } returns
+            (mode == RestoreMaintenanceMode.Mode.NORMAL)
+        return barrier
+    }
 
     private lateinit var importer: CsvExpenseImporter
 
     @Before
     fun setup() {
-        importer = CsvExpenseImporter(categoryDao, coordinator, currencySettingsRepository = mockk())
+        importer = CsvExpenseImporter(
+            categoryDao,
+            coordinator,
+            currencySettingsRepository = mockk(),
+            writeBarrier = writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
+        )
     }
 
     @Test
     fun `importer can be instantiated with injected DAOs`() {
-        val imp = CsvExpenseImporter(categoryDao, mockk<TransactionLifecycleCoordinator>(relaxed = true), currencySettingsRepository = mockk())
+        val imp = CsvExpenseImporter(
+            categoryDao,
+            mockk<TransactionLifecycleCoordinator>(relaxed = true),
+            currencySettingsRepository = mockk(),
+            writeBarrier = writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
+        )
         assertThat(imp).isNotNull()
+    }
+
+    @Test
+    fun `blocked mode returns controlled error and never touches the DAO`() = runTest {
+        // GR-14u44b: the write barrier must gate the import entry before
+        // any write-capable call, with a controlled-constant message
+        // (never e.message) and no DAO interaction.
+        val blockedImporter = CsvExpenseImporter(
+            categoryDao,
+            coordinator,
+            currencySettingsRepository = mockk(),
+            writeBarrier = writeBarrier(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+        )
+
+        val result = blockedImporter.importFromContent(
+            "date,amount,merchant,category,description\n2024-01-15,25.50,Starbucks,Coffee,Morning latte"
+        )
+
+        assertThat(result).isInstanceOf(CsvExpenseImporter.ImportResult.Error::class.java)
+        assertThat((result as CsvExpenseImporter.ImportResult.Error).message)
+            .isEqualTo("Import blocked: database maintenance in progress")
+        coVerify(exactly = 0) { categoryDao.getByName(any()) }
+        coVerify(exactly = 0) { categoryDao.insert(any()) }
+        coVerify(exactly = 0) { coordinator.createExpense(any()) }
+    }
+
+    @Test
+    fun `cancellation from the barrier propagates`() = runTest {
+        val cancellingBarrier = mockk<DatabaseWriteBarrier>()
+        coEvery { cancellingBarrier.checkWritesAllowed(any<String>()) } throws
+            CancellationException("cancelled")
+        val cancellingImporter = CsvExpenseImporter(
+            categoryDao,
+            coordinator,
+            currencySettingsRepository = mockk(),
+            writeBarrier = cancellingBarrier
+        )
+
+        val thrown = runCatching {
+            cancellingImporter.importFromContent("date,amount\n")
+        }.exceptionOrNull()
+
+        assertThat(thrown).isInstanceOf(CancellationException::class.java)
+        coVerify(exactly = 0) { categoryDao.getByName(any()) }
+        coVerify(exactly = 0) { coordinator.createExpense(any()) }
     }
 
     @Test
