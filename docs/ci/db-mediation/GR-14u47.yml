@@ -1,0 +1,112 @@
+# GR-14u47 — preservation-rule refinement for external-exact edges
+# (engine, reviewer-approved with mandatory carve-out).
+#
+# DEFECT: the GR-14f/GR-14j resolution-preservation rule converted
+# external-exact edges inside admitted carriers into name-match async
+# noise.  The canonical fiction: `return Result.success(Unit)` inside the
+# DatabaseBackupRepositoryImpl.checkpointWal repeat region (L2511)
+# produced an async_dispatch edge with 8 name-match `success` targets —
+# kotlin.Result.success has no corpus dispatch possibility at all, yet
+# the fictional edge decided 4-5 board rows (the u43
+# F-TRANSPARENT-CHAIN-NOISE family).  Corpus-wide, the rule was
+# converting 2,959 external-exact edges inside admitted carriers into
+# async noise.
+#
+# FIX (engine, two coordinated parts):
+#   1. Carve-out in _resolve_member_call's external branch: before
+#      returning external exact, _has_extension_candidate(receiver_fqcn,
+#      call.name) is checked — if ANY corpus extension function targets
+#      that receiver FQCN + name, the uncertain name-match edge is
+#      returned instead (UNRESOLVED_TARGET + _name_match_targets +
+#      uncertain=True, the same shape the member-miss branch produces).
+#      This makes "external exact" GLOBALLY mean "no corpus dispatch
+#      possibility at all".  _has_extension_candidate is a new helper
+#      mirroring _extension_target's scan but reporting mere EXISTENCE
+#      (unlike _extension_target, which requires a unique candidate for
+#      exact binding); receiver_fqcn is already in scope in that branch.
+#   2. Preservation-rule exemption: when the resolved edges include an
+#      edge with external=True (exact external), the rule no longer
+#      replaces it with the name-match async edge — the external exact
+#      edge is kept.  Refined invariant in the rule comment: the
+#      preservation rule keeps corpus reachability for untracked
+#      chains/receivers, but a provably-external exact edge carries no
+#      corpus dispatch possibility (guaranteed by the carve-out), so
+#      there is nothing to preserve.  The existing `not any(targets)`
+#      condition structure is unchanged; only the external exemption was
+#      added.
+#
+# EDGE A/B EVIDENCE (all 53,676 corpus edges compared pre/post):
+#   2,974 changed positions, ALL in the two intended categories:
+#     - 2,959 noise removals: async_dispatch(uncertain, name-match) ->
+#       exact_synchronous(external=True) — the preservation exemption
+#       restoring the true external classification corpus-wide
+#       (ViewModel/Screen launch{} blocks calling external APIs:
+#       Toast.makeText, Log.d, Timber, Result.success/failure, etc.);
+#     - 15 carve-out retentions: exact_synchronous(external=True) ->
+#       unresolved_target(uncertain, name-match) — sites where a corpus
+#       extension candidate EXISTS on the external receiver type, all
+#       matched 1:1 (sha256/sha256Prefix/optDoubleOrNull/toMoney/
+#       anonymizeForLog/budgetScale extension families);
+#     - zero transitions of any other shape.
+#
+# TESTS: not added as new fixture rows in this batch — the existing 72
+#   fixture scenarios all stay green (no expected_manifest.yml row
+#   changed), and the CI battery is unchanged.  The change is pinned by
+#   the edge A/B evidence above and the board determinism.  Fixture
+#   corpus rows for the carve-out (external type + unique corpus
+#   extension) and the exemption (external type, no extension, inside an
+#   admitted carrier) are recorded as a follow-up item — the batch was
+#   executed with the reviewer's evidence-first protocol and the A/B diff
+#   provides the exhaustive corpus-wide pin.
+#
+# OUTCOME (board, pre 14e80238... -> post a1e918f24d996d03, double run
+# byte-identical): ZERO rows moved.  proofStates byte-identical:
+#   proven_helper 328, restore 1, worker 14, ambiguous 1, async 35,
+#   counterexamples 0.
+#   The reviewer's next-decider caveat MATERIALIZED FULLY: removing the
+#   Result.success noise edges promoted the NEXT uncertain edge in each
+#   affected closure to decider.  Per-row deciding-edge report for the 5
+#   previously-Result.success-tainted rows (all remain
+#   unproven_async_or_escaping_callback / GR13_UNCERTAIN_CALL_EDGE, all
+#   with NEW deciding edges of state async_dispatch):
+#     Handle :: event (OperationRunEventDao.insert) — now decided by the
+#       WorkerExecutionGuard guardTerminal-lambda run.success/run.cancelled
+#       async edges (runGuarded L179 / runGuardedWithContext L364 family);
+#     Handle :: finalizeNonCancellable (OperationRunDao.finalizeIfRunning)
+#       — same WorkerExecutionGuard family;
+#     RoomOperationRunRecorder :: start (OperationRunDao.insert) — same;
+#     Handle :: terminal (BackgroundJobRunDao.completeTerminal) — same;
+#     WorkerRunLoggerImpl :: start (BackgroundJobDao.insert) — same.
+#   The promoted decider is the guardTerminal lambda's run.success /
+#   run.cancelled calls: `run` is a lambda parameter of the guardTerminal
+#   wrapper (NOT in the inline-carrier set), so the region is async and
+#   the calls stay name-match uncertain.  Clearing them is exactly the
+#   u46-manifest's planned guardTerminal set-extension (u46 BATCH MAPPING:
+#   "ENGINE set extension: evidenced once-inline private wrappers
+#   (guardTerminal) per u38 precedent -> WorkerRunLogger x2") — now with
+#   widened blast radius (the Handle/RoomOperationRunRecorder rows too).
+#   No row flipped in ANY direction corpus-wide (0 moved / 0 added / 0
+#   removed entries).
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+#   regressed, 0 unexpected delta (board entries byte-compared; only the
+#   proof internals changed, no row state changed at all).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 72/72, exit 0
+#   - scripts/ci: 1251 passed, 14 failed — the 14 failures are
+#     byte-identical to the base commit's failure set (verified by
+#     stashing the change and re-running; freshness-stamp and
+#     platform-conditional tests, environment-dependent, pre-existing)
+#   - board double run byte-identical a1e918f24d996d03
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the guardTerminal set-extension batch (u46 mapping, now
+#   widened: clears the WorkerRunLogger x2 rows AND the
+#   Handle.event/finalizeNonCancellable/RoomOperationRunRecorder.start
+#   rows if the promoted decider is the only one left); the
+#   Handle.increment ambiguous row; the F-ANON-OBJECT (16 rows) and
+#   F-PROCESSBATCH/F-POSTCOMMIT families (u43 table); fixture rows for
+#   the carve-out and exemption (follow-up).
+status: COMPLETE_AT_BOARD_a1e918f2

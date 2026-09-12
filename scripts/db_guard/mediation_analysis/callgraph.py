@@ -2195,11 +2195,18 @@ class CallGraphBuilder:
             # site must never lose corpus reachability relative to the
             # historical uncertain-edge behavior.  When exact resolution
             # cannot bind the call to corpus targets (untracked receiver
-            # chains, external receivers), keep the conservative
-            # name-matched uncertain edge instead — otherwise
-            # reverse-reachability would shrink and reclassify real
-            # recursion/inbound evidence as zero-inbound external entry.
-            if not any(edge.targets for edge in resolved):
+            # chains), keep the conservative name-matched uncertain edge
+            # instead — otherwise reverse-reachability would shrink and
+            # reclassify real recursion/inbound evidence as zero-inbound
+            # external entry.
+            # GR-14u47 refinement: a provably-EXTERNAL exact edge carries
+            # no corpus dispatch possibility at all — the carve-out in
+            # _resolve_member_call guarantees an extension candidate would
+            # have kept the uncertain edge — so there is nothing to
+            # preserve and the external exact edge stays.
+            if not any(edge.targets for edge in resolved) and not any(
+                edge.external for edge in resolved
+            ):
                 return [
                     CallEdge(
                         caller_key=model.key,
@@ -2497,6 +2504,25 @@ class CallGraphBuilder:
                 )
             ]
         if receiver_fqcn not in self.owners:
+            # GR-14u47: "external exact" must mean NO corpus dispatch
+            # possibility at all.  A corpus extension function on this
+            # receiver type would dispatch in real Kotlin, so an
+            # extension candidate keeps the uncertain name-match edge
+            # (the same shape the member-miss branch below produces)
+            # instead of the exact external edge — fail closed.
+            if self._has_extension_candidate(receiver_fqcn, call.name):
+                return [
+                    CallEdge(
+                        caller_key=model.key,
+                        state=ResolutionState.UNRESOLVED_TARGET,
+                        line=call.line,
+                        file=call.file,
+                        name_start=call.name_start,
+                        targets=self._name_match_targets(call.name),
+                        context_kind=context,
+                        uncertain=True,
+                    )
+                ]
             return [
                 CallEdge(
                     caller_key=model.key,
@@ -2900,6 +2926,23 @@ class CallGraphBuilder:
                 if resolved == receiver_fqcn:
                     candidates.append(key)
         return candidates[0] if len(candidates) == 1 else None
+
+    def _has_extension_candidate(self, receiver_fqcn: str, method: str) -> bool:
+        """True when ANY corpus extension function targets this receiver.
+
+        GR-14u47: unlike _extension_target (which requires a UNIQUE
+        candidate for exact binding), this reports mere existence — an
+        extension candidate means real Kotlin could dispatch into the
+        corpus, so the receiver must not be classified as provably
+        external.
+        """
+        for key in self.callables_by_name.get(method, ()):
+            member = self.callables[key]
+            if member.node.kind == "top_level_function" and member.node.receiver:
+                resolved = self._resolve_simple(self.file_models[member.file], member.node.receiver)
+                if resolved == receiver_fqcn:
+                    return True
+        return False
 
     def _top_level_candidates(self, name: str, file_model: FileModel) -> list[str]:
         candidates: set[str] = set()
