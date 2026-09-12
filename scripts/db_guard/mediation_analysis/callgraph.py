@@ -250,6 +250,21 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     # precedent the proof layer still admits by contract only.
     "guardTerminal",
     "withBoundedTerminalWrite",
+    # GR-14u54: HybridDedupeJudgeService.safeExecute (evidence: a private
+    # suspend fun whose body is `return try { block() } catch (e) {
+    # Timber.e(...); Failure(...) }` — the block is invoked EXACTLY ONCE
+    # inline (L84), never stored, never conditionally invoked, never
+    # escapes; 4 call sites all in the same class; corpus-wide the name
+    # appears in no other file).  The try/catch is the ENCLOSING statement
+    # of the call — the trailing-lambda carrier claim is on the call
+    # itself and composes with the tokenizer's TRY-region handling.  The
+    # block has ZERO params (the u48 premise correction applies: the
+    # tainted calls' receivers resolve via the enclosing fun's params; the
+    # win is the lambda REGION becoming transparent so
+    # _uncertain_region_state stops returning async).  Name-exact
+    # admission; per the u38 precedent the proof layer still admits by
+    # contract only.
+    "safeExecute",
     # GR-14l: androidx.activity.compose.setContent — the composition root;
     # its content lambda executes during composition (context inherited)
     "setContent",

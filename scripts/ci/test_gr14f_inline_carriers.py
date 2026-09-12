@@ -38,6 +38,7 @@ class TestInlineCarrierSet:
             "runOperation", "runCatchingCancellable", "runPostCommitSafely",
             "safeRecordMatchEvent",
             "guardTerminal", "withBoundedTerminalWrite",
+            "safeExecute",
             "setContent",
         )
 

@@ -241,6 +241,9 @@ fixtures:
   - id: CB-59
     file: call_binding/cb59_star_import_external.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-60
+    file: call_binding/cb60_safeexecute_wrapper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
   - id: HP-13
     file: helper_proof/hp13_let_inline_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE

@@ -173,6 +173,10 @@ CB_SUBJECT_CALLS = {
     "CB-57": (("exerciseCb57", "foo"),),
     "CB-58": (("exerciseCb58", "bar"),),
     "CB-59": (("exerciseCb59", "append"),),
+    # GR-14u54 inline-wrapper carrier: a safeExecute-shaped private
+    # wrapper (block invoked exactly once inside try/catch) admits its
+    # trailing lambda; the corpus method inside resolves exact.
+    "CB-60": (("exercise", "markImported"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.
