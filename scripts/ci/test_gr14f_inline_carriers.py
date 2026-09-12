@@ -36,7 +36,9 @@ class TestInlineCarrierSet:
             "withLock", "withTimeout", "withTimeoutOrNull",
             "collect", "withPermit",
             "runOperation", "runCatchingCancellable", "runPostCommitSafely",
-            "safeRecordMatchEvent", "setContent",
+            "safeRecordMatchEvent",
+            "guardTerminal", "withBoundedTerminalWrite",
+            "setContent",
         )
 
     def test_production_contract_wires_the_set(self):

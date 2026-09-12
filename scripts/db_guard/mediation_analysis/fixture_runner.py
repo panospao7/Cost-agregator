@@ -117,6 +117,17 @@ CB_SUBJECT_CALLS = {
     "CB-24": (("exerciseCb24", "event"),),
     "CB-25": (("exerciseCb25", "initialize"),),
     "CB-26": (("exerciseCb26", "event"),),
+    # GR-14u47 external-exact rows: the preservation-rule exemption keeps
+    # a provably-external edge exact inside admitted carriers (CB-27);
+    # a corpus extension candidate — unique (CB-28) or ambiguous (CB-29) —
+    # keeps the uncertain name-match edge (carve-out).
+    "CB-27": (("exerciseCb27", "success"),),
+    "CB-28": (("exerciseCb28", "persist"),),
+    "CB-29": (("exerciseCb29", "persist"),),
+    # GR-14u48 inline-wrapper carrier: a guardTerminal-shaped private
+    # wrapper (block invoked exactly once inline) admits its trailing
+    # lambda; the corpus method inside resolves exact.
+    "CB-30": (("exercise", "markImported"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.

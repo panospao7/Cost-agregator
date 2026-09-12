@@ -4,7 +4,10 @@
 # lambda-parameter typing positives (callee-signature / receiver-generic
 # binding); CB-21..CB-26 are its fail-closed pins (arity mismatch, generic
 # component, two distinct signatures, async-region param, no explicit type
-# argument, named non-trailing argument).
+# argument, named non-trailing argument).  CB-27..CB-29 are the GR-14u47
+# external-exact rows (preservation-rule exemption, unique-extension
+# carve-out, ambiguous-extension carve-out); CB-30 is the GR-14u48
+# inline-wrapper carrier positive.
 fixtures:
   - id: CB-01
     file: call_binding/cb01_overloads_diff_params.kt
@@ -84,3 +87,15 @@ fixtures:
   - id: CB-26
     file: call_binding/cb26_lambda_param_named_arg.kt
     expectedResolution: UNRESOLVED_TARGET
+  - id: CB-27
+    file: call_binding/cb27_external_exact_in_carrier.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-28
+    file: call_binding/cb28_extension_carveout.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-29
+    file: call_binding/cb29_extension_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-30
+    file: call_binding/cb30_inline_wrapper_carrier.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE

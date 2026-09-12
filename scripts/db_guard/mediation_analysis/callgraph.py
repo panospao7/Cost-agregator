@@ -239,6 +239,17 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     # (service/receiptmatching/ReceiptMatchingWorker.safeRecordMatchEvent —
     # block invoked inline, cancellation rethrown)
     "safeRecordMatchEvent",
+    # GR-14u48: WorkerExecutionGuard terminal-write wrappers (evidence:
+    # guardTerminal invokes its block EXACTLY ONCE inline via
+    # withBoundedTerminalWrite; withBoundedTerminalWrite invokes its block
+    # EXACTLY ONCE inside withContext(NonCancellable) { withTimeout() { } }
+    # — both admitted transparent scopes; neither stores, escapes, or
+    # conditionally invokes the block; all 22 guardTerminal call sites are
+    # inside the same class inside guarded contexts; corpus-wide the names
+    # appear in no other file).  Name-exact admission; per the u38
+    # precedent the proof layer still admits by contract only.
+    "guardTerminal",
+    "withBoundedTerminalWrite",
     # GR-14l: androidx.activity.compose.setContent — the composition root;
     # its content lambda executes during composition (context inherited)
     "setContent",

@@ -1,0 +1,109 @@
+# GR-14u48 — inline-wrapper set extension: guardTerminal +
+# withBoundedTerminalWrite join the closed inline-carrier set (u38
+# precedent) + the u47 review-gate fixtures landed.
+#
+# CHANGE (engine, closed-set extension + fixture gate):
+#   - `guardTerminal` and `withBoundedTerminalWrite` added to
+#     PRODUCTION_TRANSPARENT_INLINE_METHODS (callgraph.py, with the full
+#     evidence comment): guardTerminal invokes its block EXACTLY ONCE
+#     inline via withBoundedTerminalWrite; withBoundedTerminalWrite
+#     invokes its block EXACTLY ONCE inside
+#     withContext(NonCancellable) { withTimeout() { } } — both admitted
+#     transparent scopes; neither stores, escapes, or conditionally
+#     invokes the block; all 22 guardTerminal call sites are inside the
+#     same class inside guarded contexts; corpus-wide the names appear in
+#     no other file (name-collision check clean — the only other mention
+#     is a comment in WorkerExecutionGuardTest.kt, which the callgraph
+#     does not scan).  Name-exact admission; per the u38 precedent the
+#     proof layer still admits by contract only.  Pin amended in
+#     test_gr14f_inline_carriers.py.
+#   - The 3 u47 review-gate fixtures LANDED (cb27..cb29) plus the
+#     inline-wrapper positive (cb30):
+#       cb27 external-typed receiver (kotlin.text.StringBuilder), NO
+#         corpus extension for the name, inside an admitted carrier
+#         (repeat) -> edge stays EXACT_SYNCHRONOUS external (the
+#         preservation-rule exemption);
+#       cb28 external-typed receiver, UNIQUE corpus extension on that
+#         type, inside an admitted carrier -> UNRESOLVED_TARGET uncertain
+#         (the extension carve-out);
+#       cb29 external-typed receiver, TWO same-name corpus extensions ->
+#         UNRESOLVED_TARGET uncertain (ambiguity stays uncertain);
+#       cb30 guardTerminal-shaped private wrapper (block invoked exactly
+#         once inline via withContext/withTimeout) -> trailing lambda
+#         admitted, the corpus method inside resolves
+#         EXACT_CANONICAL_SCOPE.
+#   - Fixture count 72 -> 76 (test_fixtures.py EXPECTED_CONSOLIDATED_ROWS
+#     and the consolidated-manifest header updated; fixture_runner
+#     subject-call table extended).
+#
+# PREMISE CORRECTION (must-read for the next batch): the batch's expected
+#   Shape-A lambda-param binding did NOT apply.  `guardTerminal(run, ...)
+#   { run.success(...) }` has a ZERO-PARAM block — the `run` inside the
+#   lambda is the enclosing fun's WorkerRunHandle PARAMETER (resolvable
+#   without any lambda-param typing), not a lambda parameter of the
+#   block.  What the transparency admission actually bought:
+#     (a) 6 edges async -> EXACT: the applyNotificationPermissionPolicy /
+#         applyPrivacyPolicy guardTerminal lambdas' run.skipped / retry /
+#         failure calls — `run` there IS the fun param, so once the region
+#         stopped forcing async the ordinary fun-param resolution bound
+#         Handle.skipped / Handle.retry / Handle.failure exactly;
+#     (b) 22 edges async -> unresolved_target: runGuarded /
+#         runGuardedWithContext — their `run` is an UNTYPED
+#         when-initializer local val (`val run = when (startResult) { is
+#         Started -> startResult.run ... }`), so the calls stay name-match
+#         uncertain (target sets narrowed: 6-10 name-matches -> 2-3 real
+#         candidates).  A when-subject local-val inference feature is the
+#         future fix (see Remaining).
+#   Edge A/B evidence (all 53,676 corpus edges): 28 changed positions,
+#   ALL inside WorkerExecutionGuard.kt — 6 async->exact (category (a))
+#   and 22 async->unresolved_target (category (b)); zero transitions of
+#   any other shape; zero changes outside the file.
+#
+# OUTCOME (board, pre a1e918f2... -> post 54278165a14f585c, double run
+# byte-identical): proven_helper 328 UNCHANGED; ambiguous 1 -> 3; async
+# 35 -> 33.  ZERO rows proven.  TWO rows RECLASSIFIED async ->
+# ambiguous (category narrowing, NOT proven):
+#     OperationRunRecorder.Handle.finalizeIfRunning (the
+#     Handle :: finalizeNonCancellable row)
+#     BackgroundJobRunDao.completeTerminal (the Handle :: terminal row)
+#   both now interface_dispatch (GR13_UNCERTAIN_CALL_EDGE): the narrowed
+#   target sets resolve to the Handle INTERFACES, which are OPEN —
+#   WorkerRunHandle -> WorkerExecutionGuard.Handle + the WorkerRunLogger
+#   implementation; OperationRunHandle -> RoomOperationRunRecorder.Handle
+#   + CompositeOperationRunRecorder + NoOpOperationRunHandle.  No
+#   closed-world dispatch admission is soundly available for open
+#   interfaces — that is the u50 owner-decision surface (the same
+#   Handle.increment interface_dispatch row already sits there).
+#   The F-PROCESSBATCH / F-POSTCOMMIT / F-ANON-OBJECT families are
+#   unchanged.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows regressed
+#   (all 379 entries diffed — only the 2 reclassified rows differ, and
+#   reclassification is toward MORE PRECISE uncertainty, not away from
+#   proof), 0 unexpected delta.
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 76/76, exit 0
+#   - scripts/ci: 1251 passed, 14 failed — the 14 failures are
+#     byte-identical to the base commit's failure set (verified by
+#     stashing the changes and re-running; freshness-stamp and
+#     platform-conditional tests, environment-dependent, pre-existing)
+#   - board double run byte-identical 54278165a14f585c
+#   - edge A/B: 28 changed positions, all inside WorkerExecutionGuard.kt
+#     (6 async->exact, 22 async->unresolved_target)
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the 3 ambiguous rows (Handle.increment + the 2 newly
+#   reclassified) need closed-world dispatch admission for open
+#   interfaces — u50 owner decision; the runGuarded/runGuardedWithContext
+#   when-initializer local val typing (when-subject val inference — a
+#   future small engine batch candidate that would resolve `run` exactly
+#   and let the 22 narrowed edges bind); the F-PROCESSBATCH (8) /
+#   F-POSTCOMMIT (6) / F-ANON-OBJECT (16) families unchanged (u43 table);
+#   the F-TRANSPARENT-CHAIN-NOISE over-conservatism candidates remain
+#   owner-sign-off-gated.
+status: COMPLETE_AT_BOARD_54278165
+# NOTE: honest outcome — 0 rows proven, 2 rows narrowed async -> ambiguous
+#   (more precise uncertainty pending the u50 open-interface decision), 4
+#   gate fixtures landed, the set-extension evidence recorded.
