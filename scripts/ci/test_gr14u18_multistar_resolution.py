@@ -30,11 +30,24 @@ def _source(imports: str, body: str = "") -> str:
 
 class TestStarImportResolution:
     def test_single_star_import_resolves_to_its_package(self):
-        """Pre-existing behaviour: one wildcard binds the name unambiguously."""
+        """GR-14u53 amendment: the one-star case now follows the SAME
+        confidence discipline as the multi-star case — a corpus owner or a
+        known-root external, else unknown (fail closed).  The historical
+        pin asserted the OLD no-root-check shortcut, which fabricated
+        exact-external FQCNs for unresolvable names in one-star files
+        (`androidx.work.target` from `import androidx.work.*`) — the
+        deletion-trap-family defect this batch fixes.  `com.example` is
+        not a known external root, so the candidate is now unknown."""
         fqcn, origin = _resolve(
             _source("import com.example.corpus.types.*"), "Thing"
         )
-        assert (fqcn, origin) == ("com.example.corpus.types.Thing", "external")
+        assert (fqcn, origin) == ("", "unknown")
+
+    def test_single_star_import_known_root_external_still_resolves(self):
+        """The legitimate one-star case is preserved: a candidate whose
+        package root is a known external root resolves exact-external."""
+        fqcn, origin = _resolve(_source("import androidx.room.*"), "RoomDatabase")
+        assert (fqcn, origin) == ("androidx.room.RoomDatabase", "external")
 
     def test_multiple_stars_resolve_when_exactly_one_is_a_corpus_owner(self):
         """The AppDatabase.kt shape: three wildcards, one confident candidate."""

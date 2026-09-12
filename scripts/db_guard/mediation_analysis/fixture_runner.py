@@ -167,6 +167,12 @@ CB_SUBJECT_CALLS = {
     "CB-54": (("run", "insert"),),
     "CB-55": (("run", "insert"),),
     "CB-56": (("run", "insert"),),
+    # GR-14u53 star-import discipline fixtures: the fabrication pin (a
+    # non-known-root star candidate stays unresolved), corpus resolution
+    # through a star import, and the legitimate known-root external case.
+    "CB-57": (("exerciseCb57", "foo"),),
+    "CB-58": (("exerciseCb58", "bar"),),
+    "CB-59": (("exerciseCb59", "append"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.

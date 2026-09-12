@@ -1383,12 +1383,18 @@ class CallGraphBuilder:
         if simple in _BUILTIN_TYPE_NAMES:
             return "kotlin." + simple, "external"
         # A star import binds a simple name the way Kotlin does (prefix + name).
-        # With ONE star import that is unambiguous.  With SEVERAL the name is
-        # resolved only when exactly one candidate is confident — a corpus owner,
-        # or a package under a known external root — because two plausible
-        # candidates is ambiguity, not licence to guess (GR-14u18).  This matters
-        # for `AppDatabase.kt` (entity.* + dao.* + androidx.room.*), whose
-        # `RoomDatabase` must resolve so `super.onCreate` stops name-matching.
+        # Confidence discipline (mirrored across the one-star and multi-star
+        # cases, GR-14u53): a candidate is committed ONLY when it is a corpus
+        # owner, or its package root is a known external root — anything else
+        # is unknown, fail closed.  This matters for `AppDatabase.kt`
+        # (entity.* + dao.* + androidx.room.*), whose `RoomDatabase` must
+        # resolve so `super.onCreate` stops name-matching: `androidx.room` is
+        # a known external root, so the multi-star discipline preserves that
+        # resolution.  The historical ONE-star shortcut returned ANY prefix +
+        # name as exact-external with no root check — fabricating FQCNs for
+        # unresolvable names in one-star files (`androidx.work.target` from
+        # `import androidx.work.*`), the deletion-trap-family defect fixed
+        # here.
         star_prefixes = [
             entry.fqcn for entry in file_model.imports if entry.is_star
         ]
@@ -1396,7 +1402,9 @@ class CallGraphBuilder:
             candidate = star_prefixes[0] + "." + simple
             if candidate in self.owners:
                 return candidate, "corpus"
-            return candidate, "external"
+            if candidate.split(".", 1)[0] in _KNOWN_EXTERNAL_ROOTS:
+                return candidate, "external"
+            return "", "unknown"
         if len(star_prefixes) > 1:
             candidates = [prefix + "." + simple for prefix in star_prefixes]
             corpus = [candidate for candidate in candidates if candidate in self.owners]

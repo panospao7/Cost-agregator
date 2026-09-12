@@ -183,3 +183,12 @@ fixtures:
   - id: CB-56
     file: call_binding/cb56_hint_never_overrides.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-57
+    file: call_binding/cb57_star_import_fabrication.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-58
+    file: call_binding/cb58_star_import_corpus.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-59
+    file: call_binding/cb59_star_import_external.kt
+    expectedResolution: EXACT_SYNCHRONOUS
