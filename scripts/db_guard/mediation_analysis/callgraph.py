@@ -358,6 +358,10 @@ class CallableModel:
     decl_end: int = 0
     body_start: int = -1  # index after the body's '{' / after `=`; -1 = no body
     body_end: int = -1  # index of the body's '}' / expression end; [start, end)
+    # GR-14u49: synthetic anonymous-object member callables carry the key of
+    # the callable whose scope their captures resolve against (capture
+    # typing).  None for every ordinary declaration.
+    enclosing_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -495,6 +499,10 @@ _CTOR_VAL_PARAM_RE = re.compile(
 )
 _VAL_LOCAL_RE = re.compile(
     r"(?:^|[^\w.])(?:val|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([A-Za-z_][A-Za-z0-9_.<>,\s?]+?))?\s*="
+)
+# GR-14u49: val-only bindings (capture typing — a `var` capture never passes).
+_VAL_ONLY_LOCAL_RE = re.compile(
+    r"(?:^|[^\w.])(?:val)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?::\s*([A-Za-z_][A-Za-z0-9_.<>,\s?]+?))?\s*="
 )
 _ID = r"[A-Za-z_][A-Za-z0-9_]*"
 _CALL_CANDIDATE_RE = re.compile(
@@ -1282,6 +1290,10 @@ class CallGraphBuilder:
         # GR-14u45: depth guard for carrier-call resolution inside the
         # lambda-parameter binding (pathological nested-lambda receivers).
         self._carrier_resolution_depth: int = 0
+        # GR-14u49: anonymous-object member modelling state.
+        self._anon_members_registered: bool = False
+        self._anon_site_counter: dict[str, int] = {}
+        self._anon_owner_by_site: dict[tuple[str, int], str] = {}
         self.edges: tuple[CallEdge, ...] = ()
         self.scc = SCCState()
         self.scc_exact = SCCState()
@@ -1677,6 +1689,17 @@ class CallGraphBuilder:
                 self._unwrap_di_wrapper_type(file_model, local_type) or local_type,
             )
             return fqcn, origin != "unknown"
+        # GR-14u49 (reviewer-scoped): a for-loop VARIABLE binds to the
+        # iterable's element type ONLY when the iterable is a local val or
+        # param with an EXPLICIT type annotation in source (the u45 Shape B
+        # explicitness bar — inferred/ctor-shape texts never pass).  The
+        # binding is offset-scoped to the loop body: a same-named receiver
+        # after the loop stays untyped, and nested same-name loops resolve
+        # to the nearest enclosing loop.
+        loop_type = self._loop_variable_type(call)
+        if loop_type is not None:
+            fqcn, origin = self._resolve_type(file_model, loop_type)
+            return fqcn, origin != "unknown"
         if model is not None:
             for param_name, param_type in model.params_named:
                 if param_name == receiver:
@@ -1685,6 +1708,19 @@ class CallGraphBuilder:
                         self._unwrap_di_wrapper_type(file_model, param_type) or param_type,
                     )
                     return fqcn, origin != "unknown"
+            # GR-14u49 capture typing: a synthetic anonymous-object member
+            # resolves free identifiers against its ENCLOSING callable's
+            # modelled scope.  Only effectively-final (`val`) bindings with
+            # exactly-resolvable types pass through; anything else keeps
+            # the fail-closed path (no exactness through captures).  The
+            # visibility cutoff is the member's declaration start (a binding
+            # declared after the object expression is not a capture).
+            captured = self._captured_binding_type(
+                model, receiver, model.decl_start
+            )
+            if captured is not None:
+                fqcn, origin = self._resolve_type(file_model, captured)
+                return fqcn, origin != "unknown"
             owner_fqcn = model.owner_fqcn
             seen_owners: set[str] = set()
             while owner_fqcn and owner_fqcn in self.owners and owner_fqcn not in seen_owners:
@@ -1824,6 +1860,143 @@ class CallGraphBuilder:
                     next_hop = fqcn
             current = next_hop
         return "", False
+
+    _FOR_LOOP_RE = re.compile(
+        r"(?:^|[^\w.])for\s*\(\s*(?P<head>[^)\n]*)\)\s*\{"
+    )
+    _FOR_DESTRUCTURING_RE = re.compile(r"^\s*\(")
+
+    def _loop_variable_type(self, call: CallRecord) -> str | None:
+        """Element type for a for-loop variable receiver, or None.
+
+        GR-14u49 (reviewer-scoped): binds ONLY when the iterable expression
+        is a local val or a parameter whose declaration carries an EXPLICIT
+        type annotation in source (the u45 Shape B explicitness bar —
+        inferred/ctor-shape texts never pass).  Element extraction uses the
+        shared single-type-argument helper (u45 collection-head set).  Fail
+        closed on: unannotated iterables, non-collection heads (String, Map
+        used directly, arrays), destructuring heads, generic/unresolved
+        element types.  The binding is scoped to the loop-body span; nested
+        same-name loops resolve to the nearest enclosing loop.
+        """
+        model = self.callables.get(call.caller_key)
+        if model is None or model.body_start < 0:
+            return None
+        if not call.receiver_text:
+            return None
+        masked = self.file_models[call.file].masked
+        best: tuple[int, str] | None = None  # (loop_body_open, element_type)
+        for match in self._FOR_LOOP_RE.finditer(
+            masked, model.body_start, model.body_end
+        ):
+            head = match.group("head").strip()
+            if self._FOR_DESTRUCTURING_RE.match(head):
+                continue
+            name_match = re.match(
+                r"(?P<name>%s)\s*(?::\s*[^)=]+)?\s*in\s+(?P<iter>.+)" % _ID,
+                head,
+            )
+            if name_match is None:
+                continue
+            if name_match.group("name") != call.receiver_text:
+                continue
+            iter_text = name_match.group("iter").strip()
+            source_type = self._explicit_iterable_source_type(
+                model, masked, iter_text, match.start()
+            )
+            if not source_type:
+                continue
+            element = self._single_collection_type_argument(source_type)
+            if not element:
+                continue
+            body_open = masked.find("{", match.end() - 1)
+            if body_open < 0:
+                continue
+            body_close = find_balanced(masked, body_open, "{", "}")
+            if body_close < 0:
+                continue
+            # Offset-scoped: the call must sit inside THIS loop's body.
+            if not (body_open < call.name_start < body_close):
+                continue
+            if best is None or body_open > best[0]:
+                best = (body_open, element)
+        return best[1] if best is not None else None
+
+    def _explicit_iterable_source_type(
+        self,
+        model: CallableModel,
+        masked: str,
+        iter_text: str,
+        loop_offset: int,
+    ) -> str:
+        """Declared collection type of a for-loop iterable, or "".
+
+        The iterable must be a SIMPLE identifier bound to a local val or a
+        parameter with an EXPLICIT type annotation (the u45 Shape B bar —
+        inferred/ctor-shape texts never pass).  Calls, chains, dotted
+        spellings and anything else fail closed.
+        """
+        if not re.fullmatch(r"%s" % _ID, iter_text):
+            return ""
+        for param_name, param_type in model.params_named:
+            if param_name == iter_text:
+                return param_type if param_type else ""
+        # Explicitly-annotated local val only: `val xs: List<T> = ...`.
+        region = masked[model.body_start : loop_offset]
+        best: tuple[int, str] | None = None
+        for match in _VAL_ONLY_LOCAL_RE.finditer(region):
+            if match.group(1) != iter_text:
+                continue
+            declared = (match.group(2) or "").strip()
+            if not declared:
+                continue
+            offset = model.body_start + match.start(1)
+            if best is None or offset > best[0]:
+                best = (offset, declared)
+        return best[1] if best is not None else ""
+
+    def _captured_binding_type(
+        self, model: CallableModel | None, name: str, before_offset: int = -1
+    ) -> str | None:
+        """Declared type text of an enclosing-scope capture, or None.
+
+        GR-14u49 capture typing: for a synthetic anonymous-object member,
+        a free identifier resolves against the ENCLOSING callable's `val`
+        locals and params.  ISSUE-5: only bindings whose declaration offset
+        PRECEDES the use (the anon-site/member offset) are visible — a
+        binding declared after the object expression is not a capture;
+        locals are checked BEFORE params (Kotlin shadowing order: an
+        innermost local shadows a same-named parameter).  A `val` binding
+        with a non-empty declared type passes through (the caller resolves
+        it exactly or fails closed); a `var` binding or an unknown/late
+        name returns None (capture-tainted, fail closed).
+        """
+        if model is None or model.enclosing_key is None:
+            return None
+        enclosing = self.callables.get(model.enclosing_key)
+        if enclosing is None:
+            return None
+        # val-only locals FIRST (innermost scope shadows parameters).
+        masked = self.file_models[enclosing.file].masked
+        region = masked[enclosing.body_start : enclosing.body_end]
+        best: tuple[int, str] | None = None
+        for match in _VAL_ONLY_LOCAL_RE.finditer(region):
+            if match.group(1) != name:
+                continue
+            declared = (match.group(2) or "").strip()
+            if not declared:
+                continue
+            offset = enclosing.body_start + match.start(1)
+            if before_offset >= 0 and offset >= before_offset:
+                continue
+            if best is None or offset > best[0]:
+                best = (offset, declared)
+        if best is not None:
+            return best[1]
+        for param_name, param_type in enclosing.params_named:
+            if param_name == name and param_type:
+                return param_type
+        return None
 
     def _local_val_type(self, call: CallRecord) -> str | None:
         bindings = self._local_vals.get(call.caller_key, ())
@@ -2081,10 +2254,16 @@ class CallGraphBuilder:
 
     def build(self) -> "CallGraph":
         self._scan_anonymous_implementors()
+        self._register_anonymous_members()
         edge_lists: list[CallEdge] = []
         for key in sorted(self.callables):
             model = self.callables[key]
             calls = extract_calls(self.file_models[model.file].masked, model)
+            # GR-14u49 (1): drop phantom supertype-token call records at
+            # anonymous-object sites BEFORE lambda regions are derived —
+            # suppression removes BOTH the call record and the phantom
+            # region it would spawn over the object body (design §(1)).
+            calls = self._suppress_phantom_object_calls(model, calls)
             regions = self._lambda_regions(model, calls)
             self.calls_by_callable[key] = calls
             self.lambda_regions_by_callable[key] = regions
@@ -2104,6 +2283,308 @@ class CallGraphBuilder:
             scc_exact=self.scc_exact,
             roots=dict(sorted(self.roots.items())),
         )
+
+    # ── GR-14u49 anonymous-object member modelling ──────────────────────────
+
+    def _anon_object_sites(self) -> list[tuple[str, int, str, str, int, int]]:
+        """Corpus-supertype anonymous-object sites, deterministically sorted.
+
+        Returns (path, object_token_offset, supertype_fqcn, supertype_text,
+        body_open, body_close) for every `object : T { ... }` whose FIRST
+        listed supertype resolves to a corpus owner.  External-supertype
+        sites are excluded (design scope boundary: no synthetic callables
+        for them).  Sorted by (path, offset) — two runs byte-match.
+        """
+        sites: list[tuple[str, int, str, str, int, int]] = []
+        for path in sorted(self.file_models):
+            file_model = self.file_models[path]
+            masked = file_model.masked
+            if "object" not in masked:
+                continue
+            for match in _ANON_OBJECT_RE.finditer(masked):
+                tokens = self._split_top_level(match.group(1))
+                if not tokens:
+                    continue
+                head = _IDENT_HEAD_RE.match(tokens[0].strip())
+                if head is None:
+                    continue
+                fqcn, origin = self._resolve_type(file_model, head.group(1))
+                if origin != "corpus" or fqcn not in self.owners:
+                    continue
+                brace = masked.find("{", match.end())
+                if brace < 0:
+                    continue
+                close = find_balanced(masked, brace, "{", "}")
+                if close < 0:
+                    continue
+                sites.append(
+                    (path, match.start(), fqcn, head.group(1), brace, close)
+                )
+        sites.sort(key=lambda site: (site[0], site[1]))
+        return sites
+
+    def _register_anonymous_members(self) -> None:
+        """Model anonymous-object member functions as synthetic callables.
+
+        GR-14u49 (design-approved): corpus-supertype `object : T { }` sites
+        gain synthetic callables for their member functions, with owner FQCN
+        `<file>#anon<N>@<line>` (N = 1-based site ordinal within the file in
+        source order; determinism by construction — sites are scanned in
+        sorted order and counters are per-file).  External-supertype sites
+        keep the current phantom classification (no synthetic callables).
+        Each synthetic callable records `enclosing_key` = the callable whose
+        body contains the object expression (capture typing consults that
+        scope).
+        """
+        if self._anon_members_registered:
+            return
+        self._anon_members_registered = True
+        for path, offset, supertype, head_token, brace, close in self._anon_object_sites():
+            file_model = self.file_models[path]
+            masked = file_model.masked
+            # The ENCLOSING callable: the registered callable whose body
+            # contains the object expression (nearest enclosing body).
+            enclosing = None
+            for key in sorted(self.callables):
+                model = self.callables[key]
+                if model.file != path or model.body_start < 0:
+                    continue
+                if model.body_start <= offset < model.body_end:
+                    if (
+                        enclosing is None
+                        or model.body_start >= enclosing.body_start
+                    ):
+                        enclosing = model
+            if enclosing is None:
+                continue
+            site_index = self._anon_site_counter.setdefault(path, 0) + 1
+            self._anon_site_counter[path] = site_index
+            line = masked.count("\n", 0, offset) + 1
+            owner_fqcn = "%s#anon%d@%d" % (path, site_index, line)
+            self.owners[owner_fqcn] = OwnerModel(
+                fqcn=owner_fqcn,
+                simple_name="anon%d" % site_index,
+                kind="anonymous_object",
+                file=path,
+                supertype_texts=(supertype,),
+            )
+            self.owner_supertypes[owner_fqcn] = (supertype,)
+            # Key by the SUPERTYPE-TOKEN offset — the phantom call record's
+            # name_start is the token (after `object :`), not the keyword.
+            token_offset = masked.find(head_token, offset)
+            if token_offset < 0:
+                token_offset = offset
+            self._anon_owner_by_site[(path, token_offset)] = owner_fqcn
+            for member in self._anon_member_models(
+                masked, path, owner_fqcn, brace, close, enclosing
+            ):
+                if member.key in self.callables:
+                    continue
+                self.callables[member.key] = member
+                self.callables_by_name.setdefault(member.method, []).append(
+                    member.key
+                )
+                self.callables_by_name[member.method].sort()
+                self._collect_local_vals(member)
+
+    def _anon_member_models(
+        self,
+        masked: str,
+        path: str,
+        owner_fqcn: str,
+        brace: int,
+        close: int,
+        enclosing: CallableModel,
+    ) -> list[CallableModel]:
+        """Synthetic CallableModels for the `fun` members of one anon object.
+
+        GR-14u49 ISSUE-4: only DIRECT members of THIS object body — a `fun`
+        whose span sits inside a smaller `fun` span within the object (a
+        local function inside a member) is skipped, and a nested anonymous
+        object's members belong to the nested object (its own site, its own
+        synthetic owner), never to this one.
+        """
+        models: list[CallableModel] = []
+        # Rough member spans first: every `fun` head inside the object body,
+        # so local functions and nested-object members can be excluded.
+        rough: list[tuple[int, int]] = []  # (fun_start, paren)
+        for match in _FUN_DECL_RE.finditer(masked, brace + 1, close):
+            fun_start = match.start()
+            if _FUN_DECL_SKIP_RE.match(masked[fun_start : fun_start + 40]):
+                continue
+            paren = masked.find("(", match.end())
+            if paren < 0 or paren > close:
+                continue
+            rough.append((fun_start, paren))
+        rough.sort()
+        for idx, (fun_start, paren) in enumerate(rough):
+            # Skip funs contained in a SMALLER fun span (local functions).
+            contained = False
+            for other_start, other_paren in rough:
+                if other_start == fun_start:
+                    continue
+                if other_start < fun_start and other_paren < paren:
+                    other_close = find_balanced(masked, other_paren, "(", ")")
+                    if other_close > 0 and fun_start < other_close:
+                        # A smaller fun opened before and closes after this
+                        # head — this head is inside the other fun's span
+                        # only if the other fun's BODY swallows it.
+                        other_body_start, other_body_end, _ = (
+                            _body_span_after_params(masked, other_paren)
+                        )
+                        if (
+                            other_body_start >= 0
+                            and other_body_start <= fun_start < other_body_end
+                        ):
+                            contained = True
+                            break
+            if contained:
+                continue
+            # Skip funs inside a NESTED anonymous object: an `object :` site
+            # opened between this object's brace and this fun head means the
+            # fun belongs to the nested object (modelled by its own site).
+            nested_open = -1
+            for match in _ANON_OBJECT_RE.finditer(masked, brace + 1, fun_start):
+                nested_brace = masked.find("{", match.end())
+                if nested_brace < 0 or nested_brace >= fun_start:
+                    continue
+                nested_close = find_balanced(masked, nested_brace, "{", "}")
+                if nested_close > 0 and nested_brace <= fun_start < nested_close:
+                    nested_open = match.start()
+                    break
+            if nested_open >= 0:
+                continue
+            head = masked[fun_start : paren + 1]
+            name_match = re.search(
+                r"(?P<name>%s)\s*(?:<[^<>]*>)?\s*\(" % _ID, head
+            )
+            if not name_match:
+                continue
+            name = name_match.group("name")
+            if name in _CONTROL_KEYWORDS:
+                continue
+            params_close = find_balanced(masked, paren, "(", ")")
+            if params_close < 0:
+                continue
+            params_named, param_types = self._anon_params(
+                masked, paren, params_close
+            )
+            body_start, body_end, _decl_end = _body_span_after_params(
+                masked, params_close
+            )
+            if body_start < 0 or body_end < 0 or body_end > close:
+                continue
+            prefix = masked[max(0, fun_start - 40) : fun_start]
+            is_override = _has_modifier(prefix, "override")
+            key = "|".join(
+                [
+                    path,
+                    owner_fqcn,
+                    "anonymous_object",
+                    name,
+                    "null",
+                    ",".join(param_types),
+                ]
+            )
+            node = CallableNode(
+                path=path,
+                ownerFqcn=owner_fqcn,
+                kind="function",
+                method=name,
+                receiver="",
+                parameterTypes=param_types,
+            )
+            models.append(
+                CallableModel(
+                    key=key,
+                    node=node,
+                    file=path,
+                    owner_fqcn=owner_fqcn,
+                    method=name,
+                    visibility=_visibility_of(prefix),
+                    is_override=is_override,
+                    is_open=False,
+                    is_generic=bool(re.search(r"fun\s*<", head)),
+                    is_suspend=_has_modifier(prefix, "suspend"),
+                    is_composable=False,
+                    params_named=tuple(params_named),
+                    param_types=param_types,
+                    decl_start=fun_start,
+                    decl_end=body_end,
+                    body_start=body_start,
+                    body_end=body_end,
+                    enclosing_key=enclosing.key,
+                )
+            )
+        return models
+
+    def _anon_params(
+        self, masked: str, paren: int, params_close: int
+    ) -> tuple[list[tuple[str, str]], tuple[str, ...]]:
+        """(name, type) pairs and bare types for an override's parameter list."""
+        inner = masked[paren + 1 : params_close]
+        params_named: list[tuple[str, str]] = []
+        types: list[str] = []
+        if not inner.strip():
+            return params_named, tuple(types)
+        depth = 0
+        parts: list[str] = []
+        current: list[str] = []
+        for ch in inner:
+            if ch in "(<":
+                depth += 1
+            elif ch in ")>":
+                depth -= 1
+            if ch == "," and depth == 0:
+                parts.append("".join(current))
+                current = []
+            else:
+                current.append(ch)
+        parts.append("".join(current))
+        for part in parts:
+            text = part.strip()
+            if not text:
+                continue
+            m = re.match(
+                r"(?:val\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+                r"\s*:\s*(?P<type>.+)",
+                text,
+            )
+            if m is None:
+                continue
+            type_text = _strip_type_text(m.group("type"))
+            params_named.append((m.group("name"), type_text))
+            types.append(type_text)
+        return params_named, tuple(types)
+
+    def _suppress_phantom_object_calls(
+        self, model: CallableModel, calls: tuple[CallRecord, ...]
+    ) -> tuple[CallRecord, ...]:
+        """Drop phantom call records at anonymous-object sites.
+
+        GR-14u49 (1): `object : T {` made _CALL_CANDIDATE_RE emit a call
+        record named after the supertype token with a trailing lambda over
+        the object body — a phantom async region that decided rows and
+        misattributed member sites.  Suppression is SUBTRACTIVE and
+        corpus-supertype-scoped: only candidates whose name_start sits at
+        a registered anon-object site of this callable's file are dropped;
+        external-supertype sites keep the current phantom classification
+        (design scope boundary).  Runs BEFORE _lambda_regions so the
+        phantom REGION is removed together with the record (design §(1):
+        "no lambda region over the object body").  The `object` keyword
+        itself is a control keyword and never became a call.
+        """
+        if not self._anon_owner_by_site or not calls:
+            return calls
+        path = model.file
+        if not any(site_path == path for site_path, _ in self._anon_owner_by_site):
+            return calls
+        kept = [
+            call
+            for call in calls
+            if (path, call.name_start) not in self._anon_owner_by_site
+        ]
+        return tuple(kept) if len(kept) != len(calls) else calls
 
     @staticmethod
     def _split_top_level(text: str) -> list[str]:
@@ -2575,6 +3056,18 @@ class CallGraphBuilder:
                         and len(self._members_named(member_owner, call.name)) == 1
                     ):
                         return [self._exact_edge(model, call, context, (member.key,))]
+            # GR-14u49 bounded fan-out (owner-approved Option A): when the
+            # implementor set is FULLY ENUMERABLE — every named corpus
+            # implementor plus every anonymous-object site modelled as a
+            # synthetic callable (completeness re-derived EVERY run from the
+            # rebuilt graph; an unmodelled site withdraws the admission, fail
+            # closed) — the dispatch emits EXACT edges to every implementor's
+            # member instead of the uncertain interface_dispatch.  The proof
+            # layer's all-or-nothing behavior is unchanged: one unguarded
+            # implementor body fails the whole set back to uncertainty.
+            fan_out = self._bounded_fanout_targets(receiver_fqcn, call.name)
+            if fan_out:
+                return [self._exact_edge(model, call, context, tuple(fan_out))]
             return [
                 CallEdge(
                     caller_key=model.key,
@@ -2886,6 +3379,63 @@ class CallGraphBuilder:
                 if supertype in self.owners:
                     stack.append(supertype)
         return False
+
+    def _bounded_fanout_targets(
+        self, base_fqcn: str, method: str
+    ) -> list[str]:
+        """Exact fan-out targets for a fully-enumerable interface, or [].
+
+        GR-14u49 (3): the implementor set is complete when
+        (a) every named corpus implementor is found (GR-14u24 walk),
+        (b) the modelled anonymous-member count for the base equals the
+        scanned anonymous-implementor count (transitively, GR-14u23) — an
+        unmodelled site (no parseable body) withdraws the admission,
+        (c) every implementor owns exactly one member of the name
+        (overloads stay uncertain — static overload selection is not
+        modelled).  Sorted deterministically; [] = stay uncertain.
+        """
+        owner = self.owners.get(base_fqcn)
+        if owner is None or owner.kind != "interface":
+            return []
+        scanned_anon = self._anonymous_implementors_of(base_fqcn)
+        if scanned_anon <= 0:
+            return []
+        # The synthetic anonymous owners ARE corpus owners inheriting from
+        # the base, so _corpus_implementors already returns them alongside
+        # any named implementors — dedupe instead of double-counting (a
+        # duplicated implementor would break the completeness check).
+        implementors: set[str] = set(self._corpus_implementors(base_fqcn))
+        for anon_owner in sorted(self.owners):
+            if self.owners[anon_owner].kind != "anonymous_object":
+                continue
+            if self._inherits_from(anon_owner, base_fqcn):
+                implementors.add(anon_owner)
+        modelled_anon = sum(
+            1
+            for anon_owner in implementors
+            if self.owners[anon_owner].kind == "anonymous_object"
+        )
+        if modelled_anon != scanned_anon:
+            return []
+        # ISSUE-7: fan out only to members that OVERRIDE the interface's
+        # member (a same-name helper on an implementor that does not
+        # override the base member is not a dispatch target).
+        interface_member = self._member_in_scope(base_fqcn, method)[0]
+        if interface_member is None:
+            return []
+        targets: set[str] = set()
+        for implementor in sorted(implementors):
+            members = self._members_named(implementor, method)
+            if len(members) != 1:
+                return []
+            candidate = members[0]
+            if not (
+                candidate.is_override
+                and self._inherits_from(candidate.owner_fqcn, base_fqcn)
+            ):
+                return []
+            targets.add(candidate.key)
+        return sorted(targets)
 
     def _override_targets(self, base_fqcn: str, method: str) -> set[str]:
         targets: set[str] = set()

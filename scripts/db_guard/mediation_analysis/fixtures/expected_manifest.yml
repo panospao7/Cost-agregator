@@ -1,15 +1,17 @@
 # GR-13 consolidated expected manifest (shadow corpus).
-# Copies all rows from the per-group manifests: 29 call-binding (CB;
+# Copies all rows from the per-group manifests: 48 call-binding (CB;
 # CB-16 is the GR-14u22 dagger.Lazy chain row, CB-17 the GR-14u24
 # single-implementor exactness row, CB-19/CB-20 the GR-14u45
 # lambda-parameter typing positives and CB-21..CB-26 its fail-closed
 # pins, CB-27..CB-29 the GR-14u47 external-exact exemption/carve-out
-# rows, CB-30 the GR-14u48 inline-wrapper carrier row),
+# rows, CB-30 the GR-14u48 inline-wrapper carrier row, CB-31..CB-40 the
+# GR-14u49 anonymous-object rows and CB-41..CB-48 its loop-variable
+# typing rows),
 # 26 helper-proof (HP; HP-13..HP-20 are the GR-14f inline-carrier rows,
 # SL-01..SL-03 the GR-14j structured-launch rows, HP-21 the GR-14m
 # named-argument-lambda regression row, HP-22 the GR-14n default-parameter-DI
 # regression row, HP-23 the GR-14u25 restore-internal-scope row),
-# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows = 81
+# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows = 99
 # rows total.
 # CB/HP/WP rows use expectedResolution/expectedProof(/expectedRoot);
 # PR rows use expectation. All values use closed vocabularies only.
@@ -152,6 +154,60 @@ fixtures:
   - id: CB-30
     file: call_binding/cb30_inline_wrapper_carrier.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-31
+    file: call_binding/cb31_anon_member_modelled.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-32
+    file: call_binding/cb32_phantom_suppressed.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-33
+    file: call_binding/cb33_two_anon_one_file.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-34
+    file: call_binding/cb34_captured_var_failclosed.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-35
+    file: call_binding/cb35_fanout_loopvar_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-36
+    file: call_binding/cb36_fanout_incomplete.kt
+    expectedResolution: INTERFACE_DISPATCH
+  - id: CB-37
+    file: call_binding/cb37_capture_val_param.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-38
+    file: call_binding/cb38_fanout_all_or_nothing.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-39
+    file: call_binding/cb39_multi_supertype.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-40
+    file: call_binding/cb40_wrapped_supertypes.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-41
+    file: call_binding/cb41_loopvar_unannotated.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-42
+    file: call_binding/cb42_loopvar_destructuring.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-43
+    file: call_binding/cb43_loopvar_map.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-44
+    file: call_binding/cb44_loopvar_string.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-45
+    file: call_binding/cb45_loopvar_scope_leak.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-46
+    file: call_binding/cb46_loopvar_shadow.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-47
+    file: call_binding/cb47_loopvar_inferred_only.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-48
+    file: call_binding/cb48_loopvar_set_fanout.kt
+    expectedResolution: EXACT_SYNCHRONOUS
   - id: HP-13
     file: helper_proof/hp13_let_inline_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE

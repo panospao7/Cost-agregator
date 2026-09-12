@@ -311,10 +311,33 @@ def _correlate_subject_callable(builder: CallGraphBuilder, declaration_index, ob
         start = model.decl_start if model.decl_start is not None else -1
         end = model.decl_end if model.decl_end is not None else -1
         if start <= observation.source_start < max(end, model.body_end):
-            matches.append(key)
-    if len(matches) == 1:
-        return matches[0]
-    return None
+            matches.append((max(end, model.body_end) - start, key))
+    # GR-14u49: a mutation site inside an anonymous-object member body belongs to the
+    # SYNTHETIC member callable (the real executing scope), not the enclosing provider
+    # the D4 scanner named.  The member models (owner kind anonymous_object, "#anon"
+    # in the owner FQCN) carry the member's own span, strictly nested inside the
+    # provider's span; the SMALLEST containing span is the innermost executing
+    # callable (Kotlin nesting semantics).  Synthetic candidates are scanned across
+    # the whole callable table (their method/owner differ from the observation's
+    # declared identity).  Fail closed: zero containing spans -> None.
+    synthetic = []
+    for key, model in builder.callables.items():
+        if "#anon" not in model.owner_fqcn or model.file != path:
+            continue
+        start = model.decl_start if model.decl_start is not None else -1
+        end = max(model.decl_end if model.decl_end is not None else -1, model.body_end)
+        if 0 <= start <= observation.source_start < end:
+            synthetic.append((end - start, key))
+    # Fail-closed for declared matches (historical gate): ambiguous declared
+    # spans attribute to nothing.  Synthetic members are brace-disjoint by
+    # construction, so the smallest-span rule only ever resolves nesting.
+    if len(matches) > 1:
+        return None
+    pool = matches + synthetic
+    if not pool:
+        return None
+    pool.sort()
+    return pool[0][1]
 
 
 def _observations_by_graph_callable(builder, declaration_index, observations):

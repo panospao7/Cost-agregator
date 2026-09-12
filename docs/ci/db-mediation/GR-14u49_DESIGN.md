@@ -1,7 +1,45 @@
 # GR-14u49 DESIGN — anonymous-object engine batch (owner sign-off vehicle)
 
-STATUS: DESIGN — PENDING OWNER SIGN-OFF. Not implemented; no code change
-and no board claim is made by this document.
+STATUS: DESIGN — APPROVED (Option A + capture-typing), IMPLEMENTED AT
+BOARD 0028f57e (rows honest-unproven; proven upgrade = DAO-accessor
+typing follow-up).
+
+## ADDENDUM (implementation record, post-approval)
+
+- Loop-variable typing was ADDED during implementation (reviewer-scoped,
+  explicit-annotation bar only): a for-loop variable binds to the
+  iterable's element type only when the iterable is a local val or param
+  with an explicit `: T` annotation in source; offset-scoped to the loop
+  body; fail-closed on destructuring/map/string/inferred shapes.  This
+  was the missing piece that connected the bounded fan-out to the
+  DataRetentionWorker dispatch (the first implementation attempt without
+  it hit the B2 external_entry trap — suppressed phantom regions left
+  the synthetic members with zero inbound edges).
+- ONE-LINE APP ANNOTATION DISCLOSED: DataRetentionWorker.kt L100
+  `val orderedTargets: List<RetentionTarget> = allTargets.sortedBy
+  { it.name }` (GR-08k1 precedent; RetentionTarget already imported).
+  The only app change; the L274 second loop deliberately not annotated
+  (no corpus dispatch downstream).
+- CORRECTED EXPECTATION (reviewer ISSUE-2): u49 lands the 10
+  RetentionModule rows in an HONEST UNPROVEN state
+  (unproven_ambiguous_call / GR13_UNCERTAIN_CALL_EDGE, attributing to
+  the synthetic anon-member callables) — NOT proven.  The proven upgrade
+  requires DAO-accessor return typing (the members' accessor chains
+  resolve virtual_dispatch on the abstract AppDatabase).
+- SUBJECT-CORRELATION REATTRIBUTION (not in the original design — added
+  during implementation): mutation sites inside synthetic member spans
+  attribute to the synthetic member callable (innermost containing
+  span), connecting the fan-out edges to the real executing spans.
+- Reviewer conditions applied: ISSUE-4 (nested-member skip), ISSUE-5
+  (capture offset filter + locals-before-params), ISSUE-7 (override-only
+  fan-out targets), ISSUE-6 (star-import branch untouched — own batch).
+- Fixtures: all 10 design fixtures + the 8 LV fixtures landed as
+  cb31..cb48 (18 rows; consolidated manifest 84 -> 102).  Honest
+  deviations recorded in GR-14u49.yml: cb32's phantom-absence is
+  probe-documented (the runner vocabulary cannot express "no edge
+  exists"); cb38's all-or-nothing is a callgraph-level pin (the proof
+  fallback is a proof-layer behavior); cb40 pins the CURRENT wrapped-
+  supertype behavior.
 
 ## Scope and goal
 

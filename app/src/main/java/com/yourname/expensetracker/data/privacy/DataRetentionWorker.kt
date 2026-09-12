@@ -97,7 +97,9 @@ class DataRetentionWorker @AssistedInject constructor(
             // PRIV-441-12: Use injectable RetentionRegistry instead of inline list
             val allTargets = retentionRegistry.allTargets().toList()
             // P8-PR1 (NEW-P8-002): Order targets deterministically so checkpoint works.
-            val orderedTargets = allTargets.sortedBy { it.name }
+            // GR-14u49: explicit element-type annotation so the static callgraph
+            // resolves the loop variable's receiver (GR-08k1 precedent).
+            val orderedTargets: List<RetentionTarget> = allTargets.sortedBy { it.name }
             val results = mutableListOf<RetentionPurgeResult>()
 
             // Determine which targets to skip based on checkpoint
