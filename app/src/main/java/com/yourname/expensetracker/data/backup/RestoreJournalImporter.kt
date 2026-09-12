@@ -5,6 +5,7 @@ import com.yourname.expensetracker.data.database.dao.OperationRunEventDao
 import com.yourname.expensetracker.data.database.entity.OperationRun
 import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.domain.util.TimeProvider
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -117,6 +118,7 @@ class RestoreJournalImporter @Inject constructor(
                         )
                     )
                 }.onFailure {
+                    if (it is CancellationException) throw it
                     Timber.w(it, "RestoreJournalImporter: failed to insert event ${event.stage}")
                     allSucceeded = false
                 }
@@ -223,6 +225,7 @@ class RestoreJournalImporter @Inject constructor(
                         )
                     )
                 }.onFailure {
+                    if (it is CancellationException) throw it
                     Timber.w(it, "RestoreJournalImporter: failed to insert failure event ${event.stage}")
                     allSucceeded = false
                 }

@@ -207,6 +207,43 @@ class RestoreJournalImporterFailureTest {
         coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
     }
 
+    @Test
+    fun `cancellation from the DAO insert propagates and leaves the journal unmarked`() = runTest {
+        // GR-14u46b: runCatching traps CancellationException into
+        // Result.failure — without the onFailure rethrow the for-loop
+        // continued, every subsequent insert was likewise swallowed, and
+        // the outer catch's rethrow never saw the cancellation.  The
+        // exception must surface out of BOTH import functions and the
+        // journal must stay unmarked (retry-on-next-startup property).
+        val successCid = writeSuccessJournal()
+        coEvery { operationRunDao.getByCorrelationId(successCid) } returns null
+        coEvery { operationRunDao.insert(any()) } returns 11L
+        coEvery { operationRunEventDao.getByRunId(11L) } returns emptyList()
+        coEvery { operationRunEventDao.insert(any()) } throws
+            CancellationException("cancelled")
+
+        val successThrown = runCatching {
+            importer.importLastSuccessJournalIfPresent()
+        }.exceptionOrNull()
+
+        assertEquals(true, successThrown is CancellationException)
+        org.junit.Assert.assertFalse(journal.isSuccessJournalImported(successCid))
+
+        // Fresh journal for the failure path (the success journal file is
+        // untouched by the failure import, but reset mocks for clarity).
+        val failureCid = writeFailureJournal("Verification failed")
+        coEvery { operationRunDao.getByCorrelationId(failureCid) } returns null
+        coEvery { operationRunDao.insert(any()) } returns 12L
+        coEvery { operationRunEventDao.getByRunId(12L) } returns emptyList()
+
+        val failureThrown = runCatching {
+            importer.importLastFailureJournalIfPresent()
+        }.exceptionOrNull()
+
+        assertEquals(true, failureThrown is CancellationException)
+        org.junit.Assert.assertFalse(journal.isFailureJournalImported(failureCid))
+    }
+
     /** Writes a terminal success journal (active journal renamed to the success file). */
     private fun writeSuccessJournal(): String {
         val entry = journal.beginJournal(

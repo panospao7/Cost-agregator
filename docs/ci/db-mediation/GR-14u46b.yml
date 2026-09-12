@@ -1,0 +1,67 @@
+# GR-14u46b — cancellation-propagation fix in RestoreJournalImporter's
+# runCatching onFailure bodies (production Kotlin + test, minimal).
+#
+# DEFECT: `kotlin.runCatching` catches ALL Throwable including
+# CancellationException.  Both per-event insert sites in
+# RestoreJournalImporter wrapped the suspend DAO insert in
+# `runCatching { operationRunEventDao.insert(...) }.onFailure { Timber.w(...);
+# allSucceeded = false }` — the suspend insert is a cancellation delivery
+# point, so on cancellation mid-import the exception was trapped in
+# Result.failure, logged as a warning, allSucceeded set false, the for-loop
+# CONTINUED (every subsequent insert throwing-on-entry was likewise
+# swallowed), and the outer catch's correct CancellationException rethrow
+# never saw it.  This violates the repo's codified invariant
+# (CancellationSafe.kt L13: "Never swallow cancellation in result wrappers
+# or error handlers").  RestoreJournalImporter was the corpus outlier —
+# the correct idiom already exists in TransactionLifecycleCoordinator
+# (L351 / L1167: `if (it is CancellationException) throw it` as the FIRST
+# line of the onFailure body).
+#
+# FIX (2-line rethrow per site, repo idiom):
+#   - RestoreJournalImporter.kt: both onFailure bodies (L120-124 and
+#     L227-231 post-u45b numbering) gain
+#     `if (it is CancellationException) throw it` as the FIRST statement,
+#     exactly matching the TransactionLifecycleCoordinator style (import
+#     kotlinx.coroutines.CancellationException added; the bare name used —
+#     the file's own catch blocks previously spelled it fully-qualified;
+#     unifying on the imported form matches the repo idiom).
+#   - Semantic test added to RestoreJournalImporterFailureTest.kt:
+#     `cancellation from the DAO insert propagates and leaves the journal
+#     unmarked` — `coEvery { operationRunEventDao.insert(any()) } throws
+#     CancellationException("cancelled")`, asserting the exception
+#     PROPAGATES out of BOTH import functions (runCatching-then-assert,
+#     the file's existing style) AND the journal is NOT marked imported
+#     (assertFalse isSuccessJournalImported / isFailureJournalImported —
+#     the retry-on-next-startup regression property).
+#   - Nothing else touched; no engine changes.
+#
+# OUTCOME (board, pre fa065dfe... -> post fa065dfe..., double run
+# byte-identical): NO board change.  The defect fix is orthogonal to
+# proof status: the change sits inside the already-unmodelable
+# RestoreJournalImporter callables (the u33-era `.mapNotNull`-chain /
+# runCatching lambda-escape findings keep the GR-12 body model refusing,
+# so the rows remain at GR13_LOCAL_GUARD_UNMODELABLE per the u45b
+# outcome) and alters no proof-relevant structure — the runCatching
+# shape is unchanged, only the onFailure body gained a guarded rethrow.
+# proofStates byte-identical: proven_helper 324, restore 1, worker 14,
+# ambiguous 5, async 35, counterexamples 0.
+#
+# HARD STOP CHECKS: 0 counterexample flips, 0 regressions, board
+#   byte-identical (verified fc /b against board-u45b-run1.json and
+#   across the double run).
+#
+# VALIDATION:
+#   - scripts/db_guard: 269 passed (no engine change)
+#   - board double run byte-identical fa065dfeb785d0c9 (both runs
+#     identical to each other AND to the u45b board)
+#   - Kotlin: NOT RUN — production Kotlin changed (2 rethrow lines + 1
+#     import); human/CI compile validation OWED; the updated test file
+#     is compile-critical
+#
+# Remaining: the other ~20 corpus `runCatching { }.onFailure { }` sites —
+#   an audit for the same cancellation-swallowing pattern is a follow-up
+#   debt item; the u46 engine admission work will make those callables
+#   modelable so the proof layer can see their cancellation handling.
+#   The RestoreJournalImporter GR13_LOCAL_GUARD_UNMODELABLE rows (u45b
+#   outcome) await the u41-style tokenizer batch.
+status: COMPLETE_AT_BOARD_fa065dfe
