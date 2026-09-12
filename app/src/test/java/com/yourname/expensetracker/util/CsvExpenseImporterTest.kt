@@ -5,6 +5,9 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
+import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
@@ -24,6 +27,7 @@ class CsvExpenseImporterTest {
 
     private val categoryDao = mockk<CategoryDao>(relaxed = true)
     private val coordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+    private val currencySettingsRepository = mockk<CurrencySettingsRepository>()
     private val maintenanceMode = mockk<RestoreMaintenanceMode>()
 
     private fun writeBarrier(mode: RestoreMaintenanceMode.Mode): DatabaseWriteBarrier {
@@ -38,10 +42,16 @@ class CsvExpenseImporterTest {
 
     @Before
     fun setup() {
+        // GR-14u49b: the importer resolves the home currency per row BEFORE
+        // category resolution and createExpense; a strict mock without this
+        // stub made every row die at the per-row catch (base-branch debt).
+        // Idiom copied from ExportImportRoundtripTest.
+        coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+            HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         importer = CsvExpenseImporter(
             categoryDao,
             coordinator,
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencySettingsRepository,
             writeBarrier = writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
         )
     }
@@ -51,7 +61,7 @@ class CsvExpenseImporterTest {
         val imp = CsvExpenseImporter(
             categoryDao,
             mockk<TransactionLifecycleCoordinator>(relaxed = true),
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencySettingsRepository,
             writeBarrier = writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
         )
         assertThat(imp).isNotNull()
@@ -65,7 +75,7 @@ class CsvExpenseImporterTest {
         val blockedImporter = CsvExpenseImporter(
             categoryDao,
             coordinator,
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencySettingsRepository,
             writeBarrier = writeBarrier(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
         )
 
@@ -89,7 +99,7 @@ class CsvExpenseImporterTest {
         val cancellingImporter = CsvExpenseImporter(
             categoryDao,
             coordinator,
-            currencySettingsRepository = mockk(),
+            currencySettingsRepository = currencySettingsRepository,
             writeBarrier = cancellingBarrier
         )
 
