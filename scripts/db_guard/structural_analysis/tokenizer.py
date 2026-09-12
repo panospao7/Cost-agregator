@@ -517,6 +517,48 @@ def _match_chained_carrier(stripped: str, methods: tuple[str, ...]):
     return m
 
 
+_RE_CARRIER_CHAIN_CACHE: dict[tuple[str, ...], "re.Pattern[str] | None"] = {}
+
+
+def _match_carrier_chain(stripped: str, methods: tuple[str, ...]):
+    """GR-14u46: carrier-CHAIN candidate — N>=2 admitted segments.
+
+    ``[val/var prefix]? chain.c1(args?) { }.c2(args?) { }...`` where EVERY
+    segment name is name-exact against the closed inline-carrier set.  The
+    idiomatic ``runCatching { ... }.onFailure { ... }`` shape matched
+    neither the u33 head rule (its lambda does not end the statement) nor
+    the u39 chained rule (the first carrier's lambda is followed by
+    ``.onFailure``), so the whole composite fell to the generic opacity
+    gate and refused whole callables on the outer statement.
+
+    The regex only LOCATES the first segment; segment-by-segment scanning
+    (including the last-lambda-ends-the-statement requirement) happens in
+    the parser.  The first segment may be a HEAD carrier (empty prefix —
+    ``runCatching { }`` leading the statement, which the u33 head branch
+    rejects only because its lambda does not end the statement) or a
+    u39-style chained form.  A ``?`` or ``=`` anywhere in the prefix keeps
+    the u39 exclusions; mid-chain segments are scanned structurally, where
+    any non-carrier name with a lambda fails the attempt (caller falls
+    back).
+    """
+    if not methods:
+        return None
+    pattern = _RE_CARRIER_CHAIN_CACHE.get(methods)
+    if pattern is None:
+        names = "|".join(re.escape(m) for m in methods)
+        pattern = re.compile(
+            r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+            r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
+            r"(?:(?P<prefix>[^{};?=]+?)\.)?"
+            r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
+        )
+        _RE_CARRIER_CHAIN_CACHE[methods] = pattern
+    m = pattern.match(stripped)
+    if m is None or m.group("method") not in methods:
+        return None
+    return m
+
+
 _RE_SAFE_CALL_CARRIER_CACHE: dict[tuple[str, ...], "re.Pattern[str] | None"] = {}
 
 
@@ -653,6 +695,81 @@ def _parse_chained_carrier(cur: _Cursor, base: int, stmt_e: int, match):
         children=tuple(inner),
         scope_method=method,
     )
+
+
+def _parse_carrier_chain(cur: _Cursor, base: int, stmt_e: int, first_match):
+    """Build per-segment TRANSPARENT_SCOPE regions for a carrier chain.
+
+    GR-14u46: each segment's lambda parses recursively as its own carrier
+    region (param-header skip, scope-label save/restore), nested inside the
+    previous segment's region; ``scope_receiver`` stays None (chain — the
+    u39 precedent: carrier regions are never canonical scopes) and each
+    segment carries its OWN ``scope_method`` (the bridge unions all
+    carrier spans by name-exact membership, so intermediate segments join
+    exactly like nested transparent scopes already do).
+
+    Fail-closed fallback (u33 hard-stop precedent): on ANY structural
+    failure the attempt is abandoned WITHOUT keeping its findings — the
+    caller re-parses the statement through the generic opacity gate,
+    behaving exactly as pre-u46.  A claim-then-reject that hard-fails a
+    currently-absorbed no-mutation site would be a corpus-wide regression.
+
+    Returns (regions, findings) — the caller decides claim vs fallback
+    from the regions and rolls the findings back on fallback.
+    """
+    findings_before = len(cur.findings)
+    regions: list[ParsedRegion] = []
+    pos = base
+    # First segment: anchored head match (end() is relative to `stripped`,
+    # i.e. relative to `base` in absolute offsets).
+    match = first_match
+    while True:
+        method = match.group("method")
+        brace_abs = pos + match.end() - 1
+        close = _match_forward(cur.text, brace_abs, stmt_e)
+        if close < 0:
+            return None, cur.findings[findings_before:]
+        saved = cur.scope_label
+        cur.scope_label = method
+        try:
+            body_start = brace_abs + 1
+            param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+            if param_match is not None:
+                body_start += param_match.end()
+            inner = _parse_sequence(cur, body_start, close - 1, True)
+        finally:
+            cur.scope_label = saved
+        regions.append(
+            ParsedRegion(
+                kind=RegionKind.TRANSPARENT_SCOPE,
+                span=cur.span(pos, close),
+                children=tuple(inner),
+                scope_method=method,
+            )
+        )
+        # Next segment: `.name(args?) {` immediately after this lambda.
+        seg = cur.text[close:stmt_e]
+        seg_match = re.match(
+            r"\s*\.\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{",
+            seg,
+        )
+        if seg_match is None:
+            break
+        if seg_match.group(1) not in cur.transparent_inline_methods:
+            # A lambda hangs off a non-carrier name: the chain shape is
+            # not fully admitted — abandon the attempt (caller falls
+            # back to the generic path).
+            return None, cur.findings[findings_before:]
+        pos = close
+        # The remainder match's end() is relative to `seg`, i.e. relative
+        # to `close` in absolute offsets — exactly what the loop head
+        # adds to `pos`.
+        match = seg_match
+    tail = cur.text[regions[-1].span.end:stmt_e].strip(_WS) if regions else "?"
+    if not regions or tail:
+        return None, cur.findings[findings_before:]
+    return regions, cur.findings[findings_before:]
 
 
 def _parse_block(
@@ -1044,6 +1161,34 @@ def _parse_sequence(
                             out.append(region)
                         idx += 1
                         continue
+                # GR-14u46: carrier CHAINS (N>=2 admitted segments).  The
+                # idiomatic `runCatching { ... }.onFailure { ... }` matched
+                # neither the u33 head rule (its lambda does not END the
+                # statement) nor the u39 chained rule (the first carrier's
+                # lambda is followed by `.onFailure`), so the composite fell
+                # to the generic opacity gate and refused whole callables on
+                # the outer statement.  The chain is claimed ONLY when the
+                # attempt parses cleanly: every segment name is in the
+                # closed set, the last lambda ends the statement, and no
+                # structural failure occurred.  On ANY failure the attempt's
+                # findings are rolled back and the statement re-parses
+                # through the generic opacity gate — pre-u46 behavior
+                # exactly (u33 hard-stop precedent: a claim-then-reject that
+                # hard-fails a currently-absorbed no-mutation site would be
+                # a corpus-wide regression).
+                chain_match = _match_carrier_chain(
+                    stripped, cur.transparent_inline_methods
+                )
+                if chain_match is not None:
+                    findings_before = len(cur.findings)
+                    regions, _attempt_findings = _parse_carrier_chain(
+                        cur, base, stmt_e, chain_match
+                    )
+                    if regions is not None:
+                        out.extend(regions)
+                        idx += 1
+                        continue
+                    del cur.findings[findings_before:]
         if ts_match is not None:
             region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
             if region is not None:

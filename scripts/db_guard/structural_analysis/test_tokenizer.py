@@ -520,7 +520,7 @@ class TestClassification:
         assert self._classify(source) == self._classify(source)
 
 
-def parse_with_predicate(body: str, site_starts=(), barrier_spans=()):
+def parse_with_predicate(body: str, site_starts=(), barrier_spans=(), transparent_inline_methods=()):
     """Parse with a soundness gate over the given site starts / barrier spans."""
     from scripts.db_guard.structural_analysis.barrier_markers import (
         lambda_opacity_predicate,
@@ -532,7 +532,12 @@ def parse_with_predicate(body: str, site_starts=(), barrier_spans=()):
         type("S", (), {"span": SourceSpan(s, s + 1, 1, 1)})() for s in site_starts
     )
     predicate = lambda_opacity_predicate(masked, sites, tuple(barrier_spans))
-    return parse_callable_body(masked, SourceSpan(0, len(masked), 1, 1), lambda_opacity_predicate=predicate)
+    return parse_callable_body(
+        masked,
+        SourceSpan(0, len(masked), 1, 1),
+        lambda_opacity_predicate=predicate,
+        transparent_inline_methods=tuple(transparent_inline_methods),
+    )
 
 
 class TestReturnConstructs:
@@ -1008,6 +1013,151 @@ class TestReturnConstructs:
         assert not result.is_supported
         assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
         assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_carrier_chain_runCatching_onFailure_admitted(self):
+        # GR-14u46: the idiomatic `runCatching { }.onFailure { }` chain
+        # matched neither the u33 head rule (its first lambda does not end
+        # the statement) nor the u39 chained rule (the first carrier's
+        # lambda is followed by `.onFailure`), so the composite fell to the
+        # generic opacity gate and refused whole callables.  Each segment
+        # now claims its own TRANSPARENT_SCOPE region with its own
+        # scope_method (per-segment, u39 scope_receiver=None precedent).
+        result = parse(
+            "runCatching {\n"
+            "  val a = 1\n"
+            "  dao.insert(a)\n"
+            "}\n"
+            ".onFailure {\n"
+            "  log()\n"
+            "}\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+        assert result.regions[0].scope_method == "runCatching"
+        assert result.regions[1].scope_method == "onFailure"
+        assert result.regions[0].scope_receiver is None
+        assert result.regions[1].scope_receiver is None
+
+    def test_carrier_chain_with_mutation_parses(self):
+        # The parse claims the chain; the mutation inside stays
+        # dominance-gated at the proof layer (parse-level pin only).
+        result = parse(
+            "runCatching { dao.insert(x) }.onFailure { log() }\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+
+    def test_carrier_chain_non_carrier_middle_refused_falls_back(self):
+        # A lambda hanging off a NON-carrier name mid-chain is not an
+        # admitted chain shape: the attempt is abandoned and the statement
+        # falls back to the generic path — pre-u46 outcome exactly
+        # (lambda-escape, no absorbed claim).
+        result = parse(
+            "runCatching { x }\n"
+            ".customThing { y }\n"
+            ".onFailure { z }\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_carrier_chain_trailing_content_refused_falls_back(self):
+        # Trailing content after the last lambda (`... .toString()`) means
+        # the chain does not end the statement: fallback, pre-u46 outcome.
+        result = parse(
+            "runCatching { x }\n"
+            ".onFailure { y }\n"
+            ".toString()\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_carrier_chain_previously_absorbed_stays_supported(self):
+        # HARD-STOP regression guard: a no-mutation chain that the opacity
+        # gate previously absorbed as an opaque leaf must never produce a
+        # HARD finding.  Post-u46 the cleanly-parsing chain is CLAIMED (the
+        # u33 precedent: carrier children are individually modeled instead
+        # of hidden — same as `val x = y.count { }`), which is an
+        # improvement, not a regression.  The claim-then-REJECT danger
+        # (hard finding on a previously-absorbed site) is pinned by the
+        # three fallback fixtures above: non-carrier middle, trailing
+        # content, and unlisted segment names all keep the exact pre-u46
+        # lambda-escape outcome with no absorbed-site regression.
+        result = parse_with_predicate(
+            "runCatching { 1 }.onFailure { 2 }\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert [region.kind for region in result.regions] == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+
+    def test_carrier_chain_three_segments_with_unlisted_name_refused(self):
+        # `onSuccess` is NOT in the closed carrier set: the chain attempt
+        # is abandoned and the statement keeps the pre-u46 lambda-escape
+        # outcome.
+        result = parse(
+            "runCatching { x }\n"
+            ".onSuccess { y }\n"
+            ".onFailure { z }\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_carrier_chain_real_shape_restore_journal_import(self):
+        # The real RestoreJournalImporter L101-124 shape: the per-event
+        # `runCatching { dao.insert(OperationRunEvent(...)) }.onFailure {
+        # ... }` inside a for-loop — the last blocker for the 4
+        # GR13_LOCAL_GUARD_UNMODELABLE rows (barrier checks are real since
+        # u45b; GR-12 could not prove dominance over an unmodelable body).
+        result = parse(
+            "for (event in events) {\n"
+            "  if (!importedIds.add(event.eventId)) continue\n"
+            "  runCatching {\n"
+            "    operationRunEventDao.insert(\n"
+            "      OperationRunEvent(\n"
+            "        operationRunId = runId,\n"
+            "        eventId = event.eventId\n"
+            "      )\n"
+            "    )\n"
+            "  }.onFailure {\n"
+            "    if (it is CancellationException) throw it\n"
+            "    Timber.w(it, \"failed to insert event\")\n"
+            "    allSucceeded = false\n"
+            "  }\n"
+            "}\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        loop = result.regions[0]
+        assert loop.kind == RegionKind.LOOP
+        # The `if (!importedIds.add(...)) continue` guard statement, then
+        # the two chain segments as sibling carrier regions.
+        assert [child.kind for child in loop.children] == [
+            RegionKind.IF,
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+        assert loop.children[1].scope_method == "runCatching"
+        assert loop.children[2].scope_method == "onFailure"
 
 
 class TestValConstructInitializers:
