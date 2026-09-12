@@ -159,3 +159,18 @@ fixtures:
   - id: CB-48
     file: call_binding/cb48_loopvar_set_fanout.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-49
+    file: call_binding/cb49_returntype_chain.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-50
+    file: call_binding/cb50_returntype_missing.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-51
+    file: call_binding/cb51_returntype_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-52
+    file: call_binding/cb52_returntype_generic.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-53
+    file: call_binding/cb53_returntype_two_segment.kt
+    expectedResolution: EXACT_SYNCHRONOUS

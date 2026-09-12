@@ -152,6 +152,15 @@ CB_SUBJECT_CALLS = {
     "CB-46": (("exerciseCb46", "purgeInner"),),
     "CB-47": (("exerciseCb47", "purge"),),
     "CB-48": (("exerciseCb48", "purge"),),
+    # GR-14u50 return-type capture + chain typing: positives bind the val
+    # through explicit declared return types (single and two-segment
+    # chains); the pins fail closed on missing return types, distinct
+    # return types, and generic components.
+    "CB-49": (("exerciseCb49", "insert"),),
+    "CB-50": (("exerciseCb50", "insert"),),
+    "CB-51": (("exerciseCb51", "insert"),),
+    "CB-52": (("exerciseCb52", "insert"),),
+    "CB-53": (("exerciseCb53", "insert"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.

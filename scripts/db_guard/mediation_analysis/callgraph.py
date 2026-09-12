@@ -362,6 +362,10 @@ class CallableModel:
     # the callable whose scope their captures resolve against (capture
     # typing).  None for every ordinary declaration.
     enclosing_key: str | None = None
+    # GR-14u50: the EXPLICIT declared return type text (`: T` in source), or
+    # None when omitted/inapplicable.  Captured at model construction; the
+    # chain-typing consumer decides genericity.
+    return_type: str | None = None
 
 
 @dataclass(frozen=True)
@@ -975,6 +979,7 @@ def _callable_models(
         # or a bodyless declaration (`abstract fun doWork(): Result`) would
         # swallow the NEXT declaration's body.
         body_start, body_end, decl_end = _body_span_after_params(masked, params_close)
+        return_type = _declared_return_type(masked, params_close)
         models.append(
             CallableModel(
                 key=key,
@@ -995,6 +1000,7 @@ def _callable_models(
                 decl_end=decl_end,
                 body_start=body_start,
                 body_end=body_end,
+                return_type=return_type or None,
             )
         )
     return models
@@ -1106,6 +1112,33 @@ def _body_span_after_params(masked: str, params_close: int) -> tuple[int, int, i
         if expr_end > cursor + 1:
             return cursor + 1, expr_end, expr_end
     return -1, -1, params_close
+
+
+def _declared_return_type(masked: str, params_close: int) -> str:
+    """The EXPLICIT declared return-type text after the parameter list, or "".
+
+    GR-14u50 (1): captured only when the signature spells `: Type` between
+    the closing `)` and the body — the text sits between the colon and the
+    `{` / `=` that _skip_return_type locates (deterministic span, same
+    scanner).  Fail closed: an omitted return type (expression-bodied or
+    inferred) returns ""; constructors and property accessors never reach
+    this scan (they are not `fun`-declaration models with a `: T` clause).
+    The full generic text IS captured (`Result<List<X>>`); genericity is
+    the CONSUMER's decision (see _chain_val_type).
+    """
+    cursor = _skip_ws(masked, params_close)
+    if cursor >= len(masked) or masked[cursor] != ":":
+        return ""
+    colon = cursor
+    stop = _skip_return_type(masked, colon + 1)
+    text = masked[colon + 1 : stop].strip()
+    if not text:
+        return ""
+    # A trailing-lambda `{` after an ARGUMENT list is not a body brace; the
+    # captured text must not contain one (the scanner stops at depth-0 `{`).
+    if "{" in text or "=" in text:
+        return ""
+    return text
 
 
 def _call_lambda_span(masked: str, name_start: int, name_len: int) -> tuple[int, int]:
@@ -1294,6 +1327,9 @@ class CallGraphBuilder:
         self._anon_members_registered: bool = False
         self._anon_site_counter: dict[str, int] = {}
         self._anon_owner_by_site: dict[tuple[str, int], str] = {}
+        # GR-14u50: chain-typing recursion guard (mutual local-val chains
+        # like `val a = b.c(); val b = a.d()`).
+        self._chain_resolution_depth: int = 0
         self.edges: tuple[CallEdge, ...] = ()
         self.scc = SCCState()
         self.scc_exact = SCCState()
@@ -1884,7 +1920,15 @@ class CallGraphBuilder:
             return None
         if not call.receiver_text:
             return None
-        masked = self.file_models[call.file].masked
+        return self._loop_variable_type_for_name(
+            model, call.receiver_text, call.name_start
+        )
+
+    def _loop_variable_type_for_name(
+        self, model: CallableModel, var_name: str, use_offset: int
+    ) -> str | None:
+        """Name/offset-scoped core of the loop-variable typing (GR-14u49)."""
+        masked = self.file_models[model.file].masked
         best: tuple[int, str] | None = None  # (loop_body_open, element_type)
         for match in self._FOR_LOOP_RE.finditer(
             masked, model.body_start, model.body_end
@@ -1898,7 +1942,7 @@ class CallGraphBuilder:
             )
             if name_match is None:
                 continue
-            if name_match.group("name") != call.receiver_text:
+            if name_match.group("name") != var_name:
                 continue
             iter_text = name_match.group("iter").strip()
             source_type = self._explicit_iterable_source_type(
@@ -1915,8 +1959,8 @@ class CallGraphBuilder:
             body_close = find_balanced(masked, body_open, "{", "}")
             if body_close < 0:
                 continue
-            # Offset-scoped: the call must sit inside THIS loop's body.
-            if not (body_open < call.name_start < body_close):
+            # Offset-scoped: the use must sit inside THIS loop's body.
+            if not (body_open < use_offset < body_close):
                 continue
             if best is None or body_open > best[0]:
                 best = (body_open, element)
@@ -1999,6 +2043,19 @@ class CallGraphBuilder:
         return None
 
     def _local_val_type(self, call: CallRecord) -> str | None:
+        model = self.callables.get(call.caller_key)
+        if model is None:
+            return None
+        # GR-14u50: delegate to the name/offset-scoped resolver, which adds
+        # chain typing for inferred local vals (member-call initializers
+        # with explicit declared return types).  Everywhere the chain
+        # resolution fails, the historical raw-initializer-text behavior
+        # applies byte-identically.
+        chained = self._local_val_type_of_name(
+            model, call.receiver_text, call.name_start
+        )
+        if chained is not None:
+            return chained
         bindings = self._local_vals.get(call.caller_key, ())
         best: tuple[int, str] | None = None
         for name, type_text, offset in bindings:
@@ -2006,6 +2063,211 @@ class CallGraphBuilder:
                 if best is None or offset > best[0]:
                     best = (offset, type_text)
         return best[1] if best is not None else None
+
+    def _chain_val_type(
+        self, model: CallableModel, name: str, before_offset: int
+    ) -> str | None:
+        """Resolved FQCN-able type for a local val whose INITIALIZER is a
+        member chain, or None.
+
+        GR-14u50 (2): a local val like ``val rawNotificationDao =
+        appDatabase.rawNotificationDao()`` has an inferred type the local-
+        vals index cannot store — but the chain IS statically resolvable
+        when every segment has an EXPLICIT declared return type.  The head
+        receiver resolves through the established order (local vals -> loop
+        vars -> fun params -> owner properties); each segment matches the
+        corpus callable(s) on (owner, name) and contributes its captured
+        return_type to the next segment.  FAIL-CLOSED AT EVERY STEP: head
+        unresolvable, a segment matching 0 or >1 callables, a missing
+        return_type, a return type that fails to resolve to exactly one
+        corpus FQCN or known external, or any non-chain shape (assignments,
+        indexing, calls with arguments) -> None.  No inference beyond
+        explicit declared return types.
+        """
+        bindings = self._local_vals.get(model.key, ())
+        initializer: str | None = None
+        best: tuple[int, str] | None = None
+        for local_name, _type_text, offset in bindings:
+            if local_name != name:
+                continue
+            if offset >= before_offset:
+                continue
+            if best is None or offset > best[0]:
+                best = (offset, _type_text)
+        if best is None:
+            return None
+        # The initializer text is not stored in _local_vals; re-scan the
+        # declaration from the masked source.  best[0] is the NAME group's
+        # offset (match.start(1)), so the `val` keyword sits a few chars
+        # earlier — search slightly before it to re-anchor the SAME
+        # declaration.
+        masked = self.file_models[model.file].masked
+        decl_match = _VAL_LOCAL_RE.search(masked, max(0, best[0] - 12))
+        if (
+            decl_match is None
+            or decl_match.start(1) != best[0]
+            or decl_match.group(1) != name
+        ):
+            return None
+        eq = masked.find("=", decl_match.end() - 1)
+        if eq < 0:
+            return None
+        initializer = masked[eq + 1 :].lstrip()
+        newline = initializer.find("\n")
+        if newline >= 0:
+            initializer = initializer[:newline]
+        initializer = initializer.strip().rstrip(",")
+        return self._resolve_member_chain(model, initializer)
+
+    def _resolve_member_chain(
+        self, model: CallableModel, chain_text: str
+    ) -> str | None:
+        """Resolve a dotted member-call chain to its final return type FQCN."""
+        text = chain_text.strip()
+        if not text.endswith(")") or "(" in text.split(".")[-1]:
+            # The final segment must be a call; anything with arguments in
+            # the last segment or a non-call tail fails closed.
+            if not text.endswith(")"):
+                return None
+        if "=" in text or "[" in text or "{" in text:
+            return None
+        segments = text.split(".")
+        if len(segments) < 2:
+            return None
+        head = segments[0].strip()
+        if not re.fullmatch(r"%s" % _ID, head):
+            return None
+        receiver_fqcn, known = self._head_receiver_type(model, head, 0)
+        if not known or not receiver_fqcn:
+            return None
+        current = receiver_fqcn
+        # Segments: `rawNotificationDao()` style — a name optionally followed
+        # by an empty or argument-bearing paren pair.  Arguments are not
+        # analyzed; the segment binds by NAME on the receiver's owner.
+        for raw_segment in segments[1:]:
+            segment = raw_segment.strip()
+            call_match = re.fullmatch(
+                r"(?P<name>%s)\s*\(\s*\)" % _ID, segment
+            )
+            if call_match is None:
+                # Non-empty argument lists, properties, or nested shapes
+                # fail closed (no inference beyond no-arg chains).
+                return None
+            member_name = call_match.group("name")
+            file_model = self.file_models[model.file]
+            if current not in self.owners:
+                # External receiver: no corpus member lookup — fail closed.
+                return None
+            members = self._members_named(current, member_name)
+            return_types = set()
+            for member in members:
+                if not member.return_type:
+                    return None
+                return_types.add(member.return_type)
+            if len(return_types) != 1:
+                return None
+            fqcn, origin = self._resolve_type(file_model, next(iter(return_types)))
+            if origin == "unknown" or not fqcn:
+                return None
+            current = fqcn
+        return current
+
+    def _head_receiver_type(
+        self, model: CallableModel, name: str, before_offset: int
+    ) -> tuple[str, bool]:
+        """Head-receiver resolution for a chain: the established order."""
+        file_model = self.file_models[model.file]
+        local_type = self._local_val_type_of_name(model, name, before_offset)
+        if local_type is not None:
+            fqcn, origin = self._resolve_type(
+                file_model,
+                self._unwrap_di_wrapper_type(file_model, local_type) or local_type,
+            )
+            return fqcn, origin != "unknown"
+        loop_type = self._loop_variable_type_for_name(model, name, before_offset)
+        if loop_type is not None:
+            fqcn, origin = self._resolve_type(file_model, loop_type)
+            return fqcn, origin != "unknown"
+        for param_name, param_type in model.params_named:
+            if param_name == name:
+                fqcn, origin = self._resolve_type(
+                    file_model,
+                    self._unwrap_di_wrapper_type(file_model, param_type) or param_type,
+                )
+                return fqcn, origin != "unknown"
+        # GR-14u49 capture typing: synthetic anon members resolve free
+        # identifiers against the enclosing callable's scope (the same rule
+        # receiver_fqcn_for_call applies) — required for chain-head
+        # resolution inside the members.
+        captured = self._captured_binding_type(model, name, before_offset)
+        if captured is not None:
+            fqcn, origin = self._resolve_type(file_model, captured)
+            return fqcn, origin != "unknown"
+        owner_fqcn = model.owner_fqcn
+        seen_owners: set[str] = set()
+        while owner_fqcn and owner_fqcn in self.owners and owner_fqcn not in seen_owners:
+            seen_owners.add(owner_fqcn)
+            for prop_name, prop_type in self.owners[owner_fqcn].properties:
+                if prop_name == name and prop_type:
+                    fqcn, origin = self._resolve_type(
+                        file_model,
+                        self._unwrap_di_wrapper_type(file_model, prop_type) or prop_type,
+                    )
+                    return fqcn, origin != "unknown"
+            nxt = ""
+            for supertype in self.owner_supertypes.get(owner_fqcn, ()):
+                if supertype and supertype in self.owners:
+                    nxt = supertype
+                    break
+            owner_fqcn = nxt
+        fqcn, origin = self._resolve_type(file_model, name)
+        return fqcn, origin != "unknown"
+
+    def _local_val_type_of_name(
+        self, model: CallableModel, name: str, before_offset: int
+    ) -> str | None:
+        """Declared/inferred type text of a local binding by name, or None.
+
+        Includes the GR-14u50 chain resolution: an untyped (inferred) local
+        whose initializer is a resolvable member chain types through the
+        chain.  The raw initializer text (non-chain) returns None — the
+        historical failure path is unchanged for it.
+        """
+        bindings = self._local_vals.get(model.key, ())
+        best: tuple[int, str] | None = None
+        for local_name, type_text, offset in bindings:
+            if local_name != name or offset >= before_offset:
+                continue
+            if best is None or offset > best[0]:
+                best = (offset, type_text)
+        if best is None:
+            return None
+        masked = self.file_models[model.file].masked
+        # Distinguish an EXPLICIT `: T` annotation from the ctor-shape
+        # fallback: _collect_local_vals stores the initializer head when no
+        # annotation exists, so a captured text containing a dot (or a text
+        # with no colon before `=` in the source) is NOT a declared type.
+        decl_match = _VAL_LOCAL_RE.search(masked, max(0, best[0] - 12))
+        has_annotation = False
+        if (
+            decl_match is not None
+            and decl_match.start(1) == best[0]
+            and decl_match.group(1) == name
+        ):
+            eq_pos = masked.find("=", decl_match.end() - 1)
+            between = masked[decl_match.end() - 1 : eq_pos]
+            has_annotation = re.match(r"\s*:\s", between) is not None
+        if has_annotation and best[1]:
+            return best[1]
+        # Inferred: attempt chain typing on the initializer (recursion-
+        # guarded: mutual local-val chains fail closed).
+        if self._chain_resolution_depth >= 3:
+            return None
+        self._chain_resolution_depth += 1
+        try:
+            return self._chain_val_type(model, name, before_offset)
+        finally:
+            self._chain_resolution_depth -= 1
 
     def _collect_local_vals(self, model: CallableModel) -> None:
         if model.body_start < 0:
@@ -2514,6 +2776,7 @@ class CallGraphBuilder:
                     body_start=body_start,
                     body_end=body_end,
                     enclosing_key=enclosing.key,
+                    return_type=_declared_return_type(masked, params_close) or None,
                 )
             )
         return models

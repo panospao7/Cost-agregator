@@ -1,0 +1,125 @@
+# GR-14u50 — DAO-accessor return typing: return-type capture for corpus
+# callables + chain typing for local val initializers (the follow-up named
+# in GR-14u49.yml's Remaining).
+#
+# DEFECT: local vals with CHAIN initializers were untypeable.  The engine's
+# local-vals index stored the initializer TEXT (`appDatabase.
+# rawNotificationDao`) but could not type it: CallableModel had NO
+# return-type field, and _local_val_type returned the raw initializer text
+# which _resolve_type fails on.  The chain IS statically resolvable —
+# AppDatabase.rawNotificationDao(): RawNotificationDao is an explicit
+# return type on an abstract member of a corpus class, and
+# RawNotificationDao is a corpus interface with ZERO corpus implementors
+# (the Room impl is build-generated) — the same shape as every proven
+# writer callable's `private val dao: SomeEventDao` field.
+#
+# FIX (two mechanisms, fail-closed at every step):
+#   1. RETURN-TYPE CAPTURE: CallableModel gains `return_type` (default
+#      None), captured at model construction from the EXPLICIT `: Type`
+#      clause between the closing `)` and the body — reusing
+#      _skip_return_type's scanner (new _declared_return_type helper,
+#      deterministic span).  Fail closed: no return type for
+#      expression-bodied functions with an omitted type, constructors,
+#      property accessors; the full generic text IS captured and
+#      genericity is the CONSUMER's decision.  Captured for both ordinary
+#      declarations and the u49 synthetic anon members (their overrides
+#      declare `: T`).
+#   2. CHAIN TYPING for local val initializers (_resolve_member_chain +
+#      _local_val_type_of_name): when a local val's initializer is a
+#      no-arg dotted member chain, the HEAD receiver resolves through the
+#      established order (local vals -> loop vars -> fun params -> CAPTURE
+#      typing for synthetic members -> owner properties -> corpus types),
+#      and each segment matches the corpus callable(s) on (owner, name),
+#      contributing its captured return_type to the next segment; the
+#      final segment's return type becomes the val's type.  FAIL-CLOSED AT
+#      EVERY STEP: head unresolvable -> None; a segment matching 0 or >1
+#      DISTINCT return types -> None; a missing return_type -> None; a
+#      return type that fails to resolve to exactly one corpus FQCN or
+#      known external -> None; argument-bearing segments, properties,
+#      assignments, indexing -> None; mutual local-val chains guarded by
+#      a resolution-depth cap.  NO inference beyond explicit declared
+#      return types.  The explicit-annotation path is distinguished from
+#      the ctor-shape fallback text (an annotation `: T` is authoritative;
+#      the initializer-head text is not a type).  The u49 loop-var
+#      _explicit_iterable_source_type is UNCHANGED (it requires explicit
+#      annotations).  _local_val_type now delegates to the chain-aware
+#      lookup, falling back to the historical raw-text path byte-
+#      identically wherever the chain fails.
+#
+# EDGE A/B EVIDENCE (all 53,739 corpus edges compared pre/post): 108
+#   changed positions, ZERO previously-exact edges changed (hard-stop
+#   clean).  Categorization:
+#     - ~70 unresolved_target -> exact_synchronous(external): chain-typed
+#       vals on external-typed receivers corpus-wide;
+#     - ~30 unresolved_target -> exact_synchronous(corpus): chain-typed
+#       vals on corpus receivers (e.g. BillReminderWorker.doWork
+#       unresolved(1) -> exact(1));
+#     - 8 async_dispatch -> interface_dispatch: preservation-conversion
+#       sites now resolving to the honest interface-dispatch shape;
+#     - DatabaseBackupRepositoryImpl.restoreReceiptAssets: unresolved(33
+#       name-match targets) -> interface_dispatch(0) — 33-target noise
+#       narrowed to the honest interface shape;
+#     - 11 async_dispatch -> async_dispatch (same state, narrowed target
+#       sets): the RetentionModule members' site edges — receiver now
+#       resolves to the DAO interface, but the interface_dispatch(0
+#       override targets — zero corpus implementors) is still uncertain,
+#       so the preservation rule converts to async with the 1-name-match
+#       target set (narrowed from the previous wider sets).
+#
+# OUTCOME (board, pre 0028f57e... -> post 1b4c1bbe315e3155, double run
+# byte-identical): ZERO rows moved.  proofStates byte-identical:
+#   proven_helper 328, restore 1, worker 14, ambiguous 13, async 23,
+#   counterexamples 0.  The 10 RetentionModule rows remain
+#   unproven_ambiguous_call / GR13_UNCERTAIN_CALL_EDGE — REPORTED
+#   VERBATIM, NOT fabricated as proven.  Mechanism-level status: the
+#   chain typing WORKS (the members' site receivers now resolve to
+#   com.yourname.expensetracker.data.database.dao.RawNotificationDao —
+#   probe-verified), and the site edges resolve to the honest
+#   interface_dispatch shape on the DAO interface — but a zero-implementor
+#   interface's dispatch carries ZERO override targets, the edge stays
+#   uncertain, and the preservation rule converts it to async noise
+#   (narrowed).  The proof layer therefore has no exact ancestor path to
+#   upgrade the rows.  The remaining gap is NOT return typing — it is the
+#   zero-implementor-interface dispatch semantics: Room-generated DAO
+#   implementations are invisible to the corpus scan, so
+#   `interface_dispatch(0 targets)` is the truest statement the engine can
+#   make today.  Upgrading the 10 rows to proven requires an owner
+#   decision on that semantics (e.g. treating a zero-implementor corpus
+#   interface's member dispatch as a trusted single-target shape — a new
+#   uncertainty-semantics decision requiring sign-off per the charter),
+#   NOT more typing machinery.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows regressed,
+#   0 rows in unproven_external_entry, 0 previously-exact edges changed,
+#   0 unexpected board delta (379 entries diffed — zero row movements).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 99/99 checked, 99 passed, exit 0 (94 prior + 5 new)
+#   - scripts/ci: 1251 passed, 14 failed — byte-identical to the base
+#     commit's failure set (stash/re-run verified earlier in the batch
+#     family; freshness-stamp and platform-conditional tests,
+#     environment-dependent, pre-existing)
+#   - board double run byte-identical 1b4c1bbe315e3155
+#   - Kotlin: not run (no production change)
+#
+# FIXTURES (5 new, cb49..cb53; consolidated manifest 102 -> 107):
+#   cb49 RT-pos: `fun dao(): Cb49Dao` explicit return type + no-arg chain
+#        initializer -> the site edge resolves exact
+#   cb50 RT-neg-no-return-type: expression-bodied accessor, no declared
+#        return type -> unresolved (fail closed)
+#   cb51 RT-neg-ambiguous: two same-name members with DIFFERENT return
+#        types -> unresolved (distinct-return-type gate)
+#   cb52 RT-neg-generic: `fun <T> first(): T` — generic component fails to
+#        resolve -> unresolved (consumer-side genericity gate; the fixture
+#        uses an INFERRED val so the chain path is exercised — an
+#        annotated val would type via the annotation path instead)
+#   cb53 RT-chain: two-segment chain `obj.a().b()` with explicit return
+#        types on both -> val types as b's return, site exact
+#
+# Remaining: the zero-implementor-interface dispatch semantics (owner
+#   decision — the actual blocker for the 10 rows); the single-star-import
+#   fabrication fix (androidx.work.* — own batch, ISSUE-6); PrivacyGate
+#   dispatch admission (out of scope); the F-PROCESSBATCH (8) /
+#   F-POSTCOMMIT (6) families (u43 table).
+status: COMPLETE_AT_BOARD_1b4c1bbe
