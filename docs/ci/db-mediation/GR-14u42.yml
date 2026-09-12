@@ -1,0 +1,44 @@
+# GR-14u42 — ProofState vocabulary pin truth-sync (test-only, no
+# production change).
+#
+# DEFECT: models.ProofState has 12 members — PROVEN_RESTORE_INTERNAL was
+# added in the GR-14d era (GR-14u25 / contract V3, the mode-gated
+# restore-internal scope RestoreInternalWriteScope.run) between
+# PROVEN_WORKER_MEDIATED and the COUNTEREXAMPLE_* members, and the board
+# reports proven_restore_internal: 1 — but test_models.py still pinned
+# the pre-GR-14d 11-member vocabulary in BOTH places: EXPECTED_MEMBERS
+# ("ProofState") omitted the member and EXPECTED_COUNTS pinned 11, so
+# EnumVocabularyTests.test_member_counts_match_spec (12 != 11) and
+# test_no_other_members_beyond_expected_vocabulary (tuple mismatch)
+# failed on every run.  Every db_guard suite run since then needed
+# --ignore=scripts/db_guard/mediation_analysis/test_models.py to pass.
+# test_fixtures.py already knew the member; only this stale pin lagged.
+#
+# FIX (test-only): EXPECTED_MEMBERS["ProofState"] gains
+# PROVEN_RESTORE_INTERNAL in the exact models.py declaration position
+# (third, between PROVEN_WORKER_MEDIATED and
+# COUNTEREXAMPLE_UNGUARDED_CALL_PATH) and EXPECTED_COUNTS["ProofState"]
+# moves 11 -> 12.  No other test, assertion, or production file is
+# touched.
+#
+# OUTCOME (board, pre 508ad587... -> post 508ad587...):
+#   board BYTE-IDENTICAL (test-only change: no engine, no production,
+#   no fixture inputs).  proofStates unchanged: proven_helper 321,
+#   proven_restore_internal 1, proven_worker_mediated 14, ambiguous 8,
+#   async 35.
+#
+# HARD STOP CHECKS: 0 counterexample flips, 0 regressions, board
+#   byte-identical (verified fc /b against board-u41-final-a.json and
+#   across the double run).
+#
+# VALIDATION:
+#   - scripts/db_guard FULL run WITHOUT --ignore: 269 passed (the
+#     --ignore workaround is no longer needed)
+#   - structural_analysis: 237 passed
+#   - fixture corpus: 64/64, exit 0
+#   - board double run byte-identical 508ad5870150b191
+#   - Kotlin: not run (no production change)
+#
+# Remaining: none for this batch (truth-sync only; no engine or board
+#   change).
+status: COMPLETE_AT_BOARD_508ad587
