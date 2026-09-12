@@ -8,8 +8,10 @@ import com.yourname.expensetracker.data.database.entity.OperationRunEvent
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -39,7 +41,18 @@ class RestoreJournalImporterFailureTest {
     private val timeProvider = mockk<TimeProvider>().also {
         coEvery { it.now() } returns 1_700_000_000_000L
     }
+    private val maintenanceMode = mockk<RestoreMaintenanceMode>()
     private lateinit var importer: RestoreJournalImporter
+
+    private fun writeBarrier(mode: RestoreMaintenanceMode.Mode): DatabaseWriteBarrier {
+        // GR-14u45b: the DatabaseBarrierTest construction pattern — real
+        // barrier over a mode-stubbed RestoreMaintenanceMode.
+        val barrier = DatabaseWriteBarrier(maintenanceMode)
+        every { maintenanceMode.currentMode() } returns mode
+        every { maintenanceMode.isWritesAllowed() } returns
+            (mode == RestoreMaintenanceMode.Mode.NORMAL)
+        return barrier
+    }
 
     @Before
     fun setUp() {
@@ -50,7 +63,13 @@ class RestoreJournalImporterFailureTest {
             RestoreJournal.SUCCESS_JOURNAL_FILENAME
         ).forEach { File(context.filesDir, it).delete() }
         journal = RestoreJournal(context, com.yourname.expensetracker.domain.util.FakeTimeProvider(1716163200000L))
-        importer = RestoreJournalImporter(journal, operationRunDao, operationRunEventDao, timeProvider)
+        importer = RestoreJournalImporter(
+            journal,
+            operationRunDao,
+            operationRunEventDao,
+            timeProvider,
+            writeBarrier(RestoreMaintenanceMode.Mode.NORMAL)
+        )
     }
 
     /** Writes a terminal failure journal (active journal renamed to the failure file). */
@@ -123,5 +142,87 @@ class RestoreJournalImporterFailureTest {
         importer.importLastFailureJournalIfPresent()
         coVerify(exactly = 0) { operationRunDao.insert(any()) }
         coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+    }
+
+    // ── GR-14u45b write-barrier gating ────────────────────────────────────────
+
+    @Test
+    fun `blocked mode skips the success-journal import without any write`() = runTest {
+        // The write barrier must gate the import entry BEFORE any
+        // write-capable call: zero DAO inserts and zero journal marking.
+        val cid = writeSuccessJournal()
+        val blockedImporter = RestoreJournalImporter(
+            journal,
+            operationRunDao,
+            operationRunEventDao,
+            timeProvider,
+            writeBarrier(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+        )
+
+        blockedImporter.importLastSuccessJournalIfPresent()
+
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+        // The journal stays unmarked so a later healthy startup retries.
+        org.junit.Assert.assertFalse(journal.isSuccessJournalImported(cid))
+    }
+
+    @Test
+    fun `blocked mode skips the failure-journal import without any write`() = runTest {
+        val cid = writeFailureJournal("Incorrect password")
+        val blockedImporter = RestoreJournalImporter(
+            journal,
+            operationRunDao,
+            operationRunEventDao,
+            timeProvider,
+            writeBarrier(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+        )
+
+        blockedImporter.importLastFailureJournalIfPresent()
+
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+        org.junit.Assert.assertFalse(journal.isFailureJournalImported(cid))
+    }
+
+    @Test
+    fun `cancellation from the barrier propagates`() = runTest {
+        val cancellingBarrier = mockk<DatabaseWriteBarrier>()
+        coEvery { cancellingBarrier.checkWritesAllowed(any<String>()) } throws
+            CancellationException("cancelled")
+        val cancellingImporter = RestoreJournalImporter(
+            journal,
+            operationRunDao,
+            operationRunEventDao,
+            timeProvider,
+            cancellingBarrier
+        )
+
+        val thrown = runCatching {
+            cancellingImporter.importLastSuccessJournalIfPresent()
+        }.exceptionOrNull()
+
+        assertEquals(true, thrown is CancellationException)
+        coVerify(exactly = 0) { operationRunDao.insert(any()) }
+        coVerify(exactly = 0) { operationRunEventDao.insert(any()) }
+    }
+
+    /** Writes a terminal success journal (active journal renamed to the success file). */
+    private fun writeSuccessJournal(): String {
+        val entry = journal.beginJournal(
+            sourceBackupPath = "/cache/s.costbackup",
+            stagedDbPath = "/data/staged.db",
+            liveDbPath = "/data/live.db"
+        )
+        journal.appendEvent(
+            correlationId = entry.operationCorrelationId,
+            stage = "RESTORE_VERIFIED",
+            outcome = "SUCCESS",
+            severity = "INFO",
+            reasonCode = null,
+            isTerminal = true
+        )
+        journal.commitJournal(entry)
+        return entry.operationCorrelationId
     }
 }

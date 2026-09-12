@@ -18,10 +18,27 @@ class RestoreJournalImporter @Inject constructor(
     private val restoreJournal: RestoreJournal,
     private val operationRunDao: OperationRunDao,
     private val operationRunEventDao: OperationRunEventDao,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     /** Call on app startup after the DB is healthy. */
     suspend fun importLastSuccessJournalIfPresent() {
+        // GR-14u45b: canonical write-barrier admission BEFORE any write —
+        // the startup journal import is a real write path (OperationRun /
+        // OperationRunEvent inserts) and was previously ungated.  The
+        // check precedes the outer try/catch so DatabaseAccessBlockedException
+        // is never swallowed into a generic import failure;
+        // CancellationException propagates and every other failure logs a
+        // CONTROLLED CONSTANT (never e.message — repo privacy rule).
+        try {
+            writeBarrier.checkWritesAllowed(
+                "RestoreJournalImporter.importLastSuccessJournalIfPresent"
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("Restore journal import skipped: database maintenance in progress")
+            return
+        }
         val entry = restoreJournal.readSuccessJournal() ?: return
         val correlationId = entry.operationCorrelationId
         if (correlationId.isBlank()) return
@@ -130,6 +147,19 @@ class RestoreJournalImporter @Inject constructor(
      * Call on app startup after the DB is healthy.
      */
     suspend fun importLastFailureJournalIfPresent() {
+        // GR-14u45b: canonical write-barrier admission BEFORE any write —
+        // same pattern as the success-journal entry above (check precedes
+        // the outer try/catch; CancellationException propagates; controlled
+        // constant only).
+        try {
+            writeBarrier.checkWritesAllowed(
+                "RestoreJournalImporter.importLastFailureJournalIfPresent"
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("Restore journal import skipped: database maintenance in progress")
+            return
+        }
         val entry = restoreJournal.readFailureJournal() ?: return
         val correlationId = entry.operationCorrelationId
         if (correlationId.isBlank()) return
