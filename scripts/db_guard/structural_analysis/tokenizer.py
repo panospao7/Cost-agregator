@@ -470,6 +470,96 @@ def _match_chained_carrier(stripped: str, methods: tuple[str, ...]):
     return m
 
 
+_RE_SAFE_CALL_CARRIER_CACHE: dict[tuple[str, ...], "re.Pattern[str] | None"] = {}
+
+
+def _match_safe_call_carrier(stripped: str, methods: tuple[str, ...]):
+    """GR-14u40: `receiver?.name(args?) { ... }` trailing-lambda candidate.
+
+    The safe-call receiver (`runId?.let { }`) blocks every other head
+    matcher (the `.`-requiring scope regex cannot cross the `?.`), so the
+    whole composite used to fall to the generic opacity gate and, where
+    the lambda carried real content, refuse the ENTIRE callable
+    (coroutine-builder / elvis-block on the outer statement).
+
+    Conservative shape: optional val/var binding prefix (no brace,
+    semicolon, or `?.` in the type/annotation text), then a SIMPLE
+    identifier receiver, `?.`, and an admitted carrier name.  Anything
+    richer (`a?.b?.let { }`, `f()?.let { }`, `x?.foo { }` for an unlisted
+    `foo`) does not match here and keeps today's fail-closed handling.
+    Purely syntactic; admission happens in the proof layer.
+    """
+    if not methods:
+        return None
+    pattern = _RE_SAFE_CALL_CARRIER_CACHE.get(methods)
+    if pattern is None:
+        names = "|".join(re.escape(m) for m in methods)
+        pattern = re.compile(
+            r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+            r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
+            r"(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\?\.\s*"
+            r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
+        )
+        _RE_SAFE_CALL_CARRIER_CACHE[methods] = pattern
+    m = pattern.match(stripped)
+    if m is None or m.group("method") not in methods:
+        return None
+    return m
+
+
+def _parse_safe_call_carrier(cur: _Cursor, base: int, stmt_e: int, match):
+    """Build the TRANSPARENT_SCOPE region for a safe-call carrier candidate.
+
+    Mirrors _parse_chained_carrier's fail-closed body handling (prefix
+    brace check, tail check, param header skip, recursive parse,
+    scope-label save/restore).  scope_receiver mirrors the head-carrier
+    precedent: the receiver IS a simple identifier, so it is recorded
+    exactly as _parse_transparent_scope does.  The proof layer never
+    admits inline-carrier names as canonical scopes (name-exact against
+    the contract only), so this grants nothing beyond parseability.
+    """
+    receiver = match.group("receiver")
+    method = match.group("method")
+    brace_rel = match.end() - 1
+    brace_abs = base + brace_rel
+    prefix = cur.text[base:brace_abs]
+    if "{" in prefix:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            base,
+            stmt_e,
+            "lambda-before-transparent-scope",
+        )
+        return None
+    close = _match_forward(cur.text, brace_abs, stmt_e)
+    tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unknown-construct",
+        )
+        return None
+    saved = cur.scope_label
+    cur.scope_label = method
+    try:
+        body_start = brace_abs + 1
+        param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+        if param_match is not None:
+            body_start += param_match.end()
+        inner = _parse_sequence(cur, body_start, close - 1, True)
+    finally:
+        cur.scope_label = saved
+    return ParsedRegion(
+        kind=RegionKind.TRANSPARENT_SCOPE,
+        span=cur.span(base, close),
+        children=tuple(inner),
+        scope_method=method,
+        scope_receiver=receiver,
+    )
+
+
 def _parse_chained_carrier(cur: _Cursor, base: int, stmt_e: int, match):
     """Build the TRANSPARENT_SCOPE region for a chained carrier candidate.
 
@@ -876,6 +966,32 @@ def _parse_sequence(
                     if close > 0 and not tail:
                         region = _parse_chained_carrier(
                             cur, base, stmt_e, chained
+                        )
+                        if region is not None:
+                            out.append(region)
+                        idx += 1
+                        continue
+                # GR-14u40: same rule for a carrier reached through a
+                # simple-identifier safe call (`runId?.let { rid -> }`).
+                # The `?.` blocks every `.`-requiring head matcher, so the
+                # composite used to fall to the generic opacity gate and
+                # refuse whole callables on the outer statement's inner
+                # content.  An UNLISTED method after `?.` still refuses,
+                # and a lambda that does not END the statement is never
+                # claimed (same tail check as u33/u39).
+                safe_call = _match_safe_call_carrier(
+                    stripped, cur.transparent_inline_methods
+                )
+                if safe_call is not None:
+                    close = _match_forward(
+                        cur.text, base + safe_call.end() - 1, stmt_e
+                    )
+                    tail = (
+                        cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                    )
+                    if close > 0 and not tail:
+                        region = _parse_safe_call_carrier(
+                            cur, base, stmt_e, safe_call
                         )
                         if region is not None:
                             out.append(region)

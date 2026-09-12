@@ -787,6 +787,125 @@ class TestReturnConstructs:
         )
         assert not result.is_supported
 
+    def test_safe_call_let_carrier_admitted(self):
+        # GR-14u40: `runId?.let { rid -> }` — the safe-call receiver
+        # blocks every `.`-requiring head matcher, so the composite used
+        # to fall to the generic opacity gate and, where the lambda
+        # carried real content, refuse the whole callable.  An admitted
+        # inline carrier after `?.` now claims the trailing lambda.
+        result = parse(
+            "runId?.let { rid ->\n"
+            "  val x = 1\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "let"
+        assert result.regions[0].scope_receiver == "runId"
+        assert [child.kind for child in result.regions[0].children] == [
+            RegionKind.STATEMENT,
+            RegionKind.STATEMENT,
+        ]
+
+    def test_safe_call_let_carrier_with_inner_withContext_admitted(self):
+        # GR-14u40: the BankStatementLifecycleProcessor.processBankStatement
+        # cancellation-cleanup composite — the outer `runId?.let {` was
+        # never claimed, so the inner `withContext(NonCancellable) { }`
+        # refused as coroutine-builder at statement level.  Once the outer
+        # statement is claimed, the inner statements parse normally
+        # (withContext is a canonical scope; withTimeout is an admitted
+        # carrier).
+        result = parse(
+            "runId?.let { rid ->\n"
+            "  try {\n"
+            "    withContext(NonCancellable) {\n"
+            "      withTimeout(2000L) {\n"
+            "        val processedItems = itemDao.countByRunAndStatus(rid, S.CREATED)\n"
+            "        runDao.finalize(\n"
+            "          runId = rid,\n"
+            "          status = S.CANCELLED\n"
+            "        )\n"
+            "      }\n"
+            "    }\n"
+            "  } catch (cleanupError: Throwable) {\n"
+            "    cancellation.addSuppressed(cleanupError)\n"
+            "  }\n"
+            "}\n",
+            transparent_scope_methods=("withContext",),
+            transparent_inline_methods=("let", "withTimeout"),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert wrapper.scope_method == "let"
+        try_region = wrapper.children[0]
+        assert try_region.kind == RegionKind.TRY
+        # try/catch model: nested TRY body first, CATCH sibling second.
+        assert [child.kind for child in try_region.children] == [
+            RegionKind.TRY,
+            RegionKind.CATCH,
+        ]
+        assert try_region.children[0].children[0].kind == (
+            RegionKind.TRANSPARENT_SCOPE
+        )
+
+    def test_safe_call_let_carrier_with_inner_elvis_admitted(self):
+        # GR-14u40: the failure-finalization composite — the inner
+        # `e::class.simpleName ?: "Unknown"` sits in a .put(...) argument
+        # inside a runInTransaction lambda; the outer refusal was the
+        # elvis-block on the never-claimed `runId?.let {` statement.
+        # Claiming the outer statement lets the inner elvis parse as a
+        # plain argument-position expression.
+        result = parse(
+            "runId?.let { rid ->\n"
+            "  transactionRunner.runInTransaction(\n"
+            "    operationId = \"op\"\n"
+            "  ) { context ->\n"
+            "    runDao.finalize(runId = rid)\n"
+            "    writer.write(context, Event(\n"
+            "      metadata = Builder()\n"
+            "        .put(\"errorClass\", e::class.simpleName ?: \"Unknown\")\n"
+            "        .build()\n"
+            "    ))\n"
+            "  }\n"
+            "}\n",
+            transparent_scope_methods=("runInTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert wrapper.scope_method == "let"
+        assert wrapper.children[0].kind == RegionKind.TRANSPARENT_SCOPE
+        assert wrapper.children[0].scope_method == "runInTransaction"
+
+    def test_safe_call_unlisted_method_fails_closed(self):
+        # Pin: only the closed reviewed carrier set is admitted after
+        # `?.` — an unlisted method keeps today's lambda-escape refusal.
+        result = parse(
+            "x?.foo {\n"
+            "  dao.insert(y)\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_safe_call_carrier_not_ending_statement_not_claimed(self):
+        # u33/u39 rule preserved: a `?.`-carrier whose trailing lambda
+        # does not END the statement is never claimed; the argument-position
+        # lambda keeps the generic lambda-escape refusal.
+        result = parse(
+            "runId?.let { }.plus(1)\n",
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
 
 class TestValConstructInitializers:
     """GR-12 extension: `val x = if/when/try ...` construct initializers."""
