@@ -128,6 +128,30 @@ CB_SUBJECT_CALLS = {
     # wrapper (block invoked exactly once inline) admits its trailing
     # lambda; the corpus method inside resolves exact.
     "CB-30": (("exercise", "markImported"),),
+    # GR-14u49 anonymous-object + loop-variable fixtures.  Subjects whose
+    # callee lives inside a synthetic anon member use the member's method
+    # name as the caller (the synthetic callable shares the fixture file).
+    "CB-31": (("run", "purge"),),
+    # CB-32 is a structural pin: the phantom supertype-token call record
+    # must not exist (verified by probe; documented in the GR-14u49
+    # manifest).  The row pins the fixture's own marker call.
+    "CB-32": (("exerciseCb32", "cb32Marker"),),
+    "CB-33": (("emit", "cb33Record"),),
+    "CB-34": (("run", "purge"),),
+    "CB-35": (("exerciseCb35", "purge"),),
+    "CB-36": (("exerciseCb36", "drain"),),
+    "CB-37": (("run", "purge"),),
+    "CB-38": (("exerciseCb38", "purge"),),
+    "CB-39": (("exerciseCb39", "runA"),),
+    "CB-40": (("exerciseCb40", "purge"),),
+    "CB-41": (("exerciseCb41", "purge"),),
+    "CB-42": (("exerciseCb42", "purge"),),
+    "CB-43": (("exerciseCb43", "purge"),),
+    "CB-44": (("exerciseCb44", "purge"),),
+    "CB-45": (("exerciseCb45", "drain"),),
+    "CB-46": (("exerciseCb46", "purgeInner"),),
+    "CB-47": (("exerciseCb47", "purge"),),
+    "CB-48": (("exerciseCb48", "purge"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.
