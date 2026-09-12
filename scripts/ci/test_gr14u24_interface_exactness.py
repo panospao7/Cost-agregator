@@ -10,7 +10,7 @@ the corpus, so the dispatch is decidable.
 Soundness pins (must stay UNCERTAIN — these are the fail-OPEN traps):
   * a second anonymous `object : Iface` site blocks exactness even when the
     named enumeration finds one implementor (the WorkerLeaseRegistry shape);
-  * a SECOND NAMED implementor blocks exactness;
+  * implementor-set completeness governs exactness (post-u54b: enumerable-complete sets with all members overriding fan out exact);
   * overloads on the single implementor block exactness (static overload
     selection is unknown);
   * an anonymous implementor of a SUB-interface blocks exactness for the
@@ -135,7 +135,14 @@ class TestSingleImplementorExactness:
             "}\n",
         )
         # OnlyImpl AND SecondImpl exist in _DEFS: two named implementors.
-        assert _dispatch_state(builder, "exercise", "go") == "interface_dispatch"
+        # GR-14u54b amendment: the bounded fan-out admission now covers
+        # NAMED-implementor interfaces — an enumerable-complete 2-implementor
+        # set with both members overriding `go` emits exact edges to BOTH
+        # (was interface_dispatch before u54b; the old expectation pinned
+        # the pre-extension uncertainty; the fan-out gates — per-run
+        # completeness re-derivation, override-only targets, all-or-nothing
+        # — are unchanged).
+        assert _dispatch_state(builder, "exercise", "go") == "exact_synchronous"
 
     def test_single_inheriting_implementor_is_exact_to_the_inherited_member(self):
         builder = _build(

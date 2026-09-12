@@ -1,6 +1,9 @@
 // CB-06: call goes through an interface-typed reference.
-// Expected resolution: INTERFACE_DISPATCH — TWO corpus implementors exist, so
-// the GR-14u24 single-implementor exactness rule does not apply.
+// GR-14u54b amendment: the bounded fan-out admission now covers
+// NAMED-implementor interfaces — TWO corpus implementors, both overriding
+// accept, form an enumerable-complete set, so the dispatch emits exact
+// edges to BOTH implementors (was INTERFACE_DISPATCH before u54b; the old
+// expectation pinned the pre-extension uncertainty).
 
 package fixtures.callbinding
 

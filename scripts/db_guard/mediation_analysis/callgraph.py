@@ -3704,21 +3704,31 @@ class CallGraphBuilder:
     ) -> list[str]:
         """Exact fan-out targets for a fully-enumerable interface, or [].
 
-        GR-14u49 (3): the implementor set is complete when
+        GR-14u49 (3), extended by GR-14u54b (owner-sanctioned — the u49
+        Option A decision extended to NAMED-implementor interfaces, per the
+        FINAL26 memo F4 recommendation): the implementor set is complete
+        when
         (a) every named corpus implementor is found (GR-14u24 walk),
         (b) the modelled anonymous-member count for the base equals the
         scanned anonymous-implementor count (transitively, GR-14u23) — an
-        unmodelled site (no parseable body) withdraws the admission,
+        unmodelled site (no parseable body) withdraws the admission, and
+        this equality must hold for ZERO anonymous sites too (the u54b
+        extension: a named-only interface is enumerable-complete exactly
+        when its named walk is complete — the historical
+        `scanned_anon <= 0` precondition rejected enumerable-complete
+        named-implementor interfaces before evaluation),
         (c) every implementor owns exactly one member of the name
         (overloads stay uncertain — static overload selection is not
-        modelled).  Sorted deterministically; [] = stay uncertain.
+        modelled),
+        (d) every target member OVERRIDES the interface's member (a
+        same-name helper that does not override the base member is not a
+        dispatch target).
+        Sorted deterministically; [] = stay uncertain.
         """
         owner = self.owners.get(base_fqcn)
         if owner is None or owner.kind != "interface":
             return []
         scanned_anon = self._anonymous_implementors_of(base_fqcn)
-        if scanned_anon <= 0:
-            return []
         # The synthetic anonymous owners ARE corpus owners inheriting from
         # the base, so _corpus_implementors already returns them alongside
         # any named implementors — dedupe instead of double-counting (a

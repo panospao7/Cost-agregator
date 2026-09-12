@@ -33,7 +33,7 @@ fixtures:
     expectedResolution: UNRESOLVED_TARGET
   - id: CB-06
     file: call_binding/cb06_interface_dispatch.kt
-    expectedResolution: INTERFACE_DISPATCH
+    expectedResolution: EXACT_SYNCHRONOUS
   - id: CB-07
     file: call_binding/cb07_overridden_open_method.kt
     expectedResolution: VIRTUAL_DISPATCH
@@ -244,6 +244,12 @@ fixtures:
   - id: CB-60
     file: call_binding/cb60_safeexecute_wrapper.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-61
+    file: call_binding/cb61_named_fanout_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-62
+    file: call_binding/cb62_named_fanout_incomplete.kt
+    expectedResolution: INTERFACE_DISPATCH
   - id: HP-13
     file: helper_proof/hp13_let_inline_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE

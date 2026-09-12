@@ -177,6 +177,12 @@ CB_SUBJECT_CALLS = {
     # wrapper (block invoked exactly once inside try/catch) admits its
     # trailing lambda; the corpus method inside resolves exact.
     "CB-60": (("exercise", "markImported"),),
+    # GR-14u54b named-implementor fan-out: the positive emits exact edges
+    # to BOTH named implementors; the completeness negative (an implementor
+    # inheriting the interface's DEFAULT member, overriding nothing)
+    # withdraws the admission.
+    "CB-61": (("exerciseCb61", "accept"),),
+    "CB-62": (("exerciseCb62", "accept"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.
