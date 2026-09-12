@@ -174,3 +174,12 @@ fixtures:
   - id: CB-53
     file: call_binding/cb53_returntype_two_segment.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-54
+    file: call_binding/cb54_receiver_hint_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-55
+    file: call_binding/cb55_receiver_hint_absent.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-56
+    file: call_binding/cb56_hint_never_overrides.kt
+    expectedResolution: EXACT_SYNCHRONOUS

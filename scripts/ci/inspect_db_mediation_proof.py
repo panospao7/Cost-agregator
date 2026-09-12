@@ -205,12 +205,25 @@ class _DirectSiteProver:
             )
         if not sites:
             return
+        # GR-14u52: receiver hints for SYNTHETIC anonymous-object members
+        # only — the u49 capture typing resolves captured vals in the
+        # callgraph, but the GR-12 bridge's file-level resolver cannot see
+        # them (a captured val is a fun PARAMETER of the enclosing callable,
+        # never a `val` declaration).  Hints are gap-fillers only (the
+        # declaration path always wins), and non-synthetic callables pass
+        # nothing — byte-identical behavior for the rest of the corpus.
+        receiver_hints = None
+        if "#anon" in model.owner_fqcn:
+            hints = self._builder.captured_binding_types(callable_key)
+            if hints:
+                receiver_hints = hints
         outcome = prove_callable_direct_barriers(
             masked,
             body_span,
             tuple(sites),
             path=model.file,
             callable_key=callable_key,
+            receiver_hints=receiver_hints,
             # Only REAL mutation sites drive the opacity gate: a pseudo-site is
             # a call-edge offset, and letting it force a lambda to be modeled
             # could flip the whole callable to UNSUPPORTED and hide a dominating

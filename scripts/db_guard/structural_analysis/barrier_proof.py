@@ -323,9 +323,20 @@ class ReceiverTypeResolver:
     file's property declarations plus the import/package tables.  A bare
     spelling is never sufficient: the property's declared type must resolve
     through an exact import (or the file's own package) to an FQCN.
+
+    GR-14u52: ``hints`` optionally maps receiver simple-name -> exact FQCN
+    for CAPTURED bindings (e.g. a synthetic anonymous-object member closing
+    over a fun parameter of its enclosing callable — the u49 capture typing
+    lives in the callgraph, not in this file-level resolver).  Hints are
+    GAP-FILLERS ONLY: a name that resolves through the property-declaration
+    path keeps that resolution untouched (hints never override); a hint is
+    consumed only when the declaration path returns NOT_A_PROPERTY, and its
+    value must be an exact FQCN string (no inference).
     """
 
-    def __init__(self, masked_text: str) -> None:
+    def __init__(
+        self, masked_text: str, hints: dict[str, str] | None = None
+    ) -> None:
         self._text = masked_text
         self._declarations: dict[str, list[str]] = {}
         for match in _PROP_RE.finditer(masked_text):
@@ -341,10 +352,17 @@ class ReceiverTypeResolver:
             fqn = match.group(1)
             imports.setdefault(fqn.rsplit(".", 1)[-1], set()).add(fqn)
         self._imports = imports
+        self._hints: dict[str, str] = dict(hints) if hints else {}
 
     def resolve(self, receiver_name: str) -> tuple[str | None, str]:
         declared = self._declarations.get(receiver_name)
         if not declared:
+            # GR-14u52: gap-filling hint — consumed ONLY when the property-
+            # declaration path has nothing for this name; the hint value is
+            # an exact FQCN supplied by the callgraph's capture typing.
+            hinted = self._hints.get(receiver_name)
+            if hinted and "." in hinted:
+                return hinted, _RECEIVER_RESOLVED
             return None, _RECEIVER_NOT_A_PROPERTY
         if len(set(declared)) > 1:
             return None, _RECEIVER_AMBIGUOUS

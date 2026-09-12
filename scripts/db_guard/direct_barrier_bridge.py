@@ -191,6 +191,7 @@ def prove_callable_direct_barriers(
     path: str,
     callable_key: str,
     opacity_sites=None,
+    receiver_hints: dict[str, str] | None = None,
 ) -> CallableDirectBarrierProof:
     """Prove every mutation site of one callable; never raises.
 
@@ -235,7 +236,7 @@ def prove_callable_direct_barriers(
                     masked,
                     body_span,
                     CANONICAL_BARRIER_CONTRACT_V2,
-                    ReceiverTypeResolver(masked),
+                    ReceiverTypeResolver(masked, hints=receiver_hints),
                 )
             }
         )
@@ -262,7 +263,7 @@ def prove_callable_direct_barriers(
             diagnostics=("DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",),
         )
     markers = collect_barrier_markers(parse_result, masked)
-    resolver = ReceiverTypeResolver(masked)
+    resolver = ReceiverTypeResolver(masked, hints=receiver_hints)
     admitted = admit_transparent_scope_candidates(
         parse_result, CANONICAL_BARRIER_CONTRACT_V2, resolver
     )

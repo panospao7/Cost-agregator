@@ -1999,6 +1999,36 @@ class CallGraphBuilder:
                 best = (offset, declared)
         return best[1] if best is not None else ""
 
+    def captured_binding_types(self, callable_key: str) -> dict[str, str]:
+        """Receiver hints for a synthetic member, built from the callgraph's
+        OWN resolution truth.
+
+        GR-14u52 (ISSUE-1 fix): each hint is ``receiver_fqcn_for_call`` on
+        the corresponding call record — the full resolution order (member
+        local vals -> loop vars -> member params -> capture typing ->
+        anon-owner properties -> corpus types), NOT capture typing alone.
+        A member param/loop-var/local shadowing an enclosing capture
+        therefore produces the SAME hint the callgraph itself would use —
+        hint == callgraph truth by construction, and the fail-closed
+        direction is preserved (a receiver the callgraph cannot resolve
+        produces NO hint).  Returns {} for non-synthetic callables (the
+        bridge passes no hints there, so the rest of the corpus is
+        byte-identical).  Source-ordered and deduplicated — deterministic.
+        """
+        model = self.callables.get(callable_key)
+        if model is None or model.enclosing_key is None:
+            return {}
+        hints: dict[str, str] = {}
+        for call in self.calls_by_callable.get(callable_key, ()):
+            name = call.receiver_text
+            if not name or name in hints:
+                continue
+            fqcn, known = self.receiver_fqcn_for_call(call)
+            if not known or not fqcn:
+                continue
+            hints[name] = fqcn
+        return hints
+
     def _captured_binding_type(
         self, model: CallableModel | None, name: str, before_offset: int = -1
     ) -> str | None:
@@ -2785,7 +2815,10 @@ class CallGraphBuilder:
         self, masked: str, paren: int, params_close: int
     ) -> tuple[list[tuple[str, str]], tuple[str, ...]]:
         """(name, type) pairs and bare types for an override's parameter list."""
-        inner = masked[paren + 1 : params_close]
+        # find_balanced returns the index just PAST the closing paren, so the
+        # inner slice must exclude it (the main parser uses the same
+        # params_close - 1 convention).
+        inner = masked[paren + 1 : params_close - 1]
         params_named: list[tuple[str, str]] = []
         types: list[str] = []
         if not inner.strip():

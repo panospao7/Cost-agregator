@@ -161,6 +161,12 @@ CB_SUBJECT_CALLS = {
     "CB-51": (("exerciseCb51", "insert"),),
     "CB-52": (("exerciseCb52", "insert"),),
     "CB-53": (("exerciseCb53", "insert"),),
+    # GR-14u52 receiver-hint fixtures: the BH-pos subject resolves through
+    # u49 capture typing; the BH-neg keeps the pre-hint unresolved edge;
+    # the override pin proves the declaration path wins over any hint.
+    "CB-54": (("run", "insert"),),
+    "CB-55": (("run", "insert"),),
+    "CB-56": (("run", "insert"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.
