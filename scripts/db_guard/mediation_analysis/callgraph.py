@@ -1268,6 +1268,9 @@ class CallGraphBuilder:
             self._collect_local_vals(self.callables[key])
         self.calls_by_callable: dict[str, tuple[CallRecord, ...]] = {}
         self.lambda_regions_by_callable: dict[str, tuple[LambdaRegion, ...]] = {}
+        # GR-14u45: depth guard for carrier-call resolution inside the
+        # lambda-parameter binding (pathological nested-lambda receivers).
+        self._carrier_resolution_depth: int = 0
         self.edges: tuple[CallEdge, ...] = ()
         self.scc = SCCState()
         self.scc_exact = SCCState()
@@ -1356,6 +1359,287 @@ class CallGraphBuilder:
 
     # ── receiver typing ──
 
+    # GR-14u45 shape B: the collection-style carrier names whose arity-1
+    # lambda parameter binds to the receiver's single explicit type
+    # argument.  Restricted to names already in the admitted inline-carrier
+    # set (checked at the call site) that iterate a collection.
+    _LAMBDA_PARAM_COLLECTION_CARRIERS = frozenset({
+        "forEach", "forEachIndexed", "map", "mapNotNull", "mapIndexed",
+        "filter", "any", "none", "count", "first", "firstOrNull", "find",
+        "associate", "associateBy",
+    })
+    _LAMBDA_PARAM_COLLECTION_TYPES = frozenset({
+        "Set", "List", "Collection", "MutableSet", "MutableList",
+        "MutableCollection", "Iterable",
+    })
+    _MAX_CARRIER_RESOLUTION_DEPTH = 3
+
+    def _lambda_param_binding(
+        self, call: CallRecord, model: CallableModel | None
+    ) -> str:
+        """Declared type text binding a lambda parameter name, or "".
+
+        GR-14u45: a receiver that is a PARAMETER OF THE INNERMOST ENCLOSING
+        LAMBDA REGION was untypable, so member calls on it produced
+        name-match ``unresolved_target`` edges that tainted subject ancestor
+        closures.  Two narrow, fail-closed bindings:
+
+        Shape A (callee signature): the region's carrier call resolves to
+        corpus callable(s) whose lambda-typed parameter's function type has
+        as many components as the lambda has parameters; the k-th lambda
+        parameter binds to the k-th component type.  Only the trailing-
+        lambda convention is honoured (the function-typed parameter must be
+        the callee's LAST declared parameter), only ADMITTED transparent
+        regions bind, and the component type must resolve to exactly one
+        corpus FQCN or a known external — generic components never bind.
+
+        Shape B (receiver generic): the carrier name is a collection-style
+        inline carrier and the receiver's declared type text has exactly one
+        explicit type argument (one nesting level allowed, annotations
+        stripped) resolving to exactly one corpus FQCN or known external;
+        arity-1 lambda parameters bind to it.
+
+        Everything else returns "" and the caller keeps its fail-closed
+        behaviour.  The type TEXT is returned; ``receiver_fqcn_for_call``
+        and ``_declared_receiver_type_text`` both resolve it through the
+        shared resolution tail.
+        """
+        if model is None:
+            return ""
+        if self._carrier_resolution_depth >= self._MAX_CARRIER_RESOLUTION_DEPTH:
+            # Re-entrancy guard: binding the CARRIER's own receiver can
+            # re-enter this helper (nested lambda regions).  The carrier
+            # receiver is normally a fun param/local val resolved before
+            # this tail, so hitting the guard means pathological nesting —
+            # fail closed.
+            return ""
+        regions = self.lambda_regions_by_callable.get(call.caller_key)
+        if regions is None:
+            # During _lambda_regions for this very callable the region tuple
+            # is not yet registered; the carrier call's own receiver never
+            # needs this binding (it precedes its lambda), so fail closed.
+            return ""
+        region = self._innermost_lambda(regions, call.name_start)
+        if region is None or region.call_id < 0:
+            return ""
+        if region.carrier != "transparent":
+            # Only ADMITTED transparent regions bind; canonical scopes are
+            # handled by their own context logic, escaping/async/unresolved
+            # regions never bind (fail closed).
+            return ""
+        calls = self.calls_by_callable.get(call.caller_key, ())
+        carrier = next(
+            (c for c in calls if c.call_id == region.call_id), None
+        )
+        if carrier is None or carrier.lambda_start != region.start:
+            return ""
+        param_names = self._lambda_param_names(
+            self.file_models[call.file].masked, region
+        )
+        if not param_names or call.receiver_text not in param_names:
+            return ""
+        param_index = param_names.index(call.receiver_text)
+        file_model = self.file_models[call.file]
+
+        # Shape B first: receiver-generic typing (no carrier resolution
+        # needed, no recursion risk).
+        if carrier.name in self._LAMBDA_PARAM_COLLECTION_CARRIERS:
+            receiver_type = self._declared_receiver_type_text(
+                carrier, model, carrier.receiver_text
+            )
+            element = self._single_collection_type_argument(receiver_type)
+            if element:
+                fqcn, origin = self._resolve_type(file_model, element)
+                if origin != "unknown" and fqcn:
+                    return fqcn
+            return ""
+
+        # Shape A: callee-signature typing.  Resolve the carrier call's
+        # corpus targets; depth guard against pathological nesting (the
+        # carrier receiver is normally a fun param/local val, which
+        # terminates immediately).
+        if self._carrier_resolution_depth >= self._MAX_CARRIER_RESOLUTION_DEPTH:
+            return ""
+        object.__setattr__(self, "_carrier_resolution_depth",
+                           self._carrier_resolution_depth + 1)
+        try:
+            signatures = self._carrier_lambda_signatures(carrier, model)
+        finally:
+            object.__setattr__(self, "_carrier_resolution_depth",
+                               self._carrier_resolution_depth - 1)
+        if len(signatures) != 1:
+            return ""
+        components = signatures[0]
+        if len(components) != len(param_names):
+            return ""
+        component = components[param_index]
+        fqcn, origin = self._resolve_type(file_model, component)
+        if origin == "unknown" or not fqcn:
+            return ""
+        return fqcn
+
+    def _lambda_param_names(
+        self, masked: str, region: LambdaRegion
+    ) -> tuple[str, ...]:
+        """Parameter names declared in a lambda literal's head, or ().
+
+        ``{ a, b -> ... }`` -> ("a", "b"); destructuring heads return ()
+        (fail closed); an ARROWLESS head is Kotlin's implicit single
+        parameter ``it`` -> ("it",) (GR-14u45: arity-1 binding must cover
+        the implicit form too, or `forEach { it.x() }` — the most common
+        collection shape — would stay unbound).
+        """
+        head = masked[region.start + 1 : region.end]
+        arrow = head.find("->")
+        if arrow < 0:
+            return ("it",)
+        params_text = head[:arrow].strip()
+        if not params_text:
+            return ()
+        if not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*"
+            r"(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*",
+            params_text,
+        ):
+            return ()
+        return tuple(
+            piece.strip() for piece in params_text.split(",")
+        )
+
+    def _single_collection_type_argument(self, type_text: str) -> str:
+        """The single explicit type argument of a collection type text.
+
+        ``Set<X>``, ``List<X>``, ``MutableList<X>`` etc. -> ``X`` (one
+        nesting level allowed; use-site annotations stripped).  Anything
+        else (no generics, zero or 2+ top-level arguments, a non-collection
+        head) returns "".
+        """
+        text = (type_text or "").strip()
+        head_match = re.match(r"^[A-Za-z_][A-Za-z0-9_.]*", text)
+        if head_match is None or head_match.group(0) not in (
+            self._LAMBDA_PARAM_COLLECTION_TYPES
+        ):
+            return ""
+        open_idx = text.find("<")
+        if open_idx < 0 or not text.rstrip().endswith(">"):
+            return ""
+        inner = text[open_idx + 1 : text.rstrip().rindex(">")].strip()
+        # Split top-level arguments on the ORIGINAL text (whitespace kept),
+        # then strip leading use-site annotations per part — collapsing
+        # whitespace first would glue an annotation to the type name and
+        # make the annotation unstrippable.
+        depth = 0
+        parts: list[str] = []
+        current: list[str] = []
+        for ch in inner:
+            if ch == "<":
+                depth += 1
+            elif ch == ">":
+                depth -= 1
+            if ch == "," and depth == 0:
+                parts.append("".join(current))
+                current = []
+            else:
+                current.append(ch)
+        parts.append("".join(current))
+        if len(parts) != 1:
+            return ""
+        element = re.sub(
+            r"^(?:@[A-Za-z_][A-Za-z0-9_.]*(?:\([^()]*\))?\s*)+",
+            "",
+            parts[0].strip(),
+        ).strip()
+        if not element:
+            return ""
+        if element.count("<") != element.count(">"):
+            return ""
+        return element
+
+    def _carrier_lambda_signatures(
+        self, carrier: CallRecord, model: CallableModel
+    ) -> list[tuple[str, ...]]:
+        """Distinct lambda-parameter component tuples of the carrier's targets.
+
+        Resolves the carrier call through the ordinary member machinery and
+        collects, for every resolved corpus target, the component types of
+        its LAST declared parameter when that parameter's type text is a
+        function type.  Deduplicates deterministically; an empty list means
+        no usable signature (fail closed).
+        """
+        carrier_model = self.callables.get(carrier.caller_key, model)
+        synthetic = CallRecord(
+            call_id=carrier.call_id,
+            caller_key=carrier.caller_key,
+            file=carrier.file,
+            name=carrier.name,
+            name_start=carrier.name_start,
+            line=carrier.line,
+            is_reference=carrier.is_reference,
+            receiver_text=carrier.receiver_text,
+            qualification=carrier.qualification,
+            chained=carrier.chained,
+        )
+        resolved = self._resolve_member_call(carrier_model, synthetic, "none")
+        signatures: set[tuple[str, ...]] = set()
+        for edge in resolved:
+            for target in edge.targets:
+                target_model = self.callables.get(target)
+                if target_model is None or not target_model.params_named:
+                    continue
+                last_name, last_type = target_model.params_named[-1]
+                if last_name != "block":
+                    # Only the Kotlin trailing-lambda convention binds: the
+                    # function-typed parameter must be the callee's LAST
+                    # declared parameter.
+                    continue
+                components = self._function_type_components(last_type)
+                if components:
+                    signatures.add(components)
+        return sorted(signatures)
+
+    def _function_type_components(self, type_text: str) -> tuple[str, ...]:
+        """Parameter component types of a function-type text, or ().
+
+        ``suspend (A, B) -> R`` -> ("A", "B") (defaults are already absent
+        from type texts; a bare ``() -> R`` yields () and never binds).
+        Non-function texts return ().
+        """
+        text = (type_text or "").strip()
+        if text.startswith("suspend "):
+            text = text[len("suspend "):].strip()
+        if "->" not in text:
+            return ()
+        head, _, _return = text.partition("->")
+        head = head.strip()
+        if not (head.startswith("(") and head.endswith(")")):
+            return ()
+        inner = head[1:-1].strip()
+        if not inner:
+            return ()
+        depth = 0
+        parts: list[str] = []
+        current: list[str] = []
+        cursor = 0
+        while cursor < len(inner):
+            ch = inner[cursor]
+            if ch == "-" and cursor + 1 < len(inner) and inner[cursor + 1] == ">":
+                # A nested function type's arrow is part of a component.
+                current.append("->")
+                cursor += 2
+                continue
+            if ch in "(<":
+                depth += 1
+            elif ch in ")>":
+                depth -= 1
+            if ch == "," and depth == 0:
+                parts.append("".join(current).strip())
+                current = []
+            else:
+                current.append(ch)
+            cursor += 1
+        parts.append("".join(current).strip())
+        return tuple(parts)
+
     def receiver_fqcn_for_call(self, call: CallRecord) -> tuple[str, bool]:
         """(receiver FQCN, known) for a call record.
 
@@ -1420,6 +1704,15 @@ class CallGraphBuilder:
             fqcn, origin = self._resolve_type(file_model, inner)
             if origin != "unknown":
                 return fqcn, origin != "unknown"
+        # GR-14u45: a receiver that is a parameter of the innermost enclosing
+        # admitted lambda region binds through the region's carrier
+        # (callee-signature or receiver-generic typing) — fail closed
+        # otherwise.
+        bound = self._lambda_param_binding(call, model)
+        if bound:
+            fqcn, origin = self._resolve_type(file_model, bound)
+            if origin != "unknown" and fqcn:
+                return fqcn, True
         return "", False
 
     def _unwrap_di_wrapper_type(self, file_model: FileModel, type_text: str) -> str:
@@ -1476,7 +1769,9 @@ class CallGraphBuilder:
                     nxt = supertype
                     break
             owner_fqcn = nxt
-        return ""
+        # GR-14u45: lambda parameters share the binding machinery — the
+        # declared type text comes from the region's carrier.
+        return self._lambda_param_binding(call, model)
 
     def _super_receiver_fqcn(
         self, call: CallRecord, model: CallableModel | None

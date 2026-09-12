@@ -104,6 +104,19 @@ CB_SUBJECT_CALLS = {
     "CB-16": (("exerciseCb16", "put"),),
     "CB-17": (("exerciseCb17", "push"),),
     "CB-18": (("exerciseCb18", "save"),),
+    # GR-14u45 lambda-parameter typing: positives bind the lambda param
+    # through the carrier (callee signature / receiver generic); the pins
+    # keep the fail-closed edges (arity mismatch, generic component, two
+    # distinct signatures, async-region param, no explicit type argument,
+    # named non-trailing argument).
+    "CB-19": (("exerciseCb19", "event"),),
+    "CB-20": (("exerciseCb20", "initialize"),),
+    "CB-21": (("exerciseCb21", "event"),),
+    "CB-22": (("exerciseCb22", "event"),),
+    "CB-23": (("exerciseCb23", "event"),),
+    "CB-24": (("exerciseCb24", "event"),),
+    "CB-25": (("exerciseCb25", "initialize"),),
+    "CB-26": (("exerciseCb26", "event"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.

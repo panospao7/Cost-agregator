@@ -1,12 +1,14 @@
 # GR-13 consolidated expected manifest (shadow corpus).
-# Copies all rows from the per-group manifests: 17 call-binding (CB;
+# Copies all rows from the per-group manifests: 25 call-binding (CB;
 # CB-16 is the GR-14u22 dagger.Lazy chain row, CB-17 the GR-14u24
-# single-implementor exactness row),
+# single-implementor exactness row, CB-19/CB-20 the GR-14u45
+# lambda-parameter typing positives and CB-21..CB-26 its fail-closed
+# pins),
 # 26 helper-proof (HP; HP-13..HP-20 are the GR-14f inline-carrier rows,
 # SL-01..SL-03 the GR-14j structured-launch rows, HP-21 the GR-14m
 # named-argument-lambda regression row, HP-22 the GR-14n default-parameter-DI
 # regression row, HP-23 the GR-14u25 restore-internal-scope row),
-# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows = 69
+# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows = 77
 # rows total.
 # CB/HP/WP rows use expectedResolution/expectedProof(/expectedRoot);
 # PR rows use expectation. All values use closed vocabularies only.
@@ -113,6 +115,30 @@ fixtures:
   - id: CB-18
     file: call_binding/cb18_bound_reference_exact.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-19
+    file: call_binding/cb19_lambda_param_callee_signature.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-20
+    file: call_binding/cb20_lambda_param_receiver_generic.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-21
+    file: call_binding/cb21_lambda_param_arity_mismatch.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-22
+    file: call_binding/cb22_lambda_param_generic_component.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-23
+    file: call_binding/cb23_lambda_param_two_signatures.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-24
+    file: call_binding/cb24_lambda_param_async_region.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-25
+    file: call_binding/cb25_lambda_param_no_type_arg.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-26
+    file: call_binding/cb26_lambda_param_named_arg.kt
+    expectedResolution: UNRESOLVED_TARGET
   - id: HP-13
     file: helper_proof/hp13_let_inline_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE

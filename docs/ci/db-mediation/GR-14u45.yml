@@ -1,0 +1,127 @@
+# GR-14u45 — lambda-parameter typing for admitted carriers (u22-class
+# engine feature, fail-closed).
+#
+# DEFECT: lambda parameters were untyped.  Member calls on a lambda
+# parameter failed receiver resolution and produced name-match
+# unresolved_target edges that tainted subject ancestor closures.
+# Verified production shapes:
+#   - BankApiIntegration.syncTransactions L167:
+#     `operationRunRecorder.runOperation("BANK_SYNC", actor = "system")
+#     { run -> run.event(...) / run.increment(...) }` — ~27 unresolved
+#     edges on the `run` receiver (the carrier resolves interface_dispatch
+#     to the 4 runOperation implementations; all 4 declare the identical
+#     `block: suspend (OperationRunHandle) -> T` last parameter).
+#   - EmptyStatePresentationModule.provideContextualActionRegistry L29-31:
+#     `initializers.forEach { initializer -> initializer.initialize(this) }`
+#     — ONE unresolved edge with 6 name-match targets (all corpus
+#     `initialize` callables), the DECIDING taint for the 4
+#     RestoreJournalImporter rows (the edge targets
+#     AppStartupCoordinator.initialize, whose exact closure reaches
+#     importRestoreJournals -> importLast*).
+#
+# FIX (engine, one feature, fail-closed):
+#   - _lambda_param_binding in callgraph.py, wired into the SHARED
+#     not-bound tail of receiver_fqcn_for_call AND
+#     _declared_receiver_type_text (one helper, both consumers).
+#   - Shape A (callee-signature typing): the innermost enclosing ADMITTED
+#     transparent lambda region's carrier call resolves through the
+#     ordinary member machinery; the carrier's LAST declared parameter
+#     must be a function type; exactly ONE DISTINCT component-tuple across
+#     all resolved targets; arity match (lambda param count == component
+#     count); the k-th lambda parameter binds to the k-th component type;
+#     the component must resolve to exactly one corpus FQCN or a known
+#     external — a generic component (`T`) NEVER binds.
+#   - Shape B (receiver-generic typing): the carrier name is in the
+#     collection-style subset of PRODUCTION_TRANSPARENT_INLINE_METHODS
+#     (forEach/forEachIndexed/map/mapNotNull/mapIndexed/filter/any/none/
+#     count/first/firstOrNull/find/associate/associateBy) and the
+#     receiver's declared type text has EXACTLY ONE explicit type argument
+#     (Set/List/Collection/MutableSet/MutableList/MutableCollection/
+#     Iterable; one nesting level allowed; use-site annotations stripped —
+#     the whitespace-collapsed spelling glued @JvmSuppressWildcards to the
+#     type name, caught and fixed during implementation); arity-1 lambda
+#     parameters bind to the element type.  Implicit `it` supported
+#     (arrowless lambda head).
+#   - Soundness constraints: ONLY admitted transparent regions bind —
+#     escaping/async/unresolved-scope/canonical regions never bind;
+#     canonical scopes keep their own context logic (untouched); carrier
+#     resolution is depth-guarded (max 3) against pathological nested
+#     lambda receivers; the shape-B carrier-type lookup passes the CARRIER
+#     record (not the inner call) to keep offsets correct.
+#   - Full-edge A/B evidence (all 53,672 corpus edges compared pre/post):
+#     EXACTLY 29 edges changed, ALL improvements — 27 unresolved_target ->
+#     interface_dispatch (the BankApiIntegration run.event/run.increment
+#     edges: target sets narrowed from 4-5 name-matches to the 3 true
+#     OperationRunHandle implementors) and 2 unresolved_target ->
+#     exact_synchronous (the ESPM initialize edge ->
+#     DefaultEmptyStateRegistryInitializer.initialize; and
+#     AnalyticsCurrencyNormalizer.normalizeInternal's
+#     expense.toExpenseSnapshot inside a mapNotNull lambda -> the private
+#     extension).  ZERO previously-exact edges changed, ZERO new uncertain
+#     edges.
+#
+# TESTS:
+#   - 8 new fixture scenarios CB-19..CB-26: CB-19/CB-20 positives (shape A
+#     callee-signature; shape B receiver-generic with implicit `it`), and
+#     SIX fail-closed pins — CB-21 arity mismatch (2-param lambda vs
+#     1-component function type), CB-22 generic component
+#     (`suspend (T) -> T`), CB-23 two distinct candidate signatures
+#     (interface overload pair with different block types), CB-24
+#     async-carrier lambda parameter, CB-25 receiver generic with no
+#     explicit type argument (Set<*>), CB-26 lambda passed as a named
+#     non-trailing argument (no region forms, no binding fires).
+#   - scripts/ci/test_gr14u45_lambda_param_typing.py: 8 CI tests (2
+#     proving RED pre-fix, 6 soundness pins).
+#   - Fixture corpus 64 -> 72 scenarios (disclosed delta; consolidated
+#     manifest 72 -> 80 rows, EXPECTED_CONSOLIDATED_ROWS updated).
+#
+# OUTCOME (board, pre bee88087... -> post ddbd76ff12dc9557, double run
+# byte-identical): ambiguous 5 -> 1.
+#   THE 4 RESTOREJOURNALIMPORTER ROWS DID NOT SIMPLY PROVE — resolving
+#   the ESPM edge EXPOSED 4 TRUE-POSITIVE COUNTEREXAMPLES:
+#     RestoreJournalImporter.importLastSuccessJournalIfPresent ->
+#       OperationRunDao.insert / OperationRunEventDao.insert
+#     RestoreJournalImporter.importLastFailureJournalIfPresent ->
+#       OperationRunDao.insert / OperationRunEventDao.insert
+#   now counterexample_unguarded_call_path / GR13_UNGUARDED_CALL_PATH
+#   with the concrete path MainApplication.onCreate ->
+#   AppStartupDelegate.initialize -> AppStartupCoordinator.initialize ->
+#   importRestoreJournals -> importLast*JournalIfPresent -> DAO inserts
+#   (root: framework_callback).  The importer contains ZERO
+#   writeBarrier.checkWritesAllowed calls; the only gate is the
+#   isWritesAllowed() branch in AppStartupCoordinator.initialize L38 (a
+#   read-query gate the proof layer does not model as a canonical
+#   barrier).  Remediation scheduled as u45b (canonical entry checks,
+#   Pattern A — same pattern as u44b).  The async bucket did NOT move
+#   (35 unchanged): the run.event/run.increment interface_dispatch edges
+#   still taint their Handle/Recorder targets, so the u43
+#   F-ANON-OBJECT / F-PROCESSBATCH families remain the async deciders.
+#   The Handle.increment ambiguous row remains (interface_dispatch is
+#   still an uncertain state).
+#
+# HARD STOP CHECKS: 0 previously-proven rows regressed (324 proven_helper
+#   / 1 restore / 14 worker unchanged; all 379 entries diffed — only the
+#   4 importer rows changed state).  The 4 new counterexamples are
+#   EXPOSED true positives (documented above, remediation scheduled
+#   u45b), not regressions — the engine change only ever converts
+#   unresolved edges into more precise ones.  All 29 edge deltas are
+#   resolution improvements.
+#
+# VALIDATION:
+#   - scripts/db_guard: 269 passed (includes the 8 new CI tests)
+#   - fixture corpus: 72/72, exit 0
+#   - scripts/ci: 1243 passed, 14 failed — the 14 failures are
+#     byte-identical to the base commit's failure set (verified by
+#     stashing the engine change and re-running; freshness-stamp and
+#     platform-conditional tests, environment-dependent, pre-existing)
+#   - board double run byte-identical ddbd76ff12dc9557
+#   - Kotlin: NOT RUN (no production Kotlin change in u45 itself)
+#
+# Remaining: the 4 counterexample rows pending u45b remediation; the
+#   Handle.increment ambiguous row (interface_dispatch uncertainty, 3
+#   OperationRunHandle implementors — an owner-decision candidate, not
+#   silently resolvable); the async 35 (u43 family table).
+status: COMPLETE_AT_BOARD_ddbd76ff
+# NOTE: the board carries 4 DISCLOSED true-positive counterexamples
+#   pending u45b remediation — this status reflects the exposed state,
+#   not a clean board.
