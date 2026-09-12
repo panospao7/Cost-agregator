@@ -3456,6 +3456,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: aiArtifactDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
   operation: deleteExpired
@@ -3472,6 +3473,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: aiChatMessageDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
   operation: deleteOlderThan
@@ -3488,6 +3490,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: backgroundJobRunDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
   operation: redactErrorMessagesOlderThan
@@ -3505,6 +3508,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: bankStatementImportItemDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
   operation: redactMerchantOlderThan
@@ -3521,6 +3525,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: emailReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.EmailReceiptDao
   operation: redactSensitiveFieldsOlderThan
@@ -3538,6 +3543,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: notificationIntakeDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
   operation: purgeRawPayload
@@ -3555,6 +3561,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: pendingReviewDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
   operation: redactNotificationTextOlderThan
@@ -3572,6 +3579,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: pipelineDiagnosticEventDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
   operation: deleteOlderThan
@@ -3589,6 +3597,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: rawNotificationDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
   operation: updateRawContentPurged
@@ -3606,6 +3615,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: scannedReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
   operation: updateRawOcrTextPurged
