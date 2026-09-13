@@ -290,6 +290,52 @@ def _at_clause(text: str, pos: int, end: int) -> bool:
     return False
 
 
+def _paren_depth_before(text: str, start: int, pos: int) -> int:
+    """Nesting depth of ``()``/``[]`` at ``pos``, counting from ``start``.
+
+    GR-14u56b mechanism 1: masked text contains no comments or strings, so a
+    flat scan is exact.  Braces are NOT counted here: the caller asks whether
+    an elvis sits inside argument parentheses, and a depth-0 elvis whose RHS
+    opens a brace is the control-flow form the refusal exists for.
+    """
+    depth = 0
+    i = start
+    while i < pos:
+        ch = text[i]
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        i += 1
+    return depth
+
+
+def _safe_call_receiver_ok(receiver: str) -> bool:
+    """Structural validation of a safe-call carrier receiver (GR-14u56b).
+
+    GR-14u40 accepted only ``ident(.ident)*`` receivers; u56b extends the
+    shape to balanced call-result receivers (``dao.getById(x!!)``) via a
+    depth-aware scan (regexes cannot count nested parentheses).  The u39/u46
+    charset exclusions hold otherwise: no brace, semicolon, ``?`` (an elvis
+    or a second safe call in the receiver), or ``=`` anywhere; parentheses
+    and brackets must balance and never dip negative.  Anything else fails
+    closed (no match -> pre-change handling).
+    """
+    if not receiver or not receiver.strip(_WS):
+        return False
+    depth = 0
+    for ch in receiver:
+        if ch in ";?={}":
+            return False
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
 def _split_statements(cur: _Cursor, start: int, end: int) -> list[tuple[int, int]] | None:
     parts: list[tuple[int, int]] = []
     depth = 0
@@ -586,15 +632,17 @@ def _match_safe_call_carrier(stripped: str, methods: tuple[str, ...]):
     (coroutine-builder / elvis-block on the outer statement).
 
     Conservative shape: optional val/var binding prefix (no brace,
-    semicolon, or `?.` in the type/annotation text), then a DOTTED
-    identifier-chain receiver (`ident` or `ident(.ident)*` — GR-14u56a:
-    `receipt.imagePath?.let { }` blocked every property-chain carrier the
-    way the simple receiver never did), `?.`, and an admitted carrier
-    name.  The chain charset mirrors the u39/u46 prefix discipline: no
-    brace, semicolon, `?`, `=`, or call parentheses inside the receiver —
-    anything richer (`a?.b?.let { }`, `f()?.let { }`, `x?.foo { }` for an
-    unlisted `foo`) does not match here and keeps today's fail-closed
-    handling.  Purely syntactic; admission happens in the proof layer.
+    semicolon, or `?.` in the type/annotation text), then a receiver,
+    `?.`, and an admitted carrier name.  GR-14u56a: the receiver may be a
+    dotted identifier chain (`receipt.imagePath?.let { }`).  GR-14u56b: the
+    receiver may also be a CALL RESULT with balanced parentheses
+    (`scannedReceiptDao.getById(x!!)?.let { }`) — regexes cannot count
+    nested parentheses, so the receiver group is located by regex and then
+    validated structurally by ``_safe_call_receiver_ok`` (no brace,
+    semicolon, `?`, or `=`; balanced `()`/`[]`).  Anything richer
+    (`a?.b?.let { }`, `f()?.g()?.let { }`, `x?.foo { }` for an unlisted
+    `foo`) does not match here and keeps today's fail-closed handling.
+    Purely syntactic; admission happens in the proof layer.
     """
     if not methods:
         return None
@@ -604,13 +652,15 @@ def _match_safe_call_carrier(stripped: str, methods: tuple[str, ...]):
         pattern = re.compile(
             r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
             r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
-            r"(?P<receiver>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+            r"(?P<receiver>[^?]*?)"
             r"\s*\?\.\s*"
             r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
         )
         _RE_SAFE_CALL_CARRIER_CACHE[methods] = pattern
     m = pattern.match(stripped)
     if m is None or m.group("method") not in methods:
+        return None
+    if not _safe_call_receiver_ok(m.group("receiver")):
         return None
     return m
 
@@ -621,13 +671,14 @@ def _parse_safe_call_carrier(cur: _Cursor, base: int, stmt_e: int, match):
     Mirrors _parse_chained_carrier's fail-closed body handling (prefix
     brace check, tail check, param header skip, recursive parse,
     scope-label save/restore).  scope_receiver mirrors the u39
-    chained-carrier precedent for a DOTTED receiver (GR-14u56a): the
-    receiver is a property chain, so it stays None — carrier regions are
-    never canonical scopes, the bridge's carrier-span walk matches by
-    scope_method name only, and the proof layer admits by contract only,
-    so this grants nothing beyond parseability.  A SIMPLE receiver keeps
-    the u40 behavior: it is recorded exactly as _parse_transparent_scope
-    does.
+    chained-carrier precedent for a CHAIN receiver (GR-14u56a dotted
+    chains, GR-14u56b call-result receivers — any receiver containing a
+    dot or a call parenthesis): the receiver is not a simple identifier,
+    so it stays None — carrier regions are never canonical scopes, the
+    bridge's carrier-span walk matches by scope_method name only, and the
+    proof layer admits by contract only, so this grants nothing beyond
+    parseability.  A SIMPLE receiver keeps the u40 behavior: it is
+    recorded exactly as _parse_transparent_scope does.
     """
     receiver = match.group("receiver")
     method = match.group("method")
@@ -667,7 +718,9 @@ def _parse_safe_call_carrier(cur: _Cursor, base: int, stmt_e: int, match):
         span=cur.span(base, close),
         children=tuple(inner),
         scope_method=method,
-        scope_receiver=None if "." in receiver else receiver,
+        scope_receiver=(
+            None if ("." in receiver or "(" in receiver) else receiver
+        ),
     )
 
 
@@ -1185,13 +1238,48 @@ def _parse_sequence(
                         cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
                     )
                     if close > 0 and not tail:
+                        _rcv = safe_call.group("receiver")
+                        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", _rcv):
+                            # Pre-u56b claim classes (simple/dotted
+                            # receivers): byte-identical claim behavior.
+                            region = _parse_safe_call_carrier(
+                                cur, base, stmt_e, safe_call
+                            )
+                            if region is not None:
+                                out.append(region)
+                            idx += 1
+                            continue
+                        # GR-14u56b hard-stop lesson: a call-result receiver
+                        # is a NEWLY-EXPOSED claim class (pre-u56b these
+                        # statements fell to the generic opacity gate).  A
+                        # claim attempt that records ANY finding — e.g. a
+                        # labelled return to an OUTER scope's label
+                        # (`getCurrentUser(groupId)?.let {
+                        # return@withTransaction ... }` in
+                        # GroupTransactionCoordinator.addMemberToGroup) —
+                        # must roll the attempt's findings back and fall
+                        # through to the generic path, mirroring the u46
+                        # chain attempt below: claiming while keeping the
+                        # finding hard-fails currently-absorbed no-mutation
+                        # sites (corpus-wide regression).  Simple and dotted
+                        # receivers keep the pre-u56b behavior: their
+                        # prefix/tail failures were already reachable before
+                        # u56b, and rolling those back would change pinned
+                        # u40/u56a tests.
+                        findings_before = len(cur.findings)
                         region = _parse_safe_call_carrier(
                             cur, base, stmt_e, safe_call
                         )
-                        if region is not None:
+                        if (
+                            region is not None
+                            and len(cur.findings) == findings_before
+                        ):
                             out.append(region)
-                        idx += 1
-                        continue
+                            idx += 1
+                            continue
+                        del cur.findings[findings_before:]
+                        # Fall through to the generic handling below (the
+                        # opacity gate), exactly as pre-u56b.
                 # GR-14u46: carrier CHAINS (N>=2 admitted segments).  The
                 # idiomatic `runCatching { ... }.onFailure { ... }` matched
                 # neither the u33 head rule (its lambda does not END the
@@ -1423,16 +1511,25 @@ def _parse_sequence(
 
         if "?:" in stripped and "{" in stripped:
             qpos = stripped.find("?:")
-            bpos = stripped.find("{", qpos)
-            if bpos >= 0:
-                cur.fail(
-                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
-                    base,
-                    stmt_e,
-                    "elvis-block",
-                )
-                idx += 1
-                continue
+            # GR-14u56b mechanism 1: only a DEPTH-0 elvis forms a control-flow
+            # alternative whose brace-bearing result needs the refusal.  An
+            # elvis inside argument parentheses (depth > 0) is an expression,
+            # not control flow (`receipt.copy(imageHash = a ?: b)`), and the
+            # statement falls through to the ordinary handling below (the
+            # opacity gate still refuses any brace group hiding a mutation
+            # site or barrier-like call).  The depth-0 refusal is
+            # byte-identical: same code, span, and reason.
+            if _paren_depth_before(cur.text, base, base + qpos) == 0:
+                bpos = stripped.find("{", qpos)
+                if bpos >= 0:
+                    cur.fail(
+                        "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                        base,
+                        stmt_e,
+                        "elvis-block",
+                    )
+                    idx += 1
+                    continue
 
         if "{" in stripped or "}" in stripped:
             if (

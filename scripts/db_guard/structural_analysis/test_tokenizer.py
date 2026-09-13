@@ -520,7 +520,13 @@ class TestClassification:
         assert self._classify(source) == self._classify(source)
 
 
-def parse_with_predicate(body: str, site_starts=(), barrier_spans=(), transparent_inline_methods=()):
+def parse_with_predicate(
+    body: str,
+    site_starts=(),
+    barrier_spans=(),
+    transparent_inline_methods=(),
+    transparent_scope_methods=(),
+):
     """Parse with a soundness gate over the given site starts / barrier spans."""
     from scripts.db_guard.structural_analysis.barrier_markers import (
         lambda_opacity_predicate,
@@ -536,6 +542,7 @@ def parse_with_predicate(body: str, site_starts=(), barrier_spans=(), transparen
         masked,
         SourceSpan(0, len(masked), 1, 1),
         lambda_opacity_predicate=predicate,
+        transparent_scope_methods=tuple(transparent_scope_methods),
         transparent_inline_methods=tuple(transparent_inline_methods),
     )
 
@@ -1313,6 +1320,268 @@ class TestReturnConstructs:
             "lambda-escape",
             "dangling-clause",
         )
+
+    def test_elvis_inside_parens_with_trailing_carrier_admitted(self):
+        # GR-14u56b mechanism 1 + the gated-admission deviation (documented):
+        # the L501 shape — an elvis inside argument parentheses
+        # (`imageHash = fileHash ?: receipt.imageHash`) followed by a
+        # brace-bearing `.also { }` carrier — is admitted ONLY through the
+        # production-style opacity gate (parse_with_predicate,
+        # site_starts=()).  WITHOUT the gate the u46 chain-prefix charset
+        # `[^{};?=]` still refuses this composite with lambda-escape (the
+        # `=` of the named arguments excludes the prefix), so this test
+        # pins the gated admission, NOT the ungated chain claim — a known
+        # limitation recorded in the manifest (GR-14u56b Remaining).
+        result = parse_with_predicate(
+            "val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(\n"
+            "    sourceType = ReceiptSourceType.CAMERA.name,\n"
+            "    documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,\n"
+            "    processingStatus = processingStatus,\n"
+            "    imageHash = fileHash ?: receipt.imageHash,\n"
+            "    textFingerprint = textFingerprint,\n"
+            "    semanticFingerprint = semanticFingerprint\n"
+            "), now).also { it.taxInclusive = taxInclusive }\n",
+            site_starts=(),
+            transparent_inline_methods=("also",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+
+    def test_call_result_receiver_safe_call_admitted(self):
+        # GR-14u56b mechanism 2: the u40 safe-call receiver may be a CALL
+        # RESULT with balanced parentheses (`dao.getById(x!!)?.let { }` —
+        # the real L444 head).  Regexes cannot count nested parentheses, so
+        # the receiver group is located by regex and validated structurally
+        # by _safe_call_receiver_ok.  scope_receiver mirrors the u39/u56a
+        # chain precedent: None for any receiver containing a dot or a call
+        # parenthesis (grants nothing beyond parseability).
+        result = parse(
+            "dao.getById(x!!)?.let { existing ->\n"
+            "  val now = timeProvider.now()\n"
+            "  existing\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert wrapper.scope_method == "let"
+        assert wrapper.scope_receiver is None
+
+    def test_unbalanced_parens_receiver_fails_closed(self):
+        # Fail-closed pin for mechanism 2: an UNBALANCED receiver must not
+        # match (the structural validation requires balanced, never-negative
+        # `()`/`[]`), so the statement keeps the pre-u56b generic outcome.
+        result = parse(
+            "foo(bar(x?.let { it.go() }\n",
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED"
+        assert result.unsupported[0].reason == "unbalanced-delimiter"
+
+    def test_nested_call_receiver_admitted(self):
+        # GR-14u56b: the depth-aware receiver scan accepts NESTED balanced
+        # call parentheses (`foo(bar(x))?.let { }`); a regex receiver group
+        # cannot count nesting, which is why the validation is structural.
+        # scope_receiver stays None (the receiver contains a parenthesis).
+        result = parse(
+            "foo(bar(x))?.let { it.go() }\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "let"
+        assert result.regions[0].scope_receiver is None
+
+    def test_elvis_at_depth_zero_still_refused(self):
+        # u39 pin stays intact under mechanism 1: an elvis at PAREN DEPTH 0
+        # whose RHS opens a brace is still the control-flow form the
+        # elvis-block refusal exists for (the depth check gates ONLY the
+        # argument-parenthesis form; the depth-0 refusal is byte-identical).
+        # (test_elvis_block_form already pins this shape; this explicit pin
+        # documents the u56b mechanism boundary next to the depth>0
+        # admission test.)
+        result = parse("val x = foo() ?: {\n  val y = 1\n  y\n}\n")
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
+        assert result.unsupported[0].reason == "elvis-block"
+
+    def test_call_result_receiver_labelled_outer_return_absorbed_with_gate(self):
+        # GR-14u56b hard-stop regression pin: the real
+        # GroupTransactionCoordinator.addMemberToGroup L220-224 shape —
+        # `memberDao.getCurrentUser(groupId)?.let { currentUser ->`
+        # `    return@withTransaction ... }` inside
+        # `database.withTransaction { ... }`.  The call-result receiver is
+        # a NEWLY-EXPOSED claim class (pre-u56b it fell to the generic
+        # opacity gate), and the lambda's labelled return targets the
+        # OUTER withTransaction label, not the let.  The claim attempt
+        # records that labelled-return finding, so the attempt must roll
+        # back and fall through to the generic path: with a
+        # production-style gate the whole statement is absorbed as one
+        # opaque STATEMENT (supported, zero findings) — the pre-u56b
+        # behavior.  A claim that kept the finding would hard-fail the
+        # whole callable (the actual u56b board regression).
+        result = parse_with_predicate(
+            "database.withTransaction {\n"
+            "  if (isCurrentUser) {\n"
+            "    memberDao.getCurrentUser(groupId)?.let { currentUser ->\n"
+            "      return@withTransaction Result.Error(\n"
+            "        GroupValidationError.CurrentUserAlreadyExists(currentUser.id)\n"
+            "      )\n"
+            "    }\n"
+            "  }\n"
+            "  val memberId = memberDao.insert(member)\n"
+            "}\n",
+            site_starts=(),
+            transparent_scope_methods=("withTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+
+    def test_call_result_receiver_labelled_outer_return_refused_without_gate(self):
+        # Same shape WITHOUT the production-style gate: the attempt still
+        # rolls back and falls through, and the generic lambda-escape
+        # refusal fires exactly as pre-u56b (fail closed, honest).
+        result = parse(
+            "database.withTransaction {\n"
+            "  if (isCurrentUser) {\n"
+            "    memberDao.getCurrentUser(groupId)?.let { currentUser ->\n"
+            "      return@withTransaction Result.Error(\n"
+            "        GroupValidationError.CurrentUserAlreadyExists(currentUser.id)\n"
+            "      )\n"
+            "    }\n"
+            "  }\n"
+            "  val memberId = memberDao.insert(member)\n"
+            "}\n",
+            transparent_scope_methods=("withTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_call_result_receiver_claim_hiding_mutation_fails_closed(self):
+        # Fail-closed pin: a `(`-receiver claim attempt that would hide a
+        # REAL mutation site must never succeed.  Mutation sites are
+        # proof-layer facts (the tokenizer never sees them), so the pin
+        # composes the two layers the way the production pipeline does:
+        # the let lambda holds a labelled return to the OUTER scope (the
+        # attempt records that finding and is abandoned -> rollback ->
+        # fall through) AND a registered mutation site inside the brace
+        # group (the opacity gate then refuses the whole statement).  A
+        # claim that KEPT its finding would surface `labelled-return`
+        # from the inner span instead; this assertion pins the
+        # rollback-then-gate path by its outer `lambda-escape` outcome.
+        source = (
+            "database.withTransaction {\n"
+            "  memberDao.getCurrentUser(groupId)?.let { currentUser ->\n"
+            "    return@withTransaction memberDao.insert(member)\n"
+            "  }\n"
+            "}\n"
+        )
+        site = source.index("memberDao.insert")
+        result = parse_with_predicate(
+            source,
+            site_starts=(site,),
+            transparent_scope_methods=("withTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_call_result_receiver_clean_claim_hiding_site_refused_at_proof(self):
+        # Complementary fail-closed pin: a `(`-receiver claim attempt that
+        # parses CLEANLY (no labelled return) is claimed, but carrier
+        # regions are never contract-admitted (scope_receiver=None, u39
+        # precedent), so a mutation site inside the lambda stays
+        # disconnected from the scope entry and the proof layer refuses
+        # it UNSUPPORTED — the claim can never launder a hidden site.
+        source = (
+            "database.withTransaction {\n"
+            "  memberDao.getCurrentUser(groupId)?.let { currentUser ->\n"
+            "    memberDao.insert(member)\n"
+            "  }\n"
+            "}\n"
+        )
+        site = source.index("memberDao.insert")
+        result = parse_with_predicate(
+            source,
+            site_starts=(site,),
+            transparent_scope_methods=("withTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        # Tokenizer level: the claim parses (that is the u56b exposure).
+        assert result.is_supported
+        # Proof level: the site inside the never-admitted carrier is
+        # refused, never PROVEN.
+        from scripts.db_guard.structural_analysis.cfg import build_callable_cfg
+        from scripts.db_guard.structural_analysis.barrier_markers import (
+            collect_barrier_markers,
+        )
+        from scripts.db_guard.structural_analysis.barrier_proof import (
+            ProofStatus,
+            prove_direct_barrier,
+        )
+
+        masked = mask_kotlin_source(source)
+        assert len(masked) == len(source)
+        markers = collect_barrier_markers(result, masked)
+        sites = (
+            type(
+                "MS",
+                (),
+                {
+                    "span": SourceSpan(
+                        start=site,
+                        end=site + len("memberDao.insert"),
+                        line=source.count("\n", 0, site) + 1,
+                        column=1,
+                    ),
+                    "callable_key": "p|o|function|m|null|",
+                    "dao_fqcn": "example.Dao",
+                    "operation": "insert",
+                    "mutation_kind": "ROOM_ABSTRACT_INSERT",
+                    "source_identity": "example.Dao::insert",
+                },
+            )(),
+        )
+        cfg, _ = build_callable_cfg(
+            result,
+            sites,
+            markers,
+            path="app/src/main/java/Repo.kt",
+            callable_key="p|o|function|m|null|",
+            admitted_transparent_spans=frozenset(),
+        )
+        from scripts.db_guard.structural_analysis.barrier_proof import (
+            ReceiverTypeResolver,
+            admit_transparent_scope_candidates,
+        )
+        from scripts.db_guard.structural_analysis.barrier_proof import (
+            CANONICAL_BARRIER_CONTRACT_V2,
+        )
+
+        resolver = ReceiverTypeResolver(masked)
+        admitted = admit_transparent_scope_candidates(
+            result, CANONICAL_BARRIER_CONTRACT_V2, resolver
+        )
+        assert admitted == frozenset()  # the let carrier is never admitted
+        results, _ = prove_direct_barrier(
+            masked,
+            SourceSpan(0, len(masked), 1, 1),
+            cfg,
+            sites,
+            CANONICAL_BARRIER_CONTRACT_V2,
+            resolver,
+            path="app/src/main/java/Repo.kt",
+            callable_key="p|o|function|m|null|",
+        )
+        assert results[0].status is ProofStatus.UNSUPPORTED
 
 
 class TestValConstructInitializers:
