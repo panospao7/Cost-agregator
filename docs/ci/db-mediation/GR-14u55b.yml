@@ -1,0 +1,115 @@
+# GR-14u55b — multi-level lambda-parameter binding + bare call-expression
+# initializer typing (precedented extensions of u45/u50; with a PREMISE
+# CORRECTION disclosed).
+#
+# DEFECT (as verified by probe — the task's premise was partially wrong):
+# the 2 remaining ambiguous rows (Handle.finalizeNonCancellable,
+# Handle.terminal) were decided by unresolved_target edges calling
+# Handle.success/cancelled/failedFinal.  The task hypothesized the
+# receivers were the runOperation LAMBDA PARAM (`run`) blocked by
+# nested-lambda scoping.  PROBE-VERIFIED CORRECTION: in
+# CompositeOperationRunRecorder.runOperation (L49-72), `run` is a LOCAL
+# VAL — `val run = start(operationType, actor, metadata)` (L55) — a bare
+# receiverless CALL-EXPRESSION initializer, which the u50 chain typing did
+# not cover (it required a dotted member chain).  The u45 multi-level
+# scoping gap IS real in general (outer lambda params stay lexically in
+# scope inside nested lambdas) and is fixed here too, but it was not the
+# blocker for these rows.
+#
+# FIX (two mechanisms, fail-closed):
+#   1. MULTI-LEVEL LAMBDA-PARAM BINDING (the u45 extension as specified):
+#      _lambda_param_binding now walks OUTWARD through ALL enclosing lambda
+#      regions (innermost first, sorted by start offset descending).  At
+#      each level: the name must match one of that level's bound params AND
+#      the level's carrier must resolve with exactly-one-distinct signature
+#      (Shape A) or the receiver-generic gate (Shape B) — innermost
+#      innermost DECLARATION wins (Kotlin shadowing).  u55c REVIEW FIX
+#      (ISSUE-1): a level that DECLARES the name but cannot type it
+#      (generic component, Shape B miss, unresolved carrier, arity
+#      mismatch) STOPS the walk - fail closed, no outer substitution
+#      (the inner declaration IS the binding); the walk continues ONLY
+#      when the name is not declared at that level.  ALL existing guards preserved
+#      per-level: admitted-transparent-regions-only (escaping/async/
+#      unresolved/canonical never bind), arity match, generic-T never
+#      binds, the re-entrancy depth cap.  The fun-param level remains the
+#      final fallback (existing behavior).
+#   2. BARE CALL-EXPRESSION INITIALIZER TYPING (the u50 extension that
+#      actually addresses the verified gap): _resolve_member_chain now
+#      accepts a BARE receiverless call initializer
+#      (`val run = start(operationType, actor, metadata)`) — the callee
+#      resolves against the ENCLOSING owner (implicit this) and must match
+#      EXACTLY ONE corpus member whose captured return_type resolves;
+#      arguments are allowed here (unlike chain segments) because with
+#      exactly one member match there is no overload-selection ambiguity,
+#      so the declared return type is authoritative.  Fail closed: unknown
+#      callee, 0/2+ matches, missing return_type, unresolvable return
+#      type, assignments/indexing/braces in the text.
+#
+# FIXTURES (4 new, cb63..cb66; consolidated manifest 116 -> 120):
+#   cb63 NL-pos (bare-call): `val run = start(op)` in a corpus owner ->
+#        the val types via start's declared return type; run.success()
+#        resolves exact (EXACT_SYNCHRONOUS)
+#   cb64 NL-shadow: the same-name binding at two lambda levels -> the
+#        INNERMOST wins (Kotlin shadowing; EXACT_SYNCHRONOUS)
+#   cb65 NL-neg-escaping: an async-carrier outer lambda (launchWorker) ->
+#        the param never binds; the edge keeps the ASYNC_DISPATCH region
+#        state (the admitted-regions-only guard, preserved per level —
+#        the region state PREEMPTS receiver resolution, so the honest
+#        expectation is ASYNC_DISPATCH, not unresolved_target; the
+#        fixture expectation was corrected to the actual fail-closed
+#        behavior and the probe confirmed)
+#   cb66 NL-neg-generic: the outer binding's component is the callee's
+#        own generic T -> never binds; ASYNC_DISPATCH (same region-state
+#        preemption, same correction)
+#
+# EDGE A/B EVIDENCE (all 53,789 corpus edges compared pre/post):
+#   186 changed positions: 61 async_dispatch(uncertain) + 125
+#   unresolved_target(uncertain) -> 176 exact_synchronous(external) + 10
+#   exact_synchronous(corpus).  ZERO previously-exact edges changed
+#   (hard-stop clean).  The bare-call typing resolved receiverless member
+#   calls corpus-wide (every `val x = owner.member(...)` shape with a
+#   single-match callee and a declared return type).
+#
+# OUTCOME (board, pre b6963016... -> post 6bb3b894a9cc7181, double run
+# byte-identical): ZERO rows moved.  proofStates byte-identical:
+#   proven_helper 339, restore 1, worker 14, ambiguous 2, async 23,
+#   counterexamples 0.  REPORTED HONESTLY: the 2 rows' taint now flows
+#   from the NEXT deciders — post-change trace for
+#   Handle.finalizeNonCancellable shows RestoreDiagnosticsSink.
+#   finalizeRunFailed and DatabaseBackupRepositoryImpl.createCostBackup
+#   unresolved_target edges calling handle.failedFinal (their own
+#   receivers are other callables' handles, not the Composite's `run`
+#   val).  The u55b mechanisms resolved 186 edges corpus-wide and removed
+#   the Composite's own uncertain edges, but the next-decider takeover
+#   (the u47/u54 lesson, again) means each cleared family reveals the
+#   next.  The remaining closure taint is a NEW family (handle-receiver
+#   unresolved edges from RestoreDiagnosticsSink/DatabaseBackupRepository
+#   Impl call sites) not enumerated in the FINAL26 memo — a GR-15 input
+#   addendum.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows regressed,
+#   0 rows in unproven_external_entry, 0 previously-exact edges changed,
+#   0 unexpected board delta (379 entries diffed — zero row movements).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 113/113 checked, 113 passed, exit 0 (121 manifest
+#     rows after the u55c review fixes: cb64 rewritten as the shadow
+#     fail-closed pin, cb67 added as the outer-level binding positive,
+#     headers corrected; 48+19 CB + 25 HP + 3 SL + 18 WP + 8 PR)
+#   - scripts/ci: 1259 passed, 14 failed — byte-identical to the base
+#     commit's failure set (freshness-stamp and platform-conditional
+#     tests, environment-dependent, pre-existing)
+#   - board double run byte-identical 6bb3b894a9cc7181
+#   - edge A/B: 186 uncertain->exact, zero previously-exact edges changed
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the NEW handle-receiver unresolved family
+#   (RestoreDiagnosticsSink.finalizeRunFailed /
+#   DatabaseBackupRepositoryImpl.createCostBackup calling handle.
+#   failedFinal — a GR-15 input addendum, not in the FINAL26 memo); the
+#   F1 withPermit (11) / F3 PostCommitAction (6) families (FINAL26 memo);
+#   the F-TRANSPARENT-CHAIN-NOISE family (owner sign-off gate); the
+#   tracked candidate/accounting pair regeneration (pre-existing --verify
+#   drift, u51b disclosure).
+status: COMPLETE_AT_BOARD_6bb3b894

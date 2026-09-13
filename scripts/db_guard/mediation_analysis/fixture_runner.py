@@ -183,6 +183,16 @@ CB_SUBJECT_CALLS = {
     # withdraws the admission.
     "CB-61": (("exerciseCb61", "accept"),),
     "CB-62": (("exerciseCb62", "accept"),),
+    # GR-14u55b lambda-scope fixtures: the bare-call initializer positive
+    # (the callee's declared return type types the val), the shadow pin
+    # (innermost binding wins), and the two fail-closed pins (an
+    # async-carrier lambda param keeps the ASYNC_DISPATCH region state;
+    # a generic component never binds).
+    "CB-63": (("exercise", "success"),),
+    "CB-64": (("exerciseCb64", "ping"),),
+    "CB-65": (("exerciseCb65", "success"),),
+    "CB-66": (("exerciseCb66", "success"),),
+    "CB-67": (("exerciseCb67", "success"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.

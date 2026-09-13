@@ -201,3 +201,19 @@ fixtures:
   - id: CB-62
     file: call_binding/cb62_named_fanout_incomplete.kt
     expectedResolution: INTERFACE_DISPATCH
+  - id: CB-63
+    file: call_binding/cb63_bare_call_init.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-64
+    file: call_binding/cb64_lambda_shadow.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-65
+    file: call_binding/cb65_lambda_escaping.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-66
+    file: call_binding/cb66_lambda_generic.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-67
+    file: call_binding/cb67_outer_level_binding_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+

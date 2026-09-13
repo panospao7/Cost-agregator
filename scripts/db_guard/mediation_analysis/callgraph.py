@@ -1456,15 +1456,25 @@ class CallGraphBuilder:
     })
     _MAX_CARRIER_RESOLUTION_DEPTH = 3
 
+    # GR-14u55c (review fix, ISSUE-1): tri-state outcome of one level of
+    # _lambda_param_binding_at_level.  NAME_NOT_DECLARED lets the u55b walk
+    # continue outward; DECLARED_UNTYPABLE stops the walk and fails closed
+    # (Kotlin shadowing — the innermost declaration IS the binding, so an
+    # outer level must never be substituted past it); BOUND returns the
+    # declared type text.
+    _LEVEL_NAME_NOT_DECLARED = "name_not_declared"
+    _LEVEL_DECLARED_UNTYPABLE = "declared_untypable"
+    _LEVEL_BOUND = "bound"
+
     def _lambda_param_binding(
         self, call: CallRecord, model: CallableModel | None
     ) -> str:
         """Declared type text binding a lambda parameter name, or "".
 
-        GR-14u45: a receiver that is a PARAMETER OF THE INNERMOST ENCLOSING
-        LAMBDA REGION was untypable, so member calls on it produced
-        name-match ``unresolved_target`` edges that tainted subject ancestor
-        closures.  Two narrow, fail-closed bindings:
+        GR-14u45: a receiver that is a PARAMETER OF AN ENCLOSING LAMBDA
+        REGION was untypable, so member calls on it produced name-match
+        ``unresolved_target`` edges that tainted subject ancestor closures.
+        Two narrow, fail-closed bindings:
 
         Shape A (callee signature): the region's carrier call resolves to
         corpus callable(s) whose lambda-typed parameter's function type has
@@ -1485,6 +1495,17 @@ class CallGraphBuilder:
         behaviour.  The type TEXT is returned; ``receiver_fqcn_for_call``
         and ``_declared_receiver_type_text`` both resolve it through the
         shared resolution tail.
+
+        GR-14u55b multi-level walk (see the walk comment below) and
+        GR-14u55c contract (ISSUE-1/ISSUE-4): the walk checks each enclosing
+        lambda level innermost-first and STOPS at the first level that
+        DECLARES the receiver name — Kotlin shadowing makes that
+        declaration the binding.  A declared-but-untypable level fails
+        closed (no outer substitution); only a level that does not declare
+        the name continues the walk.  Note ``receiver_fqcn_for_call`` checks
+        the enclosing callable's ``params_named`` BEFORE this walk: a
+        same-name fun param wins over every lambda level (it is the actual
+        Kotlin binding, not a fallback).
         """
         if model is None:
             return ""
@@ -1501,25 +1522,98 @@ class CallGraphBuilder:
             # is not yet registered; the carrier call's own receiver never
             # needs this binding (it precedes its lambda), so fail closed.
             return ""
-        region = self._innermost_lambda(regions, call.name_start)
-        if region is None or region.call_id < 0:
-            return ""
+        # GR-14u55b: MULTI-LEVEL binding — walk OUTWARD through the
+        # enclosing lambda regions (innermost first).  Kotlin lexical
+        # scoping keeps outer lambda params in scope inside nested lambdas,
+        # so the u45 innermost-only lookup under-approximated: a receiver
+        # bound by an OUTER lambda param (e.g. the `run` of a runOperation
+        # block used inside a nested `runCatching { run.success(...) }`)
+        # stayed unresolvable.  Per level: if the name matches one of that
+        # level's bound params AND the level's carrier resolves with
+        # exactly-one-distinct signature, bind (innermost shadowing wins —
+        # Kotlin semantics).  The walk stops at the FIRST level that
+        # DECLARES the name: Kotlin shadowing means the innermost
+        # declaration IS the binding, so a declared-but-untypable inner
+        # level fails closed (no outer substitution — the u55c review
+        # correction; the pre-review walk skipped such levels and could
+        # substitute an OUTER type past a shadowing inner declaration).
+        # Only a level that does not declare the name at all continues
+        # outward.  The fun-param level (params_named) is checked BEFORE
+        # this walk in receiver_fqcn_for_call — a same-name fun param wins
+        # over every lambda level (it is the actual Kotlin binding, not a
+        # fallback).
+        containing = sorted(
+            (
+                region
+                for region in regions
+                if region.start <= call.name_start < region.end
+            ),
+            key=lambda region: region.start,
+            reverse=True,
+        )
+        for region in containing:
+            status, bound = self._lambda_param_binding_at_level(
+                call, model, region
+            )
+            if status == self._LEVEL_DECLARED_UNTYPABLE:
+                # Declared-but-untypable inner binding: STOP the walk and
+                # return no-binding (fail closed).
+                return ""
+            if bound:
+                return bound
+        return ""
+
+    def _lambda_param_binding_at_level(
+        self, call: CallRecord, model: CallableModel | None, region: LambdaRegion
+    ) -> tuple[str, str]:
+        """One level of the GR-14u45/u55b lambda-param binding.
+
+        Returns ``(status, type)``.  ``status`` is
+        ``_LEVEL_NAME_NOT_DECLARED`` when the receiver name is not among
+        this level's bound params (the
+        u55b walk continues outward), ``_LEVEL_DECLARED_UNTYPABLE`` when the
+        name IS declared here but no typable binding can be established
+        (fail closed — Kotlin shadowing: the inner declaration IS the
+        binding, so an outer level must not be substituted), and
+        ``_LEVEL_BOUND`` on success (``type`` is the declared type text).
+        Shape A (callee signature) and Shape B (receiver generic) exactly as
+        the u45 innermost rule defined them.
+        """
         if region.carrier != "transparent":
             # Only ADMITTED transparent regions bind; canonical scopes are
             # handled by their own context logic, escaping/async/unresolved
-            # regions never bind (fail closed).
-            return ""
+            # regions never bind (fail closed).  This is a LEVEL-level gate,
+            # not a name declaration: a name the region does not declare is
+            # not blocked by this region's carrier state, so classify the
+            # name first and continue the walk outward for undeclared names.
+            calls = self.calls_by_callable.get(call.caller_key, ())
+            carrier = next(
+                (c for c in calls if c.call_id == region.call_id), None
+            )
+            if carrier is None or carrier.lambda_start != region.start:
+                return self._LEVEL_NAME_NOT_DECLARED, ""
+            param_names = self._lambda_param_names(
+                self.file_models[call.file].masked, region
+            )
+            if not param_names or call.receiver_text not in param_names:
+                return self._LEVEL_NAME_NOT_DECLARED, ""
+            # The name IS declared at this level: the non-transparent
+            # carrier state preempts receiver resolution entirely (the
+            # region state decides the edge outcome), so the binding fails
+            # closed here — the walk must not substitute an outer type past
+            # this declaration.
+            return self._LEVEL_DECLARED_UNTYPABLE, ""
         calls = self.calls_by_callable.get(call.caller_key, ())
         carrier = next(
             (c for c in calls if c.call_id == region.call_id), None
         )
         if carrier is None or carrier.lambda_start != region.start:
-            return ""
+            return self._LEVEL_NAME_NOT_DECLARED, ""
         param_names = self._lambda_param_names(
             self.file_models[call.file].masked, region
         )
         if not param_names or call.receiver_text not in param_names:
-            return ""
+            return self._LEVEL_NAME_NOT_DECLARED, ""
         param_index = param_names.index(call.receiver_text)
         file_model = self.file_models[call.file]
 
@@ -1533,15 +1627,15 @@ class CallGraphBuilder:
             if element:
                 fqcn, origin = self._resolve_type(file_model, element)
                 if origin != "unknown" and fqcn:
-                    return fqcn
-            return ""
+                    return self._LEVEL_BOUND, fqcn
+            return self._LEVEL_DECLARED_UNTYPABLE, ""
 
         # Shape A: callee-signature typing.  Resolve the carrier call's
         # corpus targets; depth guard against pathological nesting (the
         # carrier receiver is normally a fun param/local val, which
         # terminates immediately).
         if self._carrier_resolution_depth >= self._MAX_CARRIER_RESOLUTION_DEPTH:
-            return ""
+            return self._LEVEL_DECLARED_UNTYPABLE, ""
         object.__setattr__(self, "_carrier_resolution_depth",
                            self._carrier_resolution_depth + 1)
         try:
@@ -1550,15 +1644,15 @@ class CallGraphBuilder:
             object.__setattr__(self, "_carrier_resolution_depth",
                                self._carrier_resolution_depth - 1)
         if len(signatures) != 1:
-            return ""
+            return self._LEVEL_DECLARED_UNTYPABLE, ""
         components = signatures[0]
         if len(components) != len(param_names):
-            return ""
+            return self._LEVEL_DECLARED_UNTYPABLE, ""
         component = components[param_index]
         fqcn, origin = self._resolve_type(file_model, component)
         if origin == "unknown" or not fqcn:
-            return ""
-        return fqcn
+            return self._LEVEL_DECLARED_UNTYPABLE, ""
+        return self._LEVEL_BOUND, fqcn
 
     def _lambda_param_names(
         self, masked: str, region: LambdaRegion
@@ -2175,7 +2269,18 @@ class CallGraphBuilder:
     def _resolve_member_chain(
         self, model: CallableModel, chain_text: str
     ) -> str | None:
-        """Resolve a dotted member-call chain to its final return type FQCN."""
+        """Resolve a dotted member-call chain to its final return type FQCN.
+
+        GR-14u55b extension: a BARE CALL-EXPRESSION initializer
+        (``val run = start(operationType, actor, metadata)`` — a
+        receiverless member call on the enclosing owner, implicit ``this``)
+        also types when the callee matches EXACTLY ONE corpus member of the
+        owner whose captured return_type resolves.  Arguments are allowed
+        here (unlike chain segments): with exactly one member match there is
+        no overload-selection ambiguity, so the declared return type is
+        authoritative.  Fail closed: unknown callee, 0/2+ matches, missing
+        return_type, or an unresolvable return type.
+        """
         text = chain_text.strip()
         if not text.endswith(")") or "(" in text.split(".")[-1]:
             # The final segment must be a call; anything with arguments in
@@ -2184,6 +2289,32 @@ class CallGraphBuilder:
                 return None
         if "=" in text or "[" in text or "{" in text:
             return None
+        # GR-14u55b: bare receiverless call — `name(...)` with no dot.  The
+        # callee resolves against the ENCLOSING owner (implicit this); the
+        # exactly-one-member gate carries the whole load (an overload pair
+        # fails closed).
+        if "." not in text:
+            call_match = re.fullmatch(
+                r"(?P<name>%s)\s*\(.*\)" % _ID, text
+            )
+            if call_match is None:
+                return None
+            member_name = call_match.group("name")
+            owner_fqcn = model.owner_fqcn
+            if owner_fqcn not in self.owners:
+                return None
+            members = self._members_named(owner_fqcn, member_name)
+            if len(members) != 1:
+                return None
+            member = members[0]
+            if not member.return_type:
+                return None
+            fqcn, origin = self._resolve_type(
+                self.file_models[model.file], member.return_type
+            )
+            if origin == "unknown" or not fqcn:
+                return None
+            return fqcn
         segments = text.split(".")
         if len(segments) < 2:
             return None
