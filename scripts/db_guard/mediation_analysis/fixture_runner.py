@@ -193,6 +193,14 @@ CB_SUBJECT_CALLS = {
     "CB-65": (("exerciseCb65", "success"),),
     "CB-66": (("exerciseCb66", "success"),),
     "CB-67": (("exerciseCb67", "success"),),
+    # GR-14u55 kotlinx known-root fixtures: the kotlinx star-import positive
+    # (a MutableStateFlow-typed local val's member call resolves
+    # exact-external), the dual-star fiction-dissolution pin (java.util +
+    # kotlinx star imports -> honest ambiguity, no fabricated FQCN), and the
+    # non-root fail-closed pin (the roots list is not a wildcard).
+    "CB-68": (("exercise", "update"),),
+    "CB-69": (("exercise", "emitNow"),),
+    "CB-70": (("exercise", "emitNow"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.

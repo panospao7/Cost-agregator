@@ -11,7 +11,7 @@ GROUP_MANIFESTS = (
     "protocol_manifest.yml",
 )
 CONSOLIDATED_MANIFEST = "expected_manifest.yml"
-EXPECTED_CONSOLIDATED_ROWS = 121
+EXPECTED_CONSOLIDATED_ROWS = 124
 FIELDS = ("id", "file", "expectedResolution", "expectedProof",
           "expectedRoot", "expectation")
 

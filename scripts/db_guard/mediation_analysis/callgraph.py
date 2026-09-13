@@ -465,7 +465,18 @@ ROOT_KIND_REASON_CODES = {
     RootKind.UNKNOWN_EXTERNAL: "ROOT_UNKNOWN_EXTERNAL",
 }
 
-_KNOWN_EXTERNAL_ROOTS = ("java", "javax", "kotlin", "android", "androidx")
+# GR-14u55: kotlinx added to the known external roots — completing the u53
+# disclosure (the u53 KNOWN LIMITATION named kotlinx as the fail-closed
+# casualty).  Probe-verified defect the addition fixes: files star-importing
+# BOTH kotlinx.* and java.util.* made the multi-star branch pick java.util as
+# the single known-root candidate and FABRICATE FQCNs that do not exist
+# (`java.util.MutableStateFlow` — CashFlowCalendarViewModel `_state.update{}`).
+# With kotlinx known-rooted, both candidates are known-root -> 2 candidates ->
+# honest ambiguity, and the 180 real kotlinx resolutions (Flow/StateFlow/
+# MutableStateFlow/CoroutineScope receivers) become exact-external.
+_KNOWN_EXTERNAL_ROOTS = (
+    "java", "javax", "kotlin", "android", "androidx", "kotlinx",
+)
 # GR-14u22: DI wrapper types whose accessor yields the wrapped instance, so a
 # receiver declared as `Wrapper<X>` types as X for dispatch resolution.  Only
 # these exact FQCNs unwrap; anything else fails closed.

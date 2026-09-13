@@ -1,17 +1,17 @@
 # GR-13 consolidated expected manifest (shadow corpus).
-# Copies all rows from the per-group manifests: 48 call-binding (CB;
+# Copies all rows from the per-group manifests: 51 call-binding (CB;
 # CB-16 is the GR-14u22 dagger.Lazy chain row, CB-17 the GR-14u24
 # single-implementor exactness row, CB-19/CB-20 the GR-14u45
 # lambda-parameter typing positives and CB-21..CB-26 its fail-closed
 # pins, CB-27..CB-29 the GR-14u47 external-exact exemption/carve-out
 # rows, CB-30 the GR-14u48 inline-wrapper carrier row, CB-31..CB-40 the
 # GR-14u49 anonymous-object rows and CB-41..CB-48 its loop-variable
-# typing rows),
-# 26 helper-proof (HP; HP-13..HP-20 are the GR-14f inline-carrier rows,
+# typing rows, CB-68..CB-70 the GR-14u55 kotlinx known-root rows),
+# 28 helper-proof+structured-launch (HP+SL; HP-13..HP-20 are the GR-14f inline-carrier rows,
 # SL-01..SL-03 the GR-14j structured-launch rows, HP-21 the GR-14m
 # named-argument-lambda regression row, HP-22 the GR-14n default-parameter-DI
 # regression row, HP-23 the GR-14u25 restore-internal-scope row),
-# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows = 99
+# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows = 124
 # rows total.
 # CB/HP/WP rows use expectedResolution/expectedProof(/expectedRoot);
 # PR rows use expectation. All values use closed vocabularies only.
@@ -265,6 +265,15 @@ fixtures:
   - id: CB-67
     file: call_binding/cb67_outer_level_binding_pos.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-68
+    file: call_binding/cb68_kx_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-69
+    file: call_binding/cb69_kx_neg_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-70
+    file: call_binding/cb70_kx_neg_nonroot.kt
+    expectedResolution: UNRESOLVED_TARGET
   - id: HP-13
     file: helper_proof/hp13_let_inline_positive.kt
     expectedResolution: EXACT_CANONICAL_SCOPE

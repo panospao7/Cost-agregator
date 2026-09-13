@@ -13,7 +13,9 @@
 # all-or-nothing, multi-supertype, wrapped-supertype pin); CB-41..CB-48
 # are its loop-variable typing rows (explicit-annotation positive,
 # unannotated/destructuring/map/string/scope-leak negatives, shadow and
-# inferred-only pins, set-headed fan-out positive).
+# inferred-only pins, set-headed fan-out positive).  CB-68..CB-70 are the
+# GR-14u55 kotlinx known-root rows (kotlinx star-import positive,
+# dual-star ambiguity/fiction-dissolution pin, non-root fail-closed pin).
 fixtures:
   - id: CB-01
     file: call_binding/cb01_overloads_diff_params.kt
@@ -216,4 +218,13 @@ fixtures:
   - id: CB-67
     file: call_binding/cb67_outer_level_binding_pos.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-68
+    file: call_binding/cb68_kx_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-69
+    file: call_binding/cb69_kx_neg_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-70
+    file: call_binding/cb70_kx_neg_nonroot.kt
+    expectedResolution: UNRESOLVED_TARGET
 
