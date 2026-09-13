@@ -1159,6 +1159,161 @@ class TestReturnConstructs:
         assert loop.children[1].scope_method == "runCatching"
         assert loop.children[2].scope_method == "onFailure"
 
+    def test_dotted_receiver_safe_call_admitted(self):
+        # GR-14u56a mechanism 1: the u40 safe-call receiver may be a DOTTED
+        # identifier chain (`receipt.imagePath?.let { }`).  Pre-u56a the
+        # simple-identifier receiver regex blocked every property-chain
+        # carrier, so the ReceiptLifecycleCoordinator.processReceiptInput
+        # val-initializer shape (L328, try/catch inside the lambda) refused
+        # as lambda-escape and blanked the whole callable.  scope_receiver
+        # mirrors the u39 chained-carrier precedent: None for a chain (the
+        # bridge's carrier-span walk matches by scope_method name only, so
+        # this grants nothing beyond parseability).
+        result = parse(
+            "val fileHash = receipt.imagePath?.let { path ->\n"
+            "  try {\n"
+            "    assetStore.computeFileHash(path).getOrNull()\n"
+            "  } catch (e: Exception) {\n"
+            "    CancellationSafe.rethrowIfCancellation(e)\n"
+            "    null\n"
+            "  }\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert wrapper.scope_method == "let"
+        assert wrapper.scope_receiver is None
+        assert wrapper.children[0].kind == RegionKind.TRY
+
+    def test_safe_call_continuation_glued(self):
+        # GR-14u56a mechanism 2: a line starting with `?.` continues the
+        # previous statement exactly like the leading-`.` continuation.
+        # Pre-u56a `x?.takeIf { }\n?.let { }` split into TWO statements, so
+        # the `?.let` half lost its carrier head and refused as a bare
+        # lambda-escape.  Post-fix the composite is ONE statement claimed as
+        # a carrier chain (the u46 chain parser handles the segments; the
+        # head is a safe call).
+        result = parse(
+            "receipt.imagePath?.takeIf { it.isNotBlank() }\n"
+            "    ?.let { assetStore.deleteAsset(it) }\n",
+            transparent_inline_methods=("takeIf", "let"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+        assert result.regions[0].scope_method == "takeIf"
+        assert result.regions[0].scope_receiver is None
+        assert result.regions[1].scope_method == "let"
+        assert result.regions[1].scope_receiver is None
+
+    def test_one_line_safe_call_chain_admitted(self):
+        # GR-14u56a composition: the one-line chained safe-call form
+        # (`x?.takeIf { }?.let { }`) — the u40 head rule declines (its
+        # lambda does not END the statement) and the u46 chain rule claims
+        # the composite with the safe-call head.
+        result = parse(
+            "receipt.imagePath?.takeIf { it.isNotBlank() }?.let { assetStore.deleteAsset(it) }\n",
+            transparent_inline_methods=("takeIf", "let"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+
+    def test_dotted_receiver_unlisted_method_fails_closed(self):
+        # Pin: only the closed reviewed carrier set is admitted after a
+        # dotted-receiver `?.` — an unlisted method keeps the pre-u56a
+        # lambda-escape refusal (fail closed).
+        result = parse(
+            "receipt.imagePath?.foo {\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_question_mark_alone_does_not_glue(self):
+        # Fail-closed continuation: ONLY the exact `?.` pair glues a line to
+        # its predecessor.  A line starting with `?` alone (elvis) does NOT
+        # glue — it stays its own statement part (two plain leaves below),
+        # and the elvis-block refusal for a brace-bearing elvis line stays
+        # intact (pre-u56a behavior pinned exactly).
+        result = parse(
+            "val x = foo\n"
+            "    ?: bar\n",
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+        glued = parse(
+            "val x = foo\n"
+            "    ?: bar { dao.insert(x) }\n",
+        )
+        assert not glued.is_supported
+        assert glued.unsupported[0].code == "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
+        assert glued.unsupported[0].reason == "elvis-block"
+
+    def test_simple_receiver_still_works(self):
+        # u40 regression guard: the simple-identifier safe-call carrier
+        # keeps its exact pre-u56a behavior, including the recorded
+        # scope_receiver (a simple receiver is NOT a chain).
+        result = parse(
+            "runId?.let { rid ->\n"
+            "  val x = 1\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "let"
+        assert result.regions[0].scope_receiver == "runId"
+
+    def test_when_branch_carrier_line_gluing_is_deferred(self):
+        # GR-14u56a DEFERRED shape (documented, not fixed): the
+        # ReceiptLifecycleCoordinator L270-277 subject-less `when { }` whose
+        # branch conditions end with `->` — the `>` of the arrow is a
+        # _CONT_END continuation char, so every branch line glues into ONE
+        # when-entry and the when parser misreads the composite (the
+        # remaining branches become the first branch's arrow body).  The
+        # production opacity gate absorbs the no-mutation shape today, so
+        # this pins the parse-level finding honestly instead of widening
+        # this batch: a when-branch-aware entry split is a THIRD mechanism,
+        # deferred to a follow-up batch (batch cap discipline).
+        result = parse(
+            "val reasonCode = when {\n"
+            "                validation.errors.any { it.contains("
+            + chr(34) + "not readable" + chr(34) + ") } -> "
+            + chr(34) + "URI_NOT_READABLE" + chr(34) + "\n"
+            "                validation.errors.any { it.contains("
+            + chr(34) + "MIME type" + chr(34) + ") || it.contains("
+            + chr(34) + "determine MIME" + chr(34) + ") } -> "
+            + chr(34) + "MIME_UNKNOWN" + chr(34) + "\n"
+            "                else -> "
+            + chr(34) + "VALIDATION_FAILED" + chr(34) + "\n"
+            "            }\n",
+            transparent_inline_methods=("any",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code in (
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+        )
+        assert result.unsupported[0].reason in (
+            "lambda-escape",
+            "dangling-clause",
+        )
+
 
 class TestValConstructInitializers:
     """GR-12 extension: `val x = if/when/try ...` construct initializers."""

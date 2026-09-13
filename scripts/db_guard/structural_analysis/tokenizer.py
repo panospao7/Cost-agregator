@@ -367,7 +367,15 @@ def _split_statements(cur: _Cursor, start: int, end: int) -> list[tuple[int, int
                 nxt = cur.non_ws(i + 1, end)
                 cont = bool(prev) and prev[-1] in _CONT_END
                 dot_cont = nxt < end and text[nxt] == "."
-                if not cont and not dot_cont:
+                # GR-14u56a: a line starting with `?.` is a safe-call
+                # continuation of the previous statement, exactly like the
+                # leading-`.` dot continuation (`x?.takeIf { }\n?.let { }`
+                # split into two statements, so the `?.let` half lost its
+                # carrier head and refused as a bare lambda-escape).  ONLY
+                # the exact `?.` pair glues: a line starting with `?` alone
+                # (elvis) does NOT — the elvis-block refusal stays intact.
+                safe_dot_cont = nxt + 1 < end and text[nxt] == "?" and text[nxt + 1] == "."
+                if not cont and not dot_cont and not safe_dot_cont:
                     parts.append((stmt_start, i))
                     stmt_start = None
         i += 1
@@ -535,11 +543,16 @@ def _match_carrier_chain(stripped: str, methods: tuple[str, ...]):
     (including the last-lambda-ends-the-statement requirement) happens in
     the parser.  The first segment may be a HEAD carrier (empty prefix —
     ``runCatching { }`` leading the statement, which the u33 head branch
-    rejects only because its lambda does not end the statement) or a
-    u39-style chained form.  A ``?`` or ``=`` anywhere in the prefix keeps
-    the u39 exclusions; mid-chain segments are scanned structurally, where
-    any non-carrier name with a lambda fails the attempt (caller falls
-    back).
+    rejects only because its lambda does not end the statement), a
+    u39-style chained form, or — GR-14u56a — a SAFE-CALL head
+    (``receipt.imagePath?.takeIf { }``: the u40 head structure whose
+    lambda does not end the statement, so only the chain rule can claim
+    the composite).  A ``?`` or ``=`` anywhere in a plain-chain prefix
+    keeps the u39 exclusions; the safe-call head variant accepts ONLY a
+    dotted identifier-chain receiver (no call parentheses — the
+    ``f()?.let { }`` call-result form keeps today's fail-closed
+    handling).  Mid-chain segments are scanned structurally, where any
+    non-carrier name with a lambda fails the attempt (caller falls back).
     """
     if not methods:
         return None
@@ -549,7 +562,8 @@ def _match_carrier_chain(stripped: str, methods: tuple[str, ...]):
         pattern = re.compile(
             r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
             r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
-            r"(?:(?P<prefix>[^{};?=]+?)\.)?"
+            r"(?:(?:(?:(?P<prefix>[^{};?=]+?)\s*\.)"
+            r"|(?P<safe_receiver>[A-Za-z_][A-Za-z0-9_.]*)\s*\?\.\s*))?"
             r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
         )
         _RE_CARRIER_CHAIN_CACHE[methods] = pattern
@@ -572,11 +586,15 @@ def _match_safe_call_carrier(stripped: str, methods: tuple[str, ...]):
     (coroutine-builder / elvis-block on the outer statement).
 
     Conservative shape: optional val/var binding prefix (no brace,
-    semicolon, or `?.` in the type/annotation text), then a SIMPLE
-    identifier receiver, `?.`, and an admitted carrier name.  Anything
-    richer (`a?.b?.let { }`, `f()?.let { }`, `x?.foo { }` for an unlisted
-    `foo`) does not match here and keeps today's fail-closed handling.
-    Purely syntactic; admission happens in the proof layer.
+    semicolon, or `?.` in the type/annotation text), then a DOTTED
+    identifier-chain receiver (`ident` or `ident(.ident)*` — GR-14u56a:
+    `receipt.imagePath?.let { }` blocked every property-chain carrier the
+    way the simple receiver never did), `?.`, and an admitted carrier
+    name.  The chain charset mirrors the u39/u46 prefix discipline: no
+    brace, semicolon, `?`, `=`, or call parentheses inside the receiver —
+    anything richer (`a?.b?.let { }`, `f()?.let { }`, `x?.foo { }` for an
+    unlisted `foo`) does not match here and keeps today's fail-closed
+    handling.  Purely syntactic; admission happens in the proof layer.
     """
     if not methods:
         return None
@@ -586,7 +604,8 @@ def _match_safe_call_carrier(stripped: str, methods: tuple[str, ...]):
         pattern = re.compile(
             r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
             r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
-            r"(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\?\.\s*"
+            r"(?P<receiver>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)"
+            r"\s*\?\.\s*"
             r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
         )
         _RE_SAFE_CALL_CARRIER_CACHE[methods] = pattern
@@ -601,11 +620,14 @@ def _parse_safe_call_carrier(cur: _Cursor, base: int, stmt_e: int, match):
 
     Mirrors _parse_chained_carrier's fail-closed body handling (prefix
     brace check, tail check, param header skip, recursive parse,
-    scope-label save/restore).  scope_receiver mirrors the head-carrier
-    precedent: the receiver IS a simple identifier, so it is recorded
-    exactly as _parse_transparent_scope does.  The proof layer never
-    admits inline-carrier names as canonical scopes (name-exact against
-    the contract only), so this grants nothing beyond parseability.
+    scope-label save/restore).  scope_receiver mirrors the u39
+    chained-carrier precedent for a DOTTED receiver (GR-14u56a): the
+    receiver is a property chain, so it stays None — carrier regions are
+    never canonical scopes, the bridge's carrier-span walk matches by
+    scope_method name only, and the proof layer admits by contract only,
+    so this grants nothing beyond parseability.  A SIMPLE receiver keeps
+    the u40 behavior: it is recorded exactly as _parse_transparent_scope
+    does.
     """
     receiver = match.group("receiver")
     method = match.group("method")
@@ -645,7 +667,7 @@ def _parse_safe_call_carrier(cur: _Cursor, base: int, stmt_e: int, match):
         span=cur.span(base, close),
         children=tuple(inner),
         scope_method=method,
-        scope_receiver=receiver,
+        scope_receiver=None if "." in receiver else receiver,
     )
 
 
@@ -706,7 +728,12 @@ def _parse_carrier_chain(cur: _Cursor, base: int, stmt_e: int, first_match):
     u39 precedent: carrier regions are never canonical scopes) and each
     segment carries its OWN ``scope_method`` (the bridge unions all
     carrier spans by name-exact membership, so intermediate segments join
-    exactly like nested transparent scopes already do).
+    exactly like nested transparent scopes already do).  GR-14u56a: the
+    head may be a safe-call carrier (dotted identifier-chain receiver,
+    ``receipt.imagePath?.takeIf { }``) and mid-chain segments may be
+    reached through ``?.`` — the head regex and the segment scanner accept
+    the exact ``?.`` separator; a bare ``?`` (elvis) never matches, and
+    every other fail-closed rule is unchanged.
 
     Fail-closed fallback (u33 hard-stop precedent): on ANY structural
     failure the attempt is abandoned WITHOUT keeping its findings — the
@@ -747,10 +774,14 @@ def _parse_carrier_chain(cur: _Cursor, base: int, stmt_e: int, first_match):
                 scope_method=method,
             )
         )
-        # Next segment: `.name(args?) {` immediately after this lambda.
+        # Next segment: `.name(args?) {` or `?.name(args?) {` immediately
+        # after this lambda (GR-14u56a: the safe-call continuation
+        # `?.let { }` is a chain segment exactly like the plain-dot one;
+        # the elvis `?` alone never matches — the separator is the exact
+        # `?.` pair).
         seg = cur.text[close:stmt_e]
         seg_match = re.match(
-            r"\s*\.\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*\??\.\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)"
             r"\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{",
             seg,
         )
