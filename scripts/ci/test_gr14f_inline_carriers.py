@@ -35,6 +35,11 @@ class TestInlineCarrierSet:
             "find", "associate", "associateBy", "buildSet", "buildList",
             "withLock", "withTimeout", "withTimeoutOrNull",
             "collect", "withPermit",
+            # GR-14u56c: kotlinx structured suspend scopes.  `async` is
+            # additionally gated by the receiver-evidence rule in
+            # _lambda_regions (receiverless or a reviewed owned receiver
+            # only) — membership here alone never admits it.
+            "coroutineScope", "async",
             "runOperation", "runCatchingCancellable", "runPostCommitSafely",
             "safeRecordMatchEvent",
             "guardTerminal", "withBoundedTerminalWrite",
@@ -296,3 +301,119 @@ class TestInlineCarrierProofBehavior:
         assert proof.proof_state is ProofState.PROVEN_HELPER
         assert proof.local_guard == "direct"
         assert proof.reason_code != "GR13_ZERO_INBOUND_CALL_SITES"
+
+
+# ── GR-14u56c: structured suspend scopes + async receiver-evidence gate ─────
+
+def _coro_project(helper_body: str, extra_imports: str = "") -> str:
+    return (
+        "package com.example\n"
+        "import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier\n"
+        + extra_imports
+        + "class CoroScopeRepo(\n"
+        "    private val dao: Dao,\n"
+        "    private val writeBarrier: DatabaseWriteBarrier,\n"
+        ") {\n"
+        "    fun guardedWrite(x: Int) {\n"
+        "        writeBarrier.runWrite {\n"
+        "            writeRow(x)\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "    private suspend fun writeRow(x: Int) {\n"
+        + helper_body
+        + "    }\n"
+        "}\n"
+    )
+
+
+def _prove_coro_helper(source: str, extra_imports: str = ""):
+    corpus = {"app/src/main/java/com/example/CoroScopeRepo.kt": source}
+    builder = CallGraphBuilder(_production_contract(), corpus)
+    graph = builder.build()
+    models = [
+        model
+        for model in builder.callables.values()
+        if model.method == "writeRow"
+    ]
+    assert len(models) == 1
+    model = models[0]
+    prover = MediationProver(
+        builder,
+        graph,
+        registered_do_work_roots=frozenset(),
+        ambiguous_worker_classes=frozenset(),
+    )
+    subject = MutationSubject(
+        mutation_key="coro-scope-test",
+        callable_key=model.key,
+        barrier_mode="helper",
+        site_start=source.index("dao.insert("),
+    )
+    return prover.prove(subject)
+
+
+class TestStructuredSuspendScopes:
+    def test_coroutinescope_carrier_proves_helper(self):
+        proof = _prove_coro_helper(
+            _coro_project(
+                "        coroutineScope {\n"
+                "            dao.insert(x)\n"
+                "        }\n"
+            ),
+            extra_imports="import kotlinx.coroutines.coroutineScope\n",
+        )
+        assert proof.proof_state is ProofState.PROVEN_HELPER
+
+    def test_async_inside_coroutinescope_proves_helper(self):
+        proof = _prove_coro_helper(
+            _coro_project(
+                "        coroutineScope {\n"
+                "            async {\n"
+                "                dao.insert(x)\n"
+                "            }\n"
+                "        }\n"
+            ),
+            extra_imports=(
+                "import kotlinx.coroutines.coroutineScope\n"
+                "import kotlinx.coroutines.async\n"
+            ),
+        )
+        assert proof.proof_state is ProofState.PROVEN_HELPER
+
+    def test_async_on_unowned_receiver_stays_async(self):
+        """The receiver-evidence gate: `unownedScope.async { }` is neither
+        receiverless nor on the reviewed owned-receiver set, so the region
+        keeps its default async uncertainty and the helper stays unproven
+        (fail closed; the GlobalScope.async family)."""
+        proof = _prove_coro_helper(
+            _coro_project(
+                "        coroutineScope {\n"
+                "            unownedScope.async {\n"
+                "                dao.insert(x)\n"
+                "            }\n"
+                "        }\n",
+            ),
+            extra_imports=(
+                "import kotlinx.coroutines.coroutineScope\n"
+                "import kotlinx.coroutines.async\n"
+            ),
+        )
+        assert (
+            proof.proof_state is ProofState.UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+        )
+
+    def test_coroutinescope_receiver_form_stays_async(self):
+        """`coroutineScope` is receiverless by nature; a receiver-qualified
+        spelling is a different (unmodeled) method and keeps the default
+        async uncertainty."""
+        proof = _prove_coro_helper(
+            _coro_project(
+                "        someHolder.coroutineScope {\n"
+                "            dao.insert(x)\n"
+                "        }\n"
+            )
+        )
+        assert (
+            proof.proof_state is ProofState.UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+        )

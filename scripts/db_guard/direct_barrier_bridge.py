@@ -56,6 +56,18 @@ __all__ = [
     "prove_evidence_callable",
 ]
 
+#: GR-14u56c reviewed OWNED-receiver spellings for the `async` inline
+#: carrier (name-exact, closed set).  Evidence standard identical to the
+#: GR-14j structured-launch receivers: a class-owned CoroutineScope
+#: property tied to its owner's lifetime.  Empty today — the production
+#: census found ZERO receiver-qualified `async` calls (all 25 sites are
+#: receiverless `async {`); any future receiver form must be added here
+#: after its own reviewed census, never by widening the gate.
+_PRODUCTION_ASYNC_OWNED_RECEIVERS: tuple[str, ...] = ()
+
+#: Sentinel for the carrier-span walk: "this region is gated OUT".
+_SKIP = object()
+
 
 def _unsupported_result(site: MutationSite, callable_key: str) -> DirectBarrierProofResult:
     return DirectBarrierProofResult(
@@ -268,14 +280,33 @@ def prove_callable_direct_barriers(
         parse_result, CANONICAL_BARRIER_CONTRACT_V2, resolver
     )
 
-    def _walk_carrier_spans(regions):
+    def _walk_carrier_spans(regions, async_owned_receivers=()):
         for region in regions:
             if (
                 region.kind.value == "TRANSPARENT_SCOPE"
                 and (region.scope_method or "") in PRODUCTION_TRANSPARENT_INLINE_METHODS
             ):
-                yield (region.span.start, region.span.end)
-            yield from _walk_carrier_spans(region.children)
+                # GR-14u56c receiver-evidence gate: the `async` carrier joins
+                # the enclosing flow only when its syntactic receiver is
+                # empty (kotlinx.coroutines.async on the enclosing scope) or
+                # one of the reviewed owned-receiver spellings;
+                # `coroutineScope` is receiverless by nature (a
+                # receiver-qualified spelling is a different, unmodeled
+                # method).  Fail closed: an unreviewed receiver keeps the
+                # carrier's span OUT of the admitted set, so its lambda body
+                # builds as a disconnected scope.
+                receiver = region.scope_receiver
+                if (region.scope_method or "") == "async":
+                    if receiver is not None and receiver not in async_owned_receivers:
+                        receiver = _SKIP
+                elif (region.scope_method or "") == "coroutineScope":
+                    if receiver is not None:
+                        receiver = _SKIP
+                if receiver is not _SKIP:
+                    yield (region.span.start, region.span.end)
+            yield from _walk_carrier_spans(
+                region.children, async_owned_receivers
+            )
 
     # GR-14u33: inline-carrier regions (closed reviewed name set) execute
     # their lambda body inline, so their children join the enclosing flow.
@@ -283,7 +314,22 @@ def prove_callable_direct_barriers(
     # were modeled as opaque sequence leaves and their inner writes were
     # dominated by any preceding barrier; now the children are individually
     # modeled instead of hidden.  Name-exact from the closed set only.
-    admitted = frozenset(admitted | set(_walk_carrier_spans(parse_result.regions)))
+    #
+    # GR-14u56c receiver-evidence gate: `async` (and receiverless-by-design
+    # `coroutineScope`) joined the closed set, but `async` is transparent
+    # ONLY when the syntactic receiver is empty or one of the reviewed
+    # owned-receiver spellings — a `GlobalScope.async { }` lambda is a
+    # genuinely detached dispatch and must never join the enclosing flow.
+    # Mirrors the mediation layer's `_lambda_regions` async gate.
+    admitted = frozenset(
+        admitted
+        | set(
+            _walk_carrier_spans(
+                parse_result.regions,
+                async_owned_receivers=_PRODUCTION_ASYNC_OWNED_RECEIVERS,
+            )
+        )
+    )
     try:
         cfg, _cfg_diagnostics = build_callable_cfg(
             parse_result,

@@ -16,6 +16,9 @@
 # inferred-only pins, set-headed fan-out positive).  CB-68..CB-70 are the
 # GR-14u55 kotlinx known-root rows (kotlinx star-import positive,
 # dual-star ambiguity/fiction-dissolution pin, non-root fail-closed pin).
+# CB-71..CB-73 are the GR-14u56c structured-suspend-scope rows
+# (coroutineScope positive, async-inside-coroutineScope positive,
+# async-on-unowned-receiver receiver-gate negative).
 fixtures:
   - id: CB-01
     file: call_binding/cb01_overloads_diff_params.kt
@@ -227,4 +230,13 @@ fixtures:
   - id: CB-70
     file: call_binding/cb70_kx_neg_nonroot.kt
     expectedResolution: UNRESOLVED_TARGET
+  - id: CB-71
+    file: call_binding/cb71_coroutinescope_carrier_positive.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-72
+    file: call_binding/cb72_async_in_coroutinescope_positive.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-73
+    file: call_binding/cb73_async_unowned_receiver_negative.kt
+    expectedResolution: ASYNC_DISPATCH
 

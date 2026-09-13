@@ -81,6 +81,10 @@ FIXTURE_CONTRACT = AnalysisContract(
     # restore admission is receiver-exact and must not widen to other receivers.
     restore_scope_receiver_fqcn="fixtures.helperproof.Hp23RestoreScope",
     restore_scope_methods=("run",),
+    # CB-73 exercises the GR-14u56c async receiver-evidence gate: the
+    # fixture-local unowned receiver name stays OUTSIDE the closed set, so
+    # the negative row keeps its ASYNC_DISPATCH edge.
+    async_owned_receivers=(),
 )
 
 # CB rows: every listed (caller method, callee name) pair must resolve to
@@ -201,6 +205,13 @@ CB_SUBJECT_CALLS = {
     "CB-68": (("exercise", "update"),),
     "CB-69": (("exercise", "emitNow"),),
     "CB-70": (("exercise", "emitNow"),),
+    # GR-14u56c structured-suspend-scope rows: the coroutineScope positive
+    # and the async-inside-coroutineScope positive (the processBatch
+    # shape) resolve exact; the unowned-receiver async keeps the
+    # fail-closed ASYNC_DISPATCH edge (receiver-evidence gate).
+    "CB-71": (("exerciseCb71", "put"),),
+    "CB-72": (("exerciseCb72", "put"),),
+    "CB-73": (("exerciseCb73", "put"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.

@@ -1,0 +1,78 @@
+# GR-14u56c - coroutineScope + async admission with a receiver-evidence
+# gate (engine; the B5 close-condition retest; unproven 21 -> 20).
+#
+# DEFECT: coroutineScope was absent from the structured-scope family it
+# belongs to (withLock/withTimeout/withPermit/collect are admitted;
+# coroutineScope - the canonical member - was not).  async was absent
+# with NO receiver-evidence gate: a bare name-exact admission would
+# have made GlobalScope.async { } transparent (the exact hole the u54c
+# reviewer warned about - caught by the CB-73 probe-then-pin BEFORE the
+# board run: the name-exact branch fired before the gate branches,
+# making them dead code; fixed by excluding the two names from the
+# name-exact branch so they fall through to the gates).
+#
+# FIX: both names added to PRODUCTION_TRANSPARENT_INLINE_METHODS with a
+# receiver-evidence gate mirroring the structured-launch design:
+# coroutineScope transparent only receiverless-exact; async transparent
+# only receiverless or in the closed async_owned_receivers set (census:
+# EMPTY - all 25 async sites are receiverless; 0 GlobalScope; 0
+# receiver-qualified; 0 project shadows; 0 CoroutineScope implementors).
+# The gate is enforced in _lambda_regions AND in the GR-12 bridge's
+# _walk_carrier_spans (via scope_receiver); _propagate_nested_
+# transparency excludes the two names (mirroring the launch exclusion)
+# so a gated-out async region inside a transparent container is never
+# promoted.
+#
+# SIGN-OFF BASIS (recorded per the FINAL26 memo rule): (1) the census
+# evidence above (re-verified this session); (2) the coroutineScope
+# composition argument - coroutineScope joins ALL children at scope
+# exit (structural, not corpus-observational), the same family as the
+# admitted withLock/withTimeout/withPermit/collect; (3) the delegation
+# chain: owner "continue" + the u54c reviewer ruling (LAND with
+# conditions a-h) + the B5 close condition met (the calls now resolve
+# exactly post-u45/u50/u55b/u56a/u56b).
+#
+# EDGE A/B (mandatory per the pin's contract): 53,789 edges pre and
+# post; 0 lost sites, 0 new sites, 0 external-edge changes, 0
+# previously-exact edges regressing.  138 transitions: 96 async->
+# exact_synchronous, 25 async->exact_canonical_scope, 9 async->
+# unresolved_target (preservation-rule name-match, uncertain->uncertain),
+# 8 unresolved_target->async_dispatch (reconstructed against the u56b
+# engine: all 8 were 0-target unresolved pre-change -> 0-target async
+# post - no corpus reachability lost, sound).
+#
+# TESTS: CB-71 coroutineScope positive (EXACT_SYNCHRONOUS); CB-72
+# async-inside-coroutineScope positive (the processBatch shape);
+# CB-73 async-on-unowned-receiver NEGATIVE (ASYNC_DISPATCH - the
+# fail-closed pin that caught the branch-order bug); CB-24/CB-65/CB-66
+# probed unchanged (their carriers are launchWorker/runOp, not the
+# literal names); the pin test amended per precedent + 4 new behavior
+# tests (coroutineScope positive, async-in-coroutineScope positive,
+# unowned-receiver async stays async, receiver-form coroutineScope
+# stays async).  Count pin 124 -> 127.
+#
+# OUTCOME (board c5721de2efd88dde -> 0226e6f5ae96899a, double run byte-
+# identical, exactly 1 row): ReceiptInsertResolver.insertOrResolve ->
+# proven_helper/GR13_ALL_PATHS_GUARDED.  proofStates: proven_helper 343
+# -> 344; unproven_async 19 -> 18.  0 counterexamples, 0 regressions,
+# 0 external_entry.  The F1 family's remaining rows route elsewhere
+# (safeExecute/PostCommit/noise deciders) - the admission does not
+# finish F1; the post-admission board is the honest input to those
+# family decisions.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+# regressed, 0 external_entry, 0 previously-exact edges regressing
+# (full edge A/B).
+#
+# VALIDATION: db_guard 292, fixtures 119/119 checked (127-row manifest),
+# scripts/ci failure set byte-identical to base (14 pre-existing),
+# board double run byte-identical 0226e6f5...  Kotlin: not run (no
+# production change).
+#
+# Remaining: the unresolved->async 0-target demotions (8 sites in
+# AdvancedAnalyticsEngine/SpendingPersonalityClassifier - sound, could
+# be pinned by a fixture later); _PRODUCTION_ASYNC_OWNED_RECEIVERS
+# lives in the bridge (not the V2 contract - a documented choice;
+# contract-carried state would be a contract-version change); the F2/
+# F3/noise families (FINAL26 memo + the u55b addendum).
+status: COMPLETE_AT_BOARD_0226e6f5

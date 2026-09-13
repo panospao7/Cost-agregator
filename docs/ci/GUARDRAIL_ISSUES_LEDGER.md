@@ -353,6 +353,18 @@ counterexample**; the project suspend wrappers (`runWithRetry`, `withRateLimit`,
 
 **Do NOT** start with "admit more async carriers".
 
+**RE-MEASURED 2026-09-14 (GR-14u56c), CLOSE CONDITION MET:** on the
+post-u56b engine (processReceiptInput fully modelable, all 4 sites
+PROVEN), admitting coroutineScope + async (with a receiver-evidence
+gate mirroring structured-launch; census: all 25 async sites
+receiverless, 0 GlobalScope, 0 shadows) yields **+1 proven
+(ReceiptInsertResolver.insertOrResolve), 0 counterexamples, 0
+regressions, 0 previously-exact edges regressing** (full edge A/B:
+138 transitions, all sound).  The u26-era counterexample was an
+artifact of the then-unmodelable processReceiptInput - fixed by
+u56a/u56b.  B5 CLOSED by GR-14u56c; the strategy guidance ("do not
+start with admission") stands for future buckets.
+
 ---
 
 ## C. `PRODUCTION` / owner issues

@@ -87,6 +87,14 @@ class AnalysisContract:
     transparent_scope_methods: tuple[str, ...] = ()
     transparent_inline_methods: tuple[str, ...] = ()
     structured_launch_receivers: tuple[str, ...] = ()
+    # GR-14u56c: reviewed OWNED-receiver spellings for `async` admission.
+    # The transparent-inline `async` carrier is admitted only receiverless
+    # or on one of these receivers (a class-owned CoroutineScope property
+    # tied to its owner's lifetime — the same evidence standard as the
+    # GR-14j structured-launch set); anything else (GlobalScope, an
+    # injected scope, an untracked chain) stays default-async.  Empty in
+    # production today (census: zero receiver-qualified `async` calls).
+    async_owned_receivers: tuple[str, ...] = ()
     # GR-14u25 / contract V3: the mode-gated restore-internal scope
     # (RestoreInternalWriteScope.run).  Admission is RECEIVER-EXACT; the
     # method name `run` intentionally overlaps transparent_inline_methods —
@@ -112,6 +120,15 @@ class AnalysisContract:
             ):
                 raise ValueError(
                     "structured_launch_receivers entries must be plain identifiers"
+                )
+        if not isinstance(self.async_owned_receivers, tuple):
+            raise TypeError("async_owned_receivers must be a tuple")
+        for name in self.async_owned_receivers:
+            if not isinstance(name, str) or not re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*", name
+            ):
+                raise ValueError(
+                    "async_owned_receivers entries must be plain identifiers"
                 )
         inline = set(self.transparent_inline_methods)
         if inline & set(STRUCTURED_LAUNCH_METHODS):
@@ -231,6 +248,25 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     "collect",
     # kotlinx structured semaphore (suspend inline, like withLock)
     "withPermit",
+    # GR-14u56c: kotlinx structured suspend scopes.  `coroutineScope` is a
+    # top-level suspend scope function — RECEIVERLESS by nature (census:
+    # all 14 production sites are bare `coroutineScope {`, zero
+    # receiver-qualified forms, no project shadow declaration), suspend
+    # inline in kotlinx-coroutines, runs its block in the caller's context
+    # and returns before the caller proceeds.  `async` is suspend-inline
+    # and returns a Deferred the caller must await INSIDE the same
+    # coroutineScope block before it completes, so every mutation inside
+    # the lambda is dominated by the enclosing callable's own barrier
+    # context — context inherited, never a guard source.  ADMISSION IS NOT
+    # NAME-EXACT ALONE for `async`: the u56c receiver-evidence gate in
+    # _lambda_regions admits `async` ONLY receiverless (or on the closed
+    # owned-receiver set) — a bare name-exact extension would admit
+    # `GlobalScope.async { }` (a genuinely detached dispatch), which the
+    # census shows is absent today but must stay fail-closed if it ever
+    # appears.  `coroutineScope` needs no receiver gate (there is no
+    # receiver form to gate).
+    "coroutineScope",
+    "async",
     # project inline wrappers (see evidence above)
     "runOperation",
     "runCatchingCancellable",
@@ -2540,9 +2576,19 @@ class CallGraphBuilder:
                     # non-restore receiver FALLS THROUGH to the transparent
                     # treatment instead of becoming unresolved.
                     carrier = "canonical_restore"
-                elif self.contract.is_transparent_scope_method(
-                    call.name
-                ) or self.contract.is_inline_transparent_method(call.name):
+                elif (
+                    self.contract.is_transparent_scope_method(
+                        call.name
+                    ) or (
+                        self.contract.is_inline_transparent_method(call.name)
+                        # GR-14u56c: `async` and `coroutineScope` are in the
+                        # inline set but NEVER name-exact transparent — they
+                        # fall through to their own receiver-evidence gates
+                        # below (a bare name-exact admission would make
+                        # `GlobalScope.async { }` transparent).
+                        and call.name not in ("async", "coroutineScope")
+                    )
+                ):
                     carrier = "transparent"
                 elif (
                     call.name in STRUCTURED_LAUNCH_METHODS
@@ -2564,6 +2610,43 @@ class CallGraphBuilder:
                     # Launch-family carriers keep their own admission rule
                     # (unknown receivers stay async-uncertain).
                     carrier = "transparent"
+                elif (
+                    carrier == "async"
+                    and call.name == "coroutineScope"
+                ):
+                    # GR-14u56c: kotlinx.coroutines.coroutineScope is a
+                    # TOP-LEVEL suspend scope function — receiverless by
+                    # nature.  A receiver-qualified spelling would be a
+                    # different (unmodeled) method, so admission stays
+                    # receiverless-exact; anything else keeps the default
+                    # async uncertainty (fail closed).
+                    if not call.receiver_text:
+                        carrier = "transparent"
+                elif (
+                    carrier == "async"
+                    and call.name == "async"
+                ):
+                    # GR-14u56c receiver-evidence gate (mirrors the GR-14j
+                    # structured-launch design): kotlinx.coroutines.async
+                    # runs its block in the caller's context and its result
+                    # must be awaited before the enclosing coroutineScope
+                    # block completes, so the lambda inherits context and
+                    # every mutation inside is dominated by the enclosing
+                    # callable's own barrier — BUT only when the call is
+                    # RECEIVERLESS (kotlinx.coroutines.async on the
+                    # enclosing CoroutineScope) or on a reviewed OWNED
+                    # receiver (a class-owned CoroutineScope property tied
+                    # to its owner's lifetime, same evidence standard as
+                    # structured_launch_receivers).  `GlobalScope.async` or
+                    # an injected/untracked scope receiver stays
+                    # default-async — fail closed.  Census evidence
+                    # (GR-14u56c): all 25 production `async {` sites are
+                    # receiverless; zero receiver-qualified forms exist.
+                    if (
+                        not call.receiver_text
+                        or call.receiver_text in self.contract.async_owned_receivers
+                    ):
+                        carrier = "transparent"
             regions.append(
                 LambdaRegion(
                     start=call.lambda_start,
@@ -2632,6 +2715,14 @@ class CallGraphBuilder:
                 if region.carrier != "async":
                     continue
                 if region.method in STRUCTURED_LAUNCH_METHODS:
+                    continue
+                # GR-14u56c: the async family keeps its own admission rule
+                # exactly like the launch family — an `async`/`coroutineScope`
+                # region whose receiver-evidence gate FAILED stays
+                # async-uncertain even inside a transparent container (a
+                # GlobalScope.async lambda can outlive the enclosing block;
+                # nested-carrier inheritance must never unlock it).
+                if region.method in ("async", "coroutineScope"):
                     continue
                 container = None
                 for other in mutable:
