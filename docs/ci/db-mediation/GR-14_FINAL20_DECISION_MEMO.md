@@ -1,5 +1,12 @@
 # GR-14 FINAL20 DECISION MEMO — the last 20 unproven rows (GR-15 gate input)
 
+> **CORRECTED by `GR-14_FINAL20_CORRECTION_ADDENDUM.md` — read it
+> before acting on anything below.**  The ambiguous-pair promotion
+> mechanism is FALSIFIED (the interfaces already declare the members;
+> the emulation of the real fix flips both rows to counterexamples),
+> Family E's closure carries ~204 deciders (not the single L210
+> fiction), and the gate endpoint arithmetic is corrected there.
+
 Supersedes `GR-14_FINAL26_DECISION_MEMO.md` (the campaign has advanced
 since that memo; its F1/F2 surfaces and one F4 row no longer exist, its
 F3 family survives refined as Family A below, and its remaining
