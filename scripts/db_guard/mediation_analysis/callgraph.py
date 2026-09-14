@@ -301,6 +301,22 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     # admission; per the u38 precedent the proof layer still admits by
     # contract only.
     "safeExecute",
+    # GR-14u56d: CompositeGeocodingService.safeLookup (evidence: a private
+    # suspend fun whose body is `= try { block() } catch (e:
+    # CancellationException) { ...; throw e } catch (e: Exception) {
+    # Failure(...) }` — the block is invoked EXACTLY ONCE inline (L385),
+    # never stored, never conditionally invoked, never escapes, and
+    # CancellationException is RETHROWN (the correct cancellation pattern);
+    # 2 call sites, both in the same class (L75, L92); corpus-wide the name
+    # appears in no other file (the L387 mention is inside a string
+    # literal — masked, so no corpus name collision).  Same shape as the
+    # u54 safeExecute admission: the try/catch is the ENCLOSING statement
+    # of the call and the block has ZERO params (no Shape-A binding; the
+    # win is the lambda REGION becoming transparent so
+    # _uncertain_region_state stops returning async).  Name-exact
+    # admission; per the u38 precedent the proof layer still admits by
+    # contract only.
+    "safeLookup",
     # GR-14l: androidx.activity.compose.setContent — the composition root;
     # its content lambda executes during composition (context inherited)
     "setContent",

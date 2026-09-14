@@ -44,6 +44,10 @@ class TestInlineCarrierSet:
             "safeRecordMatchEvent",
             "guardTerminal", "withBoundedTerminalWrite",
             "safeExecute",
+            # GR-14u56d: CompositeGeocodingService.safeLookup (exactly-once
+            # inline suspend wrapper, CancellationException rethrown — the
+            # u54 safeExecute shape).
+            "safeLookup",
             "setContent",
         )
 

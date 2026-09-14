@@ -1,0 +1,108 @@
+# GR-14u56d — admit `safeLookup` into PRODUCTION_TRANSPARENT_INLINE_METHODS
+# (the u54 safeExecute precedent — an evidenced exactly-once-inline wrapper;
+# u38-precedent set extension).
+#
+# DEFECT: 4 rows (PrivacyAuditLoggerImpl.logDecision,
+# RoomReceiptLifecycleEventWriter.write,
+# RoomTransactionLifecycleEventWriter.write,
+# WarrantyTrackerRepository.toWarrantyEntityOrNull) carried async_dispatch
+# taint from async edges inside the CompositeGeocodingService callables
+# whose argument lambdas classified `carrier: async method: safeLookup` —
+# the evidenced wrapper was not in the closed carrier set.  The u38
+# evidence (orchestrator-confirmed): CompositeGeocodingService.safeLookup
+# (L381-392) is a private suspend fun invoking `block` EXACTLY ONCE inline
+# (L385) inside a try/catch with CancellationException RETHROWN (the
+# correct pattern); 2 call sites, both in the same class (L75, L92);
+# corpus-wide name-collision check: `safeLookup` appears ONLY in this file
+# (the L387 mention is masked string-literal text).
+#
+# FIX: `safeLookup` added to PRODUCTION_TRANSPARENT_INLINE_METHODS with the
+# full evidence comment (mirrors the u54 safeExecute comment: the
+# try/catch is the ENCLOSING statement of the call, the block has ZERO
+# params — no Shape-A binding; the win is the lambda REGION becoming
+# transparent so _uncertain_region_state stops returning async).  Pin
+# amended in test_gr14f_inline_carriers.py (test_production_set_is_pinned).
+# Fixture cb74: a safeLookup-shaped wrapper (private suspend fun invoking
+# block exactly once in try/catch with CancellationException rethrow;
+# caller passes a trailing lambda calling a corpus method) -> the lambda
+# region is transparent and the edge resolves EXACT_CANONICAL_SCOPE (the
+# CB-60 precedent — same-owner callee).  Consolidated manifest 127 -> 128.
+# CB_SUBJECT_CALLS wired for CB-74 in fixture_runner.py (the CB-60
+# pattern).
+#
+# NOTE (B5 census settlement): this wrapper is one of the six project
+# suspend wrappers the B5 census listed (runWithRetry, withRateLimit,
+# safeExecute, safeLookup, guardTerminal, withBoundedTerminalWrite).
+# safeExecute (u54), guardTerminal/withBoundedTerminalWrite (u48), and now
+# safeLookup (u56d) are admitted.  runWithRetry is NOT admissible under
+# the u38 bar: it conditionally re-invokes its block on retry, so the
+# invocation count is data-dependent and the exactly-once-inline evidence
+# fails.  withRateLimit is still unassessed.
+#
+# EDGE A/B (mandatory per the pin's contract): 53,789 edges pre and post;
+# 0 lost sites, 0 new sites, 0 external-edge changes, 0 previously-exact
+# edges regressing.  4 changed edge positions (2 removed + 2 added, both
+# in CompositeGeocodingService.search):
+#   * L76 (name_start 3239, the primary lookup's `nominatim.search(...)`
+#     inside the safeLookup lambda): async_dispatch(uncertain, 8-target
+#     name-match fan-out) -> exact_synchronous (1 target:
+#     NominatimGeocodingService.search) — the false async classification
+#     removed and the edge tightened to the single corpus target.
+#   * L93 (name_start 3861, the fallback lookup's `provider.search(...)`
+#     inside the safeLookup lambda): async_dispatch(uncertain, 8-target
+#     name-match fan-out) -> unresolved_target(uncertain, same 8-target
+#     fan-out) — uncertain -> uncertain; NO corpus reachability lost
+#     (identical target set, still tier-5 evidence; the receiver is the
+#     loop variable `provider`, unbindable by design — the u56c
+#     unresolved->async demotion family, sound).
+#
+# OUTCOME (board pre 0226e6f5ae96899a -> post 16f92490aacb9a55, double run
+# byte-identical, 379 entries diffed): ZERO rows moved.  proofStates
+# byte-identical: proven_helper 344, restore 1, worker 14, ambiguous 2,
+# async 18, counterexamples 0.  REPORTED HONESTLY, NOT fabricated: the 4
+# rows did NOT move because their DECIDING async edges were never the
+# safeLookup-carrier edges — the taint trace (run pre- AND post-change)
+# shows the tier-5 first decider for all 4 rows is the async_dispatch
+# edge at CloudCategorizationAssistService.parseResponse L278 (the next
+# un-admitted carrier family in the ancestor closure; the u47
+# next-decider lesson, again).  The safeLookup admission removed the
+# geocoding callables' OWN false async edges (the 2-edge A/B above) and
+# made their regions transparent, but the rows' taint flows from the NEXT
+# deciders.  The set extension is still CORRECT and permanent (any future
+# caller of safeLookup-shaped wrappers benefits), and the rows' honest
+# remediation path now routes through the Cloud* async-carrier family.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows regressed,
+# 0 external_entry rows (board delta zero — checked verbatim), 0
+# previously-exact edges regressing (full edge A/B; the only previously-
+# exact edge involved, nominatim.search L76, IMPROVED async->exact).
+#
+# VALIDATION:
+#   - scripts/db_guard: 292 passed
+#   - fixture corpus: 120/120 checked, 120 passed, exit 0 (119 prior + 1;
+#     128-row manifest)
+#   - scripts/ci: 1263 passed, 14 failed — byte-identical to the base
+#     commit's failure set (re-run on stashed BASE: the same 14 names,
+#     all test_verify_known_good_state.py /
+#     test_inspect_direct_write_barrier_proof.py /
+#     test_test_result_freshness.py /
+#     test_verify_production_source_roots.py freshness-stamp and
+#     platform-conditional tests, environment-dependent, pre-existing)
+#   - board double run byte-identical (targetSha-normalized sha16
+#     16f92490aacb9a55; the report's targetSha field is run-parameter
+#     data, not analysis output — content-identical apart from it)
+#   - edge A/B: 2 async->exact (the primary carrier edge), 2
+#     async->unresolved_target (the fallback carrier edge, uncertain ->
+#     uncertain, zero reachability lost), zero previously-exact edges
+#     changed
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the Cloud* async-carrier family
+#   (CloudCategorizationAssistService.parseResponse L278 et al. — the
+#   rows' current first deciders); runWithRetry NOT admissible (the
+#   exactly-once bar fails — census question settled); withRateLimit
+#   still unassessed; the F-TRANSPARENT-CHAIN-NOISE family (owner
+#   sign-off gate); the F1 withPermit / F3 PostCommitAction families
+#   (FINAL26 memo); the 3 open-interface ambiguous rows (u50 owner
+#   decision).
+status: COMPLETE_AT_BOARD_16f92490

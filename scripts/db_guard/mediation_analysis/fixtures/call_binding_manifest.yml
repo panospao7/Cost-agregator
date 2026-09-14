@@ -18,7 +18,8 @@
 # dual-star ambiguity/fiction-dissolution pin, non-root fail-closed pin).
 # CB-71..CB-73 are the GR-14u56c structured-suspend-scope rows
 # (coroutineScope positive, async-inside-coroutineScope positive,
-# async-on-unowned-receiver receiver-gate negative).
+# async-on-unowned-receiver receiver-gate negative); CB-74 is the
+# GR-14u56d safeLookup-shaped wrapper row.
 fixtures:
   - id: CB-01
     file: call_binding/cb01_overloads_diff_params.kt
@@ -239,4 +240,7 @@ fixtures:
   - id: CB-73
     file: call_binding/cb73_async_unowned_receiver_negative.kt
     expectedResolution: ASYNC_DISPATCH
+  - id: CB-74
+    file: call_binding/cb74_safelookup_wrapper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
 
