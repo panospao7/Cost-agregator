@@ -3331,12 +3331,34 @@ class CallGraphBuilder:
         carrier admitted by an engine contract (GR-14f inline table or
         GR-14j structured launch).  Called only after
         ``_uncertain_region_state`` returned None, so every region
-        containing ``offset`` is already transparent; wrapper-only chains
+        containing ``offset`` is already transparent OR canonical
+        (canonical scopes also return None there); wrapper-only chains
         keep their historical resolution path.  A transparent region whose
         method is a structured launch method can only be an ADMITTED
-        launch (unadmitted launches classify as default-async)."""
+        launch (unadmitted launches classify as default-async).
+
+        GR-14u57b: canonical scopes (worker guard / direct barrier /
+        restore-internal) are NOT engine-carrier chains.  They are guard
+        SOURCES — their own contract shapes resolution (the scope-shaped
+        call resolves EXACT_CANONICAL_SCOPE) and their context propagates
+        as direct/worker/restore_internal.  Counting them here let the
+        shared method name ``run`` (the V3 restore-internal scope) collide
+        with the stdlib inline ``run`` in the transparent-inline table, so
+        a dao call INSIDE the restore scope whose exact resolution could
+        not bind corpus targets was converted to a conservative
+        name-matched async_dispatch fan-out — the L1253
+        restoreReceiptAssets 34-target fiction that decided 4 board rows.
+        A site inside a canonical scope has NO carrier-escape concern: the
+        region is a guard, not a deferred dispatch, so the preservation
+        rule has nothing to preserve there.  Nested ADMITTED transparent
+        regions inside a canonical scope still qualify through their own
+        carrier (unchanged behavior for the runGuarded+forEach shape).
+        """
         return any(
-            self.contract.is_inline_transparent_method(region.method)
+            (
+                region.carrier == "transparent"
+                and self.contract.is_inline_transparent_method(region.method)
+            )
             or (
                 region.carrier == "transparent"
                 and region.method in STRUCTURED_LAUNCH_METHODS
