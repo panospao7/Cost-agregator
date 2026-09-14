@@ -278,6 +278,23 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
+     * Best-effort event write that preserves caller cancellation (U-001).
+     *
+     * [transactionEventDao.insert] is suspend, so a raw [runCatching] would
+     * trap a [CancellationException] in a discarded result and let the
+     * mutation continue after the caller is gone. Returns null on
+     * non-cancellation failure; callers keep their existing bounded
+     * diagnostics for that case.
+     */
+    private suspend fun <T> bestEffortEvent(block: suspend () -> T): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
      * Internal DB-only create mutation. Validates, normalizes, dedupes, inserts
      * atomically (expense + CREATED event + source links), and returns the planned
      * side-effect batch. Side effects are NEVER executed here — callers must dispatch.
@@ -318,7 +335,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // 1. Write CREATE_ATTEMPTED event before validation
         // Canonical attempt dedupe key: matches the persisted key for STRICT_EXTERNAL_ID
         val attemptDedupeKey = createAttemptDedupeKey(request)
-        runCatching {
+        bestEffortEvent {
             transactionEventDao.insert(
                 TransactionEvent(
                     expenseId = null,
@@ -340,7 +357,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         // 2. Validate
         val validationErrors = validate(request)
         if (validationErrors.isNotEmpty()) {
-            runCatching {
+            bestEffortEvent {
                 transactionEventDao.insert(
                     TransactionEvent(
                         expenseId = null,
@@ -473,14 +490,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
             CurrencyConverter.DEFAULT_BASE_CURRENCY
         }
         if (expense.currency != homeCurrency) {
-            val conversion = runCatching {
+            val conversion = try {
                 currencyConverter.convertAsOf(
                     amount = expense.amount,
                     fromCurrency = expense.currency,
                     toCurrency = homeCurrency,
                     atMillis = expense.date
                 )
-            }.getOrNull()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                null
+            }
             if (conversion != null) {
                 expense = expense.copy(
                     baseAmount = conversion.convertedAmount,
@@ -512,7 +532,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     val strictKey = strictExternalDedupeKey(request)
                     if (strictKey == null) {
                         // P2-CURRENT-010: Emit validation event for missing key
-                        runCatching {
+                        bestEffortEvent {
                             transactionEventDao.insert(
                                 TransactionEvent(
                                     expenseId = null,
@@ -649,7 +669,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
             if (existingId != null) {
                 // Resolved — treat as duplicate
-                val eventLogged = runCatching {
+                val duplicateEventOutcome = bestEffortEvent {
                     transactionEventDao.insert(
                         TransactionEvent(
                             expenseId = existingId,
@@ -678,7 +698,14 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         )
                     )
                     true
-                }.getOrDefault(false)
+                }
+                if (duplicateEventOutcome == null) {
+                    Timber.w(
+                        "CREATE_DUPLICATE_SKIPPED event write failed for expense %d",
+                        existingId
+                    )
+                }
+                val eventLogged = duplicateEventOutcome != null
 
                 return Pair(CreateExpenseResult.DuplicateSkipped(
                     existingExpenseId = existingId,
@@ -688,7 +715,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             }
 
             // Unresolved — write INSERT_CONFLICT
-            runCatching {
+            bestEffortEvent {
                 transactionEventDao.insert(
                     TransactionEvent(
                         expenseId = null,
@@ -871,14 +898,17 @@ class TransactionLifecycleCoordinator @Inject constructor(
             CurrencyConverter.DEFAULT_BASE_CURRENCY
         }
         val preComputedConversion = if (expense.currency != homeCurrencyUpdate) {
-            runCatching {
+            try {
                 currencyConverter.convertAsOf(
                     amount = expense.amount,
                     fromCurrency = expense.currency,
                     toCurrency = homeCurrencyUpdate,
                     atMillis = expense.date
                 )
-            }.getOrNull()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                null
+            }
         } else null
 
         // 3. Persist inside a single transaction (TOCTOU-safe: read + write atomic)

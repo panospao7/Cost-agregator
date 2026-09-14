@@ -32,6 +32,7 @@ import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionUpdateKind
 import kotlinx.coroutines.CancellationException
+import java.io.IOException
 import kotlin.test.assertFailsWith
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -175,6 +176,120 @@ class TransactionLifecycleCoordinatorTest {
         val result = coordinator.createExpense(request)
 
         assertTrue("Expected ValidationFailed, got $result", result is CreateExpenseResult.ValidationFailed)
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+    }
+
+    // ── U-001 (RP-01): cancellation must propagate through conversion and best-effort event writes ──
+
+    private fun usdCreateRequest() = CreateExpenseRequest(
+        merchant = "Test",
+        amount = 10.0,
+        currency = "USD",
+        date = now,
+        transactionType = TransactionType.PURCHASE,
+        source = ExpenseSource.MANUAL_ENTRY
+    )
+
+    @Test
+    fun `createExpense converter cancellation propagates and nothing is committed`() = runTest {
+        coEvery {
+            currencyConverter.convertAsOf(
+                amount = any<Double>(),
+                fromCurrency = any<String>(),
+                toCurrency = any<String>(),
+                atMillis = any<Long>()
+            )
+        } throws CancellationException("Cancelled")
+
+        assertFailsWith<CancellationException> {
+            coordinator.createExpense(usdCreateRequest())
+        }
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+    }
+
+    @Test
+    fun `createExpense event-write cancellation propagates before insert`() = runTest {
+        coEvery { transactionEventDao.insert(any()) } throws CancellationException("Cancelled")
+
+        assertFailsWith<CancellationException> {
+            coordinator.createExpense(usdCreateRequest())
+        }
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+    }
+
+    @Test
+    fun `updateExpense converter cancellation propagates before transaction`() = runTest {
+        val existing = Expense(
+            id = 1L, amount = 10.0, merchant = "Test",
+            transactionType = TransactionType.PURCHASE, date = now,
+            currency = "USD", dedupeKey = "old-dk", merchantKey = "mk"
+        )
+        coEvery {
+            currencyConverter.convertAsOf(
+                amount = any<Double>(),
+                fromCurrency = any<String>(),
+                toCurrency = any<String>(),
+                atMillis = any<Long>()
+            )
+        } throws CancellationException("Cancelled")
+
+        assertFailsWith<CancellationException> {
+            coordinator.updateExpense(existing)
+        }
+        coVerify(exactly = 0) { expenseDao.getById(any()) }
+    }
+
+    /**
+     * U-001: non-cancellation conversion failure must keep the null fallback.
+     *
+     * IGNORED, not deleted: this is the only new test that reaches
+     * `database.withTransaction`, and every test that crosses that boundary
+     * hangs for 60s under the current fixture — the relaxed-mock AppDatabase
+     * drops the transaction runnable, so the Room transaction context never
+     * resumes. Proven pre-existing: the unchanged `createExpense with valid
+     * request returns Created` hangs identically at pristine HEAD, in
+     * isolation (build/guard-debug/rp01-baseline-pristine3.log,
+     * rp01-isolation.log). RP-21 triage owns the fixture fix (candidate:
+     * mockkStatic("androidx.room.RoomDatabaseKt") stub executing the block);
+     * un-ignore after that lands. The contract itself stays covered by the
+     * passing updateType non-cancellation test and the propagation contract
+     * entries.
+     */
+    @Test
+    @org.junit.Ignore("withTransaction hang family — pre-existing fixture defect, RP-21 triage")
+    fun `createExpense converter non-cancellation failure keeps existing fallback`() = runTest {
+        coEvery {
+            currencyConverter.convertAsOf(
+                amount = any<Double>(),
+                fromCurrency = any<String>(),
+                toCurrency = any<String>(),
+                atMillis = any<Long>()
+            )
+        } throws IOException("offline")
+
+        val result = coordinator.createExpense(usdCreateRequest())
+
+        assertTrue("Expected Created, got $result", result is CreateExpenseResult.Created)
+        coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
+    }
+
+    /** CE subclass mirroring TimeoutCancellationException (whose constructor is internal). */
+    private class TimeoutLikeCancellation(message: String) : CancellationException(message)
+
+    @Test
+    fun `createExpense timeout cancellation is not swallowed into fallback`() = runTest {
+        coEvery {
+            currencyConverter.convertAsOf(
+                amount = any<Double>(),
+                fromCurrency = any<String>(),
+                toCurrency = any<String>(),
+                atMillis = any<Long>()
+            )
+        } throws TimeoutLikeCancellation("timeout")
+
+        assertFailsWith<TimeoutLikeCancellation> {
+            coordinator.createExpense(usdCreateRequest())
+        }
         coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
     }
 
