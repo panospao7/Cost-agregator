@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.di
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.domain.privacy.RetentionPurgeResult
 import com.yourname.expensetracker.domain.privacy.RetentionRegistry
@@ -19,6 +20,11 @@ import javax.inject.Singleton
  *
  * All sensitive data targets must be registered here. [DataRetentionWorker]
  * uses [RetentionRegistry.allTargets] instead of an inline list.
+ *
+ * RP-02 U-004: every target checks the [DatabaseWriteBarrier] immediately before
+ * each DAO mutation (not once per purge), so a maintenance/restore mode flip
+ * mid-run cannot let a later mutation slip through. Cleanup is never gated on a
+ * retention capability — only on restore/maintenance mode.
  */
 @Module
 @InstallIn(SingletonComponent::class)
@@ -29,7 +35,8 @@ object RetentionModule {
     @ElementsIntoSet
     fun provideRetentionTargets(
         appDatabase: AppDatabase,
-        timeProvider: TimeProvider
+        timeProvider: TimeProvider,
+        writeBarrier: DatabaseWriteBarrier
     ): Set<RetentionTarget> = setOf(
 
         object : RetentionTarget {
@@ -42,6 +49,7 @@ object RetentionModule {
                     val batch = dao.getUnpurgedRawNotificationsOlderThan(cutoffMs, 100)
                     if (batch.isEmpty()) break
                     for (n in batch) {
+                        writeBarrier.checkWritesAllowed("retention.purge.raw_notifications")
                         dao.updateRawContentPurged(
                             id = n.id, rawContentPurgedAt = now,
                             title = null, text = null, bigText = null,
@@ -70,7 +78,10 @@ object RetentionModule {
                 while (true) {
                     val batch = dao.getUnpurgedScannedReceiptsOlderThan(cutoffMs, 100)
                     if (batch.isEmpty()) break
-                    for (r in batch) dao.updateRawOcrTextPurged(r.id, now)
+                    for (r in batch) {
+                        writeBarrier.checkWritesAllowed("retention.purge.scanned_receipts.raw_ocr")
+                        dao.updateRawOcrTextPurged(r.id, now)
+                    }
                     total += batch.size
                 }
                 RetentionPurgeResult(name, total, true)
@@ -87,6 +98,7 @@ object RetentionModule {
         object : RetentionTarget {
             override val name = "ai_artifacts"
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
+                writeBarrier.checkWritesAllowed("retention.purge.ai_artifacts")
                 val count = appDatabase.aiArtifactDao().deleteExpired(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse {
@@ -102,6 +114,7 @@ object RetentionModule {
         object : RetentionTarget {
             override val name = "ai_chat_messages"
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
+                writeBarrier.checkWritesAllowed("retention.purge.ai_chat_messages")
                 val count = appDatabase.aiChatMessageDao().deleteOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse {
@@ -119,6 +132,7 @@ object RetentionModule {
             // PRIV-43B-12: Redact sensitive fields, do NOT delete rows (preserves dedup hashes/links)
             // cutoffMs is the email-specific cutoff (now - 30 days), passed by DataRetentionWorker
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
+                writeBarrier.checkWritesAllowed("retention.purge.email_receipt_sources")
                 val count = appDatabase.emailReceiptDao().redactSensitiveFieldsOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse {
@@ -144,7 +158,10 @@ object RetentionModule {
                 while (true) {
                     val batch = dao.getUnpurgedIntakeOlderThan(cutoffMs, 100)
                     if (batch.isEmpty()) break
-                    for (n in batch) dao.purgeRawPayload(n.id, now)
+                    for (n in batch) {
+                        writeBarrier.checkWritesAllowed("retention.purge.notification_intake")
+                        dao.purgeRawPayload(n.id, now)
+                    }
                     total += batch.size
                 }
                 RetentionPurgeResult(name, total, true)
@@ -164,6 +181,7 @@ object RetentionModule {
             // metadataJson can carry PII). cutoffMs is the diagnostics cutoff, passed by
             // DataRetentionWorker.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
+                writeBarrier.checkWritesAllowed("retention.purge.pipeline_diagnostic_events")
                 val count = appDatabase.pipelineDiagnosticEventDao().deleteOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse {
@@ -181,6 +199,7 @@ object RetentionModule {
             // PR5: Redact notification text/title in pending reviews past the notification
             // retention window. Preserves structural fields for review queue functionality.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
+                writeBarrier.checkWritesAllowed("retention.purge.pending_reviews.notification_text")
                 val count = appDatabase.pendingReviewDao().redactNotificationTextOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse {
@@ -198,6 +217,7 @@ object RetentionModule {
             // PR5: Redact error messages in background job runs older than 30 days.
             // Error messages may contain PII from exception stack traces.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
+                writeBarrier.checkWritesAllowed("retention.purge.background_job_runs.error_message")
                 val count = appDatabase.backgroundJobRunDao().redactErrorMessagesOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse {
@@ -214,6 +234,7 @@ object RetentionModule {
             override val name = "bank_statement_import_items.merchant"
             // U-PRIVACY-01: Redact raw merchant names from bank statement imports past retention window.
             override suspend fun purge(cutoffMs: Long): RetentionPurgeResult = CancellationSafe.runCatchingCancellable {
+                writeBarrier.checkWritesAllowed("retention.purge.bank_statement_import_items.merchant")
                 val count = appDatabase.bankStatementImportItemDao().redactMerchantOlderThan(cutoffMs)
                 RetentionPurgeResult(name, count, true)
             }.getOrElse {

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.notification.capture
 
 import androidx.work.*
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
@@ -27,7 +28,9 @@ class NotificationIntakeCoordinator @Inject constructor(
     private val workManager: WorkManager,
     private val diagnostics: NotificationDiagnosticEmitter,
     private val timeProvider: TimeProvider,
-    private val crypto: NotificationTransientPayloadCrypto
+    private val crypto: NotificationTransientPayloadCrypto,
+    // RP-02 U-004: barrier ownership at the durable intake write site.
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     suspend fun capture(
         packageName: String,
@@ -122,6 +125,8 @@ class NotificationIntakeCoordinator @Inject constructor(
             updatedAt = now
         )
 
+        // RP-02 U-004: structural barrier check immediately before the durable intake write.
+        writeBarrier.checkWritesAllowed("notification.intake.capture")
         val intakeId = intakeDao.insertOrIgnore(entity)
         if (intakeId == -1L) {
             Timber.d("Intake insert conflict: $packageName")
@@ -211,6 +216,8 @@ class NotificationIntakeCoordinator @Inject constructor(
             updatedAt = now
         )
 
+        // RP-02 U-004: structural barrier check immediately before the deferred intake write.
+        writeBarrier.checkWritesAllowed("notification.intake.capture.deferred")
         val intakeId = intakeDao.insertOrIgnore(entity)
         if (intakeId == -1L) {
             Timber.d("captureForRetry: insert conflict for $packageName")

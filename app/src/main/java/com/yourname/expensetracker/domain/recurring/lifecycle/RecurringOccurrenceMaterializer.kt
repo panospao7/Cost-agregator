@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
@@ -33,7 +34,9 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val timeProvider: TimeProvider,
     private val lifecycleEventDao: RecurringLifecycleEventDao,
-    private val plannedExpenseDao: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao
+    private val plannedExpenseDao: com.yourname.expensetracker.data.database.dao.PlannedExpenseDao,
+    // RP-02 U-004: barrier ownership for the occurrence materialization write entry points.
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     data class MaterializationResult(
         val created: Int = 0,
@@ -59,8 +62,12 @@ class RecurringOccurrenceMaterializer @Inject constructor(
     suspend fun materialize(
         resolved: List<OccurrenceConflictResolver.ResolvedOccurrence>,
         options: MaterializationOptions
-    ): MaterializationResult = database.withTransaction {
-        materializeInCurrentTransaction(resolved, options)
+    ): MaterializationResult {
+        // RP-02 U-004: structural barrier check before opening the write transaction.
+        writeBarrier.checkWritesAllowed("recurring.occurrence.materialize")
+        return database.withTransaction {
+            materializeInCurrentTransaction(resolved, options)
+        }
     }
 
     /**
@@ -76,6 +83,10 @@ class RecurringOccurrenceMaterializer @Inject constructor(
         resolved: List<OccurrenceConflictResolver.ResolvedOccurrence>,
         options: MaterializationOptions
     ): MaterializationResult {
+        // RP-02 U-004: structural barrier check at this independently callable write
+        // entry point — safe to run inside an already-open Room transaction. Callers'
+        // barrier checks (e.g. RecurringLifecycleCoordinator) are not ownership.
+        writeBarrier.checkWritesAllowed("recurring.occurrence.materialize.in_transaction")
         var created = 0
         var updated = 0
         var skipped = 0

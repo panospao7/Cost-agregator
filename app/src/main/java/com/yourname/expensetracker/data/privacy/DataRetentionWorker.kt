@@ -8,6 +8,7 @@ import android.content.SharedPreferences
 import android.util.Log
 import androidx.hilt.work.HiltWorker
 import androidx.work.*
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
 import com.yourname.expensetracker.data.database.entity.PrivacyAuditEvent
@@ -60,7 +61,10 @@ class DataRetentionWorker @AssistedInject constructor(
     private val timeProvider: TimeProvider,
     private val executionGuard: WorkerExecutionGuard,
     private val retentionRegistry: RetentionRegistry,
-    private val diagnosticEventWriter: DiagnosticEventWriter
+    private val diagnosticEventWriter: DiagnosticEventWriter,
+    // RP-02 U-004: barrier ownership for the post-purge audit writes. The guard's
+    // earlier entry/checkpoint check is NOT ownership of these later writes.
+    private val writeBarrier: DatabaseWriteBarrier
 ) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
@@ -193,6 +197,10 @@ class DataRetentionWorker @AssistedInject constructor(
             val ocrCount = results.firstOrNull { it.targetName == "scanned_receipts.rawOcrText" }?.rowsPurged ?: 0
 
             if (notifCount > 0) {
+                // RP-02 U-004: per-insert barrier check — a mode flip after the
+                // purges must still block this audit write. A block propagates to
+                // WorkerExecutionGuard and follows its blockedPolicy contract.
+                writeBarrier.checkWritesAllowed("privacy.retention.audit")
                 auditDao.insert(PrivacyAuditEvent(
                     capability = PrivacyCapability.RAW_NOTIFICATION_RETENTION.name,
                     decision = "ALLOWED",
@@ -203,6 +211,8 @@ class DataRetentionWorker @AssistedInject constructor(
                 ))
             }
             if (ocrCount > 0) {
+                // RP-02 U-004: per-insert barrier check (independent of the audit insert above).
+                writeBarrier.checkWritesAllowed("privacy.retention.audit")
                 auditDao.insert(PrivacyAuditEvent(
                     capability = PrivacyCapability.RAW_OCR_RETENTION.name,
                     decision = "ALLOWED",

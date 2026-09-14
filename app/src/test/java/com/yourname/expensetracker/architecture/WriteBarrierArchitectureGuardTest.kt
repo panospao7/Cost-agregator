@@ -116,23 +116,36 @@ class WriteBarrierArchitectureGuardTest {
             "AppDatabase" to "Room database class; migrations use raw SQL, not DAO write calls",
             "AppStartupCoordinator" to "startup recovery — runs before barrier is available",
             "MaintenanceOperationRunner" to "maintenance mode itself — enters/drains, does not call DAO writes",
-            // ── TEMPORARY owner=RP-02 (batch 2 removes these) ───────
-            "NotificationIntakeCoordinator" to "owner=RP-02 issue=U-004 expiry=2026-10-31 intakeDao.insertOrIgnore in capture()/captureForRetry() lacks local barrier; batch 2 injects writeBarrier",
-            "SourceLinkWriterImpl" to "owner=RP-02 issue=U-004 expiry=2026-10-31 sourceLinkDao.insert in linkTarget() lacks barrier; batch 2 injects writeBarrier",
-            "PendingReviewSourceLinkServiceImpl" to "owner=RP-02 issue=U-004 expiry=2026-10-31 mutates only via SourceLinkWriterImpl delegation; barrier ownership lands in batch 2",
-            "PendingReviewSourceLinkPromoterImpl" to "owner=RP-02 issue=U-004 expiry=2026-10-31 mutates via SourceLinkWriterImpl delegation (reads via entitySourceLinkDao); barrier ownership lands in batch 2",
-            "RecurringOccurrenceMaterializer" to "owner=RP-02 issue=U-004 expiry=2026-10-31 plannedExpenseDao.fulfillByOccurrenceKey and lifecycleEventDao inserts lack barrier; batch 2 guards materialize()/materializeInCurrentTransaction()",
-            "RecurringLifecycleEventWriter" to "owner=RP-02 issue=U-004 expiry=2026-10-31 RoomRecurringLifecycleEventWriter is the approved event boundary but inserts without barrier; batch 2 decides writer ownership",
-            "DataRetentionWorker" to "owner=RP-02 issue=U-004 expiry=2026-10-31 local auditDao alias from appDatabase.privacyAuditDao() plus audit inserts lack per-write barrier; batch 2 checks before each insert",
-            "RetentionModule" to "owner=RP-02 issue=U-004 expiry=2026-10-31 anonymous retention targets purge via DAO SQL without per-mutation barrier; batch 2 checks before each mutation",
-            // ── TEMPORARY pre-existing guard debt (guard was red before batch 1) ──
+            // ── TEMPORARY surfaced by RP-02 alias-proof detection ──
+            //
+            // PROPOSED OWNERS — coordinator to confirm (RP-02 batch 2 triage).
+            // These owner=UNASSIGNED entries are NOT remediated by RP-02 batch 2;
+            // each RP must register barrier ownership for its writers:
+            //
+            // | Class                               | Proposed owner | Domain                        |
+            // |-------------------------------------|----------------|-------------------------------|
+            // | WorkerRunLogger                     | RP-16          | worker observability          |
+            // | OperationRunRecorder                | RP-16          | worker observability          |
+            // | WarrantyExpirationWorker            | RP-16 area     | worker lifecycle writes       |
+            // | DiagnosticEventWriter               | RP-14 / RP-15  | privacy/diagnostics           |
+            // | PrivacyAuditLoggerImpl              | RP-14 / RP-15  | privacy/diagnostics           |
+            // | RestoreJournalImporter              | RP-03          | restore journal               |
+            // | ReceiptInsertResolver               | RP-12          | receipt lifecycle             |
+            // | ReceiptLifecycleEventWriter         | RP-12          | receipt lifecycle             |
+            // | CsvExpenseImporter                  | RP-19          | import pipelines              |
+            // | JsonExpenseImporter                 | RP-19          | import pipelines              |
+            // | LegacyDataMigrationService          | RP-20 candidate| legacy migration              |
+            // | NotificationIntakeWorker            | RP-10          | notification intake workers   |
+            // | NotificationIntakePayloadRepairer   | RP-10          | notification intake workers   |
+            // | NotificationIntakeRecoveryScheduler | RP-10          | notification intake workers   |
+            // | TransactionLifecycleEventWriter     | RP-11 area     | transaction lifecycle events  |
+            // | DebugExpenseAuditWriter             | RP-11 area     | transaction event audit       |
             "LegacyDataMigrationService" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: categoryDao.insert without barrier; triage owner required",
             "CsvExpenseImporter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: categoryDao.insert without barrier; triage owner required",
             "JsonExpenseImporter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: categoryDao.insert without barrier; triage owner required",
             "RestoreJournalImporter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: operationRunDao/operationRunEventDao inserts without barrier (restore-path journal); triage owner required",
             "ReceiptInsertResolver" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: scannedReceiptDao.insert without barrier; triage owner required",
             "DebugExpenseAuditWriter" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 pre-existing debt: transactionEventDao.insert without barrier; triage owner required",
-            // ── TEMPORARY surfaced by RP-02 alias-proof detection ──
             "NotificationIntakeWorker" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: intakeDao claim/mark/purge state writes without barrier; triage owner required",
             "NotificationIntakePayloadRepairer" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: intakeDao payload purge/encrypt writes without barrier; triage owner required",
             "NotificationIntakeRecoveryScheduler" to "owner=UNASSIGNED issue=U-004 expiry=2026-10-31 alias-detected: intakeDao.releaseStaleProcessing without barrier; triage owner required",

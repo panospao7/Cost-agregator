@@ -58,8 +58,18 @@ class RetentionTargetPurgeTest {
     }
 
     private fun targetNamed(name: String): RetentionTarget =
-        RetentionModule.provideRetentionTargets(database, timeProvider)
-            .first { it.name == name }
+        RetentionModule.provideRetentionTargets(
+            database,
+            timeProvider,
+            // RP-02 U-004: real barrier backed by a NORMAL-mode RestoreMaintenanceMode,
+            // so the per-mutation checks in each target pass in this test.
+            com.yourname.expensetracker.data.backup.DatabaseWriteBarrier(
+                com.yourname.expensetracker.data.backup.RestoreMaintenanceMode(
+                    ApplicationProvider.getApplicationContext(),
+                    timeProvider
+                )
+            )
+        ).first { it.name == name }
 
     private fun intakeRow(fingerprint: String, capturedAt: Long) = NotificationIntakeEntity(
         packageName = "com.bank.app",
