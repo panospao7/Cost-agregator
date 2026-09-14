@@ -249,7 +249,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String?,
         errors: List<TransactionValidationError>
     ) {
-        runCatching {
+        try {
             transactionEventDao.insert(
                 TransactionEvent(
                     expenseId = expenseId,
@@ -271,9 +271,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                     correlationId = correlationId
                 )
             )
-        }.onFailure {
-            if (it is CancellationException) throw it
-            Timber.w(it, "Failed to write UPDATE_VALIDATION_FAILED for expense %d", expenseId)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Timber.w(e, "Failed to write UPDATE_VALIDATION_FAILED for expense %d", expenseId)
         }
     }
 
@@ -386,7 +386,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
             val missingSourceFields = CreateExpenseSourceLinkRequirements.missingRequirements(request)
             if (missingSourceFields.isNotEmpty()) {
                 val provenanceErrors = listOf("Missing source provenance fields for ${request.source}: ${missingSourceFields.joinToString(",")}")
-                runCatching {
+                try {
                     transactionEventDao.insert(
                         TransactionEvent(
                             expenseId = null,
@@ -406,9 +406,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                             correlationId = correlationId
                         )
                     )
-                }.onFailure {
-                    if (it is CancellationException) throw it
-                    Timber.w(it, "Failed to write CREATE_VALIDATION_FAILED for provenance failure")
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Timber.w(e, "Failed to write CREATE_VALIDATION_FAILED for provenance failure")
                 }
                 return Pair(CreateExpenseResult.ValidationFailed(provenanceErrors), PostCommitActionBatch.empty(correlationId))
             }
@@ -1191,7 +1191,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         val unsupported = patch.unsupportedFields()
         if (unsupported.isNotEmpty()) {
-            runCatching {
+            try {
                 transactionEventDao.insert(
                     TransactionEvent(
                         expenseId = expenseId,
@@ -1211,9 +1211,9 @@ class TransactionLifecycleCoordinator @Inject constructor(
                         correlationId = correlationId
                     )
                 )
-            }.onFailure {
-                if (it is CancellationException) throw it
-                Timber.w(it, "Failed to write UPDATE_VALIDATION_FAILED for business patch")
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Timber.w(e, "Failed to write UPDATE_VALIDATION_FAILED for business patch")
             }
 
             return BusinessExpenseUpdateResult.UnsupportedFields(unsupported)

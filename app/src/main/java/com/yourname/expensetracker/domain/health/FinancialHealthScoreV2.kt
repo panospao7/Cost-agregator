@@ -90,15 +90,24 @@ class FinancialHealthScoreV2 @Inject constructor(
         periodEnd: Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
     ): FinancialHealthResult {
         val startTime = timeProvider.now()
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
+        val homeCurrency = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: Exception) {
+            // U-001 (RP-01): caller cancellation propagates; only genuine
+            // unavailability becomes the typed IllegalStateException.
+            if (e is CancellationException) throw e
+            throw IllegalStateException("Home currency unavailable: ${e.message}")
+        }
         
         return try {
             // Fetch all necessary data
             val expenses = expenseRepository.getExpensesBetween(periodStart, periodEnd)
-            val normalized = runCatching {
+            val normalized = try {
                 analyticsCurrencyNormalizer.normalizeExpenses(expenses, homeCurrency)
-            }.getOrNull()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                null
+            }
             val normalizedExpenses = normalized?.includedExpenses
                 ?: expenses.map { it.toExpenseSnapshot() }
 
@@ -378,11 +387,18 @@ class FinancialHealthScoreV2 @Inject constructor(
             return null
         }
 
-        val homeCurrency = runCatching { currencySettingsRepository.homeCurrency().first() }
-            .getOrElse { throw IllegalStateException("Home currency unavailable: ${it.message}") }
-        val normalized = runCatching {
+        val homeCurrency = try {
+            currencySettingsRepository.homeCurrency().first()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            throw IllegalStateException("Home currency unavailable: ${e.message}")
+        }
+        val normalized = try {
             analyticsCurrencyNormalizer.normalizeExpenses(historicalExpenses, homeCurrency)
-        }.getOrNull()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            null
+        }
         val normalizedAmountById = normalized?.includedExpenses?.associateBy { it.id }
             ?: emptyMap()
 

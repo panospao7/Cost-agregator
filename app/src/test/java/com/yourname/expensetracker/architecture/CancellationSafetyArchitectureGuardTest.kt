@@ -132,7 +132,10 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("ReceiptOcrService.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("ReceiptMatchingWorker.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("WarrantyExpirationWorker.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch preceded by CE catch", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("TransactionLifecycleCoordinator.kt", "FALSE_POSITIVE_CE_RETHROW", category = "INFRASTRUCTURE", owner = "Infrastructure", "False positive — broad catch at L239 preceded by sibling CE catch at L237", "MIT-034", LocalDate.of(2026, 12, 31)),
+            // U-001 (RP-01) fixed the coordinator's conversion/event-write sites;
+            // the file-level exclusion is removed so the (now executable-evidence)
+            // guard enforces it directly. Re-add ONLY with owner/reason/issue/expiry
+            // if a regression appears.
             // ── Services ──────────────────────────────────────────────────
             ArchitectureAllowlistEntry("NotificationCaptureService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "SERVICE", owner = "Service", "Service with broad catches in suspend functions", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("CloudQueryInterpretationService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "SERVICE", owner = "Service", "Cloud service with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
@@ -144,7 +147,6 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("AnalyticsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("BudgetViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("BudgetForecastingViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("DebugDataStorage.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel/debug storage with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("DebugViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("SourceLinkDebugViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("HomeViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
@@ -178,7 +180,21 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("ExportOptionsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("LocationSearchPicker.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI component with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("LoadableUiState.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("MutationState.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31))
+            ArchitectureAllowlistEntry("MutationState.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "UI state utility with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
+            // ── TEMPORARY (RP-01 U-002 exposure): executable-evidence scanning
+            // surfaced these broad catches; each CE fix is owned by the named
+            // remediation plan and the entry MUST be removed when that plan
+            // lands. Do not renew without a named owner. ──
+            ArchitectureAllowlistEntry("NotificationProcessingPipeline.kt", "CATCH_WITHOUT_CE_RETHROW", category = "REPOSITORY", owner = "RP-10", "Broad catch exposed by executable-evidence guard; CE fix owned by RP-10", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReceiptLinkService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "RP-12", "Broad catch exposed by executable-evidence guard; CE fix owned by RP-12", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ReceiptSideEffectPlanner.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "RP-12", "Broad catch exposed by executable-evidence guard; CE fix owned by RP-12", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CsvExpenseImporter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "RP-19", "Broad catch exposed by executable-evidence guard; CE fix owned by RP-19", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("JsonExpenseImporter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "RP-19", "Broad + raw runCatching exposed by executable-evidence guard; CE fix owned by RP-19", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("SideEffectDiagnosticRecorder.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "UNASSIGNED", "Broad catch exposed by executable-evidence guard; triage owner required", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("PostCommitSideEffectEvidenceService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "SERVICE", owner = "UNASSIGNED", "Broad catch exposed by executable-evidence guard; triage owner required", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("ConfidenceRouter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "UNASSIGNED", "Broad catch exposed by executable-evidence guard; triage owner required", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("LocationResolver.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "UNASSIGNED", "Broad catch exposed by executable-evidence guard; triage owner required", "MIT-034", LocalDate.of(2026, 12, 31)),
+            ArchitectureAllowlistEntry("CarbonFootprintCalculator.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "UNASSIGNED", "Broad catch exposed by executable-evidence guard; triage owner required", "MIT-034", LocalDate.of(2026, 12, 31))
         )
 
         val RAW_RUN_CATCHING_ALLOWLIST = listOf(
@@ -194,20 +210,42 @@ class CancellationSafetyArchitectureGuardTest {
             RawRunCatchingAllowlistEntry("NetCashflowBalanceProvider.kt", "LEGACY_REPOSITORY", "Forecasting", "Non-critical cashflow provider", "MIT-034", LocalDate.of(2026, 10, 1)),
             RawRunCatchingAllowlistEntry("InvestmentTracker.kt", "LEGACY_REPOSITORY", "Investment", "Non-critical investment tracker", "MIT-034", LocalDate.of(2026, 10, 1)),
             RawRunCatchingAllowlistEntry("SubscriptionManagerEngine.kt", "LEGACY_REPOSITORY", "Subscription", "Non-critical subscription engine", "MIT-034", LocalDate.of(2026, 10, 1)),
+            // ── TEMPORARY (RP-01 U-002 exposure): raw runCatching surfaced by the
+            // un-excluded coordinator scan path and executable-evidence rework;
+            // CE fixes are owned by the named plans. Must shrink. ──
+            RawRunCatchingAllowlistEntry("RestoreDiagnosticsSink.kt", "BACKUP_DATA", "RP-03", "Raw runCatching in restore diagnostics sink; CE fix owned by RP-03", "MIT-034", LocalDate.of(2026, 12, 31)),
+            RawRunCatchingAllowlistEntry("HistoricalSpendingDistribution.kt", "DOMAIN", "RP-06", "Raw runCatching in forecasting distribution; CE fix owned by RP-06", "MIT-034", LocalDate.of(2026, 12, 31)),
         )
     }
 
     /**
      * Matches `catch (e: Exception)`, `catch (_: Exception)`, `catch (e: Throwable)`,
      * `catch (_: Throwable)` — i.e. any broad catch that would swallow CE.
+     * Group 1 captures the caught variable name for evidence checks.
      */
-    private val broadCatchPattern = Regex("""\bcatch\s*\(\s*\w+\s*:\s*(Exception|Throwable)\s*\)""")
+    private val broadCatchPattern = Regex("""\bcatch\s*\(\s*(\w+)\s*:\s*(Exception|Throwable)\s*\)""")
 
     /** Matches `suspend fun` declarations (including `private suspend fun`, etc.). */
     private val suspendFunPattern = Regex("""\bsuspend\s+fun\b""")
 
-    /** Evidence that CE is handled: the body mentions CancellationException or a known CE-safe helper. */
-    private val ceGuardEvidence = Regex("""CancellationException|rethrowIfCancellation""")
+    /**
+     * U-002: executable CE-guard evidence only — a comment, string literal,
+     * import, or bare `CancellationException` token is NOT evidence. Callers
+     * MUST pass sanitizer output as [catchBody].
+     *
+     * Accepted forms (per RP-01 U-002):
+     *  1. a call to the verified `rethrowIfCancellation` helper;
+     *  2. the type-check-then-throw idiom: `if (e is CancellationException) throw e`;
+     *  3. unconditional rethrow of the caught throwable: `throw e`;
+     *  4. `ensureActive()` actually in the catch path.
+     */
+    private fun hasExecutableCeGuard(caughtVar: String, catchBody: String): Boolean {
+        if (Regex("""\brethrowIfCancellation\s*\(""").containsMatchIn(catchBody)) return true
+        if (Regex("""\bis\s+[\w.]*CancellationException\s*\)\s*throw\b""").containsMatchIn(catchBody)) return true
+        if (Regex("""\bthrow\s+${Regex.escape(caughtVar)}\b""").containsMatchIn(catchBody)) return true
+        if (Regex("""\bensureActive\s*\(\s*\)""").containsMatchIn(catchBody)) return true
+        return false
+    }
 
     @Test
     fun `every broad catch in suspend functions rethrows CancellationException`() {
@@ -230,7 +268,10 @@ class CancellationSafetyArchitectureGuardTest {
         val rawRunCatchingPattern = Regex("""(?<!CancellationSafe\.)\brunCatching\s*\{""")
 
         for (file in ktFiles) {
-            val content = file.readText()
+            // U-002: scan sanitized text — comment/string mentions can never
+            // count as evidence or fabricate a violation. Newlines are
+            // preserved, so line numbers in violations stay accurate.
+            val content = SourceTextSanitizer.stripCommentsAndStringBodies(file.readText())
             // Only inspect files that contain at least one suspend fun
             if (!suspendFunPattern.containsMatchIn(content)) continue
 
@@ -246,7 +287,13 @@ class CancellationSafetyArchitectureGuardTest {
                 val catchBody = extractCatchBlockBody(content, match.range.last)
                     ?: continue
 
-                if (!ceGuardEvidence.containsMatchIn(catchBody)) {
+                // A preceding sibling `catch (x: CancellationException) { ... }`
+                // in the same try means the broad catch can never receive CE.
+                val siblingWindow = content.substring((catchPos - 200).coerceAtLeast(0), catchPos)
+
+                if (!hasExecutableCeGuard(match.groupValues[1], catchBody) &&
+                    !precedingSiblingCeCatch.containsMatchIn(siblingWindow)
+                ) {
                     val lineNum = content.substring(0, catchPos).count { it == '\n' } + 1
                     val relativePath = file.relativeTo(sourceRoot).path
                     violations.add("$relativePath:$lineNum — broad catch without CancellationException guard")
@@ -347,12 +394,31 @@ class CancellationSafetyArchitectureGuardTest {
         }
     }
 
+    /** U-003: single injectable clock seam for expiry checks — keeps tests deterministic. */
+    private fun guardToday(): java.time.LocalDate = java.time.LocalDate.now()
+
     @Test
     fun `expired allowlist entries fail`() {
-        val today = LocalDate.now()
+        val today = guardToday()
         val expired = KNOWN_VIOLATIONS.filter { it.expires.isBefore(today) }
         assertTrue(
             "Expired allowlist entries found: ${expired.map { it.fileName }}",
+            expired.isEmpty()
+        )
+    }
+
+    /**
+     * U-003: the raw `runCatching` allowlist previously asserted only that
+     * expiry was non-null — the entries could silently become permanent.
+     * The same enforced expiry as KNOWN_VIOLATIONS now applies.
+     */
+    @Test
+    fun `expired raw runCatching allowlist entries fail`() {
+        val today = guardToday()
+        val expired = RAW_RUN_CATCHING_ALLOWLIST.filter { it.expires.isBefore(today) }
+        assertTrue(
+            "Expired raw runCatching allowlist entries found: ${expired.map { it.fileName }} — " +
+                "renew with owner/reason or fix the underlying files",
             expired.isEmpty()
         )
     }
@@ -472,13 +538,17 @@ class CancellationSafetyArchitectureGuardTest {
 
     private fun scanForCancellationViolations(sourceText: String): List<String> {
         val violations = mutableListOf<String>()
-        val suspendFunRanges = findSuspendFunBodyRanges(sourceText)
-        for (match in broadCatchPattern.findAll(sourceText)) {
+        val sanitized = SourceTextSanitizer.stripCommentsAndStringBodies(sourceText)
+        val suspendFunRanges = findSuspendFunBodyRanges(sanitized)
+        for (match in broadCatchPattern.findAll(sanitized)) {
             val catchPos = match.range.first
             if (suspendFunRanges.none { catchPos in it }) continue
-            val catchBody = extractCatchBlockBody(sourceText, match.range.last) ?: continue
-            if (!ceGuardEvidence.containsMatchIn(catchBody)) {
-                violations.add("CATCH_WITHOUT_CE_RETHROW at ${sourceText.substring(0, catchPos).count { it == '\n' } + 1}")
+            val catchBody = extractCatchBlockBody(sanitized, match.range.last) ?: continue
+            val siblingWindow = sanitized.substring((catchPos - 200).coerceAtLeast(0), catchPos)
+            if (!hasExecutableCeGuard(match.groupValues[1], catchBody) &&
+                !precedingSiblingCeCatch.containsMatchIn(siblingWindow)
+            ) {
+                violations.add("CATCH_WITHOUT_CE_RETHROW at ${sanitized.substring(0, catchPos).count { it == '\n' } + 1}")
             }
         }
         return violations
@@ -554,6 +624,80 @@ class CancellationSafetyArchitectureGuardTest {
     }
 
     @Test
+    fun `negative fixture - default parameter suspend fun body is scanned and raw runCatching found`() {
+        val badSource = """
+            package test
+            class BadRepo {
+                suspend fun fetchData(limit: Int = 10, label: String = "x") {
+                    val result = runCatching {
+                        Thread.sleep(100)
+                    }.getOrNull()
+                }
+            }
+        """.trimIndent()
+
+        // U-002: the balanced-paren scanner must produce a body range despite
+        // the default parameters' `=` signs (the old scanner returned none).
+        val ranges = findSuspendFunBodyRanges(badSource)
+        assertTrue(
+            "Default-parameter suspend fun must yield a scannable body range, got ${ranges.size}",
+            ranges.isNotEmpty()
+        )
+        val runCatchingPos = badSource.indexOf("runCatching")
+        assertTrue(
+            "raw runCatching must sit inside the scanned body range",
+            ranges.any { runCatchingPos in it }
+        )
+    }
+
+    @Test
+    fun `positive fixture - default parameter suspend fun with executable CE rethrow passes`() {
+        val goodSource = """
+            package test
+            import kotlinx.coroutines.CancellationException
+            class GoodRepo {
+                suspend fun fetchData(limit: Int = 10, label: String = "x") {
+                    try {
+                        Thread.sleep(100)
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        println("Failed safely")
+                    }
+                }
+            }
+        """.trimIndent()
+
+        val violations = scanForCancellationViolations(goodSource)
+        assertTrue(
+            "Default-param suspend fun with executable CE rethrow must pass (got ${violations.size})",
+            violations.isEmpty()
+        )
+    }
+
+    @Test
+    fun `negative fixture - comment-only CE mention is not evidence`() {
+        val badSource = """
+            package test
+            class BadService {
+                suspend fun doWork() {
+                    try {
+                        Thread.sleep(100)
+                    } catch (e: Exception) {
+                        // CancellationException is rethrown elsewhere; this is fine (sic)
+                        println("Failed")
+                    }
+                }
+            }
+        """.trimIndent()
+
+        val violations = scanForCancellationViolations(badSource)
+        assertTrue(
+            "Comment-only CancellationException mention must NOT count as CE evidence",
+            violations.isNotEmpty()
+        )
+    }
+
+    @Test
     fun `negative fixture catch Throwable without CE rethrow is detected`() {
         val badSource = """
             package test
@@ -590,8 +734,8 @@ class CancellationSafetyArchitectureGuardTest {
         "WorkerExecutionGuard.kt"
     )
 
-    /** Detects a preceding sibling `catch (e: CancellationException)` clause before a broad catch. */
-    private val precedingSiblingCeCatch = Regex("""catch\s*\(\s*\w+\s*:\s*CancellationException\s*\)""")
+    /** Detects a preceding sibling `catch (e: CancellationException)` clause before a broad catch (FQN-safe). */
+    private val precedingSiblingCeCatch = Regex("""catch\s*\(\s*\w+\s*:\s*[\w.]*CancellationException\s*\)""")
 
     @Test
     fun `launch blocks in pipeline-critical files rethrow CancellationException`() {
@@ -602,7 +746,7 @@ class CancellationSafetyArchitectureGuardTest {
                 .filter { it.isFile && it.name == fileName }
                 .firstOrNull() ?: continue
 
-            val content = file.readText()
+            val content = SourceTextSanitizer.stripCommentsAndStringBodies(file.readText())
             val launchRanges = findCoroutineLaunchBodyRanges(content)
             if (launchRanges.isEmpty()) continue
 
@@ -611,11 +755,10 @@ class CancellationSafetyArchitectureGuardTest {
                 if (launchRanges.none { catchPos in it }) continue
 
                 val catchBody = extractCatchBlockBody(content, match.range.last) ?: continue
-                if (!ceGuardEvidence.containsMatchIn(catchBody)) {
-                    // Check for a preceding sibling CE catch in the same try block
-                    val lookback = content.substring((catchPos - 200).coerceAtLeast(0), catchPos)
-                    if (precedingSiblingCeCatch.containsMatchIn(lookback)) continue
-
+                val siblingWindow = content.substring((catchPos - 200).coerceAtLeast(0), catchPos)
+                if (!hasExecutableCeGuard(match.groupValues[1], catchBody) &&
+                    !precedingSiblingCeCatch.containsMatchIn(siblingWindow)
+                ) {
                     val lineNum = content.substring(0, catchPos).count { it == '\n' } + 1
                     violations.add("$fileName:$lineNum — broad catch in launch/async without CE guard")
                 }
@@ -652,36 +795,80 @@ class CancellationSafetyArchitectureGuardTest {
 
     /**
      * Returns character ranges of suspend function bodies in the source.
-     * Uses brace-matching from the opening `{` after `suspend fun ...(...): ...`.
+     *
+     * U-002: the parameter list is consumed with a balanced-parenthesis scan
+     * that skips string/char literals, so a default parameter's `=` can no
+     * longer truncate the signature and hide the body from this scanner.
+     * Expression bodies (body after `=`) still yield no range — a `catch`
+     * cannot appear there.
      */
     private fun findSuspendFunBodyRanges(source: String): List<IntRange> {
         val ranges = mutableListOf<IntRange>()
         for (match in suspendFunPattern.findAll(source)) {
-            // Find the opening brace of the function body
             var i = match.range.last + 1
-            var foundEquals = false
+            // Skip modifiers/name to the parameter-list opening paren.
+            while (i < source.length && source[i] != '(' && source[i] != '{' && source[i] != '=') i++
+            if (i >= source.length || source[i] != '(') continue
+            var depth = 0
             while (i < source.length) {
                 val ch = source[i]
-                if (ch == '{') break
-                if (ch == '=') { foundEquals = true; break }
-                i++
-            }
-            if (i >= source.length || foundEquals) continue // expression body — no catch possible
-
-            // Brace-match to find the end of the function body
-            val bodyStart = i
-            var depth = 1
-            i++
-            while (i < source.length && depth > 0) {
-                when (source[i]) {
-                    '{' -> depth++
-                    '}' -> depth--
+                when {
+                    ch == '"' -> i = skipStringLiteral(source, i) - 1
+                    ch == '\'' -> i = skipCharLiteral(source, i) - 1
+                    ch == '(' -> depth++
+                    ch == ')' -> { depth--; if (depth == 0) break }
                 }
                 i++
             }
-            ranges.add(bodyStart until i)
+            if (i >= source.length) continue
+            // After the parameter list: optional return type, then the body.
+            var j = i + 1
+            while (j < source.length && source[j] != '{' && source[j] != '=') j++
+            if (j >= source.length || source[j] == '=') continue // expression body
+            var bodyDepth = 1
+            i = j + 1
+            while (i < source.length && bodyDepth > 0) {
+                when {
+                    source[i] == '"' -> i = skipStringLiteral(source, i) - 1
+                    source[i] == '\'' -> i = skipCharLiteral(source, i) - 1
+                    source[i] == '{' -> bodyDepth++
+                    source[i] == '}' -> bodyDepth--
+                }
+                i++
+            }
+            ranges.add(j until i)
         }
         return ranges
+    }
+
+    /** Returns the index just past the string literal starting at [start], honoring escapes and triple quotes. */
+    private fun skipStringLiteral(source: String, start: Int): Int {
+        if (source.startsWith("\"\"\"", start)) {
+            val end = source.indexOf("\"\"\"", start + 3)
+            return if (end < 0) source.length else end + 3
+        }
+        var i = start + 1
+        while (i < source.length) {
+            when {
+                source[i] == '\\' -> i++
+                source[i] == '"' -> return i + 1
+            }
+            i++
+        }
+        return source.length
+    }
+
+    /** Returns the index just past the char literal starting at [start], honoring escapes. */
+    private fun skipCharLiteral(source: String, start: Int): Int {
+        var i = start + 1
+        while (i < source.length) {
+            when {
+                source[i] == '\\' -> i++
+                source[i] == '\'' -> return i + 1
+            }
+            i++
+        }
+        return source.length
     }
 
     /**

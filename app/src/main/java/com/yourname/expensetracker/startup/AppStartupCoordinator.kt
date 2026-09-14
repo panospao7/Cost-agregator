@@ -11,6 +11,7 @@ import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import java.io.File
@@ -348,11 +349,15 @@ class AppStartupCoordinator @Inject constructor(
 
     private fun recoverStaleWorkerRuns() {
         ProcessLifecycleOwner.get().lifecycleScope.launch {
-            runCatching {
+            try {
                 workerExecutionGuard.recoverStaleRunningJobs(
                     staleThresholdMs = startupStaleThresholdMs()
                 )
-            }.onFailure { Timber.w(it, "Startup: stale worker-run recovery failed") }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Startup: stale worker-run recovery failed")
+            }
         }
     }
 
@@ -373,10 +378,20 @@ class AppStartupCoordinator @Inject constructor(
      */
     private fun importRestoreJournals() {
         ProcessLifecycleOwner.get().lifecycleScope.launch {
-            runCatching { restoreJournalImporter.importLastSuccessJournalIfPresent() }
-                .onFailure { Timber.w(it, "Startup: restore success-journal import failed") }
-            runCatching { restoreJournalImporter.importLastFailureJournalIfPresent() }
-                .onFailure { Timber.w(it, "Startup: restore failure-journal import failed") }
+            try {
+                restoreJournalImporter.importLastSuccessJournalIfPresent()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Startup: restore success-journal import failed")
+            }
+            try {
+                restoreJournalImporter.importLastFailureJournalIfPresent()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Startup: restore failure-journal import failed")
+            }
         }
     }
 }
