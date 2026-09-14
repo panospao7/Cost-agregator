@@ -1,0 +1,149 @@
+# GR-14A9 — zero-inbound / external_entry owner triage (plan item A9).
+#
+# Evidence note, NOT an engine batch: no engine, policy, baseline, or
+# production-Kotlin change is included.  Establishes the post-u28 baseline
+# for the plan (docs/ci/GUARDRAIL_ISSUES_PLAN.md) and records the source
+# verification behind the 24 unproven_external_entry rows, per writer,
+# for the owner decisions owed under ledger §C1/C2/C4.
+#
+# Baseline (Step-0 for the next engine batch, plan item A1):
+#   board workspace: build/guard-debug/gr14u29/
+#   board_pre_run1.json == board_pre_run2.json, byte-identical
+#   sha256 a997620894f506a568dec19da7cf6e66d1ae6a7665f67064096dbb5bae2a8d37
+#   (matches the ledger §G expected board)
+#   proofStates: proven_helper 286, proven_restore_internal 1,
+#     proven_worker_mediated 14, unproven_ambiguous_call 37,
+#     unproven_async_or_escaping_callback 44, unproven_external_entry 24
+#   counterexamples 0; CLI exit 1 (unproven-only; expected current state)
+#   activePolicySha256 7851adc2…; sourceRootManifestSha256 37b0d874…
+#   targetSha null (shadow report; working tree at d2af4f94, clean)
+#
+# Method: hand call-site search per writer from source (grep over
+# app/src/{main,test,androidTest} with receiver attribution), per ledger
+# §A4 rule — board labels were NOT used as deadness evidence.  DI bindings
+# were checked per ledger §A1 rule (count bindings, not files).
+#
+# The 24 rows attributed to 8 writers (fresh board, not the pre-u28 list —
+# InvestmentTracker switched addHolding -> updatePrice, as §A4 predicted):
+
+writers:
+- writer: ExpenseWriteStore (8 rows: conditionallySetLocation, deleteAll,
+    incrementBackfillAttempts, insertAll, updateCategoryNullable,
+    updateCategory, updateMerchantKey, updateMerchant)
+  productionCallers: none — the class is never constructed or injected;
+    the only non-test reference is the stale doc comment
+    (ExpenseReadStore.kt:13 "Write paths must use [ExpenseWriteStore] or
+    [TransactionLifecycleCoordinator]") — defect D2
+  otherCallers: ExpenseWriteStoreObservabilityTest only
+  classification: designed-but-unwired write layer
+  ownerDecision: DELETE the class + its test (and fix the ExpenseReadStore
+    doc comment), or WIRE it as the write path it was designed to be.
+    Deleting removes 8 rows.  NOT deletable on the board label alone —
+    this note IS the hand verification the ledger requires.
+
+- writer: GroupLifecycleCoordinator (8 rows: createGroup, addExpense,
+    addMember, removeMember x2, archiveGroup, recordSettlement,
+    deleteGroupPermanently — all lifecycleEventDao/settlementDao inserts)
+  productionCallers: none — GroupTransactionCoordinator.kt:62-95 contains
+    only a TODO comment ("PR-E15") describing the routing that would call
+    this coordinator; it was never built (ledger §C4).  Every method is
+    exercised only by GroupLifecycleScenarioTest /
+    GroupLifecycleContractTest.  Methods are self-guarded
+    (writeBarrier.checkWritesAllowed present, e.g. recordSettlement).
+  otherCallers: scenario/contract suites only
+  classification: complete, guarded, test-covered coordinator whose
+    production routing was never built
+  ownerDecision: BUILD the routing (feature work, outside the guardrail
+    program) or DELETE the coordinator + its suites (removes 8 rows).
+    Feeds plan item C2.
+
+- writer: TransactionLifecycleCoordinator.deleteExpense — the ID overload
+    deleteExpense(expenseId: Long, ...) (2 rows: expenseDao.delete +
+    transactionEventDao.insert)
+  productionCallers: none — ExpenseRepository.deleteExpense(Long)
+    (ExpenseRepository.kt:430) resolves ID -> entity and calls the ENTITY
+    overload (line 417), which is the production-reached path
+    (TransactionsViewModel -> ExpenseRepository.deleteExpense(expense)).
+  otherCallers: TransactionLifecycleCoordinatorTest:261 only
+  classification: dead overload (the entity overload carries the same
+    guard and lifecycle behavior)
+  ownerDecision: DELETE the ID overload + retarget its test (removes 2
+    rows), or keep and wire.  Deletion is lifecycle-path work — must go
+    through the transaction-lifecycle owners, not a guard-side edit.
+
+- writer: InvestmentTracker.updatePrice (2 rows: investmentDao.updatePrice
+    + investmentValueDao.insert)
+  productionCallers: none — InvestmentViewModel injects the tracker for
+    read paths only (portfolio summary/quality); no production caller of
+    tracker.updatePrice.
+  otherCallers: InvestmentTrackerTest (negative-path cases only)
+  classification: price-update flow never wired
+  ownerDecision: DELETE the method + tests (removes 2 rows) or wire the
+    update-price UI/flow.  (addHolding left this bucket via GR-14u28 and
+    is a separate, already-dispositioned case.)
+
+- writer: ExpenseGroupDao.insertGroupWithMembers (1 row: memberDao.insertAll)
+  productionCallers: ZERO anywhere (main, test, androidTest)
+  otherCallers: none
+  classification: dead @Transaction convenience method
+  ownerDecision: DELETE (removes 1 row).  Resolves unexplained row #1
+    (ledger §C2).
+
+- writer: BankApiIntegration.completeConnection (1 row: bankConnectionDao.insert)
+  productionCallers: none — BankConnectionLifecycleCoordinator injects the
+    class but does not call completeConnection.
+  otherCallers: BankApiIntegrationTest:322 only
+  classification: connection-completion flow not wired
+  ownerDecision: DELETE or wire the OAuth completion step.
+
+- writer: BudgetForecastingEngine.updateForecastAccuracy (1 row:
+    budgetForecastDao.update)
+  productionCallers: ZERO anywhere — BudgetForecastingViewModel calls only
+    generateForecastResult.
+  otherCallers: none
+  classification: dead accuracy-feedback write
+  ownerDecision: DELETE (removes 1 row) or wire accuracy feedback.
+
+- writer: RoomRecurringLifecycleEventWriter.writeDiagnostic (1 row: dao.insert)
+  productionCallers: ZERO anywhere — RecurringLifecycleCoordinator calls
+    writeCritical/writeEvent, never writeDiagnostic.
+  otherCallers: none
+  classification: dead diagnostic surface (likely superseded by
+    writeCritical)
+  ownerDecision: DELETE (removes 1 row).  Resolves unexplained row #2
+    (ledger §C2).
+
+# Cross-check: 8 + 8 + 2 + 2 + 1 + 1 + 1 + 1 = 24 = unproven_external_entry. OK
+#
+# Honest-uncertainty caveats:
+# - Classifications rest on exhaustive grep with receiver attribution, not
+#   on the engine's call graph; reflection/framework construction of these
+#   classes was checked via DI-binding search (none found for
+#   ExpenseWriteStore; wired-but-unused-method for the rest).
+# - init{} references: none of the 8 writers is referenced from an init
+#   block (ledger §B4 shape) — verified during the same grep pass.
+#
+# Not claimed here: zero gate, GR-15 entry, GATE-00R trust.  Owner
+# sign-off per writer is still owed before any deletion batch (plan §2 A9
+# protocol); deletions themselves are separate production batches under
+# the PR-GR-14 batch cap.
+# DISPOSITIONS (owner-approved in session 2026-09-11; executed across
+# GR-14u34+ tranches):
+#   DELETE (executed GR-14u34, board 0ab27b26):
+#     ExpenseGroupDao.insertGroupWithMembers (1 row)
+#     RoomRecurringLifecycleEventWriter.writeDiagnostic (1 row)
+#   DELETE (pending tranches): ExpenseWriteStore class (8 rows),
+#     GroupLifecycleCoordinator remaining 5 rows + scenario suites,
+#     TransactionLifecycleCoordinator.deleteExpense ID overload (retarget
+#     test), InvestmentTracker.updatePrice, BudgetForecastingEngine.
+#     updateForecastAccuracy
+#   KEEP (residual, no action): BankApiIntegration.completeConnection
+#     (consistent stub-mode scaffolding; wire when bank sync ships)
+#
+# POST-u29 UPDATE (GR-14u29.yml): the 2 TransactionLifecycleCoordinator
+# deleteExpense rows moved unproven_external_entry -> proven_helper when
+# the labelled-return misclassification fix landed.  The writer is still
+# zero-inbound in production (the entity overload carries the reachable
+# path); the owner decision to delete the ID overload stands and now
+# removes 2 PROVEN rows instead of 2 unproven ones.
+status: OWNER-DECISIONS-PENDING

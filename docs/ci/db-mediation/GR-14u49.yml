@@ -1,0 +1,184 @@
+# GR-14u49 — anonymous-object engine batch: Option A (bounded fan-out
+# dispatch admission) WITH capture-typing + loop-variable typing
+# (owner-approved design; reviewer conditions applied).
+#
+# DEFECT: `_CALL_CANDIDATE_RE` matched the supertype token of
+# `object : T {` as a call with a trailing lambda, spawning a PHANTOM
+# async lambda region over the object body.  16 rows were affected:
+# 10 x RetentionModule.provideRetentionTargets mutation rows classified
+# GR13_SITE_INSIDE_UNRESOLVED_LAMBDA (the sites live in the objects'
+# purge() overrides but attributed to the enclosing provider), and 6
+# rows decided by the phantom async edge over
+# CloudDashboardBriefingService.failClosedGate's `object : PrivacyGate`.
+#
+# FIX (the full mechanism list; reviewer conditions applied):
+#   1. PHANTOM-CALL SUPPRESSION: per-callable, running between
+#      extract_calls and _lambda_regions so BOTH the call record and the
+#      phantom region vanish; keyed by (path, supertype-TOKEN offset) —
+#      the call record's name_start is the token after `object :`, not
+#      the keyword (an implementation bug found and fixed during this
+#      batch).  Corpus-supertype sites only; the 148 external-supertype
+#      sites keep the current phantom classification (design scope
+#      boundary).
+#   2. MEMBER MODELLING: corpus-supertype anon-object member functions
+#      become synthetic callables with owner FQCN
+#      `<file>#anon<N>@<line>` (N = per-file source-order ordinal;
+#      deterministic by construction).  Synthetic owners enter the owner
+#      table (kind anonymous_object, supertype = the corpus interface).
+#      ISSUE-4 applied: only DIRECT members — funs inside a smaller fun
+#      span (local functions) and members of nested anon objects are
+#      skipped (nested objects model via their own site).
+#   3. CAPTURE-TYPING: a synthetic member's free identifiers resolve
+#      against the ENCLOSING callable's scope.  ISSUE-5 applied: only
+#      bindings whose declaration offset PRECEDES the member's
+#      declaration start are visible, and locals are checked BEFORE
+#      params (Kotlin shadowing order).  `val` + exactly-resolvable type
+#      -> resolves; `var` or unresolvable -> fail-closed (no exactness
+#      through captures).
+#   4. BOUNDED FAN-OUT DISPATCH ADMISSION (owner-approved Option A): for
+#      a corpus interface whose implementor set is fully enumerable
+#      (named implementors + all modelled anonymous sites; the modelled
+#      anon count must EQUAL the scanned count — an unmodelled site
+#      withdraws the admission, fail closed; completeness re-derived
+#      EVERY run from the rebuilt graph), the dispatch call emits EXACT
+#      edges to every implementor's member.  ISSUE-7 applied: fan-out
+#      targets must OVERRIDE the interface's member (same-name
+#      non-override helpers are not dispatch targets).  All-or-nothing:
+#      the proof layer's behavior is unchanged — one unguarded
+#      implementor body fails the whole set back to uncertainty.
+#   5. LOOP-VARIABLE TYPING (reviewer-scoped addition, explicit-
+#      annotation bar ONLY): a for-loop variable binds to the iterable's
+#      element type ONLY when the iterable is a local val or param with
+#      an EXPLICIT `: T` annotation in source (the u45 Shape B bar —
+#      inferred/ctor-shape texts never pass).  Element extraction via
+#      the shared single-type-argument helper (u45 collection-head set +
+#      Sequence).  Offset-scoped to the loop body: a same-named receiver
+#      after the loop stays untyped; nested same-name loops resolve to
+#      the nearest enclosing loop.  Fail closed on destructuring heads,
+#      non-collection heads (Map/String/arrays), and unresolved element
+#      types.  The binding lives in the local-value stage of
+#      receiver_fqcn_for_call (preempts the star-import fabrication for
+#      loop vars naturally); the single-star-import branch itself is
+#      UNTOUCHED (ISSUE-6 = separate future batch).
+#   6. SUBJECT-CORRELATION REATTRIBUTION (added during implementation,
+#      not in the original design): mutation sites inside synthetic
+#      member spans attribute to the synthetic member callable
+#      (innermost containing span), which is what connects the fan-out
+#      edges to the real executing spans.
+#   7. DISCLOSED ONE-LINE APP ANNOTATION (GR-08k1 precedent):
+#      DataRetentionWorker.kt L102
+#      `val orderedTargets = allTargets.sortedBy { it.name }` ->
+#      `val orderedTargets: List<RetentionTarget> = allTargets.sortedBy
+#      { it.name }` (+ explanatory comment; RetentionTarget was already
+#      imported).  The ONLY app change.  The L274 second loop (`for
+#      (target in allTargets)`) is deliberately NOT annotated — it has
+#      no corpus dispatch downstream (asymmetry disclosed).
+#
+# REVIEW CONDITIONS APPLIED (strict reviewer ruled PROCEED-OPTION-1):
+#   ISSUE-2 (corrected success criterion): u49 lands the 10 RetentionModule
+#     rows in an HONEST UNPROVEN state — NOT proven.  Zero proven-row
+#     claims.  The proven upgrade requires DAO-accessor return typing
+#     (the members' `appDatabase.rawNotificationDao()` chains resolve
+#     virtual_dispatch on the ABSTRACT AppDatabase — uncertainty is the
+#     correct terminal state until that follow-up batch).
+#   ISSUE-6: the single-star-import branch (androidx.work.* fabricating
+#     `androidx.work.target` for the bare name `target`) is untouched —
+#     own future batch.  The loop-var typing preempts it for loop
+#     variables only.
+#
+# FIXTURES (18 new, cb31..cb48; count 84 -> 102 consolidated rows):
+#   cb31 anon-member modelling positive (member callable; captured dao
+#        resolves exact)
+#   cb32 phantom suppression pin (no supertype-token call record; the
+#        row pins the fixture's marker call; the phantom ABSENCE is
+#        probe-documented — the runner vocabulary cannot express
+#        "no edge exists")
+#   cb33 two-anon-objects-in-one-file naming determinism (distinct
+#        per-file ordinals; both members' calls exact)
+#   cb34 captured-var fail-closed (var capture -> unresolved_target)
+#   cb35 bounded fan-out positive (2 named + 1 anon; explicit-annotation
+#        loop var -> 3 exact fan-out edges)
+#   cb36 fan-out gate contrast (enumerable-but-empty implementor set ->
+#        INTERFACE_DISPATCH; the modelled 1+1 set -> exact)
+#   cb37 capture-typing positive (outer val param -> member DAO edge exact)
+#   cb38 all-or-nothing callgraph pin (fan-out stays exact/complete
+#        regardless of member-body guard content; the PROOF-level
+#        fallback is a proof-layer behavior, documented — the callgraph
+#        cannot see guards)
+#   cb39 multi-supertype object (site-keyed naming; dispatch from either
+#        interface finds the same synthetic owner)
+#   cb40 line-wrapped supertype list negative pin (current end-of-line
+#        capture behavior pinned; the wrapped anon is invisible to the
+#        graph — disclosed current-behavior pin)
+#   cb41 LV-neg-unannotated (inferred iterable -> loop var untyped)
+#   cb42 LV-neg-destructuring ((k, v) head -> untyped)
+#   cb43 LV-neg-map (Map head not in the collection set -> untyped)
+#   cb44 LV-neg-string (String head -> untyped)
+#   cb45 LV-neg-scope-leak (same-named receiver AFTER the loop -> untyped;
+#        the after-loop call targets a different member for a
+#        single-state row)
+#   cb46 LV-pin-shadow (nested same-name loops -> inner binding wins
+#        inside the inner body)
+#   cb47 LV-pin-inferred-only (ctor-shape inferred iterable -> untyped)
+#   cb48 LV-pos set-headed fan-out (explicit Set<T> iterable -> full
+#        exact fan-out)
+#   Fixture-count math: 84 + 18 = 102 consolidated rows (94 runner-
+#   checked scenarios = 84 prior CB/HP/WP + 10 new... measured: 94
+#   checked, 94 passed — the runner checks every non-PR row).
+#
+# OUTCOME (board, pre 54278165... -> post 0028f57e40f16b29, double run
+# byte-identical — orchestrator-verified): ambiguous 3 -> 13, async
+# 33 -> 23, external_entry 0.  EXACTLY 10 entries changed vs baseline,
+# ALL unproven_async_or_escaping_callback/GR13_SITE_INSIDE_UNRESOLVED_LAMBDA
+# -> unproven_ambiguous_call/GR13_UNCERTAIN_CALL_EDGE, attributing to the
+# synthetic anon-member callables (anon1@35 .. anon10@236 in
+# RetentionModule.kt):
+#     AiArtifactDao.deleteExpired
+#     AiChatMessageDao.deleteOlderThan
+#     BackgroundJobRunDao.redactErrorMessagesOlderThan
+#     BankStatementImportItemDao.redactMerchantOlderThan
+#     EmailReceiptDao.redactSensitiveFieldsOlderThan
+#     NotificationIntakeDao.purgeRawPayload
+#     PendingReviewDao.redactNotificationTextOlderThan
+#     PipelineDiagnosticEventDao.deleteOlderThan
+#     RawNotificationDao.updateRawContentPurged
+#     ScannedReceiptDao.updateRawOcrTextPurged
+#   u49 does NOT claim proven rows: the rows are honest-unproven
+#   (UNCERTAIN_CALL_EDGE via virtual-dispatch uncertainty on the abstract
+#   AppDatabase accessors); the DAO-accessor return typing follow-up
+#   batch is what upgrades them to proven under the worker's canonical
+#   guard (the fan-out edges from DataRetentionWorker are exact and in
+#   place — verified by probe: 10 exact targets).
+#   The 6 PrivacyGate rows did NOT move: the phantom was not their final
+#   decider (their deciding edges were already the next-decider family
+#   after u47's noise removal).  The 3 old ambiguous rows unchanged.
+#   0 counterexamples, 0 regressions, 0 external_entry (the B2 trap the
+#   first implementation attempt hit — via the then-missing loop-var
+#   typing — is avoided in the final state).
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+#   regressed, 0 rows in unproven_external_entry, 0 unexpected delta
+#   (exactly the 10 declared rows moved).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 94/94 checked, 94 passed, exit 0 (76 prior + 18 new)
+#   - scripts/ci/test_gr14u45_lambda_param_typing.py +
+#     test_gr14f_inline_carriers.py: 20 passed
+#   - scripts/ci full battery: 1251 passed, 14 failed — byte-identical to
+#     the base commit's failure set (verified by stash/re-run earlier in
+#     this batch's history; freshness-stamp and platform-conditional
+#     tests, environment-dependent, pre-existing)
+#   - board double run byte-identical 0028f57e40f16b29
+#     (orchestrator-verified; the byte-identical board also proves the
+#     synthetic-key determinism)
+#   - Kotlin: NOT RUN — human validation owed for the one-line annotation
+#     (./gradlew :app:compileDebugKotlin --console=plain)
+#
+# Remaining: DAO-accessor return typing (upgrades the 10 rows to proven —
+#   the members' accessor chains resolve virtual_dispatch on abstract
+#   AppDatabase); single-star-import fabrication fix (androidx.work.*
+#   fabricating androidx.work.target — own batch, ISSUE-6); PrivacyGate
+#   dispatch admission (out of scope — not a closed world); the
+#   F-PROCESSBATCH (8) / F-POSTCOMMIT (6) families (u43 table).
+status: COMPLETE_AT_BOARD_0028f57e

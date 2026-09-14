@@ -1,0 +1,72 @@
+# GR-14e — GUARD_UNGUARDED_PATH family closure + mediation prover fixes.
+#
+# Scope: the 11 DEFINITE_VIOLATION counterexample rows of the GR-13
+# remediation seed (family GR14_GUARD_UNGUARDED_PATH), the program's only
+# DEFINITE_VIOLATION risk class.
+#
+# Diagnosis (build/guard-debug/gr14e/, prove_dump.py harness): the shadow's
+# direct-site bridge never credited ANY caller barrier because
+# _DirectSiteProver._compute compared ProofStatus.PROVEN ("PROVEN") against
+# the lowercase literal "proven" (always false), and the precompute prefilter
+# requested proofs only for edges whose DIRECT target was a subject
+# callable, dropping the transitive hops (caller -> intermediate helper ->
+# subject) so guard context leaked "none" through proven intermediates.
+# With both fixed, 9 of the 11 rows closed WITHOUT code changes or with the
+# entry barriers below:
+#   - RecommendationRepository.expireAll x2 (barrier added at the
+#     RecommendationInvalidator entries; sole caller chain)
+#   - SourceStatsRepository.insertIfNotExists (barrier added at
+#     ConfidenceRouter.ensureSourceStats)
+#   - FinancialHealthScoreV2.saveToHistory x3 (barrier added at
+#     ComputeDashboardWidgetsUseCase.computeHealthScoreV2; transitive path
+#     proved only after the prefilter fix)
+#   - RecurringLifecycleCoordinator.updateOccurrenceStatus x2 (barriers
+#     added at the three unguarded convenience roots skipOccurrence /
+#     cancelOccurrence / markOccurrenceMissed)
+#   - TransactionLifecycleCoordinator.updateBusinessExpensePatch x2
+#     (barrier added at the deprecated updateBusinessFlags shim root)
+#
+# Remaining debt (1 row, NOT closed here):
+#   - GroupLifecycleCoordinator.emitLifecycleEvent ->
+#     GroupLifecycleEventDao.insert: recordSettlement's barrier exists
+#     (post-GR-12 canonical call, first statement of the entry) but the
+#     prover's body parser returns DB_DIRECT_BARRIER_PROOF_UNSUPPORTED for
+#     the expression-body `= withContext(ioDispatcher) { ... withTransaction
+#     { ... } }` shape, so dominance is unprovable to the engine.  Repair
+#     belongs to the parser-capability family (same class of work as the
+#     GR-07 expression-body enablement, commit acc563f2); it is NOT a
+#     missing-barrier violation.
+schemaVersion: 1
+batchId: GR-14e
+startSha: ffe0a69b
+# Shadow evidence (before/after): build/guard-debug/gr14e/shadow_current.json
+# (11 counterexamples, pre-fix engine) and shadow_final.json (1 remaining,
+# post-fix); report sha256 from the seed regeneration below.
+finalReportSha256: 559f0c815ee83a8d76401919655cf4c9fa34d5227c2d232536507e1aec720f41
+engineFixes:
+  - inspect_db_mediation_proof.py: ProofStatus enum comparison replaces the
+    lowercase-literal comparison that discarded every direct-site proof
+  - inspect_db_mediation_proof.py: precompute prefilter widened to every
+    exact edge of barrier-capable callers (transitive context propagation)
+codeFixes:
+  - RecommendationInvalidator.invalidateAllForUser + invalidateStale
+  - ConfidenceRouter.ensureSourceStats
+  - ComputeDashboardWidgetsUseCase.computeHealthScoreV2
+  - RecurringLifecycleCoordinator.skipOccurrence + cancelOccurrence +
+    markOccurrenceMissed (expression bodies converted to block bodies with
+    a first-statement canonical barrier)
+  - TransactionLifecycleCoordinator.updateBusinessFlags
+validation:
+  - shadow counterexamples 11 -> 1; proven_helper 20 -> 29
+  - mediation CLI + fixture + worker-disposition tests 42 passed;
+    flat-mode models/parser-span tests 13 passed
+  - :app:compileDebugKotlin PASS (build/guard-debug/gr14e/compile.log)
+  - confidence router / dashboard / integration test classes touched by the
+    constructor additions PASS (build/guard-debug/gr14e/test_touched2.log)
+  - pre-existing Kotlin hang failures in TransactionLifecycleCoordinatorTest,
+    RecurringLifecycleCoordinatorTest.generateOccurrences x2 and
+    CrossGroupIntegrationTest x3 reproduced unchanged at the pre-batch
+    baseline ffe0a69b (A/B, build/guard-debug/gr14e/test_baseline_ff0.log,
+    test_baseline3.log); not caused by this batch, owed to a separate batch
+  - GATE-00R double capture OWED at merge (this record is conditional on it)
+status: PARTIAL

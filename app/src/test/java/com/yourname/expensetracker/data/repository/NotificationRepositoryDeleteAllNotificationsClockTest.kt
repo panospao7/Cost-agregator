@@ -64,7 +64,6 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
 
     @Before
     fun setup() {
-        every { database.transactionEventDao() } returns transactionEventDao
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
             firstArg<suspend () -> Any>().invoke()
         }
@@ -79,6 +78,7 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
         pendingReviewDao = pendingReviewDao,
         userCorrectionDao = userCorrectionDao,
         sourceStatsDao = sourceStatsDao,
+        transactionEventDao = transactionEventDao,
         classifier = classifier,
         pipeline = pipeline,
         writeBarrier = writeBarrier,

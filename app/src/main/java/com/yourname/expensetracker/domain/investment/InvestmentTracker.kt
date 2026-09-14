@@ -336,41 +336,6 @@ class InvestmentTracker @Inject constructor(
             )
         }
     
-    /**
-     * Update price for an investment and record value history.
-     *
-     * ATOMICITY-VERIFIED: Wrapped in [database.withTransaction] at the call site
-     * (see line 231) so the price update + value history insert are atomic.
-     */
-    suspend fun updatePrice(investmentId: Long, newPrice: Double) = withContext(ioDispatcher) {
-        writeBarrier.checkWritesAllowed("InvestmentTracker.updatePrice")
-        require(newPrice.isFinite() && newPrice > 0.0) { "Price must be finite and positive" }
-        val investment = investmentDao.getById(investmentId) ?: return@withContext
-        val timestamp = timeProvider.now()
-        
-        val previousDayClose = getPreviousDayCloseSnapshot(investmentId, timestamp)
-        val dayChange = previousDayClose?.let { newPrice - it.price }
-        val dayChangePercent = previousDayClose?.let {
-            if (it.price > 0.0) ((newPrice - it.price) / it.price) * 100 else 0.0
-        }
-        
-        // Wrap update + insert in transaction for atomicity
-        database.withTransaction {
-            // Update investment
-            investmentDao.updatePrice(investmentId, newPrice, timestamp)
-            
-            // Record value history
-            val value = InvestmentValue(
-                investmentId = investmentId,
-                price = newPrice,
-                totalValue = newPrice * investment.quantity,
-                timestamp = timestamp,
-                dayChange = dayChange,
-                dayChangePercent = dayChangePercent
-            )
-            investmentValueDao.insert(value)
-        }
-    }
     
     /**
      * Get investments that have reached target price (for alerts).

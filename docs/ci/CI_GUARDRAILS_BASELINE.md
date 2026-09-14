@@ -1,5 +1,7 @@
 # CI Guardrails Baseline Inventory
 
+> **Historical record** — this inventory is a frozen PR 1–H7 program log, not current-state authority. as-of: the PR 1–9/G1–G4/H1–H7 integration era (2026-07; "17 guards" was that era's count); scope: that program phase only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml, docs/ci/GUARD_COMMANDS.generated.md, and docs/ci/GUARD_STATUS.generated.md.
+
 > **Created**: PR 1 — CI Baseline and Workflow Validation
 > **Purpose**: Comprehensive inventory of all existing CI guardrails, verification tasks, scripts, tests, and gaps. Serves as the foundation for the multi-PR CI static guardrails hardening plan.
 > **Status**: ✅ Final Integration — All PRs (1–9, G1–G4, H1–H7) complete. 17 guards active. Ratchets locked.

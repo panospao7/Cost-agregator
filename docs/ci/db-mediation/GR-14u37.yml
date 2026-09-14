@@ -1,0 +1,45 @@
+# GR-14u37 — A9 hygiene tranche: dead overload + never-wired methods
+# (owner-approved dispositions; plan track A9; all rows were PROVEN, so
+# this batch is code hygiene — no gate movement).
+#
+# PRODUCTION REMOVALS (all triple-proven dead in production):
+#   - TransactionLifecycleCoordinator.deleteExpense ID overload
+#     (ExpenseRepository.deleteExpense(Long) resolves ID->entity and calls
+#     the entity overload, which is the production-reached path; identical
+#     guard + lifecycle behavior).  Its one test retargeted to the entity
+#     overload (expense captured in a val).
+#   - InvestmentTracker.updatePrice (never wired; the ViewModel uses the
+#     tracker read-only) + its two negative-path tests.
+#   - BudgetForecastingEngine.updateForecastAccuracy (zero callers
+#     anywhere).
+#
+# POLICY TRUTH SYNC + a real generation-side discovery:
+#   - active 412 -> 407; seeds 359 -> 352
+#   - DISCOVERY: after the ID overload's deletion, the legacy v1 fold
+#     (coarse, signature-free) resolves the legacy deleteExpense row onto
+#     the ENTITY overload's key, so the entity overload's seed rows would
+#     shadow legacy-resolved keys -> --generate failed CLOSED with
+#     "seed rows duplicate a legacy-resolved candidate mutation key count=2"
+#     (verified NOT caused by the seed edit: HEAD seeds reproduce it).
+#     Resolution per the GR-14b EXACT_IDENTITY_MOVE precedent: the
+#     entity-overload seed rows (x2) are redundant once legacy resolves
+#     them and are removed from the generation input; the active policy
+#     rows are unchanged.  This is the duplicate check working as
+#     designed.
+#   - tracked pair regenerated; --verify --seed-rows FULL MATCH exit 0;
+#     folds unchanged 53/40/43; OWNER_MISSING=9 persists (frozen legacy
+#     GLC rows, documented at GR-14u36)
+#   - _CANDIDATE_ENTRIES 412 -> 407; seed-drift ledger 62 -> 69
+#     (5 deleted-writer rows + 2 shadowed entity rows); combined pin 352
+#
+# OUTCOME (board, pre 03392d87... -> post 48012557...):
+#   exactly the 5 PROVEN rows removed (proven_helper 313 -> 308); unproven
+#   unchanged at 56 (external 0, ambiguous 20, async 36); 0 regressions,
+#   0 counterexamples.  GATE-00R recapture owed at merge.
+#
+# VALIDATION:
+#   - seed-rows + current-repo + db_guard: 458 passed
+#   - verify_db_access_boundaries --fail-on-violation: exit 0
+#   - :app:compileDebugKotlin: exit 0
+#   - board double run byte-identical 48012557...
+status: COMPLETE_AT_BOARD_48012557

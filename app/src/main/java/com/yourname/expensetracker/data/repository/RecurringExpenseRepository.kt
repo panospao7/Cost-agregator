@@ -129,30 +129,4 @@ class RecurringExpenseRepository @Inject constructor(
         ruleLifecycleCoordinator.get().updateRule(expense)
     }
 
-    private suspend fun writeLifecycleEvent(
-        ruleId: Long,
-        eventType: String,
-        occurredAt: Long,
-        oldStatus: String?,
-        newStatus: String?,
-        metadata: String?
-    ) {
-        if (ruleId <= 0) return
-        writeBarrier.checkWritesAllowed("RecurringExpenseRepository.writeLifecycleEvent")
-        try {
-            lifecycleEventDao.insert(
-                com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent(
-                    occurrenceId = null,
-                    eventType = eventType,
-                    occurredAt = occurredAt,
-                    oldStatus = oldStatus,
-                    newStatus = newStatus,
-                    metadata = metadata
-                )
-            )
-        } catch (e: Exception) {
-            timber.log.Timber.w(e, "Non-critical: failed to write lifecycle event %s for rule %d", eventType, ruleId)
-        }
-    }
-
 }

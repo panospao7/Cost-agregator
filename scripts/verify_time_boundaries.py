@@ -4,7 +4,10 @@ verify_time_boundaries.py — canonical direct wall-clock time guard (PR-GR-02).
 
 RULE_ID: G-TIME-01
 
-Scans production Kotlin under ``app/src/main/java`` and flags direct
+Scans the declared production Kotlin source scope (the roots of the
+checked-in manifest ``config/guards/production_source_roots.yml`` via
+``scripts/guardrails/production_source_scope.py`` — currently
+``app/src/main/java``) and flags direct
 wall-clock / calendar-clock API calls that must be routed through the
 canonical ``TimeProvider`` boundary (``SystemTimeProvider`` via Hilt):
 
@@ -86,19 +89,35 @@ Usage:
 """
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
+
 RULE_ID = "G-TIME-01"
 
 # Canonical exceptions policy (exact path/class/method/api entries only).
 DEFAULT_ALLOWLIST = "config/guards/time_boundary_exceptions.yml"
 
-# Only production Kotlin under app/src/main/java is scanned.
-SOURCE_SUBDIR = "app/src/main/java"
+# PR-GR-10B: the scanned production source scope is declared by the
+# checked-in manifest ``config/guards/production_source_roots.yml`` (resolved
+# via scripts/guardrails/production_source_scope.py).  There is NO
+# conventional-root fallback: a missing, malformed, or undeclared manifest
+# fails closed with exit 2.  The historical hard-coded root
+# (``app/src/main/java``) is the manifest's currently declared single root,
+# so the scanned file set is unchanged.
 
 SUPPORTED_VERSION = 1
 
@@ -913,16 +932,15 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
-    src_dir = root / SOURCE_SUBDIR
 
-    # Fail closed: missing or empty source tree.
-    if not src_dir.exists():
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).  Any
+    # diagnostic (manifest absent/malformed/undeclared/topology) is fatal.
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
         raise GuardFatalError(
-            f"{RULE_ID}: source directory not found: {src_dir} — fail closed"
-        )
-    if not src_dir.is_dir():
-        raise GuardFatalError(
-            f"{RULE_ID}: source path is not a directory: {src_dir} — fail closed"
+            f"{RULE_ID}: production source scope unresolved: {codes} — fail closed"
         )
 
     allowlist_path = Path(args.allowlist)
@@ -931,16 +949,25 @@ def main() -> int:
 
     exceptions = load_exceptions(allowlist_path)
 
-    kotlin_files = sorted(p for p in src_dir.rglob("*.kt") if p.is_file())
+    # Deterministic declared-root-order then canonical path-order
+    # enumeration (identical to the previous sorted rglob over the single
+    # declared root ``app/src/main/java``).
+    try:
+        sources = list(iter_production_kotlin_files(str(root), root_set))
+    except ProductionSourceScopeError as exc:
+        raise GuardFatalError(
+            f"{RULE_ID}: production source enumeration failed: {exc.code} — fail closed"
+        )
+    kotlin_files = [(Path(s.absolute_path), s.repository_relative_path) for s in sources]
     if not kotlin_files:
         raise GuardFatalError(
-            f"{RULE_ID}: no Kotlin sources found under {src_dir} — fail closed"
+            f"{RULE_ID}: no Kotlin sources found under the declared "
+            f"production source roots — fail closed"
         )
 
     all_violations: List[TimeViolation] = []
     raw_match_keys: Set[Tuple[str, str, str, str]] = set()
-    for file_path in kotlin_files:
-        rel_path = file_path.relative_to(root).as_posix()
+    for file_path, rel_path in kotlin_files:
         violations = scan_file(file_path, rel_path)
         for v in violations:
             raw_match_keys.add(v.key_tuple())

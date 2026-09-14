@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.intelligence
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.entity.SourceStats
 import com.yourname.expensetracker.data.repository.SourceStatsRepository
 import com.yourname.expensetracker.data.repository.UserCorrectionRepository
@@ -29,6 +30,7 @@ data class RoutingResult(
 
 @Singleton
 class ConfidenceRouter @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val sourceStatsRepository: SourceStatsRepository,
     private val userCorrectionRepository: UserCorrectionRepository,
     private val classifier: TransactionClassifier,
@@ -360,6 +362,7 @@ class ConfidenceRouter @Inject constructor(
 
         val existing = sourceStatsRepository.getByPackage(packageName)
         if (existing == null) {
+            writeBarrier.checkWritesAllowed("ConfidenceRouter.ensureSourceStats")
             sourceStatsRepository.insertIfNotExists(
                 SourceStats(
                     packageName = packageName,

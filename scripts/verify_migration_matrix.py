@@ -12,6 +12,16 @@ Fallback: AppDatabase.kt (APP_DATABASE_SCHEMA_VERSION) and DatabaseMigrations.kt
 Registered migrations are parsed from DatabaseMigrations.kt.
 Schema JSON files under app/schemas/ are used to verify version coverage.
 
+Kotlin sources are resolved ONLY under the declared production source
+roots of the checked-in manifest ``config/guards/production_source_roots.yml``
+(via ``scripts/guardrails/production_source_scope.py``; currently
+``app/src/main/java``) — exact known production paths first, then a
+canonical-order scoped search.  A repository-level invocation
+(``main()``) requires the manifest and fails closed (exit 2) when it is
+missing, malformed, or undeclared — there is NO conventional-root
+fallback.  Stray copies of these file names under ``build/`` trees or
+test fixtures can never shadow the real production sources.
+
 Exit codes: 0 = all migrations present, 1 = missing migrations (with --fail-on-violation)
 
 Rule ID: G-MIG-01
@@ -24,9 +34,45 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_kotlin_file,
+    resolve_production_source_scope,
+    resolve_source_root_set_for_test_fixtures,
+)
+
 
 RULE_ID = "G-MIG-01"
 DESCRIPTION = "Validates Room database migration coverage from baseline to latest"
+
+# Historical production source root (repository-relative POSIX).  Kept as
+# documentation and for test assertions: it is the manifest's currently
+# declared single root.  The LIVE authority is the checked-in manifest
+# ``config/guards/production_source_roots.yml`` resolved via
+# ``scripts/guardrails/production_source_scope.py`` (PR-GR-10B) — this
+# constant no longer drives any scan.
+SOURCE_SUBDIR = "app/src/main/java"
+
+# Exact known production paths (repository-relative POSIX), preferred before
+# the scoped fallback search.  These are the canonical locations in this
+# repository; fixture layouts and package moves resolve through the scoped
+# search under SOURCE_SUBDIR instead.
+_KNOWN_SOURCE_PATHS = {
+    "AppDatabase.kt": (
+        "app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt"
+    ),
+    "DatabaseMigrations.kt": (
+        "app/src/main/java/com/yourname/expensetracker/data/database/DatabaseMigrations.kt"
+    ),
+    "DatabaseSchemaPolicy.kt": (
+        "app/src/main/java/com/yourname/expensetracker/data/database/DatabaseSchemaPolicy.kt"
+    ),
+}
 
 
 def find_file(root: Path, filename: str) -> Optional[Path]:
@@ -37,11 +83,52 @@ def find_file(root: Path, filename: str) -> Optional[Path]:
     return None
 
 
-def find_kotlin_source(root: Path, simple_name: str) -> Optional[Path]:
-    """Find a Kotlin source file by its simple name (e.g. 'AppDatabase.kt')."""
-    for path in root.rglob(simple_name):
-        if path.is_file() and "src" in path.parts:
-            return path
+def find_kotlin_source(root: Path, simple_name: str, root_set=None) -> Optional[Path]:
+    """Find a production Kotlin source file by its simple name.
+
+    Resolution is root-aware and deterministic — only the DECLARED
+    production source roots are searched, never ``build/`` output trees,
+    test fixtures, or any other part of the repository (PR-GR-10B):
+
+      1. the exact known production path for ``simple_name``, when one is
+         declared and resolves under a declared production root;
+      2. otherwise the first match in canonical order over the declared
+         production Kotlin files (covers fixture layouts and package moves
+         without widening the scope).
+
+    ``root_set`` is an already-resolved ``SourceRootSet``.  Repository-level
+    callers (``main()``) MUST pass the manifest-resolved scope — the
+    manifest is required and there is no fallback.  When ``root_set`` is
+    omitted (direct/fixture-level calls only), the scope is resolved via
+    the explicitly named test-fixture seam, whose conventional-root
+    fallback is isolated to synthetic repositories without a manifest.
+    """
+    if root_set is None:
+        root_set, _diagnostics = resolve_source_root_set_for_test_fixtures(
+            str(root)
+        )
+        if root_set is None:
+            return None
+        known_rel = _KNOWN_SOURCE_PATHS.get(simple_name)
+        if known_rel is not None:
+            candidate = root.joinpath(*known_rel.split("/"))
+            if candidate.is_file():
+                return candidate
+    else:
+        known_rel = _KNOWN_SOURCE_PATHS.get(simple_name)
+        if known_rel is not None:
+            source_file, _code = resolve_production_kotlin_file(
+                str(root), root_set, known_rel
+            )
+            if source_file is not None:
+                return Path(source_file.absolute_path)
+            # UNDECLARED / UNREADABLE / LAYOUT_UNSUPPORTED -> scoped search.
+    try:
+        for source_file in iter_production_kotlin_files(str(root), root_set):
+            if Path(source_file.absolute_path).name == simple_name:
+                return Path(source_file.absolute_path)
+    except ProductionSourceScopeError:
+        return None
     return None
 
 
@@ -80,11 +167,20 @@ def parse_baseline_version(migrations_path: Path) -> Tuple[Optional[int], Option
     return None, None
 
 
-def parse_policy_versions(policy_path: Path) -> Tuple[Optional[int], Optional[int]]:
+def parse_policy_versions(
+    policy_path: Path,
+    app_database_path: Optional[Path] = None,
+) -> Tuple[Optional[int], Optional[int]]:
     """Extract CURRENT_VERSION and MIGRATION_BASELINE from DatabaseSchemaPolicy.kt.
 
     This is the authoritative source — preferred over AppDatabase.kt and
     the baseline comment in DatabaseMigrations.kt.
+
+    ``app_database_path`` is the already-resolved production AppDatabase.kt
+    (the root-scoped result of ``find_kotlin_source``); it wins over the
+    policy file's sibling check.  Delegate resolution never searches the
+    whole project — an unbounded rglob could pick up a stray fixture copy
+    under ``build/`` trees.
 
     Returns (latest_version, baseline_version).
     """
@@ -94,7 +190,14 @@ def parse_policy_versions(policy_path: Path) -> Tuple[Optional[int], Optional[in
         print(f"ERROR reading {policy_path}: {e}", file=sys.stderr)
         return None, None
 
-    latest_match = re.search(r"CURRENT_VERSION\s*=\s*\S+\.APP_DATABASE_SCHEMA_VERSION", content)
+    # The qualifier is optional: DatabaseSchemaPolicy.kt declares the delegate
+    # unqualified ("const val CURRENT_VERSION = APP_DATABASE_SCHEMA_VERSION"),
+    # while a qualified form ("... = AppDatabase.APP_DATABASE_SCHEMA_VERSION")
+    # must also keep matching. A bare lookalike constant without a dot
+    # separator (e.g. FOO_APP_DATABASE_SCHEMA_VERSION) must NOT match.
+    latest_match = re.search(
+        r"CURRENT_VERSION\s*=\s*(?:[\w.]+\.)?APP_DATABASE_SCHEMA_VERSION", content
+    )
     baseline_match = re.search(r"MIGRATION_BASELINE\s*=\s*(\d+)", content)
 
     if not latest_match or not baseline_match:
@@ -107,22 +210,20 @@ def parse_policy_versions(policy_path: Path) -> Tuple[Optional[int], Optional[in
     baseline = int(baseline_match.group(1))
 
     # CURRENT_VERSION delegates to AppDatabase.APP_DATABASE_SCHEMA_VERSION.
-    # Try to resolve from the policy file's parent directory.
-    app_db_path = policy_path.parent / "AppDatabase.kt"
+    # Resolve it deterministically: the explicitly resolved production
+    # AppDatabase.kt first, then the policy file's own directory (the three
+    # canonical files are siblings in production).  Never search the whole
+    # project — stray copies under build/ must not shadow production.
+    candidates = []
+    if app_database_path is not None:
+        candidates.append(app_database_path)
+    candidates.append(policy_path.parent / "AppDatabase.kt")
+
     latest = None
-    if app_db_path.exists():
-        latest = parse_latest_version(app_db_path)
-    else:
-        # Fallback: search the project
-        root = policy_path
-        while root.parent != root:
-            root = root.parent
-            candidate = root / "app" / "src"
-            if candidate.exists():
-                break
-        for path in root.rglob("AppDatabase.kt"):
-            if path.is_file() and "src" in path.parts:
-                latest = parse_latest_version(path)
+    for candidate in candidates:
+        if candidate.is_file():
+            latest = parse_latest_version(candidate)
+            if latest is not None:
                 break
 
     return latest, baseline
@@ -230,20 +331,32 @@ def main():
 
     root = Path(args.root).resolve()
 
+    # PR-GR-10B: repository-level invocation requires the checked-in
+    # production source-root manifest (fail closed — no conventional-root
+    # fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"FATAL ({RULE_ID}): production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     # ── Locate source files ──────────────────────────────────────────
-    app_db_path = find_kotlin_source(root, "AppDatabase.kt")
+    app_db_path = find_kotlin_source(root, "AppDatabase.kt", root_set)
     if app_db_path is None:
         print(f"FATAL ({RULE_ID}): Could not find AppDatabase.kt under {root}",
               file=sys.stderr)
         sys.exit(2)
 
-    mig_path = find_kotlin_source(root, "DatabaseMigrations.kt")
+    mig_path = find_kotlin_source(root, "DatabaseMigrations.kt", root_set)
     if mig_path is None:
         print(f"FATAL ({RULE_ID}): Could not find DatabaseMigrations.kt under {root}",
               file=sys.stderr)
         sys.exit(2)
 
-    policy_path = find_kotlin_source(root, "DatabaseSchemaPolicy.kt")
+    policy_path = find_kotlin_source(root, "DatabaseSchemaPolicy.kt", root_set)
 
     # ── Parse versions ───────────────────────────────────────────────
     # Prefer DatabaseSchemaPolicy.kt as the authoritative source.
@@ -254,7 +367,9 @@ def main():
     policy_source = False
 
     if policy_path is not None:
-        policy_latest, policy_baseline = parse_policy_versions(policy_path)
+        policy_latest, policy_baseline = parse_policy_versions(
+            policy_path, app_database_path=app_db_path
+        )
         if policy_latest is not None and policy_baseline is not None:
             latest_version = policy_latest
             baseline_version = policy_baseline

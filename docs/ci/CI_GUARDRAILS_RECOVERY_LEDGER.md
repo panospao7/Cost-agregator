@@ -1,5 +1,7 @@
 # CI Guardrails Recovery Ledger
 
+> **Historical record** — this ledger is a frozen recovery-attempt log, not current-state authority. as-of: the recovery rounds it records (R1 dated 2026-08-05, SHA `e15fbd121d6450730f02646af2f5e810ff21a5ad`); scope: those recovery attempts only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml and docs/ci/GUARD_STATUS.generated.md.
+
 > **Purpose**: Tracks recovery attempts for CI guard suite failures. Each recovery phase (R1, R2, ...) is recorded as an atomic entry with evidence, root cause, and next-phase action items.
 > **Status**: RED — DB ownership debt + Gradle config-cache incompatibility remain
 

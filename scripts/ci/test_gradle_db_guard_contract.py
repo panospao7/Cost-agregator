@@ -2,38 +2,43 @@
 """
 test_gradle_db_guard_contract.py
 
-Static/contract tests for PR-GR-01: the Gradle ``:app:verifyDbAccessBoundaries``
-task must fail closed, validate its required inputs, preflight the Python
-interpreter, invoke the ratchet with an argument list (``--command-arg``), and
-direct developers to the canonical DB write-ownership policy.
+Static/contract tests for PR-GR-01 + PR-GR-10A Slice 3: the Gradle
+``:app:verifyDbAccessBoundaries`` task is a THIN WRAPPER around the
+registered runner bridge (``scripts/ci/run_registered_guard.py --guard-id
+db_access --context gradle``) and must fail closed while owning NO guard
+command construction.
 
 Three kinds of tests:
 
   1. STATIC SOURCE CONTRACT (no Gradle execution)
 
      Parses ``app/build.gradle.kts`` and asserts the task:
-       * lists every required input (ratchet, guard script, baseline,
-         ownership policy, structural exceptions, structural manifest);
-       * rejects missing / non-regular / unreadable / outside-root inputs with
-         ``GradleException`` (never ``logger.warn`` or an early return);
-       * supports ``-PpythonExecutable`` (default ``python3``) with a
-         ``--version`` preflight treated as an infrastructure error;
-       * uses repeatable single-token ``--command-arg=<value>`` arguments and
-         passes ``--ci-mode`` (the legacy ``--command "<shell string>"`` form
-         is not used; a split ``--command-arg <value>`` pair would let
-         argparse re-parse option-like child values as the ratchet's own
-         flags and abort with "expected one argument");
-       * resolves relative override paths against the repository root
-         (``rootDir``), never against the Gradle project directory;
-       * exposes the test-only overrides ``dbGuardRatchetPath``,
-         ``dbGuardScriptPath``, ``dbGuardBaselinePath`` plus the
-         policy/manifest overrides, with production defaults;
-       * failure messages reference only canonical policy paths and never the
-         superseded ``config/db_access_allowlist.yml``;
-       * ALWAYS passes all six resolved input paths to the inner ratchet
-         command — the policy/manifest arguments are never gated on override
-         properties, so production CI uses the explicit canonical defaults
-         (see the parity tests below).
+       * invokes the registered runner bridge with the canonical shape
+         (``--guard-id db_access --context gradle --root <repo>``);
+       * passes ``--ci-mode`` for production enforcement and constructs NO
+         child command: no ``--command-arg`` tokens, no ``--baseline``, no
+         ratchet/policy/baseline path construction remain in the Gradle
+         plane (the registry execution schema + plan compiler own them);
+       * resolves the Python interpreter through the shared build-script
+         ``pythonInterpreter()`` helper (``-PpythonExecutable`` property
+         first, then ``python3``/``python`` PATH probes, ``python3``
+         fallback) with a ``--version`` preflight treated as an
+         infrastructure error;
+       * validates the runner script itself fail-closed (outside-root,
+         missing, non-regular, unreadable -> ``GradleException``);
+       * forwards ONLY the four policy/manifest test-only overrides as
+         typed ``--input-override KEY=PATH`` pairs (relative overrides
+         resolved against ``rootDir``), gated behind the dedicated
+         ``-PdbGuardTestOverrides=true`` test mode — the retired
+         ratchet/script/baseline override properties are gone (an override
+         must never change guard ID, mode, baseline mode, or protocol);
+       * failure messages reference only canonical policy paths and never
+         the superseded ``config/db_access_allowlist.yml``.
+
+     The former parity gates against ``gradle_db_guard_inputs.py``
+     (the contract mirror of the OLD inline input validation) are retired
+     with the inline construction they mirrored; the mirror's own
+     behavioral tests below are unchanged.
 
   2. RATCHET CONTRACT (behavioral, temporary fixtures only)
 
@@ -58,47 +63,10 @@ Three kinds of tests:
   3. INPUT-VALIDATION HELPER CONTRACT (behavioral, temporary fixtures only)
 
      Exercises ``scripts/ci/gradle_db_guard_inputs.py`` — the Python contract
-     mirror of the Gradle task's input validation — against real temporary
-     files and a real interpreter, so behavior is proven without relying only
-     on source-string assertions:
-       * missing file -> rejected;
-       * directory path -> rejected (not a regular file);
-       * outside-root path -> rejected;
-       * unreadable path -> rejected where the platform supports it;
-       * relative override resolves against the repository root (rootDir),
-         mirroring the Gradle relative-override contract;
-       * ``resolve_db_guard_path`` returns the canonical resolved path
-         (``Path.resolve()``), mirroring the Gradle task's ``canonicalFile``;
-       * a candidate whose textual root/case differs from the real repository
-         root — same relative file — is accepted, mirroring Gradle's
-         case-insensitive ``startsWith(..., ignoreCase = true)``;
-       * a symlink inside the root that escapes to a file outside the root is
-         rejected as ``outside_root``;
-       * failed Python preflight -> rejected (infrastructure error);
-       * successful preflight -> passes.
-
-CONTRACT MIRROR & PARITY REQUIREMENT
-------------------------------------
-
-``scripts/ci/gradle_db_guard_inputs.py`` is the **contract mirror** of the
-Gradle task's input validation (the task keeps its inline implementation in
-``app/build.gradle.kts``; behavior is unchanged).
-
-Whenever the Gradle validation changes — a required input path, an override
-property name, or how the inner ratchet command is constructed — you MUST:
-
-  1. update the contract mirror (``gradle_db_guard_inputs.py``); and
-  2. keep the parity tests green:
-     - ``test_parity_task_inputs_and_overrides_match_contract_mirror``
-     - ``test_parity_command_always_passes_all_required_input_paths``
-     - ``test_parity_default_paths_paired_with_exact_override_properties``
-     - ``test_command_construction_uses_single_token_command_arg``
-
-The parity tests read ``app/build.gradle.kts`` directly and assert that the
-six required input paths and override property names correspond exactly to
-``gradle_db_guard_inputs.DEFAULT_DB_GUARD_INPUTS``, and that the three
-policy/manifest arguments are ALWAYS present in the constructed command path
-(never gated on override properties).
+     mirror of the PRE-Slice-3 Gradle task's input validation — against real
+     temporary files and a real interpreter.  The mirror is retained as the
+     historical record of the retired inline validation contract; the live
+     Gradle task now delegates input validation to the plan compiler.
 
 Run:
     python -m pytest scripts/ci/test_gradle_db_guard_contract.py -v
@@ -132,24 +100,40 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 GRADLE_BUILD = REPO_ROOT / "app" / "build.gradle.kts"
 RATCHET_SCRIPT = Path(__file__).resolve().parent / "guard_ratchet.py"
 
-# The canonical required-input set enforced by the Gradle task.
+# The registered runner bridge the Gradle task must invoke.
+RUNNER_RELATIVE = "scripts/ci/run_registered_guard.py"
+GUARD_ID = "db_access"
+
+# Canonical required inputs of the db_access guard — compiler-owned since
+# Slice 3 (validated fail-closed by the plan compiler, never constructed by
+# Gradle).  They must still exist in the repository.
 REQUIRED_INPUTS = [
     "scripts/ci/guard_ratchet.py",
     "scripts/verify_db_access_boundaries.py",
-    "config/baselines/db_access.json",
+    "config/baselines/db_access_v2.json",
     "config/guards/db_ownership_policy.yml",
     "config/guards/db_structural_exceptions.yml",
     "config/guards/db_structural_exceptions_expected_methods.yml",
+    "config/guards/production_source_roots.yml",
 ]
 
-# Test-only override properties the task must expose (defaults used in CI).
+# Test-only override properties the task must expose (typed input overrides,
+# gated behind the dedicated test-mode property).
 OVERRIDE_PROPERTIES = [
-    "dbGuardRatchetPath",
-    "dbGuardScriptPath",
-    "dbGuardBaselinePath",
     "dbGuardOwnershipPolicyPath",
     "dbGuardStructuralExceptionsPath",
     "dbGuardStructuralManifestPath",
+    "dbGuardSourceRootsManifestPath",
+]
+TEST_MODE_PROPERTY = "dbGuardTestOverrides"
+
+# Retired override properties: the ratchet script, guard entrypoint, and
+# baseline are compiler-owned ratchet metadata — an override must never
+# change guard ID, mode, baseline mode, or protocol (plan Step 6 rule 5).
+RETIRED_OVERRIDE_PROPERTIES = [
+    "dbGuardRatchetPath",
+    "dbGuardScriptPath",
+    "dbGuardBaselinePath",
 ]
 
 FORBIDDEN_LEGACY_REFERENCE = "config/db_access_allowlist.yml"
@@ -178,62 +162,160 @@ def _verify_task_text() -> str:
     return text[start:end]
 
 
+def _bridge_helper_text() -> str:
+    """Return the shared runRegisteredGuardFromGradle helper source only."""
+    build = _gradle_build_text()
+    marker = "fun runRegisteredGuardFromGradle"
+    if marker not in build:
+        raise AssertionError("registered-runner bridge helper not found")
+    start = build.index(marker)
+    end_match = re.search(r"\n(?:fun |android \{)", build[start + 1:])
+    end = start + 1 + end_match.start() if end_match else len(build)
+    return build[start:end]
+
+
 # ---------------------------------------------------------------------------
-# Static source contract tests
+# Static source contract tests (PR-GR-10A Slice 3 registered-runner shape)
 # ---------------------------------------------------------------------------
 
 
-def test_task_lists_all_required_inputs() -> None:
+def test_task_invokes_the_registered_runner_bridge() -> None:
+    """The task is a thin wrapper: it invokes run_registered_guard.py for the
+    registered db_access guard and constructs no guard command of its own."""
     task = _verify_task_text()
-    for rel in REQUIRED_INPUTS:
-        assert rel in task, f"required input not declared in task: {rel}"
+    build = _gradle_build_text()
+    assert RUNNER_RELATIVE in task, (
+        "task must invoke the registered runner bridge scripts/ci/run_registered_guard.py"
+    )
+    assert f'guardId = "{GUARD_ID}"' in task, (
+        "task must pass the registered guard id db_access"
+    )
+    # The canonical registered-runner argv shape lives in the shared helper:
+    # --guard-id <id> --context gradle --root <repo>, token list only.
+    helper_region = _bridge_helper_text()
+    assert '"--guard-id", guardId' in helper_region
+    assert '"--context", "gradle"' in helper_region
+    assert '"--root", rootDir.canonicalFile.absolutePath' in helper_region
+
+
+def test_task_constructs_no_child_command() -> None:
+    """Gradle must not own the ratchet child command: no --command-arg
+    tokens, no --baseline flag, and no ratchet/policy/baseline path
+    construction remain in the task (registry + plan compiler own them)."""
+    task = _verify_task_text()
+    assert "--command-arg" not in task, (
+        "task must not construct ratchet child argv (--command-arg is "
+        "compiler-owned since PR-GR-10A Slice 3)"
+    )
+    assert '"--baseline"' not in task, (
+        "task must not pass the ratchet --baseline flag"
+    )
+    assert "resolveDbGuardPath" not in task, (
+        "task must not rebuild guard input paths"
+    )
+    assert "guard_ratchet.py" not in task, (
+        "task must not reference the ratchet script directly"
+    )
+    assert "verify_db_access_boundaries.py" not in task, (
+        "task must not reference the guard entrypoint directly"
+    )
+
+
+def test_task_passes_ci_mode_for_production_enforcement() -> None:
+    task = _verify_task_text()
+    assert '"--ci-mode"' in task, (
+        "production enforcement requires the runner's --ci-mode flag"
+    )
+    # The legacy shell-string form must not appear anywhere in the task.
+    assert '"--command"' not in task
+    assert "'--command'" not in task
 
 
 def test_required_input_files_exist_in_repo() -> None:
+    """The compiler-owned required inputs still exist in the repository."""
     for rel in REQUIRED_INPUTS:
         candidate = REPO_ROOT / rel
         assert candidate.is_file(), f"required input missing from repo: {rel}"
 
 
-def test_missing_input_fails_closed_with_gradle_exception() -> None:
-    task = _verify_task_text()
-    assert "GradleException" in task
-    assert "logger.warn" not in task, "task must never warn-and-return"
-    assert "return@doLast" not in task, "task must never silently skip"
-    # Each required-input failure mode must be rejected with a hard error.
-    assert "not found" in task
-    assert "isFile" in task or "regular file" in task
-    assert "canRead()" in task or "not readable" in task
+def test_runner_script_exists_in_repo() -> None:
+    assert (REPO_ROOT / RUNNER_RELATIVE).is_file(), (
+        f"registered runner bridge missing from repo: {RUNNER_RELATIVE}"
+    )
 
 
-def test_outside_root_path_rejected() -> None:
-    task = _verify_task_text()
-    assert "canonicalFile" in task
-    assert "startsWith" in task
-    assert "outside the repository root" in task
+def test_runner_input_validation_fails_closed() -> None:
+    """The one Gradle-owned input (the runner script) is validated
+    fail-closed by the shared build-script helper: outside-root, missing,
+    non-regular, and unreadable are hard GradleExceptions — never a warning
+    or a silent skip."""
+    build = _gradle_build_text()
+    assert "GradleException" in build
+    assert "logger.warn" not in build.split("tasks.register")[0], (
+        "input validation must never warn-and-return"
+    )
+    assert "outside the repository root" in build
+    assert "registered-runner script not found" in build
+    assert "is not a regular file" in build
+    assert "is not readable" in build
 
 
 def test_python_executable_property_with_preflight() -> None:
     task = _verify_task_text()
-    assert "pythonExecutable" in task
-    assert '"python3"' in task
-    assert "--version" in task
-    assert "infrastructure error" in task.lower()
-
-
-def test_uses_command_arg_list_and_ci_mode() -> None:
-    task = _verify_task_text()
-    assert "--command-arg" in task
-    assert "--ci-mode" in task
-    # The legacy shell-string form (`--command "..."`) must not be used.
-    assert '"--command"' not in task
-    assert "'--command'" not in task
+    build = _gradle_build_text()
+    # Parity gate: the task must resolve the interpreter through the shared
+    # build-script ``pythonInterpreter()`` helper (pinned exactly so any
+    # Gradle-side drift fails here).
+    assert "val pythonExecutable = pythonInterpreter()" in task
+    # Resolver contract: the -PpythonExecutable property always wins ...
+    assert 'findProperty("pythonExecutable")' in build
+    # ... then PATH candidates are probed in this exact order ...
+    assert 'listOf("python3", "python")' in build
+    # ... and this exact final fallback is documented behavior.
+    assert 'return "python3"' in build
+    # The preflight stays in the shared helper; a launch failure or non-zero
+    # --version exit is an infrastructure error.
+    assert '"--version"' in build
+    assert "infrastructure error" in build.lower()
 
 
 def test_exposes_test_only_override_properties() -> None:
     task = _verify_task_text()
     for prop in OVERRIDE_PROPERTIES:
         assert prop in task, f"missing override property: {prop}"
+    assert TEST_MODE_PROPERTY in task, (
+        f"overrides must be gated behind the dedicated {TEST_MODE_PROPERTY} test mode"
+    )
+
+
+def test_retired_override_properties_are_gone() -> None:
+    """The ratchet/script/baseline override properties are retired: an
+    override must never change guard ID, mode, baseline mode, or protocol."""
+    task = _verify_task_text()
+    for prop in RETIRED_OVERRIDE_PROPERTIES:
+        assert prop not in task, (
+            f"retired override property must not be exposed: {prop}"
+        )
+
+
+def test_overrides_forwarded_as_typed_input_overrides() -> None:
+    """Overrides are forwarded as typed --input-override KEY=PATH pairs with
+    relative paths resolved against the repository root."""
+    task = _verify_task_text()
+    assert '"--input-override"' in task
+    assert '"$inputKey=${resolved.absolutePath}"' in task
+    assert 'if (overrideFile.isAbsolute) overrideFile else file("$rootDir/$raw")' in task, (
+        "relative overrides must resolve against rootDir (repository root)"
+    )
+
+
+def test_override_without_test_mode_fails_closed() -> None:
+    """An override property set without -PdbGuardTestOverrides=true is a hard
+    GradleException (overrides are rejected in production CI)."""
+    task = _verify_task_text()
+    assert 'findProperty("dbGuardTestOverrides")?.toString() == "true"' in task
+    assert "requires " in task and "dbGuardTestOverrides=true" in task
+    assert "rejected in production CI" in task
 
 
 def test_failure_message_uses_canonical_policy_paths() -> None:
@@ -248,166 +330,21 @@ def test_failure_message_uses_canonical_policy_paths() -> None:
 
 def test_infrastructure_exit_message_mentions_baseline() -> None:
     task = _verify_task_text()
-    assert "config/baselines/db_access.json" in task
+    assert "config/baselines/db_access_v2.json" in task
     assert "infrastructure error" in task.lower()
 
 
-def _command_construction_region(task: str) -> str:
-    """Return the inner ratchet command-construction block only.
-
-    The block runs from the mutable argument-list declaration to the exec
-    invocation.  It must contain no conditionals: every required input is
-    appended unconditionally.
-    """
-    start_marker = "val commandArgs = mutableListOf<String>()"
-    end_marker = "val result = exec {"
-    if start_marker not in task:
-        raise AssertionError("command construction block not found in task")
-    start = task.index(start_marker)
-    if end_marker not in task:
-        raise AssertionError("exec invocation not found in task")
-    end = task.index(end_marker, start)
-    return task[start:end]
-
-
-def test_parity_task_inputs_and_overrides_match_contract_mirror() -> None:
-    """Parity: Gradle task inputs/overrides must match the contract mirror.
-
-    Reads ``app/build.gradle.kts`` directly and verifies every required input
-    path and override property name from
-    ``gradle_db_guard_inputs.DEFAULT_DB_GUARD_INPUTS`` is present in the
-    ``verifyDbAccessBoundaries`` task source.  Any drift fails this gate.
-    """
-    task = _verify_task_text()
-    for default_rel, override_prop in DEFAULT_DB_GUARD_INPUTS:
-        assert default_rel in task, (
-            f"Gradle task no longer declares required input '{default_rel}' "
-            f"from DEFAULT_DB_GUARD_INPUTS"
-        )
-        assert override_prop in task, (
-            f"Gradle task no longer exposes override property '{override_prop}' "
-            f"from DEFAULT_DB_GUARD_INPUTS"
-        )
-
-
-def test_parity_command_always_passes_all_required_input_paths() -> None:
-    """Parity: the inner ratchet command always passes all six inputs.
-
-    The policy/manifest arguments must NOT be gated on override properties —
-    production CI must always pass the resolved canonical paths so the inner
-    guard can never silently fall back to a different file.  All six inputs
-    are passed explicitly and unconditionally in the command construction.
-    """
-    task = _verify_task_text()
-    command_region = _command_construction_region(task)
-
-    # Ratchet, guard script, and baseline are always passed explicitly.
-    assert "ratchetFile.absolutePath" in command_region
-    assert "guardFile.absolutePath" in command_region
-    assert "baselineFile.absolutePath" in command_region
-
-    # Policy/manifest inputs are always present in the constructed command.
-    for flag, file_ref in (
-        ("--ownership-policy", "ownershipPolicyFile.absolutePath"),
-        ("--structural-exceptions", "structuralExceptionsFile.absolutePath"),
-        ("--structural-manifest", "structuralManifestFile.absolutePath"),
-    ):
-        assert flag in command_region, f"missing inner guard argument: {flag}"
-        assert file_ref in command_region, f"missing resolved path: {file_ref}"
-
-    # The construction block is unconditional — no `if` may gate any input.
-    assert "if (" not in command_region, (
-        "command construction must not gate required inputs behind conditionals"
-    )
-
-
-def test_parity_default_paths_paired_with_exact_override_properties() -> None:
-    """Parity: each default path is paired with its exact override property.
-
-    Every ``(default_rel, override_prop)`` pair from
-    ``gradle_db_guard_inputs.DEFAULT_DB_GUARD_INPUTS`` must appear as one
-    ``resolveDbGuardPath("<default_rel>", "<override_prop>")`` call in the
-    ``verifyDbAccessBoundaries`` task.  This asserts the exact pairing rather
-    than merely that both strings occur somewhere in the source — a re-ordered
-    or mis-paired resolve call fails this gate.
-    """
-    task = _verify_task_text()
-    for default_rel, override_prop in DEFAULT_DB_GUARD_INPUTS:
-        pair_pattern = (
-            r"resolveDbGuardPath\s*\(\s*"
-            + re.escape(f'"{default_rel}"')
-            + r"\s*,\s*"
-            + re.escape(f'"{override_prop}"')
-            + r"\s*\)"
-        )
-        assert re.search(pair_pattern, task), (
-            f"Gradle task must pair default input '{default_rel}' with "
-            f"override property '{override_prop}' in a single "
-            f'resolveDbGuardPath("{default_rel}", "{override_prop}") call'
-        )
-
-
-def test_command_construction_uses_single_token_command_arg() -> None:
-    """Every ratchet child argument must be a single ``--command-arg=<value>`` token.
-
-    GR-01 regression: a split ``--command-arg <value>`` pair lets argparse
-    re-parse option-like child values (``--fail-on-violation``,
-    ``--ownership-policy``, ``--structural-exceptions``,
-    ``--structural-manifest``) as the ratchet's own flags and abort with
-    "expected one argument".  The task must encode every child argument as
-    ``--command-arg=<value>`` (single list token).
-    """
-    command_region = _command_construction_region(_verify_task_text())
-
-    # The standalone flag form must not be used inside the construction block.
-    assert '"--command-arg"' not in command_region, (
-        "standalone --command-arg token found; every child argument must be "
-        "encoded as --command-arg=<value> (single list token)"
-    )
-
-    # Every option-like child flag is encoded as a single --command-arg= token.
-    for child_flag in (
-        "--fail-on-violation",
-        "--ownership-policy",
-        "--structural-exceptions",
-        "--structural-manifest",
-    ):
-        assert f'"--command-arg={child_flag}"' in command_region, (
-            f"child argument '{child_flag}' must be encoded as "
-            f'--command-arg={child_flag} (single list token)'
-        )
-
-    # Child executable and resolved paths are encoded as single tokens too.
-    assert '"--command-arg=$pythonExecutable"' in command_region
-    assert '"--command-arg=${guardFile.absolutePath}"' in command_region
-    assert '"--command-arg=${ownershipPolicyFile.absolutePath}"' in command_region
-    assert '"--command-arg=${structuralExceptionsFile.absolutePath}"' in command_region
-    assert '"--command-arg=${structuralManifestFile.absolutePath}"' in command_region
-
-    # The ratchet's own flags (--baseline, --fail-on-violation, --ci-mode)
-    # remain outside the --command-arg tokens.
-    assert '"--baseline"' in command_region
-    assert '"--ci-mode"' in command_region
-
-
-def test_relative_overrides_resolve_against_repository_root() -> None:
-    """Relative override paths must resolve against rootDir, not projectDir.
-
-    ``file(override)`` in Gradle resolves relative paths against the project
-    directory (``app/``).  The task must distinguish absolute overrides and
-    resolve relative overrides against ``rootDir`` (the repository root) so
-    test-only overrides are consistent with the canonical defaults.
-    """
-    task = _verify_task_text()
-    assert "isAbsolute" in task, (
-        "task must distinguish absolute overrides from relative ones"
-    )
-    assert '"$rootDir/$override"' in task, (
-        "relative overrides must resolve against rootDir (repository root)"
-    )
-    assert '"$rootDir/$defaultRel"' in task, (
-        "canonical defaults must also resolve against rootDir"
-    )
+def test_exit_mapping_is_universal() -> None:
+    """0 pass / 1 violation / 2 infrastructure / anything else is unexpected."""
+    helper_region = _bridge_helper_text()
+    assert "0 ->" in helper_region
+    assert "1 -> onViolation()" in helper_region
+    assert "2 -> onInfra()" in helper_region
+    assert "unexpected exit code" in helper_region
+    assert "isIgnoreExitValue = true" in helper_region
+    assert "commandLine(commandArgs)" in helper_region
+    # Token list execution only — never a shell string.
+    assert "shell = true" not in helper_region.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -448,12 +385,20 @@ def _run_ratchet_args(
     Every child argument is encoded as one ``--command-arg=<value>`` list
     token (never a split ``--command-arg <value>`` pair) so argparse can never
     re-parse option-like child values as the ratchet's own flags.
+
+    ``--finding-protocol=1`` is pinned because these tests contract-test the
+    LEGACY stdout ratchet surface with stdout-only mock children.
+    ``db_access`` is registered with ``finding_protocol: 2``, so without an
+    explicit protocol the registry silently selects v2 and every mock child
+    leaves the retained report file empty, which fails closed as
+    ``RATCHET_V2_REPORT_INVALID ... code=INVALID_JSON`` (exit 2).
     """
     cmd = [
         sys.executable,
         str(RATCHET_SCRIPT),
         "--guard-name", guard_name,
         "--baseline", str(baseline),
+        "--finding-protocol=1",
     ]
     for arg in command_args:
         cmd += [f"--command-arg={arg}"]
@@ -511,6 +456,8 @@ def test_command_arg_single_token_with_option_like_child_flags(
         str(RATCHET_SCRIPT),
         "--guard-name", "db_access",
         "--baseline", str(baseline),
+        # Legacy stdout contract: keep the registry from auto-selecting v2.
+        "--finding-protocol=1",
         # Child args encoded as single --command-arg=<value> tokens,
         # including option-like values.
         "--command-arg=" + sys.executable,
@@ -687,7 +634,7 @@ def test_malformed_baseline_is_infrastructure_error(tmp_path: Path) -> None:
         cwd=tmp_path,
     )
     assert result.returncode == 2, result.stdout + result.stderr
-    assert "Malformed baseline" in result.stderr
+    assert "RATCHET_BASELINE_MALFORMED" in result.stderr
 
 
 def test_baseline_top_level_non_dict_is_infrastructure_error(tmp_path: Path) -> None:
@@ -889,6 +836,8 @@ def test_legacy_command_metacharacters_are_shell_free(tmp_path: Path) -> None:
             "--guard-name", "db_access",
             "--command", metachar_command,
             "--baseline", str(baseline),
+            # Legacy stdout contract: keep the registry from auto-selecting v2.
+            "--finding-protocol=1",
             "--ci-mode",
             "--fail-on-violation",
         ],
@@ -944,6 +893,8 @@ def test_legacy_command_quoted_path_with_spaces_runs_shell_free(
             "--guard-name", "db_access",
             "--command", command,
             "--baseline", str(baseline),
+            # Legacy stdout contract: keep the registry from auto-selecting v2.
+            "--finding-protocol=1",
             "--ci-mode",
             "--fail-on-violation",
         ],
@@ -1025,8 +976,8 @@ def test_helper_missing_guard_script_is_rejected(tmp_path: Path) -> None:
 def test_helper_missing_baseline_is_rejected(tmp_path: Path) -> None:
     """Missing ratchet baseline -> controlled 'not_found' code."""
     root = tmp_path
-    _write_all_valid_inputs_except(root, "config/baselines/db_access.json")
-    _assert_only_input_missing_is_rejected(root, "config/baselines/db_access.json")
+    _write_all_valid_inputs_except(root, "config/baselines/db_access_v2.json")
+    _assert_only_input_missing_is_rejected(root, "config/baselines/db_access_v2.json")
 
 
 def test_helper_missing_ownership_policy_is_rejected(tmp_path: Path) -> None:
@@ -1096,19 +1047,19 @@ def test_helper_accepts_candidate_with_differently_cased_root(
     same variable is uppercased and used for both the root and the candidate.
     """
     root = tmp_path / "repo"
-    target = root / "config" / "baselines" / "db_access.json"
+    target = root / "config" / "baselines" / "db_access_v2.json"
     target.parent.mkdir(parents=True)
     target.write_text("{}", encoding="utf-8")
 
     # Same relative file, but the candidate's textual root portion differs in
     # case from the real repository root passed as ``root``.
     cased_candidate = (
-        Path(str(root).upper()) / "config" / "baselines" / "db_access.json"
+        Path(str(root).upper()) / "config" / "baselines" / "db_access_v2.json"
     )
 
     resolved = resolve_db_guard_path(
         root,
-        "config/baselines/db_access.json",
+        "config/baselines/db_access_v2.json",
         str(cased_candidate),
     )
     # Accepted as Gradle does: same canonical relative file, never outside_root.
@@ -1137,9 +1088,9 @@ def test_helper_relative_override_resolves_against_repository_root(
 
     resolved = validate_db_guard_inputs(
         root,
-        [("config/baselines/db_access.json", "alt/baseline.json")],
+        [("config/baselines/db_access_v2.json", "alt/baseline.json")],
     )
-    assert resolved["config/baselines/db_access.json"] == baseline
+    assert resolved["config/baselines/db_access_v2.json"] == baseline
 
 
 def test_helper_resolve_returns_canonical_path(tmp_path: Path) -> None:

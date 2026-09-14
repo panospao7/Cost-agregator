@@ -6,6 +6,7 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
 import com.yourname.expensetracker.domain.backup.DatabaseStats
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.every
@@ -55,7 +56,12 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
     }
 
     private fun createViewModel(): BackupRestoreViewModel {
-        return BackupRestoreViewModel(context, databaseBackupRepository, restoreMaintenanceMode)
+        return BackupRestoreViewModel(
+            context,
+            databaseBackupRepository,
+            restoreMaintenanceMode,
+            FakeTimeProvider(1_700_000_000_000L)
+        )
     }
 
     @Test

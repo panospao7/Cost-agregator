@@ -12,7 +12,7 @@ import com.yourname.expensetracker.domain.ai.policy.AiPolicy
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.HybridDashboardBriefingService
 import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
@@ -40,7 +40,7 @@ import javax.inject.Inject
 class GenerateTransactionInsightUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
-    private val dashboardBriefingService: DashboardBriefingService,
+    private val dashboardBriefingService: HybridDashboardBriefingService,
     private val aiCapabilityRouter: AiCapabilityRouter,
     private val aiPolicy: AiPolicy,
     private val inputBuilder: TransactionInsightInputBuilder,

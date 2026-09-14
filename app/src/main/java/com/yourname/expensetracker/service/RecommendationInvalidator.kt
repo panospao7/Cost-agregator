@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.service
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.repository.RecommendationRepository
 import com.yourname.expensetracker.di.IoDispatcher
 import com.yourname.expensetracker.domain.util.CancellationSafe
@@ -20,6 +21,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class RecommendationInvalidator @Inject constructor(
+    private val writeBarrier: DatabaseWriteBarrier,
     private val repository: RecommendationRepository,
     private val stateManager: RecommendationStateManager,
     private val cacheService: RecommendationCacheService,
@@ -34,6 +36,7 @@ class RecommendationInvalidator @Inject constructor(
      * - User explicitly requests a refresh
      */
     suspend fun invalidateAllForUser(userId: String) {
+        writeBarrier.checkWritesAllowed("RecommendationInvalidator.invalidateAllForUser")
         withContext(ioDispatcher) {
             try {
                 // Clear cache
@@ -57,6 +60,7 @@ class RecommendationInvalidator @Inject constructor(
      * Use this for periodic cleanup without triggering a full refresh.
      */
     suspend fun invalidateStale(userId: String) {
+        writeBarrier.checkWritesAllowed("RecommendationInvalidator.invalidateStale")
         withContext(ioDispatcher) {
             try {
                 // Expire old recommendations

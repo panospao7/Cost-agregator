@@ -1,5 +1,7 @@
 # Latest CI Verification — Final Integration
 
+> **Historical record** — superseded snapshot, not current-state authority. as-of SHA `422b8a633a23304a8d4d3370e263000495edfff8` (branch `atomicity-pr21-enforcement-final`, 2026-07-11); scope: that verification pass only (its "17 guards", ratchet counts, and job table describe that era, not the current registry); it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml, docs/ci/GUARD_COMMANDS.generated.md, and docs/ci/GUARD_STATUS.generated.md.
+
 ## Commit
 - SHA: `422b8a633a23304a8d4d3370e263000495edfff8`
 - Branch: `atomicity-pr21-enforcement-final`

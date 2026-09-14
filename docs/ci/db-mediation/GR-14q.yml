@@ -1,0 +1,78 @@
+# GR-14q — taint-resolution wave 1 (multi-agent): DI concretization,
+# materializer scope, test-infra repairs.
+#
+# Production:
+#   - 4 AI use-case fields concretized from interface to their single
+#     bound Hybrid implementation (DedupeJudgeService ->
+#     HybridDedupeJudgeService; CategorizationAssistService ->
+#     HybridCategorizationAssistService; DashboardBriefingService ->
+#     HybridDashboardBriefingService x2).  Behavior-preserving: same
+#     @Singleton instance, single @Binds per interface.
+#   - RecurringOccurrenceMaterializer: DatabaseWriteBarrier constructor
+#     injection added + materializeInCurrentTransaction's mutation block
+#     scoped (6 rows now localGuard=direct; total local=direct 84 -> 90).
+#
+# Investigated and correctly SKIPPED:
+#   - PrivacyGate concretization: the only bound implementation is
+#     CompositePrivacyGate (no @Inject constructor; built manually in
+#     PrivacyModule) — concretizing requires a DI module change
+#     (owner decision pending; 31 injection sites).
+#   - cloud*/Hybrid fields were already concrete-typed; their delegate
+#     edges are single-target virtual_dispatch (see engine finding).
+#
+# Test-infra (partial, quantified):
+#   - RecommendationRepositoryTest.saveAll: FIXED (16/3 -> 17/0) — mockk
+#     matcher mismatch corrected against verified-correct production logic.
+#   - DbGuardPolicyFixtureTest: parser accepts the v2 policy header
+#     (38/37 -> 55/20); 20 residual failures need count-pin updates.
+#   - TLC test classes: runWrite pass-through stubs added; hangs improved
+#     but not eliminated (3/1 on final run) — residue documented.
+#
+# Shadow delta vs post-GR-14p: ZERO proof-state change; local=direct
+# 84 -> 90; call-edge interface_dispatch 2154 -> 2150, virtual_dispatch
+# 127 -> 131 (concretized sites collapse 4-5 potential targets to 1).
+# Diagnostics unchanged.
+#
+# STRATEGIC ENGINE FINDING (verified in callgraph.py:1877): the engine
+# classifies any call to an `override` member as virtual_dispatch-
+# uncertain EVEN when the resolved receiver is a final concrete class.
+# Finality-aware dispatch (final class + member found => exact) is the
+# principal remaining unlock for the interface-dispatch/virtual class
+# and for flipping the 90 scoped rows whose closures carry such edges.
+#
+# Validation: per-agent compile PASS (q-b 9m03s, q-c 9m57s); merged
+# compile PASS; combined shadow clean (no state corruption); per-agent
+# sha256s: q-b 9be6d7294341e0665188dcc07f27d1e204676bc85abd661d8a800c8441fddc4d.
+# GATE-00R + Gradle DB owed at merge (carried).
+schemaVersion: 1
+batchId: GR-14q
+startSha: 67ca7c9f
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: c556addd54844a667dc7dee57922433d05269331f61434739ebe601bac6da0ec
+mediationReportSha256After: 4c0812a4e91aa23459e16cc26b08d3733cc80648b9ca74f27d6bf328828489db
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/JudgePendingReviewDuplicateUseCase.kt
+  - app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/SuggestCategoryFallbackUseCase.kt
+  - app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/GenerateDashboardBriefingUseCase.kt
+  - app/src/main/java/com/yourname/expensetracker/domain/ai/usecase/GenerateTransactionInsightUseCase.kt
+  - app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
+
+testFixes:
+  - RecommendationRepositoryTest (saveAll verify fixed; 17/0)
+  - DbGuardPolicyFixtureTest (v2-header parser; 55/20, residual pins owed)
+  - TransactionLifecycleCoordinator{Test,UpdateTest,DbContractTest}
+    (runWrite pass-through stubs; partial hang improvement)
+
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+rootCause: ESCAPING_CALLBACK # taint-resolution accumulation
+selectedPattern: engine-enablement + Pattern A
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch concretizes single-binding DI fields, scopes the materializer,
+  and repairs test infrastructure.  It is not a baseline, exception, or
+  authorization document.

@@ -1,0 +1,374 @@
+# GR-08 batch 14, part 2 (GR-08n2) reviewed exact v2 policy seed rows --
+# DB_UNAUTHORIZED_MUTATION EXACT_POLICY authorization for
+# data/repository/ReceiptRepository.kt,
+# domain/investment/InvestmentTracker.kt and
+# domain/subscription/SubscriptionManagerEngine.kt.
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope verification against the trusted START report
+# (build/guard-debug/gr08n/before.json == trusted GR-08m after.json,
+# 92 findings / 20 advisory diagnostics): ReceiptRepository.kt carries
+# exactly 5 DB_UNAUTHORIZED_MUTATION findings / 5 UNIQUE fingerprints,
+# InvestmentTracker.kt carries exactly 5 findings / 5 UNIQUE fingerprints,
+# and SubscriptionManagerEngine.kt carries exactly 5 findings / 5 UNIQUE
+# fingerprints.  Every finding is its own tuple (dedup key: callable
+# identity + daoAccessor + daoFqcn + operation): the three addHolding
+# insert sites hit THREE different DAOs and the three priceHistoryDao.insert
+# sites live in THREE different engine callables, so all are distinct
+# fingerprints.  Combined batch scope (all SIX GR-08n files) is 29 findings
+# / 29 UNIQUE fingerprints > the 25-fingerprint batch cap, so the batch was
+# SPLIT into GR-08n1 (AiArtifactRepositoryImpl.kt + BudgetRepository.kt +
+# MerchantLocationRepository.kt, 14 findings / 14 unique fingerprints /
+# 16 seed rows) and GR-08n2 (this manifest: ReceiptRepository.kt +
+# InvestmentTracker.kt + SubscriptionManagerEngine.kt, 15 findings /
+# 15 unique fingerprints / 15 seed rows) per the
+# GR-08c/GR-08e/GR-08i/GR-08j/GR-08k/GR-08l/GR-08m precedent; each part is
+# within the cap.
+#
+# Layer legality:
+# * ReceiptRepository is the repository-layer legal writer for the receipt
+#   MAINTENANCE surface (the match-mutation and insert surfaces are retired
+#   or delegated: saveMatchSuggestion is a documented no-op, insertReceipt/
+#   insertOrResolve delegate to ReceiptInsertResolver, and the lifecycle
+#   paths live in ReceiptLifecycleCoordinator (GR-08m2) /
+#   ReceiptMatchLifecycleService (GR-08h) / ReceiptLinkService (GR-08j1) --
+#   all already authorized).  Every mutating method runs
+#   writeBarrier.checkWritesAllowed at its entrypoint:
+#   updateCategorizationStatus stamps itemCategorizationStatus for the
+#   categorization pipeline; deleteReceipt (WARNING-deprecated shim pointing
+#   at ReceiptLifecycleCoordinator.deleteReceipt) deletes the row after the
+#   image cleanup; clearAllScannedReceipts (WARNING-deprecated,
+#   P3-0D5-09) deletes all rows after per-receipt image cleanup;
+#   clearMatchForReceipt (ERROR-deprecated shim pointing at
+#   ReceiptMatchLifecycleService.clearMatchForReceipt -- the GR-08h legal
+#   path; Kotlin callers are compile-time blocked, the body survives only as
+#   a source-compatibility shim) clears the match fields via the abstract
+#   @Update; writeReceiptEvent is the private Pipeline-3 event helper --
+#   best-effort (failures are logged and never fail the business
+#   operation), CancellationException is rethrown (catch order:
+#   CancellationException rethrow, then generic catch), and the message/
+#   errorDetails payloads are bounded with take(500) before persistence.
+# * InvestmentTracker is THE domain investment tracker -- the sanctioned
+#   investment writer per docs/architecture/LEGAL_PATHS.md "Investment
+#   Mutations": ADD HOLDING names InvestmentTracker.addHolding(investment)
+#   (DatabaseWriteBarrier check -> validation -> database.withTransaction {
+#   InvestmentDao.insert + InvestmentValueDao.insert initial snapshot +
+#   InvestmentTransactionDao.insert type="BUY" }) and UPDATE PRICE names
+#   InvestmentTracker.updatePrice(investmentId, newPrice)
+#   (DatabaseWriteBarrier check -> require(newPrice > 0 finite) ->
+#   database.withTransaction { InvestmentDao.updatePrice +
+#   InvestmentValueDao.insert snapshot with dayChange/dayChangePercent });
+#   FORBIDDEN: InvestmentDao.insert()/update()/updatePrice() outside
+#   InvestmentTracker, InvestmentValueDao.insert() outside the
+#   updatePrice/addHolding transaction, InvestmentTransactionDao.insert()
+#   outside the addHolding transaction.  Validation (symbol/name/quantity/
+#   purchasePrice/currency/purchaseDate/currentPrice/purchaseFees) runs
+#   BEFORE any write; both callables are barrier-checked and atomic.
+# * SubscriptionManagerEngine is THE subscription ENGINE -- the sanctioned
+#   engine surface per docs/architecture/LEGAL_PATHS.md "Subscription
+#   Mutations": CREATE/ACCEPT names validateAndCreate (barrier check ->
+#   validation -> database.withTransaction { subscription insert via
+#   RecurringExpenseRepository + baseline SubscriptionPriceHistoryDao.insert
+#   gated on request.recordPriceHistory }); the FORBIDDEN clause
+#   "SubscriptionCandidateDao.insert/delete outside
+#   validateAndCreate/acceptCandidate" names acceptCandidate as the second
+#   sanctioned engine surface (barrier check -> validation ->
+#   database.withTransaction { subscription insert + baseline price history
+#   + candidateDao.markAsConverted }); RECORD price change names
+#   recordPriceChange (barrier check -> validation -> existence check ->
+#   change-gated database.withTransaction { priceHistoryDao.insert +
+#   REC-7 subscription amount update via RecurringExpenseRepository });
+#   RECORD usage names recordUsage (barrier check ->
+#   SubscriptionUsageDao.insert within transaction scope, the documented
+#   single-write form).  FORBIDDEN: SubscriptionPriceHistoryDao.insert()
+#   outside recordPriceChange/validateAndCreate/acceptCandidate and direct
+#   DAO mutations bypassing engine validation -- every row here IS the
+#   engine surface, so no bypass is created.
+#
+# barrierMode is `helper` for every row (the GR-08a..m batch convention; the
+# write barrier runs at each callable entrypoint and no direct-barrier proof
+# is claimed per row).
+#
+# Closure additions (GR-08n2 blind-spot sweep): ZERO closure rows.  Every
+# dao-accessor call in ALL batch callable bodies was enumerated, not just
+# the findings: every called mutating DAO method (ScannedReceiptDao.
+# updateCategorizationStatus / delete / deleteAll / update, ReceiptEventDao.
+# insert, InvestmentDao.insert / updatePrice, InvestmentValueDao.insert,
+# InvestmentTransactionDao.insert, SubscriptionPriceHistoryDao.insert,
+# SubscriptionCandidateDao.markAsConverted, SubscriptionUsageDao.insert) is
+# an abstract Room-annotated method -- ScannedReceiptDao, ReceiptEventDao,
+# InvestmentDao, InvestmentValueDao, InvestmentTransactionDao,
+# SubscriptionPriceHistoryDao, SubscriptionCandidateDao and
+# SubscriptionUsageDao are fully abstract interfaces with ZERO @Transaction
+# methods, so no convenience-method closure row exists (the
+# GR-08b/GR-08d/GR-08l1 pattern does not trigger).  The only other
+# DAO-accessor calls in the bodies are read-only lookups
+# (scannedReceiptDao.getAll/getById, receiptEventDao has no other callers,
+# investmentDao.getById/getAllInvestments/getAllActiveInvestments/getByType,
+# investmentValueDao.getMaxPrice/getMinPrice/getLatestValue/
+# getLatestValueBefore/getPortfolioHistoryBatch, priceHistoryDao.
+# getLatestPrice/getAllPricesForSubscription, usageDao.getUsageSince/
+# getUsageBetween) and repository-mediated calls (recurringExpenseRepository.
+# insert/getById/update in the engine -- separate files with their own
+# coverage, out of batch scope).
+#
+# Chain-form census AFTER review: ZERO database-chained
+# `appDatabase.xxxDao()` mutation receivers and ZERO method-local DAO
+# aliases in ALL THREE files.  ReceiptRepository, InvestmentTracker and
+# SubscriptionManagerEngine each inject AppDatabase but use it ONLY as the
+# androidx.room.withTransaction extension receiver (ReceiptRepository line
+# 291, InvestmentTracker lines 183/358, SubscriptionManagerEngine lines
+# 194/245/357) -- never as a DAO accessor; every DAO call goes through the
+# injected constructor properties scannedReceiptDao / receiptEventDao /
+# expenseDao / pendingReviewDao (ReceiptRepository), investmentDao /
+# investmentValueDao / investmentTransactionDao (InvestmentTracker), and
+# priceHistoryDao / usageDao / candidateDao (SubscriptionManagerEngine).
+# NO accessor-normalization source change is needed for this part.
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1 +
+# GR-08l2 + GR-08m1 + GR-08m2 + GR-08n1 + GR-08n2 rows verbatim, 353 rows
+# after GR-08n); passing only GR-08n2-seed.yml would drop the earlier
+# batches' rows from the rendered candidate.
+schemaVersion: 2
+entries:
+# ─── ReceiptRepository.kt (5 findings-derived rows) ─────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: updateCategorizationStatus
+  receiver: null
+  parameterTypes:
+  - Long
+  - com.yourname.expensetracker.data.database.entity.CategorizationStatus
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: updateCategorizationStatus
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: barrier-checked itemCategorizationStatus stamp for the receipt categorization pipeline (status name persisted via the abstract @Query update)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: deleteReceipt
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.ScannedReceipt
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: delete
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: barrier-checked single-receipt delete (WARNING-deprecated shim pointing at ReceiptLifecycleCoordinator.deleteReceipt, the legal path) -- the entity-typed @Delete runs after the stored-image cleanup"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: clearAllScannedReceipts
+  receiver: null
+  parameterTypes: []
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: deleteAll
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: barrier-checked delete-all-receipts maintenance (WARNING-deprecated, P3-0D5-09, points at ReceiptLifecycleCoordinator) -- SQL delete-all after per-receipt stored-image cleanup"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: clearMatchForReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: barrier-checked match-field clear (expenseId/matchStatus/suggestedExpenseId/matchConfidence reset via the abstract @Update) -- ERROR-deprecated source-compatibility shim pointing at ReceiptMatchLifecycleService.clearMatchForReceipt (the GR-08h legal path); Kotlin callers are compile-time blocked and the row exists only so the surviving shim body is not an unauthorized mutation"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/data/repository/ReceiptRepository.kt
+  ownerFqcn: com.yourname.expensetracker.data.repository.ReceiptRepository
+  kind: function
+  method: writeReceiptEvent
+  receiver: null
+  parameterTypes:
+  - Long
+  - String
+  - Long
+  - String
+  - String
+  - String
+  - String
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: private Pipeline-3 lifecycle-event helper -- best-effort ReceiptEvent insert (failures are logged and never fail the business operation), CancellationException rethrown (catch order: cancellation rethrow, then generic catch), message/errorDetails bounded with take(500) before persistence"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+# ─── InvestmentTracker.kt (5 findings-derived rows) ─────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: addHolding
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Investment
+  daoAccessor: investmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS ADD HOLDING -- barrier-checked, fully validated (symbol/name/quantity/purchasePrice/currency/purchaseDate/currentPrice/purchaseFees) holding insert inside database.withTransaction (atomic with the value snapshot + BUY transaction record)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: addHolding
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Investment
+  daoAccessor: investmentValueDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentValueDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS ADD HOLDING -- initial InvestmentValue snapshot (purchasePrice * quantity) inside the same database.withTransaction as the holding insert; InvestmentValueDao.insert outside the addHolding/updatePrice transactions is FORBIDDEN"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: addHolding
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.Investment
+  daoAccessor: investmentTransactionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentTransactionDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS ADD HOLDING -- PR-I1 BUY transaction record (cost-basis tracking) inside the same database.withTransaction as the holding insert; InvestmentTransactionDao.insert outside the addHolding transaction is FORBIDDEN"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: updatePrice
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  daoAccessor: investmentDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentDao
+  operation: updatePrice
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS UPDATE PRICE -- barrier-checked, require(newPrice finite && > 0) validated price update inside database.withTransaction (atomic with the value-history snapshot); InvestmentDao.updatePrice outside the tracker validation + value history is FORBIDDEN"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
+  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
+  kind: function
+  method: updatePrice
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  daoAccessor: investmentValueDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentValueDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS UPDATE PRICE -- InvestmentValue snapshot with dayChange/dayChangePercent inside the same database.withTransaction as the price update; InvestmentValueDao.insert outside the updatePrice/addHolding transactions is FORBIDDEN"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+# ─── SubscriptionManagerEngine.kt (5 findings-derived rows) ─────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: validateAndCreate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.domain.subscription.CreateSubscriptionRequest
+  daoAccessor: priceHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS CREATE subscription -- barrier-checked, validated baseline SubscriptionPriceHistory insert inside database.withTransaction (atomic with the subscription insert via RecurringExpenseRepository), gated on request.recordPriceHistory"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: acceptCandidate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
+  - com.yourname.expensetracker.domain.model.RecurrenceFrequency
+  - Long
+  daoAccessor: priceHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS ACCEPT candidate (SUB-1/SUB-2) -- barrier-checked, validated baseline price-history insert with the candidate currency inside database.withTransaction (atomic with the subscription insert + candidate mark-converted)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: acceptCandidate
+  receiver: null
+  parameterTypes:
+  - com.yourname.expensetracker.data.database.entity.SubscriptionCandidate
+  - com.yourname.expensetracker.domain.model.RecurrenceFrequency
+  - Long
+  daoAccessor: candidateDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionCandidateDao
+  operation: markAsConverted
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS ACCEPT candidate -- candidate mark-converted inside the same database.withTransaction as the subscription + baseline price history (all-or-nothing conversion); SubscriptionCandidateDao mutations outside validateAndCreate/acceptCandidate are FORBIDDEN"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: recordUsage
+  receiver: null
+  parameterTypes:
+  - Long
+  - Int?
+  - String?
+  daoAccessor: usageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionUsageDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS RECORD usage -- barrier-checked SubscriptionUsage insert (usedAt from the injected TimeProvider; the documented single-write form of the usage record)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N
+- path: app/src/main/java/com/yourname/expensetracker/domain/subscription/SubscriptionManagerEngine.kt
+  ownerFqcn: com.yourname.expensetracker.domain.subscription.SubscriptionManagerEngine
+  kind: function
+  method: recordPriceChange
+  receiver: null
+  parameterTypes:
+  - Long
+  - Double
+  - String?
+  daoAccessor: priceHistoryDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SubscriptionPriceHistoryDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08n2 EXACT_POLICY: LEGAL_PATHS RECORD price change -- barrier-checked, validated, change-gated (> 0.01) SubscriptionPriceHistory insert with TimeProvider recordedAt (W04: no 0L sentinel) inside database.withTransaction (atomic with the REC-7 subscription amount update via RecurringExpenseRepository); SubscriptionPriceHistoryDao.insert outside the engine callables is FORBIDDEN"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08N

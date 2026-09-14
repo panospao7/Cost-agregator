@@ -35,7 +35,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.time.Instant
-import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -232,8 +231,11 @@ fun ExportOptionsScreen(
                                     "json" -> "json"
                                     else -> "csv"
                                 }
-                                // Migration: use DateTimeFormatter for thread-safety
-                                val timestamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US).format(LocalDateTime.now())
+                                // Migration: use DateTimeFormatter for thread-safety.
+                                // G-TIME-01: derive the filename timestamp from the
+                                // ViewModel's injected TimeProvider, not the wall clock.
+                                val timestamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss", Locale.US)
+                                    .format(Instant.ofEpochMilli(viewModel.referenceNowMillis()).atZone(ZoneId.systemDefault()))
                                 saveLauncher.launch("expenses_$timestamp.$ext")
                             },
                             onShare = {

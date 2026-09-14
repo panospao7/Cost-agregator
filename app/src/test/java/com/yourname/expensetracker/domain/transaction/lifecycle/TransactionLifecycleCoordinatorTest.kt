@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.transaction.lifecycle
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -72,6 +74,21 @@ class TransactionLifecycleCoordinatorTest {
         recurringLifecycleCoordinator = mockk(relaxed = true)
         restoreMaintenanceMode = mockk(relaxed = true)
         writeBarrier = mockk(relaxed = true)
+        // GR-14p: mutations are scoped in writeBarrier.runWrite; a relaxed mock
+        // would neither run the block nor return its value (the coordinator
+        // casts the result to Long), so pass the block through.
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        // The scoped block opens a Room transaction; a relaxed database mock
+        // would never execute it. Pass the transaction block through (same
+        // pattern as NotificationRepositoryDeleteAllNotificationsClockTest).
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            firstArg<suspend () -> Any>().invoke()
+        }
         currencySettingsRepository = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
@@ -233,15 +250,16 @@ class TransactionLifecycleCoordinatorTest {
     @Test
     fun `deleteExpense runner cancellation rethrows`() = runTest {
         val expenseId = 1L
-        coEvery { expenseDao.getById(expenseId) } returns Expense(
+        val expense = Expense(
             id = expenseId, amount = 10.0, merchant = "Test",
             transactionType = TransactionType.PURCHASE, date = now,
             currency = "EUR", dedupeKey = "old-dk", merchantKey = "mk"
         )
+        coEvery { expenseDao.getById(expenseId) } returns expense
         coEvery { planner.planDeleted(any(), any(), any()) } returns nonEmptyBatch()
         coEvery { runner.run(any()) } throws CancellationException("Cancelled")
 
-        val result = coordinator.deleteExpense(expenseId)
+        val result = coordinator.deleteExpense(expense)
         assertTrue("Expected failure, got $result", result.isFailure)
         assertTrue("Expected CancellationException", result.exceptionOrNull() is CancellationException)
         coVerify(exactly = 1) { expenseDao.delete(any()) }

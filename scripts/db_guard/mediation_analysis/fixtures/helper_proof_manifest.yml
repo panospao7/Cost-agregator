@@ -1,0 +1,117 @@
+# GR-13 helper-proof fixtures (shadow slice S2b).
+# One row per fixture file; expectedResolution uses the controlled
+# resolution-state vocabulary and expectedProof uses the controlled
+# proof-state vocabulary only.
+fixtures:
+  - id: HP-01
+    file: helper_proof/hp01_guarded_only_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-02
+    file: helper_proof/hp02_mixed_guarded_unguarded.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-03
+    file: helper_proof/hp03_zero_call_sites_private_helper.kt
+    expectedResolution: EXTERNAL_ENTRY
+    expectedProof: UNPROVEN_EXTERNAL_ENTRY
+  - id: HP-04
+    file: helper_proof/hp04_function_reference.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-05
+    file: helper_proof/hp05_coroutine_launch.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-06
+    file: helper_proof/hp06_escaping_callback_field.kt
+    expectedResolution: ESCAPING_LAMBDA
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-07
+    file: helper_proof/hp07_recursive_pair.kt
+    expectedResolution: RECURSIVE_UNSUPPORTED
+    expectedProof: UNPROVEN_RECURSION
+  - id: HP-08
+    file: helper_proof/hp08_barrier_unrelated_branch.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-09
+    file: helper_proof/hp09_scope_exit_before_call.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-10
+    file: helper_proof/hp10_local_barrier_direct_insert.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-11
+    file: helper_proof/hp11_canonical_direct_barrier_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-12
+    file: helper_proof/hp12_helper_chain_both_guarded.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-13
+    file: helper_proof/hp13_let_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-14
+    file: helper_proof/hp14_apply_runcatching_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-15
+    file: helper_proof/hp15_foreach_map_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-16
+    file: helper_proof/hp16_structured_suspend_carrier_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-17
+    file: helper_proof/hp17_project_helper_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-18
+    file: helper_proof/hp18_assigned_lambda_escape_negative.kt
+    expectedResolution: ESCAPING_LAMBDA
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-19
+    file: helper_proof/hp19_custom_carrier_stays_async_negative.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-20
+    file: helper_proof/hp20_transparent_not_authorization_negative.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: SL-01
+    file: helper_proof/sl01_structured_launch_guarded_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: SL-02
+    file: helper_proof/sl02_unknown_scope_stays_async_negative.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: SL-03
+    file: helper_proof/sl03_launch_reachable_unguarded_counterexample_negative.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-21
+    file: helper_proof/hp21_named_argument_lambda_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-22
+    file: helper_proof/hp22_default_parameter_di_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-23
+    file: helper_proof/hp23_restore_scope_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_RESTORE_INTERNAL
+  - id: HP-24
+    file: helper_proof/hp24_self_guarded_async_only.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-25
+    file: helper_proof/hp25_self_guarded_mixed_callers.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER

@@ -24,8 +24,11 @@ object AiOutputValidators {
 
     /**
      * Returns `true` if [epoch] is a plausible Unix epoch millisecond
-     * timestamp — between epoch zero and one year from now.
+     * timestamp — between epoch zero and one year after [nowEpochMs].
+     *
+     * Pure function: the caller supplies the reference time (typically
+     * `timeProvider.now()`); this validator never reads the wall clock.
      */
-    fun isPlausibleEpochMillis(epoch: Long): Boolean =
-        epoch in 0..(System.currentTimeMillis() + 365L * 24 * 60 * 60 * 1000)
+    fun isPlausibleEpochMillis(epoch: Long, nowEpochMs: Long): Boolean =
+        epoch in 0..(nowEpochMs + 365L * 24 * 60 * 60 * 1000)
 }

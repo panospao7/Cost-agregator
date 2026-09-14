@@ -1,0 +1,92 @@
+# GR-14u23 — anonymous `object : T { }` implementor sites are counted per
+# corpus type.  Zero board movement by design (latent capability); this is the
+# soundness prerequisite for the §4.D4 step-c exactness rule (GR-14u24).
+#
+# ROOT CAUSE (engine): anonymous objects never enter the owner table
+#   (probe_anon.py: 0 owners that look anonymous), so implementor enumeration
+#   over named owners alone under-counts wherever an anonymous object
+#   implements a corpus interface.  Measured instances on the production
+#   corpus: 12 `object : PrivacyGate` sites and 1 `object : WorkerLeaseRegistry`
+#   (RestoreMaintenanceMode.kt:36) — the latter makes the named-only count of 1
+#   for WorkerLeaseRegistry a FALSE UNIQUE, exactly the shape that would make a
+#   naive "exactly one implementor => exact dispatch" rule unsound (fail-OPEN).
+#
+# CHANGE (callgraph.py):
+#   - `build()` scans every file's masked text for anonymous object expressions
+#     (`object\s*:\s*` with the colon directly after the keyword, so named
+#     `object Name : T` declarations never match) and counts each site once per
+#     CORPUS supertype it lists, resolving each supertype through the file's
+#     imports (`_scan_anonymous_implementors`, `_split_top_level`).
+#   - External supertypes (`object : Runnable`) are not implementors of
+#     anything here; constructor arguments do not confuse the tokenisation
+#     (depth-aware top-level comma split).
+#   - Nothing consumes the counts yet — the capability is stored for the
+#     exactness rule, which must also apply it TRANSITIVELY (an anonymous
+#     implementor of a sub-interface is an implementor of the super-interface).
+#
+# Production measurement (this batch, read-only):
+#   10 corpus types carry anonymous sites: PrivacyGate 12, RetentionTarget 10,
+#   RestoreDatabaseOpener / AiSettingsRepository / DiagnosticEventWriter /
+#   OperationRunRecorder / PrivacyAuditLogger / PrivacySettingsRepository /
+#   WorkerLease / WorkerLeaseRegistry 1 each.  NONE of the six §4.D4 row
+#   interfaces (GroupTransactionCoordinator, SharedExpenseDataPort,
+#   LocationCachePort, SavingsGoalRepository, GroupsRepository,
+#   DatabaseBackupRepository) has an anonymous site — consistent with the
+#   2026-09-10 textual scan.
+#
+# PINS (scripts/ci/test_gr14u23_anon_implementors.py, 7) — all RED pre-fix:
+#   property-initialiser site counted; named object NOT counted; multi-
+#   supertype site counts each corpus supertype; constructor args do not break
+#   the count; external supertype not counted; two sites count two; interface
+#   extension is not an implementor (anonymous counts only list listed types —
+#   transitive application is the consumer's duty).
+#
+# Validation:
+#   - engine battery 106 passed (99 + 7 new pins); scripts/db_guard 235 passed;
+#     fixture scenarios 59/59.
+#   - live board re-captured with the capability landed: BYTE-IDENTICAL to the
+#     GR-14u22 board 6a18b4bf... (0 rows move), confirming latency.
+#   - policy, baseline and exception bytes unchanged.
+schemaVersion: 1
+batchId: GR-14u23
+startSha: d534b648
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: 6a18b4bf4f2fd5a1c5cf824c782f0ae90c1e8c51b9cb3f05fcde7a40d770a169
+mediationReportSha256After: 6a18b4bf4f2fd5a1c5cf824c782f0ae90c1e8c51b9cb3f05fcde7a40d770a169
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+      _scan_anonymous_implementors + _split_top_level + build() hook +
+      anonymous_implementor_counts attribute
+  - scripts/ci/test_gr14u23_anon_implementors.py: new pins (7)
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - none (0 rows move; latent capability)
+
+rootCause: GR13_ANONYMOUS_IMPLEMENTOR_INVISIBILITY
+selectedPattern: ENGINE
+tests:
+  - test_gr14u23_anon_implementors.py 7/7 (all RED pre-fix)
+  - engine battery 106 passed; scripts/db_guard 235 passed; fixture_runner 59/59
+  - live board byte-identical to GR-14u22 (0 rows move)
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  Anonymous object expressions implement corpus interfaces without entering the
+  owner table, so implementor enumeration over named owners alone under-counted
+  wherever one exists - a false unique waiting to mislead any
+  single-implementor exactness rule into proving a dispatch that has two
+  runtime targets.  The builder now counts anonymous implementor sites per
+  corpus supertype over the masked source.  Nothing consumes the counts in
+  this batch: it is landed as its own latent capability with its own pins so
+  the exactness rule can be built on a complete enumeration and cannot be
+  credited with a delta it does not have.  The board remains byte-identical at
+  6a18b4bf with policy, baseline and exception bytes unchanged.

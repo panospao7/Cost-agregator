@@ -1,0 +1,43 @@
+# GR-14u36 — A9 dead-writer tranche 3: GroupLifecycleCoordinator
+# (owner-approved disposition; ledger §C4; plan track A9).
+#
+# OWNER APPROVAL: session 2026-09-11.  The coordinator was complete,
+# guarded, and scenario-test-covered, but the GroupTransactionCoordinator
+# routing designed to call it was never built (only a TODO comment); live
+# group operations run through SharedExpenseManager /
+# SharedExpenseDataPortAdapter.  Decision: delete now, resurrect
+# deliberately if group lifecycle-event auditing is ever scheduled.
+#
+# PRODUCTION REMOVALS:
+#   - domain/groups/GroupLifecycleCoordinator.kt (whole class, 9 rows)
+#   - scenarios/GroupLifecycleScenarioTest.kt + GroupLifecycleContractTest.kt
+#     (dedicated suites; their tests die with the class)
+#   - GroupTransactionCoordinator.kt: the stale PR-E15 implementation-plan
+#     KDoc block replaced with a three-line historical note
+#   - DirectEventDaoInsertGuardTest: GLC allowlist fixture entry removed
+#   - GroupTransactionCoordinatorTest: stale comment reworded
+#
+# POLICY TRUTH SYNC:
+#   - active 421 -> 412; combined seeds 368 -> 359
+#   - tracked pair regenerated; --verify --seed-rows FULL MATCH exit 0;
+#     folds unchanged 53/40/43
+#   - legacy fold note: the frozen legacy inputs still carrying GLC rows
+#     now classify OWNER_MISSING ("source unreadable") in the legacy
+#     report - honest REVIEW_DEBT in the unchanged unresolved bucket, not
+#     an error state; distribution identical to u35
+#   - _CANDIDATE_ENTRIES 421 -> 412; seed-drift ledger 53 -> 62 (GLC x9);
+#     combined pin 359
+#
+# OUTCOME (board, pre fe1edae4... -> post 03392d87...):
+#   unproven 62 -> 56 (external_entry 5 -> 0: bucket emptied; ambiguous
+#   21 -> 20); proven 331 -> 328; moved rows = 9 deleted GLC rows PLUS
+#   GroupTransactionCoordinator.addExpenseToGroup unproven_ambiguous ->
+#   proven_helper (its only uncertain inbound caller was GLC); 0
+#   regressions, 0 counterexamples.  GATE-00R recapture owed at merge.
+#
+# VALIDATION:
+#   - seed-rows + current-repo: 213 passed; db_guard: 245 passed
+#   - verify_db_access_boundaries --fail-on-violation: exit 0
+#   - :app:compileDebugKotlin: exit 0 (0 errors)
+#   - board double run byte-identical 03392d87...
+status: COMPLETE_AT_BOARD_03392d87

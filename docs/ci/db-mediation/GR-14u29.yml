@@ -1,0 +1,65 @@
+# GR-14u29 — A1 labelled-return precision (plan item A1,
+# docs/ci/GUARDRAIL_ISSUES_PLAN.md).
+#
+# DEFECT (ledger §B1 / §E-adjacent): the jump-statement handler gated the
+# labelled-return refusal on the crude substring test `"@" in rest`.  A
+# `return` statement whose rest merely CONTAINS an `@` inside nested text
+# (an annotation, or a `return@withTransaction` inside a wrapper lambda of
+# a `return try { ... }` statement) was misclassified as an unsupported
+# labelled return with the WHOLE statement's span — the try-construct
+# parser was never reached.  Three production bodies refused this way
+# (probe build/guard-debug/gr14w0/probe_exception_flow.py, re-run on the
+# u28 board): BankStatementLifecycleProcessor.processBankStatement,
+# ReceiptLinkService.unlinkReceiptFromExpense,
+# TransactionLifecycleCoordinator.deleteExpense (14 row-findings).
+#
+# FIX (tokenizer.py, one gate): the labelled-return branch now requires
+# the label to LEAD the rest (`_RE_LABEL_NAME.match(rest_s)`), which the
+# old code already computed but only used after the substring gate.  A
+# genuinely label-led return keeps the exact old behavior: matching-scope
+# returns become LAMBDA_RETURN; mismatched/unscoped ones refuse
+# fail-closed (labelled-return / labelled-break / labelled-throw pins
+# unchanged).  Statements with a non-leading `@` now reach the existing
+# `return try/if/when` construct parsing and the plain-return leaf.
+# No contract, policy, baseline, or production-Kotlin change.
+#
+# FIXTURES (test_tokenizer.py, added BEFORE the fix, both failed on the
+# pre-fix tree):
+#   - test_return_try_with_labelled_return_inside_wrapper_supported
+#     (campaign idiom: return try + withTransaction + return@withTransaction)
+#   - test_return_try_named_arg_transaction_wrapper_supported
+#     (ReceiptLinkService shape: named-arg runInTransaction(...) { ctx -> }
+#     with label-led return inside a braced if)
+#   - parse() helper extended with transparent_scope_methods=() (defaults
+#     preserve the old signature).
+#
+# OUTCOME (board diff, pre a9976208... -> post 5f23aabd...):
+#   proven_helper 286 -> 297 (+11), ambiguous 37 -> 30, async 44 -> 42,
+#   external_entry 24 -> 22; unproven 105 -> 94; counterexamples 0.
+#   Moved rows (all unproven -> proven_helper, no other movement):
+#     unlinkReceiptFromExpense x5 (ambiguous)
+#     DefaultExpenseCategoryAssignmentService.assignCategoryIfUnset x2
+#       (async — same return-try + labelled shape)
+#     deleteExpense x4 (2 external_entry ID-overload rows + 2 ambiguous
+#       entity-overload rows)
+#   BankStatementLifecycleProcessor.processBankStatement rows did NOT move
+#   (body parses now; remaining refusal families are A2/A3 work).
+#
+# HARD STOP CHECKS: 0 counterexample flips, 0 proven->unproven regressions.
+#
+# Cross-check note: the 2 deleteExpense rows that moved are the same rows
+# GR-14A9_ZERO_INBOUND_TRIAGE.yml records as a dead ID overload — the rows
+# are now PROVEN, but the writer remains zero-inbound in production; the
+# owner decision (delete the overload) is unchanged and now strictly
+# simplifying.
+#
+# VALIDATION:
+#   - structural_analysis pytest: 210 passed (2 new fixtures + all pins)
+#   - scripts/db_guard pytest (excl. test_models.py pre-existing): 237 passed
+#   - fixture corpus: 64/64
+#   - test_inspect_db_mediation_proof.py + test_gr14*.py: 141 passed
+#   - Kotlin: not run (no production change)
+#   - Board determinism: post run1 == run2, byte-identical
+#     sha256 5f23aabd94945584cb226e65238ddf92f6d4d83baa10f3f6d7fa92081f485fec
+#   - Pre-baseline determinism: board_pre_run1 == run2 == a9976208...(ledger §G)
+status: COMPLETE_AT_BOARD_5f23aabd

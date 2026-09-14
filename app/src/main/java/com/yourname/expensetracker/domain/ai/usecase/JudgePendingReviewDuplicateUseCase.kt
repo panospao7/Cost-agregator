@@ -17,7 +17,7 @@ import com.yourname.expensetracker.domain.ai.model.DedupeJudgeSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
+import com.yourname.expensetracker.data.ai.provider.HybridDedupeJudgeService
 import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -29,7 +29,7 @@ import javax.inject.Inject
 class JudgePendingReviewDuplicateUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
-    private val dedupeJudgeService: DedupeJudgeService,
+    private val dedupeJudgeService: HybridDedupeJudgeService,
     private val aiCapabilityRouter: AiCapabilityRouter,
     private val inputBuilder: DedupeJudgeInputBuilder,
     private val timeProvider: TimeProvider

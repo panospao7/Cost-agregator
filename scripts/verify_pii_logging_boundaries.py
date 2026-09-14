@@ -35,10 +35,21 @@ Exit codes:
 """
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
+
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
 
 # ── Configuration ──────────────────────────────────────────
 RULE_ID = "G-PII-01"
@@ -46,12 +57,19 @@ DESCRIPTION = (
     "PII Logging Guard — detects sensitive data leaking into logs, "
     "exception messages, and diagnostics"
 )
-SCOPE_DIRS = ["app/src/main/java"]
 FILE_PATTERNS = ["*.kt"]
 ALLOWLIST_PATH = "scripts/allowlists/pii_logging_allowlist.yml"
 
 # Files always excluded (test files, generated code)
 EXCLUDED_DIR_PATTERNS = ["src/test", "src/androidTest", "build", "generated"]
+
+# PR-GR-10B: the scanned production source scope is declared by the
+# checked-in manifest ``config/guards/production_source_roots.yml`` (resolved
+# via scripts/guardrails/production_source_scope.py).  There is NO
+# conventional-root fallback: a missing, malformed, or undeclared manifest
+# fails closed with exit 2.  The historical hard-coded root
+# (``app/src/main/java``) is the manifest's currently declared single root,
+# so the scanned file set is unchanged.
 
 # ── Sensitive content variable names (raw PII data) ────────
 # These indicate raw user content that should never be logged.
@@ -366,23 +384,39 @@ def main() -> None:
 
     allowlist = load_allowlist(root / args.allowlist) if args.allowlist else []
 
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"ERROR: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     all_violations: List[str] = []
     fatal_errors: List[str] = []
 
-    for scope_dir in SCOPE_DIRS:
-        scan_dir = root / scope_dir
-        if not scan_dir.exists():
+    try:
+        source_files = list(iter_production_kotlin_files(str(root), root_set))
+    except ProductionSourceScopeError as exc:
+        print(
+            f"ERROR: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    for source_file in source_files:
+        filepath = Path(source_file.absolute_path)
+        # Skip test and generated files (semantic filter, preserved verbatim)
+        path_str = str(filepath).replace("\\", "/")
+        if any(excl in path_str for excl in EXCLUDED_DIR_PATTERNS):
             continue
-        for pattern in FILE_PATTERNS:
-            for filepath in scan_dir.rglob(pattern):
-                # Skip test and generated files
-                path_str = str(filepath).replace("\\", "/")
-                if any(excl in path_str for excl in EXCLUDED_DIR_PATTERNS):
-                    continue
-                violations, had_fatal = scan_file(filepath, allowlist)
-                if had_fatal:
-                    fatal_errors.append(str(filepath))
-                all_violations.extend(violations)
+        violations, had_fatal = scan_file(filepath, allowlist)
+        if had_fatal:
+            fatal_errors.append(str(filepath))
+        all_violations.extend(violations)
 
     if fatal_errors:
         for fp in fatal_errors:

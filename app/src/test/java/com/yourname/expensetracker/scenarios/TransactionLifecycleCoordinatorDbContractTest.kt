@@ -2,6 +2,7 @@ package com.yourname.expensetracker.scenarios
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -14,6 +15,7 @@ import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import com.yourname.expensetracker.testfixtures.database.AppDatabaseTestFactory
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.runBlocking
@@ -67,6 +69,18 @@ class TransactionLifecycleCoordinatorDbContractTest {
         )
 
         // ── Build coordinator with real DB objects + mocked side-effects ─
+        // GR-14p: the coordinator scopes mutations in writeBarrier.runWrite;
+        // a relaxed mock would neither run the block nor return its value (the
+        // coordinator casts the result to Long), so pass each block through to
+        // the real in-memory database.
+        val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+
         coordinator = TransactionLifecycleCoordinator(
             database = db,
             expenseDao = db.expenseDao(),
@@ -77,7 +91,7 @@ class TransactionLifecycleCoordinatorDbContractTest {
             planner = mockk(relaxed = true),
             runner = mockk(relaxed = true),
             recurringLifecycleCoordinator = mockk(relaxed = true),
-            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            writeBarrier = writeBarrier,
             currencySettingsRepository = mockk(relaxed = true),
             sourceLinkWriter = mockk(relaxed = true),
             transactionValidator = mockk(relaxed = true),

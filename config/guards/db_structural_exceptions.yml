@@ -45,6 +45,29 @@ entries:
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
+  # ── Room migrations (AppDatabase.kt companion — NAMED migration objects) ──
+  # `object MIGRATION_X_Y : Migration(...)` declarations are attributed by the
+  # scanner to the object's OWN class (owner simple name MIGRATION_X_Y, method
+  # migrate), which the bounded `class: AppDatabase` entry above can never
+  # match.  These exact tuples authorize the two named-object migrations
+  # (GR-08j adjudication: legitimate DB-infrastructure writers — execSQL is
+  # the only way to perform a Room schema migration; the data backfill inside
+  # MIGRATION_16_17 is migration-internal and must stay atomic with the DDL).
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: MIGRATION_16_17
+    method_pattern: migrate
+    operation: execSQL
+    reason: "Room migration SQL — named migration object MIGRATION_16_17 (merchant canonical/alias schema v16→v17 with in-migration data backfill)"
+    owner: "@panospao7"
+    linked_issue: "MIT-DB-08J"
+  - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
+    class: MIGRATION_41_42
+    method_pattern: migrate
+    operation: execSQL
+    reason: "Room migration SQL — named migration object MIGRATION_41_42 (exchange_rates schema v41→v42 with default-rate seeding)"
+    owner: "@panospao7"
+    linked_issue: "MIT-DB-08J"
+
   - path: app/src/main/java/com/yourname/expensetracker/data/database/AppDatabase.kt
     class: AppDatabase
     method_pattern: "FRESH_INSTALL_CALLBACK"

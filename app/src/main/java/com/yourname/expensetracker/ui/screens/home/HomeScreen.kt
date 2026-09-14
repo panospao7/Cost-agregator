@@ -1258,7 +1258,9 @@ fun RecentExpenseRow(expense: DashboardExpense, categoryColor: Color? = null) {
 @Composable
 fun AddPlannedExpenseDialog(
     categories: List<Category> = emptyList(),
-    referenceNowMillis: Long = System.currentTimeMillis(),
+    // G-TIME-01: required — callers pass the ViewModel's TimeProvider-backed
+    // referenceNowMillis (S12-008 pattern); no wall-clock default.
+    referenceNowMillis: Long,
     onDismiss: () -> Unit,
     onConfirm: (String, Double, Long, Long?, PlannedExpensePriority) -> Unit
 ) {

@@ -76,15 +76,16 @@ enum class ForecastHorizon(
     /**
      * REST_OF_MONTH is calendar-bound. Use the [kind] property and compute the actual
      * day count via [com.yourname.expensetracker.domain.util.TimePeriodUtils] at call sites.
+     *
+     * Legacy contract: REST_OF_MONTH reports `0` ("0 means calculate based on
+     * calendar") — this getter never throws.
      */
     @Deprecated(
         message = "Use fixedDays and kind. REST_OF_MONTH is calendar-bound and has no fixed day count.",
         replaceWith = ReplaceWith("fixedDays")
     )
     val days: Int
-        get() = fixedDays ?: throw UnsupportedOperationException(
-            "${name} is calendar-bound and does not have a fixed day count"
-        )
+        get() = fixedDays ?: 0
 }
 
 /**

@@ -21,7 +21,7 @@ import com.yourname.expensetracker.domain.ai.model.CategoryOption
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
+import com.yourname.expensetracker.data.ai.provider.HybridCategorizationAssistService
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
@@ -41,7 +41,7 @@ class SuggestCategoryFallbackUseCaseTest {
 
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
-    private lateinit var categorizationAssistService: CategorizationAssistService
+    private lateinit var categorizationAssistService: HybridCategorizationAssistService
     private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var inputBuilder: CategorizationAssistInputBuilder
     private lateinit var categoryRepository: CategoryRepository

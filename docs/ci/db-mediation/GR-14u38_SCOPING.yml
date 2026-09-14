@@ -1,0 +1,44 @@
+# GR-14u38 — u38 scoping: the splitter off-by-one is a RETRACTED
+# diagnosis; the real gaps are carrier-set membership + chained shapes.
+# NO code change in this record.
+#
+# RETRACTION: GR-14u30's census printed ensureDefaultCategories' first
+# statement as 'ithContext(Dispatchers.IO) {', recorded in the u32
+# scoping note as a _split_statements off-by-one.  Direct instrumentation
+# on the current tree shows the splitter produces CORRECT parts
+# (writeBarrier.checkWritesAllowed(...), then withContext(...) intact at
+# offset 2120).  The 'ithContext' artifact came from the no-set probe
+# parse of the pre-u31 engine, where the barrier-check branch captured
+# the wrapper statement mid-flow - the same probe-infidelity corrected at
+# GR-14u32, one symptom earlier than documented there.
+#
+# CURRENT engine-exact census (u37 board 48012557, 12 unmodelable rows /
+# 3 callables, V2 scope set + V3 inline set):
+#   ensureDefaultCategories (4 rows):
+#     lambda-escape x3:
+#       categories.associate { it.name to it.id }        - 'associate' NOT
+#         in PRODUCTION_TRANSPARENT_INLINE_METHODS (associateBy IS)
+#       defaults.find { ... }                            - 'find' NOT in set
+#       merchantCategoryDao.getX().forEach { mapping -> ... }  - CHAINED
+#         carrier head (u33 deliberate limitation), and the opacity gate
+#         correctly refuses it (relevant content inside)
+#   processBankStatement (7 rows): lambda-escape x6 (mostly argument-
+#     position lambdas in multi-line constructor calls - not carriers),
+#     unknown-construct x1 ('duplicatesSkipped++'), coroutine-builder x1,
+#     elvis-block x1 ('runId?.let')
+#   migrateCategories (1 row): lambda-escape x1 + elvis-block x1
+#     (db.rawQuery(...).use { } - chained carrier)
+#
+# PROPOSED u38 batch (OWNER GATE: extends the GR-14f closed reviewed
+# inline-carrier set; precedent GR-14j owner-approved set extension):
+#   add 'associate' and 'find' to PRODUCTION_TRANSPARENT_INLINE_METHODS
+#   (callgraph.py) + amend the test_gr14f_inline_carriers pin + corpus
+#   usage census as evidence + fixtures + Step-0 projection.  Expected
+#   yield: the 2 head-shaped statements of ensureDefaultCategories
+#   (up to 4 rows if the third statement then opacity-absorbs cleanly -
+#     it will NOT parse, so the callable likely stays unmodelable unless
+#     the opacity gate absorbs the chained forEach; measure at Step-0).
+#   NOT in this batch: chained-carrier head matching (separate feature),
+#   '++' statement, '?.let' elvis misdetection, argument-position lambdas
+#   (D19-adjacent modeling decision).
+status: SCOPED - awaiting owner approval for the 2-name set extension

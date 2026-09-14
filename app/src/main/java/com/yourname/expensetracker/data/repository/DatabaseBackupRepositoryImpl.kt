@@ -28,6 +28,10 @@ import com.yourname.expensetracker.domain.privacy.PrivacyCapability
 import com.yourname.expensetracker.domain.privacy.PrivacyDecision
 import com.yourname.expensetracker.domain.privacy.PrivacyGate
 import com.yourname.expensetracker.domain.privacy.PrivacySettingsRepository
+import com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
+import com.yourname.expensetracker.domain.diagnostics.OperationRunHandle
+import com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder
+import com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptAssetStore
 import com.yourname.expensetracker.domain.util.TimeProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -118,13 +122,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         ),
         com.yourname.expensetracker.data.backup.SqliteSnapshotCreator(),
         com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(restoreMaintenanceMode),
-        object : com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder {
-            override suspend fun start(operationType: String, actor: String?, metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata): com.yourname.expensetracker.domain.diagnostics.OperationRunHandle =
-                com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle
-            override suspend fun <T> runOperation(operationType: String, actor: String?, metadata: com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata, block: suspend (com.yourname.expensetracker.domain.diagnostics.OperationRunHandle) -> T): T =
-                block(com.yourname.expensetracker.domain.diagnostics.NoOpOperationRunHandle)
-            override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) = Unit
-        },
+        NoOpOperationRunRecorder,
         com.yourname.expensetracker.data.backup.TimberMaintenanceSafeDiagnosticSink(),
         timeProvider
     ) {
@@ -2534,4 +2532,32 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
         return Result.failure(Exception("Failed to checkpoint WAL"))
     }
+}
+
+/**
+ * GR-14u55a: named replacement for the constructor-context anonymous
+ * `object : OperationRunRecorder` (the static callgraph cannot model
+ * members of an anonymous object declared outside any fun body, which
+ * broke the u54b fan-out completeness equality for OperationRunRecorder).
+ * Pure no-op recorder — identical behavior to the anonymous object it
+ * replaces (start returns [NoOpOperationRunHandle]; runOperation invokes
+ * the block with it).  Type spellings use the SIMPLE names via imports —
+ * matching the other implementors' files, so the u45 Shape-A carrier
+ * signature set stays single-distinct (a fully-qualified spelling here
+ * would split the signature tuples and unbind the runOperation lambda
+ * param typing corpus-wide).
+ */
+private object NoOpOperationRunRecorder : OperationRunRecorder {
+    override suspend fun start(
+        operationType: String,
+        actor: String?,
+        metadata: SafeEventMetadata
+    ): OperationRunHandle = NoOpOperationRunHandle
+
+    override suspend fun <T> runOperation(
+        operationType: String,
+        actor: String?,
+        metadata: SafeEventMetadata,
+        block: suspend (OperationRunHandle) -> T
+    ): T = block(NoOpOperationRunHandle)
 }

@@ -256,6 +256,7 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
         val localAnalyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter())
 
         val useCase = ComputeDashboardWidgetsUseCase(
+            writeBarrier = mockk(relaxed = true),
             insightsEngine = insightsEngine,
             synthesisEngine = synthesisEngine,
             monteCarloSimulator = mockk(relaxed = true),

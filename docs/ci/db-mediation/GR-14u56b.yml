@@ -1,0 +1,123 @@
+# GR-14u56b - depth-aware elvis-block gate + call-result-receiver safe-call
+# carriers (tokenizer, two mechanisms + a mid-batch hard stop with its fix,
+# fail-closed; engine-only batch of the GR-14u56 series).
+#
+# DEFECT (two gaps, both probe-verified):
+#   1. The elvis-block refusal was DEPTH-BLIND: any `?:` with a brace
+#      anywhere after it refused the whole statement, even when the elvis
+#      sat INSIDE argument parentheses (an expression, not control flow) -
+#      processReceiptInput L501
+#      (`imageHash = fileHash ?: receipt.imageHash` inside
+#      receipt.copy(...)).  Pre-fix findings on the callable: 9 (u56a end
+#      state), of which L444/L501 elvis-block were the remaining family.
+#   2. The u40 safe-call carrier receiver charset excluded call
+#      parentheses, so `scannedReceiptDao.getById(x!!)?.let { ... }` (the
+#      real L444 head) could never be claimed - the composite fell to the
+#      generic opacity gate.
+#
+# FIX (two mechanisms + the hard-stop fix, all fail-closed):
+#   1. Depth-aware elvis gate: `_paren_depth_before` (masked text has no
+#      comments/strings, so a flat scan is exact) gates the refusal to
+#      DEPTH-0 elvis only; a depth>0 elvis falls through to ordinary
+#      handling.  The depth-0 refusal is byte-identical (same code, span,
+#      reason - pinned).
+#   2. Call-result receivers: the receiver group is located by regex
+#      (`[^?]*?`) and validated STRUCTURALLY by `_safe_call_receiver_ok`
+#      (depth-aware scan: no brace/semicolon/?/=; balanced ()/[] never
+#      dipping negative - regexes cannot count nesting).  scope_receiver
+#      stays None for any receiver containing a dot or a parenthesis (u39
+#      chained-carrier precedent; grants nothing beyond parseability).
+#      Anything richer (a?.b?.let, f()?.g()?.let, unlisted method after ?.,
+#      elvis-in-receiver via the ? exclusion) keeps the pre-change
+#      fail-closed handling - pinned.
+#   3. THE MID-BATCH HARD STOP (full disclosure): the first board double
+#      run REGRESSED GroupTransactionCoordinator.addMemberToGroup
+#      (memberDao.insert) proven_helper ->
+#      unproven_async_or_escaping_callback.  Root cause (fully diagnosed
+#      before any further change): addMemberToGroup L220-224 contains
+#      `memberDao.getCurrentUser(groupId)?.let { currentUser ->
+#      return@withTransaction ... }` inside `database.withTransaction { }`.
+#      Pre-u56b the `(`-receiver did not match, so the statement fell to
+#      the generic opacity gate and was absorbed; post-u56b the widened
+#      receiver matched, the let was CLAIMED, the inner labelled-return
+#      finding (return@withTransaction targets the OUTER scope label, not
+#      the let) was recorded and NOT rolled back (the u40 claim branch had
+#      no findings-rollback), and the whole callable went UNSUPPORTED.
+#      Fix (mirrors the u46 chain attempt exactly): in the safe-call claim
+#      branch, for NEWLY-EXPOSED receivers only (receivers containing `(`),
+#      snapshot findings_before, run the claim attempt, and when the
+#      attempt records ANY finding (or returns None) roll the findings
+#      back (`del cur.findings[findings_before:]`) and fall through to the
+#      generic opacity gate - pre-u56b behavior exactly.  Simple and
+#      dotted receivers keep the pre-u56b claim path byte-identical
+#      (rolling back THEIR prefix/tail failures would change pinned
+#      u40/u56a tests such as
+#      test_safe_call_carrier_not_ending_statement_not_claimed).  Lesson
+#      recorded in-code: a newly-claimed carrier that records findings
+#      must roll back and fall through, never claim-while-failing.
+#
+# TESTS (4 new + 5 kept from the u56a working tree, additive; the mutation-site pin is split into two
+#   layer-truthful tests because mutation sites are proof-layer facts the
+#   tokenizer never sees): the addMemberToGroup shape WITH a
+#   production-style gate -> supported (absorbed, zero findings); the same
+#   shape WITHOUT the gate -> still refused (lambda-escape, fail closed);
+#   attempt-fails-plus-registered-site -> rollback then opacity-gate
+#   refusal (outer lambda-escape outcome pins the rollback path); a CLEAN
+#   `(`-receiver claim hiding a site is refused at the PROOF layer (the
+#   carrier is never contract-admitted, the site stays disconnected ->
+#   UNSUPPORTED, never PROVEN - a claim can never launder a hidden site);
+#   depth-0 elvis refusal pinned byte-identical next to the depth>0
+#   admission test.  Plus the u56a batch's 5 tests (kept from the
+#   uncommitted working tree).
+#
+# GATED-ADMISSION DEVIATION (disclosed): L501
+#   (`val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(...
+#   imageHash = fileHash ?: receipt.imageHash, ...), now).also { ... }`)
+#   is admitted via the PRODUCTION OPACITY GATE, not the u46 chain claim:
+#   the u46 chain prefix charset excludes `=` (named arguments), so the
+#   chain matcher cannot take this composite; with the gate the statement
+#   parses as one opaque STATEMENT (supported).  Recorded in Remaining.
+#
+# OUTCOME (board pre ec7fd24b1c9c45ea -> post c5721de2efd88dde, double run
+#   byte-identical, all 379 entries key-identical): 5 rows moved -
+#   1-4. processReceiptInput pendingReviewDao.deleteByScannedReceiptId,
+#       pendingReviewDao.insert, scannedReceiptDao.delete,
+#       scannedReceiptDao.update: unproven_async_or_escaping_callback
+#       (localGuard=none, GR13_UNCERTAIN_CALL_EDGE, async_dispatch) ->
+#       proven_helper (localGuard=direct, GR13_ALL_PATHS_GUARDED,
+#       exact_canonical_scope) - the intended u56b gain.
+#   5. addExpenseToGroup groupExpenseDao.insert: localGuard none -> direct
+#      (benign localGuard refinement; proofStatus unchanged
+#      proven_helper).
+#   addMemberToGroup (memberDao.insert) RESTORED to its pre-state:
+#   proven_helper, entry byte-identical (absent from the board diff).
+#   proofStates: proven_helper 339 -> 343, unproven_async_or_escaping_
+#   callback 23 -> 19, all other states unchanged (465 subjects).
+#
+# PRODUCTION PROBE (processReceiptInput, production params - mask_
+#   kotlin_source, CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_methods,
+#   PRODUCTION_TRANSPARENT_INLINE_METHODS, opacity predicate via
+#   shadow_report._default_opacity_predicate over the real in-body
+#   scan_db_access observations + config/guards/db_ownership_policy.yml,
+#   decl start_line 245, body span 13733-32241): supported=True,
+#   findings=[], diagnostics=(), has_canonical_barrier=True, all 4 sites
+#   PROVEN (L369 deleteByScannedReceiptId, L554 insert, L382 delete, L455
+#   update - barrier_form DIRECT_CHECK).
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 external_entry, 0 previously-
+#   proven rows regressed (all 379 entries diffed; the one mid-batch
+#   regression was caught by exactly this check and fixed before final
+#   measurement).
+#
+# VALIDATION: structural 260 (256 + 4 new), db_guard 292, fixtures
+#   116/116, CI failure set byte-identical to base (14 pre-existing,
+#   verified by stash-run-pop), board double run byte-identical
+#   c5721de2efd88dde.  Kotlin: not run (no production change).
+#
+# Remaining: the u46 chain prefix charset excludes `=` in named
+#   arguments, so the L501 composite is admitted via the opacity gate, not
+#   the chain claim (a chain-charset extension would need its own
+#   fail-closed analysis); the L272 when-branch gluing (deferred in u56a);
+#   dotted/`(`-receiver claims still record no scope_receiver (u39
+#   precedent, by design).
+status: COMPLETE_AT_BOARD_c5721de2efd88dde

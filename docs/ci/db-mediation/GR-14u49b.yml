@@ -1,0 +1,50 @@
+# GR-14u49b — pre-existing CSV importer test stub repair (test-only,
+# base-branch debt repaired in-campaign).
+#
+# DEFECT: 8 pre-existing CsvExpenseImporterTest failures on the base
+# branch (verified identical on the main tree, which carries zero campaign
+# changes).  Root cause: the strict `currencySettingsRepository = mockk()`
+# had no stub for `resolveHomeCurrency()`; the importer calls it PER ROW
+# before category resolution and `createExpense`, so the MockKException
+# was swallowed by the per-row catch and every row became
+# RowResult.Failed — imported=0 / errors=2 / request-slot-not-captured /
+# insert-not-called.  All 8 failure shapes match that mechanism exactly.
+# (The earlier hypothesis — missing `createExpense -> Created` stubs — was
+# falsified; those stubs were already present.)
+#
+# FIX (test-only): the inline mock was promoted to a named class field
+# `private val currencySettingsRepository = mockk<CurrencySettingsRepository>()`
+# and `setup()` stubs
+# `coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
+# HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))` — the repo-wide
+# idiom copied exactly from ExportImportRoundtripTest (L98/L163).
+# All four inline `currencySettingsRepository = mockk()` constructor args
+# (setup, the instantiation test, and the two GR-14u44b campaign tests)
+# now use the named field.  `resolveHomeCurrency()` verified as
+# `suspend fun resolveHomeCurrency(): HomeCurrencyResolution` (no params,
+# CurrencySettingsRepository.kt L71); the wrapper type and CurrencyCode
+# construction match HomeCurrencyResolution.kt L16-25
+# (`Resolved(val currency: CurrencyCode)`, `value class CurrencyCode(val
+# code: String)`).
+#
+# OUTCOME (board, pre 54278165... -> post 54278165...): BYTE-IDENTICAL —
+#   test-only change, no production or engine file touched.
+#
+# HARD STOP CHECKS: 0 counterexample flips, 0 regressions, board
+#   byte-identical (verified fc /b across the double run and against
+#   board-u48-run1.json).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed (no engine change)
+#   - fixture corpus: 76/76, exit 0
+#   - board double run byte-identical 54278165a14f585c (both runs
+#     identical to each other AND to board-u48-run1.json)
+#   - Kotlin: NOT RUN — human validation owed:
+#     ./gradlew :app:testDebugUnitTest --tests "*CsvExpenseImporter*"
+#     --console=plain   (expected: 14/14 pass — 10 pre-existing +
+#     4 campaign tests, all previously shape-failing on the 8)
+#   - JsonExpenseImporterTest: NOT touched (no CurrencySettingsRepository
+#     dependency — verified); no production file touched.
+#
+# Remaining: none.
+status: COMPLETE_AT_BOARD_54278165

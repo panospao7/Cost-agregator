@@ -1,0 +1,76 @@
+# GR-14m — argument-lambda false-positive fix: named-argument lambdas are
+# not assigned-literal escapes.
+#
+# PROBLEM (taint-traced to source in this batch): the escaping scanner's
+# `= {` heuristic flagged every named-argument lambda (`onConfirm = { ... }`,
+# `onDismiss = { ... }`) inside dialog/button call sites as an
+# assigned-literal ESCAPE.  Argument lambdas execute in-process with
+# inherited context and never leave the enclosing callable — the two UI
+# "escapes" blocking the async family (SharedExpenseGroupsScreen.
+# CreateGroupDialog, TransactionsScreen) were both this false positive.
+#
+# Engine fix: the escaping pass computes the paren depth of each `= {`
+# match within the callable body; matches at depth > 0 are named-argument
+# lambdas and are skipped.  Statement-level assignments (`val x = { ... }`,
+# `x = { ... }`) remain at depth 0 and stay ESCAPING (HP-18 pin holds).
+#
+# Shadow delta (before = post-GR-14l): the escaping taint cleared for the
+# two traced rows and the whole dialog-handler surface — async 303 -> 139
+# (-164), ambiguous 12 -> 176 (+164; net unchanged) as the affected rows
+# now expose their TRUE blockers: 137 unresolved_target (dominant shape:
+# Compose screens receive ViewModels via initializer properties like
+# `viewModel: XViewModel = hiltViewModel()` — the owner-property pass
+# does not yet type-infer constructor-call initializers; local vals
+# already get this inference), 14 function_reference, 13 interface_dispatch.
+# proven/counterexample/entry: unchanged; diagnostics: unchanged.
+#
+# GR-14n (next engine batch): owner-property initializer type inference
+# (same inference the local-val pass already performs) — targets the 137
+# unresolved_target rows.
+#
+# Validation:
+#   - new regression fixture HP-21 (named-argument lambda + guarded caller
+#     -> PROVEN_HELPER; would have been escaping-tainted before the fix);
+#     corpus 63 -> 64 rows, battery 56/56;
+#   - assigned-literal escape pin HP-18 still passes (depth-0 stays
+#     escaping); carrier/structured-launch/CLI/mediation suites all green;
+#   - no production Kotlin changed; GATE-00R + Gradle DB owed at merge
+#     (carried).
+schemaVersion: 1
+batchId: GR-14m
+startSha: da9dfb6d
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: 7bba5ffff2fe2fd0b64cbf865b81590e4f5e38555b62c07fb27abc55750cf77f
+mediationReportSha256After: ff6dde8731e5451812ad61840a958fa5a414c46b2bb7182818f8509d46e7a82b
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+engineFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+    - escaping pass paren-depth filter (depth > 0 `= {` matches are
+      named-argument lambdas, never flagged as assigned-literal escapes)
+
+fixtures:
+  - helper_proof/hp21_named_argument_lambda_positive.kt
+  consolidated manifest: 63 -> 64 rows
+
+tests:
+  - fixture battery 56/56 (HP-21 included; HP-18 escape pin intact)
+  - carrier/structured-launch/CLI/mediation suites green
+
+knownFollowUps:
+  - GR-14n engine batch: owner-property initializer type inference
+    (targets the 137 unresolved_target rows)
+  - function_reference (14) and interface_dispatch (13) rows: per-site
+
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+rootCause: ESCAPING_CALLBACK # false-positive classification
+selectedPattern: engine-enablement
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch corrects an engine misclassification (named-argument lambdas
+  are not escapes).  It is not a baseline, exception, or authorization
+  document; the fail-closed assigned-literal escape semantics are pinned
+  by HP-18 and unchanged.

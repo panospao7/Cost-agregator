@@ -90,6 +90,9 @@ class ExportOptionsViewModel @Inject constructor(
     private var exportJob: Job? = null
     private var exportGeneration: Long = 0L
 
+    /** G-TIME-01: the screen's single TimeProvider-backed "now" source. */
+    fun referenceNowMillis(): Long = timeProvider.now()
+
     init {
         val now = timeProvider.now()
         val start = TimePeriodUtils.addMonths(now, -1)

@@ -1,0 +1,123 @@
+# GR-14j — structured coroutine-launch admission (owner-approved design).
+#
+# PROBLEM (probe-verified in this batch): the async family's 328 rows are
+# held by ~350 uncertain inbound edges — 219 coroutine launches
+# (207 viewModelScope.launch), ~17 structured suspend carriers
+# (withPermit/withTimeoutOrNull/collect), ~16 project helpers — and the
+# GR-13 tier order lets those uncertain edges preempt LOCAL canonical
+# scope proofs (updateType's runWrite wrap alone flipped nothing).  With
+# launch edges permanently uncertain, the async family can never close
+# and the GR-14 zero gate is unreachable.
+#
+# OWNER-APPROVED DESIGN (2026-09-07): the maintenance barrier is app-global
+# state (RestoreMaintenanceMode) checked at the mutation site at execution
+# time; caller-side context is irrelevant to barrier correctness.  A
+# launch on a REVIEWED STRUCTURED receiver (name-exact closed set —
+# ViewModel-/service-owned CoroutineScope properties, cancelled with their
+# owner; tree-wide grep evidence) resolves EXACTLY with context inherited.
+# Deliberately STRICTER overall: writers with their own canonical scope
+# prove independent of launch callers; writers WITHOUT local scope on a
+# launch-reachable path become COUNTEREXAMPLES (definite unguarded call
+# paths) — the honest classification that drives the remaining scope
+# batches (GR-14k+).  Launches on unknown receivers (GlobalScope, injected
+# dispatchers, parameters) stay async-uncertain.
+#
+# Engine changes:
+#   - AnalysisContract.structured_launch_receivers (validated plain
+#     identifiers);
+#   - STRUCTURED_LAUNCH_METHODS = ("launch",) closed constant;
+#   - _lambda_regions admits launch-on-reviewed-receiver as transparent
+#     (context inherited, edge exact);
+#   - _chain_admitted_by_engine_carriers generalizes the GR-14f
+#     resolution-preservation fallback to admitted launch chains;
+#   - inline carrier set extended with evidence-backed structured suspend
+#     carriers: withTimeoutOrNull, collect (context-inheriting per-emission
+#     flow terminal), withPermit (semaphore, like withLock), and the
+#     project wrapper safeRecordMatchEvent (inline try/catch, cancellation
+#     rethrown).  .PostCommitAction (9 edges) and .finally (19 edges)
+#     labels are evidence-unclear and deliberately NOT admitted.
+# Production receiver set (closed): viewModelScope, scope, workTracker,
+#   serviceScope, diagnosticScope.
+#
+# Demonstration unit (production): TransactionLifecycleCoordinator.updateType
+# mutations wrapped in writeBarrier.runWrite canonical scope — with the
+# engine change its 2 rows prove (the earlier probe, now completing).
+#
+# Shadow delta (the inversion, before = post-GR-14i):
+#   proven_helper:            31 -> 39   (+8; updateType x2 + 6 more
+#     locally-scoped writers on launch-reachable paths)
+#   unproven_async:          328 -> 305  (-23)
+#   counterexamples:           0 -> 4    (the inversion: RecommendationRepository.
+#     clearForUser x1, TransactionLifecycleCoordinator.updateTransferDetails
+#     x3 — unscoped writers, honestly now definite violations; these are
+#     the GR-14k work queue)
+#   unproven_ambiguous:        6 -> 12   (exposed by exact edges)
+#   unproven_external_entry:  64 -> 69   (exposed by exact edges)
+#
+# Validation:
+#   - python: structured-launch module 7/7, carrier module 12/12, CLI
+#     battery 23/23, mediation suite 32/32, fixture battery 55/55
+#     (SL-01..SL-03 included);
+#   - :app:compileDebugKotlin PASS;
+#   - TLC test classes: 4 PASSED; 4 FAILED — stash A/B at the pre-batch
+#     state reproduces all failures (DbGuardPolicyFixtureTest fails
+#     WHOLESALE at baseline — its parser rejects the v2 policy header;
+#     broken since v2 activation, never run in recent batches; the
+#     createExpense/updateExpense failures are the GR-14e-documented
+#     hang/infra family) — none caused by this batch;
+#   - GATE-00R double capture + Gradle DB task: OWED at merge (carried).
+schemaVersion: 1
+batchId: GR-14j
+startSha: f2acc657
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: 836af4fb95a2d65cc840d245b9411a8b78174e255410406622ae460acb85e807
+mediationReportSha256After: 1b997fd2ecb2ca02ec64fa6562fde39ed090edea389494aa34c26764f648225b
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+engineFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+    - AnalysisContract.structured_launch_receivers (validated)
+    - STRUCTURED_LAUNCH_METHODS closed constant ("launch",)
+    - _lambda_regions structured-launch admission (context inherited)
+    - _chain_admitted_by_engine_carriers (generalized resolution
+      preservation for admitted launch chains)
+    - PRODUCTION_TRANSPARENT_INLINE_METHODS += withTimeoutOrNull, collect,
+      withPermit, safeRecordMatchEvent (evidence in table docstring)
+  - scripts/ci/inspect_db_mediation_proof.py:
+    - _PRODUCTION_STRUCTURED_LAUNCH_RECEIVERS closed set + wiring
+  - scripts/db_guard/mediation_analysis/fixture_runner.py:
+    - SL fixture dispatch + fixture-contract launch wiring
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt:
+    - updateType mutations scoped in writeBarrier.runWrite (demonstration
+      unit; rows now proven)
+
+fixtures:
+  - helper_proof/sl01_structured_launch_guarded_positive.kt
+  - helper_proof/sl02_unknown_scope_stays_async_negative.kt
+  - helper_proof/sl03_launch_reachable_unguarded_counterexample_negative.kt
+  consolidated manifest: 60 -> 63 rows
+
+tests:
+  - scripts/ci/test_gr14j_structured_launch.py (7: receiver-set pin,
+    wiring pin, method disjointness, contract validation, 3 behavior
+    proofs including the strictness inversion)
+  - scripts/ci/test_gr14f_inline_carriers.py 12/12 (set pin updated)
+  - fixture battery 55/55; mediation suite 32/32; CLI battery 23/23
+  - TLC Gradle classes: 4 passed; 4 failures stash-A/B-reproduced
+    pre-batch (pre-existing infra/parser classes)
+
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+rootCause: ESCAPING_CALLBACK # async dispatch uncertainty on launch edges
+selectedPattern: engine-enablement + Pattern A demonstration
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch changes engine classification per the owner-approved
+  structured-launch design.  It is not a baseline, exception, or
+  authorization document.  The admission is strictly stricter overall:
+  launch-reachable writers now require their own canonical scope, with
+  unscoped writers honestly classified as definite counterexamples.

@@ -16,7 +16,7 @@ import com.yourname.expensetracker.domain.ai.model.CategoryAssistSuggestion
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import com.yourname.expensetracker.domain.ai.service.CategorizationAssistService
+import com.yourname.expensetracker.data.ai.provider.HybridCategorizationAssistService
 import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.util.TimeProvider
@@ -31,7 +31,7 @@ import kotlin.coroutines.cancellation.CancellationException
 class SuggestCategoryFallbackUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
-    private val categorizationAssistService: CategorizationAssistService,
+    private val categorizationAssistService: HybridCategorizationAssistService,
     private val aiCapabilityRouter: AiCapabilityRouter,
     private val inputBuilder: CategorizationAssistInputBuilder,
     private val categoryRepository: CategoryRepository,

@@ -1,0 +1,110 @@
+# GR-14u53 — single-star-import fabrication fix in _resolve_type (the
+# reviewer's tracked ISSUE-6 from the u49 design review; a
+# deletion-trap-family defect).
+#
+# DEFECT: `_resolve_type`'s single-star-import branch returned
+# `star_prefixes[0] + "." + simple` as EXACT-EXTERNAL with NO known-root
+# check — fabricating exact-external FQCNs for ANY unresolvable simple
+# name in a one-star-import file (the canonical example:
+# `androidx.work.target` from `import androidx.work.*` in
+# DataRetentionWorker.kt, which made the worker's `target.purge(cutoff)`
+# dispatch false-external and masked the real fan-out path during u49's
+# first implementation attempt).  The multi-star branch already applied
+# the correct confidence discipline (corpus owner or known-root external,
+# else unknown); the one-star branch was the outlier.  Fabrication is a
+# deletion-trap-family defect: a fabricated exact-external edge makes the
+# engine CLAIM a resolved shape that does not exist, which can mask real
+# reachability (the u44/u45 counterexample-exposure family) or blank a
+# callable's uncertainty classification.
+#
+# FIX (one branch, mirroring the multi-star discipline):
+#   - the `len(star_prefixes) == 1` branch now commits a candidate ONLY
+#     when it is a corpus owner (-> corpus) or its package root is in
+#     _KNOWN_EXTERNAL_ROOTS (java/javax/kotlin/android/androidx — ->
+#     external); anything else returns ("", "unknown") — fail closed.
+#   - The historical rationale for the one-star shortcut — AppDatabase.kt's
+#     RoomDatabase resolution so `super.onCreate` stops name-matching — is
+#     PRESERVED: `androidx.room` is a known external root, so
+#     `androidx.room.RoomDatabase` still resolves exact-external
+#     (probe-verified).
+#
+# EDGE A/B EVIDENCE (all 53,789 corpus edges compared pre/post) — EXACT
+#   match with the orchestrator's pre-measured shape:
+#     165 removed, ALL exact_synchronous/external=True fabrications;
+#     165 added: 140 unresolved_target(uncertain) + 25
+#     async_dispatch(uncertain);
+#     ZERO previously-exact NON-fabricated edges changed (hard-stop
+#     clean).
+#   Blast radius by file (ViewModel-heavy, Compose star imports):
+#     ReceiptMatchingViewModel 59, HomeViewModel 31,
+#     WarrantyTrackerViewModel 28, TransactionsViewModel 13,
+#     TransactionClassifier 10, DebugViewModel 9,
+#     AccountingExportRepository 6, WarrantyTrackerRepository 4,
+#     ExpenseRepository 2, + 3 singles.
+#
+# # HONEST-SCOPE NOTE: cb58/cb59 pin the corpus/known-root legs at the edge layer and may
+# pass identically at base (their receivers resolve before the star branch); the changed
+# one-star branch itself is pinned by cb57 (edge layer) and the companion unit test
+# (resolver level, androidx.room.RoomDatabase).
+# KNOWN LIMITATION: kotlinx is not in _KNOWN_EXTERNAL_ROOTS - a future one-star
+# kotlinx.* import whose receiver has no other binding now fails closed as unknown
+# (honest; the current corpus resolves those receivers via other legs, verified by
+# the zero-non-fabricated-edges-changed A/B evidence).  RESOLVED by GR-14u55
+# (kotlinx added to _KNOWN_EXTERNAL_ROOTS; the dual-star java.util fabrication
+# fiction dissolved — see GR-14u55.yml).
+FIXTURES (3 new, cb57..cb59; consolidated manifest 110 -> 113):
+#   cb57 SI-neg-fabrication: a one-star project-local import
+#        (fixtures.starfix53.* — root `fixtures` is NOT a known external
+#        root, the exact fabrication shape) with an unresolvable receiver
+#        -> UNRESOLVED_TARGET (the regression pin)
+#   cb58 SI-pos-corpus: a one-star import whose candidate IS a corpus
+#        owner -> corpus resolution preserved (EXACT_SYNCHRONOUS)
+#   cb59 SI-pos-external: a one-star kotlin.collections.* import and a
+#        StringBuilder receiver -> the known-root external case preserved
+#        (EXACT_SYNCHRONOUS; kotlin.StringBuilder external)
+#   The multi-star behavior is untouched (the u18 multi-star fixtures
+#   already pin it; all 4 pass unchanged).
+#
+# PIN AMENDMENT (disclosed): the u18 pin
+#   test_single_star_import_resolves_to_its_package asserted the OLD
+#   no-root-check shortcut (`com.example.corpus.types.Thing` as
+#   external) — it pinned the fabrication.  Amended to the new fail-closed
+#   expectation with a full disclosure comment, PLUS a new companion pin
+#   (test_single_star_import_known_root_external_still_resolves) locking
+#   the legitimate androidx.room.RoomDatabase case.  6/6 pass.
+#
+# OUTCOME (board, pre 8b1b5d03... -> post dc8c91b88b5561af, double run
+# byte-identical): ZERO rows moved.  proofStates byte-identical:
+#   proven_helper 338, restore 1, worker 14, ambiguous 3, async 23,
+#   counterexamples 0.  The 165 de-fabricated edges all live in
+#   ViewModel/repository callables whose rows were ALREADY honest-unproven
+#   via other deciders — the fabricated exact edges were not deciding any
+#   row (they were noise inherited from the pre-u47 preservation-rule
+#   era).  The honesty gain is structural: the engine no longer CLAIMS
+#   resolved shapes that do not exist, and the 140+25 uncertain edges are
+#   now visible to future deciders instead of being hidden behind
+#   fabricated exactness.  No counterexample surfaced (the de-fabricated
+#   sites carry no mutation rows).
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+#   regressed, 0 rows in unproven_external_entry, 0 previously-exact
+#   non-fabricated edges changed, 0 unexpected board delta (379 entries
+#   diffed — zero row movements).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 105/105 checked, 105 passed, exit 0 (102 prior + 3)
+#   - scripts/ci: 1259 passed, 14 failed — byte-identical to the base
+#     commit's failure set (the u18 pin amendment added 1 test: 1258+1);
+#     freshness-stamp and platform-conditional tests,
+#     environment-dependent, pre-existing
+#   - board double run byte-identical dc8c91b88b5561af
+#   - edge A/B: exactly the orchestrator's measured shape (165/165,
+#     all-fabrications removed, zero non-fabricated exact edges changed)
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the 3 open-interface ambiguous rows (u50 owner decision);
+#   the tracked candidate/accounting pair regeneration (pre-existing
+#   --verify drift, u51b disclosure); the F-PROCESSBATCH (8) /
+#   F-POSTCOMMIT (6) families (u43 table).
+status: COMPLETE_AT_BOARD_dc8c91b8

@@ -52,7 +52,13 @@ import builtins
 import pytest
 
 # Import the module under test directly (its CLI only runs under __main__).
+# Sibling-test convention: put BOTH the scripts directory (flat-mode names)
+# and the repository root (the ``scripts.*`` package namespace used by
+# db_guard modules' package-relative imports) on sys.path.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT_STR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT_STR not in sys.path:
+    sys.path.insert(0, _REPO_ROOT_STR)
 import verify_db_access_boundaries as _mod  # noqa: E402
 
 scan = _mod.scan
@@ -144,6 +150,21 @@ def _normalized(entries):
 def _write_policy_yaml(tmp_path, entries_body):
     policy = tmp_path / "policy.yml"
     policy.write_text("entries:\n" + entries_body, encoding="utf-8")
+    return str(policy)
+
+
+def _write_v2_policy_yaml(tmp_path, entries_body):
+    """Write a schemaVersion-2 ownership policy document (activated contract).
+
+    Post-activation ``load_db_ownership_policy`` accepts ONLY v2 documents,
+    so tests that exercise acceptance/evidence/structural-decoupling paths
+    must install this shape.  ``_write_policy_yaml`` deliberately keeps
+    writing the retired v1 shape for the loader-rejection tests.
+    """
+    policy = tmp_path / "policy.yml"
+    policy.write_text(
+        "schemaVersion: 2\nentries:\n" + entries_body, encoding="utf-8"
+    )
     return str(policy)
 
 
@@ -292,6 +313,9 @@ def test_ownership_loader_rejects_missing_method(tmp_path):
 
 
 def test_ownership_loader_rejects_noncanonical_path_bare_basename(tmp_path, capsys):
+    """Post-activation the active loader is the v2 loader: a legacy-shaped
+    document is rejected with CONTROLLED CODES ONLY — raw policy path text
+    never reaches stderr — plus the fixed not-v2 promotion guidance."""
     policy_path = _write_policy_yaml(tmp_path, """
   - path: SomeRepo.kt
     class: SomeRepo
@@ -307,8 +331,10 @@ def test_ownership_loader_rejects_noncanonical_path_bare_basename(tmp_path, caps
         load_db_ownership_policy(policy_path)
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "not canonical" in err
-    assert "SomeRepo.kt" in err
+    assert "POLICY_ERROR_" in err
+    assert _mod.DB_V2_ACTIVE_POLICY_NOT_V2 in err
+    # Privacy: raw policy path/payload text is never echoed.
+    assert "SomeRepo.kt" not in err
 
 
 def test_ownership_loader_rejects_noncanonical_path_backslash(tmp_path):
@@ -329,6 +355,8 @@ def test_ownership_loader_rejects_noncanonical_path_backslash(tmp_path):
 
 
 def test_ownership_loader_rejects_missing_daos(tmp_path, capsys):
+    """A legacy-shaped document without DAO identity is rejected by the v2
+    loader with controlled codes only (bounded stderr, no payload echo)."""
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
     class: SomeRepo
@@ -343,8 +371,9 @@ def test_ownership_loader_rejects_missing_daos(tmp_path, capsys):
         load_db_ownership_policy(policy_path)
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "daos" in err
-    assert "SomeRepo.kt" in err
+    assert "POLICY_ERROR_" in err
+    assert _mod.DB_V2_ACTIVE_POLICY_NOT_V2 in err
+    assert "SomeRepo.kt" not in err
 
 
 def test_ownership_loader_rejects_empty_daos(tmp_path):
@@ -365,6 +394,8 @@ def test_ownership_loader_rejects_empty_daos(tmp_path):
 
 
 def test_ownership_loader_rejects_missing_barrier_required(tmp_path, capsys):
+    """A legacy-shaped document without barrier metadata is rejected by the
+    v2 loader with controlled codes only (bounded stderr, no payload echo)."""
     policy_path = _write_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
     class: SomeRepo
@@ -379,8 +410,9 @@ def test_ownership_loader_rejects_missing_barrier_required(tmp_path, capsys):
         load_db_ownership_policy(policy_path)
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "barrier_required" in err
-    assert "SomeRepo.kt" in err
+    assert "POLICY_ERROR_" in err
+    assert _mod.DB_V2_ACTIVE_POLICY_NOT_V2 in err
+    assert "SomeRepo.kt" not in err
 
 
 def test_ownership_loader_rejects_string_barrier_required(tmp_path):
@@ -418,60 +450,88 @@ def test_ownership_loader_rejects_integer_barrier_required(tmp_path):
 
 
 def test_ownership_loader_rejects_unknown_field(tmp_path, capsys):
-    policy_path = _write_policy_yaml(tmp_path, """
+    """Unknown keys are configuration errors: the v2 loader reports the
+    controlled unknown-field code (the mistyped key label is bounded
+    configuration metadata) plus the fixed not-v2 classification."""
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
-    class: SomeRepo
+    ownerFqcn: com.example.SomeRepo
+    kind: function
     method: "doWork"
+    receiver: null
+    parameterTypes: []
     daoz: [expenseDao]
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     with pytest.raises(SystemExit) as exc_info:
         load_db_ownership_policy(policy_path)
     assert exc_info.value.code == 2
     err = capsys.readouterr().err
-    assert "unknown key" in err
-    assert "SomeRepo.kt" in err
+    assert "POLICY_ERROR_UNKNOWN_FIELD" in err
+    assert _mod.DB_V2_ACTIVE_POLICY_NOT_V2 in err
+    assert "SomeRepo.kt" not in err
 
 
 def test_ownership_loader_accepts_exact_entry(tmp_path):
-    policy_path = _write_policy_yaml(tmp_path, """
+    """Post-activation the loader returns immutable typed PolicyEntry objects
+    loaded from a schemaVersion-2 document."""
+    from scripts.db_guard.policy_model import BarrierMode, CallableKind
+
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/SomeRepo.kt
-    class: SomeRepo
+    ownerFqcn: com.example.SomeRepo
+    kind: function
     method: "doWork"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insertOrIgnore
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     entries = load_db_ownership_policy(policy_path)
     assert len(entries) == 1
-    assert entries[0]["method"] == "doWork"
-    assert entries[0]["operation"] == "insertOrIgnore"
+    entry = entries[0]
+    assert entry.method == "doWork"
+    assert entry.operation == "insertOrIgnore"
+    assert entry.owner_fqcn == "com.example.SomeRepo"
+    assert entry.kind is CallableKind.FUNCTION
+    assert entry.dao_accessor == "expenseDao"
+    assert entry.dao_fqcn == "com.example.ExpenseDao"
+    assert entry.barrier_mode is BarrierMode.HELPER
 
 
-def test_ownership_loader_accepts_worker_barrier_via_metadata(tmp_path):
-    policy_path = _write_policy_yaml(tmp_path, """
+def test_ownership_loader_accepts_worker_mediated_metadata(tmp_path):
+    """workerMediated barrierMode metadata loads as the activated equivalent
+    of the retired worker ``barrier_via`` documentation field."""
+    from scripts.db_guard.policy_model import BarrierMode
+
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
-    class: DataRetentionWorker
+    ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
+    kind: function
     method: "doWork"
-    daos: [privacyAuditDao]
+    receiver: null
+    parameterTypes: []
+    daoAccessor: privacyAuditDao
+    daoFqcn: com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
     operation: insert
-    barrier_required: false
-    barrier_via: WorkerExecutionGuard
+    barrierMode: workerMediated
     reason: WorkerExecutionGuard-mediated write protection
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     entries = load_db_ownership_policy(policy_path)
     assert len(entries) == 1
-    assert entries[0]["barrier_required"] is False
-    assert entries[0]["barrier_via"] == "WorkerExecutionGuard"
+    assert entries[0].barrier_mode is BarrierMode.WORKER_MEDIATED
 
 
 # ── 3. Structural exception loader (bounded contract) ─────────────────────────
@@ -651,7 +711,6 @@ def test_structural_loader_rejects_invalid_operation_in_manifest(tmp_path):
     manifest_path = tmp_path / "manifest.yml"
     manifest_path.write_text(
         "counts:\n"
-        "  ownership_entries: 99\n"
         "  structural_entries: 1\n"
         "expected:\n"
         "  - path: app/src/main/java/com/example/SomeClass.kt\n"
@@ -4249,53 +4308,101 @@ def test_source_evidence_invalid_entry_metadata_fails_closed(tmp_path):
     assert "operation: write" in errors[0]["detail"]
 
 
+# GR-04 triage aligned the test to the v2 report contract (pre-existing staleness, not a weakening).
+# PR-GR-07 Slice 2: the consulted stage is now the ACTIVATED v2 evidence gate.
 def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path, monkeypatch, capsys):
-    """The CLI maps a source-evidence failure to exit 2 and prints the
-    controlled DB_POLICY_SOURCE_EVIDENCE diagnostic to stderr — a stale policy
-    entry can never silently approve anything."""
+    """The CLI maps a v2 source-evidence failure to return code 2, prints
+    exactly the single umbrella stderr line, and records the controlled
+    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic in the --findings-output JSON
+    (OWNER_MISSING stays an internal detail) — a stale policy entry can never
+    silently approve anything."""
+    import json
+
     src = _fixture_source(tmp_path, monkeypatch)
     _write_kt(
         src,
         "com/example/FooRepo.kt",
-        """class FooRepo {
-    fun doWork() {
-        expenseDao.insert(e)
+        """package com.example
+
+data class Item(val id: Int)
+
+@androidx.room.Dao
+interface ExpenseDao {
+    @androidx.room.Insert
+    fun insert(item: Item)
+}
+
+class FooRepo(private val expenseDao: ExpenseDao) {
+    fun doWork(item: Item) {
+        expenseDao.insert(item)
     }
 }
 """,
     )
-    # Valid policy metadata, but the referenced class does not exist in the
-    # fixture source — the source-evidence validator fails with CLASS_MISSING.
-    policy_path = _write_policy_yaml(tmp_path, """
+    # Valid schemaVersion-2 metadata whose ownerFqcn does not exist in the
+    # fixture source — the activated v2 evidence validator fails with
+    # OWNER_MISSING before any scanner matching runs.
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/FooRepo.kt
-    class: MissingRepo
+    ownerFqcn: com.example.MissingRepo
+    kind: function
     method: "doWork"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: [com.example.Item]
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     exceptions_path = tmp_path / "exceptions.yml"
     exceptions_path.write_text("entries: []\n", encoding="utf-8")
+
+    # Canonical raw-query classification policy at its DEFAULT location so
+    # the activated pipeline's inventory stage stays clean and the run
+    # reaches the v2 evidence stage under test.
+    raw_policy_path = tmp_path / "config" / "guards" / "db_raw_query_classification.yml"
+    raw_policy_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_policy_path.write_text("version: 1\nmethods: []\n", encoding="utf-8")
+
+    # Pass-through seam spy: proves the CLI actually consults the activated
+    # v2 evidence stage while the real OWNER_MISSING detection runs.
+    real_evidence_check = _mod.verify_v2_policy_source_evidence
+    evidence_codes = []
+
+    def _evidence_spy(entries, repo_root, *args, **kwargs):
+        result = real_evidence_check(entries, repo_root, *args, **kwargs)
+        evidence_codes.extend(d.code for d in result.diagnostics)
+        return result
+
+    monkeypatch.setattr(_mod, "verify_v2_policy_source_evidence", _evidence_spy)
 
     # SOURCE_DIR is computed at import time; pin it (and PROJECT_ROOT) to the
     # fixture tree so main() resolves the fixture policy against fixture source.
     monkeypatch.setattr(_mod, "SOURCE_DIR", str(src))
     monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+    findings_output = tmp_path / "db_guard_findings.json"
     monkeypatch.setattr(sys, "argv", [
         "verify_db_access_boundaries.py",
         "--ownership-policy", policy_path,
         "--structural-exceptions", str(exceptions_path),
+        "--findings-output", str(findings_output),
     ])
 
-    with pytest.raises(SystemExit) as exc_info:
-        _mod.main()
-    assert exc_info.value.code == 2
+    assert _mod.main() == 2
     err = capsys.readouterr().err
-    assert "DB_POLICY_SOURCE_EVIDENCE" in err
-    assert "CLASS_MISSING" in err
+    assert err == "ERROR: DB access discovery infrastructure diagnostics present\n"
+    # The activated v2 evidence stage really ran and really detected the
+    # missing owner.
+    assert "DB_V2_POLICY_OWNER_MISSING" in evidence_codes
+    # Detailed codes surface only through the findings JSON, never on stderr.
+    report = json.loads(findings_output.read_text(encoding="utf-8"))
+    codes = [diagnostic.get("code") for diagnostic in report["diagnostics"]]
+    assert codes == ["DB_POLICY_SOURCE_EVIDENCE_INVALID"]
+    assert report["findings"] == []
+    assert report["statistics"]["trusted"] is False
 
 
 # ── 20. Structural expected-methods manifest gate ─────────────────────────────
@@ -4305,8 +4412,11 @@ def test_source_evidence_cli_wiring_exits_2_with_controlled_diagnostic(tmp_path,
 #   * exact tuple-set equivalence between the manifest's `expected` + `fixtures`
 #     tuple set and the current structural-exception tuple set (missing/extra
 #     tuples and duplicates all fail);
-#   * pinned entry counts (99 ownership / 62 structural) via the manifest's
-#     `counts` section;
+#   * the pinned structural entry count (64 — GR-08j raised it from 62 by
+#     adding two exact named-object Room-migration tuples) via the manifest's
+#     `counts` section — the manifest governs structural exceptions ONLY, so a
+#     legacy `ownership_entries` counts key is unknown-count-key metadata
+#     that fails closed as MANIFEST_INVALID (GR-04 decoupling);
 #   * exact source evidence for every manifest tuple (canonical path resolves
 #     to a real file, class declared exactly once, method_pattern fullmatches a
 #     declaration, and — for `expected` tuples — the operation token has EXACT
@@ -4333,14 +4443,18 @@ def _manifest_entries_yaml(entries):
 
 
 def _write_manifest_yaml(tmp_path, expected_entries, fixture_entries=(),
-                         ownership=99, structural=62):
-    """Write a structural expected-methods manifest into the temp tree."""
+                         structural=62):
+    """Write a structural expected-methods manifest into the temp tree.
+
+    The manifest governs structural exceptions ONLY: its ``counts`` block
+    carries ``structural_entries`` and nothing else (GR-04 decoupling — an
+    ``ownership_entries`` key is unknown-count-key metadata and fails closed).
+    """
     manifest = tmp_path / "manifest.yml"
     content = (
         "baseline:\n"
         '  commit: "test"\n'
         "counts:\n"
-        f"  ownership_entries: {ownership}\n"
         f"  structural_entries: {structural}\n"
     )
     if expected_entries:
@@ -4355,12 +4469,15 @@ def _write_manifest_yaml(tmp_path, expected_entries, fixture_entries=(),
     return str(manifest)
 
 
-def _manifest_dict(expected_entries, fixture_entries=(), ownership=99, structural=62):
-    """Build a parsed manifest mapping (the validator API input form)."""
+def _manifest_dict(expected_entries, fixture_entries=(), structural=62):
+    """Build a parsed manifest mapping (the validator API input form).
+
+    Counts carry ``structural_entries`` ONLY — the manifest never pins
+    ownership cardinality (GR-04 decoupling).
+    """
     return {
         "baseline": {"commit": "test"},
         "counts": {
-            "ownership_entries": ownership,
             "structural_entries": structural,
         },
         "expected": list(expected_entries),
@@ -4415,8 +4532,8 @@ def _sexc_entries_for(tuples):
 def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, monkeypatch):
     """The manifest's expected tuple set EXACTLY equals the structural
     exceptions YAML's entry tuple set (both copied to temp files and loaded
-    through the production loaders) — with the pinned 99/62 counts and full
-    source evidence the gate passes cleanly."""
+    through the production loaders) — with the pinned structural count and
+    full source evidence the gate passes cleanly."""
     src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
     class_name = "SomeClass"
     tuples = _manifest_tuples(path, class_name)
@@ -4429,8 +4546,9 @@ def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, 
     manifest_path = _write_manifest_yaml(tmp_path, tuples)
     manifest = load_db_structural_expected_methods(manifest_path)
 
+    # Synthetic manifests cannot satisfy the immutable checked-in classification contract; fixture mode isolates the behavior under test.
     errors = verify_structural_exceptions_manifest(
-        structural, manifest, str(src), ownership_count=99
+        structural, manifest, str(src), enforce_canonical_contract=False,
     )
     assert errors == [], errors
 
@@ -4438,19 +4556,25 @@ def test_manifest_exact_tuple_equality_against_structural_yaml_passes(tmp_path, 
 def test_manifest_missing_tuple_fails_closed(tmp_path, monkeypatch):
     """A manifest tuple with no EXACT structural exception entry fails with the
     controlled MISSING_TUPLE code — and no other code fires."""
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=63)
+    # GR-08j aligned the fixture arithmetic to the current canonical contract:
+    # the pinned structural count is 64 (62 -> 64), and the canonical-mode
+    # count stage requires counts.structural_entries == 64 AND exactly 64
+    # current entries.  The fixture therefore carries 65 manifest tuples over
+    # a 64-entry current set, leaving exactly one manifest tuple (m64)
+    # uncovered.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=65)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=63)
-    # Current structural exceptions omit m62; the manifest keeps it.
+    tuples = _manifest_tuples(path, class_name, n=65)
+    # Current structural exceptions omit m64; the manifest keeps it.
     current = _sexc_entries_for(tuples[:-1])
-    manifest = _manifest_dict(tuples)
+    manifest = _manifest_dict(tuples, structural=64)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     missing = [e for e in errors if e.startswith("MISSING_TUPLE")]
     assert len(missing) == 1, errors
-    assert "m62" in missing[0], missing
+    assert "m64" in missing[0], missing
     assert all(not e.startswith("EXTRA_TUPLE") for e in errors), errors
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
 
@@ -4459,19 +4583,22 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
     """A structural exception tuple with no manifest coverage fails with the
     controlled EXTRA_TUPLE code — an entry added without a manifest update can
     never silently pass."""
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=62)
+    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 64 current entries over
+    # a 63-tuple manifest leaves exactly one uncovered exception tuple (m63).
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=62)
-    # Current exceptions keep m61; the manifest does not cover it.
+    tuples = _manifest_tuples(path, class_name, n=64)
+    # Current exceptions keep m63; the manifest does not cover it.
     current = _sexc_entries_for(tuples)
-    manifest = _manifest_dict(tuples[:-1])
+    manifest = _manifest_dict(tuples[:-1], structural=64)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     extra = [e for e in errors if e.startswith("EXTRA_TUPLE")]
     assert len(extra) == 1, errors
-    assert "m61" in extra[0], extra
+    assert "m63" in extra[0], extra
     assert all(not e.startswith("MISSING_TUPLE") for e in errors), errors
     assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
 
@@ -4479,15 +4606,18 @@ def test_manifest_extra_tuple_fails_closed(tmp_path, monkeypatch):
 def test_manifest_duplicate_tuple_fails_closed(tmp_path, monkeypatch):
     """A duplicated tuple inside the CURRENT structural exceptions fails with
     the controlled DUPLICATE_TUPLE code."""
-    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=61)
+    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 63 distinct tuples plus
+    # one duplicate give exactly 64 current entries against the 64-pin.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=63)
     class_name = "SomeClass"
-    tuples = _manifest_tuples(path, class_name, n=61)
+    tuples = _manifest_tuples(path, class_name, n=63)
     current = _sexc_entries_for(tuples)
     current.append(_sexc(path, class_name, "m0", "execSQL"))  # duplicate m0
-    manifest = _manifest_dict(tuples)
+    manifest = _manifest_dict(tuples, structural=64)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     dup = [e for e in errors if e.startswith("DUPLICATE_TUPLE")]
     assert len(dup) == 1, errors
@@ -4543,7 +4673,7 @@ def test_manifest_malformed_entry_fails_closed(tmp_path):
     invalid = [
         e for e in verify_structural_exceptions_manifest(
             _sexc_entries_for(tuples), _manifest_dict(bad_path),
-            str(tmp_path), ownership_count=99,
+            str(tmp_path),
         )
         if e.startswith("MANIFEST_INVALID")
     ]
@@ -4551,24 +4681,70 @@ def test_manifest_malformed_entry_fails_closed(tmp_path):
     assert any("not canonical" in e for e in invalid), invalid
 
 
-def test_manifest_count_mismatch_fails_closed(tmp_path, monkeypatch):
-    """Manifest counts that drift from the pinned 99/62 contract fail with the
-    controlled COUNT_MISMATCH code — on the manifest side, the current
-    ownership count, and the current structural count."""
+def test_manifest_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
+    """A manifest whose counts.structural_entries drifts from the pinned 64
+    contract fails with the controlled COUNT_MISMATCH code — on both the
+    manifest side and the current-structural side.  Ownership cardinality is
+    never part of this contract (GR-04 decoupling)."""
     src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
     class_name = "SomeClass"
     tuples = _manifest_tuples(path, class_name)
     current = _sexc_entries_for(tuples)
 
-    manifest = _manifest_dict(tuples, ownership=98, structural=61)
+    manifest = _manifest_dict(tuples, structural=61)
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     count_errors = [e for e in errors if e.startswith("COUNT_MISMATCH")]
-    assert len(count_errors) >= 2, errors
-    assert any("ownership_entries" in e for e in count_errors), count_errors
-    assert any("structural_entries" in e for e in count_errors), count_errors
-    assert all("99" in e or "62" in e for e in count_errors), count_errors
+    assert len(count_errors) == 2, errors
+    # One error names the manifest counts key drift; the other names the
+    # current structural side's entry count against that manifest contract.
+    assert any("counts.structural_entries" in e for e in count_errors), count_errors
+    assert any("current structural exceptions" in e for e in count_errors), count_errors
+    assert any("61" in e for e in count_errors), count_errors
+    assert all(not e.startswith("MANIFEST_INVALID") for e in errors), errors
+
+
+def test_manifest_legacy_ownership_count_key_fails_closed(tmp_path, monkeypatch):
+    """Old-shape manifest metadata — a ``counts.ownership_entries`` key — is
+    unknown-count-key configuration and fails closed as MANIFEST_INVALID
+    before any tuple, count, or source check (GR-04 decoupling: the manifest
+    governs structural exceptions ONLY).  The identical manifest without the
+    legacy key passes cleanly, so the failure is attributable to the ownership
+    key alone and re-coupling ownership into the manifest cannot pass."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+    current = _sexc_entries_for(tuples)
+
+    # Baseline decoupling assertion: the structurally exact manifest passes
+    # with NO ownership input whatsoever.
+    # Synthetic manifests cannot satisfy the immutable checked-in classification contract; fixture mode isolates the behavior under test.
+    assert verify_structural_exceptions_manifest(
+        current, _manifest_dict(tuples), str(src),
+        enforce_canonical_contract=False,
+    ) == []
+
+    # Adding ONLY the legacy ownership count key fails closed — even though
+    # every structural value (tuples, count, evidence) is correct.
+    legacy = _manifest_dict(tuples)
+    legacy["counts"]["ownership_entries"] = len(current)
+    errors = verify_structural_exceptions_manifest(
+        current, legacy, str(src), enforce_canonical_contract=False,
+    )
+    assert errors, "legacy ownership_entries metadata must fail closed"
+    assert all(e.startswith("MANIFEST_INVALID") for e in errors), errors
+    assert any(
+        "unknown 'counts' key(s) ['ownership_entries']" in e for e in errors
+    ), errors
+    assert all(
+        not e.startswith(("COUNT_MISMATCH", "MISSING_TUPLE", "EXTRA_TUPLE",
+                          "SOURCE_")) for e in errors
+    ), errors
+
+    # The shared metadata validator reports the same unknown-count-key detail.
+    meta = structural_manifest_metadata_errors(legacy)
+    assert "unknown 'counts' key(s) ['ownership_entries']" in meta, meta
 
 
 def test_manifest_source_class_missing_fails_closed(tmp_path, monkeypatch):
@@ -4584,7 +4760,7 @@ def test_manifest_source_class_missing_fails_closed(tmp_path, monkeypatch):
     manifest = _manifest_dict(tuples)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     class_missing = [e for e in errors if e.startswith("SOURCE_CLASS_MISSING")]
     assert len(class_missing) == 1, errors
@@ -4604,7 +4780,7 @@ def test_manifest_source_declaration_missing_fails_closed(tmp_path, monkeypatch)
     manifest = _manifest_dict(tuples)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     decl = [e for e in errors if e.startswith("SOURCE_DECLARATION_MISSING")]
     assert len(decl) == 1, errors
@@ -4624,7 +4800,7 @@ def test_manifest_source_evidence_missing_fails_closed(tmp_path, monkeypatch):
     manifest = _manifest_dict(tuples)
 
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src)
     )
     evidence = [e for e in errors if e.startswith("SOURCE_EVIDENCE_MISSING")]
     assert len(evidence) == 1, errors
@@ -4647,61 +4823,111 @@ def test_manifest_fixture_tuple_requires_declaration_only(tmp_path, monkeypatch)
     current = _sexc_entries_for(tuples)
     manifest = _manifest_dict(expected, fixtures)
 
+    # Synthetic manifests cannot satisfy the immutable checked-in classification contract; fixture mode isolates the behavior under test.
     errors = verify_structural_exceptions_manifest(
-        current, manifest, str(src), ownership_count=99
+        current, manifest, str(src), enforce_canonical_contract=False,
     )
     assert errors == [], errors
 
 
+# GR-04 triage aligned the test to the v2 report contract (pre-existing staleness, not a weakening).
 def test_manifest_cli_wiring_exits_2_with_db_structural_manifest(tmp_path, monkeypatch, capsys):
-    """The CLI maps a structural-manifest failure to exit 2 and prints the
-    controlled DB_STRUCTURAL_MANIFEST diagnostic to stderr — a stale manifest
-    can never silently approve file operations."""
+    """The CLI maps a structural-manifest failure to return code 2, prints
+    exactly the single umbrella stderr line, and records the controlled
+    DB_POLICY_SOURCE_EVIDENCE_INVALID diagnostic in the --findings-output JSON
+    (COUNT_MISMATCH stays an internal detail string) — a stale manifest can
+    never silently approve file operations."""
+    import json
+
     src = _fixture_source(tmp_path, monkeypatch)
     _write_kt(
         src,
         "com/example/FooRepo.kt",
-        """class FooRepo {
-    fun doWork() {
-        expenseDao.insert(e)
+        """package com.example
+
+data class Item(val id: Int)
+
+@androidx.room.Dao
+interface ExpenseDao {
+    @androidx.room.Insert
+    fun insert(item: Item)
+}
+
+class FooRepo(private val expenseDao: ExpenseDao) {
+    fun doWork(item: Item) {
+        expenseDao.insert(item)
     }
 }
 """,
     )
-    # Ownership policy backed by exact source evidence (passes the
-    # source-evidence stage), empty structural exceptions, and a manifest whose
-    # pinned counts do not match the current policy sizes — a COUNT_MISMATCH
-    # that must exit 2 under the DB_STRUCTURAL_MANIFEST prefix.
-    policy_path = _write_policy_yaml(tmp_path, """
+    # Ownership policy backed by exact schemaVersion-2 metadata AND exact
+    # source evidence (passes the activated loader and v2 evidence stages),
+    # empty structural exceptions, and a manifest whose pinned structural
+    # count does not match the current structural size — a COUNT_MISMATCH
+    # that must exit 2 under the controlled DB_POLICY_SOURCE_EVIDENCE_INVALID
+    # report diagnostic.
+    policy_path = _write_v2_policy_yaml(tmp_path, """
   - path: app/src/main/java/com/example/FooRepo.kt
-    class: FooRepo
+    ownerFqcn: com.example.FooRepo
+    kind: function
     method: "doWork"
-    daos: [expenseDao]
+    receiver: null
+    parameterTypes: [com.example.Item]
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
     operation: insert
-    barrier_required: false
+    barrierMode: helper
     reason: test
     owner: "@test"
-    linked_issue: "TEST-001"
+    linkedIssue: "TEST-001"
 """)
     exceptions_path = tmp_path / "exceptions.yml"
     exceptions_path.write_text("entries: []\n", encoding="utf-8")
-    manifest_path = _write_manifest_yaml(tmp_path, [], ownership=99, structural=62)
+    manifest_path = _write_manifest_yaml(tmp_path, [], structural=62)
 
+    # Canonical raw-query classification policy at its DEFAULT location so
+    # the activated pipeline's inventory stage stays clean and the run
+    # reaches the structural-manifest gate under test.
+    raw_policy_path = tmp_path / "config" / "guards" / "db_raw_query_classification.yml"
+    raw_policy_path.parent.mkdir(parents=True, exist_ok=True)
+    raw_policy_path.write_text("version: 1\nmethods: []\n", encoding="utf-8")
+
+    # Pass-through seam spy: proves the CLI actually consults the structural
+    # manifest gate while the real COUNT_MISMATCH detection runs.
+    real_manifest_check = _mod.verify_structural_exceptions_manifest
+    manifest_calls = []
+    manifest_results = []
+
+    def _manifest_spy(*args, **kwargs):
+        result = real_manifest_check(*args, **kwargs)
+        manifest_calls.append(args)
+        manifest_results.append(result)
+        return result
+
+    monkeypatch.setattr(_mod, "verify_structural_exceptions_manifest", _manifest_spy)
     monkeypatch.setattr(_mod, "SOURCE_DIR", str(src))
     monkeypatch.setattr(_mod, "PROJECT_ROOT", str(tmp_path))
+    findings_output = tmp_path / "db_guard_findings.json"
     monkeypatch.setattr(sys, "argv", [
         "verify_db_access_boundaries.py",
         "--ownership-policy", policy_path,
         "--structural-exceptions", str(exceptions_path),
         "--structural-manifest", manifest_path,
+        "--findings-output", str(findings_output),
     ])
 
-    with pytest.raises(SystemExit) as exc_info:
-        _mod.main()
-    assert exc_info.value.code == 2
+    assert _mod.main() == 2
     err = capsys.readouterr().err
-    assert "DB_STRUCTURAL_MANIFEST" in err
-    assert "COUNT_MISMATCH" in err
+    assert err == "ERROR: DB access discovery infrastructure diagnostics present\n"
+    # The manifest gate really ran and really detected the count mismatch.
+    assert len(manifest_calls) == 1
+    assert any(error.startswith("COUNT_MISMATCH") for error in manifest_results[0])
+    # Detailed codes surface only through the findings JSON, never on stderr.
+    report = json.loads(findings_output.read_text(encoding="utf-8"))
+    codes = [diagnostic.get("code") for diagnostic in report["diagnostics"]]
+    assert codes == ["DB_POLICY_SOURCE_EVIDENCE_INVALID"]
+    assert report["findings"] == []
+    assert report["statistics"]["trusted"] is False
 
 
 # ── 21. Immutable manifest classification contract ────────────────────────────
@@ -4714,9 +4940,10 @@ def test_manifest_cli_wiring_exits_2_with_db_structural_manifest(tmp_path, monke
 # fixtures bucket.
 #
 # The checked-in contract tests below load the REAL production files through
-# the production loaders (no synthetic temp fixtures): the 99/62 counts, the
-# exact tuple classification, and the full structural-manifest gate must all
-# pass on the actual repo state.
+# the production loaders (no synthetic temp fixtures): the pinned structural
+# count (64 — GR-08j raised it from 62; the manifest carries no ownership
+# count), the exact tuple classification, and the full structural-manifest
+# gate must all pass on the actual repo state.
 
 def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
     """Build a parsed manifest mapping from canonical (path, class,
@@ -4732,7 +4959,6 @@ def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
     return {
         "baseline": {"commit": "test"},
         "counts": {
-            "ownership_entries": 99,
             "structural_entries": 62,
         },
         "expected": [to_entry(t) for t in expected_tuples],
@@ -4741,11 +4967,11 @@ def _manifest_dict_from_tuples(expected_tuples, fixture_tuples=()):
 
 
 def test_manifest_immutable_contracts_pin_exact_counts():
-    """The immutable contracts pin EXACTLY 58 expected and 4 fixture tuples,
+    """The immutable contracts pin EXACTLY 60 expected and 4 fixture tuples,
     every tuple is canonical, and the two contracts are disjoint."""
-    assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 58
+    assert MANIFEST_IMMUTABLE_EXPECTED_COUNT == 60
     assert MANIFEST_IMMUTABLE_FIXTURE_COUNT == 4
-    assert len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES) == 58
+    assert len(MANIFEST_IMMUTABLE_EXPECTED_TUPLES) == 60
     assert len(MANIFEST_IMMUTABLE_FIXTURE_TUPLES) == 4
     assert MANIFEST_IMMUTABLE_EXPECTED_TUPLES.isdisjoint(
         MANIFEST_IMMUTABLE_FIXTURE_TUPLES
@@ -4835,7 +5061,7 @@ def test_manifest_classification_checked_in_manifest_accepted():
 def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     """The CURRENT structural exceptions YAML tuple set must EXACTLY equal the
     checked-in manifest's expected+fixtures tuple set — no missing, no extra,
-    no duplicates, and exactly the pinned 62 entries."""
+    no duplicates, and exactly the pinned 64 entries."""
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
     current_tuples = [
@@ -4849,29 +5075,645 @@ def test_manifest_current_structural_yaml_tuple_set_remains_exact():
     assert len(current_tuples) == len(set(current_tuples)), "duplicates in current YAML"
     assert len(manifest_tuples) == len(set(manifest_tuples)), "duplicates in manifest"
     assert set(current_tuples) == set(manifest_tuples)
-    assert len(current_tuples) == 62
-    assert len(manifest_tuples) == 62
+    assert len(current_tuples) == 64
+    assert len(manifest_tuples) == 64
 
 
-def test_checked_in_99_62_manifest_contract_via_production_apis():
-    """Canonical checked-in integration test — loads the ACTUAL ownership
-    policy, structural policy, and structural manifest from their production
-    paths and validates the 99/62 contract through the production loaders and
-    validators (no synthetic temp fixtures)."""
-    ownership = load_db_ownership_policy()
+def test_checked_in_structural_only_manifest_contract_via_production_apis():
+    """Canonical checked-in integration test — loads the ACTUAL policies and
+    structural manifest from their production paths and validates the
+    decoupled contract through the production loaders and validators (no
+    synthetic temp fixtures).
+
+    GR-04: the manifest pins the structural count ONLY — its counts block is
+    exactly ``{structural_entries: 64}`` with no ownership cardinality.
+
+    Activated truth (PR-GR-07 wave 2): the ACTIVE ownership policy IS the
+    promoted schemaVersion-2 document.  It loads cleanly through the
+    production v2 loader into exactly 477 immutable typed entries — a v1
+    document can never occupy the active path again, so there is no
+    not-v2 rejection left to pin here.
+
+    Derivation of the 477 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 477 schemaVersion-2
+    entry rows (each with exactly one ``ownerFqcn``/``daoAccessor``/
+    ``operation`` mutation identity; the v2 loader performs no dedupe), as
+    of the GR-14a exact-policy wave (5 rows for the default-@Transaction
+    mutators newly indexed by the GR-14a inventory rule) that grew the
+    document from the 472 GR-08m1-era rows, unchanged in count by the
+    GR-14b EXACT_IDENTITY_MOVE (the deleteReceipt|receiptEventDao|insert
+    row replaced 1:1 by the writeAssetDeleteFailedEvent direct owner row),
+    reduced 477 -> 475 by the GR-14c Pattern E removal of the two dead
+    legacy MIT-003 rows (DataRetentionWorker.doWork|privacyAuditDao and
+    WorkerRunLoggerImpl.start|backgroundJobRunDao; each write stays
+    authorized by its surviving GR-08p1 exact row).
+    Re-derive this pin after every policy promotion.
+    """
+    from scripts.db_guard.source_roots import load_source_root_manifest
+
+    entries = load_db_ownership_policy()
+    assert len(entries) == 475
+    # Every loaded row is an immutable typed v2 entry: no legacy dict rows.
+    for entry in entries:
+        assert hasattr(entry, "owner_fqcn")
+        assert hasattr(entry, "barrier_mode")
+        assert entry.path.startswith("app/src/main/java/")
+        assert entry.path.endswith(".kt")
+
     structural = load_db_structural_exceptions()
     manifest = load_db_structural_expected_methods()
 
-    assert len(ownership) == 99
-    assert len(structural) == 62
+    assert len(structural) == 64
     assert manifest["counts"] == {
-        "ownership_entries": 99,
-        "structural_entries": 62,
+        "structural_entries": 64,
     }
     assert structural_manifest_classification_errors(manifest) == []
 
     errors = verify_structural_exceptions_manifest(
-        structural, manifest, _mod.SOURCE_DIR, ownership_count=len(ownership)
+        structural, manifest, _mod.SOURCE_DIR
     )
     assert errors == [], errors
+
+    # The declared source-root manifest is present and shape-valid: the
+    # activated pipeline's first stage resolves it cleanly.
+    manifest_set, manifest_diagnostics = load_source_root_manifest(
+        os.path.join(
+            _mod.PROJECT_ROOT,
+            "config", "guards", "production_source_roots.yml",
+        )
+    )
+    assert manifest_set is not None
+    assert manifest_diagnostics == ()
+
+
+# ── 22. GR-04 decoupling & current-repo regression matrix ────────────────────
+# GR-04 removed ownership cardinality from the structural-manifest contract:
+# the structural verifier takes NO ownership input, the manifest's ``counts``
+# block carries ``structural_entries`` ONLY, and the CLI call site forwards no
+# ownership count.  The tests below pin the decoupling from four angles
+# (verifier signature, verifier result under differing ownership policies,
+# v2-style policy splits, CLI source text), pin the current-repo blocked state
+# as an ACTIVE-POLICY signature/evidence block (never a structural count or
+# classification diagnostic), and close the counts-type rejection gaps.
+
+def test_structural_verifier_signature_has_no_ownership_parameter():
+    """The structural verifier's signature has no ``ownership_count``
+    parameter and the module exposes no pinned ownership count constant
+    (GR-04: ownership cardinality never enters the structural gate)."""
+    import inspect
+
+    parameters = inspect.signature(
+        verify_structural_exceptions_manifest
+    ).parameters
+    assert "ownership_count" not in parameters
+    assert not hasattr(_mod, "PINNED_OWNERSHIP_ENTRY_COUNT")
+
+
+def test_structural_result_independent_of_ownership_cardinality(tmp_path, monkeypatch):
+    """Identical valid structural tuples + manifest verify identically no
+    matter which ownership policy is loaded alongside them: one valid entry vs
+    two valid exact entries both yield the SAME clean verifier result (GR-04:
+    the verifier result is independent of ownership cardinality)."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    tuples = _manifest_tuples(path, "SomeClass")
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(tuples)
+
+    single_dir = tmp_path / "ownership-single"
+    pair_dir = tmp_path / "ownership-pair"
+    single_dir.mkdir()
+    pair_dir.mkdir()
+    single_path = _write_v2_policy_yaml(single_dir, """
+  - path: app/src/main/java/com/example/SomeClass.kt
+    ownerFqcn: com.example.SomeClass
+    kind: function
+    method: "m0"
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
+    operation: insert
+    barrierMode: helper
+    reason: test
+    owner: "@test"
+    linkedIssue: "TEST-001"
+""")
+    pair_path = _write_v2_policy_yaml(pair_dir, """
+  - path: app/src/main/java/com/example/SomeClass.kt
+    ownerFqcn: com.example.SomeClass
+    kind: function
+    method: "m0"
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
+    operation: insert
+    barrierMode: helper
+    reason: test
+    owner: "@test"
+    linkedIssue: "TEST-001"
+
+  - path: app/src/main/java/com/example/SomeClass.kt
+    ownerFqcn: com.example.SomeClass
+    kind: function
+    method: "m1"
+    receiver: null
+    parameterTypes: []
+    daoAccessor: budgetDao
+    daoFqcn: com.example.BudgetDao
+    operation: insert
+    barrierMode: helper
+    reason: test
+    owner: "@test"
+    linkedIssue: "TEST-001"
+""")
+
+    # Both ownership variants load cleanly through the production loader and
+    # genuinely differ in cardinality.
+    single = load_db_ownership_policy(single_path)
+    pair = load_db_ownership_policy(pair_path)
+    assert len(single) == 1
+    assert len(pair) == 2
+
+    result_single = tuple(verify_structural_exceptions_manifest(
+        current, manifest, str(src), enforce_canonical_contract=False,
+    ))
+    result_pair = tuple(verify_structural_exceptions_manifest(
+        current, manifest, str(src), enforce_canonical_contract=False,
+    ))
+
+    assert result_single == ()
+    assert result_pair == ()
+    assert result_single == result_pair
+
+
+def test_v2_style_split_cannot_trigger_structural_failure(tmp_path, monkeypatch):
+    """Splitting one legacy multi-DAO ownership row into its 2-row v2-style
+    equivalent cannot change the structural verification outcome: both policy
+    YAML files coexist in tmp, both load cleanly through the production
+    loader, and the structural verification result is identical (and clean)
+    for the legacy row and its split equivalent (GR-04)."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    tuples = _manifest_tuples(path, "SomeClass")
+    current = _sexc_entries_for(tuples)
+    manifest = _manifest_dict(tuples)
+
+    legacy_dir = tmp_path / "policy-legacy-row"
+    split_dir = tmp_path / "policy-v2-split"
+    legacy_dir.mkdir()
+    split_dir.mkdir()
+
+    legacy_path = _write_v2_policy_yaml(legacy_dir, """
+  - path: app/src/main/java/com/example/SomeClass.kt
+    ownerFqcn: com.example.SomeClass
+    kind: function
+    method: "doWork"
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
+    operation: insert
+    barrierMode: helper
+    reason: test
+    owner: "@test"
+    linkedIssue: "TEST-001"
+
+  - path: app/src/main/java/com/example/SomeClass.kt
+    ownerFqcn: com.example.SomeClass
+    kind: function
+    method: "doWork"
+    receiver: null
+    parameterTypes: []
+    daoAccessor: budgetDao
+    daoFqcn: com.example.BudgetDao
+    operation: insert
+    barrierMode: helper
+    reason: test
+    owner: "@test"
+    linkedIssue: "TEST-001"
+""")
+    split_path = _write_v2_policy_yaml(split_dir, """
+  - path: app/src/main/java/com/example/SomeClass.kt
+    ownerFqcn: com.example.SomeClass
+    kind: function
+    method: "doWork"
+    receiver: null
+    parameterTypes: []
+    daoAccessor: expenseDao
+    daoFqcn: com.example.ExpenseDao
+    operation: insert
+    barrierMode: helper
+    reason: test
+    owner: "@test"
+    linkedIssue: "TEST-001"
+
+  - path: app/src/main/java/com/example/SomeClass.kt
+    ownerFqcn: com.example.SomeClass
+    kind: function
+    method: "doWork"
+    receiver: null
+    parameterTypes: []
+    daoAccessor: budgetDao
+    daoFqcn: com.example.BudgetDao
+    operation: insert
+    barrierMode: helper
+    reason: test
+    owner: "@test"
+    linkedIssue: "TEST-001"
+""")
+
+    legacy_entries = load_db_ownership_policy(legacy_path)
+    split_entries = load_db_ownership_policy(split_path)
+    # v2 has no multi-DAO row: the retired single row and its split
+    # equivalent are both two typed entries covering the same DAO set.
+    assert len(legacy_entries) == 2
+    assert len(split_entries) == 2
+    # The v2-style split preserves the authorized DAO set exactly.
+    assert (
+        {entry.dao_accessor for entry in legacy_entries} ==
+        {entry.dao_accessor for entry in split_entries}
+    )
+
+    outcomes = []
+    for _ownership in (legacy_entries, split_entries):
+        # Identical structural inputs on every run; ONLY the loaded ownership
+        # policy varies (it is not even an input to the structural gate).
+        outcomes.append(tuple(verify_structural_exceptions_manifest(
+            current, manifest, str(src), enforce_canonical_contract=False,
+        )))
+
+    legacy_outcome, split_outcome = outcomes
+    assert legacy_outcome == ()
+    assert split_outcome == ()
+    assert legacy_outcome == split_outcome
+
+
+def test_cli_source_passes_no_ownership_count_to_structural_validation():
+    """The CLI's verify_structural_exceptions_manifest(...) call site forwards
+    no ``ownership_count`` token inside its argument block (bounded extraction
+    of each balanced call region in the CLI source text)."""
+    import re
+
+    cli_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "verify_db_access_boundaries.py",
+    )
+    with open(cli_path, encoding="utf-8") as handle:
+        text = handle.read()
+
+    call_token = "verify_structural_exceptions_manifest("
+    starts = [match.start() for match in re.finditer(re.escape(call_token), text)]
+    assert starts, "expected at least one verifier call site in the CLI source"
+
+    for start in starts:
+        depth = 0
+        end = None
+        for idx in range(start + len(call_token) - 1, min(len(text), start + 2000)):
+            char = text[idx]
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    end = idx
+                    break
+        assert end is not None, "unbalanced verifier call region"
+        argument_block = text[start + len(call_token):end]
+        assert "ownership_count" not in argument_block, argument_block
+
+
+def test_no_executable_ownership_pin_references():
+    """No executable (non-test) script under scripts/ references the removed
+    ``PINNED_OWNERSHIP_ENTRY_COUNT`` pin, and no non-test script references an
+    ``ownership_entries`` counts-KEY literal (quoted form) — ownership
+    cardinality is never pinned anywhere executable (GR-04 regression)."""
+    scripts_dir = os.path.dirname(os.path.abspath(__file__))
+    scanned = 0
+    for name in sorted(os.listdir(scripts_dir)):
+        if not name.endswith(".py"):
+            continue
+        with open(os.path.join(scripts_dir, name), encoding="utf-8") as handle:
+            text = handle.read()
+        if name.startswith("test_"):
+            # Test files may reference the removed pin in rejection tests.
+            continue
+        scanned += 1
+        assert "PINNED_OWNERSHIP_ENTRY_COUNT" not in text, name
+        assert '"ownership_entries"' not in text, name
+        assert "'ownership_entries'" not in text, name
+    assert scanned > 0
+
+    # Sanity control: the scan really reads source text — this very test file
+    # contains the pin token inside its own rejection assertions.
+    with open(
+        os.path.join(scripts_dir, "test_verify_db_access_boundaries.py"),
+        encoding="utf-8",
+    ) as handle:
+        assert "PINNED_OWNERSHIP_ENTRY_COUNT" in handle.read()
+
+
+def test_current_db_gate_activated_policy_real_config_pipeline(tmp_path, monkeypatch):
+    """Activated truth (PR-GR-07 wave 2, GR-08m1 end state): invoking the CLI
+    in-process with the REAL config paths runs the FULL activated pipeline —
+    the active schemaVersion-2 policy loads (477 typed entries), the v2
+    evidence stage runs over the real tree with NO loader/evidence failure,
+    and the structural-manifest gate IS consulted and stays clean.
+
+    Derivation of the 477 pin: the checked-in active document
+    ``config/guards/db_ownership_policy.yml`` carries 477 schemaVersion-2
+    entry rows (one exact mutation identity each; the v2 loader performs no
+    dedupe), as of the GR-14a exact-policy wave (5 rows for the newly indexed
+    default-@Transaction mutators), unchanged in count by the GR-14b
+    EXACT_IDENTITY_MOVE (deleteReceipt|receiptEventDao|insert replaced 1:1
+    by the writeAssetDeleteFailedEvent direct owner row).  Re-derive after
+    every policy promotion.
+
+    The run exits 0 as a TRUSTED scan: the exact policy covers every
+    discovered mutation (no finding) and no BLOCKING diagnostic remains.
+    GR-09 derivation (advisory-debt drift): the real tree again carries
+    advisory-only scanner debt — the GR-09 static-suite3 guard run
+    (build/guard-debug/gr09/current-findings.json) reports 20 advisory
+    DB_SIGNATURE_UNRESOLVED diagnostics over non-DB-relevant
+    UI/AI/location/worker callables (first:
+    data/ai/provider/OnDeviceQueryInterpretationService.kt) with
+    trusted=true and findings=[].  That set grows and shrinks with the
+    tree, so it is deliberately NOT pinned; the fail-closed shape is:
+    every diagnostic must carry the advisory marker (the scanner's own
+    blocking rule) and any blocking diagnostic or any finding still
+    fails.  The report assertions stay structurally strict — schema
+    shape, trust semantics, and the activation identifiers — never
+    volatile per-counter tree statistics."""
+    import json
+
+    monkeypatch.delenv("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA", raising=False)
+    findings_output = tmp_path / "db_guard_findings.json"
+
+    structural_calls = []
+    real_structural_check = _mod.verify_structural_exceptions_manifest
+
+    def _structural_spy(*args, **kwargs):
+        result = real_structural_check(*args, **kwargs)
+        structural_calls.append(args)
+        return result
+
+    monkeypatch.setattr(
+        _mod,
+        "verify_structural_exceptions_manifest",
+        _structural_spy,
+    )
+
+    exit_code = _mod.main([
+        # ``main(argv)`` forwards the list straight to argparse, which expects
+        # arguments only (no program-name token; sys.argv[0] is never part of
+        # an in-process argv list).
+        "--fail-on-violation",
+        "--ownership-policy", _mod.OWNERSHIP_POLICY_PATH,
+        "--structural-exceptions", _mod.STRUCTURAL_EXCEPTIONS_PATH,
+        "--structural-manifest", _mod.STRUCTURAL_EXPECTED_METHODS_PATH,
+        "--findings-output", str(findings_output),
+    ])
+    assert exit_code == 0
+
+    # Activated loading truth: the active document IS a schemaVersion-2
+    # document whose rows load as typed v2 entries.
+    document, _document_loaded = _mod._read_yaml_document_for_evidence(
+        _mod.OWNERSHIP_POLICY_PATH
+    )
+    assert isinstance(document, dict)
+    assert document.get("schemaVersion") == 2
+    entries, loaded = _mod._read_ownership_entries_for_evidence(
+        _mod.OWNERSHIP_POLICY_PATH
+    )
+    assert loaded
+    # 475 post-GR-14c (two dead legacy MIT-003 rows removed; re-derived
+    # per the checked-in-manifest contract pin above).
+    assert len(entries) == 475
+
+    # The structural gate really ran (post-activation it is no longer
+    # short-circuited by a loader block) and stayed clean.
+    assert len(structural_calls) == 1
+
+    report = json.loads(findings_output.read_text(encoding="utf-8"))
+    assert set(report) == {
+        "schema", "schema_version", "guard", "findings",
+        "diagnostics", "statistics",
+    }
+    assert report["schema"] == "cost-aggregator.guard-findings"
+    assert report["schema_version"] == 2
+    assert report["guard"] == "db_access"
+    # Trusted run: no unauthorized mutation over the real tree — every
+    # policy stage ran clean over the activated configuration.  Advisory
+    # scanner debt (GR-07 Option-B) is reported but never breaks trust;
+    # only its fail-closed shape is pinned (see the docstring derivation):
+    # every diagnostic must carry the advisory marker, mirroring the
+    # scanner's blocking rule, so any blocking diagnostic still fails.
+    assert report["findings"] == []
+    for diagnostic in report["diagnostics"]:
+        assert diagnostic["controlled_context"].get("advisory") is True, (
+            diagnostic
+        )
+    statistics = report["statistics"]
+    assert statistics["trusted"] is True
+    assert statistics["findingCount"] == 0
+    assert statistics["diagnosticCount"] == len(report["diagnostics"])
+    assert statistics["advisoryDiagnosticCount"] == len(
+        report["diagnostics"]
+    )
+    # Activation identifiers stay pinned; per-counter tree statistics
+    # (files/declarations/inventory) are deliberately not pinned.
+    assert statistics["activePolicySchemaVersion"] == 2
+    assert statistics["policyMode"] == "authoritative-v2"
+    assert statistics["scannerMode"] == "protocol-v2"
+    assert statistics["scannerVersion"] == 2
+
+
+def test_counts_type_rejections():
+    """Boolean True, a negative integer, a string, and a float
+    ``counts.structural_entries`` each fail via
+    structural_manifest_metadata_errors with exactly one bounded error, and an
+    extra unknown count key fails with the distinct unknown-count-key error
+    (GR-04 schema gap-filler)."""
+    type_error = "'counts.structural_entries' must be a non-negative integer"
+    unknown_error = "unknown 'counts' key(s) ['ownership_entries']"
+
+    def counts_errors(mutate):
+        manifest = _manifest_dict([])
+        mutate(manifest["counts"])
+        return structural_manifest_metadata_errors(manifest)
+
+    def set_boolean(counts):
+        counts["structural_entries"] = True
+
+    def set_negative(counts):
+        counts["structural_entries"] = -1
+
+    def set_string(counts):
+        counts["structural_entries"] = "62"
+
+    def set_float(counts):
+        counts["structural_entries"] = 62.0
+
+    def add_unknown_key(counts):
+        counts["ownership_entries"] = 99
+
+    failures = (
+        ("boolean True", set_boolean, type_error),
+        ("negative", set_negative, type_error),
+        ("string", set_string, type_error),
+        ("float 62.0", set_float, type_error),
+        ("extra unknown count key", add_unknown_key, unknown_error),
+    )
+    collected = []
+    for label, mutate, expected_error in failures:
+        errors = counts_errors(mutate)
+        assert errors == [expected_error], (label, errors)
+        collected.extend(errors)
+
+    # Bounded and deterministic: only the two controlled failure shapes.
+    assert set(collected) == {type_error, unknown_error}
+
+
+def test_manifest_fixture_structural_count_mismatch_fails_closed(tmp_path, monkeypatch):
+    """A FIXTURE-mode manifest (``enforce_canonical_contract=False``) whose
+    ``counts.structural_entries`` drifts from the CURRENT structural tuple
+    count fails closed with the controlled COUNT_MISMATCH code naming
+    ``structural_entries`` — never MANIFEST_INVALID."""
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name)
+    current = _sexc_entries_for(tuples)
+
+    # Tuple sets agree exactly; ONLY the pinned count drifts (61 != 62).
+    manifest = _manifest_dict(tuples, structural=len(current) - 1)
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src), enforce_canonical_contract=False,
+    )
+    count_errors = [e for e in errors if e.startswith("COUNT_MISMATCH")]
+    assert len(count_errors) == 2, errors
+    assert any("structural_entries" in e for e in count_errors), count_errors
+    assert any(str(len(current) - 1) in e for e in count_errors), count_errors
+    assert all(not e.startswith("MANIFEST_INVALID") for e in errors), errors
+    # The tuple sets are equivalent — the failure is attributable to the
+    # drifted count alone.
+    assert all(
+        not e.startswith(("MISSING_TUPLE", "EXTRA_TUPLE", "DUPLICATE_TUPLE"))
+        for e in errors
+    ), errors
+
+
+def test_changed_operation_on_same_pattern_fails_closed(tmp_path, monkeypatch):
+    """A manifest tuple identical to a structural entry EXCEPT its operation
+    can never satisfy exact tuple equivalence: the verifier reports BOTH the
+    swapped tuple as MISSING_TUPLE and the original tuple as EXTRA_TUPLE — an
+    operation change on the same (path, class, method_pattern) is never
+    silently accepted as clean."""
+    # GR-08j aligned the fixture arithmetic to the pinned 64-entry contract
+    # (see test_manifest_missing_tuple_fails_closed): 64 current entries and
+    # counts.structural_entries=64 keep the count stage clean so the
+    # tuple-set stage is what rejects the changed operation.
+    src, path = _manifest_source_file_fixture(tmp_path, monkeypatch, n=64)
+    class_name = "SomeClass"
+    tuples = _manifest_tuples(path, class_name, n=64)
+    current = _sexc_entries_for(tuples)
+
+    # Same canonical path / class / method_pattern, DIFFERENT operation
+    # (still inside the supported whitelist so metadata stays valid and the
+    # tuple-set stage is what rejects it).
+    changed = [dict(t) for t in tuples]
+    changed[0]["operation"] = "openDatabase"
+    manifest = _manifest_dict(changed, structural=64)
+
+    errors = verify_structural_exceptions_manifest(
+        current, manifest, str(src)
+    )
+    assert errors, "changed-operation manifest must never verify clean"
+    missing = [e for e in errors if e.startswith("MISSING_TUPLE")]
+    extra = [e for e in errors if e.startswith("EXTRA_TUPLE")]
+    assert len(missing) == 1, errors
+    assert len(extra) == 1, errors
+    assert "m0" in missing[0], missing
+    assert "openDatabase" in missing[0], missing
+    assert "m0" in extra[0], extra
+    assert "execSQL" in extra[0], extra
+    # Counts and metadata stay valid — the failure is the operation change.
+    assert all(not e.startswith("MANIFEST_INVALID") for e in errors), errors
+    assert all(not e.startswith("COUNT_MISMATCH") for e in errors), errors
+    assert all(not e.startswith("DUPLICATE_TUPLE") for e in errors), errors
+
+
+# ── PR-GR-03 part 2: no executable app/src/main topology gate ────────────────
+
+
+class TestNoExecutableAppSrcMainTopologyGate:
+    """Assert no executable app/src/main topology gate remains outside
+    source_roots/tests/docs/data.
+
+    PR-GR-03 part 2 removed hidden app-only topology authorities from the
+    signature module, declaration scanner, and scanner diagnostic parser.
+    This test scans the allowed executable files to ensure no hardcoded
+    app/src/main path decisions remain that would act as topology
+    authorities.
+    """
+
+    def test_no_app_src_prefix_gate_in_db_policy_signature(self):
+        """db_policy_signature._normalize_canonical_path has no app/src gate."""
+        import inspect
+        # Import from the scripts directory
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, scripts_dir)
+        import db_policy_signature as mod
+        source = inspect.getsource(mod._normalize_canonical_path)
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+                continue
+            assert 'startswith("app/src' not in stripped, (
+                f"Executable app/src topology gate found in "
+                f"_normalize_canonical_path: {stripped}"
+            )
+            assert "startswith('app/src" not in stripped, (
+                f"Executable app/src topology gate found in "
+                f"_normalize_canonical_path: {stripped}"
+            )
+
+    def test_no_app_src_prefix_gate_in_declaration_scanner_validate_path(self):
+        """declaration_scanner._validate_diagnostic_path has no app/src gate."""
+        import inspect
+        # Package-mode import (sibling-test convention): db_guard modules use
+        # package-relative imports, so the top-level ``db_guard`` name cannot
+        # load them.
+        from scripts.db_guard.declaration_scanner import _validate_diagnostic_path
+        source = inspect.getsource(_validate_diagnostic_path)
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+                continue
+            assert 'startswith("app/src' not in stripped, (
+                f"Executable app/src topology gate found in "
+                f"_validate_diagnostic_path: {stripped}"
+            )
+
+    def test_no_app_src_prefix_gate_in_scanner_diag_from_text(self):
+        """scanner._diag_from_text has no app/src gate."""
+        import inspect
+        # Package-mode import (sibling-test convention); see above.
+        from scripts.db_guard.scanner import _diag_from_text
+        source = inspect.getsource(_diag_from_text)
+        for line in source.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("#") or stripped.startswith('"""') or stripped.startswith("'''"):
+                continue
+            assert 'startswith("app/src' not in stripped, (
+                f"Executable app/src topology gate found in "
+                f"_diag_from_text: {stripped}"
+            )
+
+    def test_no_app_src_prefix_constant_in_signature_module(self):
+        """The _APP_SRC_PREFIX constant has been removed from db_policy_signature."""
+        scripts_dir = os.path.dirname(os.path.abspath(__file__))
+        sys.path.insert(0, scripts_dir)
+        import db_policy_signature as mod
+        assert not hasattr(mod, "_APP_SRC_PREFIX"), (
+            "_APP_SRC_PREFIX should be removed; path validation is topology-neutral"
+        )
 

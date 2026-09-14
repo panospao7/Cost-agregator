@@ -1,0 +1,483 @@
+﻿# GR-08 batch 13, part 1 (GR-08m1) tracked batch manifest -- file group 1:
+# data/repository/AiChatRepositoryImpl.kt (repository-layer AI chat history
+# writer) + domain/diagnostics/OperationRunRecorder.kt (THE canonical
+# run-ledger writer) + data/backup/RestoreJournalImporter.kt (restore-path
+# post-restore diagnostics ingestion).
+#
+# Batch scope (plan): GR-08m covered FIVE files as ONE batch, with a forced
+# split if the combined unique fingerprint count exceeded 25.  Scope
+# verification against the trusted START report
+# (build/guard-debug/gr08m/before.json == trusted GR-08l after-l3.json,
+# 121 findings / 20 advisory diagnostics; reference-copy SHA-256 recorded
+# below): AiChatRepositoryImpl.kt carries exactly 6 DB_UNAUTHORIZED_MUTATION
+# findings collapsing to 6 UNIQUE fingerprints, OperationRunRecorder.kt
+# carries exactly 6 findings collapsing to 6 UNIQUE fingerprints, and
+# RestoreJournalImporter.kt carries exactly 5 findings collapsing to 4
+# UNIQUE fingerprints (dedup key: callable identity + daoAccessor + daoFqcn
+# + operation; importLastSuccessJournalIfPresent carries the SAME
+# operationRunDao.insert fingerprint at TWO call sites -- the legacy
+# zero-event branch line 39 and the get-or-insert branch line 64 -- so the
+# two findings share one fingerprint).  Combined batch unique count
+# 28 > the 25-fingerprint batch cap, so the batch was SPLIT into GR-08m1
+# (this manifest: AiChatRepositoryImpl.kt + OperationRunRecorder.kt +
+# RestoreJournalImporter.kt, 17 findings / 16 unique fingerprints) and
+# GR-08m2 (ReceiptLifecycleCoordinator.kt + WarrantyExpirationWorker.kt,
+# 12 findings / 12 unique fingerprints) per the
+# GR-08c/GR-08e/GR-08i/GR-08j/GR-08k/GR-08l precedent; each part is within
+# the cap.
+#
+# AICHATREPOSITORYIMPL LAYER LEGALITY: repository-layer writer for AI
+# assistant chat history (AiChatSessionDao + AiChatMessageDao per
+# docs/architecture/dao-map.md).  Every mutating method runs
+# writeBarrier.checkWritesAllowed at its entrypoint.  History persistence
+# is privacy-gated (W34): createSession/appendMessage no-op (return null)
+# unless shouldPersistHistory(); appendMessage stores payloadJson only in
+# RAW mode and redacts text via CloudPayloadRedactor in REDACTED mode
+# (NLP-6), OFF returns null before any write; appendMessage wraps the
+# message insert + session updateLastTouched in one database.withTransaction
+# (atomicity); clearSession/clearAllHistory/purgeOldMessages are
+# user-initiated deletion / retention cleanup via SQL deletes (no raw
+# payloads materialized).
+#
+# OPERATIONRUNRECORDER LAYER LEGALITY: RoomOperationRunRecorder (+ its
+# private Handle) is THE canonical run-ledger writer for the
+# OperationRun/OperationRunEvent diagnostics ledger used by every pipeline
+# (workers, backup/restore, bank, email, export/import) -- the
+# diagnostics/logging-persistence writer layer.  All six sites are
+# diagnostics-ledger writes: start inserts the RUNNING row with
+# sanitizer-sanitized metadataJson; Handle.event inserts a best-effort
+# event (CancellationSafe.runCatchingCancellable -- failure is recorded to
+# the durable MaintenanceSafeDiagnosticSink and NEVER fails the business
+# operation, DDL-016-02); Handle.increment persists counters best-effort
+# (DDL-A8-10); Handle.finalizeNonCancellable finalizes inside
+# withContext(NonCancellable) via the idempotent finalizeIfRunning
+# (WHERE status = 'RUNNING' -- only the first terminal state wins,
+# DDL-81-07); recoverStaleRunningOperationRuns is the startup crash
+# recovery (finalizeIfRunning to STALE_ABORTED + best-effort
+# STALE_RECOVERY event, DDL-A8-11).  CancellationException is never
+# swallowed (runCatchingCancellable rethrows; runOperation rethrows after
+# recording CANCELLED).  Metadata and exception text pass through
+# EventMetadataSanitizer -- no raw payloads persisted; reason-code fields
+# carry controlled DiagnosticReasonCode constants only.
+#
+# RESTOREJOURNALIMPORTER LAYER LEGALITY (restore path): post-restore
+# diagnostics ingestion (P7-CURRENT-016).  The restore/reset path bans Room
+# after the DB swap (P7-CURRENT-005), so terminal restore/reset trails
+# survive only in the on-disk journal until this class ingests them into
+# the queryable OperationRun/OperationRunEvent ledger on the NEXT healthy
+# startup.  Restore/write barrier semantics: the importer performs no
+# direct writeBarrier call -- the temporal barrier is enforced by its ONLY
+# caller AppStartupCoordinator.importRestoreJournals(), which runs it on
+# startup when writes are allowed (DB healthy); the importer is the
+# sanctioned post-barrier ingestion point, not a barrier bypass.  Idempotent
+# per event (isSuccessJournalImported/isFailureJournalImported gates,
+# get-or-insert run row, per-eventId dedup via getByRunId + importedIds set
+# blocking in-journal duplicates too, DDL-F876-13); partial imports keep
+# the journal for retry on the next startup; CancellationException is
+# rethrown at every handler; exceptionMessage comes from
+# event.exceptionMessageSafe (pre-sanitized at journal write time).
+#
+# Chain-form census AFTER review: ZERO database-chained
+# `appDatabase.xxxDao()` mutation receivers and ZERO method-local DAO
+# aliases in ALL THREE files.  AiChatRepositoryImpl's
+# `database.withTransaction` is the androidx.room.withTransaction
+# extension, not a DAO accessor; OperationRunRecorder and
+# RestoreJournalImporter do not inject AppDatabase at all.  Every DAO call
+# goes through the injected constructor properties sessionDao / messageDao
+# / runDao / eventDao / operationRunDao / operationRunEventDao.
+# NO accessor-normalization source change is needed for this part.
+#
+# Closure additions (GR-08m1 blind-spot sweep): ZERO closure rows.  Every
+# dao-accessor call in ALL batch callable bodies was enumerated, not just
+# the findings: every called mutating DAO method (AiChatSessionDao.insert /
+# updateLastTouched / deleteById / deleteAll, AiChatMessageDao.insert /
+# deleteOlderThan, OperationRunDao.insert / finalizeIfRunning /
+# incrementCounters, OperationRunEventDao.insert) is an abstract
+# Room-annotated method -- AiChatSessionDao, AiChatMessageDao,
+# OperationRunDao and OperationRunEventDao are fully abstract interfaces
+# with ZERO @Transaction methods, so no convenience-method closure row
+# exists (the GR-08b/GR-08d pattern does not trigger).  The only other
+# DAO-accessor calls in the bodies are read-only lookups
+# (sessionDao.getById/observeAll, messageDao.observeBySession,
+# runDao.getStaleRunning, operationRunDao.getByCorrelationId,
+# operationRunEventDao.getByRunId).
+#
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h + GR-08i1 +
+# GR-08i2 + GR-08i3 + GR-08j1 + GR-08j2 + GR-08k1 + GR-08k2 + GR-08l1 +
+# GR-08l2 + GR-08m1 + GR-08m2 rows verbatim, 322 rows after GR-08m);
+# passing only GR-08m1-seed.yml would drop the earlier batches' rows from
+# the rendered candidate.
+schemaVersion: 1
+batchId: GR-08m1
+startSha: 54719197
+startReport:
+  path: build/guard-debug/gr08m/before.json
+  # SHA-256 of the reference copy (trusted GR-08l after-l3 report; 121
+  # findings / 20 advisory).  ORCHESTRATOR: fill this in from the
+  # reference-copy step before the generate step.  Reference copy created
+  # by the orchestrator (batch agent is command-prohibited); expected
+  # source: build/guard-debug/gr08l/after-l3.json (trusted: true).
+  sha256: 
+  trusted: true
+  findingCount: 121
+activePolicySha256: 
+# ORCHESTRATOR: fill activePolicySha256 from the CURRENT active policy
+# (config/guards/db_ownership_policy.yml) at batch start, before generate.
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08M
+counts:
+  fileFindings: 17
+  batchCallablesFindings: 17
+  uniqueFingerprints: 16
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=createSession|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatSessionDao|identity.accessor=sessionDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=appendMessage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22com.yourname.expensetracker.domain.ai.model.AssistantMessageRole%22%2C%22com.yourname.expensetracker.domain.ai.model.AssistantMessageKind%22%2C%22String%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatMessageDao|identity.accessor=messageDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=appendMessage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22com.yourname.expensetracker.domain.ai.model.AssistantMessageRole%22%2C%22com.yourname.expensetracker.domain.ai.model.AssistantMessageKind%22%2C%22String%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatSessionDao|identity.accessor=sessionDao|identity.operation=updateLastTouched|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=clearSession|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatSessionDao|identity.accessor=sessionDao|identity.operation=deleteById|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=clearAllHistory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatSessionDao|identity.accessor=sessionDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=purgeOldMessages|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatMessageDao|identity.accessor=messageDao|identity.operation=deleteOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|symbol.name=start|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=runDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|symbol.name=recoverStaleRunningOperationRuns|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=runDao|identity.operation=finalizeIfRunning|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|symbol.name=recoverStaleRunningOperationRuns|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunEventDao|identity.accessor=eventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|symbol.name=event|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22com.yourname.expensetracker.domain.diagnostics.EventOutcome%22%2C%22com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode%3F%22%2C%22com.yourname.expensetracker.domain.diagnostics.EventSeverity%22%2C%22com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata%22%2C%22String%3F%22%2C%22Long%3F%22%2C%22Throwable%3F%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunEventDao|identity.accessor=eventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|symbol.name=finalizeNonCancellable|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22Throwable%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=runDao|identity.operation=finalizeIfRunning|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|symbol.name=increment|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Int%22%2C%22Int%22%2C%22Int%22%2C%22Int%22%2C%22Int%22%2C%22Int%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=runDao|identity.operation=incrementCounters|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fbackup%2FRestoreJournalImporter.kt|symbol.owner=com.yourname.expensetracker.data.backup.RestoreJournalImporter|symbol.name=importLastSuccessJournalIfPresent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=operationRunDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fbackup%2FRestoreJournalImporter.kt|symbol.owner=com.yourname.expensetracker.data.backup.RestoreJournalImporter|symbol.name=importLastSuccessJournalIfPresent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunEventDao|identity.accessor=operationRunEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fbackup%2FRestoreJournalImporter.kt|symbol.owner=com.yourname.expensetracker.data.backup.RestoreJournalImporter|symbol.name=importLastFailureJournalIfPresent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=operationRunDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fbackup%2FRestoreJournalImporter.kt|symbol.owner=com.yourname.expensetracker.data.backup.RestoreJournalImporter|symbol.name=importLastFailureJournalIfPresent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunEventDao|identity.accessor=operationRunEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+findings:
+# â”€â”€ AiChatRepositoryImpl.kt (6 fingerprints / 6 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=createSession|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatSessionDao|identity.accessor=sessionDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+    method: createSession
+    receiver: null
+    parameterTypes:
+    - String?
+    kind: function
+  daoAccessor: sessionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+  operation: insert
+  locations: [62]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked assistant chat-session insert behind the write barrier; privacy-gated (W34) -- returns null without writing unless conversation-history persistence is enabled."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=appendMessage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22com.yourname.expensetracker.domain.ai.model.AssistantMessageRole%22%2C%22com.yourname.expensetracker.domain.ai.model.AssistantMessageKind%22%2C%22String%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatMessageDao|identity.accessor=messageDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+    method: appendMessage
+    receiver: null
+    parameterTypes:
+    - Long
+    - com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
+    - com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
+    - String
+    - String?
+    kind: function
+  daoAccessor: messageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
+  operation: insert
+  locations: [92]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked chat-message insert inside database.withTransaction (atomic with the session touch); privacy posture enforced before the write -- payloadJson stored only in RAW mode, text redacted via CloudPayloadRedactor in REDACTED mode (NLP-6), OFF returns null before any write."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=appendMessage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%2C%22com.yourname.expensetracker.domain.ai.model.AssistantMessageRole%22%2C%22com.yourname.expensetracker.domain.ai.model.AssistantMessageKind%22%2C%22String%22%2C%22String%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatSessionDao|identity.accessor=sessionDao|identity.operation=updateLastTouched|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+    method: appendMessage
+    receiver: null
+    parameterTypes:
+    - Long
+    - com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
+    - com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
+    - String
+    - String?
+    kind: function
+  daoAccessor: sessionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+  operation: updateLastTouched
+  locations: [102]
+  disposition: EXACT_POLICY
+  rationale: "Session updatedAt touch inside the same database.withTransaction as the message insert (single atomic append); authorized separately because the DAO accessor and operation differ from the message insert."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=clearSession|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatSessionDao|identity.accessor=sessionDao|identity.operation=deleteById|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+    method: clearSession
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: sessionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+  operation: deleteById
+  locations: [109]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked user-initiated single-session history deletion (SQL delete by id, no raw payloads materialized)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=clearAllHistory|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatSessionDao|identity.accessor=sessionDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+    method: clearAllHistory
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: sessionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatSessionDao
+  operation: deleteAll
+  locations: [114]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked user-initiated clear-all assistant history (SQL delete-all, no raw payloads materialized)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FAiChatRepositoryImpl.kt|symbol.owner=com.yourname.expensetracker.data.repository.AiChatRepositoryImpl|symbol.name=purgeOldMessages|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.AiChatMessageDao|identity.accessor=messageDao|identity.operation=deleteOlderThan|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/AiChatRepositoryImpl.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.AiChatRepositoryImpl
+    method: purgeOldMessages
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: messageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
+  operation: deleteOlderThan
+  locations: [120]
+  disposition: EXACT_POLICY
+  rationale: "Barrier-checked retention cleanup (W34) -- SQL-deletes chat messages older than the cutoff (no raw payloads materialized)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ OperationRunRecorder.kt (6 fingerprints / 6 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|symbol.name=start|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=runDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
+    method: start
+    receiver: null
+    parameterTypes:
+    - String
+    - String?
+    - com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+    kind: function
+  daoAccessor: runDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: insert
+  locations: [103]
+  disposition: EXACT_POLICY
+  rationale: "Canonical run-ledger writer -- inserts the RUNNING row with sanitizer-sanitized metadataJson; the subsequent STARTED event write is best-effort and must not orphan the RUNNING row (DDL-016-03)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|symbol.name=recoverStaleRunningOperationRuns|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=runDao|identity.operation=finalizeIfRunning|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
+    method: recoverStaleRunningOperationRuns
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: runDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: finalizeIfRunning
+  locations: [149]
+  disposition: EXACT_POLICY
+  rationale: "Startup crash recovery -- marks stale RUNNING rows STALE_ABORTED via the idempotent conditional finalize (WHERE status = 'RUNNING', only first terminal state wins)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|symbol.name=recoverStaleRunningOperationRuns|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunEventDao|identity.accessor=eventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder
+    method: recoverStaleRunningOperationRuns
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: eventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: insert
+  locations: [158]
+  disposition: EXACT_POLICY
+  rationale: "Best-effort STALE_RECOVERY event insert after a successful stale finalize (DDL-A8-11 -- event failure is recorded to the durable MaintenanceSafeDiagnosticSink and must not abort startup recovery); reasonCode is the controlled CANCELLED_BY_SYSTEM constant."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|symbol.name=event|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22com.yourname.expensetracker.domain.diagnostics.EventOutcome%22%2C%22com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode%3F%22%2C%22com.yourname.expensetracker.domain.diagnostics.EventSeverity%22%2C%22com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata%22%2C%22String%3F%22%2C%22Long%3F%22%2C%22Throwable%3F%22%2C%22Boolean%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunEventDao|identity.accessor=eventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle
+    method: event
+    receiver: null
+    parameterTypes:
+    - String
+    - com.yourname.expensetracker.domain.diagnostics.EventOutcome
+    - com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?
+    - com.yourname.expensetracker.domain.diagnostics.EventSeverity
+    - com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata
+    - String?
+    - Long?
+    - Throwable?
+    - Boolean
+    kind: function
+  daoAccessor: eventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: insert
+  locations: [224]
+  disposition: EXACT_POLICY
+  rationale: "The run-ledger event channel -- best-effort event insert (DDL-016-02) with sanitizer-sanitized metadata/exception fields and controlled reason codes; failure is recorded to the durable safe sink and NEVER fails the business operation; CancellationException rethrown via CancellationSafe.runCatchingCancellable."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|symbol.name=finalizeNonCancellable|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%2C%22String%3F%22%2C%22Throwable%3F%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=runDao|identity.operation=finalizeIfRunning|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle
+    method: finalizeNonCancellable
+    receiver: null
+    parameterTypes:
+    - String
+    - String?
+    - Throwable?
+    kind: function
+  daoAccessor: runDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: finalizeIfRunning
+  locations: [310]
+  disposition: EXACT_POLICY
+  rationale: "Terminal run finalization inside withContext(NonCancellable) via the idempotent conditional finalize (WHERE status = 'RUNNING'); best-effort (DDL-81-07) so diagnostic finalization never fails business success; errorSummary passes through sanitizeExceptionMessage."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdomain%2Fdiagnostics%2FOperationRunRecorder.kt|symbol.owner=com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|symbol.name=increment|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Int%22%2C%22Int%22%2C%22Int%22%2C%22Int%22%2C%22Int%22%2C%22Int%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=runDao|identity.operation=incrementCounters|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle
+    method: increment
+    receiver: null
+    parameterTypes:
+    - Int
+    - Int
+    - Int
+    - Int
+    - Int
+    - Int
+    kind: function
+  daoAccessor: runDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: incrementCounters
+  locations: [274]
+  disposition: EXACT_POLICY
+  rationale: "Immediate counter persistence on the RUNNING row (crash-safe progress accounting, DDL-A8-10); best-effort with durable safe-sink diagnostic on failure."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+# â”€â”€ RestoreJournalImporter.kt (4 fingerprints / 5 sites) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fbackup%2FRestoreJournalImporter.kt|symbol.owner=com.yourname.expensetracker.data.backup.RestoreJournalImporter|symbol.name=importLastSuccessJournalIfPresent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=operationRunDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+    method: importLastSuccessJournalIfPresent
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: operationRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: insert
+  locations: [39, 64]
+  disposition: EXACT_POLICY
+  rationale: "Post-restore ledger ingestion (P7-CURRENT-016) -- get-or-insert of the RESTORE_COSTBACKUP run row on the next healthy startup; BOTH call sites (legacy zero-event branch line 39, get-or-insert branch line 64) share this fingerprint.  The restore/write barrier is enforced by the only caller AppStartupCoordinator.importRestoreJournals (runs only when writes are allowed after the P7-CURRENT-005 post-swap Room ban lifts); idempotent via isSuccessJournalImported + getByCorrelationId get-or-insert."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); BOTH findings absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fbackup%2FRestoreJournalImporter.kt|symbol.owner=com.yourname.expensetracker.data.backup.RestoreJournalImporter|symbol.name=importLastSuccessJournalIfPresent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunEventDao|identity.accessor=operationRunEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+    method: importLastSuccessJournalIfPresent
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: operationRunEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: insert
+  locations: [85]
+  disposition: EXACT_POLICY
+  rationale: "Post-restore ledger ingestion -- per-event insert with eventId dedup (getByRunId + importedIds set blocks cross-startup AND in-journal duplicates, DDL-F876-13); per-event failures keep the journal for retry on the next startup; exceptionMessage comes from event.exceptionMessageSafe (pre-sanitized)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fbackup%2FRestoreJournalImporter.kt|symbol.owner=com.yourname.expensetracker.data.backup.RestoreJournalImporter|symbol.name=importLastFailureJournalIfPresent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunDao|identity.accessor=operationRunDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+    method: importLastFailureJournalIfPresent
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: operationRunDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunDao
+  operation: insert
+  locations: [150]
+  disposition: EXACT_POLICY
+  rationale: "Post-restore/reset FAILURE journal ingestion (P7-CURRENT-016) -- get-or-insert of the RESTORE_OR_RESET FAILED_FINAL run row so terminal failure diagnostics (wrong password, verification/rollback/reset failures) become queryable on the next healthy startup; same caller-enforced temporal restore barrier and idempotency contract as the success path."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Fbackup%2FRestoreJournalImporter.kt|symbol.owner=com.yourname.expensetracker.data.backup.RestoreJournalImporter|symbol.name=importLastFailureJournalIfPresent|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.OperationRunEventDao|identity.accessor=operationRunEventDao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/backup/RestoreJournalImporter.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.backup.RestoreJournalImporter
+    method: importLastFailureJournalIfPresent
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: operationRunEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.OperationRunEventDao
+  operation: insert
+  locations: [178]
+  disposition: EXACT_POLICY
+  rationale: "Post-restore/reset FAILURE journal ingestion -- per-event insert with the same eventId dedup and retry-on-partial contract; eventType/stage carry controlled constants, exceptionMessage is the pre-sanitized exceptionMessageSafe."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08M
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for the GR-08m1 files: after the GR-08m promotion, AiChatRepositoryImpl.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (6/6 sites authorized across 6 fingerprints), OperationRunRecorder.kt carries 0 (6/6 sites authorized across 6 fingerprints) and RestoreJournalImporter.kt carries 0 (5/5 sites authorized across 4 fingerprints -- the two importLastSuccessJournalIfPresent operationRunDao.insert call sites share one fingerprint).  Out-of-batch stability: the rescan delta expectation for the WHOLE GR-08m batch is 121 -> 92 (28 = 6 AiChatRepositoryImpl + 6 OperationRunRecorder + 4 RestoreJournalImporter + 6 ReceiptLifecycleCoordinator + 6 WarrantyExpirationWorker unique fingerprints; 29 findings disappear because the shared RestoreJournalImporter fingerprint covers 2 findings); the remaining 92 include the still-unauthorized files deferred to future batches, which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

@@ -1,0 +1,95 @@
+# GR-14u18 (§D7 last finding) — guard the legacy-migration category write
+# (production guard-form change).  Closes the ONE genuine counterexample the
+# D6 multi-star projection surfaced, so D6 can land with zero violations.
+#
+# THE FINDING: `LegacyDataMigrationService.migrateCategories` wrote
+# `categoryDao.insert(...)` with NO write-barrier check — the file contained zero
+# occurrences of `checkWritesAllowed` / `runWrite` / `writeBarrier` — while
+# importing a legacy database into the LIVE Room database.  It was the only
+# `counterexample_unguarded_call_path` left once GR-14u15/u16/u17 removed the
+# false positives (6 of 7).  NOT engine noise.
+#
+# IS IT REACHABLE? `LegacyDataMigrationService` is a @Singleton injected into
+# `DebugViewModel.migrateLegacyDatabase`, invoked from `DebugScreen`, which
+# renders a stub when `!BuildConfig.DEBUG` (DebugScreen.kt:61).  So it is a
+# DEBUG-BUILD path — but it still writes to the production database, and a
+# restore in progress must block it.  Guarding is the fail-closed choice and is
+# cheaper than documenting an exception; it also lets D6 land clean.
+#
+# FIX: inject `DatabaseWriteBarrier` and check it as the first statement inside
+# the existing `try` of `migrateCategories`, plus a SPECIFIC catch so a blocked
+# write is reported accurately ("skipped: database writes blocked during restore")
+# instead of the generic "Failed to migrate categories table".  Placement inside
+# the try is deliberate: `DatabaseAccessBlockedException` is then caught locally
+# and the function returns zero counts — fail-safe, no writes, and the remaining
+# tables (which guard themselves through their own coordinators/repositories)
+# still run.  The guard is also engine-visible, which is what clears the finding
+# (the GR-12 proof needs the guard in the WRITE's own callable).
+#
+# EVIDENCE:
+#   - guard alone, no D6: current board 0 rows changed; summary identical.
+#   - guard + D6 (projection): counterexamples **1 -> 0**, proven_helper +18,
+#     0 regressions.  (Before the guard: exactly 1 counterexample,
+#     `migrateCategories`.)
+#   - constructor signature changed (added `writeBarrier`) — no test constructs
+#     this service (only DebugViewModel injects it), so nothing breaks.
+#
+# VALIDATION STATUS: COMPLETE.
+#   - engine evidence: COMPLETE (board delta + projection above), plus engine
+#     battery 89 passed, scripts/db_guard 235 passed, fixture_runner 58/58.
+#   - Kotlin compile: **PASSED** — `gradlew :app:compileDebugKotlin` completed in
+#     the same cycle as GR-14u17, confirming the added `DatabaseWriteBarrier`
+#     constructor parameter and the new guard/catch compile (Hilt resolves the
+#     added dependency; no construction site needed updating, since only
+#     DebugViewModel injects this service).
+#   - Targeted tests: the one failing assertion in the run
+#     (`TransactionLifecycleCoordinatorDbContractTest`) belongs to GR-14u17's file,
+#     not this one, and is PRE-EXISTING (recorded in
+#     docs/testing/generated/TEST_FAILURE_TRACKER.md:154).  No test constructs
+#     LegacyDataMigrationService.
+#   - NOTE: the full suite is NOT a usable gate (TEST_FAILURE_LEDGER.md records
+#     many pre-existing failures and a JVM agent crash); prefer targeted runs.
+schemaVersion: 1
+batchId: GR-14u18
+startSha: 50c0b8bc
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+mediationReportSha256After: 2b282860fae306c52a1542b6965523023e26c008d252cd23952c60ede7e51c1f
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/service/debug/
+    LegacyDataMigrationService.kt:
+      inject DatabaseWriteBarrier; checkWritesAllowed at the category write path;
+      specific catch for DatabaseAccessBlockedException
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - LegacyDataMigrationService.migrateCategories -> CategoryDao.insert
+rootCause: GR13_UNGUARDED_CALL_PATH # legacy migration wrote the live DB unguarded
+selectedPattern: PRODUCTION
+tests:
+  - board delta (no D6): 0 rows
+  - D6 projection: counterexamples 1 -> 0, proven_helper +18, 0 regressions
+  - Kotlin compile: PASSED (:app:compileDebugKotlin completed)
+  - no test constructs this service; the run's single failure is a pre-existing
+    stale assertion in TransactionLifecycleCoordinatorDbContractTest
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  LegacyDataMigrationService migrated categories from a legacy backup into the
+  live database without checking the write barrier, so a legacy import could write
+  while a restore was in progress.  This batch injects the canonical barrier and
+  checks it at the category write path, catching a blocked write locally and
+  skipping the table instead of failing the run, which is the same fail-closed
+  shape the notification and receipt writers use.  It alters no business rule or
+  lifecycle path, changes no policy, baseline, exception or authorization bytes,
+  leaves the current mediation board unchanged, and reduces the D6 projection from
+  one genuine unguarded call path to none.  Main-source Kotlin compilation passes;
+  no test constructs this service.

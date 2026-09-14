@@ -317,26 +317,6 @@ class InvestmentTrackerTest {
     }
 
     @Test
-    fun `updatePrice rejects zero and does not call dao`() = runTest {
-        val investment = makeInvestment(id = 50L)
-        coEvery { investmentDao.getById(50L) } returns investment
-        val ex = kotlin.runCatching { tracker.updatePrice(50L, 0.0) }.exceptionOrNull()
-        assertThat(ex).isInstanceOf(IllegalArgumentException::class.java)
-        assertThat(ex?.message).contains("finite")
-        coVerify(exactly = 0) { investmentDao.updatePrice(any(), any(), any()) }
-    }
-
-    @Test
-    fun `updatePrice rejects NaN and does not call dao`() = runTest {
-        val investment = makeInvestment(id = 51L)
-        coEvery { investmentDao.getById(51L) } returns investment
-        val ex = kotlin.runCatching { tracker.updatePrice(51L, Double.NaN) }.exceptionOrNull()
-        assertThat(ex).isInstanceOf(IllegalArgumentException::class.java)
-        assertThat(ex?.message).contains("finite")
-        coVerify(exactly = 0) { investmentDao.updatePrice(any(), any(), any()) }
-    }
-
-    @Test
     fun `investmentPerformance contains per holding aggregate`() = runTest {
         val investment = makeInvestment(id = 60L, currentPrice = 150.0, purchasePrice = 100.0, quantity = 2.0)
         coEvery { investmentDao.getById(60L) } returns investment

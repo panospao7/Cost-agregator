@@ -13,6 +13,7 @@ Run with: python -m pytest scripts/test_verify_cloud_payload_boundaries.py -v
 import os
 import sys
 import tempfile
+import pytest
 
 # Import the module under test directly
 sys.path.insert(0, os.path.dirname(__file__))
@@ -238,3 +239,104 @@ interface CloudPayloadPolicy {
     assert len(filtered) == 0, (
         f"Expected no filtered violations for allowlisted file, got: {filtered}"
     )
+
+
+# ── PR-GR-10B source-scope contract ─────────────────────────────────────────
+# The guard's scan scope is the checked-in production source-root manifest
+# (config/guards/production_source_roots.yml), resolved via
+# scripts/guardrails/production_source_scope.py — fail closed with exit 2
+# when it is missing/malformed/undeclared; cloud-payload relevance is a
+# semantic filter applied AFTER enumerating every declared production file.
+
+def _write_scope_manifest(root, root_rel="app/src/main/java"):
+    manifest = root / "config" / "guards" / "production_source_roots.yml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "schemaVersion: 1\n"
+        "roots:\n"
+        "  - module: ':app'\n"
+        "    sourceSet: main\n"
+        f"    path: {root_rel}\n",
+        encoding="utf-8",
+    )
+
+
+_CLOUD_VIOLATION_KT = (
+    "package com.example.bypass\n"
+    "\n"
+    "import okhttp3.MediaType.Companion.toMediaType\n"
+    "import okhttp3.RequestBody\n"
+    "\n"
+    "class BypassSender {\n"
+    "    fun send(payload: String) {\n"
+    "        val body = RequestBody.create(\"application/json\".toMediaType(), payload)\n"
+    "    }\n"
+    "}\n"
+)
+
+_CLEAN_KT = "package com.example\nclass Clean { fun f() = 1 }\n"
+
+
+def _scope_run_main(root, monkeypatch, capsys, extra=()):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["verify_cloud_payload_boundaries.py", "--root", str(root)] + list(extra),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _mod.main()
+    return excinfo.value.code, capsys.readouterr()
+
+
+def _write_declared(root, rel, content):
+    target = root / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+
+
+def test_manifest_declared_root_finding_matches_hardcoded_era(tmp_path, monkeypatch, capsys):
+    """With the single-root manifest declaring app/src/main/java, findings
+    are identical to the pre-GR-10B hard-coded-root era: a raw
+    RequestBody.create() under the declared root is flagged."""
+    _write_scope_manifest(tmp_path)
+    _write_declared(
+        tmp_path,
+        "app/src/main/java/com/example/bypass/BypassSender.kt",
+        _CLOUD_VIOLATION_KT,
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 1
+    assert "BypassSender.kt" in out.out
+    assert "RequestBody.create()" in out.out
+
+
+def test_missing_manifest_fails_closed(tmp_path, monkeypatch, capsys):
+    """No checked-in manifest -> exit 2 (no conventional-root fallback)."""
+    _write_declared(
+        tmp_path,
+        "app/src/main/java/com/example/bypass/BypassSender.kt",
+        _CLOUD_VIOLATION_KT,
+    )
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 2
+    assert "production source scope unresolved" in out.err
+
+
+def test_undeclared_root_file_is_never_scanned(tmp_path, monkeypatch, capsys):
+    """Kotlin files outside the declared production roots are invisible."""
+    _write_scope_manifest(tmp_path)
+    _write_declared(tmp_path, "app/src/main/java/com/example/Clean.kt", _CLEAN_KT)
+    undeclared = (
+        tmp_path / "other" / "src" / "main" / "java" / "com" / "example"
+        / "bypass" / "BypassSender.kt"
+    )
+    undeclared.parent.mkdir(parents=True)
+    undeclared.write_text(_CLOUD_VIOLATION_KT, encoding="utf-8")
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 0
+    assert "BypassSender" not in out.out

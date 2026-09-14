@@ -94,7 +94,6 @@ class PR5PrivacyContractTest {
     private class BlockInvokingRecorder : OperationRunRecorder {
         override suspend fun start(operationType: String, actor: String?, metadata: SafeEventMetadata): OperationRunHandle = NoOpOperationRunHandle
         override suspend fun <T> runOperation(operationType: String, actor: String?, metadata: SafeEventMetadata, block: suspend (OperationRunHandle) -> T): T = block(NoOpOperationRunHandle)
-        override suspend fun recoverStaleRunningOperationRuns(staleAgeMs: Long) = Unit
     }
 
     @Before

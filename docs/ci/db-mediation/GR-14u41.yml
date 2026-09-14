@@ -1,0 +1,108 @@
+# GR-14u41 — `++`/`--` statement termination in _split_statements
+# (tokenizer, one feature).
+#
+# DEFECT: _CONT_END = set("+-*/%,:?.&|<>!(`[") exists so binary-operator
+# line continuations (`val x = a +\n b`) split correctly, but its `+`/`-`
+# members also made a STATEMENT-ENDING postfix increment a continuation:
+# `duplicatesSkipped++` glued with every following line until a line
+# ended without a continuation char.  In
+# BankStatementLifecycleProcessor.processBankStatement the L594
+# `duplicatesSkipped++` was followed by masked-comment gap lines and the
+# multi-line `transactionRunner.runInTransaction(...) {
+# checkWritesAllowed(...) ... }` statement; the glued L594-L613
+# composite matched _RE_BARRIER_CHECK, whose paren closes mid-statement
+# with a non-empty tail, and refused unknown-construct
+# (DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED, L594-L613).  This was the ONLY
+# remaining tokenizer finding for the callable under full production
+# parameters (settled by the u40 orchestrator probe at board c15d5385).
+#
+# FIX (tokenizer, one feature):
+#   - _split_statements: at depth 0 with a statement started, an
+#     ADJACENT doubled `+`/`-` (`++`/`--`) terminates the statement
+#     through both operator chars, like a `;` (part span
+#     `(stmt_start, i+2)`, stmt_start reset, scan index jumps past the
+#     second operator char so it cannot re-trigger) — and ONLY under
+#     two guards (strict-review refinement):
+#       (a) `stmt_start < i` — the operator must not OPEN the
+#           statement, so statement-initial prefix forms (`++x`) keep
+#           their pre-fix behavior (the line splits at the newline as
+#           the one `++x` leaf it always was);
+#       (b) the remainder of the line after the operator must strip to
+#           empty (_line_remainder_blank) — so MID-STATEMENT forms
+#           (`if (cond) x++ else y`, the SourceLinkBackfillWorker
+#           L202/L257 shape, and `a++ + b`) keep gluing into the one
+#           statement _parse_if/expression parsing handled before.
+#   - ADJACENCY remains the increment discriminator, NOT a
+#     next-non-whitespace peek: `val y = a +\n +b` (single `+` at end
+#     of line, unary `+` leading the next line) keeps the continuation
+#     path as ONE statement.
+#   - `+=`/`-=` never match (the char after `+`/`-` is `=`) — assignment
+#     continuation behavior is intentionally unchanged.  A single
+#     `+`/`-` followed by any other char keeps the existing continuation
+#     behavior (`val z = a + b` on one line unchanged).
+#   - Masked text contains no strings or comments (mask_kotlin_source
+#     guarantee), so a doubled `+`/`-` inside a literal can never reach
+#     the scan.
+#
+# OUTCOME (board, pre c15d5385... -> post 508ad587...):
+#   proven_helper 314 -> 321 (+7); ambiguous 15 -> 8; async 35;
+#   unproven inventory 50 -> 43; counterexamples 0.
+#   Moved rows (all unproven_ambiguous_call/GR13_LOCAL_GUARD_UNMODELABLE
+#   -> proven_helper/GR13_ALL_PATHS_GUARDED, localGuard none -> direct;
+#   the u40 target callable became modelable and the GR-12 direct-site
+#   prover proves every site against its preceding
+#   checkWritesAllowed):
+#     processBankStatement x7:
+#       BankStatementImportItemDao.insert
+#       BankStatementImportRunDao.attachReceipt
+#       BankStatementImportRunDao.finalize
+#       BankStatementImportRunDao.insert
+#       BankStatementImportRunDao.updatePdfPartial
+#       PendingReviewDao.insert
+#       ScannedReceiptDao.update
+#   The 3 SourceLinkBackfillWorker rows (EntitySourceLinkDao.insert in
+#   backfillLegacySource / backfillNotificationLinks /
+#   backfillReceiptLinks) are byte-identical to the u40 board
+#   (proven_helper/GR13_ALL_PATHS_GUARDED in both) — the refined rule
+#   leaves the worker's mid-statement `if (inserted > 0) created++
+#   else skipped++` statements on their pre-fix glued path (probed:
+#   backfillLegacySource/backfillNotificationLinks keep their
+#   PRE-EXISTING elvis-block/lambda-escape findings and
+#   backfillReceiptLinks stays supported, unchanged by this batch).
+#
+# HARD STOP CHECKS: 0 counterexample flips, 0 regressions (all 379
+#   entries compared pre/post; only the 7 rows above differ, and all in
+#   the proven direction).  Review disclosure: the PRE-refinement
+#   version of this batch (unguarded adjacency) fired on mid-statement
+#   `++` and would have split `if (cond) x++ else y` into a dangling
+#   `else y` leaf; the reviewer caught it before any board with that
+#   version was accepted — the refined board equals the pre-fix board
+#   everywhere except the 7 rows above, and the SourceLinkBackfillWorker
+#   rows were verified byte-identical pre/post refinement.
+#
+# VALIDATION:
+#   - structural_analysis: 237 passed (7 new fixtures: postfix `++` and
+#     `--` termination, the real L594-L613 runInTransaction composite
+#     shape, continuation preservation for `a +\n +b` / `a + b`, `+=`
+#     behavior pinned, mid-statement `if (cond) x++ else y` NOT
+#     terminating (IF region preserved), prefix `++x` NOT terminating)
+#   - scripts/db_guard: 264 passed (test_models.py excluded —
+#     pre-existing stale pin, untouched); fixture corpus 64/64
+#   - scripts/ci: 1243 passed, 14 failed — the 14 failures are
+#     byte-identical to the base commit's failure set (verified by
+#     stashing the change and re-running: freshness-stamp and
+#     platform-conditional tests, environment-dependent, pre-existing)
+#   - board double run byte-identical 508ad587... (the refined board is
+#     byte-identical to the pre-refinement u41 board: the guards change
+#     no board outcome, they only restore pre-fix handling for shapes
+#     the unguarded rule would have broken)
+#   - direct probe: the L594 unknown-construct finding is gone — the
+#     if-block now splits into 5 clean statements (duplicatesSkipped++,
+#     val duplicateExpenseId = ..., runInTransaction scope,
+#     parsingLogs.add(...), continue) with zero findings
+#   - Kotlin: not run (no production change)
+#
+# Remaining unmodelable subjects after u41: none new.  The 8 remaining
+#   ambiguous rows (GR13_UNCERTAIN_CALL_EDGE) and the 35 async rows are
+#   mediation-layer classifications, not tokenizer findings.
+status: COMPLETE_AT_BOARD_508ad587

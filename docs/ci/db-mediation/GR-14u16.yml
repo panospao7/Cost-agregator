@@ -1,0 +1,117 @@
+# GR-14u16 (§D7 Bug 2b, largest single cause) — the barrier-scope form now
+# matches the REAL `runWrite` API.  ZERO board delta at this level; the value is
+# that canonical guarded bodies become MODELABLE (unmodelable observed callables
+# 82 -> 59) instead of being refused wholesale.
+#
+# ROOT CAUSE (found by GR-14u15's reason census, handoff §D7):
+#   `DatabaseWriteBarrier.runWrite` is
+#     `suspend fun <T> runWrite(operation: DatabaseAccessOperation, block: suspend () -> T): T`
+#   (DatabaseWriteBarrier.kt:33) — the operation argument is REQUIRED, so the only
+#   legal call shape is `writeBarrier.runWrite(op) { ... }` (or `runWrite(op, { ... })`).
+#   But the tokenizer's `_RE_BARRIER_SCOPE` was
+#     r"\bwriteBarrier\s*\.\s*runWrite\s*\{"
+#   (tokenizer.py:39) — it demanded the brace IMMEDIATELY after `runWrite`, i.e. a
+#   bare `runWrite { ... }` that CANNOT be written against this signature.  Real
+#   usage therefore missed the BARRIER_SCOPE branch and fell into
+#   `_RE_LIKE_BARRIER` (tokenizer.py:49), which fails the WHOLE body with
+#   `DB_STRUCTURAL_MODEL_BARRIER_FORM_UNRECOGNIZED`.
+#   Measured: that reason accounted for 47 of the 82 unmodelable observed
+#   callables — the single largest cause — and it includes the notification-capture
+#   writers guarded in GR-14u6 (`NotificationIntakeCoordinator.capture` /
+#   `.captureForRetry`, NotificationIntakeCoordinator.kt:140 and :248) and
+#   `TransactionLifecycleCoordinator.createExpenseMutation`.
+#   `_RE_WORKER_GUARD` (tokenizer.py:45) ALREADY allows the parenthesised form
+#   (`runGuardedWithContext|runGuarded\s*(?:\([^()]*\))?\s*\{`), so the barrier
+#   scope was the odd one out — an oversight, not a design choice.
+#
+# FIX: make the argument list optional, mirroring _RE_WORKER_GUARD, with one level
+# of parenthesis nesting so `runWrite(DatabaseAccessOperation("...")) {` matches:
+#   r"\bwriteBarrier\s*\.\s*runWrite\s*(?:\((?:[^()]|\([^()]*\))*\))?\s*\{"
+# The existing safety guards are untouched: the canonical-receiver requirement,
+# the `lambda-before-barrier-scope` escape check (tokenizer.py:731) and the
+# like-barrier tripwire for every other receiver.
+#
+# FIXTURE PINS (scripts/ci/test_gr14u16_barrier_scope_form.py, 5):
+#   - accepted: `runWrite(op) { ... }` (THE REAL FORM — failed pre-fix with
+#     barrier-form-unrecognized, verified RED before the change);
+#   - accepted: bare `runWrite { ... }` (back-compat with the old regex);
+#   - documented limitation: `runWrite(op, { ... })` STILL fails closed — its
+#     lambda sits inside the argument list, a different shape, and guessing is
+#     refused; the call remains visible to the text-only barrier scan, which is
+#     what keeps such a body out of counterexamples via GR-14u15;
+#   - still fail-closed: `other.runWrite(op) { ... }` (unknown receiver) is not a
+#     barrier scope;
+#   - still fail-closed: a barrier scope nested in an enclosing lambda escapes.
+#
+# SHADOW DELTA on the current board: 0 rows — report BYTE-IDENTICAL to the
+# committed GR-14u15 report (da296160...) and deterministic across a double run.
+# The newly modelable bodies belong to rows that are still decided by earlier
+# tiers (uncertain call edges), so no verdict moves yet.  Measured effect that
+# does move: observed callables that are unmodelable 82 -> 59 (one build with the
+# fix + the D6 patch, build/guard-debug/gr14u16/one_shot.py).
+#
+# D4 GATE IMPACT: 0 changed entries; identical summary (directEntryCount 28,
+# legacyPassCount 28, legacyFailCount 0, legacyUnknownCount 0,
+# notObservedCount 0).  Measured with build/guard-debug/gr14u16/d4_impact.py.
+#
+# D6 INTERACTION (build/guard-debug/gr14u15/project_d6.py, run against the real
+# code): with GR-14u15 + GR-14u16 the multi-star projection yields
+# proven_helper 69 -> 81 (+12), NEW counterexamples 15 -> **7**, 0 regressions.
+# The 7 are: `bulkUpdateCategory` (x2) and `updateTypeAndTransferDetails` (x4) —
+# SUB-CAUSE 2b-ii, a locally-delegated `checkWritesAllowed` helper that the
+# receiver-based barrier scan cannot see (6 false positives) — plus
+# `LegacyDataMigrationService.migrateCategories`, which is a GENUINE finding:
+# that file contains ZERO occurrences of `checkWritesAllowed` / `runWrite` /
+# `writeBarrier`, so the write really is unguarded.  D6 therefore stays BLOCKED
+# on 2b-ii, and its one true positive should be handled as its own finding.
+#
+# Validation:
+#   - engine battery 84 passed (incl. the 5 new pins); scripts/db_guard 235 passed
+#     (test_models.py excluded — bare `import models`, runs only from its own dir;
+#     pre-existing and unrelated); fixture_runner 58/58.
+#   - current board byte-identical + deterministic (da296160...).
+#   - Python-only; no Kotlin/Gradle change; policy bytes unchanged (7851adc2...).
+schemaVersion: 1
+batchId: GR-14u16
+startSha: 43cac996
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+mediationReportSha256After: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/structural_analysis/tokenizer.py:
+      _RE_BARRIER_SCOPE accepts the optional parenthesised argument list, so the
+      canonical `runWrite(operation) { ... }` form is modeled
+  - scripts/ci/test_gr14u16_barrier_scope_form.py: new pins (5)
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - none on the current board (0 rows move); the effect is on modelability
+rootCause: GR13_LOCAL_GUARD_UNMODELABLE # canonical runWrite(op){...} guard form was unrecognized
+selectedPattern: ENGINE
+tests:
+  - test_gr14u16_barrier_scope_form.py 5/5 (positive pin verified RED pre-fix)
+  - engine battery 84 passed; scripts/db_guard 235 passed; fixture_runner 58/58
+  - observed unmodelable callables 82 -> 59; D4 gate 0 changed entries
+  - current board byte-identical + deterministic (da296160...)
+
+status: COMPLETE # GR-14u15 + GR-14u16 done; D6 blocked on 2b-ii (6 rows) + 1 real finding
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  The tokenizer recognized only a bare `writeBarrier.runWrite { ... }`, a shape
+  that cannot be written against the real API because runWrite requires an
+  operation argument; genuine `runWrite(operation) { ... }` guards were therefore
+  rejected as an unrecognized barrier form, making the entire enclosing body
+  unmodelable.  This batch accepts the real form (mirroring the worker-guard
+  pattern that already allowed a parenthesised argument list) while keeping every
+  existing safety guard: only the canonical receiver may open a barrier scope, an
+  enclosing lambda still escapes, and the argument list form remains fail-closed.
+  It changes no policy, baseline, exception or authorization bytes, leaves the D4
+  gate bit-for-bit identical, leaves the mediation board byte-identical, and the
+  report remains shadow-only (reportOnly: true).

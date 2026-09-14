@@ -259,7 +259,7 @@ Review facts:
         val root = JSONObject(body)
         val candidates = root.optJSONArray("candidates") ?: return null
         if (candidates.length() == 0) return null
-        val text = candidates.optJSONObject(0)
+        val text: String = candidates.optJSONObject(0)
             ?.optJSONObject("content")
             ?.optJSONArray("parts")
             ?.optJSONObject(0)
@@ -273,10 +273,11 @@ Review facts:
         if (!suggestion.has("categoryName") || suggestion.optString("categoryName").isBlank()) return null
 
         val categoryId = StrictAiJsonParsing.run { suggestion.positiveIdOrNull("categoryId") } ?: return null
+        val suggestedName: String = suggestion.optString("categoryName").trim()
         val matchedCategory = input.candidateCategories.firstOrNull { it.id == categoryId }
             ?: input.candidateCategories.firstOrNull {
-                it.name.equals(suggestion.optString("categoryName").trim(), ignoreCase = true) ||
-                    it.cloudLabel.equals(suggestion.optString("categoryName").trim(), ignoreCase = true)
+                it.name.equals(suggestedName, ignoreCase = true) ||
+                    it.cloudLabel.equals(suggestedName, ignoreCase = true)
             }
             ?: return null
 

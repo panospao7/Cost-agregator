@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
 import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
@@ -29,6 +31,7 @@ import javax.inject.Singleton
 @Singleton
 class RecurringOccurrenceMaterializer @Inject constructor(
     private val database: AppDatabase,
+    private val writeBarrier: DatabaseWriteBarrier,
     private val occurrenceDao: RecurringOccurrenceDao,
     private val reminderDeliveryDao: RecurringReminderDeliveryDao,
     private val timeProvider: TimeProvider,
@@ -82,6 +85,13 @@ class RecurringOccurrenceMaterializer @Inject constructor(
         var remindersCreated = 0
         val now = timeProvider.now()
 
+        // GR-14q-c: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "RecurringOccurrenceMaterializer.materializeInCurrentTransaction"
+            )
+        ) {
         for (r in resolved) {
             val entity = buildEntity(r, now)
             val insertResult = occurrenceDao.insert(entity)
@@ -293,6 +303,7 @@ class RecurringOccurrenceMaterializer @Inject constructor(
                     }
                 }
             }
+        }
         }
 
         return MaterializationResult(

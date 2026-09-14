@@ -511,6 +511,7 @@ class ExpenseRepository @Inject constructor(
 
     @Deprecated("Use TransactionLifecycleCoordinator.updateMerchant() instead for proper lifecycle tracking.")
     suspend fun updateExpenseMerchant(expense: Expense, newMerchant: String, applyToAll: Boolean = false) {
+        writeBarrier.checkWritesAllowed("ExpenseRepository.updateExpenseMerchant")
         if (expense.merchant == newMerchant) return
         val oldMerchant = expense.merchant
 

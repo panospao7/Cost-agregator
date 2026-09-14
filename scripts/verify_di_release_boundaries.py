@@ -43,11 +43,31 @@ DESCRIPTION = "DI/Release Binding Guard — detects debug-leak bindings and inse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-DI_SRC_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java",
-                          "com", "yourname", "expensetracker", "di")
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    is_declared_production_path,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
+
 GRADLE_FILE = os.path.join(PROJECT_ROOT, "app", "build.gradle.kts")
 ALLOWLIST_PATH = os.path.join(SCRIPT_DIR, "allowlists", "di_release_allowlist.yml")
-SRC_MAIN_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java")
+
+# PR-GR-10B: the DI package directory is the guard's targeted semantic
+# scope (a subtree of the declared production roots); the blanket
+# production scan enumerates every declared production Kotlin file.  The
+# root authority is the checked-in manifest
+# ``config/guards/production_source_roots.yml`` (resolved via
+# ``scripts/guardrails/production_source_scope.py``): the repository-level
+# guard fails closed (exit 2) when the manifest is missing/malformed or
+# when the DI package path is not a declared production path.  There is NO
+# conventional-root fallback.
+
+# Targeted DI package subtree (repository-relative POSIX).
+DI_PACKAGE_RELPATH = "app/src/main/java/com/yourname/expensetracker/di"
 
 # ── Suspicious type patterns ─────────────────────────────────────────────────
 # PascalCase variants that suggest debug/test-only types leaking into DI modules.
@@ -439,8 +459,27 @@ def main():
     args = parser.parse_args()
 
     root = args.root
-    di_dir = os.path.join(root, "app", "src", "main", "java",
-                          "com", "yourname", "expensetracker", "di")
+
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"ERROR: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    # Targeted DI package subtree: must be a declared production path.
+    if not is_declared_production_path(root_set, DI_PACKAGE_RELPATH):
+        print(
+            "ERROR: DI package scope is not a declared production path: "
+            f"{DI_PACKAGE_RELPATH}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    di_dir = os.path.join(os.path.abspath(str(root)), *DI_PACKAGE_RELPATH.split("/"))
     gradle_file = os.path.join(root, "app", "build.gradle.kts")
 
     if not os.path.isdir(di_dir):
@@ -473,43 +512,47 @@ def main():
     print(f"  Scanned {di_files_scanned} DI module file(s)")
 
     # ── Scan all production code (expanded checks) ────────────────────────────
-    src_main = os.path.join(root, "app", "src", "main", "java")
-    if os.path.isdir(src_main):
-        print(f"Scanning all production code for http:// URLs, body/payload logging, "
-              f"and debug types: {src_main}")
-        full_files_scanned = 0
-        for dirpath, _, filenames in os.walk(src_main):
-            for filename in filenames:
-                if not filename.endswith(".kt"):
-                    continue
-                filepath = os.path.join(dirpath, filename)
-                full_files_scanned += 1
+    # PR-GR-10B: every declared production Kotlin file is enumerated
+    # (deterministic root-order then canonical path-order); the DI-package
+    # and debug-type relevance rules are semantic filters, not root filters.
+    print("Scanning all production code for http:// URLs, body/payload logging, "
+          "and debug types (declared production roots)")
+    full_files_scanned = 0
+    try:
+        source_files = list(iter_production_kotlin_files(str(root), root_set))
+    except ProductionSourceScopeError as exc:
+        print(
+            f"ERROR: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    for source_file in source_files:
+        filepath = source_file.absolute_path
+        full_files_scanned += 1
 
-                # Full codebase http:// scan — all production files (advisory)
-                violations, had_fatal = scan_full_codebase_http(filepath, allowlist)
-                if had_fatal:
-                    fatal_errors.append(filepath)
-                advisory_violations.extend(violations)
+        # Full codebase http:// scan — all production files (advisory)
+        violations, had_fatal = scan_full_codebase_http(filepath, allowlist)
+        if had_fatal:
+            fatal_errors.append(filepath)
+        advisory_violations.extend(violations)
 
-                # Body/payload logging scan — all production files (advisory)
-                violations, had_fatal = scan_log_body_payload(filepath, allowlist)
-                if had_fatal:
-                    fatal_errors.append(filepath)
-                advisory_violations.extend(violations)
+        # Body/payload logging scan — all production files (advisory)
+        violations, had_fatal = scan_log_body_payload(filepath, allowlist)
+        if had_fatal:
+            fatal_errors.append(filepath)
+        advisory_violations.extend(violations)
 
-                # Suspicious debug/test types in non-DI packages (advisory)
-                rel = os.path.relpath(filepath, root).replace("\\", "/").lower()
-                path_parts = rel.split("/")
-                is_in_di = "di" in path_parts
-                if not is_in_di:
-                    violations, had_fatal = scan_suspicious_types_production(filepath, allowlist)
-                    if had_fatal:
-                        fatal_errors.append(filepath)
-                    advisory_violations.extend(violations)
+        # Suspicious debug/test types in non-DI packages (advisory)
+        rel = os.path.relpath(filepath, root).replace("\\", "/").lower()
+        path_parts = rel.split("/")
+        is_in_di = "di" in path_parts
+        if not is_in_di:
+            violations, had_fatal = scan_suspicious_types_production(filepath, allowlist)
+            if had_fatal:
+                fatal_errors.append(filepath)
+            advisory_violations.extend(violations)
 
-        print(f"  Scanned {full_files_scanned} production file(s) with expanded checks")
-    else:
-        print(f"WARNING: Production source directory not found at {src_main}", file=sys.stderr)
+    print(f"  Scanned {full_files_scanned} production file(s) with expanded checks")
 
     # ── Scan build.gradle.kts ─────────────────────────────────────────────────
     if os.path.isfile(gradle_file):

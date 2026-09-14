@@ -1,0 +1,117 @@
+# GR-14u55 — kotlinx added to _KNOWN_EXTERNAL_ROOTS (completing the u53
+# disclosure; one-line root-list extension + fixtures + manifest).
+#
+# DEFECT (the u53 KNOWN LIMITATION, now probe-verified as worse than
+# disclosed): kotlinx was absent from _KNOWN_EXTERNAL_ROOTS, so
+#   (a) a one-star `import kotlinx.coroutines.flow.*` whose receiver had no
+#       other binding failed closed (the disclosed, honest casualty), and
+#   (b) WORSE: files star-importing BOTH kotlinx.* AND java.util.* made the
+#       multi-star branch pick java.util as the single known-root candidate
+#       and FABRICATE exact-external FQCNs that do not exist —
+#       `java.util.MutableStateFlow` (probe-verified: CashFlowCalendarViewModel
+#       `_state.update { ... }` resolved pre-change against the nonexistent
+#       java.util class).  A fabrication, the deletion-trap-family defect
+#       class u53 fixed for the one-star branch — surviving in the multi-star
+#       branch because the candidate-root set was incomplete.
+#
+# FIX (one line + comment): "kotlinx" added to _KNOWN_EXTERNAL_ROOTS
+# (callgraph.py).  With kotlinx known-rooted, the dual-star files have TWO
+# known-root candidates -> honest ambiguity (no fabrication), and the real
+# kotlinx receivers (Flow/StateFlow/MutableStateFlow/CoroutineScope) resolve
+# exact-external.  No other behavior changed: the roots list did NOT become
+# a wildcard (cb70 pins a non-root star import still failing closed).
+#
+# FIXTURES (3 new, cb68..cb70; consolidated manifest 121 -> 124):
+#   cb68 KX-pos: `import kotlinx.coroutines.flow.*` (single star) + a local
+#        val explicitly typed `MutableStateFlow<Int>` + a member call on it
+#        -> the receiver resolves external (kotlinx.coroutines.flow.
+#        MutableStateFlow) -> EXACT_SYNCHRONOUS (the u53 limitation
+#        completed).
+#   cb69 KX-neg-ambiguous: BOTH `java.util.*` and `kotlinx.coroutines.flow.*`
+#        star imports + an unresolvable member call on a MutableStateFlow-
+#        typed val -> UNRESOLVED_TARGET (the fiction-dissolution pin: two
+#        known-root candidates -> honest ambiguity, no fabricated
+#        java.util FQCN).
+#   cb70 KX-neg-nonroot: a NON-root star import (`fixtures.starfix53.*`, the
+#        cb57 shape) + an unresolvable member call -> UNRESOLVED_TARGET
+#        (the roots list did not become a wildcard).
+#
+# EDGE A/B EVIDENCE (all 53,789 corpus edges compared pre/post via the
+#   stash method; exactly the orchestrator's twice-verified shape):
+#     221-edge delta, 221 positions changed, 53,789 -> 53,789:
+#     IMPROVEMENTS 180: 151 unresolved_target(uncertain) ->
+#       exact_synchronous(external) + 29 async_dispatch(uncertain) ->
+#       exact_synchronous(external) — real kotlinx receivers resolving.
+#     FICTION DISSOLUTION 41: exact_synchronous(external) ->
+#       30 unresolved_target + 11 async_dispatch — ALL 41 inside the two
+#       dual-star files (AnalyticsViewModel.kt 24, CashFlowCalendarViewModel.kt
+#       17; both star-import kotlinx.coroutines.flow.* + java.util.*; no
+#       other file hosts one).  The pre-change exact edges resolved against
+#       fabricated FQCNs (java.util.MutableStateFlow et al.); post-change
+#       both candidates are known-root -> honest uncertainty.  The
+#       regressions are the fail-closed direction replacing false exactness
+#       — the u53 A/B discipline holds exactly.
+#     HONEST SPLIT (u55b review correction): 39 of the 41 are fiction
+#       dissolutions; TWO positions resolved pre-change against the REAL
+#       class java.util.Locale (AnalyticsViewModel Locale.getDefault()
+#       L557/L768) and now dissolve to honest uncertainty - epistemically
+#       correct fail-closed precision loss on real classes (the engine
+#       cannot bind Locale from source under three star imports),
+#       board-neutral (zero row movement, verified).  Hard-stop record:
+#       zero previously-exact edges changed EXCEPT the two disclosed
+#       Locale sites (fail-closed, board-neutral); no counterexample, no
+#       regression.
+#   Per-file blast radius (improvements): ReceiptMatchingViewModel 59,
+#   SavingsGoalsViewModel 22, HomeViewModel 33, WarrantyTrackerViewModel 28,
+#   TransactionsViewModel 15, TransactionClassifier 9, DebugViewModel 9,
+#   NaturalLanguageSearchViewModel 1, BankStatementParser 1,
+#   ExpenseRepository 2, ReceiptRepository 1.
+#
+# OUTCOME (board, pre 6bb3b894a9cc7181 -> post ec7fd24b1c9c45ea, double run
+# byte-identical): ZERO rows moved (379 entries diffed — every entry
+# byte-identical in proofStatus/reasonCode/decidingResolution/boundedPath/
+# reachingRootKinds/localGuard/convertibleToDirect).  proofStates
+# byte-identical: proven_helper 339, restore 1, worker 14, ambiguous 2,
+# async 23, counterexamples 0.  REPORTED HONESTLY: the 180 real
+# resolutions did NOT un-taint the F2 family's 6 rows or the F-NOISE
+# residue — their deciding edges are async_dispatch inside
+# HybridDedupeJudgeService.safeExecute (F2) and the withPermit/PostCommit
+# carriers (F1/F3), not the kotlinx receiver shapes; the u55b Remaining
+# families (handle-receiver unresolved edges from
+# RestoreDiagnosticsSink.finalizeRunFailed /
+# DatabaseBackupRepositoryImpl.createCostBackup) are likewise untouched.
+# The board effect is structural only: callEdgeStates moved
+# exact_synchronous +139, unresolved_target -121, async_dispatch -18
+# (the +139/-159 net = the 180 improvements minus the 41 dissolved
+# fictions, minus 11 async-region reclassifications of the same sites);
+# the engine no longer CLAIMS nonexistent java.util fictions and 180 real
+# kotlinx edges are now visible to future deciders.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows regressed,
+#   0 rows in unproven_external_entry, 0 previously-exact non-fabricated
+#   edges changed, 0 unexpected board delta (379 entries diffed — zero row
+#   movements).
+#
+# VALIDATION:
+#   - scripts/db_guard (PYTHONPATH=scripts\db_guard\mediation_analysis):
+#     276 passed
+#   - fixture corpus: 116/116 checked, 116 passed, exit 0 (124 manifest
+#     rows: 70 CB + 25 HP + 3 SL + 18 WP + 8 PR)
+#   - scripts/ci: 1259 passed, 14 failed — byte-identical failure set to
+#     the base commit (freshness-stamp and platform-conditional tests,
+#     environment-dependent, pre-existing)
+#   - board double run byte-identical ec7fd24b1c9c45ea
+#   - edge A/B: exactly the orchestrator's measured shape (180 improvements
+#     + 41 fiction dissolutions, zero non-fabricated exact edges changed)
+#   - Kotlin: not run (no production change; app/ untouched)
+#
+# Remaining: unchanged from u55b — the handle-receiver unresolved family
+#   (RestoreDiagnosticsSink.finalizeRunFailed /
+#   DatabaseBackupRepositoryImpl.createCostBackup calling handle.
+#   failedFinal — GR-15 input addendum); the F1 withPermit (11) / F2
+#   safeExecute (6) / F3 PostCommitAction (6) families (FINAL26 memo); the
+#   F-TRANSPARENT-CHAIN-NOISE family (owner sign-off gate); the 3
+#   open-interface ambiguous rows (u50 owner decision); the tracked
+#   candidate/accounting pair regeneration (pre-existing --verify drift,
+#   u51b disclosure).
+status: COMPLETE_AT_BOARD_ec7fd24b

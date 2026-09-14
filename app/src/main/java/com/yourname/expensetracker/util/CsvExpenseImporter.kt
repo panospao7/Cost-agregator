@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.util
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.TransactionType
@@ -30,7 +31,8 @@ import javax.inject.Inject
 class CsvExpenseImporter @Inject constructor(
     private val categoryDao: CategoryDao,
     private val coordinator: TransactionLifecycleCoordinator,
-    private val currencySettingsRepository: CurrencySettingsRepository
+    private val currencySettingsRepository: CurrencySettingsRepository,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
 
     /**
@@ -51,6 +53,21 @@ class CsvExpenseImporter @Inject constructor(
         fileImportRunId: Long? = null,
         onProgress: (Int, Int) -> Unit = { _, _ -> }
     ): ImportResult = withContext(Dispatchers.IO) {
+        // GR-14u44b: canonical write-barrier admission BEFORE the outer
+        // try/catch — a check inside the try would be swallowed by the
+        // generic `catch (e: Exception)` below and misreported as an
+        // import failure.  Mirrors the
+        // BankStatementLifecycleProcessor.processBankStatement entry
+        // pattern: CancellationException propagates, everything else
+        // becomes a controlled-constant failure (never e.message).
+        try {
+            writeBarrier.checkWritesAllowed("CsvExpenseImporter.importFromContent")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            return@withContext ImportResult.Error(
+                "Import blocked: database maintenance in progress"
+            )
+        }
         try {
             val allLines = csvContent.lines()
             if (allLines.isEmpty()) {

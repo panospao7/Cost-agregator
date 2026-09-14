@@ -18,13 +18,14 @@ class ConfidenceRouterTest {
     private val sourceStatsRepository = mockk<SourceStatsRepository>(relaxed = true)
     private val userCorrectionRepository = mockk<UserCorrectionRepository>(relaxed = true)
     private val classifier = mockk<TransactionClassifier>(relaxed = true)
+    private val writeBarrier = mockk<com.yourname.expensetracker.data.backup.DatabaseWriteBarrier>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val fixedNow = 1_700_000_000_000L
 
     @Before
     fun setup() {
         every { timeProvider.now() } returns fixedNow
-        router = ConfidenceRouter(sourceStatsRepository, userCorrectionRepository, classifier, timeProvider)
+        router = ConfidenceRouter(writeBarrier, sourceStatsRepository, userCorrectionRepository, classifier, timeProvider)
 
         // Default: no source stats, no corrections, classifier not ready
         coEvery { sourceStatsRepository.getByPackage(any()) } returns null

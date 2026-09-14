@@ -1,0 +1,72 @@
+# GR-15 BATCH 1 — the owner-accepted gate tier (CLI batch, owner-sanctioned).
+#
+# Implements docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md exactly: the
+# GR-15 completion gate becomes "every row proven OR owner_accepted per
+# the tracked acceptance registry", with the counterexample HARD STOP
+# unchanged at zero.
+#
+# Changes (scripts/ci/inspect_db_mediation_proof.py ONLY — no engine, no
+# policy, no production Kotlin):
+#   - _load_acceptance_registry / _validate_acceptance_registry /
+#     _apply_acceptance_registry: fail-closed registry loader (exact
+#     contract, unknown fields rejected, duplicate keys rejected) and a
+#     pure exact-key applier.  Missing/invalid registry = infrastructure
+#     (exit 2).  A registry row matching no board row, a proven row, or a
+#     counterexample row is a MISMATCH that forces exit 1 — the registry
+#     can satisfy the gate, never silence it, and counterexamples are
+#     never absorbable.  Unregistered rows stay unproven (fail closed).
+#   - Report: summary.ownerAcceptedCount + summary.ownerAcceptedCaveat
+#     (the amendment's mandatory caveat line) + a top-level
+#     acceptanceRegistry block (path, sha256, appliedCount,
+#     appliedMutationKeys, mismatches).  unprovenInventory is computed
+#     AFTER reclassification and excludes owner_accepted.
+#   - New tracked input: docs/ci/db-mediation/
+#     GR-14_OWNER_ACCEPTANCE_REGISTRY.yml — GENERATED from board
+#     03acbb044721e9dc (the 20 rows carry the exact canonical keys from
+#     the cold baseline board); owner document:
+#     GR-14_OWNER_ACCEPTANCE_RECORD.md.
+#
+# Shadow delta (before = post-GR-14u57b board, exit 1 under old
+# semantics): unproven_ambiguous_call 2 + unproven_async_or_escaping_
+# callback 18 -> owner_accepted 20; proven rows unchanged (344 + 14 + 1);
+# counterexamples 0 before and after; unprovenInventory 20 -> 0;
+# acceptance mismatches 0.  Exit 1 -> exit 0.
+#
+# Validation:
+#   - new suite scripts/ci/test_gr15_acceptance_gate.py 15/15 (loader
+#     fail-closed codes; schema violations incl. unknown field, bad
+#     version, duplicate key; reclassification; unmatched/proven/
+#     counterexample mismatches; unregistered rows stay unproven; the
+#     tracked registry loads with the exact 20-row family census);
+#   - fixture battery 121/121; mediation suite 27/27 (no engine
+#     regression — engine untouched);
+#   - cold single-basis acceptance run (the CLIs own pipeline, ~4 min):
+#     board_after.json exit 0, owner_accepted 20, caveat in summary,
+#     0 mismatches, infrastructure clean.
+#
+# Carried (unchanged by this batch, still owed at the GR-14-series
+# merge per GR-14_HANDOFF section 5): GATE-00R double capture + Gradle
+# DB task; DbGuardPolicyFixtureTest count pins; TLC hang residue;
+# WarrantyTrackerRepositoryTest OOM (pre-existing, A/B-proved).
+schemaVersion: 1
+batchId: GR-15_BATCH1
+startSha: bf58906a
+gateEvidenceSha256: null # GATE-00R carried — no Kotlin/policy bytes changed in this batch
+mediationReportSha256Before: 53493598704a18f1ec20deaea92f81196afb4fec4207d28fc8580cce2bf9dd32
+mediationReportSha256After: 6980835a9a334acd5cc62d89a7c4a96cc194962f8f2f2e0dddc85d7586826f8c
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+gateChanges:
+  - scripts/ci/inspect_db_mediation_proof.py:
+    - acceptance-registry loader + validator + pure applier (fail closed)
+    - owner_accepted bucket + mandatory caveat in summary
+    - acceptanceRegistry report block; unprovenInventory post-reclassification
+    - exit contract: 0 = proven-or-accepted + zero counterexamples + zero
+      mismatches; 1 = unproven/counterexample OR registry mismatch;
+      2 = infrastructure incl. invalid registry
+newInputs:
+  - docs/ci/db-mediation/GR-14_OWNER_ACCEPTANCE_REGISTRY.yml (generated from
+    the cold baseline board; do not hand-edit rows)
+newTests:
+  - scripts/ci/test_gr15_acceptance_gate.py (15 tests)

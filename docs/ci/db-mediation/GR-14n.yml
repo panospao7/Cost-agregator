@@ -1,0 +1,69 @@
+# GR-14n — resolution fix: parameter default-value assignments stripped
+# from declared types (resolution-local; canonical keys byte-stable).
+#
+# PROBLEM (probe-verified): Compose screens receive ViewModels via
+# default-parameter DI (`viewModel: ReviewViewModel = hiltViewModel()`).
+# The parameter parser keeps the default assignment in the type text
+# ("ReviewViewModel = hiltViewModel()"), so `_resolve_type` fails, the
+# receiver is unknown, and the call edge is UNRESOLVED_TARGET — the
+# dominant blocker class of the GR-14m ambiguous surface (137 rows).
+#
+# Engine fix: `_resolve_type` normalizes declared-type texts at entry —
+# a top-level " = " splits off the default assignment.  Canonical
+# mutation keys keep the historical raw text (zero policy impact).
+#
+# Shadow delta (before = post-GR-14m):
+#   proven_helper:            43 -> 45
+#   counterexamples:           0 -> 2  (unscoped writers through newly
+#     exact edges — the honest inversion continuing; GR-14k scope pattern)
+#   unproven_ambiguous:      176 -> 171
+#   unproven_external_entry:  71 -> 72
+#   net unproven:            386 -> 384; diagnostics unchanged.
+#
+# Known remainder (GR-14o): TYPELESS initializer properties
+# (`val viewModel = hiltViewModel()` — no declared type at all) still
+# resolve unknown; closing them needs initializer type inference for
+# owner properties (the local-val pass already infers from initializers).
+#
+# Validation:
+#   - regression fixture HP-22 (default-parameter DI + guarded caller ->
+#     PROVEN_HELPER); corpus 64 -> 65 rows, battery 57/57;
+#   - fixture/mediation/CLI/carrier/structured-launch/composable suites
+#     all green; no production Kotlin changed;
+#   - GATE-00R double capture + Gradle DB task: OWED at merge (carried).
+schemaVersion: 1
+batchId: GR-14n
+startSha: 7221563c
+gateEvidenceSha256: null # GATE-00R double capture OWED at merge (carried)
+mediationReportSha256Before: ff6dde8731e5451812ad61840a958fa5a414c46b2bb7182818f8509d46e7a82b
+mediationReportSha256After: bfb60311fbeaea6a03c2a7f608c5e25a150a9cca1e8365b814abc93b17cf7800
+activePolicySha256: unchanged
+baselineSha256: unchanged
+
+engineFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+    - _resolve_type strips top-level default-value assignments from
+      declared-type texts before resolution (resolution-local only)
+
+fixtures:
+  - helper_proof/hp22_default_parameter_di_positive.kt
+  consolidated manifest: 64 -> 65 rows
+
+tests:
+  - fixture battery 57/57 (HP-22 included)
+  - carrier/structured-launch/composable/CLI/mediation suites green
+
+knownFollowUps:
+  - GR-14o: initializer type inference for typeless properties
+  - GR-14k scope pattern continues for the counterexample queue
+
+status: PARTIAL # GATE-00R + Gradle DB owed at merge (carried)
+rootCause: ESCAPING_CALLBACK # receiver-resolution gap class
+selectedPattern: engine-enablement
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch corrects a receiver-resolution gap (default-value pollution
+  in declared-type texts).  It is not a baseline, exception, or
+  authorization document.

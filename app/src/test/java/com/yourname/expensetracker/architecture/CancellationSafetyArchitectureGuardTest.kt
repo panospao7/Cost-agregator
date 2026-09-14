@@ -144,7 +144,6 @@ class CancellationSafetyArchitectureGuardTest {
             ArchitectureAllowlistEntry("AnalyticsViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("BudgetViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("BudgetForecastingViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("DebugDataStorage.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel/debug storage with broad catches", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("DebugViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("SourceLinkDebugViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("HomeViewModel.kt", "LAUNCH_CE_NO_RETHROW", category = "UI", owner = "UI", "ViewModel with broad catches in viewModelScope", "MIT-034", LocalDate.of(2026, 12, 31)),

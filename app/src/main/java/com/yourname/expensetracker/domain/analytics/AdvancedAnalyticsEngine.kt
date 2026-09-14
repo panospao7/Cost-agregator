@@ -80,6 +80,19 @@ class AdvancedAnalyticsEngine @Inject constructor(
         referenceDate: Long = timeProvider.now(),
         computeComparison: Boolean = true
     ): AnalyticsPeriodRange {
+        // GR-14g: comparison windows come from the non-recursive leaf below;
+        // getPeriodRange -> getPreviousPeriodRange -> calculatePeriodRange,
+        // never back into getPeriodRange.
+        val range = calculatePeriodRange(period, referenceDate)
+        if (!computeComparison) return range
+        return range.copy(comparisonRange = getPreviousPeriodRange(period, range.startMs))
+    }
+
+    /** Single-window leaf (comparisonRange always null) — no recursion. */
+    private fun calculatePeriodRange(
+        period: AnalyticsPeriod,
+        referenceDate: Long
+    ): AnalyticsPeriodRange {
         val (startMs, endMs, label) = when (period) {
             AnalyticsPeriod.WEEK -> calculateWeekRange(referenceDate)
             AnalyticsPeriod.MONTH -> calculateMonthRange(referenceDate)
@@ -89,13 +102,12 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 "Custom period requires explicit date range. Use getCustomPeriodRange() instead."
             )
         }
-        
         return AnalyticsPeriodRange(
             period = period,
             startMs = startMs,
             endMs = endMs,
             label = label,
-            comparisonRange = if (computeComparison) getPreviousPeriodRange(period, startMs) else null
+            comparisonRange = null
         )
     }
     
@@ -145,8 +157,8 @@ class AdvancedAnalyticsEngine @Inject constructor(
                 AnalyticsPeriod.YEAR -> TimePeriodUtils.addYears(currentStartMs, -1)
                 AnalyticsPeriod.CUSTOM -> return null
             }
-            
-            getPeriodRange(period, previousRef, computeComparison = false)
+
+            calculatePeriodRange(period, previousRef)
         } catch (e: Exception) {
             Timber.tag(TAG).w(e, "Failed to calculate previous period")
             null

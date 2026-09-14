@@ -1,0 +1,541 @@
+﻿# GR-08 batch 5, part 1 (GR-08e1) tracked batch manifest -- DB_UNAUTHORIZED_MUTATION
+# exact-policy authorization for NotificationRepository.kt.
+#
+# Batch scope (plan): GR-08e covered TWO files (NotificationRepository.kt 23
+# findings + WarrantyTrackerRepository.kt 23 findings) as ONE batch, with a
+# forced split if the combined unique fingerprint count exceeded 25.  Scope
+# verification against the trusted START report
+# (build/guard-debug/gr08e/before.json == trusted GR-08d after.json,
+# 391 findings / 20 advisory diagnostics): NotificationRepository.kt carries
+# exactly 23 DB_UNAUTHORIZED_MUTATION findings collapsing to 23 UNIQUE
+# fingerprints (dedup key: callable identity + daoAccessor + daoFqcn +
+# operation; every finding here is a distinct tuple -- no per-call-site
+# repeats), and WarrantyTrackerRepository.kt carries 23 findings / 23 unique
+# fingerprints.  Combined unique count 46 > the 25-fingerprint batch cap, so
+# the batch was SPLIT into GR-08e1 (this manifest) / GR-08e2
+# (GR-08e2.yml) per the GR-08c precedent; each part is within the cap.
+# All 23 file findings are DB_UNAUTHORIZED_MUTATION with disposition
+# EXACT_POLICY: this file is the REPOSITORY layer, a legal writer layer per
+# docs/architecture/LEGAL_PATHS.md (raw-notification persistence/deletion,
+# package blocking, per-source stats bookkeeping, review/correction cleanup,
+# BULK_DELETED audit event; every entrypoint opens with
+# writeBarrier.checkWritesAllowed).
+#
+# GR-08e SOURCE CHANGE (accessor normalization, both parts): 9 of the 46
+# batch findings (1 here, 8 in GR-08e2) reached their DAO through the
+# database-chained form `database.xxxDao().insert(...)`.  The findings
+# scanner reports that receiver text verbatim, but the v2 source-evidence
+# verifier resolves chain-form bodies to the Room accessor identity and
+# fails any row spelled with the chain text (DB_V2_POLICY_MUTATION_NOT_FOUND
+# -- empirically evidenced in build/guard-debug/gr08e/
+# probe-accessor-spellings.json), so NO spelling of a chain-form row can
+# pass both gates.  The batch normalizes those call sites to the
+# codebase-standard constructor-property injection (ReviewQueueRepository.kt
+# precedent, GR-08d): `transactionEventDao` (here) and
+# `warrantyLifecycleEventDao` (GR-08e2) are now @Inject constructor
+# properties provided by DaoModule.  Room caches DAO instances per database,
+# so the injected instances are the same objects the chained calls returned;
+# every write keeps its surrounding transaction and cancellation-safe
+# semantics.  Callable signatures are unchanged, so every finding fingerprint
+# is unchanged and the 391 -> 345 delta accounting holds.  End-to-end
+# pre-validation with the real scanner over the changed source
+# (build/guard-debug/gr08e/probe-delta-final.json): 345 findings, both batch
+# files at 0, out-of-batch byte-stable, zero added findings.
+#
+# Closure additions (GR-08e blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in ALL mutating-callable bodies was enumerated, not just
+# the findings: 23 findings == 23 abstract-method mutating call sites, and
+# this file calls NO body-carrying @Transaction DAO convenience method (the
+# PendingReviewDao calls are getByRawId/deleteByRawId/deleteAll, all
+# abstract; RawNotificationDao, BlockedPackageDao, SourceStatsDao,
+# UserCorrectionDao, ExpenseDao.deleteAll and TransactionEventDao.insert are
+# abstract too).  Read-only callables perform no mutations;
+# processAndSave/processAndSaveAll/retrainClassifier delegate to the
+# pipeline/classifier whose own writes live in already-authorized batch
+# scopes (GR-08a/GR-08b).  Constructor-property DAO aliases (GR-08a
+# pattern): all DAO accessors except the normalized transactionEventDao are
+# direct constructor properties resolved natively by the evidence verifier;
+# after the GR-08e source change transactionEventDao is one too.
+# Multi-seed note: the migration CLI accepts a SINGLE --seed-rows value, so
+# every generation run consumes the combined document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 rows verbatim); passing only GR-08e1-seed.yml
+# would drop the earlier batches' rows from the rendered candidate.
+schemaVersion: 1
+batchId: GR-08e1
+startSha: d64c0c43
+startReport:
+  path: build/guard-debug/gr08e/before.json
+  # ORCHESTRATOR: fill with the SHA-256 of the reference copy after
+  # `copy build\guard-debug\gr08d\after.json build\guard-debug\gr08e\before.json`
+  # (trusted GR-08d after report; 391 findings / 20 advisory).
+  sha256: 
+  trusted: true
+  findingCount: 391
+activePolicySha256: 3e898f1701e63e6d59520e7802aa69eab8858c0eb21996832c24e73735a8669d
+seedFile: docs/ci/db-findings/GR-08-seeds.yml
+owner: '@panospao7'
+linkedIssue: MIT-DB-08E
+counts:
+  fileFindings: 23
+  batchCallablesFindings: 23
+  uniqueFingerprints: 23
+selectedFingerprints:
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=blockPackage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BlockedPackageDao|identity.accessor=blockedPackageDao|identity.operation=block|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=delete|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=deleteByRawId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=delete|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=delete|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=decrementPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=resetAllPendingCounts|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.UserCorrectionDao|identity.accessor=userCorrectionDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=resetAllPendingCounts|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=database.transactionEventDao%28%29|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.UserCorrectionDao|identity.accessor=userCorrectionDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=resetSourceStats|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreDebugSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreDebugSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreDebugSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreDebugSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreSourceStatsSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.data.database.entity.SourceStats%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreSourceStatsSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.data.database.entity.SourceStats%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=save|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+- "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=unblockPackage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BlockedPackageDao|identity.accessor=blockedPackageDao|identity.operation=unblock|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+findings:
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=blockPackage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BlockedPackageDao|identity.accessor=blockedPackageDao|identity.operation=block|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: blockPackage
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: blockedPackageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BlockedPackageDao
+  operation: block
+  locations: [152]
+  disposition: EXACT_POLICY
+  rationale: "Package-block insert (IGNORE conflict strategy keeps re-blocks idempotent) behind the write barrier; the repository is the legal writer for notification-source blocking."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=delete|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=deleteByRawId|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: delete
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RawNotification
+    kind: function
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: deleteByRawId
+  locations: [173]
+  disposition: EXACT_POLICY
+  rationale: "Detached-review cleanup for the deleted notification, inside the delete transaction so review state and the raw row never diverge."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=delete|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=delete|identity.mutation_kind=ROOM_DELETE|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: delete
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RawNotification
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: delete
+  locations: [174]
+  disposition: EXACT_POLICY
+  rationale: "Terminal raw-notification row delete, last write of the delete transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=delete|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=decrementPending|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: delete
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RawNotification
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: decrementPending
+  locations: [171]
+  disposition: EXACT_POLICY
+  rationale: "Per-source pending counter decrement when the deleted notification still had a PENDING review, inside the delete transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.ExpenseDao|identity.accessor=expenseDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAll
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: expenseDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
+  operation: deleteAll
+  locations: [255]
+  disposition: EXACT_POLICY
+  rationale: "Expenses wipe inside the full-reset transaction (the dangerous half of the compile-error-deprecated deleteAll, documented WARNING, barrier-guarded, development resets only)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAll
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: deleteAll
+  locations: [256]
+  disposition: EXACT_POLICY
+  rationale: "Pending-review wipe inside the full-reset transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAll
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: deleteAll
+  locations: [254]
+  disposition: EXACT_POLICY
+  rationale: "Raw-notification wipe inside the full-reset transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=resetAllPendingCounts|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAll
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: resetAllPendingCounts
+  locations: [258]
+  disposition: EXACT_POLICY
+  rationale: "Per-source pending counters reset inside the full-reset transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAll|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.UserCorrectionDao|identity.accessor=userCorrectionDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAll
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: deleteAll
+  locations: [257]
+  disposition: EXACT_POLICY
+  rationale: "User-correction wipe inside the full-reset transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.PendingReviewDao|identity.accessor=pendingReviewDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAllNotifications
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: pendingReviewDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
+  operation: deleteAll
+  locations: [217]
+  disposition: EXACT_POLICY
+  rationale: "Pending-review bulk cleanup alongside the raw-notification purge, inside the deleteAllNotifications transaction (notification-specific cleanup never touches expenses)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAllNotifications
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: deleteAll
+  locations: [216]
+  disposition: EXACT_POLICY
+  rationale: "Raw-notification bulk purge inside the deleteAllNotifications transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=resetAllPendingCounts|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAllNotifications
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: resetAllPendingCounts
+  locations: [219]
+  disposition: EXACT_POLICY
+  rationale: "Per-source pending counters reset to zero after the review purge, inside the deleteAllNotifications transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.TransactionEventDao|identity.accessor=database.transactionEventDao%28%29|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAllNotifications
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: transactionEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
+  operation: insert
+  locations: [201]
+  disposition: EXACT_POLICY
+  rationale: "BULK_DELETED TransactionEvent audit write (expenseId null, provider-derived occurredAt per G-TIME-01, bounded metadata) before the bulk mutation, inside the deleteAllNotifications transaction.  The finding's accessor spelling reflects the pre-batch database-chained call form; the GR-08e source change normalized the call site to the injected transactionEventDao constructor property (ReviewQueueRepository precedent) and the seed row spells the normalized accessor."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=deleteAllNotifications|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22Long%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.UserCorrectionDao|identity.accessor=userCorrectionDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: deleteAllNotifications
+    receiver: null
+    parameterTypes:
+    - Long
+    kind: function
+  daoAccessor: userCorrectionDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.UserCorrectionDao
+  operation: deleteAll
+  locations: [218]
+  disposition: EXACT_POLICY
+  rationale: "User-correction bulk cleanup alongside the raw-notification purge, inside the deleteAllNotifications transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=resetSourceStats|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: resetSourceStats
+    receiver: null
+    parameterTypes: []
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: deleteAll
+  locations: [264]
+  disposition: EXACT_POLICY
+  rationale: "Per-source stats table reset behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreDebugSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: restoreDebugSnapshot
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: deleteAll
+  locations: [283]
+  disposition: EXACT_POLICY
+  rationale: "DEBUG-gated snapshot restore (UnsupportedOperationException in release) clearing raw notifications inside the restore transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreDebugSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: restoreDebugSnapshot
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: insertAll
+  locations: [286]
+  disposition: EXACT_POLICY
+  rationale: "DEBUG-gated snapshot restore re-inserting the captured raw-notification rows (IGNORE conflict basis) inside the restore transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreDebugSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: restoreDebugSnapshot
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: deleteAll
+  locations: [284]
+  disposition: EXACT_POLICY
+  rationale: "DEBUG-gated snapshot restore clearing per-source stats inside the restore transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreDebugSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: restoreDebugSnapshot
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.repository.NotificationRepository.DebugNotificationsSnapshot
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: insertAll
+  locations: [289]
+  disposition: EXACT_POLICY
+  rationale: "DEBUG-gated snapshot restore re-inserting the captured per-source stats rows inside the restore transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreSourceStatsSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.data.database.entity.SourceStats%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=deleteAll|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: restoreSourceStatsSnapshot
+    receiver: null
+    parameterTypes:
+    - List<com.yourname.expensetracker.data.database.entity.SourceStats>
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: deleteAll
+  locations: [301]
+  disposition: EXACT_POLICY
+  rationale: "Stats snapshot restore clearing existing rows inside the restore transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=restoreSourceStatsSnapshot|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22List%3Ccom.yourname.expensetracker.data.database.entity.SourceStats%3E%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.SourceStatsDao|identity.accessor=sourceStatsDao|identity.operation=insertAll|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: restoreSourceStatsSnapshot
+    receiver: null
+    parameterTypes:
+    - List<com.yourname.expensetracker.data.database.entity.SourceStats>
+    kind: function
+  daoAccessor: sourceStatsDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.SourceStatsDao
+  operation: insertAll
+  locations: [303]
+  disposition: EXACT_POLICY
+  rationale: "Stats snapshot restore re-inserting the captured rows inside the restore transaction."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=save|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22com.yourname.expensetracker.data.database.entity.RawNotification%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.RawNotificationDao|identity.accessor=dao|identity.operation=insert|identity.mutation_kind=ROOM_INSERT|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: save
+    receiver: null
+    parameterTypes:
+    - com.yourname.expensetracker.data.database.entity.RawNotification
+    kind: function
+  daoAccessor: dao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
+  operation: insert
+  locations: [67]
+  disposition: EXACT_POLICY
+  rationale: "Raw-notification persistence writer behind the write barrier; the repository is the legal storage writer for captured notifications (storage payload already sanitized per RawStorageMode upstream)."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+- fingerprint: "v2|db_access|DB_UNAUTHORIZED_MUTATION|path=app%2Fsrc%2Fmain%2Fjava%2Fcom%2Fyourname%2Fexpensetracker%2Fdata%2Frepository%2FNotificationRepository.kt|symbol.owner=com.yourname.expensetracker.data.repository.NotificationRepository|symbol.name=unblockPackage|symbol.receiver=%3Cnone%3E|symbol.parameters=%5B%22String%22%5D|identity.dao=com.yourname.expensetracker.data.database.dao.BlockedPackageDao|identity.accessor=blockedPackageDao|identity.operation=unblock|identity.mutation_kind=ROOM_MUTATING_QUERY|identity.call_form=receiver"
+  ruleId: DB_UNAUTHORIZED_MUTATION
+  path: app/src/main/java/com/yourname/expensetracker/data/repository/NotificationRepository.kt
+  callable:
+    ownerFqcn: com.yourname.expensetracker.data.repository.NotificationRepository
+    method: unblockPackage
+    receiver: null
+    parameterTypes:
+    - String
+    kind: function
+  daoAccessor: blockedPackageDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.BlockedPackageDao
+  operation: unblock
+  locations: [157]
+  disposition: EXACT_POLICY
+  rationale: "Package-unblock delete behind the write barrier."
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08E
+  expectedResolution: "Seed row merged into the v2 candidate via --seed-rows (combined GR-08-seeds.yml); finding absent from the after.json rescan."
+deferred:
+  note: "NONE for this file: after the GR-08e promotion NotificationRepository.kt carries 0 DB_UNAUTHORIZED_MUTATION findings (23/23 authorized).  Out-of-batch stability: the rescan delta expectation is 391 -> 345 (46 = 23 GR-08e1 + 23 GR-08e2); the remaining 345 include the still-unauthorized files deferred to future batches (e.g. SmartBillNegotiationEngine.kt with the only remaining database-chained accessor finding) which must remain byte-stable across this batch's rescan.  Future batches must keep passing the cumulative combined seed document so earlier batch rows never drop from the rendered candidate."
+  callables: []

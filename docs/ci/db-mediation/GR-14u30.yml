@@ -1,0 +1,53 @@
+# GR-14u30 — A2 dangling-clause MEASURED MOOT (plan item A2,
+# docs/ci/GUARDRAIL_ISSUES_PLAN.md).  Negative-result record; NO code change.
+#
+# What the plan expected (ledger §B1, u28 board): 14 dangling-clause
+# refusal findings (DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED) as a
+# distinct exception-flow engine feature, sequenced as batch A2 after A1
+# (labelled-return).
+#
+# What measurement shows on the post-u29 board (5f23aabd):
+#   1. Subject census (the 22 rows still carrying
+#      GR13_LOCAL_GUARD_UNMODELABLE): dangling-clause count = 0.  The 14
+#      u28 findings were DERIVATIVE ARTIFACTS of the u29 misfire: when the
+#      jump handler refused a whole `return try { ... } catch { ... }`
+#      statement early (labelled-return misclassification), the statement
+#      was skipped and its trailing `catch` part then appeared unclaimed
+#      in the sequence, producing a second dangling-clause finding.
+#      Evidence: the pre-fix fixture
+#      test_return_try_named_arg_transaction_wrapper_supported failed on
+#      the u28 tree with BOTH reasons on one statement (labelled-return
+#      from the jump handler + dangling-clause from the orphaned catch);
+#      after u29 both are gone.
+#   2. Corpus-wide sweep (ALL 1,000+ callables, not only mutation
+#      subjects; build/guard-debug/gr14u29/sweep_corpus_u30.log): 31
+#      dangling-clause findings across 26 DISTINCT non-subject callables
+#      (ReviewQueueRepository.approveReview,
+#      NotificationIntakeCoordinator.capture, RawContentSanitizer.*,
+#      LegacyDataMigrationService.build*Entity, AddExpenseViewModel.save,
+#      CsvExpenseImporter.parseAndImportLine, ...).
+#
+# SCOPE DECISION (not taken here): the 26 non-subject callables are
+# outside A2's defined blast radius (A2 = the ledger's subject rows).  An
+# unmodelable non-subject body degrades call-graph edge fidelity (its
+# outbound calls fall back to uncertain extraction), which may be holding
+# OTHER rows unproven — but that is a hypothesis to be measured with its
+# own Step-0 projection before any parser change.  Recorded as candidate
+# engine work "GR-14-dc (non-subject dangling-clause edge fidelity)";
+# do not fold it into another batch.
+#
+# BOARD: unchanged — 5f23aabd... (u29 board; no code change in this batch).
+#
+# Remaining unmodelable subject rows after A2's close-out (9 callables,
+# current refusal mix — supersedes the ledger §B1 u28 finding counts):
+#   processBankStatement          lambda-escape x9, unknown-construct x5,
+#                                 coroutine-builder x1, elvis-block x1
+#   ensureDefaultCategories       coroutine-builder x1
+#   syncTransactions              unknown-construct x1
+#   createGroupWithMembers        unknown-construct x1
+#   archiveGroup (GTC)            unknown-construct x1
+#   addExpenseToGroup             unknown-construct x1
+#   migrateCategories             lambda-escape x1, elvis-block x1
+#   deleteGroupAtomic             lambda-escape x2
+#   updateExpenseCategoryBulk     lambda-escape x1
+status: MEASURED-MOOT (no work remains at A2's defined scope)

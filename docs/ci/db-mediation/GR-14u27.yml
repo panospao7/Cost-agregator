@@ -1,0 +1,179 @@
+# GR-14u27 — self-guarded mutations prove on their own evidence.
+# unproven 205 -> 111 (-94); proven 201 -> 295.  0 counterexamples; 0 regressions.
+#
+# ROOT CAUSE (engine, order-of-checks defect): a mutation whose LOCAL guard is
+#   ``direct`` is guarded on EVERY execution — the dominance engine proved a
+#   canonical barrier dominates the mutation inside the callable's own body, or
+#   the mutation sits inside a canonical direct scope region.  The barrier is
+#   evaluated at the mutation site against app-global maintenance state, so no
+#   caller can change the outcome.  The prover ALREADY encodes this: step 7
+#   collapses ``effective`` to ``{"direct"}`` whenever ``local == "direct"``
+#   (proof.py), and the GR-14u5 zero-inbound exemption was granted on exactly the
+#   GR-14j principle.
+#
+#   But step 5 ("uncertain edges reaching the subject stop the proof") and step 6
+#   ("no exact production path -> external entry") both returned EARLIER, so any
+#   inbound uncertain edge — or merely the absence of a discoverable exact path —
+#   suppressed a proof the local evidence had already established.  Measured on
+#   the u26 board: 89 rows carried proofStatus
+#   ``unproven_async_or_escaping_callback`` *with* ``localGuard == "direct"``,
+#   plus 5 more in ``unproven_ambiguous_call``.  94 rows in total.
+#
+# FIX (engine, proof.py): compute ``self_guarded_helper`` once
+#   (``mode == "helper" and local in ("direct", "restore_internal")``) and use it
+#   (a) to keep the step-4 zero-inbound exemption (unchanged semantics), (b) to
+#   skip the step-5 uncertain-edge gate, and (c) to skip the step-6 external-edge
+#   verdict.  Step 7 then proves the row from the local guard.
+#
+#   FAIL-CLOSED by construction.  ``local`` is only ``direct``/``restore_internal``
+#   when a canonical barrier is structurally present:
+#     * step 3 still returns first when the site itself sits inside an
+#       async/escaping/unresolved lambda, so an async-carried mutation never
+#       reaches here;
+#     * ``_local_site_context`` consults the dominance prover only when no
+#       uncertain region covers the site, and the prover reports ``direct`` only
+#       for ``ProofStatus.PROVEN`` dominance; ``unmodelable`` and ``unguarded``
+#       both leave ``local == "none"`` (pinned);
+#     * worker mediation is excluded (``mode == "helper"``), so the
+#       worker-root rules are untouched (pinned).
+#
+# DELIBERATE POLICY REVERSAL — needs owner awareness:
+#   Two pre-existing pins asserted the OLD step-5 policy, i.e. that a
+#   self-guarded row with an uncertain inbound edge "stays fail-closed unproven":
+#     * scripts/ci/test_gr14u5_self_scoped_helper.py
+#         test_self_scoped_helper_with_uncertain_caller_stays_unproven
+#     * scripts/ci/test_gr14f_inline_carriers.py
+#         test_inline_carrier_site_keeps_uncertain_evidence_when_unbindable
+#   They are amended, NOT deleted, and the part of each that carries real safety
+#   content is preserved verbatim:
+#     * the uncertain inbound edge MUST still be recorded (the GR-14f
+#       resolution-preservation invariant) — untouched, still asserted;
+#     * the row must NEVER degrade to a zero-inbound external-entry misdiagnosis
+#       — still asserted (and now structurally guaranteed).
+#   Only the proof-state expectation changed (unproven -> PROVEN_HELPER), with
+#   ``local_guard == "direct"`` asserted alongside.  The previous policy was
+#   inconsistent with step 7 of the same function; this batch makes the function
+#   self-consistent.  This is a policy change, not a safety relaxation: the
+#   counterexample machinery is untouched and the board stays at 0
+#   counterexamples.
+#
+# PINS:
+#   * scripts/ci/test_gr14u27_self_guarded.py (NEW, 7): drives the production
+#     dominance-prover callback (which the fixture harness cannot wire).
+#     Proving (RED pre-fix): proven local guard + uncertain caller -> proven;
+#     reports ``local_guard == "direct"`` and GR13_ALL_PATHS_GUARDED; and the
+#     same site with NO caller at all still proves.
+#     Fail-closed (green before and after): ``unguarded`` local status stays
+#     unproven; ``unmodelable`` local status stays unproven; no prover wired stays
+#     unproven; ``workerMediated`` does NOT use the bypass.
+#   * fixtures HP-24 (self-guarded helper, async-only caller) and HP-25
+#     (self-guarded helper, exact + async callers) — RED pre-fix end to end;
+#     consolidated rows 70 -> 72.
+#   * test_gr14u5 / test_gr14f pins: reachability + no-external-entry assertions
+#     preserved; proof-state expectation amended (see above).
+#
+# BOARD (captured twice, byte-identical — board_run1.json == board_run2.json):
+#   sha256 8d813a2553d45bce2a6a62350970804838a26b8be9c9e9e2b3325134ebea20bc
+#   proven: 201 -> 295 (helper 186 -> 280, restore_internal 1, worker 14)
+#   unproven: 205 -> 111 (ambiguous 45 -> 40, async 133 -> 44, external 27 -> 27)
+#   counterexamples 0 -> 0
+#   changed rows: EXACTLY 94, ALL -> proven_helper
+#     (89 from unproven_async_or_escaping_callback, 5 from unproven_ambiguous_call)
+#   ``unproven_external_entry`` is UNCHANGED at 27 — the 28 rows that a step-5-only
+#   fix would have mislabelled GR13_NO_EXACT_PRODUCTION_PATH are proved instead.
+#   Policy bytes UNCHANGED (7851adc2...); baseline/exception bytes unchanged.
+#   ALSO PRESENT (not a determinism capture): board_fallback_step5.json
+#   (sha 513fa69b...), the measured owner-decline fallback (unproven 171).  It is
+#   named separately on purpose so the two-capture evidence is not misread.
+#
+# INDEPENDENT REVIEW (strict-reviewer-deep, 2026-09-11): VERDICT FAIL on three
+#   documentation/evidence issues only — all fixed before this manifest was
+#   finalised (stale module docstring in test_gr14u5_self_scoped_helper.py; an
+#   incorrect "every pin untouched" fallback claim in the state report; and the
+#   mislabelled determinism artifact above).  The reviewer independently
+#   confirmed (a) SOUNDNESS: no caller shape exists in which a
+#   ``local == "direct"``/``"restore_internal"`` mutation executes without the
+#   canonical barrier having passed (traced through DatabaseWriteBarrier.kt,
+#   callgraph.py, inspect_db_mediation_proof.py, barrier_proof.py); (b)
+#   FAIL-CLOSED: step 3, the tri-state statuses, worker mode and the
+#   counterexample machinery are untouched, and no counterexample->proven flip is
+#   possible because step 7 already made that branch unreachable for these rows;
+#   (c) no other test, guard, ratchet, baseline or doc depends on the old policy;
+#   and (d) reproduced the board byte-identically.  The reviewer's remaining
+#   requirement is OWNER SIGN-OFF on the policy reversal (GR-14u5.yml:34-40
+#   recorded the old step-5 behaviour as deliberate), which is why this batch is
+#   NOT to be merged without an explicit decision.
+#
+# Validation:
+#   - test_gr14u27_self_guarded.py 7/7 (2 RED pre-fix).
+#   - fixtures 64/64 (2 new); db_guard 235 passed.
+#   - engine battery 1234 passed / 13 failed / 14 skipped — and the 13 are the
+#     IDENTICAL pre-existing set (freshness x1, verify_known_good_state x11,
+#     production_source_roots x1), i.e. zero new failures.
+#   - board 8d813a25 deterministic double-run; 0 counterexamples; policy unchanged.
+schemaVersion: 1
+batchId: GR-14u27
+startSha: afc56d28
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: 04e6a21a976bad3f3dfb93a9529250761cb963afb1f06c1d35f33f4a8c58d986
+mediationReportSha256After: 8d813a2553d45bce2a6a62350970804838a26b8be9c9e9e2b3325134ebea20bc
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/mediation_analysis/proof.py:
+      ``self_guarded_helper`` computed once; step 5 and step 6 no longer suppress
+      a proof the local guard already establishes
+  - scripts/ci/test_gr14u27_self_guarded.py: 7 pins (new)
+  - scripts/ci/test_gr14u5_self_scoped_helper.py,
+    scripts/ci/test_gr14f_inline_carriers.py: proof-state expectation amended;
+    reachability + no-external-entry assertions preserved
+  - fixtures: HP-24, HP-25 (new); consolidated rows 70 -> 72
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - (94 rows) unproven_* -> proven_helper — see the board delta above
+rootCause: GR13_LOCAL_GUARD_SUPPRESSED_BY_INBOUND_UNCERTAINTY
+selectedPattern: ENGINE
+
+tests:
+  - test_gr14u27_self_guarded.py 7/7 (2 RED pre-fix)
+  - fixtures 64/64; db_guard 235 passed
+  - engine battery 1234 passed; the 13 failures are the identical pre-existing set
+  - board 8d813a25 deterministic double-run; 0 counterexamples; policy unchanged
+
+status: COMPLETE
+statusNote: >
+  Engine work, pins, fixtures and validation are COMPLETE; an independent strict
+  review confirmed soundness and fail-closed behaviour while reproducing the
+  board byte-identically; and the OWNER DECISION this batch was blocked on has
+  been explicitly granted (owner @panospao7, 2026-09-11): the step-5/6 policy
+  recorded as deliberate in GR-14u5.yml:34-40 is superseded for locally-guarded
+  mutations, on the grounds that step 7 of the same function already assumed it.
+  The two amended pins keep their GR-14f reachability and no-external-entry
+  assertions verbatim; only the proof-state expectation changed.
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  A mutation whose own body carries a canonical guard the dominance engine
+  proved, or which sits inside a canonical barrier scope, is guarded every time
+  it runs: the barrier is evaluated at the mutation site against app-global
+  maintenance state, so no caller can change the outcome.  The prover already
+  said so - it collapses the effective guard context to "direct" for exactly
+  these rows - but two earlier checks returned first, so any uncertain inbound
+  edge, or merely the lack of a discoverable exact path, suppressed a proof the
+  local evidence had already established.  This batch lets those rows prove from
+  their own evidence while keeping every fail-closed behaviour: an
+  async-carried mutation is still rejected before this point, an unproven or
+  unmodelable local guard still leaves the row unproven, and worker mediation is
+  untouched.  It does change one previously pinned policy - a self-guarded row
+  with an uncertain caller used to stay unproven - so that expectation is
+  amended in two existing pins with their reachability and
+  no-external-entry-misdiagnosis assertions preserved verbatim; the change makes
+  the prover self-consistent rather than relaxing a safety check.  Ninety-four
+  rows move, all of them to proven helper, the board is deterministic with zero
+  counterexamples and zero regressions, and policy, baseline and exception bytes
+  are unchanged.

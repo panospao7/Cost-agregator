@@ -1,0 +1,2442 @@
+"""Shadow-only conservative Kotlin statement-boundary tokenizer.
+
+Operates only on masked text (comments/strings blanked, offsets preserved).
+Recognizes a small supported subset; anything else is an explicit
+unsupported finding. Spans and kinds only, no raw source retained.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from enum import Enum
+
+from .diagnostics import DIAGNOSTIC_CODES
+from .model import BarrierMarkerKind, SourceSpan
+
+__all__ = [
+    "RegionKind",
+    "ParsedRegion",
+    "UnsupportedFinding",
+    "CallableBodyParse",
+    "parse_callable_body",
+]
+
+_ALLOWED_CODES = (
+    "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+    "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+    "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+    "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED",
+    "DB_STRUCTURAL_MODEL_BARRIER_FORM_UNRECOGNIZED",
+)
+
+_ID = r"[A-Za-z_][A-Za-z0-9_]*"
+_RE_FUN = re.compile(r"\bfun\b")
+_RE_OBJECT = re.compile(r"\bobject\s*(?::|\{)")
+_RE_COROUTINE = re.compile(
+    r"(?:^|[^\w$.])(?:launch|async|withContext|runBlocking)\s*[\(\{]"
+)
+_RE_BARRIER_SCOPE = re.compile(
+    # `DatabaseWriteBarrier.runWrite(operation, block)` REQUIRES the operation,
+    # so the canonical call is `runWrite(op) { ... }`.  The optional argument
+    # list (mirroring _RE_WORKER_GUARD below) is what makes real guarded bodies
+    # modelable; without it they fell through to _RE_LIKE_BARRIER and failed the
+    # whole body with BARRIER_FORM_UNRECOGNIZED (GR-14u16).  One level of
+    # parenthesis nesting covers `runWrite(DatabaseAccessOperation("...")) {`.
+    r"\bwriteBarrier\s*\.\s*runWrite\s*(?:\((?:[^()]|\([^()]*\))*\))?\s*\{"
+)
+_RE_BARRIER_CHECK = re.compile(
+    r"\bwriteBarrier\s*\.\s*checkWritesAllowed\s*\("
+)
+_RE_WORKER_GUARD = re.compile(
+    r"\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*"
+    r"(?P<method>runGuardedWithContext|runGuarded)\s*(?:\([^()]*\))?\s*\{"
+)
+_RE_LIKE_BARRIER = re.compile(
+    r"\b\w+\s*\.\s*(?:runWrite|checkWritesAllowed)\s*[\(\{]"
+)
+_RE_RETURN_LABEL = re.compile(r"\breturn\s*@")
+_RE_BREAK_CONT_LABEL = re.compile(r"\b(?:break|continue)\s*@")
+_RE_IF = re.compile(r"if\s*\(")
+_RE_WHEN = re.compile(r"when\s*\(")
+_RE_WHILE = re.compile(r"while\s*\(")
+_RE_FOR = re.compile(r"for\s*\(")
+_RE_TRY = re.compile(r"try\s*\{")
+_RE_CATCH = re.compile(r"catch\s*\(")
+_RE_FINALLY = re.compile(r"finally\s*\{")
+_RE_DO = re.compile(r"do\s*\{")
+_RE_ELSE = re.compile(r"else\b")
+_RE_ACCESSOR = re.compile(r"(?:^|[^\w])(?:get|set)\s*\(")
+_RE_JUMP = re.compile(r"^(return|throw|break|continue)(?![\w])")
+_RE_VAL_CONSTRUCT = re.compile(
+    r"^(?:val|var)\s+[^=\n]*?=\s*(?P<construct>try|if|when)(?![\w])"
+)
+_RE_LABEL_NAME = re.compile(r"^@([A-Za-z_][A-Za-z0-9_]*)")
+_RE_LAMBDA_PARAMS = re.compile(
+    r"\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*\s*->"
+)
+_RE_TS_SCOPE = re.compile(
+    # GR-14u28: an optional declaration/assignment prefix.  A transparent scope is
+    # just as transparent when its result is bound (`val id = db.withTransaction { }`)
+    # as when the call stands alone — but the pattern used to be anchored straight
+    # onto `receiver.method`, so a bound scope never matched, its lambda took the
+    # escape path, and the ENTIRE callable became UNSUPPORTED (hiding an already-
+    # dominating barrier).  Recognising the candidate here grants nothing: admission
+    # stays receiver-exact / import-exact in the proof layer, so a bound scope that
+    # fails admission is still fail-closed.
+    r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+    r"(?:\s*:\s*[A-Za-z_][A-Za-z0-9_<>,.?\s]*)?\s*=\s*"
+    r"|[A-Za-z_][A-Za-z0-9_]*\s*=\s*)?"
+    r"(?:(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?"
+    r"(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*"
+    r"(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{"
+)
+
+_CONT_END = set("+-*/%,:?.&|<>!(`[")
+_WS = " \t\r\n\x0b\x0c"
+
+
+class RegionKind(str, Enum):
+    STATEMENT = "STATEMENT"
+    BLOCK = "BLOCK"
+    IF = "IF"
+    WHEN = "WHEN"
+    WHEN_BRANCH = "WHEN_BRANCH"
+    LOOP = "LOOP"
+    TRY = "TRY"
+    CATCH = "CATCH"
+    FINALLY = "FINALLY"
+    RETURN = "RETURN"
+    THROW = "THROW"
+    BREAK = "BREAK"
+    CONTINUE = "CONTINUE"
+    ACCESSOR = "ACCESSOR"
+    BARRIER_SCOPE = "BARRIER_SCOPE"
+    TRANSPARENT_SCOPE = "TRANSPARENT_SCOPE"
+    LAMBDA_RETURN = "LAMBDA_RETURN"
+    DIRECT_CHECK = "DIRECT_CHECK"
+
+
+@dataclass(frozen=True)
+class ParsedRegion:
+    kind: RegionKind
+    span: SourceSpan
+    children: tuple[ParsedRegion, ...] = ()
+    barrier: BarrierMarkerKind | None = None
+    # TRANSPARENT_SCOPE candidates only: the wrapper method name and the
+    # syntactic receiver (None for receiverless calls).  Admission (exact
+    # receiver/import resolution against the contract) happens in the proof
+    # layer, never here.
+    scope_method: str | None = None
+    scope_receiver: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, RegionKind):
+            raise TypeError("ParsedRegion.kind must be a RegionKind")
+        if not isinstance(self.span, SourceSpan):
+            raise TypeError("ParsedRegion.span must be a SourceSpan")
+        if not isinstance(self.children, (tuple, list)):
+            raise TypeError("ParsedRegion.children must be a tuple of ParsedRegion")
+        for child in self.children:
+            if not isinstance(child, ParsedRegion):
+                raise TypeError("ParsedRegion.children must be a tuple of ParsedRegion")
+        if self.barrier is not None and not isinstance(self.barrier, BarrierMarkerKind):
+            raise TypeError("ParsedRegion.barrier must be a BarrierMarkerKind or None")
+        if self.kind is RegionKind.TRANSPARENT_SCOPE:
+            if not self.scope_method:
+                raise ValueError("TRANSPARENT_SCOPE requires scope_method")
+        elif self.scope_method is not None or self.scope_receiver is not None:
+            raise ValueError("scope_method/scope_receiver are TRANSPARENT_SCOPE-only")
+        object.__setattr__(self, "children", tuple(self.children))
+
+
+@dataclass(frozen=True)
+class UnsupportedFinding:
+    code: str
+    span: SourceSpan
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.code not in DIAGNOSTIC_CODES or self.code not in _ALLOWED_CODES:
+            raise ValueError("UnsupportedFinding.code must be an allowed code: %r" % (self.code,))
+        if not isinstance(self.span, SourceSpan):
+            raise TypeError("UnsupportedFinding.span must be a SourceSpan")
+        if not isinstance(self.reason, str) or not self.reason:
+            raise TypeError("UnsupportedFinding.reason must be a non-empty string")
+
+
+@dataclass(frozen=True)
+class CallableBodyParse:
+    body_span: SourceSpan
+    regions: tuple[ParsedRegion, ...]
+    unsupported: tuple[UnsupportedFinding, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.body_span, SourceSpan):
+            raise TypeError("CallableBodyParse.body_span must be a SourceSpan")
+        if not isinstance(self.regions, (tuple, list)):
+            raise TypeError("CallableBodyParse.regions must be a tuple of ParsedRegion")
+        if not isinstance(self.unsupported, (tuple, list)):
+            raise TypeError("CallableBodyParse.unsupported must be a tuple of UnsupportedFinding")
+        for region in self.regions:
+            if not isinstance(region, ParsedRegion):
+                raise TypeError("CallableBodyParse.regions must be a tuple of ParsedRegion")
+        for finding in self.unsupported:
+            if not isinstance(finding, UnsupportedFinding):
+                raise TypeError(
+                    "CallableBodyParse.unsupported must be a tuple of UnsupportedFinding"
+                )
+        object.__setattr__(
+            self, "regions", tuple(sorted(self.regions, key=lambda r: (r.span.start, r.span.end)))
+        )
+        object.__setattr__(
+            self,
+            "unsupported",
+            tuple(sorted(self.unsupported, key=lambda f: (f.span.start, f.span.end, f.reason))),
+        )
+
+    @property
+    def is_supported(self) -> bool:
+        return not self.unsupported
+
+
+def _line_starts(text: str) -> list[int]:
+    starts = [0]
+    for match in re.finditer(r"\n", text):
+        starts.append(match.end())
+    return starts
+
+
+class _Cursor:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.starts = _line_starts(text)
+        self.findings: list[UnsupportedFinding] = []
+        # Optional soundness gate for opaque-lambda modeling: when set, a
+        # brace-containing leaf statement may be modeled as an opaque
+        # STATEMENT only if the predicate returns True for its span (no
+        # mutation site start and no barrier-like call inside any brace
+        # group).  None preserves the strict lambda-escape failure.
+        self.opacity_predicate = None
+        # GR-14b Contract v2: wrapper method names eligible for
+        # transparent-scope candidacy.  Empty (default) preserves exact v1
+        # behavior; admission happens in the proof layer.
+        self.transparent_scope_methods: tuple[str, ...] = ()
+        # GR-14u33: closed inline-carrier method names (e.g. the reviewed
+        # PRODUCTION_TRANSPARENT_INLINE_METHODS set) whose trailing-lambda
+        # statements parse recursively as context-preserving regions.  This
+        # makes bodies parseable; it authorizes nothing — the proof layer
+        # never admits these as canonical scopes, so mutations inside them
+        # stay disconnected (fail closed).  Empty (default) preserves exact
+        # pre-u33 behavior.
+        self.transparent_inline_methods: tuple[str, ...] = ()
+        # While parsing the direct child sequence of a transparent-scope
+        # candidate, holds the wrapper method name (the implicit label for
+        # `return@label`); None inside any nested lambda.
+        self.scope_label: str | None = None
+
+    def span(self, start: int, end: int) -> SourceSpan:
+        import bisect
+
+        if end < start:
+            end = start
+        idx = bisect.bisect_right(self.starts, start) - 1
+        line = idx + 1
+        column = start - self.starts[idx] + 1
+        return SourceSpan(start=start, end=end, line=line, column=column)
+
+    def fail(self, code: str, start: int, end: int, reason: str) -> None:
+        self.findings.append(UnsupportedFinding(code=code, span=self.span(start, end), reason=reason))
+
+    def non_ws(self, pos: int, end: int, forward: bool = True) -> int:
+        if forward:
+            while pos < end and self.text[pos] in _WS:
+                pos += 1
+            return pos
+        pos -= 1
+        while pos >= end and self.text[pos] in _WS:
+            pos -= 1
+        return pos + 1
+
+
+def _match_forward(text: str, opening: int, end: int) -> int:
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    stack = [text[opening]]
+    i = opening + 1
+    while i < end:
+        ch = text[i]
+        if ch in pairs:
+            stack.append(ch)
+        elif ch in ")]}":
+            if not stack or pairs[stack[-1]] != ch:
+                return -1
+            stack.pop()
+            if not stack:
+                return i + 1
+        i += 1
+    return -1
+
+
+def _at_clause(text: str, pos: int, end: int) -> bool:
+    """True when ``pos`` starts a clause keyword that continues the enclosing
+    construct (else/catch/finally/while) or an accessor (get/set): a ``}``
+    closing to depth 0 right before one of these ends the statement part so
+    the clause parser sees the clause as its own part."""
+    for word in ("else", "catch", "finally", "while", "get", "set"):
+        if text.startswith(word, pos):
+            after = pos + len(word)
+            if after >= end or not (text[after].isalnum() or text[after] == "_"):
+                return True
+    return False
+
+
+def _paren_depth_before(text: str, start: int, pos: int) -> int:
+    """Nesting depth of ``()``/``[]`` at ``pos``, counting from ``start``.
+
+    GR-14u56b mechanism 1: masked text contains no comments or strings, so a
+    flat scan is exact.  Braces are NOT counted here: the caller asks whether
+    an elvis sits inside argument parentheses, and a depth-0 elvis whose RHS
+    opens a brace is the control-flow form the refusal exists for.
+    """
+    depth = 0
+    i = start
+    while i < pos:
+        ch = text[i]
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        i += 1
+    return depth
+
+
+def _safe_call_receiver_ok(receiver: str) -> bool:
+    """Structural validation of a safe-call carrier receiver (GR-14u56b).
+
+    GR-14u40 accepted only ``ident(.ident)*`` receivers; u56b extends the
+    shape to balanced call-result receivers (``dao.getById(x!!)``) via a
+    depth-aware scan (regexes cannot count nested parentheses).  The u39/u46
+    charset exclusions hold otherwise: no brace, semicolon, ``?`` (an elvis
+    or a second safe call in the receiver), or ``=`` anywhere; parentheses
+    and brackets must balance and never dip negative.  Anything else fails
+    closed (no match -> pre-change handling).
+    """
+    if not receiver or not receiver.strip(_WS):
+        return False
+    depth = 0
+    for ch in receiver:
+        if ch in ";?={}":
+            return False
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _split_statements(cur: _Cursor, start: int, end: int) -> list[tuple[int, int]] | None:
+    parts: list[tuple[int, int]] = []
+    depth = 0
+    stmt_start: int | None = None
+    i = start
+    text = cur.text
+    while i < end:
+        ch = text[i]
+        if ch not in _WS and stmt_start is None:
+            stmt_start = i
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < 0:
+                bad = stmt_start if stmt_start is not None else i
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                    bad,
+                    i + 1,
+                    "stray-closing-delimiter",
+                )
+                return None
+            if depth == 0 and ch == "}" and stmt_start is not None:
+                nxt = cur.non_ws(i + 1, end)
+                if nxt < end and _at_clause(text, nxt, end):
+                    parts.append((stmt_start, i + 1))
+                    stmt_start = None
+        if depth == 0 and stmt_start is not None:
+            if ch == ";":
+                parts.append((stmt_start, i))
+                stmt_start = None
+            elif (
+                ch in "+-"
+                and stmt_start < i
+                and i + 1 < end
+                and text[i + 1] == ch
+                and _line_remainder_blank(text, i + 2, end)
+            ):
+                # GR-14u41: a STATEMENT-ENDING postfix increment/decrement
+                # (`duplicatesSkipped++`) must terminate the statement like
+                # a `;`.  `+`/`-` sit in _CONT_END for binary-operator line
+                # continuations (`val x = a +\n b`), so without this branch
+                # the `++` glued the statement with every following line
+                # until a line ended without a continuation char — in
+                # processBankStatement the glued composite swallowed the
+                # next runInTransaction(...) { checkWritesAllowed(...) }
+                # call and refused unknown-construct at the barrier tail
+                # check.  TWO guards keep every other shape on its pre-fix
+                # path: `stmt_start < i` excludes statement-INITIAL prefix
+                # forms (`++x` opens the statement, so the branch cannot
+                # fire and the line still splits at the newline as the one
+                # `++x` leaf it was before), and the line-remainder check
+                # excludes MID-STATEMENT forms (`if (c) x++ else y` keeps
+                # gluing into the one if/else statement _parse_if handled
+                # before, and `a++ + b` stays a continuation composite).
+                # ADJACENCY remains the increment discriminator, NOT a
+                # next-non-whitespace peek: `val y = a +\n +b` (single `+`
+                # at end of line, unary `+` leading the next line) keeps
+                # the continuation path as ONE statement.  Masked text
+                # contains no strings or comments (mask_kotlin_source
+                # guarantee), so a doubled `+`/`-` inside a literal can
+                # never reach this scan.  A single `+`/`-` followed by any
+                # other char keeps the existing continuation behavior —
+                # including `+=`/`-=` assignment continuations (the `=`
+                # never matches), intentionally unchanged.  The scan
+                # position jumps past the second operator char so it
+                # cannot re-trigger.
+                parts.append((stmt_start, i + 2))
+                stmt_start = None
+                i += 2
+                continue
+            elif ch == "\n":
+                prev = text[stmt_start:i].rstrip(_WS)
+                nxt = cur.non_ws(i + 1, end)
+                cont = bool(prev) and prev[-1] in _CONT_END
+                dot_cont = nxt < end and text[nxt] == "."
+                # GR-14u56a: a line starting with `?.` is a safe-call
+                # continuation of the previous statement, exactly like the
+                # leading-`.` dot continuation (`x?.takeIf { }\n?.let { }`
+                # split into two statements, so the `?.let` half lost its
+                # carrier head and refused as a bare lambda-escape).  ONLY
+                # the exact `?.` pair glues: a line starting with `?` alone
+                # (elvis) does NOT — the elvis-block refusal stays intact.
+                safe_dot_cont = nxt + 1 < end and text[nxt] == "?" and text[nxt + 1] == "."
+                if not cont and not dot_cont and not safe_dot_cont:
+                    parts.append((stmt_start, i))
+                    stmt_start = None
+        i += 1
+    if depth != 0:
+        bad = stmt_start if stmt_start is not None else start
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED", bad, end, "unbalanced-delimiter"
+        )
+        return None
+    if stmt_start is not None:
+        tail = text[stmt_start:end]
+        if tail.strip(_WS):
+            parts.append((stmt_start, end))
+    return parts
+
+
+def _strip(stmt: str) -> str:
+    return stmt.strip(_WS)
+
+
+def _line_remainder_blank(text: str, pos: int, end: int) -> bool:
+    """True when text[pos:next-newline-or-end] strips to empty (GR-14u41)."""
+    nl = text.find("\n", pos, end)
+    stop = nl if nl >= 0 else end
+    return not text[pos:stop].strip(_WS)
+
+
+def _leading_kw(stmt: str, word: str) -> bool:
+    if not stmt.startswith(word):
+        return False
+    rest = stmt[len(word) :]
+    return not rest or not (rest[0].isalnum() or rest[0] == "_")
+
+
+def _find_top_level_else(text: str, start: int, end: int) -> int | None:
+    """Absolute offset of a depth-0 ``else`` keyword in ``[start, end)``, or
+    None.  Nesting depth counts ``( )``, ``[ ]`` and ``{ }``; masked text
+    contains no comments or strings."""
+    depth = 0
+    i = start
+    while i < end:
+        ch = text[i]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif depth == 0 and ch == "e" and text.startswith("else", i):
+            before_ok = i == start or not (text[i - 1].isalnum() or text[i - 1] == "_")
+            after = i + 4
+            after_ok = after >= end or not (text[after].isalnum() or text[after] == "_")
+            if before_ok and after_ok:
+                return i
+        i += 1
+    return None
+
+
+def _match_transparent_scope(stripped: str, methods: tuple[str, ...]):
+    """Syntactic trailing-lambda candidate match, or None.
+
+    Returns the regex match for ``receiver.method(args?) {`` /
+    ``method(args?) {`` where ``method`` is one of the enabled wrapper
+    names.  Purely syntactic: admission happens in the proof layer.
+    """
+    if not methods:
+        return None
+    match = _RE_TS_SCOPE.match(stripped)
+    if match is None or match.group("method") not in methods:
+        return None
+    return match
+
+
+def _parse_transparent_scope(cur: _Cursor, base: int, stmt_e: int, match) -> ParsedRegion | None:
+    """Build the TRANSPARENT_SCOPE region for a matched candidate statement.
+
+    Returns None (after recording a finding) on any shape that is not a
+    cleanly closed trailing lambda ending the statement — fail closed.
+    """
+    receiver = match.group("receiver")
+    method = match.group("method")
+    brace_abs = base + match.end() - 1
+    prefix = cur.text[base : brace_abs]
+    if "{" in prefix:
+        # A lambda opened earlier in the statement escapes before the
+        # wrapper — never a transparent-scope candidate.
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            base,
+            stmt_e,
+            "lambda-before-transparent-scope",
+        )
+        return None
+    close = _match_forward(cur.text, brace_abs, stmt_e)
+    tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unknown-construct",
+        )
+        return None
+    saved = cur.scope_label
+    cur.scope_label = method
+    try:
+        # A trailing lambda may open with a parameter header
+        # (`{ context ->`, `{ a, b ->`).  Parameters introduce no control
+        # flow; skip the header so it never merges with the first body
+        # statement (masked comment lines between them would otherwise glue
+        # the header onto a brace-containing statement).
+        body_start = brace_abs + 1
+        param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+        if param_match is not None:
+            body_start += param_match.end()
+        inner = _parse_sequence(cur, body_start, close - 1, True)
+    finally:
+        cur.scope_label = saved
+    return ParsedRegion(
+        kind=RegionKind.TRANSPARENT_SCOPE,
+        span=cur.span(base, close),
+        children=tuple(inner),
+        scope_method=method,
+        scope_receiver=receiver,
+    )
+
+
+def _match_chained_carrier(stripped: str, methods: tuple[str, ...]):
+    """GR-14u39: `chain.name(args?) { ... }` trailing-lambda candidate.
+
+    The carrier is reached through a balanced call chain instead of
+    leading the statement.  Conservative charset: the prefix may contain
+    no brace, semicolon, question mark, or assignment (an earlier lambda,
+    elvis, or assignment target disqualifies — same fail-closed family as
+    the u31 head rules).  Purely syntactic; admission happens in the
+    proof layer.
+    """
+    if not methods:
+        return None
+    names = "|".join(re.escape(m) for m in methods)
+    m = re.match(
+        r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*\s*(?::\s*[^=\n{};]+)?=\s*)?"
+        r"(?P<prefix>[^{};?=]+?)"
+        r"\.(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names,
+        stripped,
+    )
+    if m is None or m.group("method") not in methods:
+        return None
+    return m
+
+
+_RE_CARRIER_CHAIN_CACHE: dict[tuple[str, ...], "re.Pattern[str] | None"] = {}
+
+
+def _match_carrier_chain(stripped: str, methods: tuple[str, ...]):
+    """GR-14u46: carrier-CHAIN candidate — N>=2 admitted segments.
+
+    ``[val/var prefix]? chain.c1(args?) { }.c2(args?) { }...`` where EVERY
+    segment name is name-exact against the closed inline-carrier set.  The
+    idiomatic ``runCatching { ... }.onFailure { ... }`` shape matched
+    neither the u33 head rule (its lambda does not end the statement) nor
+    the u39 chained rule (the first carrier's lambda is followed by
+    ``.onFailure``), so the whole composite fell to the generic opacity
+    gate and refused whole callables on the outer statement.
+
+    The regex only LOCATES the first segment; segment-by-segment scanning
+    (including the last-lambda-ends-the-statement requirement) happens in
+    the parser.  The first segment may be a HEAD carrier (empty prefix —
+    ``runCatching { }`` leading the statement, which the u33 head branch
+    rejects only because its lambda does not end the statement), a
+    u39-style chained form, or — GR-14u56a — a SAFE-CALL head
+    (``receipt.imagePath?.takeIf { }``: the u40 head structure whose
+    lambda does not end the statement, so only the chain rule can claim
+    the composite).  A ``?`` or ``=`` anywhere in a plain-chain prefix
+    keeps the u39 exclusions; the safe-call head variant accepts ONLY a
+    dotted identifier-chain receiver (no call parentheses — the
+    ``f()?.let { }`` call-result form keeps today's fail-closed
+    handling).  Mid-chain segments are scanned structurally, where any
+    non-carrier name with a lambda fails the attempt (caller falls back).
+    """
+    if not methods:
+        return None
+    pattern = _RE_CARRIER_CHAIN_CACHE.get(methods)
+    if pattern is None:
+        names = "|".join(re.escape(m) for m in methods)
+        pattern = re.compile(
+            r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+            r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
+            r"(?:(?:(?:(?P<prefix>[^{};?=]+?)\s*\.)"
+            r"|(?P<safe_receiver>[A-Za-z_][A-Za-z0-9_.]*)\s*\?\.\s*))?"
+            r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
+        )
+        _RE_CARRIER_CHAIN_CACHE[methods] = pattern
+    m = pattern.match(stripped)
+    if m is None or m.group("method") not in methods:
+        return None
+    return m
+
+
+_RE_SAFE_CALL_CARRIER_CACHE: dict[tuple[str, ...], "re.Pattern[str] | None"] = {}
+
+
+def _match_safe_call_carrier(stripped: str, methods: tuple[str, ...]):
+    """GR-14u40: `receiver?.name(args?) { ... }` trailing-lambda candidate.
+
+    The safe-call receiver (`runId?.let { }`) blocks every other head
+    matcher (the `.`-requiring scope regex cannot cross the `?.`), so the
+    whole composite used to fall to the generic opacity gate and, where
+    the lambda carried real content, refuse the ENTIRE callable
+    (coroutine-builder / elvis-block on the outer statement).
+
+    Conservative shape: optional val/var binding prefix (no brace,
+    semicolon, or `?.` in the type/annotation text), then a receiver,
+    `?.`, and an admitted carrier name.  GR-14u56a: the receiver may be a
+    dotted identifier chain (`receipt.imagePath?.let { }`).  GR-14u56b: the
+    receiver may also be a CALL RESULT with balanced parentheses
+    (`scannedReceiptDao.getById(x!!)?.let { }`) — regexes cannot count
+    nested parentheses, so the receiver group is located by regex and then
+    validated structurally by ``_safe_call_receiver_ok`` (no brace,
+    semicolon, `?`, or `=`; balanced `()`/`[]`).  Anything richer
+    (`a?.b?.let { }`, `f()?.g()?.let { }`, `x?.foo { }` for an unlisted
+    `foo`) does not match here and keeps today's fail-closed handling.
+    Purely syntactic; admission happens in the proof layer.
+    """
+    if not methods:
+        return None
+    pattern = _RE_SAFE_CALL_CARRIER_CACHE.get(methods)
+    if pattern is None:
+        names = "|".join(re.escape(m) for m in methods)
+        pattern = re.compile(
+            r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+            r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
+            r"(?P<receiver>[^?]*?)"
+            r"\s*\?\.\s*"
+            r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
+        )
+        _RE_SAFE_CALL_CARRIER_CACHE[methods] = pattern
+    m = pattern.match(stripped)
+    if m is None or m.group("method") not in methods:
+        return None
+    if not _safe_call_receiver_ok(m.group("receiver")):
+        return None
+    return m
+
+
+def _parse_safe_call_carrier(cur: _Cursor, base: int, stmt_e: int, match):
+    """Build the TRANSPARENT_SCOPE region for a safe-call carrier candidate.
+
+    Mirrors _parse_chained_carrier's fail-closed body handling (prefix
+    brace check, tail check, param header skip, recursive parse,
+    scope-label save/restore).  scope_receiver mirrors the u39
+    chained-carrier precedent for a CHAIN receiver (GR-14u56a dotted
+    chains, GR-14u56b call-result receivers — any receiver containing a
+    dot or a call parenthesis): the receiver is not a simple identifier,
+    so it stays None — carrier regions are never canonical scopes, the
+    bridge's carrier-span walk matches by scope_method name only, and the
+    proof layer admits by contract only, so this grants nothing beyond
+    parseability.  A SIMPLE receiver keeps the u40 behavior: it is
+    recorded exactly as _parse_transparent_scope does.
+    """
+    receiver = match.group("receiver")
+    method = match.group("method")
+    brace_rel = match.end() - 1
+    brace_abs = base + brace_rel
+    prefix = cur.text[base:brace_abs]
+    if "{" in prefix:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            base,
+            stmt_e,
+            "lambda-before-transparent-scope",
+        )
+        return None
+    close = _match_forward(cur.text, brace_abs, stmt_e)
+    tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unknown-construct",
+        )
+        return None
+    saved = cur.scope_label
+    cur.scope_label = method
+    try:
+        body_start = brace_abs + 1
+        param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+        if param_match is not None:
+            body_start += param_match.end()
+        inner = _parse_sequence(cur, body_start, close - 1, True)
+    finally:
+        cur.scope_label = saved
+    return ParsedRegion(
+        kind=RegionKind.TRANSPARENT_SCOPE,
+        span=cur.span(base, close),
+        children=tuple(inner),
+        scope_method=method,
+        scope_receiver=(
+            None if ("." in receiver or "(" in receiver) else receiver
+        ),
+    )
+
+
+def _parse_chained_carrier(cur: _Cursor, base: int, stmt_e: int, match):
+    """Build the TRANSPARENT_SCOPE region for a chained carrier candidate.
+
+    Mirrors _parse_transparent_scope's fail-closed body handling (param
+    header skip, recursive parse, scope-label save/restore); the receiver
+    is a whole chain, so scope_receiver stays None (carrier regions are
+    never canonical scopes — the proof layer admits by contract only).
+    """
+    method = match.group("method")
+    brace_rel = match.end() - 1
+    brace_abs = base + brace_rel
+    prefix = cur.text[base:brace_abs]
+    if "{" in prefix:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            base,
+            stmt_e,
+            "lambda-before-transparent-scope",
+        )
+        return None
+    close = _match_forward(cur.text, brace_abs, stmt_e)
+    tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unknown-construct",
+        )
+        return None
+    saved = cur.scope_label
+    cur.scope_label = method
+    try:
+        body_start = brace_abs + 1
+        param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+        if param_match is not None:
+            body_start += param_match.end()
+        inner = _parse_sequence(cur, body_start, close - 1, True)
+    finally:
+        cur.scope_label = saved
+    return ParsedRegion(
+        kind=RegionKind.TRANSPARENT_SCOPE,
+        span=cur.span(base, close),
+        children=tuple(inner),
+        scope_method=method,
+    )
+
+
+def _parse_carrier_chain(cur: _Cursor, base: int, stmt_e: int, first_match):
+    """Build per-segment TRANSPARENT_SCOPE regions for a carrier chain.
+
+    GR-14u46: each segment's lambda parses recursively as its own carrier
+    region (param-header skip, scope-label save/restore), nested inside the
+    previous segment's region; ``scope_receiver`` stays None (chain — the
+    u39 precedent: carrier regions are never canonical scopes) and each
+    segment carries its OWN ``scope_method`` (the bridge unions all
+    carrier spans by name-exact membership, so intermediate segments join
+    exactly like nested transparent scopes already do).  GR-14u56a: the
+    head may be a safe-call carrier (dotted identifier-chain receiver,
+    ``receipt.imagePath?.takeIf { }``) and mid-chain segments may be
+    reached through ``?.`` — the head regex and the segment scanner accept
+    the exact ``?.`` separator; a bare ``?`` (elvis) never matches, and
+    every other fail-closed rule is unchanged.
+
+    Fail-closed fallback (u33 hard-stop precedent): on ANY structural
+    failure the attempt is abandoned WITHOUT keeping its findings — the
+    caller re-parses the statement through the generic opacity gate,
+    behaving exactly as pre-u46.  A claim-then-reject that hard-fails a
+    currently-absorbed no-mutation site would be a corpus-wide regression.
+
+    Returns (regions, findings) — the caller decides claim vs fallback
+    from the regions and rolls the findings back on fallback.
+    """
+    findings_before = len(cur.findings)
+    regions: list[ParsedRegion] = []
+    pos = base
+    # First segment: anchored head match (end() is relative to `stripped`,
+    # i.e. relative to `base` in absolute offsets).
+    match = first_match
+    while True:
+        method = match.group("method")
+        brace_abs = pos + match.end() - 1
+        close = _match_forward(cur.text, brace_abs, stmt_e)
+        if close < 0:
+            return None, cur.findings[findings_before:]
+        saved = cur.scope_label
+        cur.scope_label = method
+        try:
+            body_start = brace_abs + 1
+            param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+            if param_match is not None:
+                body_start += param_match.end()
+            inner = _parse_sequence(cur, body_start, close - 1, True)
+        finally:
+            cur.scope_label = saved
+        regions.append(
+            ParsedRegion(
+                kind=RegionKind.TRANSPARENT_SCOPE,
+                span=cur.span(pos, close),
+                children=tuple(inner),
+                scope_method=method,
+            )
+        )
+        # Next segment: `.name(args?) {` or `?.name(args?) {` immediately
+        # after this lambda (GR-14u56a: the safe-call continuation
+        # `?.let { }` is a chain segment exactly like the plain-dot one;
+        # the elvis `?` alone never matches — the separator is the exact
+        # `?.` pair).
+        seg = cur.text[close:stmt_e]
+        seg_match = re.match(
+            r"\s*\??\.\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{",
+            seg,
+        )
+        if seg_match is None:
+            break
+        if seg_match.group(1) not in cur.transparent_inline_methods:
+            # A lambda hangs off a non-carrier name: the chain shape is
+            # not fully admitted — abandon the attempt (caller falls
+            # back to the generic path).
+            return None, cur.findings[findings_before:]
+        pos = close
+        # The remainder match's end() is relative to `seg`, i.e. relative
+        # to `close` in absolute offsets — exactly what the loop head
+        # adds to `pos`.
+        match = seg_match
+    tail = cur.text[regions[-1].span.end:stmt_e].strip(_WS) if regions else "?"
+    if not regions or tail:
+        return None, cur.findings[findings_before:]
+    return regions, cur.findings[findings_before:]
+
+
+def _parse_block(
+    cur: _Cursor, abs_start: int, rel_open: int, abs_end: int, in_lambda: bool
+) -> tuple[ParsedRegion | None, list[ParsedRegion]]:
+    close = _match_forward(cur.text, abs_start + rel_open, abs_end)
+    if close < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+            abs_start + rel_open,
+            abs_end,
+            "unbalanced-brace",
+        )
+        return None, []
+    inner = _parse_sequence(cur, abs_start + rel_open + 1, close - 1, in_lambda)
+    region = ParsedRegion(
+        kind=RegionKind.BLOCK, span=cur.span(abs_start, close), children=tuple(inner)
+    )
+    return region, [region]
+
+
+def _parse_sequence(
+    cur: _Cursor, start: int, end: int, in_lambda: bool
+) -> list[ParsedRegion]:
+    out: list[ParsedRegion] = []
+    parts = _split_statements(cur, start, end)
+    if parts is None:
+        return out
+    idx = 0
+    while idx < len(parts):
+        stmt_s, stmt_e = parts[idx]
+        stmt = cur.text[stmt_s:stmt_e]
+        stripped = _strip(stmt)
+        if not stripped:
+            idx += 1
+            continue
+        lead_ws = len(stmt) - len(stmt.lstrip(_WS))
+        base = stmt_s + lead_ws
+        kind_region: ParsedRegion | None = None
+
+        if stripped.startswith("{"):
+            close = _match_forward(cur.text, base, stmt_e)
+            if close != stmt_e and cur.text[close:stmt_e].strip(_WS):
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                    base,
+                    stmt_e,
+                    "unknown-construct",
+                )
+                idx += 1
+                continue
+            if close < 0:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                    base,
+                    stmt_e,
+                    "unbalanced-brace",
+                )
+                idx += 1
+                continue
+            saved_label = cur.scope_label
+            cur.scope_label = None
+            inner = _parse_sequence(cur, base + 1, close - 1, in_lambda)
+            cur.scope_label = saved_label
+            kind_region = ParsedRegion(
+                kind=RegionKind.BLOCK,
+                span=cur.span(base, close),
+                children=tuple(inner),
+            )
+            out.append(kind_region)
+            idx += 1
+            continue
+
+        if _RE_FUN.search(stripped):
+            m = _RE_FUN.search(stripped)
+            assert m is not None
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                base + m.start(),
+                stmt_e,
+                "local-function",
+            )
+            idx += 1
+            continue
+
+        if _RE_OBJECT.search(stripped):
+            m = _RE_OBJECT.search(stripped)
+            assert m is not None
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                base + m.start(),
+                stmt_e,
+                "anonymous-object",
+            )
+            idx += 1
+            continue
+
+        if _leading_kw(stripped, "if"):
+            region, consumed = _parse_if(cur, base, stmt_e, parts, idx, in_lambda)
+            if region is not None:
+                out.append(region)
+            idx = consumed
+            continue
+
+        if _leading_kw(stripped, "when"):
+            region = _parse_when(cur, base, stmt_e, in_lambda)
+            if region is not None:
+                out.append(region)
+            idx += 1
+            continue
+
+        if _leading_kw(stripped, "while") or _leading_kw(
+            stripped, "for"
+        ) or _leading_kw(stripped, "do"):
+            region = _parse_loop(cur, base, stmt_e, parts, idx, in_lambda)
+            if region is not None:
+                out.append(region)
+                if isinstance(region, _DoWhile):
+                    idx = region.consumed_until
+                elif region.span.end > stmt_e:
+                    idx = _advance_past(parts, idx, region.span.end)
+                else:
+                    idx += 1
+            else:
+                idx += 1
+            continue
+
+        if _leading_kw(stripped, "try"):
+            region, consumed = _parse_try(cur, base, stmt_e, parts, idx, in_lambda)
+            if region is not None:
+                out.append(region)
+            idx = consumed
+            continue
+
+        if _leading_kw(stripped, "else") or _leading_kw(
+            stripped, "catch"
+        ) or _leading_kw(stripped, "finally"):
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED"
+                if _leading_kw(stripped, "else")
+                else "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED",
+                base,
+                stmt_e,
+                "dangling-clause",
+            )
+            idx += 1
+            continue
+
+        jump = _RE_JUMP.match(stripped)
+        if jump:
+            word = jump.group(1)
+            rest = stripped[jump.end() :]
+            rest_s = rest.lstrip(_WS)
+            if word == "return" and cur.transparent_scope_methods:
+                # `return withContext(...) { … }` and siblings: handled BEFORE
+                # the labelled-return gate because the wrapper body may
+                # legitimately contain `return@label`.  The wrapper construct
+                # carries the flow; the RETURN wraps it explicitly so the
+                # proof is contract-backed (no more accidental return-leaf
+                # inlining).
+                ts_match = _RE_TS_SCOPE.match(rest_s)
+                if ts_match is not None and ts_match.group("method") in cur.transparent_scope_methods:
+                    cons_base = stmt_e - len(rest_s)
+                    scope_region = _parse_transparent_scope(cur, cons_base, stmt_e, ts_match)
+                    if scope_region is not None:
+                        out.append(
+                            ParsedRegion(
+                                kind=RegionKind.RETURN,
+                                span=cur.span(base, scope_region.span.end),
+                                children=(scope_region,),
+                            )
+                        )
+                        idx += 1
+                        continue
+                    # Scope parse failed and recorded a finding: fail closed
+                    # (the callable stays unmodelable).
+                    idx += 1
+                    continue
+            # A labelled return is one whose label LEADS the rest
+            # (`return@scope expr`).  An `@` anywhere else in the rest text
+            # (an annotation, or a label inside a nested wrapper lambda of a
+            # `return try { ... }` statement) is not a labelled return: the
+            # statement must fall through to the construct/plain-return
+            # handling below instead of refusing as unsupported.
+            label_match = _RE_LABEL_NAME.match(rest_s)
+            if label_match is not None:
+                label = label_match.group(1)
+                if (
+                    word == "return"
+                    and cur.scope_label == label
+                    and cur.transparent_scope_methods
+                ):
+                    if "{" in rest:
+                        cur.fail(
+                            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+                            base,
+                            stmt_e,
+                            "lambda-in-labelled-return",
+                        )
+                        idx += 1
+                        continue
+                    # Lambda-local return from the enclosing transparent
+                    # scope's lambda: the wrapper completes and the caller
+                    # continues after the statement (wired by the CFG).
+                    out.append(
+                        ParsedRegion(
+                            kind=RegionKind.LAMBDA_RETURN, span=cur.span(base, stmt_e)
+                        )
+                    )
+                    idx += 1
+                    continue
+                code = (
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
+                    if word == "return"
+                    else "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED"
+                )
+                cur.fail(code, base, stmt_e, "labelled-%s" % word)
+                idx += 1
+                continue
+            if word == "return" and in_lambda:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    base,
+                    stmt_e,
+                    "non-local-return",
+                )
+                idx += 1
+                continue
+            if word in ("break", "continue") and rest.strip(_WS):
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                    base,
+                    stmt_e,
+                    "labelled-%s" % word,
+                )
+                idx += 1
+                continue
+            if word == "return":
+                construct = None
+                if _leading_kw(rest_s, "try"):
+                    construct = "try"
+                elif _leading_kw(rest_s, "if"):
+                    construct = "if"
+                elif _leading_kw(rest_s, "when"):
+                    construct = "when"
+                if construct is not None:
+                    cons_base = stmt_e - len(rest_s)
+                    findings_before = len(cur.findings)
+                    if construct == "try":
+                        region, consumed = _parse_try(
+                            cur, cons_base, stmt_e, parts, idx, in_lambda
+                        )
+                    elif construct == "if":
+                        region, consumed = _parse_if(
+                            cur, cons_base, stmt_e, parts, idx, in_lambda
+                        )
+                    else:
+                        region = _parse_when(cur, cons_base, stmt_e, in_lambda)
+                        consumed = idx + 1
+                    if region is not None:
+                        out.append(
+                            ParsedRegion(
+                                kind=RegionKind.RETURN,
+                                span=cur.span(base, region.span.end),
+                                children=(region,),
+                            )
+                        )
+                        idx = consumed
+                        continue
+                    # Construct parse failed.  When an opacity gate proves the
+                    # statement hides no mutation site and no barrier-like
+                    # call, roll the findings back and keep the historical
+                    # leaf-RETURN model (sound: nothing is hidden).  With no
+                    # gate, keep the historical leaf too.  Otherwise fail
+                    # closed on the construct findings.
+                    construct_findings = cur.findings[findings_before:]
+                    del cur.findings[findings_before:]
+                    if (
+                        cur.opacity_predicate is not None
+                        and not cur.opacity_predicate(base, stmt_e)
+                    ):
+                        cur.findings.extend(construct_findings)
+                        idx = consumed
+                        continue
+                    out.append(
+                        ParsedRegion(kind=RegionKind.RETURN, span=cur.span(base, stmt_e))
+                    )
+                    idx = consumed
+                    continue
+            kind = {
+                "return": RegionKind.RETURN,
+                "throw": RegionKind.THROW,
+                "break": RegionKind.BREAK,
+                "continue": RegionKind.CONTINUE,
+            }[word]
+            out.append(ParsedRegion(kind=kind, span=cur.span(base, stmt_e)))
+            idx += 1
+            continue
+
+        acc = _RE_ACCESSOR.match(stripped)
+        if acc and ("get" in stripped[:8] or "set" in stripped[:8]):
+            region = _parse_accessor(cur, base, stmt_e, in_lambda)
+            if region is not None:
+                out.append(region)
+            idx += 1
+            continue
+
+        # GR-14u31: a transparent-scope candidate is owned by its HEAD
+        # method, whatever its lambda body contains.  The barrier branches
+        # below match barrier text ANYWHERE in the statement, so a
+        # `withContext(...) { checkWritesAllowed(...); ... }` body used to
+        # be captured and refused there (unknown-construct) before the
+        # transparent-scope branch was ever reached.  Here the wrapper's
+        # lambda parses recursively and an embedded check proves as its own
+        # DIRECT_CHECK part; inner statements keep their own fail-closed
+        # handling.
+        #
+        # GR-14u33: the same head-ownership applies to statements headed by
+        # an admitted inline-carrier name (closed reviewed set) — ordinary
+        # `val x = y.count { }` / `require(x) { }` idioms no longer blank
+        # the whole body.  Carrier regions still carry kind
+        # TRANSPARENT_SCOPE, but the proof layer only admits names from the
+        # canonical scope contract, so carrier children stay disconnected
+        # in the CFG (fail closed).  Chained forms (`...().use { }`) are
+        # NOT head matches and keep refusing.
+        ts_match = _match_transparent_scope(stripped, cur.transparent_scope_methods)
+        if ts_match is None:
+            # GR-14u33: a carrier candidate claims the statement ONLY when
+            # its trailing lambda cleanly ends the statement.  Chained or
+            # argument-position shapes (`a.map { }.toSet()`,
+            # `f(x.map { })`) must keep falling through to the generic
+            # opacity-gated absorption below — claiming and then rejecting
+            # them on the tail check would regress bodies that parsed
+            # before (GR-14u33 saveAll hard stop).
+            carrier_match = _match_transparent_scope(
+                stripped, cur.transparent_inline_methods
+            )
+            if carrier_match is not None:
+                close = _match_forward(
+                    cur.text, base + carrier_match.end() - 1, stmt_e
+                )
+                tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                if close > 0 and not tail:
+                    ts_match = carrier_match
+            if ts_match is None:
+                # GR-14u39: same trailing-lambda-ends-the-statement rule
+                # for a carrier reached through a balanced call chain.
+                chained = _match_chained_carrier(
+                    stripped, cur.transparent_inline_methods
+                )
+                if chained is not None:
+                    close = _match_forward(
+                        cur.text, base + chained.end() - 1, stmt_e
+                    )
+                    tail = (
+                        cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                    )
+                    if close > 0 and not tail:
+                        region = _parse_chained_carrier(
+                            cur, base, stmt_e, chained
+                        )
+                        if region is not None:
+                            out.append(region)
+                        idx += 1
+                        continue
+                # GR-14u40: same rule for a carrier reached through a
+                # simple-identifier safe call (`runId?.let { rid -> }`).
+                # The `?.` blocks every `.`-requiring head matcher, so the
+                # composite used to fall to the generic opacity gate and
+                # refuse whole callables on the outer statement's inner
+                # content.  An UNLISTED method after `?.` still refuses,
+                # and a lambda that does not END the statement is never
+                # claimed (same tail check as u33/u39).
+                safe_call = _match_safe_call_carrier(
+                    stripped, cur.transparent_inline_methods
+                )
+                if safe_call is not None:
+                    close = _match_forward(
+                        cur.text, base + safe_call.end() - 1, stmt_e
+                    )
+                    tail = (
+                        cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                    )
+                    if close > 0 and not tail:
+                        _rcv = safe_call.group("receiver")
+                        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", _rcv):
+                            # Pre-u56b claim classes (simple/dotted
+                            # receivers): byte-identical claim behavior.
+                            region = _parse_safe_call_carrier(
+                                cur, base, stmt_e, safe_call
+                            )
+                            if region is not None:
+                                out.append(region)
+                            idx += 1
+                            continue
+                        # GR-14u56b hard-stop lesson: a call-result receiver
+                        # is a NEWLY-EXPOSED claim class (pre-u56b these
+                        # statements fell to the generic opacity gate).  A
+                        # claim attempt that records ANY finding — e.g. a
+                        # labelled return to an OUTER scope's label
+                        # (`getCurrentUser(groupId)?.let {
+                        # return@withTransaction ... }` in
+                        # GroupTransactionCoordinator.addMemberToGroup) —
+                        # must roll the attempt's findings back and fall
+                        # through to the generic path, mirroring the u46
+                        # chain attempt below: claiming while keeping the
+                        # finding hard-fails currently-absorbed no-mutation
+                        # sites (corpus-wide regression).  Simple and dotted
+                        # receivers keep the pre-u56b behavior: their
+                        # prefix/tail failures were already reachable before
+                        # u56b, and rolling those back would change pinned
+                        # u40/u56a tests.
+                        findings_before = len(cur.findings)
+                        region = _parse_safe_call_carrier(
+                            cur, base, stmt_e, safe_call
+                        )
+                        if (
+                            region is not None
+                            and len(cur.findings) == findings_before
+                        ):
+                            out.append(region)
+                            idx += 1
+                            continue
+                        del cur.findings[findings_before:]
+                        # Fall through to the generic handling below (the
+                        # opacity gate), exactly as pre-u56b.
+                # GR-14u46: carrier CHAINS (N>=2 admitted segments).  The
+                # idiomatic `runCatching { ... }.onFailure { ... }` matched
+                # neither the u33 head rule (its lambda does not END the
+                # statement) nor the u39 chained rule (the first carrier's
+                # lambda is followed by `.onFailure`), so the composite fell
+                # to the generic opacity gate and refused whole callables on
+                # the outer statement.  The chain is claimed ONLY when the
+                # attempt parses cleanly: every segment name is in the
+                # closed set, the last lambda ends the statement, and no
+                # structural failure occurred.  On ANY failure the attempt's
+                # findings are rolled back and the statement re-parses
+                # through the generic opacity gate — pre-u46 behavior
+                # exactly (u33 hard-stop precedent: a claim-then-reject that
+                # hard-fails a currently-absorbed no-mutation site would be
+                # a corpus-wide regression).
+                chain_match = _match_carrier_chain(
+                    stripped, cur.transparent_inline_methods
+                )
+                if chain_match is not None:
+                    findings_before = len(cur.findings)
+                    regions, _attempt_findings = _parse_carrier_chain(
+                        cur, base, stmt_e, chain_match
+                    )
+                    if regions is not None:
+                        out.extend(regions)
+                        idx += 1
+                        continue
+                    del cur.findings[findings_before:]
+        if ts_match is not None:
+            region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
+            if region is not None:
+                out.append(region)
+            idx += 1
+            continue
+
+        if _RE_BARRIER_SCOPE.search(stripped):
+            m = _RE_BARRIER_SCOPE.search(stripped)
+            assert m is not None
+            if "{" in stripped[: m.start()]:
+                # A lambda opened earlier in the statement (e.g. a callback
+                # receiving the barrier scope) escapes before the barrier —
+                # never a barrier candidate.
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+                    base,
+                    stmt_e,
+                    "lambda-before-barrier-scope",
+                )
+                idx += 1
+                continue
+            brace_rel = stripped.find("{", m.start())
+            brace_abs = base + brace_rel
+            close = _match_forward(cur.text, brace_abs, stmt_e)
+            tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+            if close < 0 or tail:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                    base,
+                    stmt_e,
+                    "unknown-construct",
+                )
+                idx += 1
+                continue
+            saved_label = cur.scope_label
+            cur.scope_label = None
+            inner = _parse_sequence(cur, brace_abs + 1, close - 1, True)
+            cur.scope_label = saved_label
+            out.append(
+                ParsedRegion(
+                    kind=RegionKind.BARRIER_SCOPE,
+                    span=cur.span(base, close),
+                    children=tuple(inner),
+                    barrier=BarrierMarkerKind.DIRECT_SCOPE,
+                )
+            )
+            idx += 1
+            continue
+
+        if _RE_WORKER_GUARD.search(stripped):
+            # Canonical worker-guard-shaped scope: a syntactic CANDIDATE only,
+            # with no synchronicity or mediation assumption (GR-13 owns any
+            # proof).  Same conservatism as the writeBarrier scope branch.
+            m = _RE_WORKER_GUARD.search(stripped)
+            assert m is not None
+            brace_rel = stripped.find("{", m.start())
+            brace_abs = base + brace_rel
+            close = _match_forward(cur.text, brace_abs, stmt_e)
+            tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+            if close < 0 or tail:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                    base,
+                    stmt_e,
+                    "unknown-construct",
+                )
+                idx += 1
+                continue
+            saved_label = cur.scope_label
+            cur.scope_label = None
+            inner = _parse_sequence(cur, brace_abs + 1, close - 1, True)
+            cur.scope_label = saved_label
+            out.append(
+                ParsedRegion(
+                    kind=RegionKind.BARRIER_SCOPE,
+                    span=cur.span(base, close),
+                    children=tuple(inner),
+                    barrier=BarrierMarkerKind.WORKER_GUARD_CANDIDATE,
+                )
+            )
+            idx += 1
+            continue
+
+        if _RE_BARRIER_CHECK.search(stripped):
+            m = _RE_BARRIER_CHECK.search(stripped)
+            assert m is not None
+            paren_rel = stripped.find("(", m.start())
+            close = _match_forward(cur.text, base + paren_rel, stmt_e)
+            tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+            if close < 0:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                    base,
+                    stmt_e,
+                    "unbalanced-paren",
+                )
+                idx += 1
+                continue
+            if tail:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                    base,
+                    stmt_e,
+                    "unknown-construct",
+                )
+                idx += 1
+                continue
+            if "{" in cur.text[base + paren_rel : close]:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+                    base,
+                    stmt_e,
+                    "lambda-in-barrier-check",
+                )
+                idx += 1
+                continue
+            out.append(
+                ParsedRegion(
+                    kind=RegionKind.DIRECT_CHECK,
+                    span=cur.span(base, close),
+                    barrier=BarrierMarkerKind.DIRECT_CHECK,
+                )
+            )
+            idx += 1
+            continue
+
+        if _RE_LIKE_BARRIER.search(stripped):
+            m = _RE_LIKE_BARRIER.search(stripped)
+            assert m is not None
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_BARRIER_FORM_UNRECOGNIZED",
+                base + m.start(),
+                stmt_e,
+                "barrier-form-unrecognized",
+            )
+            idx += 1
+            continue
+
+        if _RE_COROUTINE.search(stripped):
+            m = _RE_COROUTINE.search(stripped)
+            assert m is not None
+            start_off = base + m.start()
+            if cur.text[start_off] not in _WS:
+                start_off += 1
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                start_off,
+                stmt_e,
+                "coroutine-builder",
+            )
+            idx += 1
+            continue
+
+        m_val = _RE_VAL_CONSTRUCT.match(stripped)
+        if m_val is not None:
+            cons_base = base + m_val.start("construct")
+            cons_kw = m_val.group("construct")
+            findings_before = len(cur.findings)
+            if cons_kw == "try":
+                region, consumed = _parse_try(
+                    cur, cons_base, stmt_e, parts, idx, in_lambda
+                )
+            elif cons_kw == "if":
+                region, consumed = _parse_if(
+                    cur, cons_base, stmt_e, parts, idx, in_lambda
+                )
+            else:
+                region = _parse_when(cur, cons_base, stmt_e, in_lambda)
+                consumed = idx + 1
+            if region is not None:
+                out.append(
+                    ParsedRegion(
+                        kind=RegionKind.STATEMENT,
+                        span=cur.span(base, region.span.end),
+                        children=(region,),
+                    )
+                )
+                idx = consumed
+                continue
+            # Construct parse failed: opaque fallback when the opacity gate
+            # proves nothing is hidden inside; else fail closed (construct
+            # findings restored).
+            construct_findings = cur.findings[findings_before:]
+            del cur.findings[findings_before:]
+            if (
+                cur.opacity_predicate is not None
+                and not cur.opacity_predicate(base, stmt_e)
+            ):
+                cur.findings.extend(construct_findings)
+                idx = consumed
+                continue
+            out.append(
+                ParsedRegion(kind=RegionKind.STATEMENT, span=cur.span(base, stmt_e))
+            )
+            idx = consumed
+            continue
+
+        if "{?:" in stripped.replace(" ", "").replace("\t", "") and "{" in stripped:
+            pass
+
+        if "?:" in stripped and "{" in stripped:
+            qpos = stripped.find("?:")
+            # GR-14u56b mechanism 1: only a DEPTH-0 elvis forms a control-flow
+            # alternative whose brace-bearing result needs the refusal.  An
+            # elvis inside argument parentheses (depth > 0) is an expression,
+            # not control flow (`receipt.copy(imageHash = a ?: b)`), and the
+            # statement falls through to the ordinary handling below (the
+            # opacity gate still refuses any brace group hiding a mutation
+            # site or barrier-like call).  The depth-0 refusal is
+            # byte-identical: same code, span, and reason.
+            if _paren_depth_before(cur.text, base, base + qpos) == 0:
+                bpos = stripped.find("{", qpos)
+                if bpos >= 0:
+                    cur.fail(
+                        "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                        base,
+                        stmt_e,
+                        "elvis-block",
+                    )
+                    idx += 1
+                    continue
+
+        if "{" in stripped or "}" in stripped:
+            if (
+                cur.opacity_predicate is not None
+                and cur.opacity_predicate(base, stmt_e)
+            ):
+                # Every brace group in this statement is provably free of
+                # mutation sites and barrier-like calls, so the lambdas are
+                # observationally opaque for the dominance proof: model the
+                # whole statement as one plain sequential STATEMENT.
+                out.append(
+                    ParsedRegion(kind=RegionKind.STATEMENT, span=cur.span(base, stmt_e))
+                )
+                idx += 1
+                continue
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+                base,
+                stmt_e,
+                "lambda-escape",
+            )
+            idx += 1
+            continue
+
+        out.append(ParsedRegion(kind=RegionKind.STATEMENT, span=cur.span(base, stmt_e)))
+        idx += 1
+    return out
+
+
+def _advance_past(
+    parts: list[tuple[int, int]], idx: int, pos: int
+) -> int:
+    nxt = idx + 1
+    while nxt < len(parts) and parts[nxt][0] < pos:
+        nxt += 1
+    return nxt
+
+
+def _parse_if(
+    cur: _Cursor,
+    base: int,
+    stmt_e: int,
+    parts: list[tuple[int, int]],
+    idx: int,
+    in_lambda: bool,
+) -> tuple[ParsedRegion | None, int]:
+    text = cur.text
+    stripped = text[base:stmt_e]
+    paren_rel = stripped.find("(")
+    if paren_rel < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "if-without-condition",
+        )
+        return None, idx + 1
+    paren_abs = base + paren_rel
+    cond_end = _match_forward(text, paren_abs, stmt_e)
+    if cond_end < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+            paren_abs,
+            stmt_e,
+            "unbalanced-paren",
+        )
+        return None, idx + 1
+    rest_raw = text[cond_end:stmt_e]
+    rest = rest_raw.strip(_WS)
+    children: list[ParsedRegion] = []
+    span_end: int
+    nxt = idx + 1
+    if rest.startswith("{"):
+        brace_abs = cond_end + (len(rest_raw) - len(rest_raw.lstrip(_WS)))
+        close = _match_forward(text, brace_abs, stmt_e)
+        tail = text[close:stmt_e].strip(_WS) if close > 0 else ""
+        if close < 0 or tail:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                base,
+                stmt_e,
+                "if-body-not-closed",
+            )
+            return None, nxt
+        children = [
+            ParsedRegion(
+                kind=RegionKind.BLOCK,
+                span=cur.span(brace_abs, close),
+                children=tuple(_parse_sequence(cur, brace_abs + 1, close - 1, in_lambda)),
+            )
+        ]
+        span_end = close
+    elif rest:
+        else_abs = _find_top_level_else(text, cond_end, stmt_e)
+        body_start = cond_end + (len(rest_raw) - len(rest_raw.lstrip(_WS)))
+        body_end = else_abs if else_abs is not None else stmt_e
+        body_regions = _parse_sequence(cur, body_start, body_end, in_lambda)
+        if len(body_regions) != 1:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                body_start,
+                body_end,
+                "unbraced-if-body",
+            )
+            return None, nxt
+        if else_abs is not None and body_regions[0].kind == RegionKind.IF:
+            # Kotlin binds a trailing else to the NEAREST if, so
+            # `if (a) if (b) x() else y()` must not bind here.
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                body_start,
+                else_abs,
+                "ambiguous-dangling-else",
+            )
+            return None, nxt
+        children = [
+            ParsedRegion(
+                kind=RegionKind.BLOCK,
+                span=cur.span(body_start, body_end),
+                children=tuple(body_regions),
+            )
+        ]
+        span_end = body_end
+        if else_abs is not None:
+            e_body_start = else_abs + 4
+            e_regions = _parse_sequence(cur, e_body_start, stmt_e, in_lambda)
+            if len(e_regions) != 1:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    e_body_start,
+                    stmt_e,
+                    "unbraced-else-body",
+                )
+                return None, nxt
+            children.append(e_regions[0])
+            span_end = e_regions[0].span.end
+    else:
+        if nxt < len(parts):
+            ns, ne = parts[nxt]
+            nstr = _strip(text[ns:ne])
+            if _leading_kw(nstr, "else"):
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    ns,
+                    ne,
+                    "if-without-body",
+                )
+                return None, nxt + 1
+            body_regions = _parse_sequence(cur, ns, ne, in_lambda)
+            if not body_regions:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    ns,
+                    ne,
+                    "unbraced-if-body",
+                )
+                return None, nxt + 1
+            children = [
+                ParsedRegion(
+                    kind=RegionKind.BLOCK,
+                    span=cur.span(ns, ne),
+                    children=tuple(body_regions),
+                )
+            ]
+            span_end = ne
+            nxt += 1
+        else:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                base,
+                stmt_e,
+                "if-without-body",
+            )
+            return None, nxt
+    while nxt < len(parts):
+        ns, ne = parts[nxt]
+        nstr = _strip(text[ns:ne])
+        if _leading_kw(nstr, "else"):
+            nbase = ns + (len(text[ns:ne]) - len(text[ns:ne].lstrip(_WS)))
+            after = nstr[4:]
+            if after and (after[0].isalnum() or after[0] == "_"):
+                break
+            if _leading_kw(after.lstrip(_WS), "if"):
+                sub_rel = nstr.find("if")
+                sub_base = nbase + sub_rel
+                region, _ = _parse_if(cur, sub_base, ne, parts, nxt, in_lambda)
+                if region is None:
+                    return None, nxt + 1
+                children = list(children) + [region]
+                span_end = region.span.end
+                nxt += 1
+                continue
+            e_rest = after.strip(_WS)
+            if not e_rest:
+                # `else` alone: the body is the next statement part.
+                if nxt + 1 < len(parts):
+                    bs, be = parts[nxt + 1]
+                    bstr = _strip(text[bs:be])
+                    if _leading_kw(bstr, "else"):
+                        cur.fail(
+                            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                            bs,
+                            be,
+                            "else-without-body",
+                        )
+                        return None, nxt + 1
+                    b_regions = _parse_sequence(cur, bs, be, in_lambda)
+                    if not b_regions:
+                        cur.fail(
+                            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                            bs,
+                            be,
+                            "unbraced-else-body",
+                        )
+                        return None, nxt + 1
+                    children = list(children) + [
+                        ParsedRegion(
+                            kind=RegionKind.BLOCK,
+                            span=cur.span(bs, be),
+                            children=tuple(b_regions),
+                        )
+                    ]
+                    span_end = be
+                    nxt += 2
+                    continue
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    nbase,
+                    ne,
+                    "else-without-body",
+                )
+                return None, nxt + 1
+            if not e_rest.startswith("{"):
+                # Unbraced same-part else body: exactly one statement.
+                e_body_start = nbase + 4 + (
+                    len(text[nbase + 4 : ne]) - len(text[nbase + 4 : ne].lstrip(_WS))
+                )
+                e_regions = _parse_sequence(cur, e_body_start, ne, in_lambda)
+                if len(e_regions) != 1:
+                    cur.fail(
+                        "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                        e_body_start,
+                        ne,
+                        "unbraced-else-body",
+                    )
+                    return None, nxt + 1
+                children = list(children) + [e_regions[0]]
+                span_end = e_regions[0].span.end
+                nxt += 1
+                continue
+            e_brace = nbase + (nstr.find("{"))
+            e_close = _match_forward(text, e_brace, ne)
+            e_tail = text[e_close:ne].strip(_WS) if e_close > 0 else ""
+            if e_close < 0 or e_tail:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    nbase,
+                    ne,
+                    "else-body-not-closed",
+                )
+                return None, nxt + 1
+            inner = _parse_sequence(cur, e_brace + 1, e_close - 1, in_lambda)
+            children = list(children) + [
+                ParsedRegion(
+                    kind=RegionKind.BLOCK,
+                    span=cur.span(nbase, e_close),
+                    children=tuple(inner),
+                )
+            ]
+            span_end = e_close
+            nxt += 1
+        else:
+            break
+    return (
+        ParsedRegion(
+            kind=RegionKind.IF, span=cur.span(base, span_end), children=tuple(children)
+        ),
+        nxt,
+    )
+
+
+def _parse_when(
+    cur: _Cursor, base: int, stmt_e: int, in_lambda: bool
+) -> ParsedRegion | None:
+    text = cur.text
+    stripped = text[base:stmt_e]
+    paren_rel = stripped.find("(")
+    kw_end = base + 4
+    after_kw = text[kw_end:stmt_e].lstrip(_WS)
+    if after_kw.startswith("{"):
+        # Subject-less `when { ... }`: the brace IS the subject position.
+        subj_end = kw_end + (len(text[kw_end:stmt_e]) - len(after_kw))
+    elif paren_rel < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "when-without-subject",
+        )
+        return None
+    else:
+        paren_abs = base + paren_rel
+        subj_end = _match_forward(text, paren_abs, stmt_e)
+        if subj_end < 0:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                paren_abs,
+                stmt_e,
+                "unbalanced-paren",
+            )
+            return None
+    rest = text[subj_end:stmt_e]
+    brace_off = rest.find("{")
+    if brace_off < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "when-without-braces",
+        )
+        return None
+    brace_abs = subj_end + brace_off
+    if rest[:brace_off].strip(_WS):
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "when-preamble",
+        )
+        return None
+    close = _match_forward(text, brace_abs, stmt_e)
+    tail = text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
+            if close > 0
+            else "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+            base,
+            stmt_e,
+            "when-body-not-closed" if close > 0 else "unbalanced-brace",
+        )
+        return None
+    entries = _split_statements(cur, brace_abs + 1, close - 1)
+    if entries is None:
+        return None
+    if not entries:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            brace_abs,
+            close,
+            "empty-when",
+        )
+        return None
+    branches: list[ParsedRegion] = []
+    for es, ee in entries:
+        estr = text[es:ee]
+        if not _strip(estr):
+            continue
+        arrow = estr.find("->")
+        if arrow < 0:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                es,
+                ee,
+                "when-branch-without-arrow",
+            )
+            return None
+        rhs = estr[arrow + 2 :]
+        rhs_s = rhs.strip(_WS)
+        if not rhs_s:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                es,
+                ee,
+                "when-branch-empty",
+            )
+            return None
+        rhs_base = es + arrow + 2 + (len(rhs) - len(rhs.lstrip(_WS)))
+        if rhs_s.startswith("{"):
+            b_close = _match_forward(text, rhs_base, ee)
+            b_tail = text[b_close:ee].strip(_WS) if b_close > 0 else ""
+            if b_close < 0 or b_tail:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                    es,
+                    ee,
+                    "when-branch-not-closed",
+                )
+                return None
+            inner = _parse_sequence(cur, rhs_base + 1, b_close - 1, in_lambda)
+            branches.append(
+                ParsedRegion(
+                    kind=RegionKind.WHEN_BRANCH,
+                    span=cur.span(es, b_close),
+                    children=tuple(inner),
+                )
+            )
+        else:
+            # Arrow body: parse the RHS so mutations inside it stay
+            # contained in the branch (a lambda there fails conservatively).
+            inner = _parse_sequence(cur, rhs_base, ee, in_lambda)
+            branches.append(
+                ParsedRegion(
+                    kind=RegionKind.WHEN_BRANCH,
+                    span=cur.span(es, ee),
+                    children=tuple(inner),
+                )
+            )
+    return ParsedRegion(
+        kind=RegionKind.WHEN, span=cur.span(base, close), children=tuple(branches)
+    )
+
+
+def _parse_loop(
+    cur: _Cursor,
+    base: int,
+    stmt_e: int,
+    parts: list[tuple[int, int]],
+    idx: int,
+    in_lambda: bool,
+) -> ParsedRegion | None:
+    text = cur.text
+    stripped = text[base:stmt_e]
+    if _leading_kw(stripped, "do"):
+        rest = stripped[2:]
+        if not rest.lstrip(_WS).startswith("{"):
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                base,
+                stmt_e,
+                "do-without-braces",
+            )
+            return None
+        brace_abs = base + stripped.find("{")
+        close = _match_forward(text, brace_abs, stmt_e)
+        tail = text[close:stmt_e].strip(_WS) if close > 0 else ""
+        if close < 0:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                brace_abs,
+                stmt_e,
+                "unbalanced-brace",
+            )
+            return None
+        span_end = close
+        if not tail:
+            nxt = idx + 1
+            if nxt < len(parts):
+                ns, ne = parts[nxt]
+                nstr = _strip(text[ns:ne])
+                if _leading_kw(nstr, "while"):
+                    wparen = text[ns:ne].find("(")
+                    if wparen < 0:
+                        cur.fail(
+                            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                            ns,
+                            ne,
+                            "do-while-without-condition",
+                        )
+                        return None
+                    wclose = _match_forward(text, ns + wparen, ne)
+                    wtail = text[wclose:ne].strip(_WS) if wclose > 0 else ""
+                    if wclose < 0 or wtail:
+                        cur.fail(
+                            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
+                            if wclose > 0
+                            else "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                            ns,
+                            ne,
+                            "do-while-condition-not-closed"
+                            if wclose > 0
+                            else "unbalanced-paren",
+                        )
+                        return None
+                    span_end = wclose
+                    inner = _parse_sequence(cur, brace_abs + 1, close - 1, in_lambda)
+                    return _DoWhile(
+                        kind=RegionKind.LOOP,
+                        span=cur.span(base, span_end),
+                        children=tuple(inner),
+                        consumed_until=nxt + 1,
+                    )
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                base,
+                stmt_e,
+                "do-without-while",
+            )
+            return None
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "do-body-not-closed",
+        )
+        return None
+    paren_rel = stripped.find("(")
+    if paren_rel < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "loop-without-header",
+        )
+        return None
+    paren_abs = base + paren_rel
+    head_end = _match_forward(text, paren_abs, stmt_e)
+    if head_end < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+            paren_abs,
+            stmt_e,
+            "unbalanced-paren",
+        )
+        return None
+    if _leading_kw(stripped, "for") and not re.search(r"\bin\b", stripped[: head_end - base]):
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "for-without-in",
+        )
+        return None
+    rest = text[head_end:stmt_e]
+    if not rest.strip(_WS).startswith("{"):
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unbraced-loop-body",
+        )
+        return None
+    brace_abs = head_end + (len(rest) - len(rest.lstrip(_WS)))
+    close = _match_forward(text, brace_abs, stmt_e)
+    tail = text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
+            if close > 0
+            else "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+            base,
+            stmt_e,
+            "loop-body-not-closed" if close > 0 else "unbalanced-brace",
+        )
+        return None
+    inner = _parse_sequence(cur, brace_abs + 1, close - 1, in_lambda)
+    return ParsedRegion(
+        kind=RegionKind.LOOP, span=cur.span(base, close), children=tuple(inner)
+    )
+
+
+@dataclass(frozen=True)
+class _DoWhile(ParsedRegion):
+    #: Index of the first part AFTER the consumed ``while (...)`` condition.
+    consumed_until: int = -1
+
+
+def _parse_try(
+    cur: _Cursor,
+    base: int,
+    stmt_e: int,
+    parts: list[tuple[int, int]],
+    idx: int,
+    in_lambda: bool,
+) -> tuple[ParsedRegion | None, int]:
+    text = cur.text
+    stripped = text[base:stmt_e]
+    rest = stripped[3:]
+    if not rest.lstrip(_WS).startswith("{"):
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED",
+            base,
+            stmt_e,
+            "try-without-braces",
+        )
+        return None, idx + 1
+    brace_abs = base + stripped.find("{")
+    close = _match_forward(text, brace_abs, stmt_e)
+    tail = text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED"
+            if close > 0
+            else "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+            base,
+            stmt_e,
+            "try-body-not-closed" if close > 0 else "unbalanced-brace",
+        )
+        return None, idx + 1
+    children: list[ParsedRegion] = [
+        ParsedRegion(
+            kind=RegionKind.TRY,
+            span=cur.span(base, close),
+            children=tuple(_parse_sequence(cur, brace_abs + 1, close - 1, in_lambda)),
+        )
+    ]
+    span_end = close
+    nxt = idx + 1
+    saw_catch_or_finally = False
+    while nxt < len(parts):
+        ns, ne = parts[nxt]
+        nstr = _strip(text[ns:ne])
+        nbase = ns + (len(text[ns:ne]) - len(text[ns:ne].lstrip(_WS)))
+        if _leading_kw(nstr, "catch"):
+            saw_catch_or_finally = True
+            nstripped = text[nbase:ne]
+            paren_rel = nstripped.find("(")
+            if paren_rel < 0:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED",
+                    nbase,
+                    ne,
+                    "catch-without-param",
+                )
+                return None, nxt + 1
+            paren_abs = nbase + paren_rel
+            head_end = _match_forward(text, paren_abs, ne)
+            if head_end < 0:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                    paren_abs,
+                    ne,
+                    "unbalanced-paren",
+                )
+                return None, nxt + 1
+            crest = text[head_end:ne]
+            if not crest.strip(_WS).startswith("{"):
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED",
+                    nbase,
+                    ne,
+                    "catch-without-braces",
+                )
+                return None, nxt + 1
+            c_brace = head_end + (len(crest) - len(crest.lstrip(_WS)))
+            c_close = _match_forward(text, c_brace, ne)
+            c_tail = text[c_close:ne].strip(_WS) if c_close > 0 else ""
+            if c_close < 0 or c_tail:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED"
+                    if c_close > 0
+                    else "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                    nbase,
+                    ne,
+                    "catch-body-not-closed" if c_close > 0 else "unbalanced-brace",
+                )
+                return None, nxt + 1
+            children.append(
+                ParsedRegion(
+                    kind=RegionKind.CATCH,
+                    span=cur.span(nbase, c_close),
+                    children=tuple(
+                        _parse_sequence(cur, c_brace + 1, c_close - 1, in_lambda)
+                    ),
+                )
+            )
+            span_end = c_close
+            nxt += 1
+        elif _leading_kw(nstr, "finally"):
+            saw_catch_or_finally = True
+            nstripped = text[nbase:ne]
+            frest = nstripped[7:]
+            if not frest.lstrip(_WS).startswith("{"):
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED",
+                    nbase,
+                    ne,
+                    "finally-without-braces",
+                )
+                return None, nxt + 1
+            f_brace = nbase + nstripped.find("{")
+            f_close = _match_forward(text, f_brace, ne)
+            f_tail = text[f_close:ne].strip(_WS) if f_close > 0 else ""
+            if f_close < 0 or f_tail:
+                cur.fail(
+                    "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED"
+                    if f_close > 0
+                    else "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                    nbase,
+                    ne,
+                    "finally-body-not-closed" if f_close > 0 else "unbalanced-brace",
+                )
+                return None, nxt + 1
+            children.append(
+                ParsedRegion(
+                    kind=RegionKind.FINALLY,
+                    span=cur.span(nbase, f_close),
+                    children=tuple(
+                        _parse_sequence(cur, f_brace + 1, f_close - 1, in_lambda)
+                    ),
+                )
+            )
+            span_end = f_close
+            nxt += 1
+            break
+        else:
+            break
+    if not saw_catch_or_finally:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED",
+            base,
+            span_end,
+            "try-without-catch-finally",
+        )
+        return None, idx + 1
+    first = children[0]
+    merged = ParsedRegion(
+        kind=RegionKind.TRY, span=cur.span(base, span_end), children=tuple(children)
+    )
+    _ = first
+    return merged, nxt
+
+
+def _parse_accessor(
+    cur: _Cursor, base: int, stmt_e: int, in_lambda: bool
+) -> ParsedRegion | None:
+    text = cur.text
+    stripped = text[base:stmt_e]
+    paren_rel = stripped.find("(")
+    if paren_rel < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "accessor-without-parens",
+        )
+        return None
+    paren_abs = base + paren_rel
+    head_end = _match_forward(text, paren_abs, stmt_e)
+    if head_end < 0:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+            paren_abs,
+            stmt_e,
+            "unbalanced-paren",
+        )
+        return None
+    rest = text[head_end:stmt_e]
+    if not rest.strip(_WS).startswith("{"):
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "accessor-without-braces",
+        )
+        return None
+    brace_abs = head_end + (len(rest) - len(rest.lstrip(_WS)))
+    close = _match_forward(text, brace_abs, stmt_e)
+    tail = text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED"
+            if close > 0
+            else "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+            base,
+            stmt_e,
+            "accessor-body-not-closed" if close > 0 else "unbalanced-brace",
+        )
+        return None
+    inner = _parse_sequence(cur, brace_abs + 1, close - 1, in_lambda)
+    return ParsedRegion(
+        kind=RegionKind.ACCESSOR, span=cur.span(base, close), children=tuple(inner)
+    )
+
+
+def parse_callable_body(
+    masked_text: str,
+    body_span: SourceSpan,
+    *,
+    lambda_opacity_predicate=None,
+    transparent_scope_methods: tuple[str, ...] = (),
+    transparent_inline_methods: tuple[str, ...] = (),
+) -> CallableBodyParse:
+    if not isinstance(masked_text, str):
+        raise TypeError("masked_text must be a string")
+    if not isinstance(body_span, SourceSpan):
+        raise TypeError("body_span must be a SourceSpan")
+    if not isinstance(transparent_scope_methods, tuple) or not all(
+        isinstance(item, str) and item.isidentifier()
+        for item in transparent_scope_methods
+    ):
+        raise TypeError(
+            "transparent_scope_methods must be a tuple of plain identifiers"
+        )
+    if not isinstance(transparent_inline_methods, tuple) or not all(
+        isinstance(item, str) and item.isidentifier()
+        for item in transparent_inline_methods
+    ):
+        raise TypeError(
+            "transparent_inline_methods must be a tuple of plain identifiers"
+        )
+    cur = _Cursor(masked_text)
+    cur.opacity_predicate = lambda_opacity_predicate
+    cur.transparent_scope_methods = tuple(transparent_scope_methods)
+    cur.transparent_inline_methods = tuple(transparent_inline_methods)
+    if '"' in masked_text or "'" in masked_text:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            body_span.start,
+            body_span.end,
+            "masking-unverified",
+        )
+        return CallableBodyParse(
+            body_span=body_span, regions=(), unsupported=tuple(cur.findings)
+        )
+    if (
+        body_span.start < 0
+        or body_span.end > len(masked_text)
+        or body_span.end < body_span.start
+    ):
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            0,
+            0,
+            "span-out-of-range",
+        )
+        return CallableBodyParse(
+            body_span=body_span, regions=(), unsupported=tuple(cur.findings)
+        )
+    raw = masked_text[body_span.start : body_span.end]
+    if not raw.strip(_WS):
+        return CallableBodyParse(body_span=body_span, regions=(), unsupported=())
+    lstripped = raw.lstrip(_WS)
+    if lstripped.startswith("=") and not lstripped.startswith("=="):
+        eq = body_span.start + (len(raw) - len(lstripped))
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            eq,
+            body_span.end,
+            "expression-body",
+        )
+        return CallableBodyParse(
+            body_span=body_span, regions=(), unsupported=tuple(cur.findings)
+        )
+    content_start, content_end = body_span.start, body_span.end
+    if lstripped.startswith("{"):
+        open_abs = body_span.start + (len(raw) - len(lstripped))
+        close = _match_forward(masked_text, open_abs, body_span.end)
+        if close < 0:
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+                open_abs,
+                body_span.end,
+                "unbalanced-brace",
+            )
+            return CallableBodyParse(
+                body_span=body_span, regions=(), unsupported=tuple(cur.findings)
+            )
+        if masked_text[close:body_span.end].strip(_WS):
+            cur.fail(
+                "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+                open_abs,
+                body_span.end,
+                "body-trailing-content",
+            )
+            return CallableBodyParse(
+                body_span=body_span, regions=(), unsupported=tuple(cur.findings)
+            )
+        content_start, content_end = open_abs + 1, close - 1
+    regions = _parse_sequence(cur, content_start, content_end, False)
+    regions = _splice_dowhile(cur, masked_text, body_span, regions)
+    return CallableBodyParse(
+        body_span=body_span, regions=tuple(regions), unsupported=tuple(cur.findings)
+    )
+
+
+def _splice_dowhile(
+    cur: _Cursor,
+    text: str,
+    body_span: SourceSpan,
+    regions: list[ParsedRegion],
+) -> list[ParsedRegion]:
+    _ = (cur, text, body_span)
+    out: list[ParsedRegion] = []
+    skip_next_statement = False
+    for region in regions:
+        if skip_next_statement and region.kind == RegionKind.STATEMENT:
+            inner_text = text[region.span.start : region.span.end]
+            if _leading_kw(_strip(inner_text), "while"):
+                skip_next_statement = False
+                continue
+            skip_next_statement = False
+        if isinstance(region, _DoWhile):
+            skip_next_statement = True
+            plain = ParsedRegion(
+                kind=region.kind,
+                span=region.span,
+                children=region.children,
+                barrier=region.barrier,
+                scope_method=region.scope_method,
+                scope_receiver=region.scope_receiver,
+            )
+            out.append(plain)
+            continue
+        if region.children:
+            fixed_children = _splice_dowhile(cur, text, body_span, list(region.children))
+            if fixed_children != list(region.children):
+                out.append(
+                    ParsedRegion(
+                        kind=region.kind,
+                        span=region.span,
+                        children=tuple(fixed_children),
+                        barrier=region.barrier,
+                        scope_method=region.scope_method,
+                        scope_receiver=region.scope_receiver,
+                    )
+                )
+                continue
+        out.append(region)
+    return out

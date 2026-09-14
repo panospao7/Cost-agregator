@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.util.Money
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.util.sum
 import com.yourname.expensetracker.domain.util.toMoney
+import java.math.BigDecimal
+import java.math.RoundingMode
+import kotlin.math.floor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
@@ -71,12 +74,73 @@ class EnhancedSplitManager @Inject constructor(
     
     /**
      * HIGH FIX: Percentage split using Money for precision.
+     * Shares are allocated so their sum equals the total exactly.
      */
     fun calculatePercentageSplit(totalAmount: Double, percentages: List<Double>): List<Double> {
-        val total = totalAmount.toMoney()
-        return percentages.map { percent ->
-            total.percentage(percent).toDouble()
+        return allocatePercentageCents(totalAmount, percentages).map { Money.cents(it).toDouble() }
+    }
+
+    /**
+     * Largest-remainder allocation in integer cents so the shares sum to the total
+     * exactly; rounding each share independently drifts by up to half a cent per
+     * share (0.03 at 50/50 gives 0.02 + 0.02). Mirrors
+     * SplitCalculator.calculateAmountsFromPercentages.
+     */
+    private fun allocatePercentageCents(totalAmount: Double, percentages: List<Double>): List<Long> {
+        if (percentages.isEmpty()) return emptyList()
+        if (percentages.all { it == 0.0 }) return List(percentages.size) { 0L }
+
+        val totalCents = BigDecimal.valueOf(totalAmount)
+            .setScale(2, RoundingMode.HALF_UP)
+            .movePointRight(2)
+            .longValueExact()
+
+        data class PercentageShare(
+            val order: Int,
+            val baseCents: Long,
+            val fractionalPart: Double
+        )
+
+        val shares = percentages.mapIndexed { index, percent ->
+            val rawCents = totalCents * (percent / 100.0)
+            val base = floor(rawCents).toLong()
+            PercentageShare(index, base, rawCents - base)
         }
+
+        val cents = shares.map { it.baseCents }.toMutableList()
+        val remainder = totalCents - cents.sum()
+
+        if (remainder > 0) {
+            val byLargestFraction = shares.sortedWith(
+                compareByDescending<PercentageShare> { it.fractionalPart }.thenBy { it.order }
+            )
+            var index = 0
+            var remaining = remainder
+            while (remaining > 0) {
+                cents[byLargestFraction[index % byLargestFraction.size].order] += 1L
+                remaining--
+                index++
+            }
+        } else if (remainder < 0) {
+            val bySmallestFraction = shares.sortedWith(
+                compareBy<PercentageShare> { it.fractionalPart }.thenBy { it.order }
+            )
+            var index = 0
+            var remaining = -remainder
+            // Cyclic removal; bounded so inputs outside the validated non-negative
+            // domain (negative total or percentage) cannot spin the loop forever.
+            val maxAttempts = bySmallestFraction.size * remaining
+            while (remaining > 0 && index < maxAttempts) {
+                val target = bySmallestFraction[index % bySmallestFraction.size].order
+                if (cents[target] > 0L) {
+                    cents[target] -= 1L
+                    remaining--
+                }
+                index++
+            }
+        }
+
+        return cents
     }
     
     /**
@@ -104,11 +168,12 @@ class EnhancedSplitManager @Inject constructor(
                 }
             }
             SplitTemplate.SplitType.PERCENTAGE -> {
-                shares.map { share ->
-                    val amount = share.percentage?.let { 
-                        total.percentage(it).toDouble() 
-                    } ?: 0.0
-                    share.participantName to amount
+                val allocated = allocatePercentageCents(
+                    totalAmount,
+                    shares.map { it.percentage ?: 0.0 }
+                )
+                shares.mapIndexed { index, share ->
+                    share.participantName to Money.cents(allocated[index]).toDouble()
                 }
             }
             SplitTemplate.SplitType.CUSTOM_AMOUNT, SplitTemplate.SplitType.UNEQUAL -> {
@@ -218,12 +283,7 @@ class EnhancedSplitManager @Inject constructor(
     suspend fun getTemplateById(templateId: Long): SplitTemplate? {
         return splitTemplateDao.getTemplateById(templateId)
     }
-    
-    suspend fun updateTemplate(template: SplitTemplate) {
-        writeBarrier.checkWritesAllowed("EnhancedSplitManager.updateTemplate")
-        splitTemplateDao.updateTemplate(template.copy(updatedAt = timeProvider.now()))
-    }
-    
+
     suspend fun deleteTemplate(template: SplitTemplate) {
         writeBarrier.checkWritesAllowed("EnhancedSplitManager.deleteTemplate")
         splitTemplateDao.deleteTemplate(template)
@@ -234,12 +294,7 @@ class EnhancedSplitManager @Inject constructor(
         splitTemplateDao.clearDefaultTemplate()
         splitTemplateDao.setDefaultTemplate(templateId)
     }
-    
-    suspend fun useTemplate(templateId: Long) {
-        writeBarrier.checkWritesAllowed("EnhancedSplitManager.useTemplate")
-        splitTemplateDao.incrementUseCount(templateId, timeProvider.now())
-    }
-    
+
     fun parseShares(template: SplitTemplate): List<SplitShare> {
         val type = object : TypeToken<List<SplitShare>>() {}.type
         return gson.fromJson(template.shares, type) ?: emptyList()
@@ -254,37 +309,6 @@ class EnhancedSplitManager @Inject constructor(
     }
     
     // Item Assignment for Receipt Splitting
-    /**
-     * SHR-13: Wrapped in a Room transaction to ensure atomicity.
-     * If the insertion fails after clearing old assignments, the entire
-     * operation rolls back, preventing orphaned expense items.
-     */
-    suspend fun assignItemsToParticipants(
-        expenseId: Long,
-        assignments: List<ItemAssignment>
-    ) {
-        writeBarrier.checkWritesAllowed("EnhancedSplitManager.assignItemsToParticipants")
-        database.withTransaction {
-            // Clear existing assignments
-            splitItemAssignmentDao.deleteAllForExpense(expenseId)
-
-            // Create new assignments
-            val entities = assignments.mapIndexed { index, assignment ->
-                SplitItemAssignment(
-                    expenseId = expenseId,
-                    receiptItemId = assignment.receiptItemId,
-                    participantName = assignment.participantName,
-                    participantIndex = index,
-                    assignedAmount = assignment.amount,
-                    isPaid = false
-                )
-            }
-
-            splitItemAssignmentDao.insertAssignments(entities)
-        }
-        Timber.d("assignItemsToParticipants: assigned %d items to participants for expense %d (transactional)", assignments.size, expenseId)
-    }
-    
     suspend fun getAssignmentsForExpense(expenseId: Long): List<SplitItemAssignment> {
         return splitItemAssignmentDao.getAssignmentsForExpenseSync(expenseId)
     }
@@ -292,12 +316,7 @@ class EnhancedSplitManager @Inject constructor(
     suspend fun getParticipantTotals(expenseId: Long): List<SplitItemAssignmentDao.ParticipantTotal> {
         return splitItemAssignmentDao.getParticipantTotals(expenseId)
     }
-    
-    suspend fun markAssignmentAsPaid(assignmentId: Long) {
-        writeBarrier.checkWritesAllowed("EnhancedSplitManager.markAssignmentAsPaid")
-        splitItemAssignmentDao.markAsPaid(assignmentId, timeProvider.now())
-    }
-    
+
     data class VisualSplitData(
         val totalAmount: Double,
         val assignedAmount: Double,

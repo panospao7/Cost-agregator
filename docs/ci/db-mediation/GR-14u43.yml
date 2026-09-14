@@ -1,0 +1,97 @@
+# GR-14u43 — async-35 family enumeration (evidence-only batch, no code
+# change).
+#
+# METHOD: live CallGraphBuilder probes over the production corpus
+# (builder + _production_contract, board 508ad587...), tier-5
+# deciding-edge selection replicated from proof.py (taint set = uncertain
+# edges with caller in the subject's ancestor closure and targets
+# intersecting the closure; sort (state.value, caller_key, name_start);
+# first after dedup), plus the enclosing lambda region (carrier/method)
+# per deciding edge.
+#
+# FAMILIES (deciding edge -> rows):
+#
+# F-ANON-OBJECT (6 async rows + the 10 RetentionModule rows = 16 total):
+#   Deciding edge: CloudDashboardBriefingService.kt L66, async_dispatch,
+#   carrier=async method=PrivacyGate — the `object : PrivacyGate { ... }`
+#   inside `failClosedGate()` (private companion) is misparsed by
+#   _CALL_CANDIDATE_RE as a call with trailing lambda, producing a
+#   phantom async lambda region over the object body.  SAME root
+#   mechanism as the 10 RetentionModule rows
+#   (GR13_SITE_INSIDE_UNRESOLVED_LAMBDA, object : RetentionTarget {).
+#   One engine fix (anonymous-object phantom-call suppression + member
+#   modelling + dispatch admission decision) covers 16 rows.  Rows:
+#   PrivacyAuditLoggerImpl.logDecision, WarrantyTrackerRepository,
+#   RoomDiagnosticEventWriter.emit, RoomReceiptLifecycleEventWriter.write,
+#   RecurringPlanProjectionService, RoomTransactionLifecycleEventWriter.
+#   write.
+#   NOTE: tier-5 sort also shows AccountingExportRepository.kt L162
+#   (FileWriter(...).use { writer.write(...) }) as a competing decider
+#   for the two event-writer rows — clearing either family clears the
+#   row's async blockage; clearing both is safest.
+#
+# F-PROCESSBATCH (8 rows):
+#   Deciding edge: ReceiptRepository.kt L591 (processBatch),
+#   async_dispatch inside carrier=transparent method=withPermit — the
+#   GR-14f preservation rule (transparent-chain exact-resolution failure
+#   -> async_dispatch).  The call
+#   `receiptLifecycleCoordinator.get().processReceiptInput(...)` sits
+#   inside coroutineScope { map { async { withContext {
+#   semaphore.withPermit { ... } } } } }; the Lazy .get() unwrap +
+#   chained member call fails exact resolution.  Rows:
+#   ReceiptLifecycleCoordinator.processReceiptInput x4,
+#   SourceLinkWriterImpl.linkTarget, ReceiptInsertResolver.insertOrResolve,
+#   RoomRecurringLifecycleEventWriter.writeCritical,
+#   TransactionLifecycleCoordinator.createExpenseMutation.
+#
+# F-POSTCOMMIT (6 rows):
+#   Deciding edge: ReceiptSideEffectPlanner.kt L305, async_dispatch,
+#   carrier=async method=PostCommitAction — the PostCommitAction lambda
+#   (custom wrapper type; runPostCommitSafely IS admitted but the
+#   PostCommitAction-typed argument lambda is not) is an async region.
+#   Rows: ReceiptLinkService.linkReceiptToExpense x6.
+#
+# F-TRANSPARENT-CHAIN-NOISE (5 rows):
+#   async_dispatch edges from benign external/chained calls inside
+#   ADMITTED transparent regions (GR-14f preservation rule):
+#   - DatabaseBackupRepositoryImpl.kt L2511 (repeat region;
+#     `return Result.success(Unit)` inside try) -> OperationRunRecorder
+#     Handle.event, Handle.finalizeNonCancellable, WorkerRunLogger
+#     Handle.terminal (3 rows)
+#   - ExpenseRepository.kt L1069 (runCatching region; chained
+#     LocalDate.parse(...).atStartOfDay(...)... date-chain) ->
+#     WorkerRunLoggerImpl.start, OperationRunRecorder start (2 rows)
+#   - DatabaseReadBarrierFlowExt.kt L19 (collect region;
+#     `collect { emit(it) }`) -> competes on RoomDiagnosticEventWriter.
+#     emit (covered above).
+#   These are engine over-conservatism candidates (uncertain external
+#   resolution inside admitted transparent regions need not be async) —
+#   ANY change here is an uncertainty-semantics change: OWNER SIGN-OFF
+#   required before implementation (charter: no silent semantics
+#   change).
+#
+# F-GUARD residue (WorkerRunLogger x2, workerMediated rows): decided by
+#   F-TRANSPARENT-CHAIN-NOISE edges above (not by guard internals as
+#   hypothesized earlier).
+#
+# BATCH MAPPING (next batches):
+#   u44 = Group A caller-side source fixes (7 ambiguous rows: DebugScreen
+#     typed val for the importers, AppStartupDelegate typed coordinator
+#     local for RestoreJournalImporter x4) — Pattern A-adjacent, GR-08k1
+#     precedent.
+#   u45 = ENGINE lambda-parameter typing for admitted carriers
+#     (BankApiIntegration `run.increment(...)` — run is a runOperation
+#     lambda param) -> incrementCounters + Handle.event/start caller
+#     un-tainting.
+#   u46 = ENGINE set extension: evidenced once-inline private wrappers
+#     (guardTerminal) per u38 precedent -> WorkerRunLogger x2.
+#   u47 = F-PROCESSBATCH + F-POSTCOMMIT source/engine remediation per
+#     owner decisions; F-ANON-OBJECT engine batch (u48) covers 16 rows
+#     and REQUIRES: (1) phantom-call suppression, (2) anonymous-object
+#     member modelling, (3) closed-world dispatch admission — OWNER
+#     SIGN-OFF mandatory (new uncertainty semantics).
+#
+# VALIDATION: evidence-only batch — no code changed; board byte-identical
+#   508ad587... (verified by orchestrator double run); probe outputs
+#   reproducible via the method above.
+status: EVIDENCE_COMPLETE_AT_BOARD_508ad587

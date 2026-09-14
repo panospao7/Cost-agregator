@@ -332,8 +332,12 @@ fun WarrantyTrackerScreen(
 private fun ManualWarrantyDialog(
     onDismiss: () -> Unit,
     onSave: (productName: String, merchantName: String, purchaseDate: Long, durationMonths: Int, supportPhone: String?) -> Unit,
-    /** S12-008: Use ViewModel reference time instead of LocalDate.now() */
-    referenceNowMillis: Long = System.currentTimeMillis()
+    /**
+     * S12-008: Use ViewModel reference time instead of LocalDate.now().
+     * G-TIME-01: required — the caller passes state.referenceNowMillis
+     * (ViewModel TimeProvider-backed); no wall-clock default.
+     */
+    referenceNowMillis: Long
 ) {
     var productName by remember { mutableStateOf("") }
     var merchantName by remember { mutableStateOf("") }

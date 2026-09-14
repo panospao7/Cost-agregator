@@ -1,0 +1,89 @@
+# GR-14u55a — convert the constructor-context anonymous
+# `object : OperationRunRecorder` in DatabaseBackupRepositoryImpl to a
+# named private object (unblocking the u54b fan-out for
+# OperationRunRecorder; small production Kotlin source batch).
+#
+# DEFECT: DatabaseBackupRepositoryImpl.kt (secondary constructor,
+# L121-126 pre-batch) declared an anonymous
+# `object : com.yourname.expensetracker.domain.diagnostics.OperationRunRecorder`
+# inside a constructor-argument list — a super-call/init context, NOT
+# inside any fun body.  The u49 member modelling requires an enclosing
+# callable, so the site was SCANNED but UNMODELLED:
+# `_anonymous_implementors_of(OperationRunRecorder) == 1` while
+# `modelled_anon == 0` — the u54b completeness equality failed, the
+# fan-out for OperationRunRecorder.runOperation withdrew, and the
+# BankApiIntegration L167 runOperation edge stayed interface_dispatch,
+# tainting the 2 remaining ambiguous rows' closures.  The anon object was
+# a pure no-op recorder (start returns NoOpOperationRunHandle;
+# runOperation invokes block with it).
+#
+# FIX (minimal, semantics-preserving):
+#   - a named `private object NoOpOperationRunRecorder : OperationRunRecorder`
+#     at the file bottom (the file's style allows it; the class closes
+#     before it), replacing the anon object at the secondary-constructor
+#     call site (`NoOpOperationRunRecorder,`).  Behavior identical — the
+#     anon object had no state.
+#   - MID-BATCH CATCH (disclosed): the first version spelled the
+#     diagnostics types FULLY-QUALIFIED (matching the anon object's
+#     style).  That split the u45 Shape-A carrier signature set into TWO
+#     distinct tuples (`('OperationRunHandle',)` from the other
+#     implementors' files vs `('com.yourname...OperationRunHandle',)` from
+#     this one) — the exactly-one-distinct-signature gate failed, the
+#     run.increment receiver UNRESOLVED, and the board REGRESSED
+#     (Handle.increment proven_helper -> unproven_ambiguous_call — caught
+#     by the hard-stop check on the first board run; that intermediate
+#     board was discarded, not shipped).  Fixed by importing the
+#     diagnostics types and using the SIMPLE spellings — matching the
+#     other implementors' files, so the signature set stays
+#     single-distinct.  A lesson recorded: new implementors of an
+#     interface whose lambda params feed Shape-A typing must match the
+#     existing implementors' type-spelling convention.
+#
+# ENGINE PROBE EVIDENCE (post-fix, all verified):
+#   - `_anonymous_implementors_of(OperationRunRecorder) == 0` (the anon
+#     site is gone) == modelled_anon -> the u54b completeness equality
+#     HOLDS;
+#   - named implementors: NoOpOperationRunRecorder,
+#     CompositeOperationRunRecorder, RoomOperationRunRecorder (3);
+#   - `_bounded_fanout_targets(OperationRunRecorder, runOperation)` -> 3
+#     exact targets;
+#   - the BankApiIntegration runOperation carrier signature set is
+#     single-distinct (`('OperationRunHandle',)`) and the run.increment
+#     receiver resolves to OperationRunHandle (u45 Shape A intact).
+#
+# OUTCOME (board, pre 8a93c402... -> post b69630160e6e8fa4, double run
+# byte-identical): ZERO rows moved.  proofStates byte-identical:
+#   proven_helper 339, restore 1, worker 14, ambiguous 2, async 23,
+#   counterexamples 0.  The structural fix WORKS (the completeness
+#   equality holds and the fan-out fires at 3 targets), but the 2
+#   remaining ambiguous rows (Handle.finalizeNonCancellable,
+#   Handle.terminal) did not move — their blocker is NOT the recorder
+#   shape: OperationRunHandle/WorkerRunHandle do not DECLARE
+#   finalizeNonCancellable/terminal as interface members (defined directly
+#   on the Handle classes), so the ISSUE-7 override gate correctly refuses
+#   fan-out for those dispatches (the u54b manifest's Remaining, verbatim).
+#   The honest disposition is unchanged: a SOURCE decision (promote the
+#   methods to the interfaces) or owner accept.  No regression: the
+#   Handle.increment row KEPT its u54b proven state through the fix.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows regressed
+#   (the mid-batch regression was caught and fixed IN-batch; the shipped
+#   board has zero regressions), 0 rows in unproven_external_entry, 0
+#   unexpected delta (379 entries diffed — zero row movements).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed (no engine change)
+#   - fixture corpus: 108/108, exit 0
+#   - board double run byte-identical b69630160e6e8fa4
+#   - Kotlin: NOT RUN — human compile validation owed (1 named object +
+#     4 imports + 1 call-site replacement;
+#     ./gradlew :app:compileDebugKotlin expected green)
+#
+# Remaining: the 2 ambiguous rows (finalizeNonCancellable/terminal —
+#   interface-member promotion is a SOURCE decision, or owner accept);
+#   the F1 withPermit (11) / F3 PostCommitAction (6) families (FINAL26
+#   memo — owner accept or design decisions); the
+#   F-TRANSPARENT-CHAIN-NOISE family (owner sign-off gate); the tracked
+#   candidate/accounting pair regeneration (pre-existing --verify drift,
+#   u51b disclosure).
+status: COMPLETE_AT_BOARD_b6963016

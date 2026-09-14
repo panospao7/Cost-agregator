@@ -88,7 +88,7 @@ class FinancialStressForecastEngine @Inject constructor(
      * @return StressForecastResult containing forecasts for all horizons
      */
     suspend fun computeStressForecast(displayCurrency: String? = null): StressForecastResult {
-        val startTime = System.currentTimeMillis()
+        val startTime = timeProvider.now()
         val resolvedDisplayCurrency = resolveDisplayCurrency(displayCurrency)
         
         return try {
@@ -157,7 +157,7 @@ class FinancialStressForecastEngine @Inject constructor(
             // Generate recommendations
             val recommendations = generateRecommendations(horizons, patterns, resolvedDisplayCurrency)
             
-            val duration = System.currentTimeMillis() - startTime
+            val duration = timeProvider.now() - startTime
             Timber.d("$TAG: Stress forecast computed in ${duration}ms - Risk: $overallRiskLevel")
             
             StressForecastResult(

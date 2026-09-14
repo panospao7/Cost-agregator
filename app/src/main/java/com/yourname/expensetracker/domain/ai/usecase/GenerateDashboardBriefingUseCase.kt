@@ -12,7 +12,7 @@ import com.yourname.expensetracker.domain.ai.model.AiTargetType
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import com.yourname.expensetracker.domain.ai.service.DashboardBriefingService
+import com.yourname.expensetracker.data.ai.provider.HybridDashboardBriefingService
 import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.usecase.dashboard.ProcessedDashboardData
@@ -40,7 +40,7 @@ import kotlin.coroutines.cancellation.CancellationException
 class GenerateDashboardBriefingUseCase @Inject constructor(
     private val aiSettingsRepository: AiSettingsRepository,
     private val aiArtifactRepository: AiArtifactRepository,
-    private val dashboardBriefingService: DashboardBriefingService,
+    private val dashboardBriefingService: HybridDashboardBriefingService,
     private val aiCapabilityRouter: AiCapabilityRouter,
     private val inputBuilder: DashboardBriefingInputBuilder,
     private val timeProvider: TimeProvider

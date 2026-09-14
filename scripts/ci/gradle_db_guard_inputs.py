@@ -64,12 +64,16 @@ class GradleDbGuardInputError(Exception):
 DEFAULT_DB_GUARD_INPUTS: List[Tuple[str, str]] = [
     ("scripts/ci/guard_ratchet.py", "dbGuardRatchetPath"),
     ("scripts/verify_db_access_boundaries.py", "dbGuardScriptPath"),
-    ("config/baselines/db_access.json", "dbGuardBaselinePath"),
+    ("config/baselines/db_access_v2.json", "dbGuardBaselinePath"),
     ("config/guards/db_ownership_policy.yml", "dbGuardOwnershipPolicyPath"),
     ("config/guards/db_structural_exceptions.yml", "dbGuardStructuralExceptionsPath"),
     (
         "config/guards/db_structural_exceptions_expected_methods.yml",
         "dbGuardStructuralManifestPath",
+    ),
+    (
+        "config/guards/production_source_roots.yml",
+        "dbGuardSourceRootsManifestPath",
     ),
 ]
 

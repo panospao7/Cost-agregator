@@ -1,6 +1,8 @@
 package com.yourname.expensetracker.util
 
 import com.google.common.truth.Truth.assertThat
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.CategoryDao
 import com.yourname.expensetracker.data.database.entity.Category
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -37,7 +39,18 @@ class ExportImportRoundtripTest {
 
     @Before
     fun setup() {
-        importer = CsvExpenseImporter(categoryDao, coordinator, currencyRepo)
+        // GR-14u44b: the importer now requires the canonical write
+        // barrier; NORMAL mode keeps the roundtrip behavior unchanged.
+        val maintenanceMode = mockk<RestoreMaintenanceMode>()
+        io.mockk.every { maintenanceMode.currentMode() } returns
+            RestoreMaintenanceMode.Mode.NORMAL
+        io.mockk.every { maintenanceMode.isWritesAllowed() } returns true
+        importer = CsvExpenseImporter(
+            categoryDao,
+            coordinator,
+            currencyRepo,
+            DatabaseWriteBarrier(maintenanceMode)
+        )
     }
 
     @Test

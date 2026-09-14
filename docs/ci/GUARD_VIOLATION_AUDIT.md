@@ -1,5 +1,7 @@
 # Guard Violation Audit — CI Static Guardrails
 
+> **Historical record** — this audit is a frozen violation snapshot, not current-state authority. as-of: generated 2026-07-10 (warning-mode era, branch `atomicity-pr21-enforcement-final`); scope: that audit pass only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml and docs/ci/GUARD_STATUS.generated.md.
+
 Generated: 2026-07-10
 Branch: `atomicity-pr21-enforcement-final`
 Status: 10 blocking guards passing, 6 warning guards with pre-existing violations

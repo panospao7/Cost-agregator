@@ -14,7 +14,10 @@ import java.util.Locale
 
 class WarrantyTextExtractorTest {
 
-    private val extractor = WarrantyTextExtractor()
+    private val extractor = WarrantyTextExtractor(
+        // Real wall clock keeps the relative-date fixtures in this test valid.
+        com.yourname.expensetracker.domain.util.SystemTimeProvider()
+    )
 
     @Test
     fun `extract returns structured warranty data for explicit warranty receipt text`() {

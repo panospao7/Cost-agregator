@@ -1,0 +1,266 @@
+# GR-08 batch 8 (GR-08h) reviewed exact v2 policy seed rows (MIT-DB-08H).
+#
+# Consumed ONLY via `scripts/migrate_db_policy_signatures.py --seed-rows`.
+# This document is a full v2-shaped policy document: it is loaded through
+# `scripts.db_guard.policy_v2_loader.load_policy_v2` (exact field set,
+# type/enum/signature validation, canonical path syntax, within-document
+# duplicate mutation-key rejection) and merged into the generated candidate
+# only after seed/legacy duplicate-key rejection.  Seeds never bypass the
+# loader, the evidence verifier, or the promotion gates.
+#
+# Scope: ReceiptMatchLifecycleService.kt -- 13 DB_UNAUTHORIZED_MUTATION
+# findings collapsing to 13 UNIQUE fingerprints (dedup key: callable identity
+# + daoAccessor + daoFqcn + operation; every one of the 13 per-call-site
+# findings is its own tuple -- the four match-mutation callables each carry
+# exactly one scannedReceiptDao.update + one receiptEventDao.insert site,
+# and the five P9-P1-08/PR12L-3 diagnostics writers each carry exactly one
+# receiptEventDao.insert site).  Unique count 13 <= the 25-fingerprint batch
+# cap, so NO split was required.  This is the receipt lifecycle layer -- the
+# AUTHORITATIVE writer for match mutations per
+# docs/architecture/LEGAL_PATHS.md ("MATCH receipt (suggest/approve/reject/
+# clear)": ReceiptMatchLifecycleService.saveMatchSuggestion() /
+# approveMatchSuggestion() / rejectAllSuggestions() / clearMatchForReceipt();
+# "Each operation: DatabaseWriteBarrier check -> withTransaction ->
+# ReceiptEvent"; the AUTO-MATCH section names the durable per-outcome events
+# MATCH_ATTEMPTED / MATCH_NOT_FOUND / MATCH_SKIPPED_DOCUMENT_TYPE /
+# AUTO_MATCH_LINK_FAILED; FORBIDDEN: ReceiptRepository.saveMatchSuggestion()
+# [DeprecationLevel.ERROR], ReceiptRepository.rejectAllSuggestions(),
+# ReceiptRepository.clearMatchForReceipt(), and "Any match mutation without
+# ReceiptEvent") -- so every row is a legal-writer EXACT_POLICY
+# authorization.
+#
+# barrierMode is `helper` for every row: the write barrier runs at each
+# callable entrypoint (writeBarrier.checkWritesAllowed is the FIRST
+# statement of every public callable in the file), then the mutations run
+# inside the database.withTransaction block after the scannedReceiptDao.getById
+# read -- the barrier is NOT re-checked directly before each individual
+# mutation, and no direct-barrier proof is claimed.
+#
+# Closure additions (GR-08h blind-spot sweep): ZERO closure rows.  EVERY
+# dao-accessor call in every mutating-callable body was enumerated, not just
+# the findings: the 13 findings == the 13 mutating DAO call sites (4x
+# scannedReceiptDao.update + 9x receiptEventDao.insert), and every called
+# mutating DAO method (ScannedReceiptDao.update, ReceiptEventDao.insert) is
+# an abstract Room-annotated method.  ReceiptEventDao is a fully abstract
+# interface with exactly two methods (abstract @Insert insert, abstract
+# @Query SELECT getEventsForReceipt) and ScannedReceiptDao is likewise fully
+# abstract (every method Room-annotated) -- NEITHER interface carries a
+# body-carrying @Transaction convenience method at all, so no
+# convenience-method closure row exists for this batch.  The only other
+# DAO-accessor calls in the file are the nine read-only
+# scannedReceiptDao.getById(receiptId) lookups that open each transaction.
+# The database.withTransaction calls are the androidx.room.withTransaction
+# extension on the injected AppDatabase, not DAO accessors, and carry no
+# closure obligation.  Constructor-property DAO aliases (GR-08a pattern):
+# both DAO accessors (scannedReceiptDao, receiptEventDao) are direct @Inject
+# constructor properties resolved natively by the evidence verifier; there
+# are NO alias indirections and NO database-chained `database.xxxDao()`
+# call sites (chain-form census: 0 -- the injected `database: AppDatabase`
+# constructor property is only ever used as the withTransaction receiver,
+# so NO GR-08e accessor-normalization source change is needed for this
+# batch).
+#
+# NOTE: the migration CLI accepts a SINGLE --seed-rows value, so the
+# generation run consumes the COMBINED document
+# docs/ci/db-findings/GR-08-seeds.yml (GR-08a + GR-08b + GR-08c1 + GR-08c2
+# + GR-08d + GR-08e1 + GR-08e2 + GR-08f + GR-08g + GR-08h rows verbatim);
+# passing only this file would drop the earlier batches' rows from the
+# rendered candidate.
+schemaVersion: 2
+entries:
+# ── match-state transitions (scannedReceiptDao, 4 tuples) ────────────────────
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: saveMatchSuggestion
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - Double
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: persists the SUGGESTED match state (suggestedExpenseId, matchStatus=SUGGESTED, matchConfidence, updatedAt) inside the withTransaction block, atomic with the MATCH_SUGGESTED ReceiptEvent; LEGAL_PATHS.md MATCH receipt names saveMatchSuggestion() as the legal path and forbids any match mutation without a ReceiptEvent"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: approveMatchSuggestion
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: transitions the receipt to MANUALLY_MATCHED (expenseId=suggestedId, suggestedExpenseId and matchConfidence cleared) inside the withTransaction block, atomic with the MATCH_APPROVED ReceiptEvent so the match state can never disagree with its event"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: rejectAllSuggestions
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: transitions matchStatus to REJECTED and clears suggestedExpenseId inside the withTransaction block, atomic with the MATCH_REJECTED ReceiptEvent; LEGAL_PATHS.md names rejectAllSuggestions() as the legal path (the ReceiptRepository spelling is DeprecationLevel.ERROR)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: clearMatchForReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: scannedReceiptDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
+  operation: update
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: clears the match (expenseId=null, matchStatus=UNMATCHED, suggestedExpenseId=null, matchConfidence=null) inside the withTransaction block, atomic with the MATCH_CLEARED ReceiptEvent; LEGAL_PATHS.md names clearMatchForReceipt() as the legal path"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+# ── lifecycle events (receiptEventDao, 9 tuples: 4 match + 5 diagnostics) ────
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: saveMatchSuggestion
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long
+  - Double
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: writes the MATCH_SUGGESTED lifecycle event inside the same transaction as the match-state update (LEGAL_PATHS.md: any match mutation without a ReceiptEvent is FORBIDDEN)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: approveMatchSuggestion
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: writes the MATCH_APPROVED lifecycle event inside the same transaction as the MANUALLY_MATCHED transition"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: rejectAllSuggestions
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: writes the MATCH_REJECTED lifecycle event inside the same transaction as the REJECTED transition"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: clearMatchForReceipt
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: writes the MATCH_CLEARED lifecycle event inside the same transaction as the UNMATCHED clear"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordMatchAttempted
+  receiver: null
+  parameterTypes:
+  - Long
+  - Int
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: P9-P1-08 diagnostics-only writer -- durable MATCH_ATTEMPTED audit event (lookbackDays recorded; no match-status mutation) so worker-side match attempts leave a durable trace; LEGAL_PATHS.md AUTO-MATCH section names this durable per-outcome event"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordMatchNotFound
+  receiver: null
+  parameterTypes:
+  - Long
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: P9-P1-08 diagnostics-only writer -- durable MATCH_NOT_FOUND audit event for the previously-silent no-candidate branch"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordMatchSkippedDocumentType
+  receiver: null
+  parameterTypes:
+  - Long
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: P9-P1-08 diagnostics-only writer -- durable MATCH_SKIPPED_DOCUMENT_TYPE audit event for receipts the worker previously skipped silently (documentType/processingStatus recorded, no match-status mutation)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordAutoMatchLinkFailed
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long?
+  - String?
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: P9-P1-08 diagnostics-only writer -- durable AUTO_MATCH_LINK_FAILED audit event; errorDetails carry only the sanitized reason code (WorkerReasonCodes.sanitizeReasonCode) and a length/filter-bounded exception class name -- never raw exception text (privacy posture)"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H
+- path: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt
+  ownerFqcn: com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptMatchLifecycleService
+  kind: function
+  method: recordNotificationSuppressed
+  receiver: null
+  parameterTypes:
+  - Long
+  - Long?
+  - String
+  - String?
+  daoAccessor: receiptEventDao
+  daoFqcn: com.yourname.expensetracker.data.database.dao.ReceiptEventDao
+  operation: insert
+  barrierMode: helper
+  reason: "GR-08h EXACT_POLICY: PR12L-3 durable notification-suppression diagnostic (NOTIFICATION_SUPPRESSED audit event, no match-status mutation); same sanitized reason-code + bounded error-class posture -- never raw exception text or notification payloads"
+  owner: '@panospao7'
+  linkedIssue: MIT-DB-08H

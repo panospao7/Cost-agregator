@@ -1,0 +1,128 @@
+# GR-14u2 — entry family tranche 3: Pattern E dead-writer removal (461 -> 451).
+#
+# Removal set (each independently triple-proven dead: engine zero-inbound
+# on the post-GR-14u board + repo grep zero call sites in main AND test with
+# same-name DAO-layer collisions ruled out per site + compile success after
+# removal as the final caller-inventory proof):
+#   1. WarrantyTrackerRepository.updateReturnWindow (ReturnWindowDao.updateReturnWindow)
+#   2. WarrantyTrackerRepository.deleteReturnWindow (ReturnWindowDao.deleteReturnWindow)
+#   3. WarrantyTrackerRepository.markAsReturned (ReturnWindowDao.updateReturnWindow)
+#      (W02 currency-fallback logic; superseded by reconcileExpiredItems)
+#   4. MerchantNormalizationRepository.updateCanonical (MerchantNormalizationDao.updateCanonical)
+#   5. MerchantNormalizationRepository.updateCanonicalCategory (MerchantNormalizationDao.updateCanonicalCategory)
+#   6. MerchantNormalizationRepository.deleteUnusedAliasesOlderThan
+#      (MerchantNormalizationDao.deleteUnusedAliasesOlderThan)
+#   7. SavingsGoalRepository (interface + impl) updateSavingsGoalAmount
+#      (SavingsGoalDao.updateGoalAmount)
+#   8. SavingsGoalRepository @Deprecated deleteGoal (SavingsGoalDao.deleteGoal)
+#   9. SavingsGoalRepository @Deprecated updateGoalAmount (SavingsGoalDao.updateGoalAmount)
+#   10. SavingsGoalRepository @Deprecated addToGoalAmount (SavingsGoalDao.addToGoalAmount)
+#       (the atomic path incrementSavingsGoalAmount REMAINS — interface + impl)
+#   10 policy keys — within the GR-14H_PLAN tranche cap.
+#
+# Policy handling (EXACT_IDENTITY removal, GR-14c/GR-14h/GR-14u precedent):
+#   - generation input edited: 10 seed blocks out of
+#     docs/ci/db-findings/GR-08-seeds.yml (408 -> 398); legacy input
+#     UNTOUCHED (93; no v1 rows for these writers);
+#   - tracked candidate/accounting pair regenerated via the sanctioned
+#     `migrate_db_policy_signatures.py --generate` and `--verify
+#     --seed-rows` FULL MATCH (all sections); fold distribution UNCHANGED
+#     (resolved=53 unresolved=40 keeper=43);
+#   - mutation-key delta vs the active policy: EXACTLY -10 (the removal
+#     set), zero additions;
+#   - active policy realigned by direct reviewed edit (GR-14c/GR-14h/GR-14u
+#     precedent); active == candidate == 451 entries.
+#   NEW active policy sha256:
+#   c6b0463ea49a9b3efd10999e4b458cda2fe4746e98c0ae357a17aa340e80a015
+#   (was 5d3b394d...).
+#
+# Pins updated with drift notes: known-good-state validator
+# (_CANDIDATE_ENTRIES 461 -> 451), current-repo tripwire (461 -> 451,
+# 3/3 PASS).  Migration suite 85/85 with NO fold-pin drift (verified for
+# GR-14u at 408 seeds; fold groups unchanged by this batch).
+#
+# Shadow delta (before = post-GR-14u, sha 970403d3 — zero drift):
+#   entries 433 -> 423; entry family 64 -> 54; EXACTLY the 10 removal rows
+#   vanish; counterexample_unguarded_call_path stays 0; every other proof
+#   bucket byte-stable; diagnostics unchanged; deterministic double-run
+#   BYTE-IDENTICAL (82e4fc9f0093ec83f4916d0f47a251d1a39197a9bbd788f19a9150
+#   24deece1b9).
+#
+# Validation:
+#   - :app:compileDebugKotlin + compileDebugUnitTestKotlin BUILD
+#     SUCCESSFUL — caller-inventory proof (one vestigial test stub removed:
+#     SavingsGoalsViewModelTest mocked updateGoalAmount in setup; the
+#     production method had zero callers);
+#   - python batteries: fixture_runner 58/58; mediation+fixtures 32/32;
+#     carrier/launch/composable/finality+CLI+tripwire 52/52;
+#   - targeted tests (SavingsGoalsViewModelTest,
+#     MerchantNormalizationRepositoryTest): 11 passed; 3 FAILED
+#     (SavingsGoalsViewModelTest contributeToGoal family:
+#     NullPointerException — SavingsContributionHistoryRepository
+#     timeProvider null in the ViewModel contributeToGoal path) — stash
+#     A/B reproduces the IDENTICAL failure set at the pre-batch state;
+#     pre-existing fixture gap, not caused by this batch;
+#   - GATE-00R double capture + Gradle DB task: OWED at merge — MANDATORY
+#     (active policy bytes changed, new sha c6b0463e...).
+#
+# Remaining entry family after this batch: 54 rows (see
+# docs/ci/architecture/DEFERRED_ISSUES.md for the classified queue:
+# dead candidates for GR-14u3, production-dead-but-test-covered owner
+# decisions, and alive-with-callers engine visibility gaps).
+schemaVersion: 1
+batchId: GR-14u2
+startSha: 42f464f0
+gateEvidenceSha256: null # GATE-00R recapture MANDATORY at merge (policy changed)
+mediationReportSha256Before: 970403d360f04c63a93720cb0082c251475a9ba0e5480c2aa4994325039a39d7
+mediationReportSha256After: 82e4fc9f0093ec83f4916d0f47a251d1a39197a9bbd788f19a915024deece1b9
+activePolicySha256: c6b0463ea49a9b3efd10999e4b458cda2fe4746e98c0ae357a17aa340e80a015
+baselineSha256: unchanged
+
+codeFixes:
+  - app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt:
+      removed dead updateReturnWindow/deleteReturnWindow/markAsReturned
+  - app/src/main/java/com/yourname/expensetracker/data/repository/MerchantNormalizationRepository.kt:
+      removed dead updateCanonical/updateCanonicalCategory/deleteUnusedAliasesOlderThan
+  - app/src/main/java/com/yourname/expensetracker/domain/savings/SavingsGoalRepository.kt:
+      removed dead updateSavingsGoalAmount interface member
+  - app/src/main/java/com/yourname/expensetracker/data/repository/SavingsGoalRepository.kt:
+      removed dead updateSavingsGoalAmount override + @Deprecated
+      deleteGoal/updateGoalAmount/addToGoalAmount (atomic
+      incrementSavingsGoalAmount retained)
+  - app/src/test/java/com/yourname/expensetracker/ui/screens/savings/SavingsGoalsViewModelTest.kt:
+      removed vestigial updateGoalAmount mockk stub (zero callers)
+
+policyFixes:
+  - docs/ci/db-findings/GR-08-seeds.yml: 10 dead seed blocks removed (408 -> 398)
+  - config/guards/db_ownership_policy.signatures.candidate.yml: regenerated 461 -> 451
+  - config/guards/db_ownership_policy.signatures.accounting.json: regenerated (paired)
+  - config/guards/db_ownership_policy.yml: active realigned 461 -> 451
+    (direct reviewed edit, key sets == candidate)
+
+selectedMutationKeys:
+  - WarrantyTrackerRepository.updateReturnWindow -> ReturnWindowDao.updateReturnWindow
+  - WarrantyTrackerRepository.deleteReturnWindow -> ReturnWindowDao.deleteReturnWindow
+  - WarrantyTrackerRepository.markAsReturned -> ReturnWindowDao.updateReturnWindow
+  - MerchantNormalizationRepository.updateCanonical -> MerchantNormalizationDao.updateCanonical
+  - MerchantNormalizationRepository.updateCanonicalCategory -> MerchantNormalizationDao.updateCanonicalCategory
+  - MerchantNormalizationRepository.deleteUnusedAliasesOlderThan -> MerchantNormalizationDao.deleteUnusedAliasesOlderThan
+  - SavingsGoalRepository.updateSavingsGoalAmount -> SavingsGoalDao.updateGoalAmount
+  - SavingsGoalRepository.deleteGoal -> SavingsGoalDao.deleteGoal
+  - SavingsGoalRepository.updateGoalAmount -> SavingsGoalDao.updateGoalAmount
+  - SavingsGoalRepository.addToGoalAmount -> SavingsGoalDao.addToGoalAmount
+rootCause: GR13_ZERO_INBOUND_CALL_SITES
+selectedPattern: E # remove dead/unreachable writer (triple-proven)
+tests:
+  - migration 85/85 (no fold drift); current-repo tripwire 3/3 (451 pin)
+  - targeted touched-area suites 11 passed / 3 pre-existing failures
+    (stash A/B identical at pre-batch state)
+
+status: PARTIAL # GATE-00R recapture + Gradle DB task MANDATORY at merge (policy changed)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch removes dead code and its now-meaningless authorization rows.
+  It is not a baseline, exception, or authorization document.  The
+  candidate/active pair stays key-set aligned at 451; every removal was
+  triple-proven dead (engine + grep + compile) before and after.

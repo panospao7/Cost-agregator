@@ -1,0 +1,129 @@
+# GR-14u51b — canonical write-barrier checks in the 10 RetentionModule
+# purge members (production Kotlin + tests + policy-signature sync; the
+# twice-sanctioned u44b/u45b pattern; reviewer-ruled LAND-u50-PLUS-(b) —
+# the engine dispatch-semantics change was REJECTED for soundness holes,
+# see GR-14u50.yml Remaining).
+#
+# DEFECT: the 10 RetentionModule purge members (the anonymous
+# `object : RetentionTarget` implementations, anon1@35..anon10@236) had NO
+# per-call write-barrier check.  The u49 fan-out proves the CURRENT
+# caller (DataRetentionWorker's canonical guard), but a FUTURE direct
+# caller of any RetentionTarget.purge would bypass the worker guard with
+# no barrier of its own — the interface contract must be self-defending.
+#
+# FIX (production Kotlin + tests + policy-signature sync):
+#   - RetentionModule.provideRetentionTargets gains a
+#     `writeBarrier: DatabaseWriteBarrier` param (Hilt provider;
+#     DatabaseWriteBarrier is @Inject-constructible — verified; import
+#     com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+#     added).  Each anonymous object closes over it.
+#   - Per-member entry check at the TOP of each purge override, BEFORE
+#     the CancellationSafe.runCatchingCancellable wrapper (the u44b
+#     lesson: a check inside the wrapper would swallow
+#     DatabaseAccessBlockedException into a RETENTION_PURGE_FAILED
+#     result).  The expression-body members were converted to block
+#     bodies with an early return — minimal, semantics-preserving.
+#     Pattern: try { writeBarrier.checkWritesAllowed(op) } catch (e) {
+#     if (e is kotlinx.coroutines.CancellationException) throw e; return
+#     RetentionPurgeResult(targetName=name, rowsPurged=0, success=false,
+#     errorMessage="WRITE_BARRIER_BLOCKED", isTransient=true,
+#     errorCode="WRITE_BARRIER_BLOCKED") } — CONTROLLED CONSTANTS only,
+#     never e.message (repo privacy rule).
+#   - The 10 operation strings (verified against each member's actual
+#     DAO): RetentionModule.RawNotificationDao.purge,
+#     ScannedReceiptDao.purge, AiArtifactDao.purge, AiChatMessageDao.purge,
+#     EmailReceiptDao.purge, NotificationIntakeDao.purge,
+#     PipelineDiagnosticEventDao.purge, PendingReviewDao.purge,
+#     BackgroundJobRunDao.purge, BankStatementImportItemDao.purge.
+#   - Tests: RetentionTargetPurgeTest (the ONLY test constructing the
+#     targets via the module — repo-wide grep verified) updated for the
+#     3-param provider (NORMAL-mode barrier, DatabaseBarrierTest
+#     pattern).  NEW tests: blocked mode (RESTORE_PREPARING) returns the
+#     controlled constant with errorCode WRITE_BARRIER_BLOCKED and ZERO
+#     DAO writes (row content asserted unchanged); CancellationException
+#     from the barrier propagates unconverted.  Existing NORMAL-mode
+#     tests cover the proceed path unchanged.
+#   - POLICY-SIGNATURE SYNC (required, disclosed — FULL SCOPE per review
+#     ISSUE-1, GR-14u37 precedent d9352a01): the provider's canonical key
+#     changed (2 -> 3 params), so ALL FOUR tracked policy-truth artifacts
+#     were synced:
+#       1. config/guards/db_ownership_policy.yml (active) — the 10
+#          provideRetentionTargets rows gained the
+#          com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+#          parameterType (same position as active: third).
+#       2. config/guards/db_ownership_policy.signatures.candidate.yml —
+#          the same 10 rows updated (scope-checked block edit: only
+#          blocks whose method is provideRetentionTargets; 10 updated).
+#       3. config/guards/db_ownership_policy.signatures.accounting.json —
+#          the 10 seedRecord "key" strings gained the third parameter
+#          component (JSON re-serialized and parse-validated).
+#       4. docs/ci/db-findings/GR-08-seeds.yml — the 10 RetentionModule
+#          seed rows updated (scope-checked block edit; 10 updated).
+#     Generation-path disclosure: the sanctioned generator
+#     (scripts/migrate_db_policy_signatures.py --generate) was NOT used —
+#     the tracked candidate/accounting pair ALREADY drifts from the
+#     in-memory regeneration (PRE-EXISTING: --verify failed identically
+#     before and after this batch's edits — entries length expected=36787
+#     vs found=313213->313863 (+650 = 10 rows x 65 chars, exactly my
+#     delta); seedRecords 'present only in the tracked artifact').  A
+#     --generate run would rewrite the whole curated candidate — out of
+#     this batch's scope.  HAND-EDIT disclosed per the reviewer's
+#     sanctioned fallback, matching the active policy's exact row format.
+#     The --verify tripwire and the known-good-state scorecard's
+#     candidate_reproducible row remain FAIL — PRE-EXISTING drift, not
+#     introduced here (verified by stash A/B; the scorecard actually
+#     improved infra 1->0 with the active-policy sync).  The tracked-pair
+#     regeneration is a separate debt item.
+#     Without this sync the next promote_db_policy_v2.py promotion would
+#     have copied 2-param candidate bytes over active, re-breaking the D4
+#     correlation (the exact failure class caught mid-batch for the
+#     active file).
+#
+# OUTCOME (board, pre 1b4c1bbe... -> post a146081346c8f4f6, double run
+# byte-identical): ZERO rows moved.  proofStates byte-identical:
+#   proven_helper 328, restore 1, worker 14, ambiguous 13, async 23,
+#   counterexamples 0, external_entry 0.  The 10 RetentionModule rows
+#   remain unproven_ambiguous_call / GR13_UNCERTAIN_CALL_EDGE (verbatim;
+#   attributed to the synthetic anon members via the u49 machinery) — the
+#   reviewer's expected honest-unproven outcome.  The barrier is REAL and
+#   detected (the rows' classification is counterexample-free by
+#   construction: the u49 fan-out edges + the per-member checks mean a
+#   future direct caller hits the barrier), but the
+#   runCatchingCancellable wrapper keeps the GR-12 body model refusing
+#   (the u45b precedent), so the direct prover cannot prove dominance
+#   and the rows stay honest-unproven.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+#   regressed, 0 rows in unproven_external_entry, 0 unexpected delta
+#   (379 entries diffed; the only intermediate deviation — the policy-
+#   signature GR13_NO_D4_OBSERVATION shift — was caught and fixed
+#   IN-batch before the final board).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed (engine untouched)
+#   - fixture corpus: 99/99, exit 0
+#   - policy artifact tripwire (--verify): FAIL — PRE-EXISTING drift
+#     (verified byte-identical failure report before and after this
+#     batch's edits via stash A/B; my delta is exactly +650 bytes across
+#     the 10 rows); tracked-pair regeneration is a separate debt item
+#   - known-good-state scorecard: 4/7 pass, 2 FAIL (candidate_reproducible
+#     + the fold-count row — both PRE-EXISTING), 1 SKIP; infra improved
+#     1 -> 0 with the active-policy sync
+#   - board double run byte-identical a146081346c8f4f6 — UNCHANGED from
+#     the pre-fix u51b board: the policy artifact bytes do not feed the
+#     board (the D4 observations do), so the full four-artifact sync
+#     changes no board byte
+#   - Kotlin: NOT RUN — human compile validation owed (1 provider param +
+#     10 entry checks + 2 new tests; ./gradlew :app:compileDebugKotlin
+#     and :app:testDebugUnitTest --tests "*RetentionTargetPurge*"
+#     expected green)
+#
+# Remaining: the tracked candidate/accounting pair regeneration (the
+#   PRE-EXISTING --verify drift — own debt item, out of this batch's
+#   scope); the @Dao-restricted dispatch semantics remains available
+#   ONLY with explicit owner sign-off (GR-14u50.yml Remaining — the
+#   rejected engine change; the per-member barriers make it unnecessary
+#   for soundness, remaining purely a proof-power question); the
+#   F-PROCESSBATCH (8) / F-POSTCOMMIT (6) families (u43 table); the
+#   single-star-import fabrication fix (own batch).
+status: COMPLETE_AT_BOARD_a1460813

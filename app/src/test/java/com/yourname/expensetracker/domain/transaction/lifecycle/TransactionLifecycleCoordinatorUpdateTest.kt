@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.domain.transaction.lifecycle
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -49,6 +51,21 @@ class TransactionLifecycleCoordinatorUpdateTest {
         timeProvider = mockk(relaxed = true)
         currencyConverter = mockk(relaxed = true)
         writeBarrier = mockk(relaxed = true)
+        // GR-14p: mutations are scoped in writeBarrier.runWrite; a relaxed mock
+        // would neither run the block nor return its value (the coordinator
+        // casts the result to Long), so pass the block through.
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        // The scoped block opens a Room transaction; a relaxed database mock
+        // would never execute it. Pass the transaction block through (same
+        // pattern as NotificationRepositoryDeleteAllNotificationsClockTest).
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            firstArg<suspend () -> Any>().invoke()
+        }
         currencySettingsRepository = mockk(relaxed = true)
 
         every { timeProvider.now() } returns now
@@ -100,7 +117,19 @@ class TransactionLifecycleCoordinatorUpdateTest {
         coEvery { expenseDao.getById(1L) } returns existingExpense
 
         // Conversion fails (returns null from runCatching)
-        coEvery { currencyConverter.convertAsOf(any<Double>(), any<CurrencyCode>(), any<CurrencyCode>(), any<Long>()) } throws RuntimeException("Network error")
+        // Concrete CurrencyCode matchers: mockk 1.13.8 cannot fabricate
+        // signature values for the validating CurrencyCode value class
+        // (its init rejects mock-generated strings), so any<CurrencyCode>()
+        // throws InvocationTargetException while recording. updateExpense
+        // converts from the expense currency (USD) to the home currency (EUR).
+        coEvery {
+            currencyConverter.convertAsOf(
+                any<Double>(),
+                CurrencyCode("USD"),
+                CurrencyCode("EUR"),
+                any<Long>()
+            )
+        } throws RuntimeException("Network error")
 
         // Capture the expense that gets persisted
         val updatedSlot = slot<Expense>()

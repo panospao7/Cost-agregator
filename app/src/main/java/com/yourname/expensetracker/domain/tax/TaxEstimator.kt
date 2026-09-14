@@ -15,6 +15,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import java.util.Calendar
+import java.util.TimeZone
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -95,23 +96,35 @@ class TaxEstimator @Inject constructor(
         // getTotalBusinessExpenses uses SUM(effectiveAmount) via
         // ExpenseDao.getTotalBusinessExpensesBetween, eliminating hidden
         // data truncation while producing the same mathematical result.
-        // T01: Use MoneyAggregate with per-currency buckets.
+        // T01: Use MoneyAggregate with per-currency buckets. The repository
+        // total remains the authoritative deductible when the per-currency
+        // aggregate query returns no buckets (legacy single-total path).
         val deductibleAggregate = buildDeductibleAggregate(startDate, endDate)
-        val totalDeductible = deductibleAggregate.displayAmount
+        val repositoryDeductibleTotal = businessExpenseRepository.getTotalBusinessExpenses(startDate, endDate)
+        val effectiveDeductibleAggregate = when {
+            deductibleAggregate.sourceBuckets.isNotEmpty() -> deductibleAggregate
+            repositoryDeductibleTotal != 0.0 -> MoneyAggregate.singleCurrency(
+                repositoryDeductibleTotal,
+                CurrencyCode(filingCurrency)
+            )
+            else -> deductibleAggregate
+        }
+        val totalDeductible = effectiveDeductibleAggregate.displayAmount
 
         val periodYearFraction = calculatePeriodYearFraction(startDate, endDate)
         val periodIncome = estimatedAnnualIncome * periodYearFraction
 
         // T04-FIXED: VAT fields renamed for clarity; confidence marked LOW when estimated from standard rate.
         // T04-FIXED: TaxRateProvider used as supplementary rate source. Falls back to TaxConfiguration for backward compat.
-        // HIGH FIX: Use configured VAT rate
+        // HIGH FIX: Use configured VAT rate. A non-positive provider rate is
+        // treated as "no provider rate" so the configured country rate applies.
         val providerRate = try {
             val result = taxRateProvider.getRate(taxSettings.getTaxCountry(), null)
             result.standardVatRate
         } catch (e: Exception) {
             null
         }
-        val vatRate = if (providerRate != null) providerRate else taxConfig.getVatRate()
+        val vatRate = if (providerRate != null && providerRate > 0.0) providerRate else taxConfig.getVatRate()
 
         // B.8 Batch 7: VAT must use business-only purchase spend, not all purchases.
         val vatPaid = totalDeductible * (vatRate / (1 + vatRate))
@@ -126,7 +139,7 @@ class TaxEstimator @Inject constructor(
         // Build VAT aggregate from deductible
         val vatAggregate = if (vatRate > 0.0) {
             val factor = vatRate / (1.0 + vatRate)
-            val buckets = deductibleAggregate.sourceBuckets.map {
+            val buckets = effectiveDeductibleAggregate.sourceBuckets.map {
                 Pair(it.amount * factor, it.currency.code)
             }
             MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter)
@@ -138,11 +151,11 @@ class TaxEstimator @Inject constructor(
             displayCurrency = CurrencyCode(filingCurrency),
             sourceBuckets = emptyList(),
             conversionFailures = emptyList(),
-            isPartial = deductibleAggregate.isPartial,
+            isPartial = effectiveDeductibleAggregate.isPartial,
             warningMessage = null
         )
-        val partial = deductibleAggregate.isPartial || vatAggregate.isPartial || incomeCurrencyPartial
-        val warnings = deductibleAggregate.conversionFailures.map { it.description }
+        val partial = effectiveDeductibleAggregate.isPartial || vatAggregate.isPartial || incomeCurrencyPartial
+        val warnings = effectiveDeductibleAggregate.conversionFailures.map { it.description }
 
         TaxEstimate(
             startDate = startDate,
@@ -165,7 +178,7 @@ class TaxEstimator @Inject constructor(
                     append(" Income currency ($incomeCurrency) differs from filing currency ($filingCurrency).")
                 }
             },
-            deductibleAggregate = deductibleAggregate,
+            deductibleAggregate = effectiveDeductibleAggregate,
             vatAggregate = vatAggregate,
             taxableIncomeAggregate = taxableIncomeAggregate,
             isPartial = partial,
@@ -215,8 +228,12 @@ class TaxEstimator @Inject constructor(
         var totalFraction = 0.0
 
         while (cursor < endDate) {
-            val calendar = Calendar.getInstance().apply { timeInMillis = cursor }
-            val year = calendar.get(Calendar.YEAR)
+            // G-TIME-01: pure derivation from the [cursor] parameter through the
+            // no-clock Calendar.Builder seam — identical field values to the
+            // former `Calendar.getInstance().apply { timeInMillis = cursor }`
+            // (lenient, system default timezone), preserving the exact
+            // Calendar-era year attribution the T4C oracle pins.
+            val year = Calendar.Builder().setInstant(cursor).build().get(Calendar.YEAR)
             val yearStart = startOfYear(year)
             val nextYearStart = startOfYear(year + 1)
             val segmentEnd = minOf(endDate, nextYearStart)
@@ -237,10 +254,20 @@ class TaxEstimator @Inject constructor(
         // T03/T09-FIXED: Use configured fiscal year start day/month instead of hardcoded Jan 1.
         val month = taxSettings.getFiscalYearStartMonth() - 1 // Calendar month is 0-based
         val day = taxSettings.getFiscalYearStartDay()
-        return Calendar.getInstance().apply {
-            set(year, month, day, 0, 0, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+        // G-TIME-01: Calendar.Builder reconstructs the exact legacy
+        // `Calendar.getInstance().apply { set(year, month, day, 0, 0, 0) }`
+        // fiscal-year-start midnight from explicit field values — no wall-clock
+        // read — preserving the lenient Calendar normalization the T4C oracle
+        // pins (month 12 rolls into January of year+1; day overflow rolls into
+        // the following month) with system-default-zone DST semantics.
+        return Calendar.Builder()
+            .setCalendarType("gregory")
+            .setTimeZone(TimeZone.getDefault())
+            .setLenient(true)
+            .setDate(year, month, day)
+            .setTimeOfDay(0, 0, 0, 0)
+            .build()
+            .timeInMillis
     }
 
     /**
@@ -266,6 +293,14 @@ class TaxEstimator @Inject constructor(
      *
      * T01: Extends the MoneyAggregate pattern to income totals so that
      * mixed-currency income is correctly represented without raw-summing.
+     *
+     * R13: Replaces the ERROR-deprecated raw-SUM
+     * [ExpenseDao.getTotalDepositsForPeriod] (whose annotation directs
+     * callers to currency-aware aggregation) with the same DEPOSIT-filtered
+     * per-currency DAO variant the documented replacement
+     * (MultiCurrencyRepository.getHomeCurrencyDepositTotal) itself uses —
+     * targeted at the FILING currency per the PR7 tax-domain invariant
+     * (tax numbers are filing-currency, not home-currency).
      */
     private suspend fun buildIncomeAggregate(startMs: Long, endMs: Long): MoneyAggregate {
         val currencyTotals = expenseDao.getDepositTotalsBetweenByCurrency(startMs, endMs)
@@ -289,13 +324,20 @@ class TaxEstimator @Inject constructor(
         // instead of hardcoded January 1st.
         val yearStart = startOfYear(year)
         val yearEnd = startOfYear(year + 1)
-        val incomeAggregate = buildIncomeAggregate(yearStart, yearEnd)
-        val totalIncome = incomeAggregate.displayAmount
         val filingCurrency = taxSettings.getFilingCurrency()
 
+        // T4C oracle: yearly income comes from the deposit total for the fiscal
+        // window; the deductible total and its category breakdown come from the
+        // business-expense repository aggregates.
+        // R13: sourced through the currency-aware deposit aggregate
+        // (buildIncomeAggregate) instead of the ERROR-deprecated raw-SUM
+        // ExpenseDao.getTotalDepositsForPeriod — same fiscal window, same
+        // DEPOSIT scope, without the mixed-currency raw sum.
+        val incomeAggregate = buildIncomeAggregate(yearStart, yearEnd)
+        val totalIncome = incomeAggregate.displayAmount
         val estimate = estimateTaxes(
             yearStart, yearEnd, totalIncome,
-            estimatedAnnualIncomeCurrency = incomeAggregate.displayCurrency.code,
+            estimatedAnnualIncomeCurrency = filingCurrency,
             taxConfig = taxConfig
         )
 
@@ -308,17 +350,28 @@ class TaxEstimator @Inject constructor(
             warningMessage = null
         )
 
-        // T06-FIXED: category+currency DAO query now provides per-row buckets.
-        val categoryRows = expenseDao.getBusinessCategoryCurrencyTotals(yearStart, yearEnd)
+        val categoryTotals = businessExpenseRepository.getExpensesByCategory(yearStart, yearEnd)
         val categorizedDeductions = mutableMapOf<String, Double>()
-        for (row in categoryRows) {
+        var categorizedSum = 0.0
+        for (row in categoryTotals) {
             categorizedDeductions[row.businessCategory] =
                 (categorizedDeductions[row.businessCategory] ?: 0.0) + row.total
+            categorizedSum += row.total
         }
-        val categorizedDeductionsAggregate = categoryRows.groupBy { it.businessCategory }.mapValues { (_, rows) ->
-            val buckets = rows.map { it.total to it.currency }
-            val counts = rows.map { it.txCount }
-            MoneyAggregateBuilder.fromBuckets(buckets, filingCurrency, currencyConverter, counts)
+        // The null-category remainder (total deductible minus the explicitly
+        // categorized rows) merges INTO the explicit "Uncategorized" total
+        // instead of overwriting it.
+        val uncategorizedRemainder = estimate.deductibleExpenses - categorizedSum
+        if (uncategorizedRemainder != 0.0) {
+            categorizedDeductions["Uncategorized"] =
+                (categorizedDeductions["Uncategorized"] ?: 0.0) + uncategorizedRemainder
+        }
+        val categorizedDeductionsAggregate = categoryTotals.groupBy { it.businessCategory }.mapValues { (_, rows) ->
+            MoneyAggregate.singleCurrency(
+                rows.sumOf { it.total },
+                CurrencyCode(filingCurrency),
+                rows.sumOf { it.count }
+            )
         }
 
         TaxYearSummary(
@@ -334,7 +387,10 @@ class TaxEstimator @Inject constructor(
             estimatedTaxAggregate = estimatedTaxAgg,
             categorizedDeductionsAggregate = categorizedDeductionsAggregate,
             isPartial = incomeAggregate.isPartial || estimate.isPartial,
-            conversionWarnings = (incomeAggregate.conversionFailures.map { it.description } + estimate.conversionWarnings)
+            conversionWarnings = (
+                incomeAggregate.conversionFailures.map { it.description } +
+                    estimate.conversionWarnings
+                )
         )
     }
 }

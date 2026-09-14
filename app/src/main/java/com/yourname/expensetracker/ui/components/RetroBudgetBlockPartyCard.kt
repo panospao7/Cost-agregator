@@ -35,6 +35,7 @@ import com.yourname.expensetracker.ui.theme.SemanticColors
 import androidx.compose.ui.res.stringResource
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 
 /**
  * Retro 8-bit game style Budget Block Party card - V2 Enhanced Edition.
@@ -210,8 +211,9 @@ private fun CalendarGridV2(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         val startOffset = if (days.isNotEmpty()) {
-            val cal = java.util.Calendar.getInstance().apply { timeInMillis = days.first().date }
-            (cal.get(java.util.Calendar.DAY_OF_WEEK) + 5) % 7
+            // G-TIME-01: TimePeriodUtils.getDayOfWeek returns the Calendar-style
+            // constants (SUNDAY=1..SATURDAY=7) derived from the given timestamp.
+            (TimePeriodUtils.getDayOfWeek(days.first().date) + 5) % 7
         } else 0
 
         val paddedDays: List<DayBudgetStatus?> = List(startOffset) { null } + days

@@ -1,6 +1,7 @@
 package com.yourname.expensetracker.domain.receipt.lifecycle
 
 import android.net.Uri
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.transaction.TransactionContext
@@ -817,6 +818,13 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
         val homeCurrency = homeResolution.currencyOrNull?.code ?: "XXX" // explicit unknown currency as last resort
 
         try {
+        // GR-14s: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation(
+                "ReceiptLifecycleCoordinator.processEmailReceipt"
+            )
+        ) {
         transactionRunner.runInTransaction(
             correlationId = java.util.UUID.randomUUID().toString(),
             operationId = "receipt.process_email",
@@ -1068,6 +1076,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 pendingReviewDao.insert(review)
             }
         }
+        }
 
         } catch (e: DuplicateReceiptInsertException) {
             // P3-EB0-04: Resolver duplicate during email insert — return Duplicate.
@@ -1240,21 +1249,7 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                     if (e is CancellationException) throw e
                     // P3-CUR-08: Write durable event when asset deletion fails
                     Timber.e(e, "Failed to delete asset for receipt %d: [REDACTED]", receiptId)
-                    receiptEventDao.insert(
-                        ReceiptEvent(
-                            receiptId = receiptId,
-                            sourceType = receipt.sourceType,
-                            documentType = receipt.documentType,
-                            eventType = "ASSET_DELETE_FAILED",
-                            occurredAt = timeProvider.now(),
-                            oldStatus = "DELETED",
-                            newStatus = null,
-                            actor = "system:coordinator",
-                            message = "Failed to delete asset file: [REDACTED]",
-                            metadata = null,
-                            errorDetails = e.message?.take(500)
-                        )
-                    )
+                    writeAssetDeleteFailedEvent(receipt, receiptId, e.message?.take(500))
                 }
             }
 
@@ -1266,6 +1261,37 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
             Timber.e(e, "Failed to delete receipt: id=%d", receiptId)
             Result.failure(e)
         }
+    }
+
+    /**
+     * Post-commit audit write for a failed asset-file deletion
+     * (GR-14b Pattern A: the DB write moves out of the generic [let]
+     * callback into an exact canonical direct barrier path owned by this
+     * coordinator; the only caller already runs after
+     * [deleteReceipt]'s canonical check, so the added check is an
+     * unreachable no-op on every current path).
+     */
+    private suspend fun writeAssetDeleteFailedEvent(
+        receipt: ScannedReceipt,
+        receiptId: Long,
+        errorDetails: String?
+    ) {
+        writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.writeAssetDeleteFailedEvent")
+        receiptEventDao.insert(
+            ReceiptEvent(
+                receiptId = receiptId,
+                sourceType = receipt.sourceType,
+                documentType = receipt.documentType,
+                eventType = "ASSET_DELETE_FAILED",
+                occurredAt = timeProvider.now(),
+                oldStatus = "DELETED",
+                newStatus = null,
+                actor = "system:coordinator",
+                message = "Failed to delete asset file: [REDACTED]",
+                metadata = null,
+                errorDetails = errorDetails
+            )
+        )
     }
 
     /**

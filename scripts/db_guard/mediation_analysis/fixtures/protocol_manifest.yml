@@ -1,0 +1,28 @@
+# GR-13 protocol fixtures (shadow slice S2d).
+# One row per fixture file; expectation uses the controlled
+# protocol-expectation vocabulary only.
+fixtures:
+  - id: PR-01
+    file: protocol/pr01_no_raw_source.md
+    expectation: REPORT_HAS_NO_SOURCE_SNIPPETS
+  - id: PR-02
+    file: protocol/pr02_two_run_stability.md
+    expectation: DETERMINISTIC
+  - id: PR-03
+    file: protocol/pr03_unknown_code_rejected.md
+    expectation: EXIT_2
+  - id: PR-04
+    file: protocol/pr04_malformed_policy.md
+    expectation: EXIT_2
+  - id: PR-05
+    file: protocol/pr05_unproven_exit1.md
+    expectation: EXIT_1
+  - id: PR-06
+    file: protocol/pr06_unsupported_exit2.md
+    expectation: EXIT_2
+  - id: PR-07
+    file: protocol/pr07_normal_db_untouched.md
+    expectation: DB_CLI_UNCHANGED
+  - id: PR-08
+    file: protocol/pr08_ratchet_untouched.md
+    expectation: RATCHET_UNCHANGED

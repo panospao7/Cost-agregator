@@ -3,7 +3,12 @@
 verify_cloud_payload_boundaries.py
 G-CLOUD-01 — Cloud Payload Fail-Closed Guard
 
-Scans app/src/main/java for cloud upload/payload paths that bypass the
+Scans the declared production Kotlin source scope (the roots of the
+checked-in manifest ``config/guards/production_source_roots.yml`` via
+``scripts/guardrails/production_source_scope.py`` — currently
+``app/src/main/java``), enumerating EVERY declared production file and then
+applying the guard-specific allowlist/package semantic filter, for cloud
+upload/payload paths that bypass the
 central fail-closed policy (CloudPayloadPolicy / PreparedCloudPayload).
 
 Detection patterns:
@@ -19,7 +24,8 @@ Detection patterns:
 Exit codes:
   0 — no violations (or warning mode without --fail-on-violation)
   1 — violations found AND --fail-on-violation is set
-  2 — script error (e.g. source directory not found)
+  2 — script error (e.g. production source scope unresolved, source
+      directory not found)
 
 Usage:
   python3 scripts/verify_cloud_payload_boundaries.py
@@ -42,10 +48,17 @@ DESCRIPTION = "Cloud Payload Fail-Closed Guard"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-SOURCE_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java")
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
+
 ALLOWLIST_PATH = os.path.join(SCRIPT_DIR, "allowlists", "cloud_payload_allowlist.yml")
 
-SCOPE_DIRS = ["app/src/main/java"]
 FILE_PATTERNS = ["*.kt"]
 SKIP_DIRS = {"test", "androidTest", "migration", "generated", "build"}
 
@@ -194,10 +207,16 @@ def main():
     args = parser.parse_args()
 
     root = args.root
-    source_dir = os.path.join(root, "app", "src", "main", "java")
 
-    if not os.path.isdir(source_dir):
-        print(f"ERROR: source directory not found: {source_dir}", file=sys.stderr)
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"ERROR: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     # Fail-closed: missing configured allowlist is fatal
@@ -209,27 +228,32 @@ def main():
 
     all_violations: List[str] = []
 
-    for dirpath, dirnames, filenames in os.walk(source_dir):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for filename in filenames:
-            if not filename.endswith(".kt"):
-                continue
-            filepath = os.path.join(dirpath, filename)
-            rel_path = os.path.relpath(filepath, root)
+    try:
+        source_files = list(iter_production_kotlin_files(str(root), root_set))
+    except ProductionSourceScopeError as exc:
+        print(
+            f"ERROR: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
-            file_violations = scan_file(filepath, rel_path)
+    for source_file in source_files:
+        filepath = source_file.absolute_path
+        rel_path = source_file.repository_relative_path
 
-            # Filter out allowlisted entries
-            for v in file_violations:
-                # Violation format: RULE_ID rel_path:line message
-                parts = v.split(" ", 2)
-                if len(parts) >= 2:
-                    fpath_part = parts[1]
-                    fpath = fpath_part.rsplit(":", 1)[0] if ":" in fpath_part else fpath_part
-                    if not is_allowlisted(fpath, "", allowlist):
-                        all_violations.append(v)
-                else:
+        file_violations = scan_file(filepath, rel_path)
+
+        # Filter out allowlisted entries
+        for v in file_violations:
+            # Violation format: RULE_ID rel_path:line message
+            parts = v.split(" ", 2)
+            if len(parts) >= 2:
+                fpath_part = parts[1]
+                fpath = fpath_part.rsplit(":", 1)[0] if ":" in fpath_part else fpath_part
+                if not is_allowlisted(fpath, "", allowlist):
                     all_violations.append(v)
+            else:
+                all_violations.append(v)
 
     if all_violations:
         for v in all_violations:

@@ -1,0 +1,4866 @@
+#!/usr/bin/env python3
+"""test_capture_db_guard_evidence.py
+
+Pytest suite for scripts/ci/capture_db_guard_evidence.py.
+
+Every test uses temporary fake commands and files; none invoke Gradle, scan the
+real repository, or touch production Kotlin / policy / baseline / config files.
+The capture tool is exercised through its importable ``capture_evidence`` API
+with an injectable runner and an injectable command matrix, so the real guard
+control plane is never executed here.
+"""
+
+from __future__ import annotations
+
+import fnmatch
+import json
+import os
+import re
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import capture_db_guard_evidence as cap  # noqa: E402
+
+REPORT_SCHEMA = cap.REPORT_SCHEMA
+REPORT_SCHEMA_VERSION = cap.REPORT_SCHEMA_VERSION
+
+# The fixture repository's checked-out commit.  Since PR-GR-00R part A this is
+# NOT a hard-coded capture target: it is supplied per run as the caller-stated
+# run pin (``expected_sha=`` / ``--expected-sha``) via the ``_capture`` wrapper.
+TEST_SHA = "9b97e7979130de605d164386bbf719cf20579475"
+# Must be a valid 40-hex Git SHA so preflight identity validation accepts it.
+TEST_TREE = "1111111111111111111111111111111111111111"
+# A second valid 40-hex SHA, deliberately different from TEST_SHA (the retired
+# permanent capture target): proves the run pin accepts any caller-declared
+# commit instead of a hard-coded historical one.
+OTHER_SHA = "f5e1d2c3b4a5968778695a4b3c2d1e0f9a8b7c6d"
+# The SHA a drift-injecting runner switches to AFTER the matrix (mid-capture).
+DRIFT_SHA = "0123456789abcdef0123456789abcdef01234567"
+# The retired permanent TARGET_SHA constant value.  Kept ONLY as the negative-
+# assertion needle for the grep-style source test; it must never appear in the
+# capture tool source and carries no authority.
+RETIRED_TARGET_SHA = "9b97e7979130de605d164386bbf719cf20579475"
+
+# ── GATE-00R extension fixtures ───────────────────────────────────────────────
+# The caller-stated base pin (``base_ref=`` / ``--base-ref``): a valid 40-hex
+# SHA, deliberately different from TEST_SHA, injected by ``_capture`` by default
+# exactly like the run pin.  The fake git runner resolves it to itself.
+BASE_REF_SHA = "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a0"
+# The merge-base the fake git runner reports for ``git merge-base HEAD <base>``.
+MERGE_BASE_SHA = "5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f"
+# 40-hex detector for fake git branches that must match a bare SHA argument.
+_SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
+
+# The complete set of tracked input files created by ``_make_root``.  The fake
+# git runner reports exactly these via ``git ls-files`` so the dynamic input
+# manifest discovery can be exercised.
+TRACKED_FILES = [
+    "scripts/verify_db_access_boundaries.py",
+    "scripts/ci/guard_ratchet.py",
+    "scripts/ci/guard_registry.py",
+    "scripts/ci/run_static_guard_suite.py",
+    "scripts/ci/guard_findings.py",
+    "config/baselines/db_access.json",
+    "config/baselines/db_access_v2.json",
+    "config/guards/db_ownership_policy.yml",
+    "config/guards/db_ownership_policy.signatures.candidate.yml",
+    "config/guards/db_structural_exceptions.yml",
+    "config/guards/db_structural_exceptions_expected_methods.yml",
+    "config/guards/db_raw_query_classification.yml",
+    "config/guards/production_source_roots.yml",
+    "app/build.gradle.kts",
+    ".github/workflows/ci.yml",
+    "settings.gradle.kts",
+    "scripts/db_guard/__init__.py",
+    "scripts/db_guard/dao_accessors.py",
+    "scripts/db_guard/declaration_scanner.py",
+    "scripts/db_guard/reporting.py",
+    "scripts/db_guard/room_inventory.py",
+    "scripts/db_guard/scanner.py",
+    "scripts/db_guard/sql_classifier.py",
+]
+
+# The .py test modules referenced by the default matrix's focused-python-tests
+# row.  They are created on disk so ``collect_infrastructure_warnings`` finds
+# them and the happy-path bundle stays warning-free like the run-01/run-02
+# oracle bundles (``infrastructure_warnings: []``).  They are deliberately NOT
+# part of TRACKED_FILES: the fake git runner's tracked universe models the
+# hashed DB-guard input set, not every referenced test module, so adding them
+# here does not perturb the input-manifest assertions.
+FOCUSED_TEST_FILES = [
+    "scripts/ci/test_guard_findings.py",
+    "scripts/ci/test_guard_ratchet.py",
+    "scripts/ci/test_guard_ratchet_v2.py",
+    "scripts/test_kotlin_callable_parser.py",
+    "scripts/test_migrate_db_policy_signatures.py",
+    "scripts/test_db_guard_room_inventory.py",
+    "scripts/test_db_guard_sql_classifier.py",
+    "scripts/test_db_guard_declaration_scanner.py",
+    "scripts/test_db_guard_scanner_d4.py",
+    "scripts/test_verify_db_access_v2.py",
+    "scripts/test_verify_db_access_boundaries.py",
+]
+
+# Cross-platform absolute-path / backslash detector for stored (repo-relative)
+# paths.  A repository-relative path uses POSIX separators and must never be an
+# absolute path on either platform: no leading "/", no backslash, and no Windows
+# drive-letter prefix (e.g. "C:\" or "C:/").
+_DRIVE_LETTER_RE = re.compile(r"[A-Za-z]:[\\/]")
+
+
+def _assert_repo_relative(path: str) -> None:
+    assert "\\" not in path, f"backslash in stored path: {path!r}"
+    assert not path.startswith("/"), f"absolute path in stored path: {path!r}"
+    assert not _DRIVE_LETTER_RE.search(path), f"drive letter in stored path: {path!r}"
+
+
+def _assert_no_absolute(token: str) -> None:
+    """A stored argv token must never be an absolute (machine) path."""
+    assert "\\" not in token, f"backslash in argv token: {token!r}"
+    assert not token.startswith("/"), f"absolute path in argv token: {token!r}"
+    assert not _DRIVE_LETTER_RE.search(token), f"drive letter in argv token: {token!r}"
+
+
+def _capture(*args, **kwargs):
+    """Fixture wrapper: supply the fixture run pin unless a test overrides it.
+
+    PR-GR-00R part A made the expected SHA a mandatory, caller-stated run pin
+    (``expected_sha=`` / ``--expected-sha``); a missing or invalid pin is a
+    controlled pre-command failure.  Every existing fixture capture targets the
+    fake repository checked out at ``TEST_SHA``, so the wrapper injects that pin
+    by default.  Pin-specific tests (missing / invalid / mismatched pins, CLI
+    argparse behavior) call ``cap.capture_evidence`` / ``cap.main`` directly.
+
+    GATE-00R extension: the base pin (``base_ref=`` / ``--base-ref``) is
+    mandatory under the same contract; the wrapper injects ``BASE_REF_SHA`` by
+    default so existing fixture captures keep exercising the success path.
+    """
+    kwargs.setdefault("expected_sha", TEST_SHA)
+    kwargs.setdefault("base_ref", BASE_REF_SHA)
+    return cap.capture_evidence(*args, **kwargs)
+
+
+# ── Semantic command matching (fixture helpers) ───────────────────────────────
+def _argv_basename(token) -> str:
+    """Basename of an argv token, tolerant of POSIX and Windows separators."""
+    return os.path.basename(str(token).replace("\\", "/"))
+
+
+def _matches(argv, script_name: str, *flags: str) -> bool:
+    """Semantic match for a child command invocation.
+
+    True iff any argv element's basename equals ``script_name`` (so the
+    repository-relative prefixed tokens used by the production command
+    matrices — e.g. ``scripts/verify_db_access_boundaries.py`` — still match)
+    AND every flag in ``flags`` appears verbatim in argv.  The verbatim-flag
+    requirement keeps sibling invocations of the same script unambiguous
+    (``--inventory-only`` vs ``--fail-on-violation``) and prevents a ratchet
+    command that merely embeds the script as a ``--command-arg=<value>`` token
+    from firing the db-cli branch.
+    """
+    if not any(_argv_basename(token) == script_name for token in argv):
+        return False
+    return all(flag in argv for flag in flags)
+
+
+def _is_git_cmd(argv, subcommand: str, *leading: str) -> bool:
+    """Semantic match for ``git <subcommand>`` carrying every ``leading`` token.
+
+    Tokens are compared verbatim and order-insensitively against ``argv[2:]``,
+    so extra flags/pathspecs (e.g. the ``--`` pathspec lists sent by the
+    preservation checker) do not break the match, while distinct revisions
+    (``HEAD`` vs ``HEAD^{tree}`` vs ``HEAD:<path>``) remain separate tokens and
+    never cross-match.
+    """
+    if len(argv) < 2 or argv[0] != "git" or argv[1] != subcommand:
+        return False
+    rest = list(argv[2:])
+    return all(token in rest for token in leading)
+
+
+# ── Fake runner ───────────────────────────────────────────────────────────────
+class FakeOutcome:
+    def __init__(self, returncode: int, combined: str = "") -> None:
+        self.returncode = returncode
+        self.combined = combined
+
+
+def _write_fake_report(path: str, *, trusted: bool, codes=(), findings=0) -> None:
+    finding_list = [
+        {"rule": "X", "severity": "error", "path": "p",
+         "location": {"line": 1},
+         "symbol": {"owner": "o", "name": f"n{i}", "parameters": [],
+                    "kind": "function"},
+         "identity": {"operation": "x"}, "message": "m"}
+        for i in range(findings)
+    ]
+    report = {
+        "schema": REPORT_SCHEMA,
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "guard": "db_access",
+        "findings": finding_list,
+        "diagnostics": [{"code": c} for c in codes],
+        "statistics": {"trusted": trusted, "files_scanned": 1},
+    }
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(report, handle)
+
+
+def _write_fake_outputs(argv, cwd):
+    """Mirror what the real commands would write, derived from argv flags.
+
+    Output paths embedded in ``argv`` are repository-relative (the capture tool
+    runs every child command with ``cwd`` = the repository root), so every
+    artifact write is resolved against the runner's ``cwd`` argument — never
+    against this test process's current working directory.
+    """
+    def _resolve(rel):
+        return os.path.join(str(cwd), rel)
+
+    if "--findings-output" in argv:
+        idx = argv.index("--findings-output")
+        out = _resolve(argv[idx + 1])
+        if "--inventory-only" in argv:
+            _write_fake_report(out, trusted=True)
+        else:
+            _write_fake_report(out, trusted=False, codes=["DB_POLICY_INCOMPLETE_V2"])
+    if "--dump-room-mutators" in argv:
+        idx = argv.index("--dump-room-mutators")
+        out = _resolve(argv[idx + 1])
+        parent = os.path.dirname(out)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(out, "w", encoding="utf-8") as handle:
+            json.dump([], handle)
+    if "--output-dir" in argv:
+        idx = argv.index("--output-dir")
+        out_dir = _resolve(argv[idx + 1])
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "summary.json"), "w", encoding="utf-8") as handle:
+            json.dump({"ok": True}, handle)
+
+
+class ConfigurableFakeRunner:
+    """Injectable runner that fakes git/version preflight and command outputs.
+
+    Branch matching is semantic, not raw membership: a guard-script branch
+    fires when any argv element's basename equals the script name (so the
+    repo-relative prefixed tokens used by the production command matrices —
+    e.g. ``scripts/ci/guard_ratchet.py`` — match) AND the branch's semantic
+    flags appear verbatim in argv.  Git subcommands match via ``_is_git_cmd``.
+    Anything unmatched falls through explicitly to ``(0, "ok")`` and is
+    recorded in ``fallthroughs`` so tests can assert which commands went
+    unmatched instead of silently succeeding.
+    """
+
+    def __init__(self, *, dirty: bool = False, command_returncodes=None,
+                 launch_fail_token: str = None, write_reports: bool = True,
+                 staged_diff: str = "", untracked: str = "",
+                 branch: str = "main") -> None:
+        self.dirty = dirty
+        self.command_returncodes = dict(command_returncodes or {})
+        self.launch_fail_token = launch_fail_token
+        self.write_reports = write_reports
+        self.staged_diff = staged_diff
+        self.untracked = untracked
+        # Current branch reported by ``git branch --show-current``.  An empty
+        # string models a detached HEAD (exit 0, empty output -> branch=None).
+        self.branch = branch
+        self.calls: list = []
+        # Explicit fallthrough log: every argv that matched no registered
+        # branch (assertable; the fallthrough always returns exit 0).
+        self.fallthroughs: list = []
+
+    def __call__(self, argv, cwd):
+        argv = list(argv)
+        self.calls.append(argv)
+        if self.launch_fail_token is not None and self.launch_fail_token in argv:
+            raise FileNotFoundError("simulated missing executable")
+        if argv and argv[0] == "git":
+            return self._git(argv)
+        # Gradle wrapper launcher: the production matrix resolves the token at
+        # construction time (``gradlew.bat`` on Windows, ``./gradlew``
+        # elsewhere), so the fixture branch matches both launcher names by
+        # basename instead of pinning the POSIX form.
+        if argv and _argv_basename(argv[0]) in ("gradlew", "gradlew.bat"):
+            return FakeOutcome(self.command_returncodes.get("gradle", 1), "gradle output")
+        if "pytest" in argv:
+            return FakeOutcome(self.command_returncodes.get("pytest", 0), "pytest output")
+        if _matches(argv, "verify_guard_registry.py"):
+            return FakeOutcome(self.command_returncodes.get("registry", 0), "registry ok")
+        if _matches(argv, "guard_ratchet.py"):
+            return FakeOutcome(self.command_returncodes.get("ratchet", 2), "ratchet blocked")
+        if _matches(argv, "run_static_guard_suite.py"):
+            if self.write_reports:
+                _write_fake_outputs(argv, cwd)
+            return FakeOutcome(self.command_returncodes.get("static", 0), "static ok")
+        if _matches(argv, "verify_time_boundaries.py"):
+            # GATE-00R time-direct row: the direct time-boundary guard
+            # observation (exit 0 in both run-01/run-02 oracle bundles).  A
+            # registered branch — not a fallthrough — so the happy-path
+            # fallthrough pin stays strict (only the version probes fall
+            # through).
+            return FakeOutcome(self.command_returncodes.get("time", 0), "time ok")
+        if _matches(argv, "verify_db_access_boundaries.py", "--inventory-only"):
+            rc = self.command_returncodes.get("inventory", 0)
+            if self.write_reports:
+                _write_fake_outputs(argv, cwd)
+            return FakeOutcome(rc, "inventory ok" if rc == 0 else "inventory blocked")
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
+            rc = self.command_returncodes.get("dbcli", 2)
+            if self.write_reports:
+                _write_fake_outputs(argv, cwd)
+            return FakeOutcome(rc, "db cli ok" if rc == 0 else "db cli blocked")
+        # Explicit fallthrough: no registered branch matched this command.
+        self.fallthroughs.append(argv)
+        if self.write_reports:
+            _write_fake_outputs(argv, cwd)
+        return FakeOutcome(0, "ok")
+
+    def _git(self, argv):
+        if _is_git_cmd(argv, "rev-parse", "HEAD^{tree}"):
+            return FakeOutcome(0, TEST_TREE)
+        if _is_git_cmd(argv, "rev-parse", "HEAD"):
+            return FakeOutcome(0, TEST_SHA)
+        if len(argv) == 3 and argv[1] == "rev-parse" and argv[2].startswith("HEAD:"):
+            # Any committed input resolves to a valid 40-hex blob ID so the
+            # forged/missing-blob-ID fail-closed path can be exercised by tests
+            # that deliberately return an invalid blob.
+            return FakeOutcome(0, "a" * 40)
+        if (len(argv) == 3 and argv[1] == "rev-parse"
+                and _SHA40_RE.match(argv[2])):
+            # GATE-00R: ``git rev-parse <base-ref>`` resolves the caller-stated
+            # 40-hex base pin to itself (a full object name echoes verbatim).
+            return FakeOutcome(0, argv[2])
+        if _is_git_cmd(argv, "merge-base", "HEAD"):
+            # GATE-00R: ``git merge-base HEAD <base-ref>`` resolves to the
+            # fixture merge-base SHA.
+            return FakeOutcome(0, MERGE_BASE_SHA)
+        if _is_git_cmd(argv, "branch", "--show-current"):
+            # GATE-00R: current branch observation (empty -> detached HEAD).
+            return FakeOutcome(0, self.branch)
+        if _is_git_cmd(argv, "status", "--porcelain=v1"):
+            base = " M config/guards/db_ownership_policy.yml\n" if self.dirty else ""
+            # Surface untracked paths as porcelain ``??`` entries so the
+            # preservation checker can observe them.
+            if self.untracked:
+                for u in self.untracked.splitlines():
+                    if u.strip():
+                        base += f"?? {u.strip()}\n"
+            return FakeOutcome(0, base)
+        if _is_git_cmd(argv, "diff", "--cached", "--exit-code"):
+            # Staged changes vs HEAD fail closed when any staged diff exists.
+            return FakeOutcome(1 if self.staged_diff else 0, "")
+        if _is_git_cmd(argv, "diff", "--exit-code") and "--cached" not in argv:
+            return FakeOutcome(1 if self.dirty else 0, "")
+        if _is_git_cmd(argv, "diff", "--cached", "--name-only"):
+            return FakeOutcome(0, self.staged_diff)
+        if _is_git_cmd(argv, "diff", "HEAD", "--name-only"):
+            # Combined staged + unstaged modifications vs HEAD.
+            return FakeOutcome(0, self.staged_diff or "")
+        if _is_git_cmd(argv, "diff", "--name-only") and "--cached" not in argv:
+            return FakeOutcome(0, "")
+        if _is_git_cmd(argv, "log", "--oneline", "-20"):
+            return FakeOutcome(0, f"{TEST_SHA} base commit\n")
+        if _is_git_cmd(argv, "ls-files") and "--others" in argv[2:]:
+            # Untracked paths (never tracked files).
+            return FakeOutcome(0, self.untracked or "")
+        if _is_git_cmd(argv, "ls-files"):
+            # Return tracked files matching the requested pathspec patterns.
+            rest = list(argv[2:])
+            patterns = rest[rest.index("--") + 1:] if "--" in rest else rest
+            matched = [
+                f for f in TRACKED_FILES
+                if any(fnmatch.fnmatch(f, p) for p in patterns)
+            ]
+            return FakeOutcome(0, "\n".join(matched))
+        return FakeOutcome(0, "")
+
+
+# ── Fixture helpers ───────────────────────────────────────────────────────────
+def _make_root(tmp_path):
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "scripts" / "ci").mkdir(parents=True)
+    (root / "config" / "guards").mkdir(parents=True)
+    (root / "config" / "baselines").mkdir(parents=True)
+    (root / "app").mkdir(parents=True)
+    (root / ".github" / "workflows").mkdir(parents=True)
+
+    fake_inputs = {rel: _fake_input_content(rel) for rel in TRACKED_FILES}
+    for rel, content in fake_inputs.items():
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    # Referenced focused-test modules (on disk only; see FOCUSED_TEST_FILES).
+    for rel in FOCUSED_TEST_FILES:
+        p = root / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text("def test_x(): pass\n", encoding="utf-8")
+    return root
+
+
+def _fake_input_content(rel: str) -> str:
+    """Deterministic fake content for a tracked input path."""
+    if rel.endswith(".py"):
+        return "print('fake')\n"
+    if rel.endswith(".json"):
+        return "{}\n"
+    if rel.endswith(".yml") or rel.endswith(".yaml"):
+        return "entries: []\n"
+    if rel.endswith(".kts"):
+        return "// gradle\n"
+    if rel.endswith(".yml") or rel == ".github/workflows/ci.yml":
+        return "name: ci\n"
+    return "// settings\n"
+
+
+def _fake_matrix(root, out_dir):
+    """A custom command matrix using repository-relative argv/report paths.
+
+    Mirrors the real ``default_command_matrix`` contract: argv tokens that point
+    at bundle outputs are repository-relative (``bundle_rel/...``), while
+    ``report_path`` is relative to the bundle directory; interpreter and Gradle
+    wrapper tokens are resolved through the same module-level resolvers the
+    production matrix uses (``_suite_python`` / ``_suite_gradlew``).  This keeps
+    the matrix valid under ``validate_command_matrix`` (no absolute/outside
+    paths) and exercising the resolved launcher tokens.
+    """
+    bundle_rel = cap._posix_rel(out_dir, str(root))
+    suite_python = cap._suite_python()
+    suite_gradlew = cap._suite_gradlew()
+
+    def rop(*parts):
+        return "/".join([bundle_rel, *parts])
+
+    return [
+        cap.CommandSpec(
+            id="registry-validation", log_name="00-registry.log",
+            argv=[suite_python, "scripts/ci/verify_guard_registry.py"],
+        ),
+        cap.CommandSpec(
+            id="room-inventory", log_name="02-room-inventory.log",
+            argv=[suite_python, "scripts/verify_db_access_boundaries.py", "--inventory-only",
+                  "--findings-output", rop("02-room-inventory.findings.json"),
+                  "--dump-room-mutators", rop("02-room-mutators.json")],
+            report_path="02-room-inventory.findings.json",
+            required_artifacts=("02-room-inventory.findings.json", "02-room-mutators.json"),
+            artifact_kinds=(
+                ("02-room-inventory.findings.json", "file"),
+                ("02-room-mutators.json", "file"),
+            ),
+        ),
+        cap.CommandSpec(
+            id="db-cli", log_name="03-db-cli.log",
+            argv=[suite_python, "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+                  "--findings-output", rop("03-db-cli.findings.json")],
+            report_path="03-db-cli.findings.json",
+            required_artifacts=("03-db-cli.findings.json",),
+            artifact_kinds=(("03-db-cli.findings.json", "file"),),
+        ),
+        cap.CommandSpec(
+            id="static-suite", log_name="05-static-suite.log",
+            argv=[suite_python, "scripts/ci/run_static_guard_suite.py", "--output-dir", rop("05-static-suite")],
+            required_artifacts=("05-static-suite", "05-static-suite/summary.json"),
+            artifact_kinds=(
+                ("05-static-suite", "dir"),
+                ("05-static-suite/summary.json", "file"),
+            ),
+        ),
+        cap.CommandSpec(
+            id="gradle-db", log_name="06-gradle-db.log",
+            argv=[suite_gradlew, ":app:verifyDbAccessBoundaries", "--no-daemon"],
+        ),
+    ]
+
+
+def _default_candidates():
+    # Discovery is now the default path inside capture_evidence; returning None
+    # keeps any legacy caller using the dynamic tracked-file manifest.
+    return None
+
+
+def _db_cli_matrix(root, out, findings_json="03-db-cli.findings.json"):
+    """A single db-cli command spec with repository-relative argv/report paths."""
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    return cap.CommandSpec(
+        id="db-cli", log_name="03-db-cli.log",
+        argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+              "--findings-output", "/".join([bundle_rel, findings_json])],
+        report_path=findings_json,
+        required_artifacts=(findings_json,),
+        artifact_kinds=((findings_json, "file"),),
+    )
+
+
+# ── Fixture regression tests: semantic runner matching ────────────────────────
+def test_fake_runner_matches_prefixed_production_argv(tmp_path):
+    """Regression (GR-00): branch matching must be basename-based so the
+    repo-relative prefixed tokens used by the production command matrices
+    (``scripts/verify_db_access_boundaries.py``) reach the intended branch
+    instead of silently hitting the exit-0 fallthrough."""
+    scratch = str(tmp_path)
+    runner = ConfigurableFakeRunner(dirty=False)
+    # The db-cli branch fires with its blocked default, never the fallthrough.
+    dbcli_outcome = runner(["python3", "scripts/verify_db_access_boundaries.py",
+                            "--fail-on-violation"], scratch)
+    assert dbcli_outcome.returncode == 2
+    assert runner.fallthroughs == []
+    # Flag gating keeps sibling invocations of the same script distinct.
+    inv_outcome = runner(["python3", "scripts/verify_db_access_boundaries.py",
+                          "--inventory-only"], scratch)
+    assert inv_outcome.returncode == 0
+    # Prefixed guard-tool commands match their registered branches too.
+    assert runner(["python3", "scripts/ci/verify_guard_registry.py"], scratch).returncode == 0
+    assert runner(["python3", "scripts/ci/run_static_guard_suite.py",
+                   "--output-dir", "out/run-1/05-static-suite"], scratch).returncode == 0
+    # A ratchet command embedding the db script as a ``--command-arg=`` value
+    # fires the ratchet branch, not the db-cli branch (verbatim-flag gating:
+    # ``--command-arg=--fail-on-violation`` is not a verbatim flag).
+    ratchet_outcome = runner(["python3", "scripts/ci/guard_ratchet.py",
+                              "--command-arg=python3",
+                              "--command-arg=scripts/verify_db_access_boundaries.py",
+                              "--command-arg=--fail-on-violation"], scratch)
+    assert ratchet_outcome.returncode == 2
+
+
+def test_fake_runner_git_matching_is_flag_semantic():
+    """Regression (GR-00): git subcommand matching is semantic (subcommand +
+    verbatim flag tokens), so pathspec-bearing preflight/preservation forms
+    match the intended branch regardless of extra arguments."""
+    runner = ConfigurableFakeRunner(dirty=False, staged_diff="config/staged.yml\n")
+    assert runner(["git", "rev-parse", "HEAD"], ".").combined.strip() == TEST_SHA
+    assert runner(["git", "rev-parse", "HEAD^{tree}"], ".").combined.strip() == TEST_TREE
+    assert runner(["git", "rev-parse", "HEAD:scripts/x.py"], ".").combined.strip() == "a" * 40
+    assert runner(["git", "status", "--porcelain=v1"], ".").combined == ""
+    assert runner(["git", "diff", "--cached", "--name-only"], ".").combined == \
+        "config/staged.yml\n"
+    assert runner(["git", "diff", "--name-only"], ".").returncode == 0
+    assert runner(["git", "diff", "HEAD", "--name-only"], ".").combined == \
+        "config/staged.yml\n"
+    # Pathspec-bearing preservation diffs hit the --exit-code branches.
+    assert runner(["git", "diff", "--exit-code", "--", "config/guards/x.yml"],
+                  ".").returncode == 0
+    assert runner(["git", "diff", "--cached", "--exit-code", "--", "app/src/main"],
+                  ".").returncode == 1
+
+
+# ── New tests: forged/missing blob ID is fatal (strict-review item 2) ────────────
+def test_missing_blob_id_fails_closed(tmp_path):
+    """A required input whose blob ID is forged/missing fails the capture closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class BadBlobRunner(ConfigurableFakeRunner):
+        def _git(self, argv):
+            sub = argv[1:]
+            if sub[:1] == ["rev-parse"] and len(sub) == 2 and sub[1].startswith("HEAD:"):
+                # Forge an invalid (non-40-hex) blob ID for one required input.
+                if sub[1].endswith("verify_db_access_boundaries.py"):
+                    return FakeOutcome(0, "not-a-valid-blob-id")
+                return FakeOutcome(0, "a" * 40)
+            return super()._git(argv)
+
+    runner = BadBlobRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any("missing-blob-id:" in w for w in evidence["infrastructure_warnings"])
+
+
+# ── New tests: empty/non-string/malformed argv rejected (strict-review item 3) ────
+def test_validate_command_matrix_rejects_empty_and_nonstring_argv(tmp_path):
+    """validate_command_matrix rejects empty and non-string argv tokens."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    empty_spec = cap.CommandSpec(id="e", log_name="00.log", argv=["python3", ""])
+    nonstring_spec = cap.CommandSpec(id="n", log_name="01.log", argv=["python3", 123])
+    empty_argv_spec = cap.CommandSpec(id="x", log_name="02.log", argv=[])
+    violations = cap.validate_command_matrix(
+        [empty_spec, nonstring_spec, empty_argv_spec], str(root))
+    assert any("invalid-matrix-argv:e:" in v for v in violations)
+    assert any("invalid-matrix-argv:n:" in v for v in violations)
+    assert any("invalid-matrix-argv:x:<empty>" in v for v in violations)
+
+
+# ── New tests: symlink artifact roots rejected by hash_artifact (item 6) ──────────
+def test_hash_artifact_rejects_symlink_root(tmp_path):
+    """hash_artifact rejects a symlink artifact root (never follows it)."""
+    out = tmp_path / "bundle"
+    out.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.json"
+    secret.write_text("EXTERNAL_SECRET", encoding="utf-8")
+    link = out / "link.json"
+    _try_symlink(str(secret), str(link))
+    # A symlink file root is rejected (returns None), so outside content is never read.
+    assert cap.hash_artifact(str(link), "file") is None
+    # A symlink directory root is likewise rejected.
+    dlink = out / "dlink"
+    _try_symlink(str(outside), str(dlink))
+    assert cap.hash_artifact(str(dlink), "dir") is None
+
+
+# __APPEND_TESTS__
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+# The 12-row command-matrix shape, derived from the GREEN run-01/run-02 oracle
+# bundles (build/guard-debug/gate-00r/<sha>/run-0{1,2}/): row ids and order,
+# per-row log/report/artifact layout, and the semantic-summary field set.  The
+# per-row EXIT CODES below are the fixture runner's own consistent child
+# observations (the oracle's real-repo exit codes are policy/environment
+# observations — e.g. the blocked DB gate — not capture-tool contract); every
+# structural field is pinned to the oracle shape exactly.
+_ORACLE_ROW_IDS = [
+    "registry-validation", "focused-python-tests", "room-inventory",
+    "db-cli", "db-ratchet", "static-suite", "gradle-db",
+    "gradle-task-graph",
+    # GATE-00R extension rows (declared order):
+    "time-direct", "time-tests", "db-inventory", "gradle-compile",
+]
+_ORACLE_LOG_NAMES = {
+    "registry-validation": "00-registry.log",
+    "focused-python-tests": "01-focused-python-tests.log",
+    "room-inventory": "02-room-inventory.log",
+    "db-cli": "03-db-cli.log",
+    "db-ratchet": "04-db-ratchet.log",
+    "static-suite": "05-static-suite.log",
+    "gradle-db": "06-gradle-db.log",
+    "gradle-task-graph": "07-gradle-task-graph.log",
+    "time-direct": "08-time-direct.log",
+    "time-tests": "09-time-tests.log",
+    "db-inventory": "10-db-inventory.log",
+    "gradle-compile": "11-gradle-compile.log",
+}
+# The exact required-artifact hash key set of the oracle bundles.
+_ORACLE_ARTIFACT_HASH_KEYS = {
+    "02-room-inventory.findings.json", "02-room-mutators.json",
+    "03-db-cli.findings.json", "04-db-ratchet.summary.json",
+    "05-static-suite", "05-static-suite/summary.json",
+    "reports/db-inventory.json", "reports/room-mutators.json",
+}
+_EVIDENCE_ROW_FIELDS = {
+    "id", "argv", "cwd", "start_utc", "end_utc", "elapsed_ms", "exit_code",
+    "log_path", "log_sha256", "report_path", "report_sha256",
+    "report_schema_version", "report_trusted", "report_diagnostic_codes",
+    "report_finding_count", "parser_error", "launch_error", "log_bytes",
+    "log_complete", "log_failure_code",
+}
+_SEMANTIC_ROW_FIELDS = {
+    "id", "argv", "exit_code", "launch_error", "report_schema_version",
+    "report_trusted", "report_diagnostic_codes", "report_finding_count",
+    "parser_error",
+}
+# Fixture runner observations for the full default matrix (mirrors the pins in
+# test_default_matrix_gate_00r_rows_execute_with_semantic_summary).
+_FIXTURE_ROW_EXITS = {
+    "registry-validation": 0, "focused-python-tests": 0, "room-inventory": 0,
+    "db-cli": 2, "db-ratchet": 2, "static-suite": 0, "gradle-db": 1,
+    "gradle-task-graph": 1, "time-direct": 0, "time-tests": 0,
+    "db-inventory": 0, "gradle-compile": 1,
+}
+
+
+def test_clean_checkout_succeeds(tmp_path):
+    """Main happy path: a clean pinned capture of the FULL default matrix
+    succeeds and the bundle asserts the complete 12-row oracle shape
+    (run-01/run-02 ground truth): row ids/order, COMPLETE hashed logs for all
+    12 rows, the oracle report-path layout (02-*/03-* at the bundle root, the
+    db-inventory reports under ``reports/``, no report parse for the ratchet
+    summary), the exact required-artifact hash key set, the semantic-summary
+    schema/identity/versions/row-field shape with run-id-free normalized argv,
+    and the recorded run/base pin identity."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = _DefaultMatrixFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner)
+    assert rc == 0
+    assert (out / "evidence.json").is_file()
+    assert (out / "summary.md").is_file()
+    assert (out / "semantic-summary.json").is_file()
+    assert (out / "output-sha256.txt").is_file()
+    # Every guard-tool command matched a registered runner branch; the only
+    # intentional fallthroughs are the interpreter/version probes.
+    assert all(argv[1] in ("--version", "-version") for argv in runner.fallthroughs)
+
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+
+    # ── Top-level evidence identity (oracle evidence.json shape) ──────────────
+    assert evidence["schema"] == "db-guard-evidence/v1"
+    assert evidence["tool"] == "capture_db_guard_evidence.py"
+    assert evidence["root"] == "out/run-1"
+    assert evidence["requested_sha"] == TEST_SHA
+    assert evidence["observed_sha"] == TEST_SHA
+    assert evidence["tree_sha"] == TEST_TREE
+    assert evidence["base_ref"] == BASE_REF_SHA
+    assert evidence["base_sha"] == BASE_REF_SHA
+    assert evidence["merge_base_sha"] == MERGE_BASE_SHA
+    assert evidence["trusted"] is True
+    assert evidence["dirty"] is False
+    assert evidence["preservation"]["ok"] is True
+    # Oracle preflight identity: the base/merge-base/branch probes are recorded.
+    preflight_argvs = [rec["argv"]
+                       for rec in evidence["git_state"]["preflight_commands"]]
+    assert ["git", "rev-parse", BASE_REF_SHA] in preflight_argvs
+    assert ["git", "merge-base", "HEAD", BASE_REF_SHA] in preflight_argvs
+    assert ["git", "branch", "--show-current"] in preflight_argvs
+    # Oracle bundle shape: no infrastructure warnings on a clean capture.
+    assert evidence["infrastructure_warnings"] == []
+
+    # ── The full 12-row matrix, in the declared oracle order ──────────────────
+    assert [c["id"] for c in evidence["commands"]] == _ORACLE_ROW_IDS
+    assert [c["id"] for c in semantic["commands"]] == _ORACLE_ROW_IDS
+
+    # Per-row evidence records: exact oracle field set, COMPLETE hashed logs,
+    # no launch failures, repository-relative paths.
+    by_id = {c["id"]: c for c in evidence["commands"]}
+    for row in evidence["commands"]:
+        assert set(row) == _EVIDENCE_ROW_FIELDS
+        assert row["log_complete"] is True
+        assert row["log_failure_code"] is None
+        assert row["log_sha256"] != ""
+        assert row["log_bytes"] > 0
+        assert row["launch_error"] is None
+        assert row["cwd"] == "."
+        expected_log = "/".join(
+            [evidence["root"], "commands", _ORACLE_LOG_NAMES[row["id"]]])
+        assert row["log_path"] == expected_log
+        _assert_repo_relative(row["log_path"])
+        assert (out / "commands" / _ORACLE_LOG_NAMES[row["id"]]).is_file()
+    assert {c["id"]: c["exit_code"] for c in evidence["commands"]} == \
+        _FIXTURE_ROW_EXITS
+
+    # Report-path layout (oracle): the two inventory rows and the db-cli row
+    # declare reports; the db-inventory pair lives under ``reports/``; the
+    # ratchet summary is a hashed artifact, never a parsed report.
+    assert by_id["room-inventory"]["report_path"] == \
+        "out/run-1/02-room-inventory.findings.json"
+    assert by_id["db-cli"]["report_path"] == "out/run-1/03-db-cli.findings.json"
+    assert by_id["db-inventory"]["report_path"] == \
+        "out/run-1/reports/db-inventory.json"
+    for row_id in ("registry-validation", "focused-python-tests", "db-ratchet",
+                   "static-suite", "gradle-db", "gradle-task-graph",
+                   "time-direct", "time-tests", "gradle-compile"):
+        assert by_id[row_id]["report_path"] is None, row_id
+    for row_id in ("room-inventory", "db-cli", "db-inventory"):
+        assert by_id[row_id]["report_schema_version"] == 2, row_id
+        assert by_id[row_id]["parser_error"] is None, row_id
+        assert by_id[row_id]["report_sha256"] != ""
+    # The db-ratchet row records NO v2 report parse (oracle row shape).
+    assert by_id["db-ratchet"]["parser_error"] is None
+    assert by_id["db-ratchet"]["report_schema_version"] is None
+    assert by_id["db-ratchet"]["report_finding_count"] is None
+
+    # Required-artifact hash coverage: exactly the oracle key set, and the
+    # reports/ artifacts exist on disk.
+    assert set(evidence["required_artifact_hashes"]) == _ORACLE_ARTIFACT_HASH_KEYS
+    for art in _ORACLE_ARTIFACT_HASH_KEYS:
+        assert len(evidence["required_artifact_hashes"][art]) == 64, art
+    assert (out / "reports" / "db-inventory.json").is_file()
+    assert (out / "reports" / "room-mutators.json").is_file()
+
+    # ── Semantic summary (oracle semantic-summary.json shape) ─────────────────
+    assert semantic["schema"] == "db-guard-evidence.semantic/v1"
+    assert semantic["commit"] == TEST_SHA
+    assert semantic["tree"] == TEST_TREE
+    assert semantic["requested_sha"] == TEST_SHA
+    assert semantic["base_sha"] == BASE_REF_SHA
+    assert semantic["merge_base_sha"] == MERGE_BASE_SHA
+    assert semantic["trusted"] is True
+    assert semantic["preservation_ok"] is True
+    assert set(semantic["versions"]) == {
+        "python_version", "python3_version", "java_version",
+        "gradle_version", "os", "ostype",
+    }
+    assert isinstance(semantic["input_manifest_sha256"], str)
+    assert len(semantic["input_manifest_sha256"]) == 64
+    for row in semantic["commands"]:
+        assert set(row) == _SEMANTIC_ROW_FIELDS
+    assert {c["id"]: c["exit_code"] for c in semantic["commands"]} == \
+        _FIXTURE_ROW_EXITS
+    sem_by_id = {c["id"]: c for c in semantic["commands"]}
+    # Run-specific bundle paths are normalized to the stable ``<bundle>`` marker
+    # so two clean runs at the same SHA stay byte-identical (oracle property).
+    assert "<bundle>/reports/db-inventory.json" in sem_by_id["db-inventory"]["argv"]
+    assert "<bundle>/04-db-ratchet.summary.json" in sem_by_id["db-ratchet"]["argv"]
+    assert "<bundle>/02-room-inventory.findings.json" in \
+        sem_by_id["room-inventory"]["argv"]
+    for row in semantic["commands"]:
+        for tok in row["argv"]:
+            assert "run-1" not in tok, (row["id"], tok)
+
+    # ── output-sha256.txt: the fixed seven top-level outputs (oracle) ─────────
+    out_sha_rels = {
+        ln.split("  ", 1)[1]
+        for ln in (out / "output-sha256.txt").read_text(encoding="utf-8").splitlines()
+        if ln.strip()
+    }
+    assert out_sha_rels == {
+        "git-state.json", "environment.json", "input-manifest.json",
+        "input-sha256.txt", "evidence.json", "summary.md",
+        "semantic-summary.json",
+    }
+
+
+def test_dirty_checkout_fails_by_default(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=True)
+    rc = _capture(str(root), str(out), runner=runner,
+                             command_matrix=_fake_matrix(str(root), str(out)),
+                             )
+    assert rc == 2
+    # No bundle is written for a rejected dirty checkout.
+    assert not (out / "evidence.json").is_file()
+
+
+def test_allow_dirty_captures_but_untrusted(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=True)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner, allow_dirty=True,
+                             expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
+                             command_matrix=_fake_matrix(str(root), str(out)),
+                             )
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is False
+    assert evidence["dirty"] is True
+    assert evidence["allow_dirty"] is True
+    # The run pin is recorded even for an untrusted (dirty) capture.
+    assert evidence["requested_sha"] == TEST_SHA
+    assert evidence["observed_sha"] == TEST_SHA
+
+
+def test_command_exit_codes_recorded_exactly(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [
+        cap.CommandSpec(id="c0", log_name="00.log", argv=["python3", "scripts/ci/verify_guard_registry.py"]),
+        cap.CommandSpec(id="c1", log_name="01.log", argv=["./gradlew", "x"]),
+        cap.CommandSpec(id="c2", log_name="02.log", argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation"]),
+    ]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix,
+                             )
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    by_id = {c["id"]: c["exit_code"] for c in evidence["commands"]}
+    assert by_id["c0"] == 0
+    assert by_id["c1"] == 1
+    assert by_id["c2"] == 2
+
+
+def test_launch_failure_creates_capture_exit_2(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [
+        cap.CommandSpec(id="missing", log_name="00.log", argv=["nonexistent_exe_xyz", "--flag"]),
+    ]
+    runner = ConfigurableFakeRunner(dirty=False, launch_fail_token="nonexistent_exe_xyz")
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix,
+                             )
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["commands"][0]["launch_error"] == "LAUNCH_FAILED"
+    assert evidence["commands"][0]["exit_code"] is None
+
+
+def test_missing_required_artifact_causes_capture_exit_2(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [
+        cap.CommandSpec(id="needs-artifact", log_name="00.log", argv=["python3", "scripts/ci/verify_guard_registry.py"],
+                        required_artifacts=("99-missing.log",),
+                        artifact_kinds=(("99-missing.log", "file"),)),
+    ]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix,
+                             )
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any("missing-required-artifact" in w for w in evidence["infrastructure_warnings"])
+
+
+def test_invalid_json_report_preserved_but_parser_failure(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
+    def bad_runner(argv, cwd):
+        # Command-aware: ONLY the db-cli stage is blocked and writes the invalid
+        # report; the git preflight/preservation surface stays CLEAN so this
+        # test exercises the invalid-report stage, not preflight rejection.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
+            idx = argv.index("--findings-output")
+            # Repository-relative argv output paths resolve against the runner
+            # ``cwd`` (the repository root), never the process cwd.
+            p = os.path.join(str(cwd), argv[idx + 1])
+            parent = os.path.dirname(p)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(p, "w", encoding="utf-8") as handle:
+                handle.write("{not valid json")
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
+
+    matrix = [_db_cli_matrix(str(root), str(out))]
+    rc = _capture(str(root), str(out), runner=bad_runner, command_matrix=matrix,
+                              )
+    # A required report that is present but invalid must fail the capture closed.
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    assert cmd["parser_error"] == "INVALID_JSON"
+    assert cmd["report_trusted"] is None
+    assert cmd["report_schema_version"] is None
+    # Artifact is preserved on disk.
+    assert (out / "03-db-cli.findings.json").is_file()
+    assert any("invalid-required-report" in w for w in evidence["infrastructure_warnings"])
+
+
+def test_v2_diagnostics_parse_correctly(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                             command_matrix=_fake_matrix(str(root), str(out)),
+                             )
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    by_id = {c["id"]: c for c in evidence["commands"]}
+    cli = by_id["db-cli"]
+    assert cli["report_schema_version"] == 2
+    assert cli["report_trusted"] is False
+    assert cli["report_diagnostic_codes"] == ["DB_POLICY_INCOMPLETE_V2"]
+    assert cli["report_finding_count"] == 0
+    inv = by_id["room-inventory"]
+    assert inv["report_trusted"] is True
+    assert inv["parser_error"] is None
+
+
+def test_output_paths_are_repository_relative(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)),
+                        )
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # Real cross-platform assertion: the bundle root must be repository-relative
+    # (no absolute path, no backslash, no Windows drive-letter prefix).
+    _assert_repo_relative(evidence["root"])
+    for c in evidence["commands"]:
+        _assert_repo_relative(c["log_path"])
+        # Command cwd is always the repository root ("."), never an absolute path.
+        assert c["cwd"] == "."
+        if c["report_path"] is not None:
+            _assert_repo_relative(c["report_path"])
+
+
+def test_no_absolute_temp_path_leaks_into_evidence(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)),
+                        )
+    raw = (out / "evidence.json").read_text(encoding="utf-8")
+    assert ".tmp" not in raw
+    # No Windows drive letters or leading absolute slashes in stored paths.
+    assert "C:\\" not in raw
+    assert ":/" not in raw
+
+
+def test_input_hashes_change_when_bytes_change(tmp_path):
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(dirty=False)
+    candidates = ["scripts/verify_db_access_boundaries.py"]
+    m1 = cap.collect_input_manifest(str(root), candidates, runner)
+    # Mutate the input bytes.
+    target = root / "scripts" / "verify_db_access_boundaries.py"
+    target.write_text("print('changed')  # different bytes\n", encoding="utf-8")
+    m2 = cap.collect_input_manifest(str(root), candidates, runner)
+    assert m1[0]["sha256"] != m2[0]["sha256"]
+    assert m2[0]["size"] != m1[0]["size"]
+
+
+def test_command_output_written_atomically(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)),
+                        )
+    # No leftover temp files anywhere under the bundle.
+    leftover = []
+    for dirpath, _dirs, files in os.walk(str(out)):
+        for name in files:
+            if ".tmp" in name:
+                leftover.append(name)
+    assert leftover == []
+    # A log file exists and is non-empty.
+    assert (out / "commands" / "00-registry.log").stat().st_size > 0
+
+
+def test_semantic_summaries_equal_across_runs(tmp_path):
+    root = _make_root(tmp_path)
+    out1 = root / "out" / "run-1"
+    out2 = root / "out" / "run-2"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out1), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out1)),
+                        )
+    _capture(str(root), str(out2), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out2)),
+                        )
+    s1 = json.loads((out1 / "semantic-summary.json").read_text(encoding="utf-8"))
+    s2 = json.loads((out2 / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert s1 == s2
+    assert s1["commit"] == TEST_SHA
+    assert s1["tree"] == TEST_TREE
+    # The caller-stated run pin is run-invariant, so it may appear in the
+    # deterministic summary without breaking byte-identical comparison.
+    assert s1["requested_sha"] == TEST_SHA
+
+
+def test_semantic_summary_argv_normalizes_run_specific_paths(tmp_path):
+    """Run-specific bundle output paths embedded in command argv are normalized to a
+    stable ``<bundle>/`` marker so the semantic summary never leaks the run id."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)))
+    s = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    # The run id must not appear anywhere in the semantic summary.
+    assert "run-1" not in json.dumps(s)
+    for c in s["commands"]:
+        for tok in c["argv"]:
+            # Run-specific output paths become ``<bundle>/...``; stable tokens are
+            # unchanged and never start with the repository-relative bundle prefix.
+            assert "run-1" not in tok, tok
+            assert tok.startswith("<bundle>/") or not tok.startswith("out/"), tok
+
+
+def test_semantic_argv_normalizes_output_and_prefix_equals_forms(tmp_path):
+    """Equals-form flags (``--output=...``, ``prefix=...``) that embed the
+    run-specific bundle path are normalized to the stable ``<bundle>`` marker so
+    the run id never reaches ``semantic-summary.json``."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    bundle_rel = cap._posix_rel(str(out), str(root))
+
+    def rop(*parts):
+        return "/".join([bundle_rel, *parts])
+
+    matrix = [
+        cap.CommandSpec(
+            id="output-equals", log_name="00-output.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py",
+                  "--output=" + rop("00-output.json")],
+        ),
+        cap.CommandSpec(
+            id="prefix-equals", log_name="01-prefix.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py",
+                  "prefix=" + bundle_rel],
+        ),
+        cap.CommandSpec(
+            id="bare-bundle", log_name="02-bare.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py",
+                  rop("02-bare.json")],
+        ),
+    ]
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    s = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    # The run id must not appear anywhere in the semantic summary.
+    assert "run-1" not in json.dumps(s)
+    by_id = {c["id"]: c for c in s["commands"]}
+    # ``--output=<bundle_rel>/00-output.json`` -> ``--output=<bundle>/00-output.json``
+    assert "--output=<bundle>/00-output.json" in by_id["output-equals"]["argv"]
+    # ``prefix=<bundle_rel>`` -> ``prefix=<bundle>``
+    assert "prefix=<bundle>" in by_id["prefix-equals"]["argv"]
+    # A bare bundle-relative token is masked to ``<bundle>/02-bare.json``.
+    assert "<bundle>/02-bare.json" in by_id["bare-bundle"]["argv"]
+
+
+def test_semantic_argv_normalizes_embedded_bundle_path(tmp_path):
+    """A run-specific bundle path embedded in the MIDDLE of a larger value (not just
+    a prefix) is still masked to ``<bundle>`` so the run id never leaks."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    matrix = [
+        cap.CommandSpec(
+            id="embedded", log_name="00-embedded.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py",
+                  "some/dir/" + bundle_rel + "/nested/file.json"],
+        ),
+    ]
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    s = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert "run-1" not in json.dumps(s)
+    tok = s["commands"][0]["argv"][2]
+    assert tok == "some/dir/<bundle>/nested/file.json", tok
+    # A longer component that merely contains the bundle prefix is NOT masked.
+    matrix2 = [
+        cap.CommandSpec(
+            id="near-miss", log_name="01-near.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py",
+                  bundle_rel + "0/sibling.json"],
+        ),
+    ]
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix2)
+    s2 = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    # ``out/run-10`` is a distinct component from ``out/run-1`` and must be kept.
+    assert "out/run-10/sibling.json" in s2["commands"][0]["argv"]
+
+
+def test_preservation_checker_fails_on_changed_forbidden_file(tmp_path):
+    root = _make_root(tmp_path)
+    clean = ConfigurableFakeRunner(dirty=False)
+    dirty = ConfigurableFakeRunner(dirty=True)
+    ok = cap.preservation_check(str(root), clean)
+    assert ok["ok"] is True
+    bad = cap.preservation_check(str(root), dirty)
+    assert bad["ok"] is False
+    assert bad["policy_ok"] is False
+
+
+def test_command_argv_is_array_not_shell_text(tmp_path):
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)),
+                        )
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    for c in evidence["commands"]:
+        assert isinstance(c["argv"], list)
+        joined = " ".join(c["argv"])
+        # A shell-string would embed operators or equal the whole command.
+        assert " && " not in joined
+        assert "; " not in joined
+        assert "|" not in joined
+
+
+def test_environment_values_redacted_except_version_fields(monkeypatch):
+    monkeypatch.setenv("MY_SECRET_TOKEN", "super-secret")
+    monkeypatch.setenv("PYTHON_VERSION", "3.11.4")
+    monkeypatch.setenv("PATH", "/usr/bin:/secret/bin")
+    env = cap.collect_environment()
+    assert env["variables"]["MY_SECRET_TOKEN"] == cap.REDACTED_MARKER
+    assert env["variables"]["PATH"] == cap.REDACTED_MARKER
+    assert env["variables"]["PYTHON_VERSION"] == "3.11.4"
+    assert "PYTHON_VERSION" in env["allowed_value_keys"]
+    assert env["redacted_count"] >= 2
+
+
+# ── New tests from tester-static findings ─────────────────────────────────────
+
+def test_arbitrary_version_suffix_is_redacted(monkeypatch):
+    """Regression: a secret-like ``*_VERSION`` variable must stay redacted."""
+    monkeypatch.setenv("DB_PASSWORD_VERSION", "super-secret")
+    monkeypatch.setenv("API_KEY_VERSION", "also-secret")
+    monkeypatch.setenv("PYTHON_VERSION", "3.11.4")
+    env = cap.collect_environment()
+    assert env["variables"]["DB_PASSWORD_VERSION"] == cap.REDACTED_MARKER
+    assert env["variables"]["API_KEY_VERSION"] == cap.REDACTED_MARKER
+    assert env["variables"]["PYTHON_VERSION"] == "3.11.4"
+    assert "DB_PASSWORD_VERSION" not in env["allowed_value_keys"]
+    assert "API_KEY_VERSION" not in env["allowed_value_keys"]
+    assert "PYTHON_VERSION" in env["allowed_value_keys"]
+
+
+def test_infrastructure_warning_for_missing_test_file(tmp_path):
+    """A referenced .py test file that is absent at the SHA is flagged."""
+    root = _make_root(tmp_path)
+    # Create one referenced test file so it is NOT flagged.
+    existing = root / "scripts" / "ci" / "test_guard_findings.py"
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.write_text("def test_x(): pass\n", encoding="utf-8")
+    missing = "scripts/ci/does_not_exist_test.py"
+    matrix = [
+        cap.CommandSpec(
+            id="focused-python-tests", log_name="01.log",
+            argv=["python3", "-m", "pytest",
+                  "scripts/ci/test_guard_findings.py", missing, "-v"],
+        ),
+    ]
+    warnings = cap.collect_infrastructure_warnings(matrix, str(root))
+    assert f"missing-test-file:{missing}" in warnings
+    # The existing test file must not be flagged.
+    assert not any("test_guard_findings.py" in w for w in warnings)
+
+
+def test_preservation_failure_makes_evidence_untrusted(tmp_path):
+    """Integration: a failed preservation check makes the whole bundle untrusted."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class PreservationFailRunner:
+        """Clean checkout, but the forbidden-file diff fails (preservation fails)."""
+
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            if argv[:2] == ["git", "diff"] and "--exit-code" in argv:
+                return FakeOutcome(1, "")
+            return self._inner(argv, cwd)
+
+    runner = PreservationFailRunner()
+    rc = _capture(str(root), str(out), runner=runner,
+                             command_matrix=_fake_matrix(str(root), str(out)),
+                             )
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # Preservation failed independently of a dirty checkout.
+    assert evidence["preservation"]["ok"] is False
+    assert evidence["preservation"]["policy_ok"] is False
+    assert evidence["dirty"] is False
+    # The failure must propagate to the top-level trusted flag.
+    assert evidence["trusted"] is False
+
+
+def test_v2_report_with_nonzero_findings(tmp_path):
+    """A v2 report carrying findings is parsed with the correct count."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
+    def findings_runner(argv, cwd):
+        # Command-aware: git preflight stays CLEAN; only the db-cli stage is
+        # blocked while writing its findings report.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
+            idx = argv.index("--findings-output")
+            # Resolve against the runner ``cwd`` (repository root).
+            out_path = os.path.join(str(cwd), argv[idx + 1])
+            _write_fake_report(out_path, trusted=False,
+                               codes=["DB_POLICY_INCOMPLETE_V2"], findings=3)
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
+
+    matrix = [_db_cli_matrix(str(root), str(out))]
+    rc = _capture(str(root), str(out), runner=findings_runner, command_matrix=matrix,
+                              )
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    assert cmd["report_finding_count"] == 3
+    assert cmd["report_schema_version"] == 2
+    assert cmd["report_trusted"] is False
+    assert cmd["report_diagnostic_codes"] == ["DB_POLICY_INCOMPLETE_V2"]
+
+
+def test_output_sha256_contract_excludes_command_and_report_artifacts(tmp_path):
+    """output-sha256.txt is a fixed contract over top-level outputs only."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)),
+                        )
+    text = (out / "output-sha256.txt").read_text(encoding="utf-8")
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    rels = [ln.split("  ", 1)[1] for ln in lines]
+    expected = {
+        "git-state.json", "environment.json", "input-manifest.json",
+        "input-sha256.txt", "evidence.json", "summary.md", "semantic-summary.json",
+    }
+    assert set(rels) == expected
+    # Command logs and per-command report artifacts are intentionally excluded.
+    assert not any(r.startswith("commands/") for r in rels)
+    assert not any(r.endswith(".findings.json") for r in rels)
+    assert "output-sha256.txt" not in text
+
+
+def test_output_sha256_uses_bundle_relative_top_level_names(tmp_path):
+    """output-sha256.txt records the documented bundle-relative top-level names
+    (relative to the bundle directory), not the repository-relative bundle path."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)))
+    text = (out / "output-sha256.txt").read_text(encoding="utf-8")
+    rels = [ln.split("  ", 1)[1] for ln in text.splitlines() if ln.strip()]
+    # No repository-relative bundle prefix (e.g. ``out/run-1/``) leaks into the names.
+    assert not any(r.startswith("out/") for r in rels)
+    # The documented bare top-level names are present.
+    for name in ["git-state.json", "environment.json", "input-manifest.json",
+                 "input-sha256.txt", "evidence.json", "summary.md",
+                 "semantic-summary.json"]:
+        assert name in rels
+
+
+def test_output_sha256_reflects_rewritten_artifacts_on_failure(tmp_path, monkeypatch):
+    """When a top-level output hash fails, output-sha256.txt carries the FINAL hashes
+    of the rewritten evidence/semantic/summary artifacts (not the pre-rewrite ones)."""
+    real_hash = cap._race_safe_hash_file
+
+    def partial_hash(path, *a, **k):
+        # Fail only for git-state.json; the other top-level outputs hash normally.
+        if str(path).endswith("git-state.json"):
+            return None
+        return real_hash(path, *a, **k)
+
+    monkeypatch.setattr(cap, "_race_safe_hash_file", partial_hash)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    out_sha = (out / "output-sha256.txt").read_text(encoding="utf-8")
+    # git-state.json failed and must be excluded (no empty hash line substituted).
+    assert "git-state.json" not in out_sha
+    # The rewritten evidence/semantic/summary must appear with their FINAL hashes,
+    # which must match the on-disk files exactly (no stale pre-rewrite hash).
+    for name in ["evidence.json", "semantic-summary.json", "summary.md"]:
+        actual = cap._race_safe_hash_file(str(out / name))
+        assert actual is not None
+        assert f"{actual}  {name}" in out_sha
+
+
+def test_warnings_capped_after_output_hash_failure(tmp_path, monkeypatch):
+    """The warning cap is applied AFTER the output-hash-failed diagnostic, so the
+    final persisted list never exceeds MAX_WARNINGS even when the failure pushes it
+    over the bound."""
+    monkeypatch.setattr(cap, "MAX_WARNINGS", 3)
+    # Force every output hash to fail so 7 output-hash-failed warnings are generated.
+    monkeypatch.setattr(cap, "_race_safe_hash_file", lambda *a, **k: None)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)))
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    warns = evidence["infrastructure_warnings"]
+    assert len(warns) <= 3
+    # The overflow marker must be present (capped after the failure diagnostics).
+    assert any(cap.OVERFLOW_WARNINGS in w for w in warns)
+
+
+# ── New tests from strict reviewer blockers ───────────────────────────────────
+
+def test_default_matrix_argv_has_no_absolute_paths(tmp_path):
+    """Regression: output paths embedded in argv must be repository-relative."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    for spec in matrix:
+        for token in spec.argv:
+            _assert_no_absolute(token)
+
+
+def test_output_outside_root_rejected(tmp_path):
+    """Fail closed when the output bundle escapes the repository root."""
+    root = _make_root(tmp_path)
+    # Sibling of the repo root, therefore not contained within it.
+    out = tmp_path / "outside" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)),
+                              )
+    assert rc == 2
+    # No bundle is written for a rejected output location.
+    assert not (out / "evidence.json").is_file()
+
+
+def test_output_traversal_rejected(tmp_path):
+    """Fail closed when the output path traverses outside the repository root."""
+    root = _make_root(tmp_path)
+    out = os.path.join(str(root), "..", "escape", "run-1")
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), out, runner=runner,
+                              command_matrix=_fake_matrix(str(root), out),
+                              )
+    assert rc == 2
+    assert not (tmp_path / "escape" / "run-1" / "evidence.json").is_file()
+
+
+def test_missing_required_input_fails_closed(tmp_path):
+    """Fail closed when a required input candidate is absent at the SHA."""
+    root = _make_root(tmp_path)
+    # Remove one required input so the manifest marks it missing.
+    (root / "scripts" / "verify_db_access_boundaries.py").unlink()
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)),
+                              )
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any("missing-required-input:scripts/verify_db_access_boundaries.py" in w
+               for w in evidence["infrastructure_warnings"])
+
+
+def test_preflight_failure_fails_closed(tmp_path):
+    """Fail closed when the essential git identity cannot be resolved."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class NoIdentityRunner:
+        """Clean checkout, but ``git rev-parse HEAD`` yields no SHA."""
+
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            if argv[:2] == ["git", "rev-parse"] and argv[2] == "HEAD":
+                return FakeOutcome(0, "")
+            return self._inner(argv, cwd)
+
+    runner = NoIdentityRunner()
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)),
+                              )
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["preflight_ok"] is False
+    assert any("preflight-failed" in w for w in evidence["infrastructure_warnings"])
+
+
+def test_preflight_commands_recorded(tmp_path):
+    """Preflight command records are captured for reproducibility."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                         command_matrix=_fake_matrix(str(root), str(out)),
+                         )
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    commands = evidence["git_state"]["preflight_commands"]
+    assert isinstance(commands, list) and len(commands) > 0
+    for rec in commands:
+        assert "argv" in rec and "exit_code" in rec and "output" in rec
+        for token in rec["argv"]:
+            _assert_no_absolute(token)
+    assert evidence["git_state"]["preflight_ok"] is True
+
+
+def test_ratchet_uses_command_arg_equals_form(tmp_path):
+    """Every ratchet child arg uses the ``--command-arg=<value>`` token form."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    ratchet = next(s for s in matrix if s.id == "db-ratchet")
+    for token in ratchet.argv:
+        if token.startswith("--command-arg"):
+            assert token.startswith("--command-arg="), f"non-equals form: {token!r}"
+        if token.startswith("--guard-name") or token.startswith("--baseline") \
+                or token.startswith("--finding-protocol"):
+            assert "=" in token, f"expected =value form: {token!r}"
+
+
+def test_required_ratchet_static_artifacts(tmp_path):
+    """Ratchet and static-suite commands require their complete artifacts."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    by_id = {s.id: s for s in matrix}
+    assert "04-db-ratchet.summary.json" in by_id["db-ratchet"].required_artifacts
+    assert "05-static-suite" in by_id["static-suite"].required_artifacts
+    assert "05-static-suite/summary.json" in by_id["static-suite"].required_artifacts
+
+
+def test_diagnostic_code_sanitized(tmp_path):
+    """A non-controlled diagnostic code is redacted, never leaked verbatim."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
+    def bad_code_runner(argv, cwd):
+        # Command-aware: git preflight stays CLEAN; only the db-cli stage is
+        # blocked while writing the report with the hostile diagnostic code.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
+            idx = argv.index("--findings-output")
+            # Resolve against the runner ``cwd`` (repository root).
+            out_path = os.path.join(str(cwd), argv[idx + 1])
+            _write_fake_report(out_path, trusted=False,
+                               codes=["db/policy/C:\\secret\\path"], findings=0)
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
+
+    matrix = [_db_cli_matrix(str(root), str(out))]
+    rc = _capture(str(root), str(out), runner=bad_code_runner, command_matrix=matrix,
+                              )
+    # The report is valid JSON, so the capture still succeeds; the code is sanitized.
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    assert cmd["report_diagnostic_codes"] == [cap.REDACTED_MARKER]
+    assert "C:\\secret" not in json.dumps(evidence)
+
+
+def test_persisted_output_redacts_absolute_paths(tmp_path):
+    """Absolute paths in child output are redacted before being persisted."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class LeakyRunner:
+        """Wrap the normal fake runner but inject an absolute path in output."""
+
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN; only child
+                # command output carries the leaky payload.
+                return outcome
+            combined = outcome.combined + \
+                " wrote config to C:\\Users\\tester\\secret.log and /etc/passwd done"
+            return FakeOutcome(outcome.returncode, combined)
+
+    matrix = [
+        cap.CommandSpec(id="leaky", log_name="00-leaky.log",
+                        argv=["python3", "scripts/ci/verify_guard_registry.py"]),
+    ]
+    runner = LeakyRunner()
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix,
+                         )
+    log = (out / "commands" / "00-leaky.log").read_text(encoding="utf-8")
+    assert "<redacted-path>" in log
+    assert "C:\\Users\\tester" not in log
+    assert "/etc/passwd" not in log
+
+
+# ── New tests: target-SHA enforcement (requirement 1) ───────────────────────────
+class WrongShaRunner(ConfigurableFakeRunner):
+    def _git(self, argv):
+        sub = argv[1:]
+        if sub[:2] == ["rev-parse", "HEAD"] and len(sub) == 2:
+            return FakeOutcome(0, "0" * 40)
+        return super()._git(argv)
+
+
+def test_target_sha_enforced_wrong_sha(tmp_path):
+    """Fail closed when HEAD differs from the approved exact target SHA."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = WrongShaRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["commit"] == "0" * 40
+    assert any(w.startswith("wrong-sha:") for w in evidence["infrastructure_warnings"])
+
+
+class NonzeroHeadRunner(ConfigurableFakeRunner):
+    def _git(self, argv):
+        sub = argv[1:]
+        if sub[:2] == ["rev-parse", "HEAD"] and len(sub) == 2:
+            # Nonzero exit but output present: must still be rejected.
+            return FakeOutcome(1, TEST_SHA)
+        return super()._git(argv)
+
+
+def test_preflight_nonzero_exit_rejected(tmp_path):
+    """Fail closed when git rev-parse HEAD exits nonzero even if output exists."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = NonzeroHeadRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["preflight_ok"] is False
+    assert evidence["git_state"]["commit"] is None
+    assert any("preflight-failed" in w for w in evidence["infrastructure_warnings"])
+
+
+class MalformedHeadRunner(ConfigurableFakeRunner):
+    def _git(self, argv):
+        sub = argv[1:]
+        if sub[:2] == ["rev-parse", "HEAD"] and len(sub) == 2:
+            return FakeOutcome(0, "not-a-valid-sha\n")
+        return super()._git(argv)
+
+
+def test_preflight_malformed_sha_rejected(tmp_path):
+    """Fail closed when git rev-parse HEAD yields a malformed (non-40-hex) SHA."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = MalformedHeadRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["preflight_ok"] is False
+    assert evidence["git_state"]["commit"] is None
+
+
+# ── New tests: dynamic input manifest (requirement 2) ──────────────────────────
+def test_input_manifest_built_dynamically(tmp_path):
+    """The manifest is built dynamically and includes all db_guard scripts + required config."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                         command_matrix=_fake_matrix(str(root), str(out)))
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    rels = {e["rel_path"] for e in evidence["input_manifest"]}
+    for f in TRACKED_FILES:
+        if f.startswith("scripts/db_guard/") and f.endswith(".py"):
+            assert f in rels, f"missing tracked db_guard script: {f}"
+    for req in cap.REQUIRED_INPUT_CANDIDATES:
+        assert req in rels, f"missing required DB input: {req}"
+
+
+def test_input_manifest_completeness(tmp_path):
+    """Completeness: every tracked file is discovered and required inputs are present."""
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(dirty=False)
+    candidates = cap.discover_input_candidates(str(root), runner)
+    for f in TRACKED_FILES:
+        assert f in candidates, f"tracked file not discovered: {f}"
+    assert len(candidates) == len(set(candidates))
+    for req in cap.REQUIRED_INPUT_CANDIDATES:
+        assert req in candidates
+
+
+def test_input_manifest_includes_production_source_roots(tmp_path):
+    """PR-GR-03 Slice E: the built manifest includes the source-root manifest.
+
+    ``config/guards/production_source_roots.yml`` must appear in the dynamic
+    input manifest when present in the fixture repo, hashed and observed like
+    every other required DB guard config input (exists + blob id + sha256).
+    """
+    rel = "config/guards/production_source_roots.yml"
+    assert rel in cap.REQUIRED_INPUT_CANDIDATES
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    entries = {e["rel_path"]: e for e in evidence["input_manifest"]}
+    entry = entries.get(rel)
+    assert entry is not None, f"{rel} missing from the built input manifest"
+    assert entry["exists"] is True
+    assert entry["blob_id"]
+    assert entry["sha256"]
+    # The capture must not fail closed over this input when it is present.
+    assert not any(w.startswith(f"missing-required-input:{rel}") or
+                   w.startswith(f"missing-blob-id:{rel}")
+                   for w in evidence["infrastructure_warnings"])
+    assert rc == 0
+
+
+def test_input_manifest_includes_v2_baseline(tmp_path):
+    """GR-09: the v2 baseline is hashed in the manifest like every required input.
+
+    ``config/baselines/db_access_v2.json`` is a control-plane input (suite,
+    registry, and Gradle wiring all consume it), so the built input manifest
+    must observe it (exists + blob id + sha256) and the capture must not fail
+    closed over it when it is present.
+    """
+    rel = "config/baselines/db_access_v2.json"
+    assert rel in cap.REQUIRED_INPUT_CANDIDATES
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    entries = {e["rel_path"]: e for e in evidence["input_manifest"]}
+    entry = entries.get(rel)
+    assert entry is not None, f"{rel} missing from the built input manifest"
+    assert entry["exists"] is True
+    assert entry["blob_id"]
+    assert entry["sha256"]
+    assert not any(w.startswith(f"missing-required-input:{rel}") or
+                   w.startswith(f"missing-blob-id:{rel}")
+                   for w in evidence["infrastructure_warnings"])
+    assert rc == 0
+
+
+def test_v2_baseline_is_control_plane_input():
+    """GR-09: the v2 baseline is preserved, discovered, and required.
+
+    The capture tool must treat ``config/baselines/db_access_v2.json`` as a
+    control-plane input: forbidden to change (preservation checker), discovered
+    via the tracked-input pathspecs, and required in the input manifest.  The
+    legacy v1 baseline file stays preserved (GR-00 freeze) and required.
+    """
+    v2 = "config/baselines/db_access_v2.json"
+    legacy = "config/baselines/db_access.json"
+    assert v2 in cap.FORBIDDEN_PRESERVATION_PATHS
+    assert legacy in cap.FORBIDDEN_PRESERVATION_PATHS
+    assert v2 in cap.INPUT_DISCOVERY_PATTERNS
+    assert v2 in cap.REQUIRED_INPUT_CANDIDATES
+    assert legacy in cap.REQUIRED_INPUT_CANDIDATES
+
+
+# ── New tests: realpath / symlink / custom-matrix validation (requirement 3) ────
+def test_symlink_escape_rejected(tmp_path, monkeypatch):
+    """Fail closed when the resolved (realpath) output escapes the repo root."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    outside = tmp_path / "escape"
+
+    def fake_realpath(p):
+        ap = os.path.abspath(p)
+        if ap == os.path.abspath(str(out)) or ap.startswith(os.path.abspath(str(out)) + os.sep):
+            return str(outside)
+        return ap
+
+    monkeypatch.setattr(cap.os.path, "realpath", fake_realpath)
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    assert not (out / "evidence.json").is_file()
+    # Output containment is checked before any runner call: zero child commands ran.
+    assert runner.calls == []
+
+
+def test_custom_matrix_absolute_path_rejected(tmp_path):
+    """A custom command matrix embedding an absolute path fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    abs_path = os.path.abspath(tmp_path / "secret" / "evil.py")
+    matrix = [cap.CommandSpec(id="bad", log_name="00.log", argv=["python3", abs_path])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-matrix-argv:") for w in evidence["infrastructure_warnings"])
+
+
+def test_validate_command_matrix_rejects_absolute_and_outside_root(tmp_path):
+    """validate_command_matrix flags both absolute and root-escaping argv tokens.
+
+    Direct unit coverage of the custom-matrix containment gate (requirement 3)
+    so the absolute/outside rejection is locked in independently of the full
+    capture flow.
+    """
+    root = _make_root(tmp_path)
+    abs_spec = cap.CommandSpec(
+        id="a", log_name="00.log",
+        argv=["python3", os.path.abspath(tmp_path / "evil.py")],
+    )
+    # Repository-relative token that resolves outside the root via traversal.
+    escape_spec = cap.CommandSpec(
+        id="b", log_name="01.log",
+        argv=["python3", "../escape.py"],
+    )
+    violations = cap.validate_command_matrix([abs_spec, escape_spec], str(root))
+    assert any(v.startswith("invalid-matrix-argv:a:") for v in violations)
+    assert any(v.startswith("invalid-matrix-argv:b:") for v in violations)
+    # A clean repository-relative token is not flagged.
+    ok_spec = cap.CommandSpec(
+        id="c", log_name="02.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+    )
+    assert cap.validate_command_matrix([ok_spec], str(root)) == []
+
+
+# ── New tests: required-artifact type + hashing (requirement 4) ─────────────────
+def test_required_artifact_type_mismatch_fails(tmp_path):
+    """A required artifact present but of the wrong type fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    (out / "02-room-inventory.findings.json").mkdir(parents=True)
+    matrix = [cap.CommandSpec(
+        id="room-inventory", log_name="02.log",
+        argv=["python3", "scripts/verify_db_access_boundaries.py", "--inventory-only"],
+        required_artifacts=("02-room-inventory.findings.json",),
+        # Explicit artifact-kind metadata is now mandatory; without it the capture
+        # fails closed with ``missing-artifact-kind`` before the type check, so the
+        # fake matrix must declare the kind to exercise the type-mismatch path.
+        artifact_kinds=(("02-room-inventory.findings.json", "file"),),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any("invalid-required-artifact-type:02-room-inventory.findings.json" in w
+               for w in evidence["infrastructure_warnings"])
+
+
+def test_required_artifact_hashes_present(tmp_path):
+    """Every required artifact is explicitly hashed into the evidence bundle."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                         command_matrix=_fake_matrix(str(root), str(out)))
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    hashes = evidence["required_artifact_hashes"]
+    for spec in _fake_matrix(str(root), str(out)):
+        for art in spec.required_artifacts:
+            assert art in hashes, f"missing hash for required artifact: {art}"
+            assert isinstance(hashes[art], str) and len(hashes[art]) == 64
+    # The static-suite directory hash covers its summary recursively.
+    assert "05-static-suite" in hashes
+    assert "05-static-suite/summary.json" in hashes
+
+
+# ── New tests: comprehensive sanitization (requirement 5) ───────────────────────
+def test_raw_secret_exception_sql_output(tmp_path):
+    """Raw secrets, exception text, and SQL errors are redacted from persisted logs."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class LeakyRunner:
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN; only child
+                # command output carries the leaky payload.
+                return outcome
+            # ``combined`` carries no trailing newline; join with an explicit
+            # leading separator so each payload stays on its own line (a bare
+            # concatenation would glue ``password=`` onto the previous output
+            # token, where the word-boundary secret pattern cannot match).
+            combined = outcome.combined + "\n" + "\n".join([
+                "password=hunter2secret",
+                "api_key=sk_live_abc123",
+                "Traceback (most recent call last):",
+                '  File "internal/secret.py", line 10, in run',
+                "ValueError: something failed badly",
+                'android.database.sqlite.SQLiteException: near "SELECT": syntax error',
+            ])
+            return FakeOutcome(outcome.returncode, combined)
+
+    matrix = [cap.CommandSpec(id="leaky", log_name="00-leaky.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = LeakyRunner()
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    log = (out / "commands" / "00-leaky.log").read_text(encoding="utf-8")
+    assert "<redacted-secret>" in log
+    assert "hunter2secret" not in log
+    assert "sk_live_abc123" not in log
+    assert "<redacted-exception>" in log
+    assert "ValueError: something failed badly" not in log
+    assert "internal/secret.py" not in log
+    assert "<redacted-sql>" in log
+    assert "SQLiteException" not in log
+    # Child exit code is preserved, never swallowed by sanitization.
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["commands"][0]["exit_code"] == 0
+
+
+def test_child_output_bounded(tmp_path):
+    """Persisted child output is bounded; unbounded payloads are truncated."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class HugeRunner:
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN (an
+                # oversized status payload would trip the dirty rejection
+                # instead of exercising the output-bounding stage).
+                return outcome
+            return FakeOutcome(outcome.returncode, "x" * (cap.CHILD_OUTPUT_LIMIT * 4))
+
+    matrix = [cap.CommandSpec(id="huge", log_name="00-huge.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = HugeRunner()
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    log = (out / "commands" / "00-huge.log").read_text(encoding="utf-8")
+    assert "<truncated>" in log
+    assert len(log) <= cap.CHILD_OUTPUT_LIMIT + len("<truncated>")
+
+
+# ── New tests: complete ratchet argv assertion (requirement 7) ──────────────────
+def test_ratchet_argv_complete(tmp_path):
+    """The full ratchet argv is asserted exactly, not merely --command-arg= presence.
+
+    GATE-00R two-run follow-up: the outer interpreter token is the module-level
+    ``_suite_python()`` resolution (a bare ``python3`` exits 9009 on Windows),
+    and the baseline pin is the GR-09-migrated v2 baseline — protocol 2 rejects
+    the legacy v1 baseline (RATCHET_V1_BASELINE_INCOMPATIBLE), which left the
+    required ratchet summary artifact permanently missing.  The nested
+    ``--command-arg=python3`` token is unchanged: the ratchet resolves it to
+    ``sys.executable`` itself (Windows-safe per its own resolution contract).
+    The ``--timeout 1380`` pin mirrors the suite-derived child budget (1380s,
+    from run_static_guard_suite.py's DEFAULT_GUARD_TIMEOUT_SECONDS 1500 minus
+    120s headroom) so a healthy scan is never killed by the bare 300s default.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    ratchet = next(s for s in matrix if s.id == "db-ratchet")
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    expected = [
+        cap._suite_python(), "scripts/ci/guard_ratchet.py",
+        "--guard-name=db_access",
+        "--command-arg=python3",
+        "--command-arg=scripts/verify_db_access_boundaries.py",
+        "--command-arg=--fail-on-violation",
+        "--command-arg=--ownership-policy",
+        "--command-arg=config/guards/db_ownership_policy.yml",
+        "--command-arg=--structural-exceptions",
+        "--command-arg=config/guards/db_structural_exceptions.yml",
+        "--command-arg=--structural-manifest",
+        "--command-arg=config/guards/db_structural_exceptions_expected_methods.yml",
+        "--baseline=config/baselines/db_access_v2.json",
+        "--ci-mode",
+        "--finding-protocol=2",
+        "--timeout", "1380",
+        "--output-summary", "/".join([bundle_rel, "04-db-ratchet.summary.json"]),
+    ]
+    assert ratchet.argv == expected
+
+
+# ── New tests: required report path directory rejection (requirement 8) ─────────
+def test_required_report_path_directory_rejected(tmp_path):
+    """A required report path that resolves to a directory fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    (out / "03-db-cli.findings.json").mkdir(parents=True)
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    matrix = [cap.CommandSpec(
+        id="db-cli", log_name="03-db-cli.log",
+        argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+              "--findings-output", "/".join([bundle_rel, "03-db-cli.findings.json"])],
+        report_path="03-db-cli.findings.json",
+        required_artifacts=(),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any("invalid-required-report:db-cli" in w for w in evidence["infrastructure_warnings"])
+
+
+# ── New tests: derived bundle-path containment (traversal + symlink) (req 1) ────
+def _try_symlink(target, link):
+    """Create a real filesystem symlink; skip the test if privileges are lacking."""
+    try:
+        os.symlink(target, link)
+    except OSError as exc:
+        msg = str(exc).lower()
+        if "privilege" in msg or getattr(exc, "winerror", None) in (1, 5, 1314):
+            pytest.skip("filesystem symlinks require elevated privilege on this host")
+        raise
+
+
+def test_log_name_traversal_rejected(tmp_path):
+    """A log_name that traverses outside the bundle fails closed (no external write)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="bad", log_name="../escape.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # The hostile traversal token is redacted, never leaked verbatim.
+    assert any(w == "invalid-bundle-path:bad:<redacted-path>"
+               for w in evidence["infrastructure_warnings"])
+    # Stop-before-run: no child command executed, no log written outside the bundle.
+    assert evidence["commands"] == []
+    assert runner.calls == []
+    assert not (tmp_path / "escape.log").is_file()
+
+
+def test_report_path_traversal_rejected(tmp_path):
+    """A report_path that traverses outside the bundle fails closed (no external read)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    matrix = [cap.CommandSpec(
+        id="db-cli", log_name="03-db-cli.log",
+        argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+              "--findings-output", "/".join([bundle_rel, "03-db-cli.findings.json"])],
+        report_path="../03-db-cli.findings.json",
+        required_artifacts=(),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # The hostile traversal token is redacted, never leaked verbatim.
+    assert any(w == "invalid-bundle-path:db-cli:<redacted-path>"
+               for w in evidence["infrastructure_warnings"])
+    # Stop-before-run: no child command executed.
+    assert evidence["commands"] == []
+    assert runner.calls == []
+
+
+def test_required_artifact_traversal_rejected(tmp_path):
+    """A required artifact that traverses outside the bundle fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(
+        id="needs-artifact", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=("../99-missing.log",),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # The hostile traversal token is redacted, never leaked verbatim.
+    assert any(w == "invalid-bundle-path:needs-artifact:<redacted-path>"
+               for w in evidence["infrastructure_warnings"])
+    # Stop-before-run: no child command executed.
+    assert evidence["commands"] == []
+    assert runner.calls == []
+
+
+def test_actual_symlink_report_path_rejected(tmp_path):
+    """An external symlink report_path is rejected (no external read)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    out.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_report = outside / "evil.json"
+    outside_report.write_text(
+        '{"schema":"cost-aggregator.guard-findings","schema_version":2}', encoding="utf-8")
+    _try_symlink(str(outside_report), str(out / "evil_link"))
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    matrix = [cap.CommandSpec(
+        id="db-cli", log_name="03-db-cli.log",
+        argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+              "--findings-output", "/".join([bundle_rel, "evil_link"])],
+        report_path="evil_link",
+        required_artifacts=(),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False, write_reports=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any("invalid-bundle-path:db-cli:evil_link" in w
+               for w in evidence["infrastructure_warnings"])
+    # Stop-before-run: no child command was executed and no command record exists.
+    assert evidence["commands"] == []
+    assert runner.calls == []
+    # The external file must not have been read into the bundle.
+    assert "evil_link" not in json.dumps(evidence.get("commands", []))
+
+
+def test_actual_symlink_required_artifact_rejected(tmp_path):
+    """An external symlink required artifact is rejected (no external read)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    out.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_art = outside / "evil.json"
+    outside_art.write_text("{}", encoding="utf-8")
+    _try_symlink(str(outside_art), str(out / "evil_art"))
+    matrix = [cap.CommandSpec(
+        id="needs-artifact", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=("evil_art",),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any("invalid-bundle-path:needs-artifact:evil_art" in w
+               for w in evidence["infrastructure_warnings"])
+    # Stop-before-run: no child command executed, no command record exists.
+    assert evidence["commands"] == []
+    assert runner.calls == []
+
+
+def test_actual_symlink_log_name_rejected(tmp_path):
+    """An external symlink log_name is rejected (no external write)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    out.mkdir(parents=True)
+    (out / "commands").mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_log = outside / "escape.log"
+    outside_log.write_text("leak", encoding="utf-8")
+    _try_symlink(str(outside_log), str(out / "commands" / "evil.log"))
+    matrix = [cap.CommandSpec(id="bad", log_name="evil.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # The warning payload is the DECLARED log_name (``evil.log``), the same
+    # convention as the report_path/required-artifact sibling pins — the
+    # derived ``commands/`` prefix is containment plumbing, not the persisted
+    # payload.  The escape itself is still prevented (assertions below).
+    assert any("invalid-bundle-path:bad:evil.log" in w
+               for w in evidence["infrastructure_warnings"])
+    # Stop-before-run: no child command executed, no log written through the symlink.
+    assert evidence["commands"] == []
+    assert runner.calls == []
+    # No log written through the symlink to the outside file.
+    assert outside_log.read_text(encoding="utf-8") == "leak"
+
+
+# ── New tests: preflight metadata sanitization + bounding (req 2) ───────────────
+def test_preflight_metadata_sanitized_and_bounded(tmp_path):
+    """Preflight status/diff/log metadata is sanitized, secret-free, and bounded."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class LeakyPreflightRunner(ConfigurableFakeRunner):
+        def _git(self, argv):
+            sub = argv[1:]
+            if sub[:2] == ["status", "--porcelain=v1"]:
+                return FakeOutcome(0, " M config/guards/db_ownership_policy.yml\n M /abs/secret/path/file.yml\n")
+            if sub[:2] == ["diff", "--name-only"]:
+                return FakeOutcome(0, "config/x.yml\n/abs/leak.yml\n")
+            if sub[:3] == ["diff", "--cached", "--name-only"]:
+                return FakeOutcome(0, "")
+            if sub[:3] == ["log", "--oneline", "-20"]:
+                return FakeOutcome(0, f"{TEST_SHA} secret=supersecret token=abc commit message\n" + "0" * 40 + " another message\n")
+            return super()._git(argv)
+
+    runner = LeakyPreflightRunner(dirty=False)
+    # The hostile status lines this test injects mark the checkout dirty by
+    # design; allow_dirty lets the metadata-persistence stage run so the
+    # sanitization of the PERSISTED git state is actually exercised.
+    _capture(str(root), str(out), runner=runner, allow_dirty=True,
+                        command_matrix=_fake_matrix(str(root), str(out)))
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    raw = json.dumps(gs)
+    # No absolute paths persisted.
+    assert "/abs/" not in raw
+    # No secret assignments persisted (status/diff or preflight command records).
+    assert "supersecret" not in raw
+    assert "token=abc" not in raw
+    # No commit-message text persisted (only SHAs in log_oneline / log record).
+    assert "commit message" not in raw
+    assert "another message" not in raw
+    assert gs["log_oneline"] == TEST_SHA + "\n" + "0" * 40
+    # Bounded.
+    assert len(gs["status"]) <= cap.CHILD_OUTPUT_LIMIT
+    assert len(gs["diff_name_only"]) <= cap.CHILD_OUTPUT_LIMIT
+
+
+# ── New tests: run-pin API contract (PR-GR-00R part A) ─────────────────────────
+def test_legacy_fixed_target_sha_kwarg_is_gone(tmp_path):
+    """The retired fixed-target API is gone: ``target_sha=`` is not accepted.
+
+    PR-GR-00R part A replaced the permanent constant with a caller-stated run
+    pin (``expected_sha=``); the old kwarg name must not be silently honored.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    with pytest.raises(TypeError):
+        cap.capture_evidence(str(root), str(out), runner=runner,
+                             command_matrix=_fake_matrix(str(root), str(out)),
+                             target_sha="0" * 40)
+
+
+# ── New tests: staged-diff preservation (req 5) ─────────────────────────────────
+def test_staged_diff_preserved(tmp_path):
+    """Staged changes are captured into git-state.json (staged_diff_name_only)."""
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(dirty=False, staged_diff="config/staged.yml\n")
+    gs = cap.run_preflight(str(root), runner)
+    assert gs["staged_diff_name_only"] == "config/staged.yml"
+
+
+def test_staged_diff_preserved_in_bundle(tmp_path):
+    """Staged diff metadata lands in the written git-state.json."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False, staged_diff="config/staged.yml\n")
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)))
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["staged_diff_name_only"] == "config/staged.yml"
+
+
+# ── New tests: git status/diff/staged-diff failures are fatal (GR-00 hardening) ──
+class GitMetaFailRunner(ConfigurableFakeRunner):
+    """Clean checkout, but the preflight git metadata commands fail (exit 1)."""
+
+    def _git(self, argv):
+        sub = argv[1:]
+        if sub[:2] == ["status", "--porcelain=v1"]:
+            return FakeOutcome(1, "")
+        if sub[:2] == ["diff", "--name-only"]:
+            return FakeOutcome(1, "")
+        if sub[:3] == ["diff", "--cached", "--name-only"]:
+            return FakeOutcome(1, "")
+        return super()._git(argv)
+
+
+def test_git_meta_failure_fails_closed(tmp_path):
+    """Fail closed when git status / diff / staged-diff cannot be observed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = GitMetaFailRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["git_meta_ok"] is False
+    assert any(w.startswith("git-meta-failed:") for w in evidence["infrastructure_warnings"])
+
+
+def test_git_meta_partial_failure_fails_closed(tmp_path):
+    """A single failing git metadata command still fails the capture closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class PartialMetaFailRunner(ConfigurableFakeRunner):
+        def _git(self, argv):
+            sub = argv[1:]
+            if sub[:2] == ["diff", "--name-only"]:
+                return FakeOutcome(1, "")
+            return super()._git(argv)
+
+    runner = PartialMetaFailRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["git_meta_ok"] is False
+    assert any("git-meta-failed:diff" in w for w in evidence["infrastructure_warnings"])
+
+
+# ── New tests: blob ID validation (GR-00 hardening) ─────────────────────────────
+def test_blob_id_validated(tmp_path):
+    """git_blob_id accepts only a 40-hex SHA-1; everything else is rejected."""
+    root = _make_root(tmp_path)
+    valid = "a" * 40
+
+    class BlobRunner:
+        def __init__(self, blob):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+            self.blob = blob
+
+        def __call__(self, argv, cwd):
+            # Semantic match for the 3-token blob query ``git rev-parse HEAD:<path>``.
+            if (len(argv) == 3 and argv[:2] == ["git", "rev-parse"]
+                    and argv[2].startswith("HEAD:")):
+                return FakeOutcome(0, self.blob)
+            return self._inner(argv, cwd)
+
+    assert cap.git_blob_id(str(root), "scripts/verify_db_access_boundaries.py",
+                           BlobRunner(valid)) == valid
+    # Non-hex, too short, multi-line, and nonzero-exit are all rejected.
+    assert cap.git_blob_id(str(root), "x.py", BlobRunner("not-a-sha")) is None
+    assert cap.git_blob_id(str(root), "x.py", BlobRunner("abc")) is None
+    assert cap.git_blob_id(str(root), "x.py", BlobRunner(valid + "\nextra")) is None
+
+    class FailBlobRunner:
+        def __call__(self, argv, cwd):
+            # Semantic match for the 3-token blob query ``git rev-parse HEAD:<path>``.
+            if (len(argv) == 3 and argv[:2] == ["git", "rev-parse"]
+                    and argv[2].startswith("HEAD:")):
+                return FakeOutcome(1, "")
+            return ConfigurableFakeRunner(dirty=False)(argv, cwd)
+
+    assert cap.git_blob_id(str(root), "x.py", FailBlobRunner()) is None
+
+
+# ── New tests: hostile custom-path rejection (backslash / UNC / traversal) ───────
+def test_custom_matrix_backslash_path_rejected(tmp_path):
+    """A backslash in an argv token is a hostile path form and fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="bad", log_name="00.log",
+                              argv=["python3", "scripts\\evil.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-matrix-argv:") for w in evidence["infrastructure_warnings"])
+    # The raw backslash path must not appear anywhere in the evidence.
+    assert "scripts\\evil.py" not in json.dumps(evidence)
+
+
+def test_custom_matrix_unc_path_rejected(tmp_path):
+    """A UNC share path in an argv token fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="bad", log_name="00.log",
+                              argv=["python3", "//server/share/evil.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-matrix-argv:") for w in evidence["infrastructure_warnings"])
+    assert "//server/share/evil.py" not in json.dumps(evidence)
+
+
+def test_bundle_path_backslash_rejected(tmp_path):
+    """A report_path containing a backslash is rejected (hostile separator)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    matrix = [cap.CommandSpec(
+        id="db-cli", log_name="03-db-cli.log",
+        argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+              "--findings-output", "/".join([bundle_rel, "03-db-cli.findings.json"])],
+        report_path="sub\\evil.json",
+        required_artifacts=(),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-bundle-path:") for w in evidence["infrastructure_warnings"])
+    assert "sub\\evil.json" not in json.dumps(evidence)
+
+
+def test_validate_bundle_paths_violations_bounded(tmp_path, monkeypatch):
+    """validate_bundle_paths bounds violation collection during iteration.
+
+    An unbounded malformed artifact list stops materializing violations at
+    ``MAX_VIOLATIONS`` and retains only the controlled ``OVERFLOW_VIOLATIONS``
+    marker, so a hostile matrix can never inflate the returned violation set.
+    """
+    monkeypatch.setattr(cap, "MAX_VIOLATIONS", 4)
+    out_dir = tmp_path / "bundle"
+    out_dir.mkdir()
+    # Every artifact is a ``..`` traversal: one violation per entry, 250 entries
+    # per spec across 5 specs (far beyond the bound).
+    hostile_artifacts = tuple(f"../escape_{i}.json" for i in range(250))
+    matrix = [
+        cap.CommandSpec(
+            id=f"c{i}", log_name=f"{i:02d}.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py"],
+            required_artifacts=hostile_artifacts,
+        )
+        for i in range(5)
+    ]
+    violations = cap.validate_bundle_paths(matrix, str(out_dir))
+    # The materialized list never exceeds the bound and ends with the marker.
+    assert len(violations) <= cap.MAX_VIOLATIONS
+    assert violations[-1] == cap.OVERFLOW_VIOLATIONS
+    # Real violations were collected up to the bound before truncation.
+    assert sum(1 for v in violations if v.startswith("invalid-bundle-path:")) == \
+        cap.MAX_VIOLATIONS - 1
+
+
+def test_validate_command_matrix_violations_bounded(tmp_path, monkeypatch):
+    """validate_command_matrix bounds the returned violation set.
+
+    A hostile matrix whose per-spec artifact lists would generate far more than
+    ``MAX_VIOLATIONS`` violations yields a returned list that never exceeds the
+    bound and terminates with the controlled ``OVERFLOW_VIOLATIONS`` marker, so a
+    malformed matrix can never inflate the violation set handed to the capture.
+    """
+    monkeypatch.setattr(cap, "MAX_VIOLATIONS", 4)
+    root = tmp_path / "repo"
+    root.mkdir()
+    # Every artifact is a ``..`` traversal: one invalid-bundle-path violation per
+    # entry (plus missing-artifact-kind), 60 entries per spec across 10 specs
+    # (far beyond the bound).
+    hostile_artifacts = tuple(f"../escape_{i}.json" for i in range(60))
+    matrix = [
+        cap.CommandSpec(
+            id=f"c{i}", log_name=f"{i:02d}.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py"],
+            required_artifacts=hostile_artifacts,
+        )
+        for i in range(10)
+    ]
+    violations = cap.validate_command_matrix(matrix, str(root))
+    # The returned list never exceeds the bound and ends with the marker.
+    assert len(violations) <= cap.MAX_VIOLATIONS
+    assert violations[-1] == cap.OVERFLOW_VIOLATIONS
+    # Real violations were collected up to the bound before truncation.
+    assert sum(1 for v in violations if v.startswith("invalid-bundle-path:")) == \
+        cap.MAX_VIOLATIONS - 1
+
+
+# ── New tests: warning payload sanitization (GR-00 hardening) ───────────────────
+def test_warning_payload_sanitized(tmp_path):
+    """A rejected custom path token is redacted, never leaked verbatim."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="bad", log_name="00.log",
+                              argv=["python3", "C:\\Users\\tester\\secret.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    raw = json.dumps(evidence)
+    assert "C:\\Users\\tester" not in raw
+    assert "/Users/tester" not in raw
+    # The warning uses a bounded redaction marker, not the raw token.
+    assert any("<redacted-path>" in w for w in evidence["infrastructure_warnings"])
+
+
+def test_sanitize_warning_redacts_hostile_payload():
+    """Unit coverage of warning-payload sanitization (backslash / UNC / safe)."""
+    assert cap._sanitize_warning("invalid-matrix-argv:bad:C:\\secret\\x") == \
+        "invalid-matrix-argv:bad:<redacted-path>"
+    assert cap._sanitize_warning("invalid-matrix-argv:bad://server/share/x") == \
+        "invalid-matrix-argv:bad:<redacted-path>"
+    # A safe repository-relative payload is preserved unchanged.
+    assert cap._sanitize_warning("missing-required-input:scripts/x.py") == \
+        "missing-required-input:scripts/x.py"
+
+
+# ── New tests: preflight/version metadata bounded sanitization (GR-00) ──────────
+class LeakyVersionRunner(ConfigurableFakeRunner):
+    """Inject an absolute path into the ``python --version`` output."""
+
+    def __call__(self, argv, cwd):
+        if argv and argv[0] == "python":
+            self.calls.append(list(argv))
+            return FakeOutcome(0, "Python 3.11.4 from /usr/bin/python3 leaked\n")
+        # Git preflight and every other command keep the clean base behavior.
+        return super().__call__(argv, cwd)
+
+
+def test_version_metadata_sanitized_and_bounded(tmp_path):
+    """Interpreter version strings are sanitized (paths redacted) and bounded."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = LeakyVersionRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                        command_matrix=_fake_matrix(str(root), str(out)))
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    # The leaked absolute path in the version string is redacted.
+    assert "/usr/bin/python3" not in json.dumps(gs)
+    assert gs["python_version"] is not None
+    assert len(gs["python_version"]) <= 256
+
+
+def test_environment_allowed_values_sanitized(tmp_path, monkeypatch):
+    """Even allowlisted env values are sanitized (paths redacted) and bounded."""
+    monkeypatch.setenv("PYTHON_VERSION", "3.11.4 from /usr/bin/python leaked")
+    env = cap.collect_environment()
+    value = env["variables"]["PYTHON_VERSION"]
+    assert "/usr/bin/python" not in value
+    assert len(value) <= 256
+    assert "PYTHON_VERSION" in env["allowed_value_keys"]
+
+
+# ── New tests: stop runner on matrix/path validation failure (GR-00 retry) ──────
+def test_stop_runner_on_matrix_validation_failure(tmp_path):
+    """No child command runs once matrix/path validation fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    abs_path = os.path.abspath(tmp_path / "secret" / "evil.py")
+    matrix = [cap.CommandSpec(id="bad", log_name="00.log", argv=["python3", abs_path])]
+
+    executed_matrix_commands = []
+
+    class SpyRunner:
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            # Record any attempt to actually execute the hostile matrix command.
+            if abs_path in argv:
+                executed_matrix_commands.append(list(argv))
+            return self._inner(argv, cwd)
+
+    runner = SpyRunner()
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    # Validation failed closed, so the capture returns 2 and no matrix command
+    # was ever executed (the runner is stopped before any child call).
+    assert rc == 2
+    assert executed_matrix_commands == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-matrix-argv:") for w in evidence["infrastructure_warnings"])
+    # No command records were produced because the runner was never invoked.
+    assert evidence["commands"] == []
+
+
+# ── New tests: custom input candidate realpath containment (GR-00 retry) ─────────
+def test_custom_input_candidate_realpath_containment(tmp_path):
+    """Hostile custom input candidates are never read/hashed; fail closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    # Absolute path, traversal, UNC share, and backslash separators — none may be
+    # read, hashed, or persisted verbatim.
+    candidates = [
+        os.path.abspath(tmp_path / "outside" / "evil.py"),
+        "../escape.py",
+        "//server/share/evil.py",
+        "scripts\\evil.py",
+    ]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)),
+                              input_candidates=candidates)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    raw = json.dumps(evidence["input_manifest"])
+    # No raw hostile token leaks into the manifest (reduced to a bounded marker).
+    assert "<redacted-unsafe-candidate>" in raw
+    assert os.path.abspath(tmp_path / "outside" / "evil.py") not in raw
+    assert "../escape.py" not in raw
+    assert "//server/share/evil.py" not in raw
+    assert "scripts\\evil.py" not in raw
+    # Each hostile candidate is recorded as missing (fail closed).
+    assert any("missing-required-input" in w for w in evidence["infrastructure_warnings"])
+
+
+# ── New tests: bounded persisted collections/counts (GR-00 retry) ───────────────
+def test_diagnostic_codes_overflow_bounded(tmp_path, monkeypatch):
+    """An unbounded diagnostic-code list is replaced by a fail-closed marker."""
+    monkeypatch.setattr(cap, "MAX_DIAGNOSTIC_CODES", 2)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
+    def many_codes_runner(argv, cwd):
+        # Command-aware: git preflight stays CLEAN; only the db-cli stage is
+        # blocked while writing the overflowing diagnostic-code report.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
+            idx = argv.index("--findings-output")
+            # Resolve against the runner ``cwd`` (repository root).
+            out_path = os.path.join(str(cwd), argv[idx + 1])
+            _write_fake_report(out_path, trusted=False,
+                               codes=[f"CODE{i}" for i in range(5)], findings=0)
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
+
+    matrix = [_db_cli_matrix(str(root), str(out))]
+    rc = _capture(str(root), str(out), runner=many_codes_runner,
+                              command_matrix=matrix)
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    assert cmd["report_diagnostic_codes"] == [cap.OVERFLOW_DIAGNOSTIC_CODES]
+
+
+def test_finding_count_overflow_fails_closed(tmp_path, monkeypatch):
+    """A report exceeding the finding-count bound fails closed (unparseable)."""
+    monkeypatch.setattr(cap, "MAX_FINDING_COUNT", 3)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    clean_checkout = ConfigurableFakeRunner(dirty=False)
+
+    def many_findings_runner(argv, cwd):
+        # Command-aware: git preflight stays CLEAN; only the db-cli stage is
+        # blocked while writing the overflowing findings report.
+        if _matches(argv, "verify_db_access_boundaries.py", "--fail-on-violation"):
+            idx = argv.index("--findings-output")
+            # Resolve against the runner ``cwd`` (repository root).
+            out_path = os.path.join(str(cwd), argv[idx + 1])
+            _write_fake_report(out_path, trusted=False, codes=["X"], findings=5)
+            return FakeOutcome(2, "blocked")
+        return clean_checkout(argv, cwd)
+
+    matrix = [_db_cli_matrix(str(root), str(out))]
+    rc = _capture(str(root), str(out), runner=many_findings_runner,
+                              command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    assert cmd["parser_error"] == cap.OVERFLOW_FINDING_COUNT
+    assert cmd["report_finding_count"] is None
+
+
+def test_manifest_overflow_fails_closed(tmp_path, monkeypatch):
+    """An unbounded input-manifest set fails closed with an overflow marker."""
+    monkeypatch.setattr(cap, "MAX_MANIFEST_ENTRIES", 3)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    candidates = [f"scripts/ci/missing_{i}.py" for i in range(6)]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)),
+                              input_candidates=candidates)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == cap.OVERFLOW_MANIFEST for w in evidence["infrastructure_warnings"])
+
+
+def test_warnings_overflow_fails_closed(tmp_path, monkeypatch):
+    """An unbounded warning set fails closed with an overflow marker."""
+    monkeypatch.setattr(cap, "MAX_WARNINGS", 2)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    candidates = [f"scripts/ci/missing_{i}.py" for i in range(3)]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)),
+                              input_candidates=candidates)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == cap.OVERFLOW_WARNINGS for w in evidence["infrastructure_warnings"])
+
+
+def test_warnings_capped_at_zero_max_warnings(tmp_path, monkeypatch):
+    """When ``MAX_WARNINGS == 0`` the persisted warning list is exactly empty (the
+    cap is exact, including zero) yet the capture still fails closed (exit 2,
+    untrusted) so the overflow is signaled via the exit code rather than a
+    persisted warning."""
+    monkeypatch.setattr(cap, "MAX_WARNINGS", 0)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    # Three missing required inputs would normally yield three warnings.
+    candidates = [f"scripts/ci/missing_{i}.py" for i in range(3)]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)),
+                              input_candidates=candidates)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # The persisted list never exceeds MAX_WARNINGS — including zero.
+    assert len(evidence["infrastructure_warnings"]) == 0
+    # The overflow is still signaled via the untrusted / failed-closed state.
+    assert evidence["trusted"] is False
+
+
+def test_summary_markdown_bounded(tmp_path, monkeypatch):
+    """The persisted summary markdown is length-bounded (fail closed)."""
+    monkeypatch.setattr(cap, "MAX_SUMMARY_CHARS", 80)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                         command_matrix=_fake_matrix(str(root), str(out)))
+    summary = (out / "summary.md").read_text(encoding="utf-8")
+    assert summary.endswith("<truncated>")
+    assert len(summary) <= 80 + len("<truncated>")
+
+
+# ── New tests: UNC/backslash + KeyboardInterrupt/StopIteration sanitization ──────
+def test_unc_and_backslash_in_child_output_redacted(tmp_path):
+    """UNC shares and backslash paths in child output are redacted."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class LeakyRunner:
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN; only child
+                # command output carries the leaky payload.
+                return outcome
+            combined = outcome.combined + "\n".join([
+                "wrote to //server/share/secret.log",
+                "wrote to C:\\Users\\tester\\secret.log",
+                "wrote to /etc/passwd",
+            ])
+            return FakeOutcome(outcome.returncode, combined)
+
+    matrix = [cap.CommandSpec(id="leaky", log_name="00-leaky.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = LeakyRunner()
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    log = (out / "commands" / "00-leaky.log").read_text(encoding="utf-8")
+    assert "<redacted-path>" in log
+    assert "//server/share/secret.log" not in log
+    assert "C:\\Users\\tester" not in log
+    assert "/etc/passwd" not in log
+
+
+def test_keyboardinterrupt_stopiteration_in_child_output_redacted(tmp_path):
+    """KeyboardInterrupt / StopIteration / GeneratorExit text is redacted."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class LeakyRunner:
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN; only child
+                # command output carries the leaky payload.
+                return outcome
+            combined = outcome.combined + "\n".join([
+                "Traceback (most recent call last):",
+                "KeyboardInterrupt",
+                "StopIteration: no more items",
+                "GeneratorExit: closed",
+            ])
+            return FakeOutcome(outcome.returncode, combined)
+
+    matrix = [cap.CommandSpec(id="leaky", log_name="00-leaky.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = LeakyRunner()
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    log = (out / "commands" / "00-leaky.log").read_text(encoding="utf-8")
+    assert "<redacted-exception>" in log
+    assert "KeyboardInterrupt" not in log
+    assert "StopIteration" not in log
+    assert "GeneratorExit" not in log
+
+
+# ── New tests: custom argv tokens never persist verbatim (GR-00 retry) ──────────
+def test_custom_argv_secret_rejected_and_not_persisted(tmp_path):
+    """A secret token in a custom matrix is rejected (fail closed), never executed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(
+        id="secret", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py", "password=hunter2secret"],
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert "password=hunter2secret" not in json.dumps(evidence)
+    assert any(w.startswith("invalid-matrix-argv:") for w in evidence["infrastructure_warnings"])
+    # No command was executed because matrix validation failed closed.
+    assert evidence["commands"] == []
+
+
+def test_sanitize_argv_token_redacts_secret_and_path():
+    """Unit: argv token sanitizer redacts secrets and absolute/UNC/backslash paths."""
+    assert cap._sanitize_argv_token("password=hunter2") == "<redacted-secret>"
+    assert cap._sanitize_argv_token("api_key=sk_live_x") == "<redacted-secret>"
+    assert "C:\\secret" not in cap._sanitize_argv_token("C:\\secret\\x")
+    assert "//server/share" not in cap._sanitize_argv_token("//server/share/x")
+    # A safe repository-relative token is preserved unchanged.
+    assert cap._sanitize_argv_token("scripts/ci/verify_guard_registry.py") == \
+        "scripts/ci/verify_guard_registry.py"
+
+
+def test_sanitize_command_id_redacts_hostile_forms():
+    """Unit: a CommandSpec id is sanitized (redacted + bounded) before persistence."""
+    assert cap._sanitize_command_id("registry-validation") == "registry-validation"
+    # A non-string or empty id collapses to the controlled marker.
+    assert cap._sanitize_command_id("") == "<non-string>"
+    assert cap._sanitize_command_id(None) == "<non-string>"
+    # Control characters are stripped.
+    assert "\n" not in cap._sanitize_command_id("bad\nid")
+    assert "\t" not in cap._sanitize_command_id("bad\tid")
+    # Secret assignments and absolute path forms are redacted.
+    assert "hunter2" not in cap._sanitize_command_id("password=hunter2")
+    assert "<redacted-secret>" in cap._sanitize_command_id("password=hunter2")
+    assert "C:\\Users" not in cap._sanitize_command_id("id C:\\Users\\x")
+    # An oversized id is length-bounded by MAX_COMMAND_ID_LEN.
+    long_id = "a" * (cap.MAX_COMMAND_ID_LEN + 5)
+    sanitized_long = cap._sanitize_command_id(long_id)
+    assert len(sanitized_long) <= cap.MAX_COMMAND_ID_LEN + len("<truncated>")
+
+
+def test_preflight_argv_tokens_sanitized(tmp_path):
+    """Preflight command records store sanitized argv (no verbatim tokens)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                         command_matrix=_fake_matrix(str(root), str(out)))
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    for rec in gs["preflight_commands"]:
+        for token in rec["argv"]:
+            _assert_no_absolute(token)
+
+
+# ── New tests: porcelain status parsing (requirement 1) ───────────────────────────
+def test_extract_git_filenames_porcelain_forms():
+    """Porcelain status parsing strips status columns before filename comparison."""
+    # Untracked ``??`` form.
+    assert cap._extract_git_filenames("?? config/guards/db_ownership_policy.yml") == \
+        ["config/guards/db_ownership_policy.yml"]
+    # Modified tracked form (status columns stripped).
+    assert cap._extract_git_filenames(" M app/src/main/Foo.kt") == ["app/src/main/Foo.kt"]
+    # Staged form.
+    assert cap._extract_git_filenames("A  app/src/main/New.kt") == ["app/src/main/New.kt"]
+    # Rename form yields both names.
+    assert cap._extract_git_filenames("R  old.py -> new.py") == ["old.py", "new.py"]
+    # Quoted name (git quoting of special characters) is unquoted.
+    assert cap._extract_git_filenames(' M "weird name.py"') == ["weird name.py"]
+    # ``--name-only`` diff line (no status columns) is returned as-is.
+    assert cap._extract_git_filenames("scripts/ci/x.py") == ["scripts/ci/x.py"]
+
+
+def test_preservation_fails_on_untracked_forbidden_file(tmp_path):
+    """An untracked forbidden file fails the preservation check (porcelain ?? form)."""
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(
+        dirty=False, untracked="config/guards/db_ownership_policy.yml\n")
+    result = cap.preservation_check(str(root), runner)
+    assert result["ok"] is False
+    assert result["policy_ok"] is False
+    assert result["untracked_ok"] is False
+
+
+def test_preservation_fails_on_untracked_production_file(tmp_path):
+    """An untracked app/src/main file fails the preservation check."""
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(dirty=False, untracked="app/src/main/Foo.kt\n")
+    result = cap.preservation_check(str(root), runner)
+    assert result["ok"] is False
+    assert result["production_ok"] is False
+    assert result["untracked_ok"] is False
+
+
+def test_preservation_fails_on_staged_change(tmp_path):
+    """A staged change to a forbidden file fails the preservation check."""
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(
+        dirty=False, staged_diff="config/guards/db_ownership_policy.yml\n")
+    result = cap.preservation_check(str(root), runner)
+    assert result["ok"] is False
+    assert result["policy_ok"] is False
+    assert result["staged_ok"] is False
+
+
+def test_preservation_fails_on_leading_space_staged_porcelain(tmp_path):
+    """A raw porcelain ``' M path'`` line resolves to the bare path.
+
+    Porcelain status lines must reach ``_extract_git_filenames`` UNSTRIPPED: the
+    two status columns are parsed positionally on the raw line, so stripping
+    first would mangle `` M path`` into ``M path`` (which matches nothing) and
+    the forbidden file would be missed on the porcelain surface.
+    """
+    root = _make_root(tmp_path)
+
+    class PorcelainOnlyRunner(ConfigurableFakeRunner):
+        """Every diff surface stays clean; only porcelain reports the change."""
+
+        def _git(self, argv):
+            sub = argv[1:]
+            if sub[:2] == ["status", "--porcelain=v1"]:
+                return FakeOutcome(0, " M config/guards/db_ownership_policy.yml\n")
+            return super()._git(argv)
+
+    result = cap.preservation_check(str(root), PorcelainOnlyRunner(dirty=False))
+    # The leading-space form is detected on the porcelain surface itself.
+    assert result["ok"] is False
+    assert result["policy_ok"] is False
+    assert result["untracked_ok"] is False
+    assert "config/guards/db_ownership_policy.yml" in result["forbidden_changed"]
+
+
+def test_preservation_fails_on_mixed_changes(tmp_path):
+    """Mixed dirty + staged + untracked changes all fail the preservation check."""
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(
+        dirty=True,
+        staged_diff="config/baselines/db_access.json\n",
+        untracked="app/src/main/Bar.kt\n",
+    )
+    result = cap.preservation_check(str(root), runner)
+    assert result["ok"] is False
+    assert result["policy_ok"] is False
+    assert result["production_ok"] is False
+    assert result["untracked_ok"] is False
+
+
+def test_preservation_fails_on_staged_v2_baseline_change(tmp_path):
+    """A staged change to the v2 baseline (control-plane input) fails preservation.
+
+    GR-09 added ``config/baselines/db_access_v2.json`` to
+    ``FORBIDDEN_PRESERVATION_PATHS``; the preservation checker must fail closed
+    when it changes on any surface, exactly like the legacy v1 baseline file.
+    """
+    root = _make_root(tmp_path)
+    runner = ConfigurableFakeRunner(
+        dirty=False, staged_diff="config/baselines/db_access_v2.json\n")
+    result = cap.preservation_check(str(root), runner)
+    assert result["ok"] is False
+    assert result["policy_ok"] is False
+    assert result["staged_ok"] is False
+
+
+# ── New tests: complete custom CommandSpec schema validation (req 2 & 3) ──────────
+def test_validate_command_matrix_missing_artifact_kind_file(tmp_path):
+    """A required file artifact without an explicit kind fails closed."""
+    root = _make_root(tmp_path)
+    spec = cap.CommandSpec(
+        id="c", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=("out.json",),
+        artifact_kinds=(),
+    )
+    violations = cap.validate_command_matrix([spec], str(root))
+    assert any(v.startswith("missing-artifact-kind:c:") for v in violations)
+
+
+def test_validate_command_matrix_missing_artifact_kind_dir(tmp_path):
+    """A required directory artifact without an explicit kind fails closed."""
+    root = _make_root(tmp_path)
+    spec = cap.CommandSpec(
+        id="c", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=("outdir",),
+        artifact_kinds=(),
+    )
+    violations = cap.validate_command_matrix([spec], str(root))
+    assert any(v.startswith("missing-artifact-kind:c:") for v in violations)
+
+
+def test_validate_command_matrix_invalid_artifact_kind_file(tmp_path):
+    """A required artifact declared with a non-file/non-dir kind fails closed."""
+    root = _make_root(tmp_path)
+    spec = cap.CommandSpec(
+        id="c", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=("out.json",),
+        artifact_kinds=(("out.json", "blob"),),
+    )
+    violations = cap.validate_command_matrix([spec], str(root))
+    assert any(v.startswith("missing-artifact-kind:c:") for v in violations)
+
+
+def test_missing_artifact_kind_fails_closed_stop_before_run(tmp_path):
+    """A missing artifact kind fails closed with zero runner calls / empty commands."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(
+        id="c", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=("out.json",),
+        artifact_kinds=(),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("missing-artifact-kind:") for w in evidence["infrastructure_warnings"])
+    # Stop-before-run: no child command executed, no command record produced.
+    assert evidence["commands"] == []
+    assert runner.calls == []
+
+
+def test_custom_command_id_overflow_fails_closed(tmp_path):
+    """An oversized custom command id fails closed with a bounded marker."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    long_id = "x" * (cap.MAX_COMMAND_ID_LEN + 10)
+    matrix = [cap.CommandSpec(
+        id=long_id, log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith(cap.OVERFLOW_COMMAND_ID) for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+    assert runner.calls == []
+
+
+def test_command_id_sanitized_before_persistence(tmp_path):
+    """A short-but-hostile custom command id is sanitized before it is persisted.
+
+    Such an id passes matrix validation (non-empty string within
+    ``MAX_COMMAND_ID_LEN``), so the command runs and a ``CommandResult`` record
+    is produced; the persisted ``id`` must carry no control characters, secret,
+    or absolute-path content in ``evidence.json`` / ``semantic-summary.json``.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    hostile_id = "le\nak\tid password=hunter2 C:\\Users\\tester"
+    assert len(hostile_id) <= cap.MAX_COMMAND_ID_LEN  # passes validation
+    matrix = [cap.CommandSpec(
+        id=hostile_id, log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd_id = evidence["commands"][0]["id"]
+    raw = json.dumps(evidence)
+    # Control characters are stripped; secrets and absolute paths are redacted.
+    assert "\n" not in cmd_id
+    assert "\t" not in cmd_id
+    assert "hunter2" not in raw
+    assert "C:\\Users\\tester" not in raw
+    assert "<redacted-secret>" in cmd_id
+    assert "<redacted-path>" in cmd_id
+    # The semantic summary derives its id from the same sanitized record.
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert semantic["commands"][0]["id"] == cmd_id
+
+
+def test_custom_path_overflow_fails_closed(tmp_path):
+    """An oversized derived path string fails closed with a bounded marker."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    long_path = "x" * (cap.MAX_PATH_LEN + 10) + ".log"
+    matrix = [cap.CommandSpec(
+        id="bad", log_name=long_path,
+        argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith(cap.OVERFLOW_PATH) for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+    assert runner.calls == []
+
+
+def test_persisted_collections_are_bounded(tmp_path):
+    """Persisted collections are bounded by the finite MAX_* constants."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    _capture(str(root), str(out), runner=runner,
+                         command_matrix=_fake_matrix(str(root), str(out)))
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert len(evidence["input_manifest"]) <= cap.MAX_MANIFEST_ENTRIES
+    assert len(evidence["infrastructure_warnings"]) <= cap.MAX_WARNINGS
+    assert len(evidence["commands"]) <= cap.MAX_MATRIX_COMMANDS
+    assert len(evidence["git_state"]["preflight_commands"]) <= 64
+
+
+# ── New tests: warning sanitization (requirement 5) ──────────────────────────────
+def test_warning_sanitization_redacts_secret_and_validates_code():
+    """Warning sanitization redacts secret payloads and rejects untrusted codes."""
+    # A secret assignment inside a warning payload is redacted, never persisted verbatim.
+    out = cap._sanitize_warning("missing-required-input:foo password=secret bar")
+    assert "password=secret" not in out
+    assert "<redacted-secret>" in out
+    # An untrusted / malformed warning code is reduced to a controlled marker.
+    assert cap._sanitize_warning("9b97e79:arbitrary") == cap.REDACTED_MARKER
+    assert cap._sanitize_warning("") == cap.REDACTED_MARKER
+    # A controlled code with a safe repo-relative payload is preserved.
+    assert cap._sanitize_warning("missing-required-input:scripts/x.py") == \
+        "missing-required-input:scripts/x.py"
+
+
+# ── New tests: nested internal/external symlink hash containment (requirement 4) ──
+def test_nested_internal_symlink_hash_exclusion(tmp_path):
+    """A nested internal symlink inside an artifact dir is excluded from the hash."""
+    out = tmp_path / "bundle"
+    out.mkdir()
+    art = out / "artdir"
+    art.mkdir()
+    (art / "summary.json").write_text("internal", encoding="utf-8")
+    nested = art / "nested"
+    nested.mkdir()
+    (nested / "deep.json").write_text("deep", encoding="utf-8")
+    # Internal symlink (points within the bundle) must be skipped, not followed.
+    _try_symlink(str(art / "summary.json"), str(art / "internal_link.json"))
+    h1 = cap.hash_artifact(str(art), "dir")
+    assert h1 is not None
+    # Tampering an internal regular file changes the hash (containment proof).
+    (nested / "deep.json").write_text("changed", encoding="utf-8")
+    h2 = cap.hash_artifact(str(art), "dir")
+    assert h1 != h2
+
+
+def test_external_symlink_hash_exclusion(tmp_path):
+    """An external symlink inside an artifact dir is excluded (never read/hashed)."""
+    out = tmp_path / "bundle"
+    out.mkdir()
+    art = out / "artdir"
+    art.mkdir()
+    (art / "summary.json").write_text("internal", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.json"
+    secret.write_text("EXTERNAL_SECRET", encoding="utf-8")
+    _try_symlink(str(secret), str(art / "evil_link.json"))
+    h1 = cap.hash_artifact(str(art), "dir")
+    assert h1 is not None
+    # Tampering the external file must NOT change the hash (excluded/rejected).
+    secret.write_text("TAMPERED", encoding="utf-8")
+    h2 = cap.hash_artifact(str(art), "dir")
+    assert h1 == h2
+
+
+# ── New tests: strict-review blockers (latest pass) ────────────────────────────
+# Requirement 1: collection bounds enforced during iteration; persisted arrays
+# bounded; runner calls bounded (stop before run on overflow).
+def test_matrix_overflow_stops_runner(tmp_path):
+    """A matrix exceeding MAX_MATRIX_COMMANDS fails closed with zero runner calls."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    big = [
+        cap.CommandSpec(id=f"c{i}", log_name=f"{i:02d}.log",
+                        argv=["python3", "scripts/ci/verify_guard_registry.py"])
+        for i in range(cap.MAX_MATRIX_COMMANDS + 5)
+    ]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=big)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith(cap.OVERFLOW_MATRIX) for w in evidence["infrastructure_warnings"])
+    # Validation failed before any child command ran.
+    assert runner.calls == []
+    assert evidence["commands"] == []
+
+
+def test_persisted_arrays_bounded_under_overflow(tmp_path, monkeypatch):
+    """Persisted manifest/warnings stay within the finite MAX_* bounds on overflow."""
+    monkeypatch.setattr(cap, "MAX_MANIFEST_ENTRIES", 3)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    candidates = [f"scripts/ci/missing_{i}.py" for i in range(6)]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)),
+                              input_candidates=candidates)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # The materialized manifest is bounded (truncated during iteration) and the
+    # controlled overflow marker is retained.
+    assert len(evidence["input_manifest"]) <= cap.MAX_MANIFEST_ENTRIES
+    assert any(w == cap.OVERFLOW_MANIFEST for w in evidence["infrastructure_warnings"])
+
+
+# Requirement 2: any required artifact/report/log hash failure, disappearance,
+# invalid type, symlink, or parse/read failure fails closed (exit 2).
+def test_required_artifact_hash_failure_fails_closed(tmp_path, monkeypatch):
+    """A present, correctly-typed artifact whose hash fails closes the capture."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    monkeypatch.setattr(cap, "hash_artifact", lambda *a, **k: None)
+    matrix = [cap.CommandSpec(
+        id="needs-artifact", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=("present.log",),
+        artifact_kinds=(("present.log", "file"),),
+    )]
+    # The bundle directory does not exist until capture_evidence creates it;
+    # create it here so the pre-seeded artifact write cannot fail at setup.
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "present.log").write_text("data", encoding="utf-8")
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith(cap.ARTIFACT_HASH_FAILED)
+               for w in evidence["infrastructure_warnings"])
+
+
+def test_log_hash_failure_fails_closed(tmp_path, monkeypatch):
+    """A finished log that cannot be read back/hashed is INCOMPLETE
+    (``log-unreadable``), is never hashed as valid evidence, and fails the
+    capture closed (PR-GR-00R part B)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    real_hash = cap._race_safe_hash_file
+
+    def log_hash_only(path, *a, **k):
+        # Fail only for the command log; top-level outputs hash normally so
+        # this test isolates the log-unreadable path.
+        if str(path).endswith("00.log"):
+            return None
+        return real_hash(path, *a, **k)
+
+    monkeypatch.setattr(cap, "_race_safe_hash_file", log_hash_only)
+    matrix = [cap.CommandSpec(id="c", log_name="00.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_UNREADABLE
+    # The unreadable artifact is never hashed as valid evidence.
+    assert cmd["log_sha256"] == ""
+    assert any(w == f"incomplete-command-log:c:{cap.LOG_UNREADABLE}"
+               for w in evidence["infrastructure_warnings"])
+
+
+def test_report_hash_failure_fails_closed(tmp_path, monkeypatch):
+    """A required report whose read/hash fails closes the capture (parser_error)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    # The report hash now derives from the same race-safe byte snapshot used for
+    # parsing, so a read failure (None) must fail closed with REPORT_HASH_FAILED.
+    monkeypatch.setattr(cap, "_race_safe_read_bytes", lambda *a, **k: None)
+    matrix = [_db_cli_matrix(str(root), str(out))]
+    runner = ConfigurableFakeRunner(dirty=False, write_reports=True)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["commands"][0]["parser_error"] == "REPORT_HASH_FAILED"
+
+
+# Requirement 3: race-safe reads/hashing reject symlinks / non-regular files.
+def test_race_safe_rejects_symlink_input(tmp_path):
+    """A symlinked input is rejected by the race-safe reader (None)."""
+    root = _make_root(tmp_path)
+    target = root / "scripts" / "verify_db_access_boundaries.py"
+    link = root / "scripts" / "link_input.py"
+    _try_symlink(str(target), str(link))
+    assert cap._race_safe_read_bytes(str(link)) is None
+
+
+def test_race_safe_rejects_symlink_report(tmp_path):
+    """A symlinked report is rejected by the race-safe hasher (None)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    out.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_report = outside / "evil.json"
+    outside_report.write_text(
+        '{"schema":"cost-aggregator.guard-findings","schema_version":2}', encoding="utf-8")
+    _try_symlink(str(outside_report), str(out / "evil_link.json"))
+    assert cap._race_safe_hash_file(str(out / "evil_link.json")) is None
+
+
+def test_race_safe_rejects_nonregular(tmp_path):
+    """A directory (non-regular) is rejected by the race-safe readers."""
+    root = _make_root(tmp_path)
+    d = root / "adir"
+    d.mkdir()
+    assert cap._race_safe_read_bytes(str(d)) is None
+    assert cap._race_safe_hash_file(str(d)) is None
+
+
+# Requirement 4: malformed injected CommandSpec / nested fields fail closed.
+def test_non_command_spec_fails_closed(tmp_path):
+    """A matrix entry that is not a CommandSpec fails closed with zero runner calls."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [{"id": "bad", "argv": ["python3", "x"]}]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith(cap.INVALID_MATRIX_SPEC)
+               for w in evidence["infrastructure_warnings"])
+    assert runner.calls == []
+    assert evidence["commands"] == []
+
+
+def test_malformed_artifact_kinds_fails_closed(tmp_path):
+    """A malformed artifact_kinds entry (non 2-tuple) fails closed, zero runner calls."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(
+        id="c", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=("out.json",),
+        artifact_kinds=(("out.json", "file"), "bad-entry"),
+    )]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith(cap.INVALID_MATRIX_SPEC)
+               for w in evidence["infrastructure_warnings"])
+    assert runner.calls == []
+    assert evidence["commands"] == []
+
+
+def test_malformed_argv_type_fails_closed(tmp_path):
+    """An argv that is not a list of strings fails closed (type + per-token warning)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="c", log_name="00.log", argv=["python3", 123])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith(cap.INVALID_MATRIX_SPEC)
+               for w in evidence["infrastructure_warnings"])
+    assert any("invalid-matrix-argv:c:" in w for w in evidence["infrastructure_warnings"])
+    assert runner.calls == []
+    assert evidence["commands"] == []
+
+
+# Requirement 5: closed WARNING_CODE_ALLOWLIST + structured make_warning.
+def test_make_warning_structured():
+    """make_warning is the structured constructor; payloads are sanitized."""
+    assert cap.make_warning("missing-required-input", "scripts/x.py") == \
+        "missing-required-input:scripts/x.py"
+    assert cap.make_warning("OVERFLOW_MANIFEST") == cap.OVERFLOW_MANIFEST
+    assert "<redacted-secret>" in cap.make_warning("invalid-matrix-argv", "bad", "password=hunter2")
+    assert "<redacted-path>" in cap.make_warning("invalid-bundle-path", "bad", "C:\\secret")
+
+
+def test_make_warning_unknown_code_redacted():
+    """An unknown warning code collapses to the redaction marker."""
+    assert cap.make_warning("not-a-real-code", "payload") == cap.REDACTED_MARKER
+    assert cap.make_warning("9b97e79", "arbitrary") == cap.REDACTED_MARKER
+
+
+def test_warning_allowlist_rejects_unknown_code():
+    """A warning whose code is outside the closed allowlist is redacted at assembly."""
+    assert cap._sanitize_warning("unknown-code:some arbitrary payload") == cap.REDACTED_MARKER
+    assert cap._sanitize_warning("missing-required-input:scripts/x.py") == \
+        "missing-required-input:scripts/x.py"
+
+
+# ── New tests: latest strict-review blockers (non-string paths / overflow / output hash / snapshot) ──
+# Requirement 1: nested CommandSpec log_name / report_path types validated before any
+# os.path operation; malformed non-string values fail closed with zero runner calls.
+def test_validate_command_matrix_rejects_nonstring_log_and_report_path(tmp_path):
+    """validate_command_matrix flags non-string log_name / report_path (fail closed)."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    log_spec = cap.CommandSpec(id="c", log_name=123, argv=["python3", "x"])
+    report_spec = cap.CommandSpec(
+        id="c", log_name="00.log", argv=["python3", "x"], report_path=456)
+    v1 = cap.validate_command_matrix([log_spec], str(root))
+    v2 = cap.validate_command_matrix([report_spec], str(root))
+    assert any(w.startswith("invalid-bundle-path:") for w in v1)
+    assert any(w.startswith("invalid-bundle-path:") for w in v2)
+
+
+def test_nonstring_log_name_fails_closed_zero_runner(tmp_path):
+    """A non-string log_name fails closed with zero runner calls (no os.path crash)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="c", log_name=123, argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-bundle-path:") for w in evidence["infrastructure_warnings"])
+    # Validation failed before any child command ran.
+    assert runner.calls == []
+    assert evidence["commands"] == []
+
+
+def test_nonstring_report_path_fails_closed_zero_runner(tmp_path):
+    """A non-string report_path fails closed with zero runner calls."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(
+        id="c", log_name="00.log", argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        report_path=456)]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-bundle-path:") for w in evidence["infrastructure_warnings"])
+    assert runner.calls == []
+    assert evidence["commands"] == []
+
+
+# Requirement 2: required-artifact hash collection bounded by an aggregate limit;
+# overflow fails closed with a controlled marker, never materializing unbounded hashes.
+def test_required_artifact_hash_overflow_fails_closed(tmp_path, monkeypatch):
+    """An unbounded required-artifact hash set fails closed (OVERFLOW marker)."""
+    monkeypatch.setattr(cap, "MAX_REQUIRED_ARTIFACT_HASHES", 2)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    arts = tuple(f"art{i}.json" for i in range(5))
+    kinds = tuple((f"art{i}.json", "file") for i in range(5))
+    matrix = [cap.CommandSpec(
+        id="many", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        required_artifacts=arts, artifact_kinds=kinds)]
+    # The bundle directory does not exist until capture_evidence creates it;
+    # create it here so the pre-seeded artifact writes cannot fail at setup.
+    out.mkdir(parents=True, exist_ok=True)
+    for i in range(5):
+        (out / f"art{i}.json").write_text("data", encoding="utf-8")
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == cap.OVERFLOW_REQUIRED_ARTIFACT_HASHES
+               for w in evidence["infrastructure_warnings"])
+    # Hashes were bounded: at most the limit was materialized (no unbounded set).
+    assert len(evidence["required_artifact_hashes"]) <= cap.MAX_REQUIRED_ARTIFACT_HASHES
+
+
+# Requirement 3: any top-level output hash/read failure fails closed (exit 2),
+# emits a controlled diagnostic, and never substitutes an empty hash.
+def test_output_hash_failure_fails_closed(tmp_path, monkeypatch):
+    """A top-level output whose hash fails closes the capture (no empty hash)."""
+    monkeypatch.setattr(cap, "_race_safe_hash_file", lambda *a, **k: None)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith(cap.OUTPUT_HASH_FAILED)
+               for w in evidence["infrastructure_warnings"])
+    # The bundle is no longer trusted once an output hash failed.
+    assert evidence["trusted"] is False
+    # No empty hash line was substituted into output-sha256.txt.
+    out_sha = (out / "output-sha256.txt").read_text(encoding="utf-8")
+    for line in out_sha.splitlines():
+        if not line:
+            continue
+        assert not line.startswith("  "), f"empty hash line found: {line!r}"
+
+
+def test_final_output_hash_pass_failure_is_consistent_and_untrusted(tmp_path, monkeypatch):
+    """A top-level output whose hash succeeds on the first pass but fails on the
+    FINAL pass (a TOCTOU / replacement between the two passes) still sets
+    ``capture_failed``, emits the controlled ``output-hash-failed`` diagnostic, and
+    rewrites the on-disk evidence to a consistent untrusted state — never a stale
+    trusted artifact."""
+    # Return a valid hash on the first call per path, None on the second (the final
+    # pass).  Each top-level output is hashed exactly twice (first pass + final
+    # pass); command logs are hashed once and stay valid.
+    call_counts: dict = {}
+
+    def fake_hash(path):
+        call_counts[path] = call_counts.get(path, 0) + 1
+        if call_counts[path] == 1:
+            return "a" * 64
+        return None
+
+    monkeypatch.setattr(cap, "_race_safe_hash_file", fake_hash)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    # The final-pass failure closes the capture.
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # The controlled diagnostic is present and the bundle is untrusted.
+    assert any(w.startswith(cap.OUTPUT_HASH_FAILED)
+               for w in evidence["infrastructure_warnings"])
+    assert evidence["trusted"] is False
+    # The on-disk evidence reflects the final (untrusted) state, not a stale
+    # pre-failure trusted artifact.
+    assert evidence["trusted"] is False
+    # No empty hash line was substituted into output-sha256.txt.
+    out_sha = (out / "output-sha256.txt").read_text(encoding="utf-8")
+    for line in out_sha.splitlines():
+        if not line:
+            continue
+        assert not line.startswith("  "), f"empty hash line found: {line!r}"
+
+
+def test_final_pass_single_output_failure_persisted_and_recomputed(tmp_path, monkeypatch):
+    """First hash pass succeeds for every output; the FINAL pass fails for one
+    different output.  The diagnostic must be persisted into the evidence /
+    summary / semantic artifacts and ``output-sha256.txt`` must be recomputed
+    AFTER the final rewrite: the failed output excluded, every surviving hash
+    matching the final on-disk bytes (no stale hash, no lost diagnostic)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    victim_rel = "summary.md"
+    out_real = os.path.realpath(str(out))
+    real_hash = cap._race_safe_hash_file
+    call_counts: dict = {}
+
+    def fake_hash(path):
+        call_counts[path] = call_counts.get(path, 0) + 1
+        # First pass (call #1 per path) succeeds everywhere; from the second
+        # (final) pass on, only the victim output fails (TOCTOU on one file).
+        if call_counts[path] > 1 and cap._posix_rel(path, out_real) == victim_rel:
+            return None
+        return real_hash(path)
+
+    monkeypatch.setattr(cap, "_race_safe_hash_file", fake_hash)
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    # The final-pass diagnostic is persisted (not lost) and the bundle is untrusted.
+    assert f"{cap.OUTPUT_HASH_FAILED}:{victim_rel}" in evidence["infrastructure_warnings"]
+    assert evidence["trusted"] is False
+    # summary.md was rewritten by the finalization and carries the same warning;
+    # semantic-summary.json reflects the untrusted state.
+    summary_text = (out / "summary.md").read_text(encoding="utf-8")
+    assert f"- {cap.OUTPUT_HASH_FAILED}:{victim_rel}" in summary_text
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert semantic["trusted"] is False
+    # output-sha256.txt was recomputed after the final rewrite: the victim is
+    # excluded and every published hash matches the FINAL on-disk bytes.
+    out_sha = (out / "output-sha256.txt").read_text(encoding="utf-8")
+    published = {}
+    for line in out_sha.splitlines():
+        if not line:
+            continue
+        h, rel = line.split("  ", 1)
+        published[rel] = h
+    assert victim_rel not in published
+    expected_names = {
+        "git-state.json", "environment.json", "input-manifest.json",
+        "input-sha256.txt", "evidence.json", "semantic-summary.json",
+    }
+    assert set(published) == expected_names
+    for rel, h in published.items():
+        assert h == real_hash(os.path.join(out_real, rel)), f"stale hash published for {rel}"
+
+
+# Requirement 4: report hash and parse use one stable byte snapshot (no version mix).
+def test_report_hash_and_parse_use_one_snapshot(tmp_path, monkeypatch):
+    """run_command hashes and parses the SAME report byte snapshot."""
+    fixed = json.dumps({
+        "schema": cap.REPORT_SCHEMA, "schema_version": cap.REPORT_SCHEMA_VERSION,
+        "guard": "db_access", "findings": [], "diagnostics": [{"code": "X"}],
+        "statistics": {"trusted": True, "files_scanned": 1},
+    }).encode("utf-8")
+    monkeypatch.setattr(cap, "_race_safe_read_bytes", lambda *a, **k: fixed)
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [_db_cli_matrix(str(root), str(out))]
+    runner = ConfigurableFakeRunner(dirty=False, write_reports=True)
+    _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    # The hash and the parse both derive from the single ``fixed`` snapshot.
+    assert cmd["report_sha256"] == cap.sha256_bytes(fixed)
+    assert cmd["parser_error"] is None
+    assert cmd["report_diagnostic_codes"] == ["X"]
+
+
+def test_parse_v2_report_accepts_raw_snapshot(tmp_path):
+    """parse_v2_report parses a supplied raw snapshot without re-reading the path."""
+    raw = json.dumps({
+        "schema": cap.REPORT_SCHEMA, "schema_version": cap.REPORT_SCHEMA_VERSION,
+        "findings": [], "diagnostics": [], "statistics": {"trusted": False},
+    }).encode("utf-8")
+    parsed = cap.parse_v2_report("ignored-path", raw=raw)
+    assert parsed["schema_version"] == cap.REPORT_SCHEMA_VERSION
+    assert parsed["trusted"] is False
+    assert parsed["parser_error"] is None
+
+
+# ── Strict typed v2 report containers (malformed shapes fail closed) ──────────
+def _v2_raw(**overrides):
+    """A minimal valid v2 report byte snapshot with per-key overrides."""
+    report = {
+        "schema": REPORT_SCHEMA,
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "guard": "db_access",
+        "findings": [],
+        "diagnostics": [],
+        "statistics": {"trusted": True},
+    }
+    report.update(overrides)
+    return json.dumps(report).encode("utf-8")
+
+
+def test_parse_v2_report_rejects_statistics_list():
+    """A list-typed statistics container is malformed (never raises, fails closed).
+
+    Regression: a list previously reached ``statistics.get("trusted")`` and raised
+    ``AttributeError``, violating the parser's never-raise contract.
+    """
+    parsed = cap.parse_v2_report("ignored-path", raw=_v2_raw(statistics=["trusted"]))
+    assert parsed["parser_error"] == cap.MALFORMED_STATISTICS
+    assert parsed["trusted"] is None
+    assert parsed["finding_count"] is None
+    assert parsed["diagnostic_codes"] == []
+
+
+def test_parse_v2_report_rejects_diagnostics_dict():
+    """A dict-typed diagnostics container is malformed, never partially accepted."""
+    parsed = cap.parse_v2_report(
+        "ignored-path", raw=_v2_raw(diagnostics={"code": "X"}))
+    assert parsed["parser_error"] == cap.MALFORMED_DIAGNOSTICS
+    assert parsed["diagnostic_codes"] == []
+    assert parsed["finding_count"] is None
+
+
+def test_parse_v2_report_rejects_findings_dict():
+    """A dict-typed findings container is malformed (count never derived from keys).
+
+    Regression: a dict previously produced ``finding_count`` = number of keys with
+    ``parser_error`` ``None`` — silently accepted.
+    """
+    parsed = cap.parse_v2_report(
+        "ignored-path",
+        raw=_v2_raw(findings={"a": {"rule": "X"}, "b": {"rule": "Y"}}))
+    assert parsed["parser_error"] == cap.MALFORMED_FINDINGS
+    assert parsed["finding_count"] is None
+
+
+def test_parse_v2_report_rejects_malformed_diagnostic_entry():
+    """A diagnostic entry that is not an object with a string code fails closed.
+
+    A non-string code (or a bare-string diagnostic) previously was silently
+    skipped; it now yields a controlled parser error.
+    """
+    parsed_nonstring_code = cap.parse_v2_report(
+        "ignored-path", raw=_v2_raw(diagnostics=[{"code": 123}]))
+    assert parsed_nonstring_code["parser_error"] == cap.MALFORMED_DIAGNOSTIC_ENTRY
+    parsed_bare_string = cap.parse_v2_report(
+        "ignored-path",
+        raw=_v2_raw(diagnostics=["DB_POLICY_INCOMPLETE_V2"]))
+    assert parsed_bare_string["parser_error"] == cap.MALFORMED_DIAGNOSTIC_ENTRY
+    # No partial codes survive a malformed entry.
+    assert parsed_nonstring_code["diagnostic_codes"] == []
+    assert parsed_bare_string["diagnostic_codes"] == []
+
+
+def test_parse_v2_report_rejects_malformed_finding_shape():
+    """Each finding must be a bounded JSON object; anything else fails closed."""
+    parsed_scalar = cap.parse_v2_report(
+        "ignored-path", raw=_v2_raw(findings=["not-an-object"]))
+    assert parsed_scalar["parser_error"] == cap.MALFORMED_FINDING_ENTRY
+    # A hostile wide-object finding exceeding MAX_FINDING_KEYS also fails closed.
+    wide = {f"k{i}": i for i in range(cap.MAX_FINDING_KEYS + 1)}
+    parsed_wide = cap.parse_v2_report(
+        "ignored-path", raw=_v2_raw(findings=[wide]))
+    assert parsed_wide["parser_error"] == cap.MALFORMED_FINDING_ENTRY
+    # A well-formed finding still parses cleanly.
+    ok = cap.parse_v2_report(
+        "ignored-path",
+        raw=_v2_raw(findings=[{"rule": "X", "severity": "error"}]))
+    assert ok["parser_error"] is None
+    assert ok["finding_count"] == 1
+
+
+# ── PR-GR-00R part A: caller-stated run pin replaces the fixed TARGET_SHA ──────
+
+def test_no_hardcoded_target_sha_remains_authoritative():
+    """Grep-style: the retired permanent TARGET_SHA authority is fully gone.
+
+    No historical SHA literal may remain authoritative anywhere in the capture
+    tool: the constant, its name, and its value must be absent from the source,
+    and no module attribute may carry the old lock.
+    """
+    with open(cap.__file__, encoding="utf-8") as handle:
+        source = handle.read()
+    # The retired historical SHA literal appears nowhere in the tool source.
+    assert RETIRED_TARGET_SHA not in source
+    # The constant name/authority is gone entirely (no definition, no reference).
+    assert "TARGET_SHA" not in source
+    assert not hasattr(cap, "TARGET_SHA")
+    # The pin contract exists instead: syntax validation for the caller-stated SHA.
+    assert cap._is_valid_sha40(TEST_SHA)
+
+
+class OtherCommitRunner(ConfigurableFakeRunner):
+    """Fixture repo checked out at a commit DIFFERENT from the retired target."""
+
+    def _git(self, argv):
+        if (_is_git_cmd(argv, "rev-parse", "HEAD")
+                and "HEAD^{tree}" not in argv):
+            return FakeOutcome(0, OTHER_SHA)
+        if _is_git_cmd(argv, "log", "--oneline", "-20"):
+            return FakeOutcome(0, f"{OTHER_SHA} base commit\n")
+        return super()._git(argv)
+
+
+def test_arbitrary_valid_sha_accepted_as_run_pin(tmp_path):
+    """Any valid caller-declared SHA is accepted; the retired constant is irrelevant.
+
+    The fixture repository is checked out at OTHER_SHA — a different commit than
+    the retired hard-coded target — and the capture succeeds when the caller
+    pins exactly that commit.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = OtherCommitRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=OTHER_SHA, base_ref=BASE_REF_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is True
+    assert evidence["requested_sha"] == OTHER_SHA
+    assert evidence["observed_sha"] == OTHER_SHA
+    assert evidence["tree_sha"] == TEST_TREE
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert semantic["requested_sha"] == OTHER_SHA
+    assert semantic["commit"] == OTHER_SHA
+
+
+def test_missing_expected_sha_fails_closed_before_any_command(tmp_path):
+    """Omitting the run pin is a controlled failure with ZERO runner calls.
+
+    The base pin is supplied (its own failure mode is covered by
+    ``test_missing_base_ref_fails_closed_before_any_command``) so this test
+    isolates the missing ``expected_sha`` contract."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              base_ref=BASE_REF_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    # Controlled failure BEFORE any command: not even a git probe was issued.
+    assert runner.calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == "missing-expected-sha" for w in evidence["infrastructure_warnings"])
+    assert evidence["trusted"] is False
+    assert evidence["commands"] == []
+
+
+@pytest.mark.parametrize("bad_pin", [
+    "9B97E7979130DE605D164386BBF719CF20579475",   # uppercase hex
+    "9b97e7979130de605d164386bbf719cf2057947",    # 39 chars (short)
+    "9b97e7979130de605d164386bbf719cf205794755",  # 41 chars (long)
+    "g" * 40,                                     # non-hex characters
+    "9b97e7979130de605d164386bbf719cf2057947!",   # punctuation
+])
+def test_invalid_expected_sha_syntax_rejected(tmp_path, bad_pin):
+    """A pin that is not exactly 40 lowercase hex fails closed before any command."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=bad_pin, base_ref=BASE_REF_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    assert runner.calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == "invalid-expected-sha" for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+
+
+# Basenames of every guard-suite executable a matrix command could invoke.
+# Both Gradle wrapper launcher names are listed: the production matrix resolves
+# the token at construction (``gradlew.bat`` on Windows, ``./gradlew`` elsewhere).
+_GUARD_SCRIPT_BASENAMES = frozenset({
+    "verify_guard_registry.py",
+    "verify_db_access_boundaries.py",
+    "guard_ratchet.py",
+    "run_static_guard_suite.py",
+    "gradlew",
+    "gradlew.bat",
+    "pytest",
+})
+
+
+class GuardCallSpyRunner(ConfigurableFakeRunner):
+    """Records every attempted guard-suite (non-git) command invocation."""
+
+    def __init__(self, head_override=None, **kwargs):
+        super().__init__(**kwargs)
+        self.head_override = head_override
+        self.guard_calls: list = []
+
+    def _git(self, argv):
+        if (self.head_override is not None
+                and _is_git_cmd(argv, "rev-parse", "HEAD")
+                and "HEAD^{tree}" not in argv):
+            return FakeOutcome(0, self.head_override)
+        return super()._git(argv)
+
+    def __call__(self, argv, cwd):
+        argv = list(argv)
+        if argv and argv[0] != "git" and any(
+                _argv_basename(tok) in _GUARD_SCRIPT_BASENAMES for tok in argv):
+            self.guard_calls.append(argv)
+        return super().__call__(argv, cwd)
+
+
+def test_sha_mismatch_rejects_before_any_matrix_command(tmp_path):
+    """A pin/HEAD mismatch fails closed PRE-LAUNCH: zero guard commands run.
+
+    Read-only git observations (preflight identity) still happen so the bundle
+    can record requested vs observed SHAs, but no matrix command starts.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = GuardCallSpyRunner(dirty=False, head_override="0" * 40)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    # The pin gate stops every MATRIX command pre-launch.  The spy does still
+    # see the read-only PREFLIGHT toolchain probe (``gradlew --version``):
+    # it is part of the git/environment state collected before the gate so a
+    # rejected bundle records the environment it was rejected in, and it
+    # executes no guard logic.  It must be the ONLY guard-suite-looking
+    # invocation — no matrix command may start.
+    assert runner.guard_calls == [["./gradlew", "--version"]]
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("wrong-sha:") for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+    # Both sides of the failed comparison are recorded.
+    assert evidence["requested_sha"] == TEST_SHA
+    assert evidence["observed_sha"] == "0" * 40
+
+
+class MidCaptureDriftRunner(ConfigurableFakeRunner):
+    """Serves the pinned identity during preflight, then mutates it post-matrix.
+
+    Observations of the chosen surface beyond ``drift_after`` calls return the
+    drifted value, simulating the repository moving underneath a running
+    capture (the post-matrix re-check observes a different HEAD/tree).
+    """
+
+    def __init__(self, surface="head", drift_after=1, **kwargs):
+        super().__init__(**kwargs)
+        self.surface = surface
+        self.drift_after = drift_after
+        self._surface_calls = 0
+
+    def _git(self, argv):
+        if (self.surface == "head"
+                and _is_git_cmd(argv, "rev-parse", "HEAD")
+                and "HEAD^{tree}" not in argv):
+            self._surface_calls += 1
+            if self._surface_calls > self.drift_after:
+                return FakeOutcome(0, DRIFT_SHA)
+            return FakeOutcome(0, TEST_SHA)
+        if self.surface == "tree" and _is_git_cmd(argv, "rev-parse", "HEAD^{tree}"):
+            self._surface_calls += 1
+            if self._surface_calls > self.drift_after:
+                return FakeOutcome(0, DRIFT_SHA)
+            return FakeOutcome(0, TEST_TREE)
+        return super()._git(argv)
+
+
+@pytest.mark.parametrize("surface", ["head", "tree"])
+def test_post_capture_identity_drift_returns_2(tmp_path, surface):
+    """HEAD/tree changed during the capture -> incomplete/untrusted bundle, exit 2."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = MidCaptureDriftRunner(dirty=False, surface=surface, drift_after=1)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is False
+    assert any(w.startswith("post-capture-drift:")
+               for w in evidence["infrastructure_warnings"])
+    # Unlike the pre-launch pin gate, the matrix DID run before the drift was
+    # observed — the bundle is complete but marked untrusted.
+    assert evidence["commands"]
+
+
+def test_clean_pin_capture_succeeds_with_child_exits_1_and_2(tmp_path):
+    """A clean expected-SHA capture succeeds while observing child exits 1 and 2.
+
+    Nonzero guard-child exits are stored observations, never capture failures;
+    only the capture tool's own completeness gates produce exit 2.
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is True
+    by_id = {c["id"]: c["exit_code"] for c in evidence["commands"]}
+    # Fake-runner defaults: the db CLI is blocked (exit 2) and Gradle fails (1).
+    assert by_id["db-cli"] == 2
+    assert by_id["gradle-db"] == 1
+    assert by_id["registry-validation"] == 0
+
+
+def test_evidence_and_git_state_record_pin_metadata(tmp_path):
+    """requested_sha / observed_sha / tree_sha land in git-state AND evidence."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    for record in (evidence, gs):
+        assert record["requested_sha"] == TEST_SHA
+        assert record["observed_sha"] == TEST_SHA
+        assert record["tree_sha"] == TEST_TREE
+    # The legacy top-level fixed-target field is gone.
+    assert "target_sha" not in evidence
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert semantic["requested_sha"] == TEST_SHA
+
+
+def test_cli_requires_expected_sha(tmp_path):
+    """--expected-sha is mandatory on the CLI (argv-only execution)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    with pytest.raises(SystemExit) as excinfo:
+        cap.main(["--root", str(root), "--out", str(out)])
+    assert excinfo.value.code == 2
+    # argparse rejects the invocation before any capture logic runs.
+    assert not (out / "evidence.json").is_file()
+
+
+def test_cli_rejects_invalid_expected_sha_syntax(tmp_path):
+    """Invalid --expected-sha syntax is a controlled pre-command failure."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    with pytest.raises(SystemExit) as excinfo:
+        cap.main(["--root", str(root), "--out", str(out),
+                  "--expected-sha", "9B97E7979130DE605D164386BBF719CF20579475"])
+    assert excinfo.value.code == 2
+    assert not (out / "evidence.json").is_file()
+
+
+# ── PR-GR-00R part B: complete/incomplete command-log capture ──────────────────
+
+class _OversizedOutputRunner:
+    """Wraps the clean fake runner; inflates every non-git command's combined
+    output far past ``CHILD_OUTPUT_LIMIT`` so the cap-exceedance path runs."""
+
+    def __init__(self, multiplier: int = 4) -> None:
+        self._inner = ConfigurableFakeRunner(dirty=False)
+        self._multiplier = multiplier
+
+    def __call__(self, argv, cwd):
+        outcome = self._inner(argv, cwd)
+        if argv and argv[0] == "git":
+            # Keep the git preflight/preservation surface CLEAN.
+            return outcome
+        return FakeOutcome(outcome.returncode,
+                           "x" * (cap.CHILD_OUTPUT_LIMIT * self._multiplier))
+
+
+def _log_record(evidence, index=0):
+    return evidence["commands"][index]
+
+
+def _assert_no_tmp_leftovers(out):
+    leftovers = [name for dirpath, _dirs, files in os.walk(str(out))
+                 for name in files if ".tmp" in name]
+    assert leftovers == []
+
+
+def test_small_log_complete_and_hashed(tmp_path):
+    """A small combined log is COMPLETE: atomically published, sized, hashed,
+    and marked complete with no failure code."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="small", log_name="00-small.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 0
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    # The part-B schema fields are present on every command record.
+    for key in ("log_bytes", "log_complete", "log_failure_code"):
+        assert key in cmd
+    assert cmd["log_complete"] is True
+    assert cmd["log_failure_code"] is None
+    log_path = out / "commands" / "00-small.log"
+    assert log_path.is_file()
+    assert cmd["log_bytes"] == log_path.stat().st_size
+    assert cmd["log_bytes"] > 0
+    # The recorded hash matches the published artifact bytes exactly.
+    assert cmd["log_sha256"] == cap.sha256_bytes(log_path.read_bytes())
+    # argv stays an array and the child exit code is preserved.
+    assert isinstance(cmd["argv"], list)
+    assert cmd["exit_code"] == 0
+    _assert_no_tmp_leftovers(out)
+
+
+def test_over_cap_log_incomplete_exit_2_never_silent_truncation(tmp_path):
+    """Cap exceedance is INCOMPLETE: capture exit 2, untrusted, controlled
+    ``output-limit-exceeded`` code, partial artifact preserved but NEVER hashed
+    as valid evidence.  The tool never exits 0 with a truncated log."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(id="huge", log_name="00-huge.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    rc = _capture(str(root), str(out), runner=_OversizedOutputRunner(),
+                  command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_OUTPUT_LIMIT_EXCEEDED
+    # A partial artifact is never hashed as valid evidence.
+    assert cmd["log_sha256"] == ""
+    # The child exit code is still observed truthfully (incompleteness of the
+    # LOG is signaled separately from the child's status).
+    assert cmd["exit_code"] == 0
+    assert evidence["trusted"] is False
+    assert any(w == f"incomplete-command-log:huge:{cap.LOG_OUTPUT_LIMIT_EXCEEDED}"
+               for w in evidence["infrastructure_warnings"])
+    # The flagged partial artifact is preserved on disk, bounded, and
+    # self-describing (exactly one truncation marker).
+    log_path = out / "commands" / "00-huge.log"
+    assert log_path.is_file()
+    data = log_path.read_text(encoding="utf-8")
+    assert data.endswith(cap.LOG_TRUNCATION_MARKER)
+    assert data.count(cap.LOG_TRUNCATION_MARKER) == 1
+    assert len(data) <= cap.CHILD_OUTPUT_LIMIT + len(cap.LOG_TRUNCATION_MARKER)
+    # Raw payload text never reaches evidence.json; no temp names leak.
+    raw = json.dumps(evidence)
+    assert "x" * 64 not in raw
+    assert ".tmp" not in raw
+    _assert_no_tmp_leftovers(out)
+
+
+def test_semantic_summary_equal_when_logs_incomplete_both_runs(tmp_path):
+    """Log volume metadata (byte counts / completeness / failure code) never
+    reaches semantic-summary.json: two same-SHA runs whose command logs are
+    both INCOMPLETE still compare byte-identical."""
+    root = _make_root(tmp_path)
+    out1 = root / "out" / "run-1"
+    out2 = root / "out" / "run-2"
+    rc1 = _capture(str(root), str(out1), runner=_OversizedOutputRunner(),
+                   command_matrix=_fake_matrix(str(root), str(out1)))
+    rc2 = _capture(str(root), str(out2), runner=_OversizedOutputRunner(),
+                   command_matrix=_fake_matrix(str(root), str(out2)))
+    assert rc1 == 2
+    assert rc2 == 2
+    s1 = json.loads((out1 / "semantic-summary.json").read_text(encoding="utf-8"))
+    s2 = json.loads((out2 / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert s1 == s2
+    dumped = json.dumps(s1)
+    for banned in ("log_bytes", "log_complete", "log_failure_code"):
+        assert banned not in dumped
+
+
+def test_log_temp_open_failure_is_log_write_failed_and_skips_execution(tmp_path, monkeypatch):
+    """A temp log that cannot be created is INCOMPLETE (``log-write-failed``);
+    the uncapturable child command is never executed (no side effects without
+    evidence)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    real_mkstemp = cap.tempfile.mkstemp
+
+    def failing_mkstemp(*args, **kwargs):
+        if os.path.basename(str(kwargs.get("dir", ""))) == "commands":
+            raise OSError("simulated temp-log creation failure")
+        return real_mkstemp(*args, **kwargs)
+
+    monkeypatch.setattr(cap.tempfile, "mkstemp", failing_mkstemp)
+    matrix = [cap.CommandSpec(id="guarded", log_name="00-guarded.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_WRITE_FAILED
+    assert cmd["log_sha256"] == ""
+    assert cmd["log_bytes"] == 0
+    # The command was never executed, so there is no exit code to observe.
+    assert cmd["exit_code"] is None
+    assert not (out / "commands" / "00-guarded.log").exists()
+    # Only preflight git probes ran; the guarded matrix command did not.
+    executed_tokens = [tok for call in runner.calls for tok in call]
+    assert not any(tok.endswith("verify_guard_registry.py")
+                   for tok in executed_tokens)
+    assert any(w == f"incomplete-command-log:guarded:{cap.LOG_WRITE_FAILED}"
+               for w in evidence["infrastructure_warnings"])
+    _assert_no_tmp_leftovers(out)
+
+
+def test_log_stream_write_failure_is_log_write_failed(tmp_path, monkeypatch):
+    """A write failure while streaming marks the log INCOMPLETE
+    (``log-write-failed``) while the child's exit code is still observed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    def failing_write_chunk(self, chunk):
+        raise OSError("simulated disk-full while streaming")
+
+    monkeypatch.setattr(cap._CommandLogSink, "_write_chunk", failing_write_chunk)
+    matrix = [cap.CommandSpec(id="wfail", log_name="00-wfail.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_WRITE_FAILED
+    assert cmd["log_sha256"] == ""
+    # The child DID run; its status remains a truthful observation.
+    assert cmd["exit_code"] == 0
+    assert any(w.endswith(f":{cap.LOG_WRITE_FAILED}")
+               for w in evidence["infrastructure_warnings"])
+    _assert_no_tmp_leftovers(out)
+
+
+def test_log_publish_failure_is_log_write_failed_without_leftovers(tmp_path, monkeypatch):
+    """An ``os.replace`` publish failure is ``log-write-failed``: nothing is
+    published, no ``*.tmp`` leftover survives, and the capture fails closed."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    real_replace = cap.os.replace
+
+    def failing_replace(src, dst):
+        if os.path.basename(str(dst)) == "00-pub.log":
+            raise OSError("simulated atomic-publish failure")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(cap.os, "replace", failing_replace)
+    matrix = [cap.CommandSpec(id="pub", log_name="00-pub.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is False
+    assert cmd["log_failure_code"] == cap.LOG_WRITE_FAILED
+    assert cmd["log_sha256"] == ""
+    assert cmd["log_bytes"] == 0
+    assert not (out / "commands" / "00-pub.log").exists()
+    _assert_no_tmp_leftovers(out)
+
+
+def test_production_streaming_runner_captures_merged_output(tmp_path):
+    """The real streaming runner captures merged stdout+stderr through the sink
+    into an atomically published, hashable COMPLETE log (small output)."""
+    final = tmp_path / "merged.log"
+    sink = cap._CommandLogSink(str(final))
+    assert sink.open() is True
+    rc = cap.streaming_subprocess_runner(
+        [sys.executable, "-c",
+         "import sys; sys.stdout.write('out-line\\n'); "
+         "sys.stderr.write('err-line\\n')"],
+        str(tmp_path), sink.sink)
+    sink.finish()
+    assert rc == 0
+    assert sink.failure_code is None
+    assert sink.exceeded is False
+    text = final.read_text(encoding="utf-8")
+    assert "out-line" in text
+    assert "err-line" in text
+    # The published artifact hashes exactly as written.
+    assert cap._race_safe_hash_file(str(final)) == \
+        cap.sha256_bytes(final.read_bytes())
+
+
+def test_production_streaming_runner_caps_output(tmp_path):
+    """The real streaming runner enforces the cap on live merged output:
+    exceedance flags ``output-limit-exceeded``, appends exactly one marker,
+    stays bounded, and keeps draining (child exits normally)."""
+    final = tmp_path / "big.log"
+    sink = cap._CommandLogSink(str(final))
+    assert sink.open() is True
+    rc = cap.streaming_subprocess_runner(
+        [sys.executable, "-c", "print('x' * 30000)"],
+        str(tmp_path), sink.sink)
+    sink.finish()
+    # The child was fully drained (never blocked on a full pipe).
+    assert rc == 0
+    assert sink.failure_code == cap.LOG_OUTPUT_LIMIT_EXCEEDED
+    assert sink.exceeded is True
+    data = final.read_text(encoding="utf-8")
+    assert data.endswith(cap.LOG_TRUNCATION_MARKER)
+    assert data.count(cap.LOG_TRUNCATION_MARKER) == 1
+    assert len(data) <= cap.CHILD_OUTPUT_LIMIT + len(cap.LOG_TRUNCATION_MARKER)
+
+
+def test_evidence_records_log_state_without_raw_payload(tmp_path):
+    """evidence.json carries the bounded log-state fields only: no raw child
+    payload, no secret, no absolute/temp path ever reaches it."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class LeakyRunner:
+        def __init__(self):
+            self._inner = ConfigurableFakeRunner(dirty=False)
+
+        def __call__(self, argv, cwd):
+            outcome = self._inner(argv, cwd)
+            if argv and argv[0] == "git":
+                return outcome
+            return FakeOutcome(outcome.returncode,
+                               "registry ok password=hunter2secret "
+                               "C:\\Users\\tester\\x.log")
+
+    matrix = [cap.CommandSpec(id="leaky", log_name="00-leaky.log",
+                              argv=["python3", "scripts/ci/verify_guard_registry.py"])]
+    rc = _capture(str(root), str(out), runner=LeakyRunner(), command_matrix=matrix)
+    assert rc == 0
+    raw = (out / "evidence.json").read_text(encoding="utf-8")
+    assert "hunter2secret" not in raw
+    assert "C:\\Users\\tester" not in raw
+    assert ".tmp" not in raw
+    evidence = json.loads(raw)
+    cmd = _log_record(evidence)
+    assert cmd["log_complete"] is True
+    assert cmd["log_failure_code"] is None
+
+
+# ── Strict-review blocker B-1: zero-side-effect command matrix ─────────────────
+
+class UntrackedSideEffectRunner(ConfigurableFakeRunner):
+    """First real matrix command leaves an untracked, non-ignored file behind.
+
+    Mirrors the B-1 failure mode: a matrix command (e.g. an unpinned pytest
+    run) materializes an untracked working-tree path mid-matrix.  Every
+    ``git status --porcelain=v1`` observation after that point reports it as
+    an untracked ``??`` entry, exactly like real git would, while preflight /
+    preservation observations (taken before any matrix command ran) stay
+    clean.  Interpreter/version probes are excluded so the side effect lands
+    strictly inside the matrix, not during preflight.
+    """
+
+    def __init__(self, rel_path: str, **kwargs):
+        super().__init__(**kwargs)
+        self.rel_path = rel_path
+        self.created = False
+
+    def __call__(self, argv, cwd):
+        outcome = super().__call__(argv, cwd)
+        if (not self.created and argv and argv[0] != "git"
+                and len(argv) > 1 and argv[1] not in ("--version", "-version")):
+            target = os.path.join(str(cwd), self.rel_path)
+            parent = os.path.dirname(target)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("untracked side effect\n")
+            self.created = True
+        return outcome
+
+    def _git(self, argv):
+        if self.created and _is_git_cmd(argv, "status", "--porcelain=v1"):
+            base = super()._git(argv).combined
+            return FakeOutcome(0, base + f"?? {self.rel_path}\n")
+        return super()._git(argv)
+
+
+def test_untracked_side_effect_mid_matrix_trips_post_capture_drift_status(tmp_path):
+    """Regression (B-1 class): a fake runner whose matrix command creates an
+    untracked, non-ignored file mid-matrix trips the post-capture drift
+    re-check on the STATUS surface (exit 2, untrusted).
+
+    This locks in the status-surface detection: an unpinned pytest run's
+    ``.pytest_cache/`` output previously surfaced exactly here, breaking the
+    two-clean-capture protocol (run-1 exit 2, run-2 dirty gate).
+    """
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = UntrackedSideEffectRunner(".pytest_cache/CACHEDIR.TAG", dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["trusted"] is False
+    # The status surface specifically fired (not head/tree/unverifiable).
+    assert "post-capture-drift:status" in evidence["infrastructure_warnings"]
+    # The matrix DID run before the drift was observed: complete but untrusted.
+    assert evidence["commands"]
+
+
+def test_default_matrix_pins_no_cacheprovider_on_pytest_invocations(tmp_path):
+    """Regression (B-1): every pytest-invoking entry of the default matrix pins
+    ``-p no:cacheprovider`` so the matrix produces zero untracked working-tree
+    side effects (no pytest config file exists and .gitignore has no
+    ``.pytest_cache`` entry, so an unpinned run would create one).
+
+    GATE-00R: the matrix now has TWO pytest-invoking rows — the focused DB
+    tests and the time-guard tests — and both must carry the pin."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    pytest_specs = [s for s in matrix if "pytest" in s.argv]
+    assert len(pytest_specs) == 2
+    assert {s.id for s in pytest_specs} == {"focused-python-tests", "time-tests"}
+    for spec in pytest_specs:
+        assert "-p" in spec.argv
+        assert "no:cacheprovider" in spec.argv
+        # Appended (not inserted): the pin closes each pytest argv.
+        assert spec.argv[-2:] == ["-p", "no:cacheprovider"]
+    # Source-level pin: the literal survives in the tool source itself, so the
+    # guarantee cannot silently regress even if the matrix is rebuilt.
+    with open(cap.__file__, encoding="utf-8") as handle:
+        source = handle.read()
+    assert '"-p", "no:cacheprovider"' in source
+
+
+def test_declared_report_absent_is_missing_report_parser_error(tmp_path):
+    """N-1: a declared ``report_path`` whose file never appears yields the
+    controlled ``MISSING_REPORT`` parser error and fails the capture closed
+    (invalid-required-report), never a silent parser_error-free record."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    matrix = [cap.CommandSpec(
+        id="db-cli", log_name="03-db-cli.log",
+        argv=["python3", "scripts/verify_db_access_boundaries.py", "--fail-on-violation",
+              "--findings-output", "/".join([bundle_rel, "03-db-cli.findings.json"])],
+        report_path="03-db-cli.findings.json",
+        required_artifacts=(),
+    )]
+    # write_reports=False: the child runs but never writes its declared report.
+    runner = ConfigurableFakeRunner(dirty=False, write_reports=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    cmd = evidence["commands"][0]
+    assert cmd["parser_error"] == "MISSING_REPORT"
+    assert cmd["report_sha256"] is None
+    assert any("invalid-required-report:db-cli" in w
+               for w in evidence["infrastructure_warnings"])
+
+
+# ── GATE-00R extension: base/merge-base/branch + platform preflight identity ──
+
+def test_preflight_records_base_merge_base_branch_and_platform(tmp_path):
+    """The GATE-00R preflight fields are recorded, bounded, and mirrored into
+    evidence.json: base_ref/base_sha/merge_base_sha/branch plus the bounded
+    platform identity fields (locale / timezone / os_identifier)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["base_ref"] == BASE_REF_SHA
+    assert gs["base_sha"] == BASE_REF_SHA
+    assert gs["merge_base_sha"] == MERGE_BASE_SHA
+    assert gs["branch"] == "main"
+    for key in ("locale", "timezone", "os_identifier"):
+        value = gs[key]
+        # Bounded (256 + the truncation marker allowance); real platform
+        # values are far shorter, and a lookup failure resolves to None.
+        assert value is None or (isinstance(value, str)
+                                 and 0 < len(value) <= 300), (key, value)
+    # The base/merge-base/branch preflight observations are recorded as
+    # sanitized preflight command records too.
+    argvs = [rec["argv"] for rec in gs["preflight_commands"]]
+    assert ["git", "rev-parse", BASE_REF_SHA] in argvs
+    assert ["git", "merge-base", "HEAD", BASE_REF_SHA] in argvs
+    assert ["git", "branch", "--show-current"] in argvs
+    branch_rec = next(rec for rec in gs["preflight_commands"]
+                      if rec["argv"] == ["git", "branch", "--show-current"])
+    assert branch_rec["output"] == "main"
+    # evidence.json mirrors the base identity additively.
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["base_ref"] == BASE_REF_SHA
+    assert evidence["base_sha"] == BASE_REF_SHA
+    assert evidence["merge_base_sha"] == MERGE_BASE_SHA
+    assert evidence["git_state"]["branch"] == "main"
+
+
+def test_platform_identity_fields_bounded_and_redacted(tmp_path, monkeypatch):
+    """locale/timezone/os_identifier are structured bounded fields: a hostile
+    platform value has secrets and absolute path forms redacted before it can
+    reach git-state.json."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    monkeypatch.setattr(cap.locale, "getlocale", lambda: ("en_US", "UTF-8"))
+    monkeypatch.setattr(cap.time, "tzname", ("Test/Zone", "Test/Daylight"))
+    monkeypatch.setattr(
+        cap.platform, "platform",
+        lambda: "Hostile-OS password=hunter2 C:\\abs\\path\\x")
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["locale"] == "en_US/UTF-8"
+    assert gs["timezone"] == "Test/Zone/Test/Daylight"
+    assert "hunter2" not in gs["os_identifier"]
+    assert "C:\\abs" not in gs["os_identifier"]
+    assert "<redacted-secret>" in gs["os_identifier"]
+    assert "<redacted-path>" in gs["os_identifier"]
+    assert len(gs["os_identifier"]) <= 256 + len("<truncated>")
+
+
+def test_platform_identity_lookup_failure_resolves_to_none(tmp_path, monkeypatch):
+    """A platform lookup failure resolves the field to None (never raises,
+    never persists raw content) and never fails the capture."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    def boom():
+        raise RuntimeError("simulated platform lookup failure")
+
+    monkeypatch.setattr(cap.locale, "getlocale", boom)
+    monkeypatch.setattr(cap.platform, "platform", boom)
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["locale"] is None
+    assert gs["os_identifier"] is None
+
+
+def test_missing_base_ref_fails_closed_before_any_command(tmp_path):
+    """Omitting the base pin is a controlled failure with ZERO runner calls."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    assert runner.calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == "missing-base-ref" for w in evidence["infrastructure_warnings"])
+    assert evidence["trusted"] is False
+    assert evidence["commands"] == []
+
+
+@pytest.mark.parametrize("bad_ref", [
+    "C1C2C3C4C5C6C7C8C9A0B1C2C3C4C5C6C7C8C9A0",     # uppercase hex (40)
+    "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a",      # 39 chars (short)
+    "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a0b",    # 41 chars (long)
+    "g" * 40,                                       # non-hex characters
+    "c1c2c3c4c5c6c7c8c9a0b1c2c3c4c5c6c7c8c9a0!",    # punctuation
+])
+def test_invalid_base_ref_syntax_rejected(tmp_path, bad_ref):
+    """A base pin that is not exactly 40 lowercase hex fails closed pre-command."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=bad_ref,
+                              command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    assert runner.calls == []
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w == "invalid-base-ref" for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+
+
+def test_cli_requires_base_ref(tmp_path):
+    """--base-ref is mandatory on the CLI (argv-only execution)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    with pytest.raises(SystemExit) as excinfo:
+        cap.main(["--root", str(root), "--out", str(out),
+                  "--expected-sha", TEST_SHA])
+    assert excinfo.value.code == 2
+    # argparse rejects the invocation before any capture logic runs.
+    assert not (out / "evidence.json").is_file()
+
+
+def test_cli_rejects_invalid_base_ref_syntax(tmp_path):
+    """Invalid --base-ref syntax is a controlled pre-command failure."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    with pytest.raises(SystemExit) as excinfo:
+        cap.main(["--root", str(root), "--out", str(out),
+                  "--expected-sha", TEST_SHA,
+                  "--base-ref", "C" * 40])
+    assert excinfo.value.code == 2
+    assert not (out / "evidence.json").is_file()
+
+
+class BaseRevParseFailRunner(ConfigurableFakeRunner):
+    """Clean checkout, but ``git rev-parse <base-ref>`` fails (exit 1)."""
+
+    def _git(self, argv):
+        if (len(argv) == 3 and argv[1] == "rev-parse"
+                and _SHA40_RE.match(argv[2])):
+            return FakeOutcome(1, "")
+        return super()._git(argv)
+
+
+def test_base_resolution_failure_blocks_launch(tmp_path):
+    """An unresolvable base SHA fails closed pre-launch: no matrix command
+    starts, and the failure is diagnosed via ``git-meta-failed:base-sha``."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = BaseRevParseFailRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["base_sha"] is None
+    assert evidence["git_state"]["git_meta_ok"] is False
+    assert any(w == "git-meta-failed:base-sha"
+               for w in evidence["infrastructure_warnings"])
+    # Launch gate: the base identity is unresolved, so nothing ran.
+    assert evidence["commands"] == []
+
+
+class MergeBaseFailRunner(ConfigurableFakeRunner):
+    """Clean checkout, but ``git merge-base HEAD <base-ref>`` fails (exit 1)."""
+
+    def _git(self, argv):
+        if _is_git_cmd(argv, "merge-base", "HEAD"):
+            return FakeOutcome(1, "")
+        return super()._git(argv)
+
+
+def test_merge_base_failure_blocks_launch(tmp_path):
+    """An uncomputable merge-base fails closed pre-launch (launch gate)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = MergeBaseFailRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["merge_base_sha"] is None
+    assert any(w == "git-meta-failed:merge-base"
+               for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+
+
+class BranchFailRunner(ConfigurableFakeRunner):
+    """Clean checkout, but ``git branch --show-current`` fails (exit 1)."""
+
+    def _git(self, argv):
+        if _is_git_cmd(argv, "branch", "--show-current"):
+            return FakeOutcome(1, "")
+        return super()._git(argv)
+
+
+def test_branch_failure_fails_closed(tmp_path):
+    """A branch lookup failure is fatal (exit 2, git-meta-failed:branch) but —
+    unlike base/merge-base — it is an observability defect, not an identity
+    gate, so the matrix still runs and its observations are recorded."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = BranchFailRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["git_state"]["branch"] is None
+    assert any(w == "git-meta-failed:branch"
+               for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"]
+
+
+def test_detached_head_branch_is_observation_not_failure(tmp_path):
+    """Empty ``git branch --show-current`` output (detached HEAD, exit 0) is an
+    observation (branch=None), never a capture failure."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = ConfigurableFakeRunner(dirty=False, branch="")
+    rc = _capture(str(root), str(out), runner=runner,
+                  command_matrix=_fake_matrix(str(root), str(out)))
+    assert rc == 0
+    gs = json.loads((out / "git-state.json").read_text(encoding="utf-8"))
+    assert gs["branch"] is None
+    assert gs["git_meta_ok"] is True
+
+
+def test_default_matrix_appends_gate_00r_rows_in_declared_order(tmp_path):
+    """The four GATE-00R rows are APPENDED after the existing eight rows, in
+    the declared order, with the exact verified flags; every existing row is
+    preserved unchanged ahead of them.
+
+    GATE-00R two-run follow-up: interpreter and Gradle wrapper tokens are the
+    module-level resolutions (``_suite_python`` / ``_suite_gradlew``) so the
+    rows launch on Windows too (bare ``python``/``python3``/``./gradlew`` names
+    exit 9009 / launch-fail there)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    ids = [s.id for s in matrix]
+    assert ids == [
+        "registry-validation", "focused-python-tests", "room-inventory",
+        "db-cli", "db-ratchet", "static-suite", "gradle-db",
+        "gradle-task-graph",
+        # GATE-00R additions, declared order:
+        "time-direct", "time-tests", "db-inventory", "gradle-compile",
+    ]
+    by_id = {s.id: s for s in matrix}
+    # Flags verified against scripts/verify_time_boundaries.py argparse.
+    assert by_id["time-direct"].argv == [
+        cap._suite_python(), "scripts/verify_time_boundaries.py",
+        "--root", ".",
+        "--allowlist", "config/guards/time_boundary_exceptions.yml",
+        "--fail-on-violation",
+    ]
+    assert by_id["time-tests"].argv == [
+        cap._suite_python(), "-m", "pytest",
+        "scripts/test_verify_time_boundaries.py",
+        "-v", "--tb=short", "-p", "no:cacheprovider",
+    ]
+    bundle_rel = cap._posix_rel(str(out), str(root))
+    assert by_id["db-inventory"].argv == [
+        cap._suite_python(), "scripts/verify_db_access_boundaries.py",
+        "--inventory-only",
+        "--findings-output", "/".join([bundle_rel, "reports", "db-inventory.json"]),
+        "--dump-room-mutators", "/".join([bundle_rel, "reports", "room-mutators.json"]),
+    ]
+    assert by_id["db-inventory"].report_path == "reports/db-inventory.json"
+    assert by_id["db-inventory"].required_artifacts == (
+        "reports/db-inventory.json", "reports/room-mutators.json")
+    assert by_id["db-inventory"].artifact_kinds == (
+        ("reports/db-inventory.json", "file"),
+        ("reports/room-mutators.json", "file"),
+    )
+    assert by_id["gradle-compile"].argv == [
+        cap._suite_gradlew(), ":app:compileDebugKotlin",
+        "--no-daemon", "--stacktrace", "--console=plain",
+    ]
+
+
+class _DefaultMatrixFakeRunner(ConfigurableFakeRunner):
+    """Fake runner that also writes the ratchet ``--output-summary`` artifact so
+    the FULL default matrix (including its required-artifact gates) can be
+    executed end-to-end against the fixture repository.
+
+    The summary mirrors the REAL ``guard_ratchet.write_summary_json_v2`` payload
+    shape (guard/protocol/schema/baseline/current/category counts/final exit
+    code) — the db-ratchet row declares it as a hashed required artifact, not as
+    a protocol-v2 findings report, so no v2 report parse is attempted on it.
+    """
+
+    def __call__(self, argv, cwd):
+        outcome = super().__call__(argv, cwd)
+        if _matches(argv, "guard_ratchet.py") and "--output-summary" in argv:
+            idx = argv.index("--output-summary")
+            path = os.path.join(str(cwd), argv[idx + 1])
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            payload = {
+                "guard": "db_access",
+                "protocol": 2,
+                "schema": 2,
+                "baseline": {"keys": 0, "occurrences": 0},
+                "current": {"keys": 0, "occurrences": 0},
+                "NEW_KEYS": 0,
+                "NEW_OCCURRENCES": 0,
+                "RESOLVED_KEYS": 0,
+                "RESOLVED_OCCURRENCES": 0,
+                "UNCHANGED": 0,
+                "EXPIRED_BASELINE_ENTRIES": 0,
+                "final_exit_code": 0,
+            }
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, indent=2, ensure_ascii=False, sort_keys=True)
+                handle.write("\n")
+        return outcome
+
+
+def test_default_matrix_gate_00r_rows_execute_with_semantic_summary(tmp_path):
+    """Executing the FULL default matrix: the GATE-00R rows run, their
+    classifications/exit codes reach the semantic summary, the db-inventory
+    reports land under <bundle>/reports/, and the base/merge-base identity is
+    retained additively (existing semantic fields unchanged)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    runner = _DefaultMatrixFakeRunner(dirty=False)
+    rc = cap.capture_evidence(str(root), str(out), runner=runner,
+                              expected_sha=TEST_SHA, base_ref=BASE_REF_SHA)
+    assert rc == 0
+    semantic = json.loads((out / "semantic-summary.json").read_text(encoding="utf-8"))
+    assert semantic["base_sha"] == BASE_REF_SHA
+    assert semantic["merge_base_sha"] == MERGE_BASE_SHA
+    by_id = {c["id"]: c for c in semantic["commands"]}
+    # New rows are present with their classifications/exit codes.
+    assert by_id["time-direct"]["exit_code"] == 0
+    assert by_id["time-direct"]["launch_error"] is None
+    assert by_id["time-tests"]["exit_code"] == 0
+    assert by_id["db-inventory"]["exit_code"] == 0
+    assert by_id["db-inventory"]["report_trusted"] is True
+    assert by_id["db-inventory"]["parser_error"] is None
+    assert by_id["gradle-compile"]["exit_code"] == 1
+    # Existing rows keep their recorded classifications.
+    assert by_id["db-cli"]["exit_code"] == 2
+    assert by_id["db-cli"]["report_trusted"] is False
+    assert by_id["room-inventory"]["report_trusted"] is True
+    # The db-ratchet row's --output-summary artifact is a hashed required
+    # artifact with NO v2 report parse declared (it is a ratchet summary, not a
+    # protocol-v2 findings report), so the row records no parser error.
+    assert by_id["db-ratchet"]["exit_code"] == 2
+    assert by_id["db-ratchet"]["parser_error"] is None
+    assert by_id["db-ratchet"]["report_schema_version"] is None
+    # The db-inventory reports were written under <bundle>/reports/ and hashed.
+    assert (out / "reports" / "db-inventory.json").is_file()
+    assert (out / "reports" / "room-mutators.json").is_file()
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    evidence_by_id = {c["id"]: c for c in evidence["commands"]}
+    assert evidence_by_id["db-ratchet"]["report_path"] is None
+    hashes = evidence["required_artifact_hashes"]
+    assert "reports/db-inventory.json" in hashes
+    assert "reports/room-mutators.json" in hashes
+    assert "04-db-ratchet.summary.json" in hashes
+    assert not any(w.startswith("invalid-required-report:db-ratchet")
+                   for w in evidence["infrastructure_warnings"])
+    # The run id never leaks through the new rows' bundle-relative argv paths.
+    for tok in by_id["db-inventory"]["argv"]:
+        assert "run-1" not in tok, tok
+    assert "--findings-output" in by_id["db-inventory"]["argv"]
+    assert "<bundle>/reports/db-inventory.json" in by_id["db-inventory"]["argv"]
+
+
+# ── GATE-00R two-run follow-up: launcher resolution + per-row log cap ──────────
+
+def test_suite_python_resolves_running_interpreter_basename():
+    """``_suite_python()`` resolves the interpreter at construction to a bare,
+    validator-safe executable name derived from ``sys.executable``.
+
+    A bare ``python3`` PATH name exits 9009 on Windows (app-execution alias), so
+    the matrix must carry the running interpreter's own name; the capture tool's
+    argv-containment contract forbids an absolute machine path, hence the
+    basename form (CreateProcess resolves it against the calling process's
+    executable directory first — the SAME interpreter — and POSIX resolves it
+    via PATH)."""
+    token = cap._suite_python()
+    assert isinstance(token, str) and token
+    assert token == (os.path.basename(sys.executable) or "python3")
+    # Validator-safe: no separator, no drive prefix, safe charset (the exact
+    # checks the matrix validator applies to argv tokens).
+    _assert_no_absolute(token)
+    assert cap._SAFE_ARGV_TOKEN_RE.match(token)
+
+
+def test_suite_gradlew_is_platform_conditional():
+    """``_suite_gradlew()`` resolves the wrapper launcher at construction:
+    ``gradlew.bat`` on Windows (os.name == 'nt'), ``./gradlew`` elsewhere —
+    the POSIX name cannot launch on Windows (exit None / 0-byte logs)."""
+    token = cap._suite_gradlew()
+    assert token == ("gradlew.bat" if os.name == "nt" else "./gradlew")
+    # Tokenized argv element: a single repository-relative-safe token, never
+    # shell text.
+    assert " " not in token
+    assert cap._SAFE_ARGV_TOKEN_RE.match(token)
+
+
+def test_default_matrix_rows_use_resolved_launcher_tokens(tmp_path):
+    """Every default-matrix row resolves its interpreter/launcher through the
+    module-level resolvers: Python rows via ``_suite_python()`` (replacing the
+    bare ``python3``/``python`` names) and Gradle rows via ``_suite_gradlew()``
+    (replacing the POSIX-only ``./gradlew``)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    suite_python = cap._suite_python()
+    suite_gradlew = cap._suite_gradlew()
+    python_rows = {
+        "registry-validation", "focused-python-tests", "room-inventory",
+        "db-cli", "db-ratchet", "static-suite",
+        "time-direct", "time-tests", "db-inventory",
+    }
+    gradle_rows = {"gradle-db", "gradle-task-graph", "gradle-compile"}
+    assert python_rows | gradle_rows == {s.id for s in matrix}
+    for spec in matrix:
+        assert spec.argv, spec.id
+        if spec.id in gradle_rows:
+            assert spec.argv[0] == suite_gradlew, (spec.id, spec.argv[0])
+        else:
+            assert spec.argv[0] == suite_python, (spec.id, spec.argv[0])
+        # Resolved tokens stay validator-safe (no absolute/machine path).
+        _assert_no_absolute(spec.argv[0])
+
+
+def test_default_matrix_db_ratchet_pins_v2_baseline_with_protocol_2(tmp_path):
+    """The db-ratchet row pins the GR-09-migrated v2 baseline with
+    ``--finding-protocol=2``.
+
+    The legacy v1 baseline predates protocol 2 (RATCHET_V1_BASELINE_INCOMPATIBLE,
+    exit 2), so the required ratchet summary artifact could never be produced
+    (observed in the run-01 gate bundle: missing-required-artifact +
+    invalid-required-report for 04-db-ratchet.summary.json)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    ratchet = next(s for s in matrix if s.id == "db-ratchet")
+    assert "--baseline=config/baselines/db_access_v2.json" in ratchet.argv
+    assert "--finding-protocol=2" in ratchet.argv
+    assert "--baseline=config/baselines/db_access.json" not in ratchet.argv
+    # The v2 baseline is a preserved control-plane input and exists in the
+    # repository the capture tool guards (relative to the tool's own location).
+    assert "config/baselines/db_access_v2.json" in cap.FORBIDDEN_PRESERVATION_PATHS
+    v2_abs = os.path.join(os.path.dirname(cap.__file__),
+                          "..", "..", "config", "baselines", "db_access_v2.json")
+    assert os.path.isfile(v2_abs), "GR-09 v2 baseline missing from the repository"
+
+
+def test_default_matrix_focused_tests_row_has_raised_output_cap(tmp_path):
+    """The focused-python-tests row carries the per-row persisted-output cap
+    override (its verbose pytest stream measured ≈200K chars — the 20,000-char
+    global cap tripped at ≈10% progress in the run-01 gate bundle, and a
+    COMPLETE log must be persistable); the gradle-db row also carries the
+    override because its failure-log size varies run-to-run (10.7KB in run-01
+    vs 20.0KB in run-02 of the add474fc bundle — the default cap tripped in
+    run-02 and left the log incomplete); every other row keeps the global cap."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = cap.default_command_matrix(str(root), str(out))
+    by_id = {s.id: s for s in matrix}
+    assert cap.MAX_ROW_OUTPUT_LIMIT > cap.CHILD_OUTPUT_LIMIT
+    assert by_id["focused-python-tests"].output_limit == cap.MAX_ROW_OUTPUT_LIMIT
+    assert by_id["gradle-db"].output_limit == cap.MAX_ROW_OUTPUT_LIMIT
+    raised = {"focused-python-tests", "gradle-db"}
+    for spec in matrix:
+        if spec.id not in raised:
+            assert spec.output_limit is None, spec.id
+
+
+def test_row_output_cap_override_persists_complete_log(tmp_path):
+    """A row with a raised cap persists a COMPLETE, hashed log for a stream that
+    exceeds the global cap, while a default-cap row with the same stream stays
+    INCOMPLETE and fails the capture closed (over-cap → exit-2 semantics intact
+    for genuinely oversized logs)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+
+    class BigOutputRunner(ConfigurableFakeRunner):
+        """Inflates every non-git command's output past the global cap."""
+
+        def __call__(self, argv, cwd):
+            outcome = super().__call__(argv, cwd)
+            if argv and argv[0] == "git":
+                # Keep the git preflight/preservation surface CLEAN.
+                return outcome
+            return FakeOutcome(outcome.returncode,
+                               "x" * (cap.CHILD_OUTPUT_LIMIT * 3))
+
+    raised = cap.CommandSpec(
+        id="raised", log_name="00-raised.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        output_limit=cap.MAX_ROW_OUTPUT_LIMIT)
+    default = cap.CommandSpec(
+        id="default", log_name="01-default.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"])
+    runner = BigOutputRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=[raised, default])
+    # The default-cap row's log is incomplete → the capture fails closed.
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    by_id = {c["id"]: c for c in evidence["commands"]}
+    # The raised-cap row's entire stream fit: COMPLETE, hashed, sized.
+    assert by_id["raised"]["log_complete"] is True
+    assert by_id["raised"]["log_failure_code"] is None
+    assert by_id["raised"]["log_sha256"] != ""
+    assert by_id["raised"]["log_bytes"] == cap.CHILD_OUTPUT_LIMIT * 3
+    # The default-cap row tripped the global cap: INCOMPLETE, never hashed.
+    assert by_id["default"]["log_complete"] is False
+    assert by_id["default"]["log_failure_code"] == cap.LOG_OUTPUT_LIMIT_EXCEEDED
+    assert by_id["default"]["log_sha256"] == ""
+    assert any(w == "incomplete-command-log:default:output-limit-exceeded"
+               for w in evidence["infrastructure_warnings"])
+    _assert_no_tmp_leftovers(out)
+
+
+def test_validate_command_matrix_rejects_invalid_output_limit(tmp_path):
+    """A per-row ``output_limit`` that is not a bounded non-negative integer is
+    rejected (fail closed) so the persisted-output bounding contract cannot be
+    lifted by a hostile custom matrix."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    for bad in (-1, "big", 1.5, True, cap.MAX_ROW_OUTPUT_LIMIT + 1):
+        spec = cap.CommandSpec(
+            id="c", log_name="00.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py"],
+            output_limit=bad)
+        violations = cap.validate_command_matrix([spec], str(root))
+        # make_warning("invalid-output-limit", <id>) carries exactly one payload
+        # part (the sanitized command id) and no trailing segment.
+        assert any(v == "invalid-output-limit:c" for v in violations), bad
+    # Valid overrides (including the finite maximum) pass cleanly.
+    for good in (None, 0, cap.CHILD_OUTPUT_LIMIT, cap.MAX_ROW_OUTPUT_LIMIT):
+        spec = cap.CommandSpec(
+            id="ok", log_name="00.log",
+            argv=["python3", "scripts/ci/verify_guard_registry.py"],
+            output_limit=good)
+        assert cap.validate_command_matrix([spec], str(root)) == [], good
+
+
+def test_row_output_cap_overflow_fails_closed(tmp_path):
+    """A custom row whose ``output_limit`` exceeds the finite bound fails closed
+    with zero runner calls (stop-before-run)."""
+    root = _make_root(tmp_path)
+    out = root / "out" / "run-1"
+    matrix = [cap.CommandSpec(
+        id="greedy", log_name="00.log",
+        argv=["python3", "scripts/ci/verify_guard_registry.py"],
+        output_limit=cap.MAX_ROW_OUTPUT_LIMIT + 1)]
+    runner = ConfigurableFakeRunner(dirty=False)
+    rc = _capture(str(root), str(out), runner=runner, command_matrix=matrix)
+    assert rc == 2
+    evidence = json.loads((out / "evidence.json").read_text(encoding="utf-8"))
+    assert any(w.startswith("invalid-output-limit:greedy")
+               for w in evidence["infrastructure_warnings"])
+    assert evidence["commands"] == []
+    assert runner.calls == []
+
+

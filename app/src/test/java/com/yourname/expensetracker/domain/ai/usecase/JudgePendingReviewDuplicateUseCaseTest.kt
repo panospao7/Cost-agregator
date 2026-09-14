@@ -21,7 +21,7 @@ import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiCapabilityRouter
 import com.yourname.expensetracker.domain.ai.service.AiArtifactRepository
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
-import com.yourname.expensetracker.domain.ai.service.DedupeJudgeService
+import com.yourname.expensetracker.data.ai.provider.HybridDedupeJudgeService
 import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coEvery
@@ -39,7 +39,7 @@ class JudgePendingReviewDuplicateUseCaseTest {
 
     private lateinit var aiSettingsRepository: AiSettingsRepository
     private lateinit var aiArtifactRepository: AiArtifactRepository
-    private lateinit var dedupeJudgeService: DedupeJudgeService
+    private lateinit var dedupeJudgeService: HybridDedupeJudgeService
     private lateinit var aiCapabilityRouter: AiCapabilityRouter
     private lateinit var inputBuilder: DedupeJudgeInputBuilder
     private lateinit var timeProvider: FakeTimeProvider

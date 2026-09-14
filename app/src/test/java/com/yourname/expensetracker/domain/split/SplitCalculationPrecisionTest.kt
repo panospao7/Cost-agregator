@@ -155,12 +155,30 @@ class SplitCalculationPrecisionTest {
     fun `percentage split with very small amount`() {
         val total = 0.03.toMoney()
         val percentages = listOf(50.0, 50.0)
-        
+
         val shares = calculatePercentageSplit(total, percentages)
         val sum = shares.sum()
-        
-        // Sum should be very close to total (might have 0.01 rounding diff)
-        assertThat(sum.toDouble()).isWithin(0.01).of(0.03)
+
+        // Sum must equal the total exactly — independent per-share rounding
+        // would give 0.02 + 0.02 = 0.04.
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
+        assertEquals(0.02, shares[0].toDouble(), 0.0)
+        assertEquals(0.01, shares[1].toDouble(), 0.0)
+    }
+
+    @Test
+    fun `percentage split allocates leftover cents by largest fractional part`() {
+        // Naive HALF_UP per share would give 0.02 + 0.02 + 0.02 = 0.06.
+        val total = 0.05.toMoney()
+        val percentages = listOf(33.33, 33.33, 33.34)
+
+        val shares = calculatePercentageSplit(total, percentages)
+        val sum = shares.sum()
+
+        assertEquals(total.toDouble(), sum.toDouble(), 0.0)
+        assertEquals(0.02, shares[0].toDouble(), 0.0)
+        assertEquals(0.01, shares[1].toDouble(), 0.0)
+        assertEquals(0.02, shares[2].toDouble(), 0.0)
     }
 
     @Test
@@ -326,11 +344,61 @@ class SplitCalculationPrecisionTest {
 
     /**
      * Calculate percentage split using Money class.
+     * Mirrors EnhancedSplitManager: largest-remainder allocation in cents so the
+     * shares sum to the total exactly.
      */
     private fun calculatePercentageSplit(total: Money, percentages: List<Double>): List<Money> {
-        return percentages.map { percent ->
-            total.percentage(percent)
+        if (percentages.isEmpty()) return emptyList()
+        if (percentages.all { it == 0.0 }) return List(percentages.size) { Money.ZERO }
+
+        val totalCents = java.math.BigDecimal.valueOf(total.toDouble())
+            .setScale(2, java.math.RoundingMode.HALF_UP)
+            .movePointRight(2)
+            .longValueExact()
+
+        data class PercentageShare(
+            val order: Int,
+            val baseCents: Long,
+            val fractionalPart: Double
+        )
+
+        val shares = percentages.mapIndexed { index, percent ->
+            val rawCents = totalCents * (percent / 100.0)
+            val base = kotlin.math.floor(rawCents).toLong()
+            PercentageShare(index, base, rawCents - base)
         }
+
+        val cents = shares.map { it.baseCents }.toMutableList()
+        val remainder = totalCents - cents.sum()
+
+        if (remainder > 0) {
+            val byLargestFraction = shares.sortedWith(
+                compareByDescending<PercentageShare> { it.fractionalPart }.thenBy { it.order }
+            )
+            var index = 0
+            var remaining = remainder
+            while (remaining > 0) {
+                cents[byLargestFraction[index % byLargestFraction.size].order] += 1L
+                remaining--
+                index++
+            }
+        } else if (remainder < 0) {
+            val bySmallestFraction = shares.sortedWith(
+                compareBy<PercentageShare> { it.fractionalPart }.thenBy { it.order }
+            )
+            var index = 0
+            var remaining = -remainder
+            while (remaining > 0) {
+                val target = bySmallestFraction[index % bySmallestFraction.size].order
+                if (cents[target] > 0L) {
+                    cents[target] -= 1L
+                    remaining--
+                }
+                index++
+            }
+        }
+
+        return cents.map { Money.cents(it) }
     }
 
     /**

@@ -12,7 +12,6 @@ import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlinx.coroutines.flow.first
-import java.util.Calendar
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -331,12 +330,14 @@ class AutomatedSavingsRuleEngine @Inject constructor(
     }
 
     private fun buildMonthKey(timestamp: Long): String {
-        val calendar = Calendar.getInstance().apply { timeInMillis = timestamp }
+        // G-TIME-01: pure derivation from the [timestamp] parameter (java.time,
+        // system default timezone — same year/month fields the Calendar produced).
+        val zoned = java.time.Instant.ofEpochMilli(timestamp).atZone(java.time.ZoneId.systemDefault())
         return String.format(
             Locale.US,
             "%04d-%02d",
-            calendar.get(Calendar.YEAR),
-            calendar.get(Calendar.MONTH) + 1
+            zoned.year,
+            zoned.monthValue
         )
     }
 

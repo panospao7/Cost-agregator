@@ -1,5 +1,7 @@
 # Test Failure Ledger — Validation/Stabilization Run (Pipelines 5–12)
 
+> **Historical record** — this ledger is a frozen test-stabilization log, not current-state authority. as-of: the Pipeline 5–12 stabilization era (the ledger records short SHA `43ca2228`); scope: those measured runs only; it is not evidence for current HEAD. Current state authority: docs/ci/GUARD_EVIDENCE_INDEX.yml and docs/ci/GUARD_STATUS.generated.md.
+
 > HEAD: `43ca2228` (Pipeline 11 + accumulated 5–12)
 > Method: real `:app:testDebugUnitTest` runs, batched by package. Numbers below are MEASURED, not estimated.
 

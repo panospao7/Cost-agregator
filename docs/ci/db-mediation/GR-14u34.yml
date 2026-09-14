@@ -1,0 +1,61 @@
+# GR-14u34 — A9 dead-writer singles tranche 1 (owner-approved
+# dispositions; plan track A9, GR-14A9_ZERO_INBOUND_TRIAGE.yml).
+#
+# OWNER APPROVAL: the A9 per-writer delete/wire dispositions were approved
+# in session on 2026-09-11.  This batch executes the two zero-caller
+# singles; the ExpenseWriteStore / GroupLifecycleCoordinator / overload
+# tranches follow separately under the PR-14 batch cap.
+#
+# PRODUCTION REMOVALS (triple-proven dead: engine zero-inbound + hand grep
+# across main/test/androidTest + DI-binding check):
+#   - ExpenseGroupDao.insertGroupWithMembers (+ its now-orphaned
+#     GroupMember import; the // Atomic transaction operations comment)
+#   - RecurringLifecycleEventWriter.writeDiagnostic (interface member +
+#     RoomRecurringLifecycleEventWriter override + orphaned Timber import;
+#     interface KDoc updated - writeCritical remains the only surface)
+#   - stale KDoc reference in SharedExpenseGroupScenarioTest helper
+#
+# COMPILE CATCH (fixed inside the batch): removing the GroupMember import
+# also removed the still-used androidx.room.Transaction import (kept by
+# getActiveWithDetails) -> KSP MissingType failure; import restored,
+# compile green.
+#
+# POLICY TRUTH SYNC (GR-14u4 precedent):
+#   - active config/guards/db_ownership_policy.yml: 434 -> 432 entries
+#   - combined seeds docs/ci/db-findings/GR-08-seeds.yml: 381 -> 379
+#   - tracked candidate/accounting regenerated via --generate --seed-rows;
+#     --verify --seed-rows FULL MATCH exit 0; folds unchanged 53/40/43
+#   - pins: _CANDIDATE_ENTRIES 434 -> 432 (known-good-state +
+#     current-repo test, derivation histories extended)
+#
+# PRE-EXISTING RED FOUND AND REPAIRED (not caused by this batch):
+#   scripts/test_migrate_db_policy_seed_rows.py concatenation drift guard
+#   was red since the GR-14u..u4 tranches (pin 421 vs actual 381 at
+#   GR-14u4): those tranches pruned the combined doc but never maintained
+#   this test (which sits OUTSIDE the standard battery globs
+#   scripts/test_verify_*.py + scripts/ci/test_*.py, so no suite caught
+#   it).  Repaired by strengthening, not weakening: the contract is now
+#   combined == concat(27 frozen batch files) MINUS a 42-row documented
+#   removal ledger (_SEED_REMOVAL_LEDGER, per-row tranche attribution in
+#   the comment block), with anti-rot checks in BOTH directions (every
+#   ledger row must be a real frozen-batch row; no ledger row may survive
+#   into the combined doc).  Keying includes parameter types because
+#   TransactionLifecycleCoordinator.bulkUpdateCategory kept its
+#   (String, Long, ...) overload while the (Long, Long, String)
+#   overload's rows were removed - a coarser key collided.
+#
+# OUTCOME (board, pre 99a87537... -> post 0ab27b26...):
+#   unproven_external_entry 15 -> 13; unproven 75 -> 73; proven unchanged
+#   (316 helper + 1 restore + 14 worker); counterexamples 0; the moved
+#   rows are exactly the 2 deleted writers (-> absent); 0 regressions.
+#   activePolicySha256 7851adc2... -> 946af0b6...  GATE-00R recapture
+#   remains owed at merge (policy bytes changed again).
+#
+# VALIDATION:
+#   - seed-rows + current-repo + migrate suites: 213 + 3 + 85-class set green
+#   - scripts/db_guard (excl. test_models.py): 245 passed
+#   - verify_db_access_boundaries --fail-on-violation: exit 0 (no live
+#     mutation lost authorization)
+#   - :app:compileDebugKotlin: exit 0 (after the import repair)
+#   - board double run byte-identical 0ab27b26...
+status: COMPLETE_AT_BOARD_0ab27b26

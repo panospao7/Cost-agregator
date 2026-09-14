@@ -1,0 +1,472 @@
+# GR-13 consolidated expected manifest (shadow corpus).
+# Copies all rows from the per-group manifests: 52 call-binding (CB;
+# CB-16 is the GR-14u22 dagger.Lazy chain row, CB-17 the GR-14u24
+# single-implementor exactness row, CB-19/CB-20 the GR-14u45
+# lambda-parameter typing positives and CB-21..CB-26 its fail-closed
+# pins, CB-27..CB-29 the GR-14u47 external-exact exemption/carve-out
+# rows, CB-30 the GR-14u48 inline-wrapper carrier row, CB-31..CB-40 the
+# GR-14u49 anonymous-object rows and CB-41..CB-48 its loop-variable
+# typing rows, CB-68..CB-70 the GR-14u55 kotlinx known-root rows,
+# CB-71..CB-73 the GR-14u56c structured-suspend-scope rows, CB-74 the
+# GR-14u56d safeLookup-shaped wrapper row, CB-75 the GR-14u56e
+# withRateLimit-shaped wrapper row),
+# 28 helper-proof+structured-launch (HP+SL; HP-13..HP-20 are the GR-14f inline-carrier rows,
+# SL-01..SL-03 the GR-14j structured-launch rows, HP-21 the GR-14m
+# named-argument-lambda regression row, HP-22 the GR-14n default-parameter-DI
+# regression row, HP-23 the GR-14u25 restore-internal-scope row),
+# 18 worker-proof (WP; WP-15a/WP-15b separate), and 8 protocol (PR) rows = 129
+# rows total.
+# CB/HP/WP rows use expectedResolution/expectedProof(/expectedRoot);
+# PR rows use expectation. All values use closed vocabularies only.
+fixtures:
+  - id: CB-01
+    file: call_binding/cb01_overloads_diff_params.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-02
+    file: call_binding/cb02_nested_owners.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-03
+    file: call_binding/cb03_same_simple_class_name_two_packages.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-04
+    file: call_binding/cb04_member_vs_extension.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-05
+    file: call_binding/cb05_wrong_receiver_fqcn.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-06
+    file: call_binding/cb06_interface_dispatch.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-07
+    file: call_binding/cb07_overridden_open_method.kt
+    expectedResolution: VIRTUAL_DISPATCH
+  - id: CB-08
+    file: call_binding/cb08_ambiguous_import.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-09
+    file: call_binding/cb09_unresolved_param_type.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-10
+    file: call_binding/cb10_generic_ambiguity.kt
+    expectedResolution: AMBIGUOUS_TARGET
+  - id: CB-11
+    file: call_binding/cb11_exact_top_level_import.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-12
+    file: call_binding/cb12_same_owner_unqualified.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-13
+    file: call_binding/cb13_private_unique_helper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-14
+    file: call_binding/cb14_qualified_top_level_call.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: HP-01
+    file: helper_proof/hp01_guarded_only_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-02
+    file: helper_proof/hp02_mixed_guarded_unguarded.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-03
+    file: helper_proof/hp03_zero_call_sites_private_helper.kt
+    expectedResolution: EXTERNAL_ENTRY
+    expectedProof: UNPROVEN_EXTERNAL_ENTRY
+  - id: HP-04
+    file: helper_proof/hp04_function_reference.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-05
+    file: helper_proof/hp05_coroutine_launch.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-06
+    file: helper_proof/hp06_escaping_callback_field.kt
+    expectedResolution: ESCAPING_LAMBDA
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-07
+    file: helper_proof/hp07_recursive_pair.kt
+    expectedResolution: RECURSIVE_UNSUPPORTED
+    expectedProof: UNPROVEN_RECURSION
+  - id: HP-08
+    file: helper_proof/hp08_barrier_unrelated_branch.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-09
+    file: helper_proof/hp09_scope_exit_before_call.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-10
+    file: helper_proof/hp10_local_barrier_direct_insert.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-11
+    file: helper_proof/hp11_canonical_direct_barrier_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-12
+    file: helper_proof/hp12_helper_chain_both_guarded.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: CB-15
+    file: call_binding/cb15_final_class_override_member.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-16
+    file: call_binding/cb16_lazy_get_chain.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-17
+    file: call_binding/cb17_single_implementor_exact.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-18
+    file: call_binding/cb18_bound_reference_exact.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-19
+    file: call_binding/cb19_lambda_param_callee_signature.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-20
+    file: call_binding/cb20_lambda_param_receiver_generic.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-21
+    file: call_binding/cb21_lambda_param_arity_mismatch.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-22
+    file: call_binding/cb22_lambda_param_generic_component.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-23
+    file: call_binding/cb23_lambda_param_two_signatures.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-24
+    file: call_binding/cb24_lambda_param_async_region.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-25
+    file: call_binding/cb25_lambda_param_no_type_arg.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-26
+    file: call_binding/cb26_lambda_param_named_arg.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-27
+    file: call_binding/cb27_external_exact_in_carrier.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-28
+    file: call_binding/cb28_extension_carveout.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-29
+    file: call_binding/cb29_extension_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-30
+    file: call_binding/cb30_inline_wrapper_carrier.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-31
+    file: call_binding/cb31_anon_member_modelled.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-32
+    file: call_binding/cb32_phantom_suppressed.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-33
+    file: call_binding/cb33_two_anon_one_file.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-34
+    file: call_binding/cb34_captured_var_failclosed.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-35
+    file: call_binding/cb35_fanout_loopvar_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-36
+    file: call_binding/cb36_fanout_incomplete.kt
+    expectedResolution: INTERFACE_DISPATCH
+  - id: CB-37
+    file: call_binding/cb37_capture_val_param.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-38
+    file: call_binding/cb38_fanout_all_or_nothing.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-39
+    file: call_binding/cb39_multi_supertype.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-40
+    file: call_binding/cb40_wrapped_supertypes.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-41
+    file: call_binding/cb41_loopvar_unannotated.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-42
+    file: call_binding/cb42_loopvar_destructuring.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-43
+    file: call_binding/cb43_loopvar_map.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-44
+    file: call_binding/cb44_loopvar_string.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-45
+    file: call_binding/cb45_loopvar_scope_leak.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-46
+    file: call_binding/cb46_loopvar_shadow.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-47
+    file: call_binding/cb47_loopvar_inferred_only.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-48
+    file: call_binding/cb48_loopvar_set_fanout.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-49
+    file: call_binding/cb49_returntype_chain.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-50
+    file: call_binding/cb50_returntype_missing.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-51
+    file: call_binding/cb51_returntype_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-52
+    file: call_binding/cb52_returntype_generic.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-53
+    file: call_binding/cb53_returntype_two_segment.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-54
+    file: call_binding/cb54_receiver_hint_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-55
+    file: call_binding/cb55_receiver_hint_absent.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-56
+    file: call_binding/cb56_hint_never_overrides.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-57
+    file: call_binding/cb57_star_import_fabrication.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-58
+    file: call_binding/cb58_star_import_corpus.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-59
+    file: call_binding/cb59_star_import_external.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-60
+    file: call_binding/cb60_safeexecute_wrapper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-61
+    file: call_binding/cb61_named_fanout_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-62
+    file: call_binding/cb62_named_fanout_incomplete.kt
+    expectedResolution: INTERFACE_DISPATCH
+  - id: CB-63
+    file: call_binding/cb63_bare_call_init.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-64
+    file: call_binding/cb64_lambda_shadow.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-65
+    file: call_binding/cb65_lambda_escaping.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-66
+    file: call_binding/cb66_lambda_generic.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-67
+    file: call_binding/cb67_outer_level_binding_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-68
+    file: call_binding/cb68_kx_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-69
+    file: call_binding/cb69_kx_neg_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-70
+    file: call_binding/cb70_kx_neg_nonroot.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-71
+    file: call_binding/cb71_coroutinescope_carrier_positive.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-72
+    file: call_binding/cb72_async_in_coroutinescope_positive.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-73
+    file: call_binding/cb73_async_unowned_receiver_negative.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-74
+    file: call_binding/cb74_safelookup_wrapper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-75
+    file: call_binding/cb75_withratelimit_wrapper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: HP-13
+    file: helper_proof/hp13_let_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-14
+    file: helper_proof/hp14_apply_runcatching_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-15
+    file: helper_proof/hp15_foreach_map_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-16
+    file: helper_proof/hp16_structured_suspend_carrier_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-17
+    file: helper_proof/hp17_project_helper_inline_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-18
+    file: helper_proof/hp18_assigned_lambda_escape_negative.kt
+    expectedResolution: ESCAPING_LAMBDA
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-19
+    file: helper_proof/hp19_custom_carrier_stays_async_negative.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: HP-20
+    file: helper_proof/hp20_transparent_not_authorization_negative.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: SL-01
+    file: helper_proof/sl01_structured_launch_guarded_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: SL-02
+    file: helper_proof/sl02_unknown_scope_stays_async_negative.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+  - id: SL-03
+    file: helper_proof/sl03_launch_reachable_unguarded_counterexample_negative.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
+  - id: HP-21
+    file: helper_proof/hp21_named_argument_lambda_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-22
+    file: helper_proof/hp22_default_parameter_di_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-23
+    file: helper_proof/hp23_restore_scope_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_RESTORE_INTERNAL
+  - id: HP-24
+    file: helper_proof/hp24_self_guarded_async_only.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-25
+    file: helper_proof/hp25_self_guarded_mixed_callers.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: WP-01
+    file: worker_proof/wp01_direct_worker_guard_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-02
+    file: worker_proof/wp02_fqcn_base_worker_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-03
+    file: worker_proof/wp03_alias_import_worker_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-04
+    file: worker_proof/wp04_intermediate_abstract_base_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-05
+    file: worker_proof/wp05_nested_worker_class_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-06
+    file: worker_proof/wp06_mutation_inside_guard_lambda_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-07
+    file: worker_proof/wp07_mutation_before_guard.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-08
+    file: worker_proof/wp08_mutation_after_scope_exit.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-09
+    file: worker_proof/wp09_guard_in_dead_helper.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-10
+    file: worker_proof/wp10_helper_inside_guard_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_WORKER_MEDIATED
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-11
+    file: worker_proof/wp11_shared_helper_non_worker_caller.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_NON_WORKER_ROOT
+    expectedRoot: PUBLIC_OR_PROTECTED_EXTERNAL
+  - id: WP-12
+    file: worker_proof/wp12_wrong_receiver_guard.kt
+    expectedResolution: UNRESOLVED_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-13
+    file: worker_proof/wp13_launch_escape_callback.kt
+    expectedResolution: ASYNC_DISPATCH
+    expectedProof: UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-14
+    file: worker_proof/wp14_unregistered_worker.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_NON_WORKER_ROOT
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-15a
+    file: worker_proof/wp15_duplicate_worker_a.kt
+    expectedResolution: AMBIGUOUS_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: UNKNOWN_EXTERNAL
+  - id: WP-15b
+    file: worker_proof/wp15_duplicate_worker_b.kt
+    expectedResolution: AMBIGUOUS_TARGET
+    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedRoot: UNKNOWN_EXTERNAL
+  - id: WP-16
+    file: worker_proof/wp16_cancellation_path_outside_scope.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: WP-17
+    file: worker_proof/wp17_checkpoint_not_scope.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: COUNTEREXAMPLE_OUTSIDE_WORKER_SCOPE
+    expectedRoot: WORKER_DO_WORK
+  - id: PR-01
+    file: protocol/pr01_no_raw_source.md
+    expectation: REPORT_HAS_NO_SOURCE_SNIPPETS
+  - id: PR-02
+    file: protocol/pr02_two_run_stability.md
+    expectation: DETERMINISTIC
+  - id: PR-03
+    file: protocol/pr03_unknown_code_rejected.md
+    expectation: EXIT_2
+  - id: PR-04
+    file: protocol/pr04_malformed_policy.md
+    expectation: EXIT_2
+  - id: PR-05
+    file: protocol/pr05_unproven_exit1.md
+    expectation: EXIT_1
+  - id: PR-06
+    file: protocol/pr06_unsupported_exit2.md
+    expectation: EXIT_2
+  - id: PR-07
+    file: protocol/pr07_normal_db_untouched.md
+    expectation: DB_CLI_UNCHANGED
+  - id: PR-08
+    file: protocol/pr08_ratchet_untouched.md
+    expectation: RATCHET_UNCHANGED

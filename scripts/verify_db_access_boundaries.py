@@ -3,18 +3,37 @@
 verify_db_access_boundaries.py
 Coherent Exact DB Access Boundary Scanner (Write/Read/Restore Barrier)
 
-Scans app/src/main/java for:
+ACTIVATED (PR-GR-07 Slice 2): the CLI runs the authoritative protocol-v2
+pipeline only.  The legacy v1 active-policy parsing (including the retired
+SIGNATURE_MISSING pre-gate) has been removed; a v1-shaped active policy can
+never authorize anything and is a controlled untrusted configuration error
+(classified ``DB_V2_ACTIVE_POLICY_NOT_V2``).  Run
+``scripts/ci/promote_db_policy_v2.py`` to promote the verified v2 candidate
+over the legacy active file.
+
+Pipeline (in order; every failure is an untrusted exit 2 with no partial
+findings):
+
+  1. source-root validation (declared manifest + topology);
+  2. Room inventory build;
+  3. active v2 loader — ``load_policy_v2`` (schemaVersion 2 required);
+  4. v2 exact source evidence — ``verify_v2_policy_source_evidence``;
+  5. structural policy/manifest validation (unchanged semantics);
+  6. D4 discovery + full-v2 typed authorization;
+  7. protocol-v2 findings report.
+
+Scans declared production source roots for:
   1. Direct DAO mutation calls outside the canonical ownership policy.
   2. DAO mutation pairs that are only partially approved — mixed
      approved/unapproved pairs in the same method fail.
   3. Forbidden DB file operations outside approved structural exceptions.
 
 Approval sources:
-  1. Ownership policy — EXACT match on (canonical path, class, method, DAO,
-     operation).  The ``operation`` field must be the EXACT DAO method name
-     that the method body invokes (e.g. ``insertOrIgnore``, ``archiveGroup``,
-     ``staleAbortIfStillRunning``, ``deleteAllForGroup``).  The universal
-     ``operation: write`` is rejected as invalid policy metadata.
+  1. Ownership policy (v2, authoritative) — EXACT equality on the full
+     mutation identity via immutable ``PolicyEntry`` objects: canonical path,
+     ownerFqcn, kind, method, receiver, ordered parameterTypes, daoAccessor,
+     daoFqcn, operation.  There are no wildcards, no simple-name owner
+     comparison, no cross-overload unions, and no legacy fields.
   2. Structural exceptions — EXACT match on (canonical path, class,
      method_pattern, operation).  method_pattern is bounded: an exact Kotlin
      identifier or the single migration form ``MIGRATION_\\d+_\\d+``.
@@ -22,42 +41,105 @@ Approval sources:
 
 Canonical policy paths (both policy files):
   * repository-relative POSIX paths under an approved production source root
-    (``app/src/main/java``), e.g.
+    (resolved through ``source_roots.APPROVED_PRODUCTION_SOURCE_ROOTS``), e.g.
     ``app/src/main/java/com/yourname/expensetracker/data/database/GroupTransactionCoordinator.kt``;
   * bare basenames, ``..``, backslashes, absolute paths, non-``.kt`` paths,
     and ambiguous suffix paths are rejected at load time (fail closed);
   * matching is exact canonical path equality — never basename or suffix.
 
-Scan semantics:
-  * class/object/interface names are parsed from the ACTUAL Kotlin
-    declarations of the referenced file — never derived from the filename;
-  * every mutation is associated with its exact enclosing class and its exact
-    enclosing method (balanced body) inside that class; there is no
-    file-wide or filename-wide fallback;
-  * DAO identities resolve through class-scoped properties/constructor
-    params and method-scoped locals to the Room accessor names used by the
-    policy (e.g. ``private val groupDao: ExpenseGroupDao`` ->
-    ``expenseGroupDao``);
-  * authorization requires every extracted ``(dao_identity, operation)`` pair
-    to be covered by an exact policy entry; a single uncovered pair fails.
-
 Exit codes:
-  0 — no violations
-  1 — violations found AND --fail-on-violation flag is set
-  2 — infrastructure/config error (loader rejection, invalid policy metadata
-      supplied directly to scan(), missing source, unreadable file, no
-      scanable files)
+  0 — clean trusted scan (or inventory-only success)
+  1 — one or more protocol-v2 findings
+  2 — one or more BLOCKING infrastructure/config diagnostics
+
+GR-07 Option-B trust amendment: scanner-stage per-callable diagnostics are
+split into BLOCKING vs ADVISORY by the DB relevance of the enclosing
+callable.  Advisory diagnostics (bounded ``controlled_context["advisory"]``
+marker on callables with no DAO/DB-handle usage) are still reported in the
+diagnostics array but never break trust and never change the exit code;
+pre-scan stage failures (source roots, inventory, loader, evidence) are
+never advisory and always exit 2.
 
 Usage:
   python3 scripts/verify_db_access_boundaries.py
   python3 scripts/verify_db_access_boundaries.py --fail-on-violation
+  python3 scripts/verify_db_access_boundaries.py --legacy-shadow-report PATH
+
+The ``--fail-on-violation`` option is accepted for compatibility.  Protocol-v2
+findings always exit 1; clean trusted scans exit 0; blocking diagnostics
+exit 2.
+
+``--legacy-shadow-report PATH`` runs the RETIRED legacy analysis in-process
+and writes a JSON report marked ``reportOnly: true``.  The shadow report is
+strictly informational: it is written after the authoritative exit code is
+fixed, can NEVER change that exit code, and MUST NOT be passed to
+guard_ratchet.py (the ratchet consumes protocol-v2 reports only).
 """
 
 import argparse
+import hashlib
+import json
 import os
 import re
 import sys
 from collections import Counter
+
+# db_guard modules are package-relative only; direct script execution must
+# anchor the repository root before importing them.
+_PROJECT_IMPORT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_IMPORT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_IMPORT_ROOT)
+
+try:
+    from scripts.db_policy_signature import SignatureError, normalize_type_text
+except ModuleNotFoundError:  # direct execution from outside the repository root
+    from db_policy_signature import SignatureError, normalize_type_text
+
+try:
+    from scripts.db_guard.policy_errors import POLICY_ERROR_SCHEMA_MISMATCH
+    from scripts.db_guard.policy_v2_evidence import verify_v2_policy_source_evidence
+    from scripts.db_guard.policy_v2_loader import load_policy_v2
+    from scripts.db_guard.source_roots import (
+        SOURCE_ROOT_MANIFEST_RELPATH,
+        SourceRoot,
+        SourceRootSet,
+        resolve_source_root_set,
+    )
+except ImportError:  # direct execution from outside the repository root
+    from db_guard.policy_errors import POLICY_ERROR_SCHEMA_MISMATCH
+    from db_guard.policy_v2_evidence import verify_v2_policy_source_evidence
+    from db_guard.policy_v2_loader import load_policy_v2
+    from db_guard.source_roots import (
+        SOURCE_ROOT_MANIFEST_RELPATH,
+        SourceRoot,
+        SourceRootSet,
+        resolve_source_root_set,
+    )
+
+try:
+    from scripts.db_guard.policy_legacy import (
+        legacy_canonical_path_error,
+        legacy_canonical_path,
+        legacy_ownership_entry_metadata_errors,
+        legacy_structural_entry_metadata_errors,
+        legacy_verify_ownership_policy_source_evidence,
+        _legacy_verify_ownership_group,
+        _legacy_canonical_path_file,
+        LEGACY_OWNERSHIP_ALLOWED_KEYS,
+        LEGACY_STRUCTURAL_ALLOWED_KEYS,
+    )
+except ImportError:
+    from db_guard.policy_legacy import (
+        legacy_canonical_path_error,
+        legacy_canonical_path,
+        legacy_ownership_entry_metadata_errors,
+        legacy_structural_entry_metadata_errors,
+        legacy_verify_ownership_policy_source_evidence,
+        _legacy_verify_ownership_group,
+        _legacy_canonical_path_file,
+        LEGACY_OWNERSHIP_ALLOWED_KEYS,
+        LEGACY_STRUCTURAL_ALLOWED_KEYS,
+    )
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -167,7 +249,7 @@ _FILE_OP_CALL_EVIDENCE = {
     "getDatabasePath": re.compile(r"\bgetDatabasePath\s*\("),
 }
 _FILE_OP_TOKEN_EVIDENCE = {
-    "deleteRecursively": re.compile(r"\.deleteRecursively\s*\(\s*\)"),
+    "deleteRecursively": re.compile(r"\bdeleteRecursively\s*\(\s*\)"),
     "writableDatabase": re.compile(r"\bwritableDatabase\b"),
 }
 
@@ -191,7 +273,7 @@ _FILE_OP_UNSUPPORTED_TOKENS = (
     ("execSQL", re.compile(r"\bexecSQL\b"), _FILE_OP_CALL_EVIDENCE["execSQL"]),
     ("openDatabase", re.compile(r"\bopenDatabase\b"), _FILE_OP_CALL_EVIDENCE["openDatabase"]),
     ("getDatabasePath", re.compile(r"\bgetDatabasePath\b"), _FILE_OP_CALL_EVIDENCE["getDatabasePath"]),
-    ("deleteRecursively", re.compile(r"\.deleteRecursively\b"), _FILE_OP_TOKEN_EVIDENCE["deleteRecursively"]),
+    ("deleteRecursively", re.compile(r"\bdeleteRecursively\b"), _FILE_OP_TOKEN_EVIDENCE["deleteRecursively"]),
 )
 
 # The evidence tables must cover EXACTLY the whitelisted structural operations
@@ -309,10 +391,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 SOURCE_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java")
 
-# Approved production source roots (repository-relative).  Canonical policy
-# paths must live under one of these roots — a path cannot point at tests,
-# generated code, or any other non-production tree.
-APPROVED_PRODUCTION_SOURCE_ROOTS = ("app/src/main/java",)
+# The approved production source-root contract lives exclusively in
+# ``scripts/db_guard/source_roots.py`` (``APPROVED_PRODUCTION_SOURCE_ROOTS``
+# plus the declared manifest layer); policy paths are validated there, so no
+# local root tuple is duplicated at this CLI boundary.
 
 OWNERSHIP_POLICY_PATH = os.path.join(
     PROJECT_ROOT, "config", "guards", "db_ownership_policy.yml"
@@ -320,6 +402,22 @@ OWNERSHIP_POLICY_PATH = os.path.join(
 STRUCTURAL_EXCEPTIONS_PATH = os.path.join(
     PROJECT_ROOT, "config", "guards", "db_structural_exceptions.yml"
 )
+
+# ── Activation contract (PR-GR-07 Slice 2) ────────────────────────────────────
+# Controlled internal classification for an active ownership-policy document
+# that is not an activatable schemaVersion 2 policy.  Like the retired
+# SIGNATURE_MISSING classification, this code stays internal: the CLI report
+# carries only the registered umbrella diagnostic, while this constant names
+# the failure mode for operators and tests.  Remediation is always the same:
+# run scripts/ci/promote_db_policy_v2.py.
+DB_V2_ACTIVE_POLICY_NOT_V2 = "DB_V2_ACTIVE_POLICY_NOT_V2"
+
+# The only activatable active-policy schema version and the bounded,
+# controlled statistics identifiers reported by trusted scans.
+ACTIVE_POLICY_SCHEMA_VERSION = 2
+ACTIVATION_POLICY_MODE = "authoritative-v2"
+ACTIVATION_SCANNER_MODE = "protocol-v2"
+ACTIVATION_SCANNER_VERSION = 2
 # Canonical structural expected-methods manifest — the contract that the
 # production CLI enforces against db_structural_exceptions.yml (exact tuple
 # set equivalence + entry counts + source evidence).
@@ -344,37 +442,13 @@ def canonical_policy_path_error(raw):
       * not bare basenames (must contain a directory component);
       * ending in ``.kt``;
       * under an approved production source root
-        (``app/src/main/java``).
+        (resolved through ``source_roots.APPROVED_PRODUCTION_SOURCE_ROOTS``).
 
     Bare basenames are rejected because duplicate basenames exist across
     packages; suffix/ambiguous paths are rejected because matching is exact
     canonical path equality.
     """
-    if not isinstance(raw, str):
-        return "path must be a string"
-    p = raw.strip()
-    if not p:
-        return "path must be non-empty"
-    if "\\" in p:
-        return f"path contains a backslash: {p!r} (use '/' separators)"
-    if p.startswith("/") or p.startswith("\\\\") or re.match(r"^[A-Za-z]:[\\/]", p):
-        return f"path must be repository-relative, not absolute: {p!r}"
-    if p.startswith("./") or p == ".":
-        return f"path must not start with './': {p!r}"
-    parts = p.split("/")
-    if any(part in ("", ".", "..") for part in parts):
-        return f"path must not contain empty, '.', or '..' segments: {p!r}"
-    if len(parts) < 2:
-        return f"bare basename path is ambiguous and not allowed: {p!r}"
-    if not p.endswith(".kt"):
-        return f"path must reference a Kotlin source file (.kt): {p!r}"
-    for root in APPROVED_PRODUCTION_SOURCE_ROOTS:
-        if p == root or p.startswith(root + "/"):
-            return None
-    return (
-        f"path {p!r} is not under an approved production source root "
-        f"{sorted(APPROVED_PRODUCTION_SOURCE_ROOTS)}"
-    )
+    return legacy_canonical_path_error(raw)
 
 
 def canonical_policy_path(raw):
@@ -384,17 +458,18 @@ def canonical_policy_path(raw):
     approved production source root.  Matching is exact canonical path
     equality — a non-canonical policy path never authorizes anything.
     """
-    if canonical_policy_path_error(raw) is None:
-        return raw.strip()
-    return None
+    return legacy_canonical_path(raw)
 
 
 def _scanned_file_canonical_path(filepath):
     """Return the repository-relative POSIX path of a scanned file.
 
-    For production files under ``app/src/main/java`` this equals the canonical
-    policy path form; for any other tree it produces a path that no canonical
-    policy path can equal (fail closed).
+    Topology-neutral: produces a repository-relative POSIX path for ANY
+    scanned file.  Authorization is performed separately by root-aware
+    stages (``_canonical_path_file`` resolves through the declared
+    production root set via ``source_roots``).  A file outside every
+    declared root cannot be resolved there and fails closed at the
+    authorization layer, not here.
     """
     return os.path.relpath(filepath, PROJECT_ROOT).replace("\\", "/")
 
@@ -439,71 +514,17 @@ def ownership_entry_metadata_errors(entry):
       9. ``barrier_via`` / ``delegate_of`` must be non-empty strings when
          present, and ``private`` must be a real boolean when present.
     """
-    errors = []
-    if not isinstance(entry, dict):
-        return ["entry must be a mapping"]
+    return legacy_ownership_entry_metadata_errors(entry)
 
-    # H2 strict schema: reject unknown keys so a mistyped field (e.g. ``daoz``)
-    # can never be silently ignored while the guard approves a mutation.
-    unknown_keys = set(entry) - OWNERSHIP_ALLOWED_KEYS
-    if unknown_keys:
-        errors.append(f"unknown key(s) {sorted(unknown_keys)}")
 
-    for field in ("path", "class", "method", "operation", "reason", "owner", "linked_issue"):
-        value = entry.get(field)
-        if not isinstance(value, str) or not value.strip():
-            errors.append(f"'{field}' must be a non-empty string")
-
-    path = entry.get("path")
-    if isinstance(path, str) and path.strip():
-        path_error = canonical_policy_path_error(path)
-        if path_error:
-            errors.append(f"'path' is not canonical: {path_error}")
-
-    op = entry.get("operation")
-    if op == "write":
-        errors.append(
-            "'operation: write' is invalid policy metadata — every entry must "
-            "name the EXACT DAO method it authorizes "
-            "(e.g. 'insert', 'insertOrIgnore', 'archiveGroup', "
-            "'deleteAllForGroup', 'staleAbortIfStillRunning')"
-        )
-    elif not isinstance(op, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", op or ""):
-        errors.append(f"'operation' must be an exact DAO method name, got {op!r}")
-
-    method = entry.get("method")
-    if isinstance(method, str) and _is_wildcard_method(method):
-        errors.append(
-            f"method {method!r} is a wildcard/pattern method — every writer "
-            "method must be individually enumerated with an exact name"
-        )
-
-    daos = entry.get("daos")
-    if "daos" not in entry:
-        errors.append("'daos' must be a non-empty list of non-empty strings")
-    elif not isinstance(daos, list) or not daos:
-        errors.append("'daos' must be a non-empty list of non-empty strings")
-    else:
-        for dao in daos:
-            if not isinstance(dao, str) or not dao.strip():
-                errors.append("every 'daos' entry must be a non-empty string")
-                break
-
-    if "barrier_required" not in entry:
-        errors.append("'barrier_required' must be a real boolean (true/false)")
-    elif not isinstance(entry["barrier_required"], bool):
-        errors.append("'barrier_required' must be a real boolean (true/false)")
-
-    for field in ("barrier_via", "delegate_of"):
-        if field in entry:
-            value = entry[field]
-            if not isinstance(value, str) or not value.strip():
-                errors.append(f"'{field}' must be a non-empty string when present")
-
-    if "private" in entry and not isinstance(entry["private"], bool):
-        errors.append("'private' must be a real boolean (true/false) when present")
-
-    return errors
+def _noncanonical_signature_type(value):
+    """Return true unless a policy type is exactly the canonical spelling."""
+    if not isinstance(value, str) or not value or "*" in value:
+        return True
+    try:
+        return normalize_type_text(value) != value
+    except SignatureError:
+        return True
 
 
 def structural_entry_metadata_errors(entry):
@@ -527,68 +548,17 @@ def structural_entry_metadata_errors(entry):
          ``raw_*`` categories, empty strings, and arbitrary values are invalid
          policy metadata and fail closed.
     """
-    errors = []
-    if not isinstance(entry, dict):
-        return ["entry must be a mapping"]
-
-    unknown_keys = set(entry) - STRUCTURAL_ALLOWED_KEYS
-    if unknown_keys:
-        errors.append(f"unknown key(s) {sorted(unknown_keys)}")
-
-    for field in ("path", "class", "method_pattern", "operation"):
-        value = entry.get(field)
-        if not isinstance(value, str) or not value.strip():
-            errors.append(f"'{field}' must be a non-empty string")
-
-    for field in ("reason", "owner", "linked_issue"):
-        if field in entry and (
-            not isinstance(entry[field], str) or not entry[field].strip()
-        ):
-            errors.append(f"'{field}' must be a non-empty string when present")
-
-    path = entry.get("path")
-    if isinstance(path, str) and path.strip():
-        path_error = canonical_policy_path_error(path)
-        if path_error:
-            errors.append(f"'path' is not canonical: {path_error}")
-
-    mp = entry.get("method_pattern")
-    if not _is_valid_method_pattern(mp):
-        errors.append(
-            f"'method_pattern' must be an exact method name or the bounded "
-            f"migration form MIGRATION_\\d+_\\d+, got {mp!r}"
-        )
-
-    # H2 strict operation whitelist: a structural exception (or manifest
-    # tuple) may name ONLY one of the exact supported structural operations.
-    # The generic ``write`` value, ``raw_*`` categories (``raw_sqlite`` /
-    # ``raw_db_file``), empty strings, and arbitrary values are invalid policy
-    # metadata — a value outside the whitelist can never authorize a file
-    # operation and fails closed here (exit 2 via the loaders / scan()).
-    op = entry.get("operation")
-    if not isinstance(op, str) or op not in STRUCTURAL_FILE_OPERATIONS:
-        errors.append(
-            f"'operation' must be one of the exact supported structural "
-            f"operations {sorted(STRUCTURAL_FILE_OPERATIONS)}, got {op!r}"
-        )
-    return errors
+    return legacy_structural_entry_metadata_errors(entry)
 
 # ── Policy loading ────────────────────────────────────────────────────────────
 
 # H2 strict schema: the ONLY keys accepted in an ownership-policy entry.
 # Everything else is a config error (exit 2) so typos/misnamed metadata can
 # never silently change approval semantics.
-OWNERSHIP_ALLOWED_KEYS = frozenset({
-    "path", "class", "method", "daos", "operation",
-    "barrier_required", "barrier_via", "reason", "owner",
-    "linked_issue", "private", "delegate_of",
-})
+OWNERSHIP_ALLOWED_KEYS = LEGACY_OWNERSHIP_ALLOWED_KEYS
 
 # H2 strict schema: the ONLY keys accepted in a structural-exception entry.
-STRUCTURAL_ALLOWED_KEYS = frozenset({
-    "path", "class", "method_pattern", "operation",
-    "reason", "owner", "linked_issue",
-})
+STRUCTURAL_ALLOWED_KEYS = LEGACY_STRUCTURAL_ALLOWED_KEYS
 
 _WILDCARD_CHARS = set("*?[]+")
 
@@ -637,64 +607,41 @@ def _yaml_safe_load_or_exit(filepath, label):
 
 
 def load_db_ownership_policy(policy_path=None):
-    """Load and validate the DB ownership policy.
+    """Load the ACTIVE DB ownership policy as an immutable v2 document.
 
-    Returns a list of policy entry dicts.
+    Activation contract (PR-GR-07 Slice 2): loading goes exclusively through
+    ``scripts.db_guard.policy_v2_loader.load_policy_v2``, which requires a
+    ``schemaVersion: 2`` document with the exact per-entry field set
+    (path ownerFqcn kind method receiver parameterTypes daoAccessor daoFqcn
+    operation barrierMode reason owner linkedIssue) and returns a tuple of
+    immutable :class:`~scripts.db_guard.policy_model.PolicyEntry` objects.
 
-    Every entry is validated at load time and must have:
-      * non-empty string ``path``, ``class``, ``method``, ``operation``,
-        ``reason``, ``owner``, ``linked_issue``;
-      * ``path`` in CANONICAL form — a repository-relative POSIX path under an
-        approved production source root (``app/src/main/java``).  Bare
-        basenames, ``..``, backslashes, absolute paths, non-``.kt`` paths, and
-        ambiguous suffix paths are rejected with exit 2;
-      * ``operation`` equal to the EXACT DAO method name authorized by the
-        entry.  The universal ``operation: write`` is rejected as invalid
-        policy metadata (exit 2) — it would authorize every mutation and make
-        the per-operation guard meaningless;
-      * ``daos`` — a non-empty list of non-empty strings;
-      * ``barrier_required`` — present and a REAL boolean;
-      * ``barrier_via`` — either absent or a non-empty string documenting the
-        mediation layer (e.g. ``WorkerExecutionGuard``).
+    There is NO tolerant legacy parsing: a v1-shaped active file (legacy
+    ``class``/``daos``/``signature`` fields, no ``schemaVersion: 2``) is a
+    controlled untrusted configuration error — exit 2, classified internally
+    as :data:`DB_V2_ACTIVE_POLICY_NOT_V2`.  Run
+    ``scripts/ci/promote_db_policy_v2.py`` to promote the verified candidate.
 
-    Malformed entries exit 2 with entry/path context.  Optional metadata (never
-    relaxes exact matching):
-      * ``private: true``  — the method is a private implementation writer.
-      * ``delegate_of``    — the public method that delegates to this writer
-        (the delegated-to method is the one approved; the public delegating
-        method is NOT approved unless separately listed).
-
-    Wildcard/pattern methods are rejected with exit 2.
+    Every rejection prints only controlled ``PolicyError`` codes and exits 2;
+    raw payloads, file contents, and exception text are never emitted.
     """
     if policy_path is None:
         policy_path = OWNERSHIP_POLICY_PATH
 
-    data = _yaml_safe_load_or_exit(policy_path, "DB ownership policy")
-    entries = data.get("entries", data) if isinstance(data, dict) else data
-
-    if not isinstance(entries, list):
+    entries, errors = load_policy_v2(policy_path)
+    if entries is None:
+        for error in errors:
+            # Bounded context only: controlled codes plus fixed labels,
+            # indices, counts, and type names — never paths or payloads.
+            print(f"ERROR: {error.code}: {dict(sorted(error.context.items()))}",
+                  file=sys.stderr)
         print(
-            f"ERROR: Ownership policy entries must be a list, "
-            f"got {type(entries).__name__}",
+            f"ERROR: {DB_V2_ACTIVE_POLICY_NOT_V2}: active ownership policy "
+            "is not a schemaVersion 2 document; run "
+            "scripts/ci/promote_db_policy_v2.py",
             file=sys.stderr,
         )
         sys.exit(2)
-
-    for i, entry in enumerate(entries):
-        # Stable, human-readable context for every error below: prefer the
-        # entry's own path, fall back to class, then index.
-        label = _entry_label(entry, i, "ownership policy entry")
-
-        # Complete validation — the SAME validator scan()'s direct API uses.
-        # Rejects unknown keys, missing/non-string required fields, non-canonical
-        # paths, universal ``operation: write``, wildcard methods, missing/empty
-        # daos, non-real booleans, and malformed optional metadata with exit 2.
-        errors = ownership_entry_metadata_errors(entry)
-        if errors:
-            for error in errors:
-                print(f"ERROR: {error} in {label}: {entry}", file=sys.stderr)
-            sys.exit(2)
-
     return entries
 
 # ── Structural method_pattern validation (fail-closed whitelist) ──────────────
@@ -736,7 +683,7 @@ def load_db_structural_exceptions(exceptions_path=None):
     Each entry must have: path, class, method_pattern, operation, reason, owner.
 
     ``path`` must be a canonical policy path (repository-relative POSIX path
-    under ``app/src/main/java``) and ``method_pattern`` must be an exact method
+    under an approved production source root) and ``method_pattern`` must be an exact method
     name or the single bounded migration form ``MIGRATION_\\d+_\\d+``.
     Broad regex patterns are rejected with exit 2.
     """
@@ -786,8 +733,8 @@ def load_db_structural_exceptions(exceptions_path=None):
 #     exception tuples, duplicates in either side, and operation mismatches on
 #     the same (path, class, method_pattern) all fail with exit 2;
 #   * entry-count contract — the manifest's ``counts`` section pins the exact
-#     number of ownership-policy and structural-exceptions entries.  A count
-#     change without an explicit manifest update is a configuration error;
+#     number of structural-exceptions entries.  A count change without an
+#     explicit manifest update is a configuration error;
 #   * source evidence — every manifest tuple must be backed by EXACT source
 #     evidence (canonical path resolves to a real file, class declared exactly
 #     once, method_pattern matches an actual declaration in that class, and —
@@ -798,22 +745,28 @@ def load_db_structural_exceptions(exceptions_path=None):
 # (including ``allowlist``-style metadata) is a config error (exit 2).
 MANIFEST_ALLOWED_TOP_KEYS = frozenset({"baseline", "expected", "fixtures", "counts"})
 
-# Only these keys are accepted inside the ``counts`` section.
-MANIFEST_COUNT_KEYS = frozenset({"ownership_entries", "structural_entries"})
+# Only these keys are accepted inside the ``counts`` section.  Any other key
+# (including ``ownership_entries``) is an unknown-count-key configuration
+# error: the manifest governs structural exceptions only.
+MANIFEST_COUNT_KEYS = frozenset({"structural_entries"})
 
-# Pinned canonical entry counts for the DB policy gate.  The manifest's
-# ``counts`` section must equal these EXACT values, and the current policy
-# files must equal the manifest's counts — a silent count change on either
-# side is a configuration error (exit 2).
-PINNED_OWNERSHIP_ENTRY_COUNT = 99
-PINNED_STRUCTURAL_ENTRY_COUNT = 62
+# Pinned canonical structural entry count for the DB policy gate.  The
+# manifest's ``counts.structural_entries`` must equal this EXACT value, and
+# the current structural-exceptions file must equal the manifest's count —
+# a silent count change on either side is a configuration error (exit 2).
+# Ownership cardinality is NOT pinned here: it is an observational migration
+# metric, not structural authorization evidence.
+# GR-08j: 62 -> 64 (two exact named-object Room-migration tuples,
+# MIGRATION_16_17/migrate and MIGRATION_41_42/migrate on AppDatabase.kt).
+PINNED_STRUCTURAL_ENTRY_COUNT = 64
 
 # ── Immutable checked-in tuple contracts (expected/fixtures classification) ────
 # The manifest's ``expected`` and ``fixtures`` sections must EXACTLY equal these
 # canonical (path, class, method_pattern, operation) tuple sets.  The sets are
 # IMMUTABLE — they pin the exact identities of the checked-in manifest:
 #
-#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 58 tuples.  Operation evidence is
+#   * MANIFEST_IMMUTABLE_EXPECTED_TUPLES — 60 tuples (58 pre-GR-08j + the two
+#     GR-08j named-object Room-migration tuples).  Operation evidence is
 #     REQUIRED for every expected tuple: the operation token must occur in the
 #     exact declaration body.
 #   * MANIFEST_IMMUTABLE_FIXTURE_TUPLES — 4 tuples.  Fixture tuples keep
@@ -871,6 +824,13 @@ MANIFEST_IMMUTABLE_EXPECTED_TUPLES = frozenset([
     (_STRUCT_PATH_APP_DATABASE, "AppDatabase", _MIGRATION_METHOD_PATTERN, "execSQL"),
     (_STRUCT_PATH_APP_DATABASE, "AppDatabase", "FRESH_INSTALL_CALLBACK", "execSQL"),
     (_STRUCT_PATH_APP_DATABASE, "AppDatabase", "onCreate", "execSQL"),
+    # GR-08j: named-object Room migrations — the scanner attributes
+    # `object MIGRATION_X_Y` migrate bodies to the object's own class, so
+    # these exact tuples are required alongside the bounded
+    # `class: AppDatabase` entry (the method_pattern is the exact method
+    # name `migrate`, not the bounded migration form).
+    (_STRUCT_PATH_APP_DATABASE, "MIGRATION_16_17", "migrate", "execSQL"),
+    (_STRUCT_PATH_APP_DATABASE, "MIGRATION_41_42", "migrate", "execSQL"),
     # ── Financial rescue (FinancialRescueCoordinator.kt) ─────────────────────
     (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "runRescueIfNeeded", "getDatabasePath"),
     (_STRUCT_PATH_FINANCIAL_RESCUE, "FinancialRescueCoordinator", "readOldDatabaseSnapshot", "openDatabase"),
@@ -1030,8 +990,9 @@ def structural_manifest_metadata_errors(manifest):
          unbounded method_patterns, and unknown entry keys are rejected;
       5. duplicate tuples inside ``expected``, inside ``fixtures``, and across
          the two sections are rejected;
-      6. ``counts`` (when present) must contain non-negative integer
-         ``ownership_entries`` and ``structural_entries``.
+      6. ``counts`` (when present) must contain only ``structural_entries``
+         (a non-negative integer); any other key — including
+         ``ownership_entries`` — is an unknown-count-key error.
     """
     errors = []
     if not isinstance(manifest, dict):
@@ -1247,7 +1208,7 @@ def _manifest_source_file(canonical_path, source_root, cache):
 
 
 def verify_structural_exceptions_manifest(structural_entries, manifest, source_root,
-                                          ownership_count=None):
+                                          enforce_canonical_contract=True):
     """Validate the structural expected-methods manifest against the CURRENT
     structural exceptions and the source tree.
 
@@ -1264,11 +1225,14 @@ def verify_structural_exceptions_manifest(structural_entries, manifest, source_r
          tuple set (path, class, method_pattern, operation) must EXACTLY equal
          the current structural-exceptions tuple set.  Missing manifest tuples,
          extra exception tuples, and duplicates in the current set all fail;
-      3. entry-count contract — the manifest's ``counts`` section must equal
-         the pinned production counts (99 ownership / 62 structural), the
-         current ownership count (``ownership_count`` argument, or a helper)
-         must equal ``counts.ownership_entries``, and the current structural
-         count must equal ``counts.structural_entries``;
+      3. entry-count contract — the manifest governs structural exceptions
+         ONLY: its ``counts.structural_entries`` must equal the pinned
+         production structural count under the canonical contract (or the
+         current structural tuple count for a fixture/custom manifest), and
+         the current structural count must equal
+         ``counts.structural_entries``.  Ownership cardinality is an
+         observational migration metric, not structural authorization
+         evidence, and is never validated here;
       4. source evidence — every tuple is source-verified through EXACT
          mechanisms only: the canonical path must resolve to a real file under
          ``source_root``, the class must be declared exactly once (masked
@@ -1295,6 +1259,13 @@ def verify_structural_exceptions_manifest(structural_entries, manifest, source_r
         for meta_error in meta_errors:
             errors.append("MANIFEST_INVALID: " + meta_error)
         return errors
+
+    # Section membership is itself part of the production contract.  Checking
+    # only the combined tuple set would allow an expected tuple to be moved to
+    # fixtures (bypassing operation evidence) without changing the set.
+    if enforce_canonical_contract:
+        for classification_error in structural_manifest_classification_errors(manifest):
+            errors.append(classification_error)
 
     # 2. Current tuples from the structural-exceptions entries.
     current_tuples = []
@@ -1349,24 +1320,19 @@ def verify_structural_exceptions_manifest(structural_entries, manifest, source_r
             "any manifest (expected/fixtures) tuple"
         )
 
-    # 6. Entry-count contract.
+    # 6. Entry-count contract (structural only).  Ownership cardinality is
+    # an observational migration metric tracked elsewhere; it is never
+    # structural authorization evidence and is not validated here.
     counts = manifest.get("counts") or {}
-    manifest_ownership = counts.get("ownership_entries")
     manifest_structural = counts.get("structural_entries")
-    if manifest_ownership != PINNED_OWNERSHIP_ENTRY_COUNT:
-        errors.append(
-            f"COUNT_MISMATCH: manifest counts.ownership_entries="
-            f"{manifest_ownership!r} must equal {PINNED_OWNERSHIP_ENTRY_COUNT}"
-        )
-    if manifest_structural != PINNED_STRUCTURAL_ENTRY_COUNT:
+    expected_structural_count = (
+        PINNED_STRUCTURAL_ENTRY_COUNT if enforce_canonical_contract
+        else len(current_tuples)
+    )
+    if manifest_structural != expected_structural_count:
         errors.append(
             f"COUNT_MISMATCH: manifest counts.structural_entries="
-            f"{manifest_structural!r} must equal {PINNED_STRUCTURAL_ENTRY_COUNT}"
-        )
-    if ownership_count is not None and ownership_count != manifest_ownership:
-        errors.append(
-            f"COUNT_MISMATCH: current ownership policy has {ownership_count} "
-            f"entries but the manifest contract requires {manifest_ownership}"
+            f"{manifest_structural!r} must equal {expected_structural_count}"
         )
     if len(current_tuples) != manifest_structural:
         errors.append(
@@ -3297,243 +3263,9 @@ def _source_evidence_error(path, class_name, method_name, code, detail,
     return error
 
 
-def _canonical_path_file(canonical_path, source_root):
-    """Resolve a canonical policy path to a real file under ``source_root``.
-
-    Canonical policy paths are repository-relative POSIX paths under an
-    approved production source root (``app/src/main/java``).  ``source_root``
-    is the absolute directory of that root, so the canonical path is stripped
-    of its root prefix and joined under ``source_root``.  Returns None when the
-    path is not under an approved root (fail closed — a basename or suffix can
-    never resolve here).
-    """
-    for root in APPROVED_PRODUCTION_SOURCE_ROOTS:
-        if canonical_path == root:
-            return None
-        if canonical_path.startswith(root + "/"):
-            rel = canonical_path[len(root) + 1:]
-            return os.path.join(source_root, *rel.split("/"))
-    return None
-
-
-def _verify_ownership_group(path, class_name, method_name, group_entries,
-                            source_root):
-    """Return structured source-evidence errors for one (path, class, method)
-    group of ownership entries.
-
-    ``group_entries`` is a list of ``(index, entry)`` tuples sharing the same
-    canonical ``path``, ``class``, and ``method``.  The group is the unit of
-    policy-union coverage: for overloaded methods the union of every overload's
-    mutation pairs is the method's evidence, and every listed ``(dao,
-    operation)`` pair must exist in that union while every actual pair in the
-    union must be covered by the group's listed union.
-
-    Fail-closed discipline mirrors ``scan()``: no filename-stem, file-wide
-    token, wildcard, or ``matches.last()`` fallback is ever used.
-    """
-    errors = []
-
-    # 1. Resolve the canonical path to a real file under the source root.
-    filepath = _canonical_path_file(path, source_root)
-    if filepath is None:
-        return [_source_evidence_error(
-            path, class_name, method_name, "PATH_INVALID",
-            "policy path is not under an approved production source root",
-        )]
-    if not os.path.isfile(filepath):
-        return [_source_evidence_error(
-            path, class_name, method_name, "PATH_NOT_FOUND",
-            "canonical source file does not exist under the source root",
-        )]
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            lines = f.readlines()
-    except (OSError, UnicodeDecodeError):
-        return [_source_evidence_error(
-            path, class_name, method_name, "FILE_UNREADABLE",
-            "cannot read Kotlin source file",
-        )]
-
-    # 2. Exact class/object resolution from the ACTUAL Kotlin declarations.
-    #    Zero matches and duplicate declarations both fail closed.
-    types = parse_type_declarations(lines)
-    class_decls = [t for t in types if t["name"] == class_name]
-    if not class_decls:
-        return [_source_evidence_error(
-            path, class_name, method_name, "CLASS_MISSING",
-            f"declared class/object {class_name!r} is not present in the "
-            "source file",
-        )]
-    if len(class_decls) > 1:
-        return [_source_evidence_error(
-            path, class_name, method_name, "CLASS_AMBIGUOUS",
-            f"declared class/object {class_name!r} is declared more than once "
-            "in the source file",
-        )]
-    type_decl = class_decls[0]
-
-    # 3. Exact method resolution, including private methods and overloads.
-    methods = parse_function_declarations(lines, type_decl["start"],
-                                         type_decl["end"])
-    target_methods = [m for m in methods if m["name"] == method_name]
-    if not target_methods:
-        return [_source_evidence_error(
-            path, class_name, method_name, "METHOD_MISSING",
-            f"method {method_name!r} is not declared in class/object "
-            f"{class_name!r}",
-        )]
-
-    # Fail closed when any body cannot be bounded: pairs extracted from a
-    # partial body can never prove exhaustive coverage.
-    for m in target_methods:
-        if m.get("unsupported_expression") or m.get("unterminated_braced_body"):
-            return [_source_evidence_error(
-                path, class_name, method_name, "METHOD_BODY_UNSUPPORTED",
-                f"method {method_name!r} body cannot be bounded; source "
-                "evidence refused",
-            )]
-
-    # 4. DAO identity resolution from class/method declarations/types — the
-    #    SAME scoping rules scan() uses (constructor params, class properties,
-    #    method locals; a local alias declared in ANOTHER method is never in
-    #    scope here and fails closed).
-    method_body_lines = set()
-    for m in methods:
-        method_body_lines.update(range(m["start"], m["end"] + 1))
-    class_map = build_class_scope_dao_var_map(
-        lines, type_decl["start"], type_decl["end"],
-        excluded_line_numbers=method_body_lines,
-    )
-    all_locals = {}
-    for m in methods:
-        body_lines = m["body"].split("\n")
-        local_map = build_dao_var_map(body_lines, 0, len(body_lines) - 1)
-        all_locals.update(local_map)
-
-    # 5. Extract exact (dao, operation) pairs from every target method body
-    #    and union them across overloads.
-    extracted = {}  # (dao, op) -> [(method_start_0, abs_lineno_1)]
-    resolution_failures = []  # (receiver, op, abs_lineno)
-    for m in target_methods:
-        body_lines = m["body"].split("\n")
-        local_map = build_dao_var_map(body_lines, 0, len(body_lines) - 1)
-        var_map = {**class_map, **local_map}
-        out_of_scope = set(all_locals) - set(var_map)
-        matches = _extract_mutation_matches(
-            m["body"],
-            var_map=var_map,
-            out_of_scope_aliases=out_of_scope,
-            out_of_scope_alias_identities=all_locals,
-        )
-        for match in matches:
-            abs_lineno = m["start"] + match["lineno"] + 1
-            if match["out_of_scope"]:
-                resolution_failures.append(
-                    (match["receiver"], match["op"], abs_lineno)
-                )
-            else:
-                extracted.setdefault((match["dao"], match["op"]), []).append(
-                    (m["start"], abs_lineno)
-                )
-
-    for receiver, op, abs_lineno in resolution_failures:
-        errors.append(_source_evidence_error(
-            path, class_name, method_name, "DAO_RESOLUTION_FAILED",
-            f"mutation {receiver}.{op}(...) at line {abs_lineno} cannot be "
-            "resolved to a DAO identity in this method (out-of-scope alias); "
-            "source evidence refused",
-            dao=receiver, operation=op,
-        ))
-
-    actual_union = set(extracted)
-
-    # 6. Policy union for the group: every (dao, operation) pair listed by
-    #    every entry with the same (path, class, method).
-    listed_union = set()
-    for _index, entry in group_entries:
-        for dao in entry.get("daos") or []:
-            listed_union.add((dao, entry["operation"]))
-
-    # 7. Bidirectional exact-pair coverage.
-    #    7a. Every listed pair must exist in the source union — a policy entry
-    #        that names a DAO/operation the method never invokes is untruthful.
-    for _index, entry in group_entries:
-        for dao in entry.get("daos") or []:
-            pair = (dao, entry["operation"])
-            if pair not in actual_union:
-                errors.append(_source_evidence_error(
-                    path, class_name, method_name, "PAIR_NOT_FOUND",
-                    f"policy lists dao={dao} operation={entry['operation']} "
-                    "but the source method body contains no such mutation",
-                    dao=dao, operation=entry["operation"],
-                ))
-
-    #    7b. Every actual pair must be covered by the policy union — a real
-    #        mutation the policy omits fails closed (all-or-nothing).
-    for dao, op in sorted(actual_union):
-        if (dao, op) not in listed_union:
-            errors.append(_source_evidence_error(
-                path, class_name, method_name, "PAIR_NOT_COVERED",
-                f"source method invokes dao={dao} operation={op} which is not "
-                "covered by any policy entry for this method",
-                dao=dao, operation=op,
-            ))
-
-    # 8. Barrier evidence and mediation truthfulness per actual mutation.
-    for (dao, op), occurrences in extracted.items():
-        covering = [
-            entry for _index, entry in group_entries
-            if entry.get("operation") == op and dao in (entry.get("daos") or [])
-        ]
-        if not covering:
-            continue  # already reported as PAIR_NOT_COVERED
-        for method_start, abs_lineno in occurrences:
-            barrier_before = _barrier_before_line(
-                lines, method_start, abs_lineno
-            )
-            for entry in covering:
-                if entry.get("barrier_required") and not barrier_before:
-                    errors.append(_source_evidence_error(
-                        path, class_name, method_name, "MISSING_WRITE_BARRIER",
-                        "barrier_required=true but no direct masked "
-                        "writeBarrier.checkWritesAllowed/runWrite before "
-                        f"dao={dao} operation={op} at line {abs_lineno}",
-                        dao=dao, operation=op,
-                    ))
-                if entry.get("barrier_via") and entry.get("barrier_required"):
-                    errors.append(_source_evidence_error(
-                        path, class_name, method_name,
-                        "MEDIATED_METADATA_UNTRUTHFUL",
-                        "entry claims WorkerExecutionGuard mediation "
-                        f"(barrier_via={entry.get('barrier_via')}) but "
-                        "barrier_required=true; mediation and a direct barrier "
-                        "claim cannot both be true",
-                        dao=dao, operation=op,
-                    ))
-                if entry.get("barrier_via") and barrier_before:
-                    errors.append(_source_evidence_error(
-                        path, class_name, method_name,
-                        "MEDIATED_METADATA_UNTRUTHFUL",
-                        "entry claims WorkerExecutionGuard mediation "
-                        f"(barrier_via={entry.get('barrier_via')}) yet the "
-                        f"source directly invokes writeBarrier before dao={dao} "
-                        f"operation={op} at line {abs_lineno}",
-                        dao=dao, operation=op,
-                    ))
-
-    # Deduplicate identical diagnostics (multiple entries may share a pair).
-    seen = set()
-    unique = []
-    for err in errors:
-        signature = (
-            err["code"], err["path"], err["class"], err["method"],
-            err.get("dao"), err.get("operation"), err["detail"],
-        )
-        if signature in seen:
-            continue
-        seen.add(signature)
-        unique.append(err)
-    return unique
+# Legacy implementation moved verbatim to scripts/db_guard/policy_legacy.py;
+# this module-level alias keeps the historical in-module call sites working.
+_canonical_path_file = _legacy_canonical_path_file
 
 
 def verify_ownership_policy_source_evidence(entries, source_root):
@@ -3575,180 +3307,511 @@ def verify_ownership_policy_source_evidence(entries, source_root):
     error concerns a specific pair.  ``code`` is one of the controlled
     SOURCE_EVIDENCE_CODES.
     """
-    errors = []
-    groups = {}
-    for i, entry in enumerate(entries):
-        if not isinstance(entry, dict):
-            errors.append(_source_evidence_error(
-                "", "", "", "ENTRY_INVALID", "entry must be a mapping",
-            ))
-            continue
-        # Reuse the loader's complete metadata validator so a malformed entry
-        # (unknown key, non-canonical path, wildcard method, operation: write,
-        # bad boolean) is reported here instead of being resolved lazily.
-        meta_errors = ownership_entry_metadata_errors(entry)
-        if meta_errors:
-            errors.append(_source_evidence_error(
-                entry.get("path", ""),
-                entry.get("class", ""),
-                entry.get("method", ""),
-                "ENTRY_INVALID",
-                "; ".join(meta_errors),
-            ))
-            continue
-        key = (entry["path"], entry["class"], entry["method"])
-        groups.setdefault(key, []).append((i, entry))
-
-    for (path, class_name, method_name), group_entries in groups.items():
-        errors.extend(_verify_ownership_group(
-            path, class_name, method_name, group_entries, source_root,
-        ))
-
-    # Deterministic ordering for stable diagnostics.
-    errors.sort(key=lambda e: (
-        e.get("path", ""),
-        e.get("class", ""),
-        e.get("method", ""),
-        e.get("code", ""),
-        e.get("dao", ""),
-        e.get("operation", ""),
-        e.get("detail", ""),
-    ))
-    return errors
+    return legacy_verify_ownership_policy_source_evidence(entries, source_root)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main():
-    parser = argparse.ArgumentParser(description="Verify DB access boundaries")
-    parser.add_argument("--fail-on-violation", action="store_true")
-    parser.add_argument(
-        "--ownership-policy",
-        default=None,
-        help="Path to ownership policy YAML (default: config/guards/db_ownership_policy.yml)",
+def _v2_diagnostics(codes):
+    """Convert scanner/inventory diagnostic strings without exposing payloads."""
+    from scripts.ci.guard_findings import GuardDiagnostic
+    from scripts.db_guard.scanner import _diag_from_text
+
+    result = []
+    for value in codes:
+        parsed = _diag_from_text(value)
+        result.append(parsed if parsed is not None else GuardDiagnostic("DB_ROOM_INVALID_INPUT"))
+    return tuple(result)
+
+
+def _diagnostic_is_advisory(diagnostic):
+    """Option-B amendment predicate.
+
+    Scanner diagnostics flagged advisory in their bounded controlled context
+    (``controlled_context["advisory"] is True``) never break trust and never
+    change the exit code.  Every pre-scan/infrastructure diagnostic is
+    unflagged and therefore always blocking (fail closed).
+    """
+    return diagnostic.controlled_context.get("advisory") is True
+
+
+def _blocking_diagnostics(diagnostics):
+    """The blocking subset of a diagnostic sequence (advisory excluded)."""
+    return tuple(
+        item for item in diagnostics if not _diagnostic_is_advisory(item)
     )
-    parser.add_argument(
-        "--structural-exceptions",
-        default=None,
-        help="Path to structural exceptions YAML (default: config/guards/db_structural_exceptions.yml)",
-    )
-    parser.add_argument(
-        "--structural-manifest",
-        default=None,
-        help="Path to structural expected-methods manifest YAML "
-             "(default: config/guards/db_structural_exceptions_expected_methods.yml)",
-    )
-    args = parser.parse_args()
 
-    if not os.path.isdir(SOURCE_DIR):
-        print(f"ERROR: source directory not found: {SOURCE_DIR}", file=sys.stderr)
-        sys.exit(2)
 
-    # Load ownership policy (rejects non-canonical paths, universal
-    # `operation: write`, wildcard methods, and unknown keys with exit 2).
-    ownership_policy_path = args.ownership_policy or OWNERSHIP_POLICY_PATH
-    ownership_policy = load_db_ownership_policy(ownership_policy_path)
+def _safe_report(path, report):
+    from scripts.db_guard.reporting import write_db_report_atomic
+    try:
+        write_db_report_atomic(path, report)
+        return True
+    except Exception:
+        print("ERROR: DB_FINDINGS_WRITE_FAILED", file=sys.stderr)
+        return False
 
-    # Load structural exceptions (rejects non-canonical paths and unbounded
-    # method_patterns with exit 2).
-    exceptions_path = args.structural_exceptions or STRUCTURAL_EXCEPTIONS_PATH
-    structural_exceptions = load_db_structural_exceptions(exceptions_path)
 
-    # Exhaustive ownership-policy source evidence: every policy entry must be
-    # backed by EXACT source evidence (canonical path, class, method, DAO,
-    # operation, and — when claimed — a direct masked write barrier).  A stale
-    # or aspirational entry is an infrastructure/config error, never a silent
-    # approval, so any source-evidence failure exits 2 before scanning.
-    source_evidence_errors = verify_ownership_policy_source_evidence(
-        ownership_policy, SOURCE_DIR
-    )
-    if source_evidence_errors:
-        for error in source_evidence_errors:
-            context = (
-                f"path={error['path']} class={error['class']} "
-                f"method={error['method']}"
-            )
-            if "dao" in error:
-                context += f" dao={error['dao']}"
-            if "operation" in error:
-                context += f" operation={error['operation']}"
-            print(
-                f"ERROR: DB_POLICY_SOURCE_EVIDENCE: {error['code']}: "
-                f"{context} — {error['detail']}",
-                file=sys.stderr,
-            )
-        sys.exit(2)
+def _read_ownership_entries_for_evidence(path):
+    """Load STRUCTURAL exception entries without dropping malformed items.
 
-    # Structural expected-methods manifest: the CANONICAL contract for
-    # db_structural_exceptions.yml.  Enforce exact tuple-set equivalence, the
-    # pinned entry counts (99 ownership / 62 structural), and EXACT source
-    # evidence for every expected method before scanning.  Any failure is an
-    # infrastructure/config error (exit 2) — a stale or aspirational manifest
-    # can never silently approve file operations.
-    manifest_path = args.structural_manifest or STRUCTURAL_EXPECTED_METHODS_PATH
-    structural_manifest = load_db_structural_expected_methods(manifest_path)
-    manifest_errors = verify_structural_exceptions_manifest(
-        structural_exceptions, structural_manifest, SOURCE_DIR,
-        ownership_count=len(ownership_policy),
-    )
-    # Immutable classification contract: the manifest's expected/fixtures tuple
-    # sets must EXACTLY equal the checked-in immutable contracts.  A moved or
-    # invented tuple fails here with MANIFEST_CLASSIFICATION_MISMATCH before
-    # scanning — a reclassified expected tuple can never bypass its operation
-    # evidence through the declaration-only fixtures bucket.
-    manifest_errors.extend(
-        structural_manifest_classification_errors(structural_manifest)
-    )
-    if manifest_errors:
-        for manifest_error in manifest_errors:
-            print(
-                f"ERROR: DB_STRUCTURAL_MANIFEST: {manifest_error}",
-                file=sys.stderr,
-            )
-        sys.exit(2)
+    The structural gate keeps its dict-based entry contract (unchanged
+    semantics).  The ACTIVE ownership policy no longer flows through here:
+    post-activation it is loaded exclusively via ``load_policy_v2``.  This
+    small loader keeps the CLI boundary fail-closed without using the legacy
+    stdout/error path.
+    """
+    if not _HAS_YAML:
+        return [], False
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return [], False
+    entries = data.get("entries", data) if isinstance(data, dict) else data
+    return (entries, isinstance(entries, list))
 
-    violations, files_scanned = scan(SOURCE_DIR, ownership_policy, structural_exceptions)
 
-    if files_scanned == 0:
-        print(
-            "ERROR: no Kotlin source files found to scan in " + SOURCE_DIR,
-            file=sys.stderr,
+def _read_active_policy_schema_version(path):
+    """Best-effort bounded read of the active document's ``schemaVersion``.
+
+    Used ONLY to classify a failed active-policy load: an int is echoed into
+    the untrusted report statistics so operators can see WHICH schema version
+    was rejected; any absent/non-integer value yields ``None``.  Never raises.
+    """
+    data, _loaded = _read_yaml_document_for_evidence(path)
+    if not isinstance(data, dict):
+        return None
+    version = data.get("schemaVersion")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None
+    return version
+
+
+def _anchored_relative_root_set(project_root, root_set):
+    """Re-anchor a resolved root set to repository-relative POSIX paths.
+
+    Manifest-declared roots are already repository-relative; implicit
+    conventional roots carry ABSOLUTE native-separator paths, which the v2
+    evidence stage cannot use for membership checks against relative policy
+    paths.  Anchoring mirrors ``declaration_scanner.declared_root_pairs``
+    parity: every root is converted with ``os.path.relpath`` against the
+    project root.  A root that cannot be anchored (outside the project)
+    fails closed by yielding ``None`` for the whole set — no path can
+    authorize anything without a fully anchored declared root set.
+    """
+    normalized = []
+    for root in root_set.roots:
+        path = root.path
+        if os.path.isabs(path):
+            try:
+                path = os.path.relpath(path, project_root).replace(os.sep, "/")
+            except ValueError:
+                return None
+            if path.startswith(".."):
+                return None
+        normalized.append(
+            SourceRoot(module=root.module, source_set=root.source_set, path=path)
         )
-        sys.exit(2)
+    if not normalized:
+        return None
+    return SourceRootSet(roots=tuple(normalized))
 
-    # Separate infrastructure errors (unreadable files) from real violations
-    read_errors = [v for v in violations if v[1] == 0 and v[3].startswith("ERROR:")]
-    real_violations = [v for v in violations if v not in read_errors]
 
-    if read_errors:
-        for _, _, _, reason in read_errors:
-            print(reason, file=sys.stderr)
-        sys.exit(2)
+def _source_root_manifest_sha256(project_root):
+    """SHA-256 hex digest of the declared source-root manifest bytes.
 
-    if not real_violations:
-        print("PASS: DB access boundaries — no unauthorized DAO mutations found.")
-        sys.exit(0)
+    A safe identifier only: the digest never exposes manifest content.  A
+    missing/unreadable manifest (synthetic fixtures without one) yields
+    ``None`` rather than a misleading digest of empty input.
+    """
+    manifest_path = os.path.join(
+        project_root, *SOURCE_ROOT_MANIFEST_RELPATH.split("/")
+    )
+    try:
+        with open(manifest_path, "rb") as handle:
+            return hashlib.sha256(handle.read()).hexdigest()
+    except OSError:
+        return None
 
-    status = "FAIL" if args.fail_on_violation else "WARNING"
-    print(f"{status}: DB access boundaries — {len(real_violations)} violation(s):\n")
 
-    for rel_path, lineno, line_text, reason in real_violations:
-        print(f"  [{reason}]")
-        print(f"  {rel_path}:{lineno}")
-        print(f"    {line_text.strip()}")
-        print()
+def _activation_statistics(scan_statistics, findings_count, diagnostics_count,
+                           project_root):
+    """Merge scanner counters with the bounded activation identifiers."""
+    statistics = dict(scan_statistics)
+    statistics.update({
+        "activePolicySchemaVersion": ACTIVE_POLICY_SCHEMA_VERSION,
+        "policyMode": ACTIVATION_POLICY_MODE,
+        "scannerMode": ACTIVATION_SCANNER_MODE,
+        "scannerVersion": ACTIVATION_SCANNER_VERSION,
+        "sourceRootManifestSha256": _source_root_manifest_sha256(project_root),
+        "findingCount": findings_count,
+        "diagnosticCount": diagnostics_count,
+    })
+    return statistics
 
-    print("For each violation, either:")
-    print("  1. Add an exact entry to config/guards/db_ownership_policy.yml with a reason.")
-    print("  2. Add a structural exception to config/guards/db_structural_exceptions.yml.")
-    print("  3. Route the write through the approved lifecycle coordinator.")
-    print()
-    print("See docs/DB_WRITE_OWNERSHIP.md for the ownership map.")
 
-    if args.fail_on_violation:
-        sys.exit(1)
-    sys.exit(0)
+def _write_legacy_shadow_report(report_path, project_root, ownership_path,
+                                structural_path, source_dir):
+    """Run the RETIRED legacy analysis in-process; write a reportOnly JSON.
+
+    The shadow report is strictly informational:
+
+      * it is written AFTER the authoritative exit code has been fixed and
+        can NEVER change that exit code (every failure below is swallowed);
+      * it MUST NOT be passed to guard_ratchet.py — the ratchet consumes
+        protocol-v2 reports only, and this payload is not one;
+      * violation payloads are bounded to path/line/reason; raw source lines
+        are deliberately omitted.
+    """
+    payload = {
+        "reportOnly": True,
+        "guard": "db_access",
+        "schema": "cost-aggregator.db-guard-legacy-shadow",
+        "violations": [],
+        "filesScanned": 0,
+    }
+    try:
+        from scripts.db_guard.policy_legacy import (
+            legacy_load_ownership_policy,
+            legacy_load_structural_exceptions,
+        )
+
+        ownership_entries, ownership_errors = legacy_load_ownership_policy(
+            ownership_path
+        )
+        structural_entries, structural_errors = legacy_load_structural_exceptions(
+            structural_path
+        )
+        if ownership_errors or structural_errors:
+            payload["shadowAnalysisFailed"] = True
+        else:
+            violations, files_scanned = scan(
+                source_dir, list(ownership_entries), list(structural_entries),
+            )
+            payload["violations"] = [
+                {"path": item[0], "line": item[1], "reason": item[3]}
+                for item in violations
+            ]
+            payload["filesScanned"] = files_scanned
+    except (Exception, SystemExit):
+        # The shadow analysis is best-effort documentation only; its failure
+        # modes are reported inside the report and never propagate.
+        payload["violations"] = []
+        payload["filesScanned"] = 0
+        payload["shadowAnalysisFailed"] = True
+    try:
+        with open(report_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+    except OSError:
+        pass
+
+
+def _read_yaml_document_for_evidence(path):
+    """Read a YAML document without exposing parser/I/O details at the CLI.
+
+    The manifest validator owns semantic validation; this boundary only keeps
+    missing, malformed, and non-mapping documents from reaching it as trusted
+    policy input.
+    """
+    if not _HAS_YAML:
+        return None, False
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = yaml.safe_load(handle)
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None, False
+    return data, isinstance(data, dict)
+
+
+def main(argv=None):
+    """Run the authoritative protocol-v2 DB discovery guard.
+
+    Activated pipeline order (PR-GR-07 Slice 2):
+
+      1. source-root validation (declared manifest + topology);
+      2. Room inventory build;
+      3. active v2 loader — ``load_policy_v2``, schemaVersion 2 required.  A
+         v1-shaped active file is a controlled untrusted configuration error
+         classified :data:`DB_V2_ACTIVE_POLICY_NOT_V2`: run
+         ``scripts/ci/promote_db_policy_v2.py``.  There is no tolerant legacy
+         parsing and the retired SIGNATURE_MISSING pre-gate is removed;
+      4. v2 exact source evidence — ``verify_v2_policy_source_evidence``
+         over the loaded ``PolicyEntry`` objects, the declared root set, and
+         the built Room inventory;
+      5. structural policy/manifest validation (unchanged semantics);
+      6. D4 discovery + full-v2 typed authorization;
+      7. protocol-v2 findings report.
+
+    Every stage failure is an untrusted exit 2 with NO partial findings.
+    GR-07 Option-B amendment: within stage 6/7, scanner diagnostics on
+    callables with no DB-relevant content are ADVISORY (reported with the
+    bounded ``controlled_context["advisory"]`` marker, trust holds, exit
+    stays 0/1); diagnostics on DB-touching callables and every pre-scan
+    stage failure remain blocking (exit 2, findings withheld).
+    ``--legacy-shadow-report PATH`` additionally runs the retired legacy
+    analysis in-process and writes a ``reportOnly: true`` JSON document that
+    can never change the authoritative exit code and is not a ratchet input.
+    """
+    parser = argparse.ArgumentParser(description="Verify DB access boundaries (protocol v2)")
+    parser.add_argument("--root", default=PROJECT_ROOT, help="Project root or app/src/main/java")
+    parser.add_argument("--findings-output", default=None)
+    parser.add_argument("--dump-room-mutators", default=None)
+    parser.add_argument("--inventory-only", action="store_true")
+    parser.add_argument("--fail-on-violation", action="store_true")
+    # Report-only legacy analysis (see _write_legacy_shadow_report): the
+    # output states reportOnly, cannot affect the exit code, and must never
+    # be passed through to guard_ratchet.py.
+    parser.add_argument("--legacy-shadow-report", default=None)
+    # These are deliberate test seams. Production invocations use the
+    # canonical defaults and do not need policy-path overrides.
+    parser.add_argument("--ownership-policy", default=None)
+    parser.add_argument("--structural-exceptions", default=None)
+    parser.add_argument("--structural-manifest", default=None)
+    parser.add_argument("--raw-query-policy", default=None)
+    args = parser.parse_args(argv)
+
+    # ``python scripts/...`` puts only the scripts directory on sys.path on
+    # some launchers.  Add the repository parent explicitly so the same
+    # executable invocation works from either Windows or POSIX shells.
+    project_import_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_import_root not in sys.path:
+        sys.path.insert(0, project_import_root)
+
+    findings_path = args.findings_output
+    if findings_path is None:
+        findings_path = os.environ.get("COST_AGGREGATOR_GUARD_FINDINGS_FILE")
+    report_requested = findings_path is not None
+    diagnostics = []
+    scan_result = None
+    inventory = None
+    operation_failed = False
+    active_policy_schema_version = None
+    project_root = None
+    root = None
+    ownership = None
+    structural = None
+
+    # The findings protocol is selected only by the exact v2 contract.  Do
+    # this before any scan so an inherited/hostile environment cannot produce
+    # a report using an accidentally supported schema.
+    findings_schema = os.environ.get("COST_AGGREGATOR_GUARD_FINDINGS_SCHEMA")
+    if findings_schema is not None and findings_schema != "2":
+        diagnostics.append("DB_ROOM_INVALID_INPUT")
+        operation_failed = True
+
+    try:
+        from scripts.db_guard.room_inventory import (
+            build_room_inventory, write_inventory_atomic, DEFAULT_RAW_QUERY_POLICY,
+            InventoryWriteError, InventoryDurabilityUnconfirmedError,
+        )
+        from scripts.db_guard.scanner import scan_db_access
+        from scripts.ci.guard_findings import GuardRunReport
+
+        supplied_root = os.path.abspath(os.fspath(args.root))
+        # ``--root`` may be the source root.  Policy/config defaults belong to
+        # the project root, while the supplied root remains the scan override.
+        if os.path.basename(supplied_root) == "java" and os.path.basename(os.path.dirname(supplied_root)) == "main":
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(supplied_root))))
+        elif os.path.basename(supplied_root) == "main" and os.path.basename(os.path.dirname(supplied_root)) == "src":
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(supplied_root)))
+        elif os.path.basename(supplied_root) == "src" and os.path.basename(os.path.dirname(supplied_root)) == "app":
+            project_root = os.path.dirname(os.path.dirname(supplied_root))
+        else:
+            project_root = supplied_root
+        root = supplied_root
+        if not os.path.isdir(root):
+            diagnostics.append("DB_ROOM_INVALID_SOURCE")
+            operation_failed = True
+        else:
+            def policy_path(value, default_name):
+                candidate = value or os.path.join(project_root, "config", "guards", default_name)
+                return candidate if os.path.isabs(candidate) else os.path.join(project_root, candidate)
+            ownership = policy_path(args.ownership_policy, "db_ownership_policy.yml")
+            structural = policy_path(args.structural_exceptions, "db_structural_exceptions.yml")
+            manifest = policy_path(
+                args.structural_manifest,
+                "db_structural_exceptions_expected_methods.yml",
+            )
+            raw_query = policy_path(args.raw_query_policy, "db_raw_query_classification.yml")
+
+            # Stage 1: source-root validation (declared manifest + topology).
+            # A failed resolution is infrastructure truth, never a finding.
+            root_set, root_diagnostics = resolve_source_root_set(project_root)
+            if root_set is None or root_diagnostics:
+                diagnostics.extend(
+                    sorted({code for code, _context in root_diagnostics})
+                )
+                operation_failed = True
+
+            # Stage 2: Room inventory build.  Diagnostics make the whole run
+            # untrusted before any policy is consulted (no partial findings).
+            if not operation_failed:
+                inventory = build_room_inventory(
+                    root, raw_query, source_root_set=root_set,
+                )
+                diagnostics.extend(inventory.diagnostics)
+                if inventory.diagnostics:
+                    operation_failed = True
+
+            if args.inventory_only:
+                # Inventory-only runs stop here by contract: no policy is
+                # loaded and no authorization decision is made.
+                pass
+            elif not operation_failed:
+                # Stage 3: active v2 loader.  schemaVersion 2 required; there
+                # is no tolerant legacy parsing.  A v1-shaped active file is
+                # classified DB_V2_ACTIVE_POLICY_NOT_V2 (internal constant):
+                # the report carries only the registered umbrella diagnostic,
+                # and remediation is scripts/ci/promote_db_policy_v2.py.
+                policy_entries, policy_errors = load_policy_v2(ownership)
+                if policy_entries is None:
+                    active_policy_schema_version = _read_active_policy_schema_version(
+                        ownership
+                    )
+                    diagnostics.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
+                    operation_failed = True
+                else:
+                    # Stage 4: v2 exact source evidence over the loaded typed
+                    # entries, the declared root set, and the built inventory.
+                    evidence_result = verify_v2_policy_source_evidence(
+                        policy_entries,
+                        project_root,
+                        source_roots=_anchored_relative_root_set(
+                            project_root, root_set
+                        ),
+                        room_inventory=inventory,
+                    )
+                    if not evidence_result.trusted:
+                        diagnostics.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
+                        operation_failed = True
+                    else:
+                        # Stage 5: structural policy/manifest validation —
+                        # unchanged semantics, still gated on trusted policy
+                        # evidence so an untrusted run never reaches matching.
+                        structural_entries, structural_loaded = (
+                            _read_ownership_entries_for_evidence(structural)
+                        )
+                        manifest_data, manifest_loaded = (
+                            _read_yaml_document_for_evidence(manifest)
+                        )
+                        manifest_errors = []
+                        if structural_loaded and manifest_loaded:
+                            manifest_errors = verify_structural_exceptions_manifest(
+                                structural_entries,
+                                manifest_data,
+                                os.path.join(project_root, "app", "src", "main", "java"),
+                                enforce_canonical_contract=args.structural_manifest is None,
+                            )
+                        if (not structural_loaded or not manifest_loaded
+                                or manifest_errors):
+                            diagnostics.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
+                            operation_failed = True
+                        else:
+                            # Stage 6: D4 discovery + full-v2 typed
+                            # authorization over the PolicyEntry objects.
+                            scan_result = scan_db_access(
+                                root, policy_entries, structural, raw_query,
+                            )
+    except (OSError, TypeError, ValueError):
+        diagnostics.append("DB_ROOM_INVALID_INPUT")
+        operation_failed = True
+    except Exception:
+        # CLI boundaries must not leak filesystem paths, YAML text, or exception messages.
+        diagnostics.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
+        operation_failed = True
+
+    if inventory is not None and args.dump_room_mutators and not operation_failed:
+        try:
+            write_inventory_atomic(args.dump_room_mutators, inventory)
+        except InventoryDurabilityUnconfirmedError as error:
+            diagnostics.append(error.code)
+            operation_failed = True
+        except InventoryWriteError as error:
+            diagnostics.append(error.code)
+            operation_failed = True
+        except (OSError, TypeError, ValueError):
+            diagnostics.append("DB_ROOM_INVENTORY_WRITE_FAILED")
+            operation_failed = True
+        except Exception:
+            diagnostics.append("DB_ROOM_INVENTORY_WRITE_FAILED")
+            operation_failed = True
+
+    # Do not create the report until every scan, inventory, and dump operation
+    # has completed.  A later failure must not retain findings/statistics from a
+    # successful earlier phase (especially when the output path already exists).
+    from scripts.ci.guard_findings import GuardRunReport
+    scan_diagnostics = scan_result.diagnostics if scan_result is not None else ()
+    # Option-B amendment: only BLOCKING scanner diagnostics make the run
+    # untrusted.  Advisory diagnostics stay visible in the reported
+    # diagnostics array but never force the untrusted report shape.
+    scan_blocking_diagnostics = _blocking_diagnostics(scan_diagnostics)
+    untrusted_statistics = {"trusted": False}
+    if active_policy_schema_version is not None:
+        # Bounded classification context for a rejected active-policy
+        # document (see DB_V2_ACTIVE_POLICY_NOT_V2): the detected integer
+        # schemaVersion, when the document declared one.
+        untrusted_statistics["activePolicySchemaVersion"] = (
+            active_policy_schema_version
+        )
+    if operation_failed or diagnostics or scan_blocking_diagnostics:
+        report = GuardRunReport(
+            "db_access", schema_version=2, findings=(),
+            diagnostics=scan_diagnostics + _v2_diagnostics(diagnostics),
+            statistics=untrusted_statistics,
+        )
+    elif args.inventory_only:
+        report = GuardRunReport(
+            "db_access", schema_version=2, diagnostics=(),
+            statistics={
+                "inventory_daos": len(inventory.daos) if inventory is not None else 0,
+                "inventory_mutators": len(inventory.mutators) if inventory is not None else 0,
+                "trusted": True,
+            },
+        )
+    else:
+        report = scan_result or GuardRunReport(
+            "db_access", schema_version=2, diagnostics=(), statistics={"trusted": True},
+        )
+        if scan_result is not None:
+            # Stage 7: protocol-v2 findings report carrying the bounded
+            # activation identifiers alongside the scanner counters.
+            report = GuardRunReport(
+                "db_access",
+                schema_version=2,
+                findings=scan_result.findings,
+                diagnostics=scan_result.diagnostics,
+                statistics=_activation_statistics(
+                    scan_result.statistics,
+                    len(scan_result.findings),
+                    len(scan_result.diagnostics),
+                    project_root,
+                ),
+            )
+
+    exit_code = 0
+    if report_requested and not _safe_report(findings_path, report):
+        exit_code = 2
+    elif diagnostics or _blocking_diagnostics(report.diagnostics):
+        # Option-B amendment: only BLOCKING diagnostics take the exit-2
+        # path; advisory-only reports keep the trusted 0/1 semantics.
+        print("ERROR: DB access discovery infrastructure diagnostics present", file=sys.stderr)
+        exit_code = 2
+    elif args.inventory_only:
+        exit_code = 0
+    elif report.findings:
+        exit_code = 1
+
+    # The legacy shadow report is written after the exit code is fixed and is
+    # structurally unable to change it (all failures are swallowed).
+    if args.legacy_shadow_report and None not in (project_root, ownership, structural, root):
+        _write_legacy_shadow_report(
+            args.legacy_shadow_report, project_root, ownership, structural, root,
+        )
+
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

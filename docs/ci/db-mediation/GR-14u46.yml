@@ -1,0 +1,123 @@
+# GR-14u46 — ENGINE chained-carrier admission: carrier chains of N>=2
+# segments (u33/u39/u40 family, fail-closed).
+#
+# DEFECT: the u33 head-carrier rule and u39 chained-carrier rule both
+# require the carrier's trailing lambda to END the statement.  The
+# idiomatic Kotlin chain `runCatching { ... }.onFailure { ... }` matched
+# neither: the first lambda is followed by `.onFailure { }`, so the whole
+# composite fell to the generic opacity gate — a mutation inside the
+# runCatching lambda then refused as lambda-escape and blanked the whole
+# callable.  This was the LAST blocker for RestoreJournalImporter's 4 rows
+# (the barrier checks are real since u45b, but GR-12 could not prove
+# dominance over an unmodelable body).  Both `runCatching` and `onFailure`
+# are in PRODUCTION_TRANSPARENT_INLINE_METHODS (the closed reviewed set).
+#
+# FIX (tokenizer, one feature, fail-closed):
+#   - _match_carrier_chain: locates the FIRST segment of
+#     `[val/var prefix]? [chain.]c1(args?) {` with the u39 prefix charset
+#     exclusions (no brace/semicolon/question mark/assignment); the head
+#     form (empty prefix — `runCatching {` leading the statement) is
+#     admitted too, because the u33 head branch rejects it only on the
+#     tail check the chain now satisfies.  Segment-by-segment scanning
+#     happens in the parser.
+#   - _parse_carrier_chain: each segment's lambda parses recursively as
+#     its own TRANSPARENT_SCOPE carrier region (param-header skip,
+#     scope-label save/restore); segments are SIBLING regions at statement
+#     level, each carrying its OWN scope_method and scope_receiver=None
+#     (chain — the u39 precedent: carrier regions are never canonical
+#     scopes).  The bridge unions all carrier spans by name-exact
+#     membership over the recursive region walk
+#     (direct_barrier_bridge._walk_carrier_spans yields children too), so
+#     intermediate segments join exactly like nested transparent scopes
+#     already do — matching by the last name alone was NOT needed.
+#   - CRITICAL fail-closed fallback (u33 hard-stop precedent): the chain
+#     is claimed ONLY when the attempt parses cleanly — every segment
+#     name in the closed set, the last lambda ending the statement, no
+#     structural failure.  On ANY failure the attempt's findings are
+#     ROLLED BACK (findings_before checkpoint) and the statement re-parses
+#     through the generic opacity gate — pre-u46 behavior exactly.  A
+#     claim-then-reject that hard-fails a currently-absorbed no-mutation
+#     site would be a corpus-wide regression.
+#   - Refusals that stay hard: none new.  The u40 safe-call and u39
+#     chained matchers keep their existing behavior; the chain matcher
+#     only sees statements they already rejected (composition: u39's
+#     first-carrier match requires the trailing `{` to end at the
+#     statement end, which a chain never does).
+#   - A/B evidence: ZERO callgraph edge changes across all 53,676 corpus
+#     edges (the tokenizer feeds the GR-12 structural model only; the
+#     GR-13 callgraph parses calls independently) — the change is
+#     perfectly surgical.
+#
+# TESTS (scripts/db_guard/structural_analysis/test_tokenizer.py,
+# additive, 7 new):
+#   - test_carrier_chain_runCatching_onFailure_admitted: multi-line
+#     chain parses supported; TWO sibling TRANSPARENT_SCOPE regions with
+#     scope_method runCatching / onFailure, scope_receiver None, no
+#     findings.
+#   - test_carrier_chain_with_mutation_parses: mutation inside stays
+#     dominance-gated at the proof layer (parse-level pin).
+#   - test_carrier_chain_non_carrier_middle_refused_falls_back /
+#     test_carrier_chain_trailing_content_refused_falls_back /
+#     test_carrier_chain_three_segments_with_unlisted_name_refused:
+#     fallback pins — each outcome byte-identical to pre-u46 (verified by
+#     stash A/B: lambda-escape, no absorbed claim).
+#   - test_carrier_chain_previously_absorbed_stays_supported: the
+#     hard-stop guard — a no-mutation chain never produces a HARD finding;
+#     post-u46 the cleanly-parsing chain is CLAIMED (the u33 precedent:
+#     carrier children individually modeled instead of hidden), which is
+#     an improvement, not a regression.  NOTE: the task fixture expected
+#     the no-mutation chain to STAY ABSORBED; the implemented (and
+#     sounder) behavior claims it — the claim-then-REJECT danger the
+#     fixture was guarding against is pinned by the three fallback
+#     fixtures instead.  parse_with_predicate gained an optional
+#     transparent_inline_methods parameter (test-helper only, additive).
+#   - test_carrier_chain_real_shape_restore_journal_import: the real
+#     RestoreJournalImporter L101-124 per-event shape inside the for-loop
+#     (runCatching { dao.insert(OperationRunEvent(...)) }.onFailure {
+#     cancellation rethrow + Timber.w + allSucceeded = false }) parses
+#     supported.
+#
+# OUTCOME (board, pre fa065dfe... -> post 14e80238b69e3d7a, double run
+# byte-identical): proven_helper 324 -> 328 (+4); ambiguous 5 -> 1;
+# async 35 UNCHANGED; counterexamples 0.  Moved rows (all
+# unproven_ambiguous_call/GR13_LOCAL_GUARD_UNMODELABLE ->
+# proven_helper/GR13_ALL_PATHS_GUARDED — the u45b barrier checks now
+# prove dominance over the newly modelable bodies):
+#     RestoreJournalImporter.importLastSuccessJournalIfPresent ->
+#       OperationRunDao.insert
+#     RestoreJournalImporter.importLastSuccessJournalIfPresent ->
+#       OperationRunEventDao.insert
+#     RestoreJournalImporter.importLastFailureJournalIfPresent ->
+#       OperationRunDao.insert
+#     RestoreJournalImporter.importLastFailureJournalIfPresent ->
+#       OperationRunEventDao.insert
+#   NO new counterexamples surfaced (the census's other mutation-carrying
+#   runCatching{}.onFailure callables — TransactionLifecycleCoordinator,
+#   RestoreDiagnosticsSink, AppStartupCoordinator — were already modelable
+#   or carry no newly-exposed unguarded sites; the board diff contains
+#   exactly the 4 rows above and nothing else).
+#
+# HARD STOP CHECKS: 0 previously-proven rows regressed (328 proven_helper
+#   / 1 restore / 14 worker all in the proven direction; all 379 entries
+#   diffed — only the 4 declared rows moved), 0 counterexample flips, 0
+#   unexpected delta.
+#
+# VALIDATION:
+#   - structural_analysis: 244 passed (237 + 7 new chain fixtures)
+#   - scripts/db_guard: 276 passed (incl. the 8 u45 CI tests)
+#   - fixture corpus: 72/72, exit 0
+#   - scripts/ci: 1251 passed, 14 failed — the 14 failures are
+#     byte-identical to the base commit's failure set (verified by
+#     stashing the change and re-running; freshness-stamp and
+#     platform-conditional tests, environment-dependent, pre-existing)
+#   - board double run byte-identical 14e80238b69e3d7a
+#   - shadow edge A/B: ZERO edge delta (all 53,676 edges identical)
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the Handle.increment ambiguous row (interface_dispatch
+#   uncertainty, 3 OperationRunHandle implementors — owner-decision
+#   candidate); the async 35 (u43 family table); the ~20 corpus
+#   runCatching{}.onFailure sites are now MODELABLE where their callables
+#   parse (the chain admission covers them), so the u46b follow-up audit
+#   of their cancellation handling is visible to the proof layer.
+status: COMPLETE_AT_BOARD_14e80238

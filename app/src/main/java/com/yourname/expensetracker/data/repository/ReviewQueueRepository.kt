@@ -27,6 +27,7 @@ import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionRunner
@@ -93,7 +94,11 @@ class ReviewQueueRepository @Inject constructor(
         pendingReviewDao.getPendingWithReceiptById(reviewId)
 
     /** Recover reviews stuck in PROCESSING state after process death mid-approval. */
-    suspend fun recoverStuckReviews(): Int = pendingReviewDao.recoverStuckProcessing()
+    suspend fun recoverStuckReviews(): Int = writeBarrier.runWrite(
+        DatabaseAccessOperation("ReviewQueueRepository.recoverStuckReviews")
+    ) {
+        pendingReviewDao.recoverStuckProcessing()
+    }
 
     private data class ReviewApprovalTxOutcome(
         val type: ReviewApprovalTxType,
@@ -209,6 +214,11 @@ class ReviewQueueRepository @Inject constructor(
         )
 
         val txOutcome = try {
+            // GR-14p-c: canonical direct scope — the mutations' proof is local
+            // to the legal writer, independent of caller context.
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("ReviewQueueRepository.approveReview")
+            ) {
             database.withTransaction {
                 val rowsUpdated = pendingReviewDao.transitionStatus(
                     id = reviewId,
@@ -350,6 +360,7 @@ class ReviewQueueRepository @Inject constructor(
                     is CreateExpenseResult.Error -> throw result.exception
                 }
             }
+            }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e  // S6-D5-001: never swallow cancellation
         } catch (e: Exception) {
@@ -417,7 +428,12 @@ class ReviewQueueRepository @Inject constructor(
         writeBarrier.checkWritesAllowed("ReviewQueueRepository.rejectReview")
         val review = pendingReviewDao.getById(reviewId) ?: return
 
-        val rejected = database.withTransaction {
+        // GR-14p-c: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        val rejected = writeBarrier.runWrite(
+            DatabaseAccessOperation("ReviewQueueRepository.rejectReview")
+        ) {
+        database.withTransaction {
             val rowsUpdated = pendingReviewDao.transitionStatus(
                 id = reviewId,
                 expectedStatus = PendingReviewStatus.PENDING,
@@ -448,6 +464,7 @@ class ReviewQueueRepository @Inject constructor(
             )
             userCorrectionDao.insert(correction)
             true
+        }
         }
 
         if (!rejected) return
@@ -588,7 +605,12 @@ class ReviewQueueRepository @Inject constructor(
             val transactionActions: PostCommitActionBatch = PostCommitActionBatch.empty("")
         )
 
-        val outcome = database.withTransaction {
+        // GR-14p-c: canonical direct scope — the mutations' proof is local
+        // to the legal writer, independent of caller context.
+        val outcome = writeBarrier.runWrite(
+            DatabaseAccessOperation("ReviewQueueRepository.markAsRelevant")
+        ) {
+        database.withTransaction {
             rawNotificationDao.markRelevance(id, isRelevant)
 
             val correction = UserCorrection(
@@ -677,6 +699,7 @@ class ReviewQueueRepository @Inject constructor(
                 }
             }
         }
+        }
 
         if (outcome.createdExpenseId != null) {
             runPostCommitSafely(
@@ -740,14 +763,26 @@ class ReviewQueueRepository @Inject constructor(
     suspend fun updatePendingReviewCategoryBulk(merchantName: String, categoryId: Long) {
         writeBarrier.checkWritesAllowed("ReviewQueueRepository.updatePendingReviewCategoryBulk")
         val merchantKey = MerchantKeyGenerator.generate(merchantName)
+        // GR-14p-c: canonical direct scope — the mutation's proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("ReviewQueueRepository.updatePendingReviewCategoryBulk")
+        ) {
         pendingReviewDao.bulkUpdateCategoryByMerchant(merchantKey, merchantName, categoryId)
+        }
     }
 
     suspend fun updatePendingReviewMerchantBulk(oldMerchant: String, newMerchant: String) {
         writeBarrier.checkWritesAllowed("ReviewQueueRepository.updatePendingReviewMerchantBulk")
         val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
+        // GR-14p-c: canonical direct scope — the mutation's proof is local
+        // to the legal writer, independent of caller context.
+        writeBarrier.runWrite(
+            DatabaseAccessOperation("ReviewQueueRepository.updatePendingReviewMerchantBulk")
+        ) {
         pendingReviewDao.bulkRenameMerchant(oldMerchantKey, oldMerchant, newMerchant, newMerchantKey)
+        }
     }
 
     suspend fun getPendingReviewsByMerchant(merchantName: String): List<PendingReview> {

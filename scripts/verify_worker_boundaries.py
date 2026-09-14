@@ -3,7 +3,12 @@
 verify_worker_boundaries.py
 G-WORKER-01 — Worker Full Boundary Guard
 
-Scans app/src/main/java for background workers that violate architecture
+Scans the declared production Kotlin source scope (the roots of the
+checked-in manifest ``config/guards/production_source_roots.yml`` via
+``scripts/guardrails/production_source_scope.py`` — currently
+``app/src/main/java``), enumerating EVERY declared production file and then
+applying the guard-specific worker-relevance semantic filter, for
+background workers that violate architecture
 boundaries established by Pipeline 9 (S8) WorkerExecutionGuard rules.
 
 Detects:
@@ -19,7 +24,8 @@ Detects:
 Exit codes:
   0 — no violations (or warning mode without --fail-on-violation)
   1 — violations found AND --fail-on-violation flag is set
-  2 — script error (e.g. source directory not found)
+  2 — script error (e.g. production source scope unresolved, source
+      directory not found)
 
 Usage:
   python3 scripts/verify_worker_boundaries.py
@@ -43,7 +49,15 @@ DESCRIPTION = "Worker Full Boundary Guard"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
-SOURCE_DIR = os.path.join(PROJECT_ROOT, "app", "src", "main", "java")
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+from guardrails.production_source_scope import (  # noqa: E402
+    ProductionSourceScopeError,
+    iter_production_kotlin_files,
+    resolve_production_source_scope,
+)
+
 ALLOWLIST_PATH = os.path.join(SCRIPT_DIR, "allowlists", "worker_allowlist.yml")
 
 SKIP_DIRS = {"test", "androidTest", "migration", "generated", "build"}
@@ -360,10 +374,18 @@ def main():
     args = parser.parse_args()
 
     root = args.root
-    source_dir = os.path.join(root, "app", "src", "main", "java")
 
-    if not os.path.isdir(source_dir):
-        print(f"ERROR: source directory not found: {source_dir}", file=sys.stderr)
+    # PR-GR-10B: resolve the production source scope from the checked-in
+    # manifest (fail closed — no conventional-root fallback).  ALL declared
+    # roots are enumerated; worker relevance is a semantic filter applied
+    # per file, not a root filter.
+    root_set, scope_diagnostics = resolve_production_source_scope(str(root))
+    if root_set is None:
+        codes = ", ".join(sorted({code for code, _ctx in scope_diagnostics}))
+        print(
+            f"ERROR: production source scope unresolved: {codes}",
+            file=sys.stderr,
+        )
         sys.exit(2)
 
     # Fail-closed: missing configured allowlist is fatal
@@ -376,17 +398,22 @@ def main():
     all_violations: List[Violation] = []
     worker_files_scanned = 0
 
-    for dirpath, dirnames, filenames in os.walk(source_dir):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for filename in filenames:
-            if not filename.endswith(".kt"):
-                continue
-            filepath = os.path.join(dirpath, filename)
-            rel_path = os.path.relpath(filepath, root)
+    try:
+        source_files = list(iter_production_kotlin_files(str(root), root_set))
+    except ProductionSourceScopeError as exc:
+        print(
+            f"ERROR: production source enumeration failed: {exc.code}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
-            worker_files_scanned += 1
-            file_violations = scan_file(filepath, rel_path)
-            all_violations.extend(file_violations)
+    for source_file in source_files:
+        filepath = source_file.absolute_path
+        rel_path = source_file.repository_relative_path
+
+        worker_files_scanned += 1
+        file_violations = scan_file(filepath, rel_path)
+        all_violations.extend(file_violations)
 
     # Filter violations through the allowlist (per-symbol, not whole-file)
     allowed_count = 0

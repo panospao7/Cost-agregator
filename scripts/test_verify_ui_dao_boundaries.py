@@ -12,6 +12,7 @@ Run with: python -m pytest scripts/test_verify_ui_dao_boundaries.py -v
 import os
 import sys
 import tempfile
+import pytest
 
 # Import the module under test directly
 sys.path.insert(0, os.path.dirname(__file__))
@@ -215,3 +216,90 @@ class BankConnectionsViewModel @Inject constructor(
     assert len(violations) == 0, (
         f"Expected no violations for allowlisted ViewModel, got: {violations}"
     )
+
+# ── PR-GR-10B source-scope contract ─────────────────────────────────────────
+# The guard's scan scope is the checked-in production source-root manifest
+# (config/guards/production_source_roots.yml), resolved via
+# scripts/guardrails/production_source_scope.py — fail closed with exit 2
+# when it is missing/malformed/undeclared; UI/ViewModel relevance is a
+# semantic filter applied AFTER enumerating every declared production file.
+
+def _write_scope_manifest(root, root_rel="app/src/main/java"):
+    manifest = root / "config" / "guards" / "production_source_roots.yml"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "schemaVersion: 1\n"
+        "roots:\n"
+        "  - module: ':app'\n"
+        "    sourceSet: main\n"
+        f"    path: {root_rel}\n",
+        encoding="utf-8",
+    )
+
+
+_UI_VIOLATION_KT = (
+    "package com.example.ui\n"
+    "\n"
+    "class SampleViewModel @Inject constructor(\n"
+    "    private val sampleDao: SampleDao\n"
+    ")\n"
+)
+
+
+def _scope_run_main(root, monkeypatch, capsys, extra=()):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["verify_ui_dao_boundaries.py", "--root", str(root)] + list(extra),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        _mod.main()
+    return excinfo.value.code, capsys.readouterr()
+
+
+def test_manifest_declared_root_finding_matches_hardcoded_era(tmp_path, monkeypatch, capsys):
+    """With the single-root manifest declaring app/src/main/java, findings
+    are identical to the pre-GR-10B hard-coded-root era."""
+    _write_scope_manifest(tmp_path)
+    target = (
+        tmp_path / "app" / "src" / "main" / "java" / "com" / "example"
+        / "SampleViewModel.kt"
+    )
+    target.parent.mkdir(parents=True)
+    target.write_text(_UI_VIOLATION_KT, encoding="utf-8")
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys, ["--fail-on-violation"])
+
+    assert code == 1
+    assert "SampleViewModel.kt" in out.out
+    assert "injects Dao directly" in out.out
+
+
+def test_missing_manifest_fails_closed(tmp_path, monkeypatch, capsys):
+    """No checked-in manifest -> exit 2 (no conventional-root fallback)."""
+    target = (
+        tmp_path / "app" / "src" / "main" / "java" / "com" / "example"
+        / "SampleViewModel.kt"
+    )
+    target.parent.mkdir(parents=True)
+    target.write_text(_UI_VIOLATION_KT, encoding="utf-8")
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 2
+    assert "production source scope unresolved" in out.err
+
+
+def test_undeclared_root_file_is_never_scanned(tmp_path, monkeypatch, capsys):
+    """Kotlin files outside the declared production roots are invisible."""
+    _write_scope_manifest(tmp_path)
+    undeclared = (
+        tmp_path / "other" / "src" / "main" / "java" / "com" / "example"
+        / "SampleViewModel.kt"
+    )
+    undeclared.parent.mkdir(parents=True)
+    undeclared.write_text(_UI_VIOLATION_KT, encoding="utf-8")
+
+    code, out = _scope_run_main(tmp_path, monkeypatch, capsys)
+
+    assert code == 0
+    assert "SampleViewModel" not in out.out

@@ -273,6 +273,11 @@ class BudgetForecastingEngine @Inject constructor(
      */
     @VisibleForTesting
     internal suspend fun insertForecast(forecast: BudgetForecast): ForecastInsertResult {
+        // GR-14a: the mutation is owned by THIS callable, so the write barrier
+        // check must lexically precede the DAO write here.  The only production
+        // caller (generateForecastResult) already checks before dispatching, so
+        // this double-check is unreachable-no-op in every current path.
+        writeBarrier.checkWritesAllowed("BudgetForecastingEngine.insertForecast")
         return try {
             ForecastInsertResult.Inserted(budgetForecastDao.insertWithDeactivation(forecast))
         } catch (e: SQLiteConstraintException) {
@@ -638,51 +643,6 @@ class BudgetForecastingEngine @Inject constructor(
         return total
     }
     
-    /**
-     * Update a forecast with actual spending data after period ends.
-     *
-     * Computes forecast accuracy as:
-     *   accuracy = 1 - (|predicted - actual| / max(predicted, actual))
-     *
-     * This produces a value in [0, 1] where 1.0 = perfect prediction,
-     * 0.0 = completely wrong, and negative values mean actual exceeded
-     * prediction by more than 2x.
-     *
-     * The result is clamped to [-1.0, 1.0] to bound outlier scenarios.
-     */
-    suspend fun updateForecastAccuracy(
-        forecastId: Long,
-        actualSpending: Double
-    ) = withContext(ioDispatcher) {
-        writeBarrier.checkWritesAllowed("BudgetForecastingEngine.updateForecastAccuracy")
-        val forecast = budgetForecastDao.getById(forecastId)
-            ?: return@withContext
-
-        // BUD-6: Actual accuracy computation replacing placeholder.
-        val predicted = forecast.predictedSpending
-        val accuracy = if (predicted > 0.0) {
-            val error = kotlin.math.abs(predicted - actualSpending)
-            val denominator = maxOf(predicted, actualSpending)
-            1.0 - (error / denominator)
-        } else {
-            // No meaningful prediction — accuracy is 0 if any actual spending occurred
-            if (actualSpending > 0.0) 0.0 else 1.0
-        }
-
-        val clampedAccuracy = accuracy.coerceIn(-1.0, 1.0)
-
-        budgetForecastDao.update(
-            forecast.copy(
-                actualSpending = actualSpending,
-                forecastAccuracy = clampedAccuracy
-            )
-        )
-
-        Timber.d(
-            "updateForecastAccuracy: forecastId=%d predicted=%.2f actual=%.2f accuracy=%.4f",
-            forecastId, predicted, actualSpending, clampedAccuracy
-        )
-    }
 
 }
 

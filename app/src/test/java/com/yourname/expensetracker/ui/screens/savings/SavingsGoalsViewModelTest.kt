@@ -247,15 +247,6 @@ class SavingsGoalsViewModelTest : ViewModelTestUtils() {
             nextId
         }
 
-        coEvery { savingsGoalRepository.updateGoalAmount(any(), any()) } coAnswers {
-            val goalId = invocation.args[0] as Long
-            val amount = invocation.args[1] as Double
-            goalsFlow.value = goalsFlow.value.map { goal ->
-                if (goal.id == goalId) goal.copy(currentAmount = amount) else goal
-            }
-            Unit
-        }
-
         coEvery { savingsGoalRepository.incrementSavingsGoalAmount(any(), any()) } coAnswers {
             val goalId = invocation.args[0] as Long
             val delta = invocation.args[1] as Double
