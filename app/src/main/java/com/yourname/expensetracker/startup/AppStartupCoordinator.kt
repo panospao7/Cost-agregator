@@ -1,29 +1,36 @@
 package com.yourname.expensetracker.startup
 
 import android.app.Application
+import android.content.Context
 import android.os.StrictMode
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.BuildConfig
+import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
+import com.yourname.expensetracker.data.backup.RestoreInternalWriteScope
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
-import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
+import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
 import com.yourname.expensetracker.domain.workers.WorkerRegistry
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.ai.usecase.SyncProactiveBriefingWorkUseCase
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import timber.log.Timber
 import java.io.File
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class AppStartupCoordinator @Inject constructor(
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: Context,
     private val backgroundLifecycleObserver: AppBackgroundLifecycleObserver,
     private val syncProactiveBriefingWorkUseCase: SyncProactiveBriefingWorkUseCase,
     private val restoreJournal: RestoreJournal,
     private val restoreMaintenanceMode: RestoreMaintenanceMode,
     private val restoreDatabaseOpener: RestoreDatabaseOpener,
+    private val restoreInternalWriteScope: RestoreInternalWriteScope,
     private val workerExecutionGuard: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard,
     private val restoreJournalImporter: com.yourname.expensetracker.data.backup.RestoreJournalImporter,
     private val timeProvider: TimeProvider
@@ -69,11 +76,13 @@ class AppStartupCoordinator @Inject constructor(
             }
 
             is RestoreJournal.RecoveryResult.AssetsIncomplete -> {
-                Timber.w("Restore journal in ASSETS_RESTORING state — DB has been swapped but assets may be incomplete")
-                // Best-effort: keep maintenance mode active, log warning
-                // Asset recovery will be handled by periodic cleanup or user-initiated restore
-                restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.RESTORE_COMPLETE_RESTART_REQUIRED)
-                Timber.w("Restore incomplete — user should verify receipt attachments")
+                // P7-002 (RP-03B): the DB is already swapped and was verified once — a
+                // crash/cancellation during the asset loop must NOT re-lock every
+                // launch forever. Re-verify the swapped DB, resume the journal's
+                // asset-task ledger idempotently, and finalize the journal. Only a
+                // genuinely unsafe state (swapped DB unhealthy AND safety recovery
+                // failed) keeps the fail-closed CRITICAL lock.
+                handleAssetsIncompleteRecovery(recovery.entry)
                 return
             }
 
@@ -86,73 +95,15 @@ class AppStartupCoordinator @Inject constructor(
                 val entry = recovery.entry
                 Timber.e("Startup: detected incomplete restore from state: %s", entry.state)
 
-                // Attempt recovery from safety backup
-                val safetyBackupPath = entry.safetyBackupPath
-                // P7-P0-02: Fail-closed crash recovery.
-                // Track whether the safety-backup copy actually succeeded.
-                // If it fails we must NOT delete the journal, NOT reset maintenance mode,
-                // and NOT allow normal startup — the DB may be corrupt.
-                var recovered = false
-
-                if (safetyBackupPath != null) {
-                    val safetyBackupFile = File(safetyBackupPath)
-                    if (safetyBackupFile.exists() && safetyBackupFile.canRead()) {
-                        val liveDbPath = entry.liveDbPath
-                        if (liveDbPath != null) {
-                            try {
-                                val liveDbFile = File(liveDbPath)
-                                val liveDbWalFile = File(liveDbPath + "-wal")
-                                val liveDbShmFile = File(liveDbPath + "-shm")
-                                val safetyWalFile = File(safetyBackupFile.parentFile, "${safetyBackupFile.name}-wal")
-                                val safetyShmFile = File(safetyBackupFile.parentFile, "${safetyBackupFile.name}-shm")
-
-                                // Remove potentially corrupt live DB files
-                                liveDbFile.delete()
-                                liveDbWalFile.delete()
-                                liveDbShmFile.delete()
-
-                                // Restore from safety backup
-                                safetyBackupFile.inputStream().use { input ->
-                                    liveDbFile.outputStream().use { output ->
-                                        input.copyTo(output)
-                                    }
-                                }
-                                if (safetyWalFile.exists()) {
-                                    safetyWalFile.inputStream().use { input ->
-                                        liveDbWalFile.outputStream().use { output ->
-                                            input.copyTo(output)
-                                        }
-                                    }
-                                }
-                                if (safetyShmFile.exists()) {
-                                    safetyShmFile.inputStream().use { input ->
-                                        liveDbShmFile.outputStream().use { output ->
-                                            input.copyTo(output)
-                                        }
-                                    }
-                                }
-
-                                recovered = true
-                                Timber.w("Startup: successfully recovered live DB from safety backup after incomplete restore")
-                            } catch (e: Exception) {
-                                Timber.e(e, "Startup: failed to recover from safety backup during crash recovery")
-                            }
-                        } else {
-                            Timber.e("Startup: journal has safety backup path but no live DB path; cannot recover")
-                        }
-                    } else {
-                        Timber.e("Startup: safety backup file not found or unreadable: %s", safetyBackupPath)
-                    }
-                } else {
-                    Timber.e("Startup: journal has no safety backup path; cannot recover from incomplete restore")
-                }
-
-                if (!recovered) {
+                // P7-P0-02 / P7-CURRENT-003: fail-closed crash recovery.
+                // RP-03B recovery ordering: journal-recorded safety backup first, then
+                // the verified `.pre_restore` snapshot saved just before the swap
+                // (P7-004 recovery hook). If neither yields a verified DB we must NOT
+                // delete the journal, NOT reset maintenance mode, and NOT allow normal
+                // startup — the DB may be corrupt.
+                if (!recoverLiveDbFromSafetySources(entry)) {
                     // P7-CURRENT-003: Fail-closed across restarts.
                     // Preserve journal as failure record and block all writes.
-                    // Do NOT clean staging, do NOT delete journal, do NOT reset maintenance mode.
-                    // The app is in an unknown state — operator must intervene before use.
-                    //
                     // Use CRITICAL_RECOVERY_REQUIRED (NOT RESTORE_COMPLETE_RESTART_REQUIRED):
                     // failJournal() renames the active journal away, so on the next restart
                     // checkAndRecover() returns NoAction. Only CRITICAL_RECOVERY_REQUIRED is
@@ -172,19 +123,7 @@ class AppStartupCoordinator @Inject constructor(
                     return
                 }
 
-                // Recovery succeeded — verify the restored DB before returning to NORMAL
-                val verificationPassed = entry.liveDbPath?.let { verifySafetyRestoredDb(File(it)) } ?: false
-                if (!verificationPassed) {
-                    restoreJournal.failJournal(
-                        entry,
-                        "Startup crash recovery: safety backup copy succeeded but DB verification failed"
-                    )
-                    restoreMaintenanceMode.enterCriticalRecoveryRequired("startup crash recovery failed")
-                    Timber.e("Startup: CRITICAL — safety-restored DB failed verification; blocking app")
-                    return
-                }
-
-                // Verification passed — clean up staging files and journal.
+                // Recovery succeeded — clean up staging files and journal.
                 restoreJournal.cleanStagingFiles(entry)
                 restoreJournal.deleteJournal()
             }
@@ -267,6 +206,287 @@ class AppStartupCoordinator @Inject constructor(
             return false
         }
         return true
+    }
+
+    /**
+     * Attempts fail-safe recovery of the live DB from on-device safety sources.
+     *
+     * RP-03B recovery ordering: the journal-recorded safety backup first, then the
+     * verified `.pre_restore` snapshot saved just before the swap (P7-004 recovery
+     * hook). Every candidate copy is fsync'd and re-verified (integrity + FK + Room
+     * open) before it is trusted; the caller enters CRITICAL_RECOVERY_REQUIRED when
+     * no candidate yields a healthy DB.
+     *
+     * @return true if the live DB files now hold a verified database.
+     */
+    private fun recoverLiveDbFromSafetySources(entry: RestoreJournal.JournalEntry): Boolean {
+        val liveDbPath = entry.liveDbPath ?: run {
+            Timber.e("Startup: journal has no live DB path; cannot recover from incomplete restore")
+            return false
+        }
+        val liveDbFile = File(liveDbPath)
+        val candidates = buildList {
+            entry.safetyBackupPath?.let { add(it to RecoverySourceKind.SAFETY_BACKUP) }
+            val preRestoreFile = File("$liveDbPath.pre_restore")
+            if (preRestoreFile.exists() && preRestoreFile.canRead()) {
+                add(preRestoreFile.absolutePath to RecoverySourceKind.PRE_RESTORE_SNAPSHOT)
+            }
+        }
+        for ((sourcePath, sourceKind) in candidates) {
+            val sourceFile = File(sourcePath)
+            if (!sourceFile.exists() || !sourceFile.canRead()) continue
+            val restored = runCatching {
+                restoreDbFilesFrom(sourceFile, liveDbFile)
+                verifySafetyRestoredDb(liveDbFile)
+            }.getOrElse { e ->
+                Timber.e("Startup: recovery from %s failed: %s", sourceKind.name, e.javaClass.simpleName)
+                false
+            }
+            if (restored) {
+                Timber.w("Startup: live DB recovered from %s after incomplete restore", sourceKind.name)
+                if (sourceKind == RecoverySourceKind.PRE_RESTORE_SNAPSHOT) {
+                    // P7-004: the .pre_restore snapshot has been successfully consumed.
+                    runCatching { sourceFile.delete() }
+                }
+                return true
+            }
+        }
+        Timber.e("Startup: no recovery source yielded a verified live DB")
+        return false
+    }
+
+    /** On-device sources a failed restore can be rolled back from (RP-03B ordering). */
+    private enum class RecoverySourceKind { SAFETY_BACKUP, PRE_RESTORE_SNAPSHOT }
+
+    /**
+     * Copies [sourceDb] (with `-wal`/`-shm` sidecars when present) over the live DB
+     * trio. Potentially corrupt live files are removed first; copies are fsync'd.
+     */
+    private fun restoreDbFilesFrom(sourceDb: File, liveDb: File) {
+        File(liveDb.path + "-wal").delete()
+        File(liveDb.path + "-shm").delete()
+        liveDb.delete()
+        copyFileSynced(sourceDb, liveDb)
+        val sourceWal = File(sourceDb.path + "-wal")
+        val sourceShm = File(sourceDb.path + "-shm")
+        if (sourceWal.exists()) copyFileSynced(sourceWal, File(liveDb.path + "-wal"))
+        if (sourceShm.exists()) copyFileSynced(sourceShm, File(liveDb.path + "-shm"))
+    }
+
+    /**
+     * RP-03B: stream-copy [sourceFile] to [destinationFile], then flush + fsync so
+     * the recovered bytes survive a crash/power loss before the next step trusts
+     * the copy (same pattern as RestoreJournal.writeTextSynced).
+     */
+    private fun copyFileSynced(sourceFile: File, destinationFile: File) {
+        destinationFile.parentFile?.mkdirs()
+        java.io.FileOutputStream(destinationFile).use { output ->
+            sourceFile.inputStream().use { input ->
+                input.copyTo(output)
+            }
+            output.flush()
+            runCatching { output.fd.sync() }
+        }
+    }
+
+    /**
+     * P7-002 (RP-03B): startup recovery for a journal left in ASSETS_RESTORING.
+     *
+     * 1. Re-verify the swapped DB (integrity + FK + Room open). If it fails, run the
+     *    existing fail-closed recovery (safety backup → verified `.pre_restore` →
+     *    CRITICAL_RECOVERY_REQUIRED).
+     * 2. If the DB is healthy, resume the journal's asset-task ledger: sources come
+     *    from the recorded extraction temp dir; missing sources mark the task FAILED
+     *    and keep the verified DB (best-effort image loss must never roll it back).
+     * 3. Commit the journal and enter RESTORE_COMPLETE_RESTART_REQUIRED — the forced
+     *    restart contract stays, but it is now reachable-to-completion: the journal
+     *    is consumed, so the next startup auto-resets the mode to NORMAL instead of
+     *    re-locking forever.
+     */
+    private fun handleAssetsIncompleteRecovery(entry: RestoreJournal.JournalEntry) {
+        Timber.w("Startup: journal in ASSETS_RESTORING — resuming receipt asset recovery")
+        // Ensure the write barrier is active and restore-internal writes are permitted
+        // even if the persisted mode drifted while the journal survived.
+        restoreMaintenanceMode.enter(RestoreMaintenanceMode.Mode.ASSETS_RESTORING)
+
+        // 1. Re-verify the swapped DB before touching anything.
+        val dbHealthy = entry.liveDbPath?.let { verifySafetyRestoredDb(File(it)) } ?: false
+        if (!dbHealthy) {
+            Timber.e("Startup: swapped DB failed verification during ASSETS_RESTORING recovery — attempting safety rollback")
+            if (recoverLiveDbFromSafetySources(entry)) {
+                // Rolled back to a verified pre-restore DB inside a fresh process;
+                // safe to resume normal operation (same contract as the swap-crash
+                // recovery path above).
+                restoreJournal.cleanStagingFiles(entry)
+                restoreJournal.deleteJournal()
+                restoreMaintenanceMode.reset()
+                Timber.w("Startup: rolled back to a verified pre-restore DB; restore marked failed")
+                return
+            }
+            restoreJournal.failJournal(
+                entry,
+                "Startup asset recovery: swapped DB failed verification and safety recovery failed"
+            )
+            restoreMaintenanceMode.enterCriticalRecoveryRequired("startup crash recovery failed")
+            Timber.e("Startup: CRITICAL — ASSETS_RESTORING recovery failed; writes stay blocked across restarts")
+            return
+        }
+
+        // 2. Resume the asset ledger idempotently (best-effort image restore).
+        var finalEntry = entry
+        runCatching {
+            // Startup runs before any coroutine scope exists; the resume is small,
+            // bounded IO + Room suspend DAO calls (Room dispatches to its own
+            // executors, so blocking here cannot deadlock).
+            runBlocking { finalEntry = resumePendingAssetTasks(entry) }
+        }.onFailure { e ->
+            // RP-01 contract: caller cancellation propagates. ASSETS_RESTORING stays
+            // active with the journal intact, so the next launch simply retries the
+            // idempotent resume instead of marking unfinished tasks FAILED.
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.e("Startup: asset resume failed (%s) — marking remaining tasks FAILED", e.javaClass.simpleName)
+            // Base the finalization on the latest journaled ledger so tasks already
+            // completed before the failure are not clobbered.
+            val latest = restoreJournal.readJournal() ?: finalEntry
+            runCatching { finalEntry = markUnfinishedAssetTasksFailed(latest, "ASSET_RESUME_FAILED") }
+        }
+
+        // 3. Finalize the journal forward — per-task failures are recorded in the
+        //    ledger; a verified DB is never rolled back for best-effort image loss.
+        restoreJournal.commitJournal(finalEntry)
+        restoreMaintenanceMode.exit(forceRestartRequired = true)
+        Timber.w("Startup: ASSETS_RESTORING recovery finished — restart required (journal consumed)")
+    }
+
+    /**
+     * P7-002: idempotent resume of the receipt-asset ledger recorded in the restore
+     * journal (RP-03B asset recovery). Only tasks that are not COMPLETED are retried.
+     * Each task: copy the bundle asset from the recorded extraction temp dir to a
+     * durable final file (fsync'd, deterministic per-asset name), then move the DB
+     * pointer inside [RestoreInternalWriteScope]. Missing sources mark the task
+     * FAILED(SOURCE_MISSING) and never touch the verified DB.
+     */
+    private suspend fun resumePendingAssetTasks(entry: RestoreJournal.JournalEntry): RestoreJournal.JournalEntry {
+        val pending = entry.assetTasks.filter { it.status != RestoreJournal.AssetRestoreStatus.COMPLETED }
+        if (pending.isEmpty()) return entry
+
+        val sourceDir = entry.extractTempDirPath?.let { File(it, "receipts") }
+        val receiptsDir = File(appContext.filesDir, "receipts").apply { mkdirs() }
+        var current = entry
+        val db = restoreDatabaseOpener.openFreshDatabase()
+        try {
+            val dao = db.scannedReceiptDao()
+            for (task in pending) {
+                current = resumeSingleAssetTask(current, task, sourceDir, receiptsDir, dao)
+            }
+        } finally {
+            runCatching { db.close() }
+        }
+        return current
+    }
+
+    private suspend fun resumeSingleAssetTask(
+        entry: RestoreJournal.JournalEntry,
+        task: RestoreJournal.AssetRestoreTask,
+        sourceDir: File?,
+        receiptsDir: File,
+        dao: ScannedReceiptDao
+    ): RestoreJournal.JournalEntry {
+        return try {
+            val sourceFile = sourceDir?.let { File(it, task.sourceRelativePath) }
+            if (sourceFile == null || !sourceFile.exists() || !sourceFile.isFile) {
+                // RP-03B: missing source → keep the verified DB, record the loss.
+                Timber.w("Startup: asset source missing for receiptId=%d — marking FAILED(SOURCE_MISSING)", task.receiptId)
+                return updateAssetTask(entry, task, RestoreJournal.AssetRestoreStatus.FAILED, "SOURCE_MISSING")
+            }
+
+            // P7-009: deterministic per-asset identity — reuse the journal-recorded
+            // target name across retries; generate (and journal) one only if absent.
+            val extension = sourceFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
+            val finalName = task.targetPath?.let { File(it).name }
+                ?: "restored_${task.receiptId}_${UUID.randomUUID()}.$extension"
+            val finalFile = File(receiptsDir, finalName)
+            val tempFile = File(receiptsDir, "$finalName.tmp")
+
+            // FINAL_DURABLE: copy + fsync, then atomic rename, BEFORE any DB write.
+            sourceFile.inputStream().use { input ->
+                java.io.FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output)
+                    output.flush()
+                    runCatching { output.fd.sync() }
+                }
+            }
+            if (!tempFile.renameTo(finalFile)) {
+                tempFile.copyTo(finalFile, overwrite = true)
+                tempFile.delete()
+            }
+            if (!finalFile.exists() || !finalFile.isFile) {
+                throw java.io.IOException("ASSET_FINAL_DURABLE_FAILED")
+            }
+
+            // DB_UPDATED: only after the final file is durable; conditional on receipt ID.
+            val receipt = dao.getById(task.receiptId)
+            if (receipt == null) {
+                Timber.w("Startup: receipt row missing for restored asset receiptId=%d", task.receiptId)
+                runCatching { tempFile.delete() }
+                runCatching { finalFile.delete() }
+                return updateAssetTask(entry, task, RestoreJournal.AssetRestoreStatus.FAILED, "RECEIPT_ROW_MISSING")
+            }
+            restoreInternalWriteScope.run("startupAssetResume.updateImagePath") {
+                dao.update(receipt.copy(imagePath = finalFile.absolutePath))
+            }
+            Timber.d("Startup: resumed receipt asset for receiptId=%d", task.receiptId)
+            updateAssetTask(
+                entry,
+                task,
+                RestoreJournal.AssetRestoreStatus.COMPLETED,
+                error = null,
+                targetPath = finalFile.absolutePath
+            )
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.e("Startup: asset task failed for receiptId=%d (%s)", task.receiptId, e.javaClass.simpleName)
+            updateAssetTask(entry, task, RestoreJournal.AssetRestoreStatus.FAILED, "ASSET_RESTORE_FAILED")
+        }
+    }
+
+    /** Merges a single asset-task update into the journal ledger (never replaces it). */
+    private fun updateAssetTask(
+        entry: RestoreJournal.JournalEntry,
+        task: RestoreJournal.AssetRestoreTask,
+        status: RestoreJournal.AssetRestoreStatus,
+        error: String?,
+        targetPath: String? = task.targetPath
+    ): RestoreJournal.JournalEntry {
+        val updatedTasks = entry.assetTasks.map { t ->
+            if (t.receiptId == task.receiptId && t.sourceRelativePath == task.sourceRelativePath) {
+                t.copy(status = status, error = error, targetPath = targetPath)
+            } else {
+                t
+            }
+        }
+        val updated = entry.copy(assetTasks = updatedTasks)
+        runCatching { restoreJournal.writeJournal(updated) }
+        return updated
+    }
+
+    /** Marks every non-COMPLETED asset task FAILED so the journal can be finalized. */
+    private fun markUnfinishedAssetTasksFailed(
+        entry: RestoreJournal.JournalEntry,
+        reasonCode: String
+    ): RestoreJournal.JournalEntry {
+        if (entry.assetTasks.none { it.status != RestoreJournal.AssetRestoreStatus.COMPLETED }) return entry
+        val updated = entry.copy(
+            assetTasks = entry.assetTasks.map { t ->
+                if (t.status == RestoreJournal.AssetRestoreStatus.COMPLETED) {
+                    t
+                } else {
+                    t.copy(status = RestoreJournal.AssetRestoreStatus.FAILED, error = reasonCode)
+                }
+            }
+        )
+        runCatching { restoreJournal.writeJournal(updated) }
+        return updated
     }
 
     /**
