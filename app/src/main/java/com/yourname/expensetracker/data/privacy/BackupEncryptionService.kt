@@ -42,10 +42,15 @@ class BackupEncryptionService @Inject constructor() {
         private const val PBKDF2_ALGORITHM = "PBKDF2WithHmacSHA256"
         private const val AES_ALGORITHM = "AES"
         private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val KEY_LENGTH_BITS = 256
-        private const val ITERATION_COUNT = 600_000
-        private const val SALT_LENGTH_BYTES = 16
-        private const val IV_LENGTH_BYTES = 12
+
+        // RP-03A: these four envelope constants are `internal` (not private) so
+        // BackupEncryptionServiceTest can pin the legacy envelope (salt16+IV12,
+        // AES-256, PBKDF2 600k) and the future versioned-KDF batch cannot
+        // silently alter them. Do not change without legacy-decrypt fallback.
+        internal const val KEY_LENGTH_BITS = 256
+        internal const val ITERATION_COUNT = 600_000
+        internal const val SALT_LENGTH_BYTES = 16
+        internal const val IV_LENGTH_BYTES = 12
         private const val GCM_TAG_LENGTH_BITS = 128
     }
 

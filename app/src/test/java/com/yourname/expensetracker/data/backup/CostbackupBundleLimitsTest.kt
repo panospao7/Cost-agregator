@@ -252,4 +252,77 @@ class CostbackupBundleLimitsTest {
         assertEquals(1L * 1024 * 1024 * 1024, CostbackupBundle.DEFAULT_MAX_ENTRY_BYTES)
         assertEquals(100_000, CostbackupBundle.DEFAULT_MAX_ENTRY_COUNT)
     }
+
+    // ── RP-03A (P7-003): OutputStream (SAF destination) create variant ──
+
+    @Test
+    fun `create with OutputStream produces an extractable bundle with identical envelope`() {
+        val dbFile = tmp.newFile("database_stream_src.bin").apply {
+            writeBytes(ByteArray(8192) { (it % 251).toByte() })
+        }
+        val buffer = java.io.ByteArrayOutputStream()
+
+        val result = CostbackupBundle.create(
+            outputStream = buffer,
+            databaseFile = dbFile,
+            receiptFiles = emptyMap(),
+            password = password,
+            nowEpochMs = nowEpochMs,
+            tableCounts = mapOf("expenses" to 2),
+            databaseVersion = 7,
+            redacted = true,
+            includeReceiptImages = false,
+            tempDir = tmp.newFolder()
+        )
+        assertTrue("streaming bundle creation should succeed", result.isSuccess)
+
+        val bytes = buffer.toByteArray()
+        assertTrue("streamed bundle must carry the COSTBACKUP1 header", bytes.size > 0)
+        assertEquals(
+            "COSTBACKUP1",
+            String(bytes, 0, 11, Charsets.US_ASCII)
+        )
+
+        // The streamed bytes must extract like a File-produced bundle.
+        val bundle = File(tmp.root, "streamed_bundle.costbackup").apply { writeBytes(bytes) }
+        val extraction = CostbackupBundle.extract(
+            bundle, File(tmp.root, "extract_streamed"), password, nowEpochMs = 0L
+        )
+        assertTrue("streamed bundle should extract", extraction.isSuccess)
+        assertEquals("stored createdAt must survive the streaming path", nowEpochMs, extraction.getOrNull()?.manifest?.createdAt)
+        assertEquals(7, extraction.getOrNull()?.manifest?.databaseVersion)
+    }
+
+    @Test
+    fun `create with OutputStream fails and cleans the temp zip when the destination throws`() {
+        val dbFile = tmp.newFile("database_stream_fail.bin").apply {
+            writeBytes(ByteArray(1024) { (it % 127).toByte() })
+        }
+        val tempDir = tmp.newFolder()
+        val throwingStream = object : java.io.OutputStream() {
+            override fun write(b: Int) {
+                throw java.io.IOException("destination write failed")
+            }
+        }
+
+        val result = CostbackupBundle.create(
+            outputStream = throwingStream,
+            databaseFile = dbFile,
+            receiptFiles = emptyMap(),
+            password = password,
+            nowEpochMs = nowEpochMs,
+            tableCounts = emptyMap(),
+            databaseVersion = 1,
+            redacted = true,
+            includeReceiptImages = false,
+            tempDir = tempDir
+        )
+
+        assertTrue("destination write failure must fail the result", result.isFailure)
+        assertEquals(
+            "temp ZIP must be cleaned up after a destination failure",
+            0,
+            tempDir.listFiles()?.size ?: 0
+        )
+    }
 }
