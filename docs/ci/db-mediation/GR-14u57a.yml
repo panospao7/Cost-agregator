@@ -1,0 +1,147 @@
+# GR-14u57a — hoist the external-type member chains in
+# CloudCategorizationAssistService.parseResponse into typed local vals
+# (the GR-08k1 precedent — typed-val hoisting so the static callgraph can
+# resolve downstream calls; small production Kotlin source batch).
+#
+# DEFECT: CloudCategorizationAssistService.parseResponse (a plain private
+# fun) parses an AI JSON response via org.json.JSONObject (external; exact
+# import).  The repeated chain `suggestion.optString("categoryName").trim()`
+# appears TWICE inside the admitted `firstOrNull` carrier lambda
+# (L278-279 pre-batch): `optString` resolves exact-external (the u47
+# exemption — no corpus dispatch possibility on an external-exact
+# receiver), but the chained `.trim()` continuation on the UNTRACKED
+# intermediate result classifies through the GR-14f/GR-14j
+# resolution-preservation rule (callgraph.py L3268-3296): an
+# admitted-carrier site whose exact resolution cannot bind corpus targets
+# and is not provably external keeps the conservative async_dispatch
+# name-matched edge.  Probe evidence (build/guard-debug/
+# probe_u57a_pre.py, PRE): parseResponse carried exactly TWO async edges
+# (L278, L279), both async_dispatch/uncertain/0 targets — the corpus has
+# no callable named `trim`, so the name-match fan-out is empty.  The
+# closure-heuristic taint probe (the probe_taint4 pattern, extended to
+# all 18 async rows) attributed the 6 Cloud-decided rows'
+# first-decider edges to these L278/L279 async sites.
+#
+# PROBE DISCLOSURE (honest, correcting the batch brief's expectation):
+# the brief expected the 6 rows to move once the L278/L279 async noise
+# was removed.  They did NOT move, and the reason is a prover-semantics
+# subtlety the closure heuristic cannot see: the prover's step-5
+# (proof.py L558-582) selects deciding edges from `uncertain_in`
+# (reverse edges TARGETING the subject callable) plus uncertain edges
+# whose TARGETS reach the ancestor closure — the L278/L279 async edges
+# have ZERO targets, enter no _reverse_all, and can reach no closure, so
+# they were NEVER the rows' deciding edges under the prover's actual
+# semantics.  The prover-exact deciding edges (probe edge_ab_u57a.py,
+# both sides) are DatabaseBackupRepositoryImpl.restoreReceiptAssets L1253
+# (34-target fan-out; logDecision, toWarrantyEntityOrNull,
+# RoomReceiptLifecycleEventWriter.write,
+# RoomTransactionLifecycleEventWriter.write),
+# backup.guardedDatabaseRead L19 (emit), and for the closure-heuristic
+# rows the first async edge INSIDE the closure remains — POST it moved
+# from parseResponse L278 to suggest L143 (the `response.body?.string()`
+# OkHttp chain, a PRE-EXISTING async edge, byte-identical pre/post in
+# the graph; probe_suggest_u57a.py + the PRE-blob re-run).  The hoist is
+# still CORRECT and permanent (the parseResponse async noise family is
+# gone from the graph), but the 6 rows' remediation routes through the
+# NEXT deciders (restoreReceiptAssets L1253 / guardedDatabaseRead L19 /
+# suggest L143).
+#
+# FIX (minimal, semantics-preserving; expression-to-typed-val hoisting
+# only, GR-08k1 precedent):
+#   - L262: `val text = ...` -> `val text: String = ...` (the chain's
+#     static type is String; the annotation is honest and gives the
+#     RESULT a resolvable type; intermediate safe-call links unchanged).
+#   - L276 (new): `val suggestedName: String =
+#     suggestion.optString("categoryName").trim()` hoisted BEFORE the
+#     firstOrNull block; both lambda comparisons now use `suggestedName`
+#     (`it.name.equals(suggestedName, ignoreCase = true)` /
+#     `it.cloudLabel.equals(suggestedName, ignoreCase = true)`).
+#   - Semantics identical: optString/trim are pure reads, the expression
+#     is evaluated once instead of twice, same evaluation order, same
+#     results.  No behavior change.  Diff: 4 insertions, 3 deletions,
+#     one file.
+#
+# ENGINE PROBE EVIDENCE (post-fix, all verified):
+#   - parseResponse edge states POST (probe_u57a_pre.py POST): the TWO
+#     async_dispatch edges are GONE; the lambda-body `equals` calls now
+#     resolve EXACT_SYNCHRONOUS external=True (the typed val types as
+#     kotlin.String — the u47 external-exact exemption applies; String
+#     members DO resolve once the receiver is a typed local val — the
+#     brief's probe question answered affirmatively); the hoisted
+#     initializer's `.trim()` chain is an honest 0-target
+#     unresolved_target OUTSIDE any carrier region (the L273 isBlank
+#     pattern).
+#   - Edge A/B (edge_ab_u57a.py, PRE = HEAD blob, POST = working tree):
+#     53,789 PRE -> 53,787 POST; 36 lost sites <-> 34 gained sites, ALL
+#     inside CloudCategorizationAssistService.kt (pure offset shifts for
+#     everything after L262).  Semantic multiset delta
+#     (edge_ab_semantic_u57a.py, offset-aware):
+#       * -2 async_dispatch(uncertain, 0-target) — the L278/L279 noise,
+#       * -1 exact_synchronous(external, 0-target) — the legitimate
+#         dedup of the REPEATED optString call (two identical PRE edges
+#         fold into the one hoisted initializer edge; the exact edge
+#         still exists POST),
+#       * +1 unresolved_target(uncertain, 0-target) — the hoisted
+#         initializer, honest and outside any carrier region.
+#     ZERO previously-exact semantic edges degraded to uncertain (the
+#     only exact-count drop is the dedup above); the raw 20-position
+#     "regression" list in the naive A/B is an offset-shift artifact of
+#     the +2-char `: String` annotation, not a semantic change.
+#   - Board proofStates PRE == POST: proven_helper 344, restore 1,
+#     worker 14, ambiguous 2, async 18, counterexamples 0.
+#
+# OUTCOME (board pre 709e2778b84cafab -> post 26caaadaf19642ae, double
+# run byte-identical modulo targetSha, 379 entries diffed): ZERO rows
+# moved.  proofStates identical (see above).  REPORTED HONESTLY, NOT
+# fabricated: the 6 Cloud-decided rows did NOT move because the L278/
+# L279 async edges were never their prover-exact deciders (the probe
+# disclosure above).  The change is still CORRECT: it removes a real
+# async-noise family from the graph (2 sites), resolves the lambda-body
+# String-member calls exactly, and the preservation-rule noise in this
+# function is eliminated.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+# regressed, 0 external_entry rows (board delta zero — checked verbatim
+# per entry via board_diff_u57a.py), 0 previously-exact semantic edges
+# regressing (the offset-aware A/B above; the 1 exact-count drop is the
+# dedup of a repeated identical call).
+#
+# VALIDATION:
+#   - scripts/db_guard: 292 passed (pytest -q with
+#     PYTHONPATH=scripts\db_guard\mediation_analysis; no engine change)
+#   - fixture corpus: 121/121 checked, 121 passed, exit 0
+#   - board double run byte-identical (targetSha-normalized sha16
+#     26caaadaf19642ae; the recipe verified pre-change by reproducing
+#     the u56e anchor 709e2778b84cafab on the pre-side boards)
+#   - edge A/B: 2 async -> (1 unresolved_target + 1 dedup'd exact-external),
+#     all inside CloudCategorizationAssistService.kt, zero previously-
+#     exact semantic edges regressing
+#   - Kotlin: NOT RUN — human compile validation owed (the refactor is
+#     compile-risky only in the trivial sense: the typed annotations
+#     must match the inferred types; `text` is String (the elvis-right
+#     `return null` makes the expression type String? -> String via the
+#     elvis, and the safe-call chain's static type is String);
+#     suggestedName is String by optString's contract;
+#     ./gradlew :app:compileDebugKotlin expected green)
+#   - tests (static check): CloudCategorizationAssistServiceTest
+#     exercises suggest() via mocked HTTP (parseResponse is private,
+#     not called directly); HybridServiceDelegationTest mocks the
+#     service class; CancellationSafetyArchitectureGuardTest only lists
+#     the file in an allowlist entry.  No test constructs parseResponse
+#     in a way the refactor breaks.
+#
+# Remaining: the 6 Cloud-decided rows' remediation routes through the
+#   next deciders (DatabaseBackupRepositoryImpl.restoreReceiptAssets
+#   L1253, backup.guardedDatabaseRead L19, suggest L143 — the OkHttp
+#   response.body?.string() chain, the same external-chain family this
+#   batch just fixed in parseResponse); the remaining 12 async rows'
+#   deciders (RescueActivity.onCreate L31, ReceiptOcrService.processImage
+#   L237, ReceiptSideEffectPlanner L305, RestoreJournalImporter L210,
+#   EmailReceiptIngestionService L134, CostbackupBundle.buildZip L517,
+#   GroupTransactionCoordinator.deleteGroupAtomic L985); the
+#   extension-carve-out x preservation-rule interaction remains an
+#   owner-decision surface; the F-TRANSPARENT-CHAIN-NOISE family (owner
+#   sign-off gate); the F1 withPermit / F3 PostCommitAction families
+#   (FINAL26 memo); the 3 open-interface ambiguous rows (u50 owner
+#   decision).
+status: COMPLETE_AT_BOARD_26caaada
