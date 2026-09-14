@@ -217,6 +217,11 @@ CB_SUBJECT_CALLS = {
     # CancellationException rethrown) admits its trailing lambda; the
     # corpus method inside resolves exact.
     "CB-74": (("exercise", "markImported"),),
+    # GR-14u56e inline-wrapper carrier: a withRateLimit-shaped private
+    # suspend wrapper (block invoked exactly once inside an admitted
+    # withLock scope) admits its trailing lambda; the corpus method
+    # inside resolves exact.
+    "CB-75": (("exercise", "markImported"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.

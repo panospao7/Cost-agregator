@@ -48,6 +48,10 @@ class TestInlineCarrierSet:
             # inline suspend wrapper, CancellationException rethrown — the
             # u54 safeExecute shape).
             "safeLookup",
+            # GR-14u56e: NominatimGeocodingService.withRateLimit (exactly-
+            # once inline suspend wrapper; block invoked exactly once
+            # inside an already-admitted withLock scope).
+            "withRateLimit",
             "setContent",
         )
 

@@ -1,0 +1,124 @@
+# GR-14u56e — admit `withRateLimit` into PRODUCTION_TRANSPARENT_INLINE_METHODS
+# (the u56d safeLookup precedent — an evidenced exactly-once-inline wrapper;
+# u38-precedent set extension).  This closes the B5 census: the last
+# unassessed wrapper is now adjudicated.
+#
+# DEFECT: the 2 async rows (PrivacyAuditLoggerImpl.logDecision,
+# WarrantyTrackerRepository.toWarrantyEntityOrNull) carried async_dispatch
+# taint through the geocoding callables whose argument lambdas classify
+# `carrier: async method: withRateLimit` — the evidenced wrapper was not in
+# the closed carrier set.  Evidence (orchestrator-confirmed in the edit
+# comment): NominatimGeocodingService.withRateLimit is a private suspend fun
+# whose body is `= rateLimitMutex.withLock { ... block() }` — the block is
+# invoked EXACTLY ONCE inline (L80) inside `withLock`, an already-admitted
+# transparent scope; the block is never stored, never conditionally invoked,
+# never escapes; 3 call sites, all in the same class (L95, L124, L142);
+# corpus-wide the name appears in no other file (the L157/L160/L164 mentions
+# are return@withRateLimit labels and L265 is a KDoc reference — no corpus
+# name collision).  Same shape as the admitted withLock family: the block
+# runs in the caller's context and the wrapper returns before the caller
+# proceeds.  No receiver gate needed (the u38 name-exact precedent; the name
+# is project-private).
+#
+# FIX: `withRateLimit` added to PRODUCTION_TRANSPARENT_INLINE_METHODS with
+# the full evidence comment (mirrors the u56d safeLookup comment).  Pin
+# amended in test_gr14f_inline_carriers.py (test_production_set_is_pinned).
+# Fixture cb75: a withRateLimit-shaped wrapper (private suspend fun invoking
+# block exactly once inside an admitted withLock scope; caller passes a
+# trailing lambda calling a corpus method) -> the lambda region is
+# transparent and the edge resolves EXACT_CANONICAL_SCOPE (probe-verified
+# before admission: resolves exactly as predicted).  Consolidated manifest
+# 128 -> 129.  CB_SUBJECT_CALLS wired for CB-75 in fixture_runner.py (the
+# CB-74 pattern).
+#
+# DECIDER DISCLOSURE (honest, correcting the batch brief): the brief
+# claimed the async rows' first decider would be an `anonymizeForLog` edge
+# at NominatimGeocodingService L125.  That claim was WRONG.  The taint
+# probe (run pre-change, probe_taint4_pre_u56e.py, and re-run post-change;
+# the script's [PRE] label is a hardcoded artifact of its first run) shows
+# BOTH rows first-decide at the async_dispatch edge inside
+# CloudCategorizationAssistService.parseResponse L278 — pre AND post
+# identical.  The u56d manifest had already disclosed the same decider for
+# its 4 rows; the L125 claim in the brief was a transcription error, not a
+# new finding.  The withRateLimit admission therefore could not and did not
+# move the rows: their taint flows from the Cloud* carrier family, which is
+# untouched by this change.
+#
+# EDGE A/B (mandatory per the pin's contract): 53,789 edges pre and post.
+# 21 lost async_dispatch sites <-> 21 new sites, ALL inside
+# NominatimGeocodingService.kt (search/searchMultiple/reverseGeocode — the
+# withRateLimit call sites and their surrounding lambda regions):
+#   * 11 -> exact_synchronous (targets empty, external=True — the
+#     previously-fanned-out async edges tighten to their true external
+#     HTTP targets),
+#   * 6 -> exact_canonical_scope (single same-owner corpus target:
+#     buildUrl/buildSafeLogRoute/executeRequest — the fan-out collapses to
+#     the exact same-class callee),
+#   * 4 -> unresolved_target (uncertain -> uncertain: anonymizeForLog,
+#     CurrencyFormatter.format/Money.format, CategorizationAssistInputBuilder.build
+#     fan-outs keep their identical target sets — tier-5 evidence, zero
+#     corpus reachability lost; the u56c demotion family, sound).
+# 0 changed in-place positions, 0 external edges lost, 11 new external
+# edges (all NominatimGeocodingService call sites), and — the HARD STOP
+# gate — 0 previously-exact edges regressing.
+#
+# OUTCOME (board pre 16f92490aacb9a55 -> post 709e2778b84cafab, double run
+# byte-identical modulo targetSha, 379 entries diffed): ZERO rows moved.
+# proofStates identical: proven_helper 344, restore 1, worker 14,
+# ambiguous 2, async 18, counterexamples 0.  REPORTED HONESTLY, NOT
+# fabricated: the 2 rows did NOT move because their DECIDING async edge is
+# CloudCategorizationAssistService.parseResponse L278 (see the decider
+# disclosure above) — the withRateLimit admission removed the geocoding
+# callables' OWN false async edges (the 21-site A/B above) and made their
+# regions transparent, but the rows' taint flows from the NEXT deciders in
+# their ancestor closures (19 geocoding closure hits for logDecision, 13
+# for toWarrantyEntityOrNull — all now honest, none async).  The set
+# extension is still CORRECT and permanent (any future caller of
+# withRateLimit-shaped wrappers benefits), and the rows' remediation path
+# now routes solely through the Cloud* async-carrier family.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows regressed,
+# 0 external_entry rows (board delta zero — checked verbatim per entry), 0
+# previously-exact edges regressing (full edge A/B above).
+#
+# VALIDATION:
+#   - scripts/db_guard: 292 passed = 287 (from scripts/db_guard, with
+#     mediation_analysis/test_models.py excluded — it must run from its own
+#     directory, pre-existing collection quirk: bare `import models`) + 5
+#     (test_models.py from its own directory)
+#   - fixture corpus: 121/121 checked, 121 passed, exit 0 (120 prior + 1;
+#     129-row manifest); manifest-shape tests 5 passed; pin test 16 passed
+#   - scripts/ci: 1263 passed, 14 failed — the pre-existing set (see the
+#     exact name list in the batch report; all
+#     test_verify_known_good_state.py freshness-stamp/scorecard rows,
+#     test_test_result_freshness.py CLI, one
+#     test_inspect_direct_write_barrier_proof.py exit-contract row, one
+#     test_verify_production_source_roots.py custom-dir row —
+#     environment-dependent, pre-existing)
+#   - board double run byte-identical (targetSha-normalized sha16
+#     709e2778b84cafab; recipe verified against the u56d anchor
+#     16f92490aacb9a55 on the u56d boards themselves)
+#   - edge A/B: 21 async -> (11 exact_synchronous + 6 exact_canonical_scope
+#     + 4 unresolved_target), all inside NominatimGeocodingService.kt, zero
+#     previously-exact edges changed
+#   - Kotlin: not run (no production change)
+#   - NOTE: the u56e board_double_run script initially reproduced a broken
+#     invocation inherited from the u56c pre-fix era (root passed as the
+#     source root -> doubled declared_root_pairs path -> fail-closed empty
+#     declaration index -> 379x GR13_NO_D4_OBSERVATION).  Diagnosed, the
+#     script corrected to the project root (the CLI _PROJECT_ROOT default);
+#     the healthy boards above come from the corrected invocation.  The
+#     engine was never at fault; no engine file outside the carrier set
+#     changed.
+#
+# Remaining: B5 census now FULLY settled — safeExecute (u54),
+# guardTerminal/withBoundedTerminalWrite (u48), safeLookup (u56d),
+# withRateLimit (u56e) admitted; runWithRetry NOT admissible (the
+# exactly-once bar fails — data-dependent re-invocation).  The 2 async
+# rows' remediation routes through the Cloud* async-carrier family
+# (CloudCategorizationAssistService.parseResponse L278 et al.); the
+# extension-carve-out x preservation-rule interaction remains an
+# owner-decision surface; the F-TRANSPARENT-CHAIN-NOISE family (owner
+# sign-off gate); the F1 withPermit / F3 PostCommitAction families
+# (FINAL26 memo); the 3 open-interface ambiguous rows (u50 owner decision).
+status: COMPLETE_AT_BOARD_709e2778

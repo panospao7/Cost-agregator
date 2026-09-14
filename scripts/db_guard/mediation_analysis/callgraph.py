@@ -317,6 +317,21 @@ PRODUCTION_TRANSPARENT_INLINE_METHODS: tuple[str, ...] = (
     # admission; per the u38 precedent the proof layer still admits by
     # contract only.
     "safeLookup",
+    # GR-14u56e: NominatimGeocodingService.withRateLimit (evidence: a
+    # private suspend fun whose body is `= rateLimitMutex.withLock { ...
+    # block() }` — the block is invoked EXACTLY ONCE inline (L80) inside
+    # `withLock`, an already-admitted transparent scope; the block is
+    # never stored, never conditionally invoked, never escapes; 3 call
+    # sites, all in the same class (L95, L124, L142); corpus-wide the
+    # name appears in no other file (the L157/L160/L164 mentions are
+    # return@withRateLimit labels and L265 is a KDoc reference — no
+    # corpus name collision).  Same shape as the admitted withLock
+    # family: the block runs in the caller's context and the wrapper
+    # returns before the caller proceeds.  No receiver gate needed (the
+    # u38 name-exact precedent; the name is project-private).  Name-exact
+    # admission; per the u38 precedent the proof layer still admits by
+    # contract only.
+    "withRateLimit",
     # GR-14l: androidx.activity.compose.setContent — the composition root;
     # its content lambda executes during composition (context inherited)
     "setContent",
