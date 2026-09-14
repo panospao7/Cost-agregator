@@ -14,13 +14,18 @@ dominance engine the active gate uses (the bridge runs per-callable with
 the callable's real mutation sites plus the mediation pseudo-sites), so no
 second barrier proof exists.
 
-Exit contract (per docs/guardrails/PR-GR-13_helper_worker_mediation_proof_plan.md):
-  0  every helper/worker entry PROVEN
-  1  valid analysis with one or more UNPROVEN / COUNTEREXAMPLE entries
+Exit contract (per docs/guardrails/PR-GR-13_helper_worker_mediation_proof_plan.md;
+amended by docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md, GR-15 batch 1 —
+the owner-accepted tier):
+  0  every helper/worker entry PROVEN or owner_accepted per the tracked
+     acceptance registry (counterexamples can never be registered; any
+     registry mismatch forces exit 1)
+  1  valid analysis with one or more UNPROVEN / COUNTEREXAMPLE entries,
+     or any acceptance-registry mismatch
   2  infrastructure or unsupported source uncertainty (invalid policy or
      roots, a policy row with no exact D4 observation, an uncorrelatable
-     subject callable, any UNSUPPORTED_SOURCE / INFRASTRUCTURE result, any
-     crash)
+     subject callable, any UNSUPPORTED_SOURCE / INFRASTRUCTURE result,
+     any crash, an invalid or missing acceptance registry)
 
 The report is deterministic JSON: sorted entries, bounded identity strings
 and line numbers, no raw source, no absolute paths, no timestamps.
@@ -157,6 +162,144 @@ def _sha256_of_file(path: str) -> str | None:
             return hashlib.sha256(handle.read()).hexdigest()
     except OSError:
         return None
+
+
+#: GR-15 batch 1 (owner-sanctioned gate amendment): the acceptance
+#: registry is the ONLY acceptance mechanism and it fails closed.  A
+#: missing/invalid registry is an infrastructure failure (the amended
+#: gate cannot run without it); a registry row that matches no board row,
+#: matches an already-proven row, or matches a counterexample row is an
+#: acceptance mismatch that forces exit 1 — the registry can satisfy the
+#: gate, never silence it, and no registry entry can ever absorb a
+#: counterexample.  See docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md and
+#: GR-14_OWNER_ACCEPTANCE_RECORD.md.
+_ACCEPTANCE_REGISTRY_RELATIVE_PATH = (
+    "docs/ci/db-mediation/GR-14_OWNER_ACCEPTANCE_REGISTRY.yml"
+)
+_ACCEPTANCE_REGISTRY_SCHEMA_VERSION = 1
+
+
+def _load_acceptance_registry(path: str) -> tuple[dict | None, tuple[str, ...]]:
+    """Load the owner-acceptance registry without ever exiting.
+
+    Returns ``(document, error_codes)`` from a closed code set.
+    ``document`` is None unless the file loads, parses, and validates
+    against the exact contract (unknown fields rejected, so the registry
+    cannot drift silently)::
+
+        {schemaVersion: 1, record: str, caveat: str,
+         rows: [{mutationKey: str, family: str, caveats: [str]}]}
+    """
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - environment contract
+        return None, ("GR15_ACCEPTANCE_REGISTRY_INVALID",)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            document = yaml.safe_load(handle)
+    except OSError:
+        return None, ("GR15_ACCEPTANCE_REGISTRY_UNAVAILABLE",)
+    except yaml.YAMLError:
+        return None, ("GR15_ACCEPTANCE_REGISTRY_INVALID",)
+    validation_error = _validate_acceptance_registry(document)
+    if validation_error is not None:
+        return None, (validation_error,)
+    return document, ()
+
+
+def _validate_acceptance_registry(document) -> str | None:
+    """Exact registry contract; returns a controlled code or None."""
+    required = {"schemaVersion", "record", "caveat", "rows"}
+    optional = {"amendment"}
+    if not isinstance(document, dict):
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    keys = set(document)
+    if not required <= keys or keys - required - optional:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    if document["schemaVersion"] != _ACCEPTANCE_REGISTRY_SCHEMA_VERSION:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    if not isinstance(document["record"], str) or not document["record"]:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    if "amendment" in document and (
+        not isinstance(document["amendment"], str) or not document["amendment"]
+    ):
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    if not isinstance(document["caveat"], str) or not document["caveat"]:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    rows = document["rows"]
+    if not isinstance(rows, list) or not rows:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    seen_keys: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"mutationKey", "family", "caveats"}:
+            return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+        key = row["mutationKey"]
+        if not isinstance(key, str) or not key:
+            return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+        if key in seen_keys:
+            return "GR15_ACCEPTANCE_REGISTRY_DUPLICATE_ROW"
+        seen_keys.add(key)
+        if not isinstance(row["family"], str) or not row["family"]:
+            return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+        caveats = row["caveats"]
+        if not isinstance(caveats, list) or not all(
+            isinstance(caveat, str) and caveat for caveat in caveats
+        ):
+            return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    return None
+
+
+def _apply_acceptance_registry(
+    entry_rows: list[dict], registry: dict, summary_counts: dict[str, int]
+) -> tuple[list[str], list[dict]]:
+    """Reclassify registry-matched rows to ``owner_accepted`` (pure).
+
+    Exact ``mutationKey`` equality only.  A registry row that matches no
+    board row, matches an already-proven row, or matches a counterexample
+    row is an acceptance MISMATCH — reported, never applied.  Board rows
+    absent from the registry are untouched (fail closed).  Mutates
+    ``entry_rows``/``summary_counts`` in place for the matched rows only.
+
+    Returns ``(applied_mutation_keys, mismatches)``; mismatches carry
+    ``{mutationKey, code}`` with codes GR15_ACCEPTANCE_ROW_UNMATCHED,
+    GR15_ACCEPTANCE_ROW_PROVEN, GR15_ACCEPTANCE_ROW_COUNTEREXAMPLE.
+    """
+    rows_by_key = {row["mutationKey"]: row for row in entry_rows}
+    applied: list[str] = []
+    mismatches: list[dict] = []
+    for registry_row in registry["rows"]:
+        key = registry_row["mutationKey"]
+        row = rows_by_key.get(key)
+        if row is None:
+            mismatches.append(
+                {"mutationKey": key, "code": "GR15_ACCEPTANCE_ROW_UNMATCHED"}
+            )
+            continue
+        status = row["proofStatus"]
+        if status.startswith("proven"):
+            mismatches.append(
+                {"mutationKey": key, "code": "GR15_ACCEPTANCE_ROW_PROVEN"}
+            )
+            continue
+        if "counterexample" in status:
+            mismatches.append(
+                {"mutationKey": key, "code": "GR15_ACCEPTANCE_ROW_COUNTEREXAMPLE"}
+            )
+            continue
+        summary_counts[status] = summary_counts.get(status, 0) - 1
+        if summary_counts[status] <= 0:
+            del summary_counts[status]
+        summary_counts["owner_accepted"] = summary_counts.get("owner_accepted", 0) + 1
+        row["proofStatus"] = "owner_accepted"
+        row["acceptance"] = {
+            "family": registry_row["family"],
+            "caveats": list(registry_row["caveats"]),
+            "record": registry["record"],
+        }
+        applied.append(key)
+    applied.sort()
+    mismatches.sort(key=lambda mismatch: mismatch["mutationKey"])
+    return applied, mismatches
 
 
 class _DirectSiteProver:
@@ -421,6 +564,23 @@ def build_mediation_shadow(
         policy_entries, _policy_errors = load_policy_v2(policy_file)
         if policy_entries is None:
             failure_reasons.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
+
+    # GR-15 batch 1: the acceptance registry is a mandatory gate input.
+    # Missing/invalid fails closed as infrastructure (exit 2) — the
+    # amended gate cannot run without it.
+    acceptance_registry = None
+    acceptance_registry_sha256 = None
+    if not failure_reasons:
+        acceptance_registry_file = os.path.join(
+            project_root, _ACCEPTANCE_REGISTRY_RELATIVE_PATH
+        )
+        acceptance_registry, _registry_errors = _load_acceptance_registry(
+            acceptance_registry_file
+        )
+        if acceptance_registry is None:
+            failure_reasons.extend(_registry_errors)
+        else:
+            acceptance_registry_sha256 = _sha256_of_file(acceptance_registry_file)
 
     helper_worker_entries = []
     if policy_entries is not None:
@@ -706,6 +866,19 @@ def build_mediation_shadow(
         entry_rows.append(row)
     entry_rows.sort(key=lambda row: row["mutationKey"])
 
+    # GR-15 batch 1: apply the owner-acceptance registry BEFORE the
+    # unproven inventory and the exit decision.  A registry row that
+    # matches nothing (or a proven/counterexample row) is a mismatch and
+    # forces exit 1 — the registry can satisfy the gate, never silence it.
+    applied_acceptances: list[str] = []
+    acceptance_mismatches: list[dict] = []
+    acceptance_caveat: str | None = None
+    if acceptance_registry is not None:
+        applied_acceptances, acceptance_mismatches = _apply_acceptance_registry(
+            entry_rows, acceptance_registry, summary_counts
+        )
+        acceptance_caveat = acceptance_registry["caveat"]
+
     edge_counts: dict[str, int] = {}
     if graph is not None:
         for edge in graph.edges:
@@ -737,6 +910,7 @@ def build_mediation_shadow(
         row
         for row in entry_rows
         if not row["proofStatus"].startswith("proven")
+        and row["proofStatus"] != "owner_accepted"
     ]
 
     active_policy_sha = _sha256_of_file(policy_file)
@@ -766,6 +940,8 @@ def build_mediation_shadow(
             "workerRegistryMismatches": registry_mismatches,
             "scanFindingCount": scan_finding_count,
             "scanDiagnosticCodes": scan_diagnostic_codes,
+            "ownerAcceptedCount": len(applied_acceptances),
+            "ownerAcceptedCaveat": acceptance_caveat,
         },
         "entries": entry_rows,
         "workerRootInventory": worker_root_inventory,
@@ -778,6 +954,13 @@ def build_mediation_shadow(
                 }
                 for record in disposition_records
             ],
+        },
+        "acceptanceRegistry": {
+            "path": _ACCEPTANCE_REGISTRY_RELATIVE_PATH,
+            "sha256": acceptance_registry_sha256,
+            "appliedCount": len(applied_acceptances),
+            "appliedMutationKeys": applied_acceptances,
+            "mismatches": acceptance_mismatches,
         },
         "unprovenInventory": [
             {
@@ -796,6 +979,8 @@ def build_mediation_shadow(
     elif summary_counts.get("unsupported_source"):
         exit_code = _EXIT_INFRASTRUCTURE
     elif unproven_inventory:
+        exit_code = _EXIT_UNPROVEN
+    elif acceptance_mismatches:
         exit_code = _EXIT_UNPROVEN
     else:
         exit_code = _EXIT_ALL_PROVEN
