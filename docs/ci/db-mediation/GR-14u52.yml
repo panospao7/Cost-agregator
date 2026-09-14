@@ -1,0 +1,134 @@
+# GR-14u52 — barrier-marker receiver hints for synthetic anonymous-object
+# members: connecting the u49 capture typing to the GR-12 direct prover.
+#
+# DEFECT: the GR-12 bridge's ReceiverTypeResolver resolves receiver names
+# from FILE-LEVEL `val/var name: Type` property declarations only
+# (_PROP_RE).  The u51b `writeBarrier` receiver inside the 10 synthetic
+# RetentionModule purge members is a CAPTURED val — a fun PARAMETER of
+# provideRetentionTargets closed over by the anonymous object — never a
+# `val` declaration, so the resolver returned NOT_A_PROPERTY, the barrier
+# call was not recognized as canonical
+# (diagnostic DB_DIRECT_BARRIER_RECEIVER_UNRESOLVED, has_canonical_barrier
+# False), and the 10 rows stayed unproven_ambiguous_call even though the
+# bodies are fully modelable (u46 chain admission + u51b block bodies) and
+# the barrier check is real.  The callgraph ALREADY resolved the capture
+# correctly (u49 capture typing) — the bridge just could not see it.
+#
+# FIX (one mechanism, fail-closed, three files):
+#   1. barrier_proof.py ReceiverTypeResolver gains an OPTIONAL `hints`
+#      param (dict receiver-simple-name -> exact FQCN).  Hints are
+#      GAP-FILLERS ONLY: consumed exclusively when the property-declaration
+#      path returns NOT_A_PROPERTY (a name that resolves through the
+#      declaration path keeps that resolution untouched — hints never
+#      override); the hint value must be an exact FQCN string (a dot is
+#      required); no inference.  canonical_barrier_call_sites' signature
+#      is unchanged (the resolver carries the hints).
+#   2. direct_barrier_bridge.py prove_callable_direct_barriers gains an
+#      OPTIONAL `receiver_hints` param (default None — every existing
+#      caller unchanged); BOTH internal ReceiverTypeResolver
+#      constructions (canonical_barrier_call_sites and
+#      admit_transparent_scope_candidates) receive the SAME
+#      hints-carrying resolver.
+#   3. inspect_db_mediation_proof.py: at the _compute site, hints are
+#      built for SYNTHETIC members ONLY (the u49 `#anon` owner-FQCN
+#      marker) via the new public builder accessor
+#      CallGraphBuilder.captured_binding_types(callable_key).
+#      ISSUE-1 FIX (reviewer): each hint is built from
+#      receiver_fqcn_for_call on the corresponding call record — the
+#      callgraph's OWN resolution truth (member local vals -> loop vars ->
+#      member params -> capture typing -> anon-owner properties -> corpus
+#      types), NOT capture typing alone.  A member param/loop-var/local
+#      shadowing an enclosing capture produces the SAME hint the callgraph
+#      itself would use — hint == callgraph truth by construction, the
+#      fail-closed direction is preserved (an unresolvable receiver
+#      produces NO hint), and coverage legitimately extends to
+#      loop-var/param receivers.  Source-ordered, deduplicated,
+#      deterministic; {} for non-synthetic callables (byte-identical
+#      behavior for the rest of the corpus).  A latent fail-open in
+#      permanent guard infrastructure (a shadowing param getting a hint
+#      contradicting the callgraph's own resolution) is eliminated.
+#      Implementation bug found and fixed during the ISSUE-1 rework:
+#      _anon_params sliced the param list INCLUDING the closing paren
+#      (find_balanced returns the index past the close), corrupting the
+#      last synthetic member's param types — aligned with the main
+#      parser's params_close - 1 convention.
+#
+# UNIT TESTS (scripts/ci/test_gr14u52_receiver_hints.py, 7 tests — the
+#   resolver/accessor-level pins the CB fixtures cannot express):
+#   1. hint fills the gap for a non-property name -> hinted FQCN, RESOLVED
+#   2. declaration beats hint (val barrier: OtherType in text + hint ->
+#      the declaration's FQCN wins)
+#   3. non-dotted hint ignored (NOT_A_PROPERTY path unchanged)
+#   4. captured_binding_types returns {} for a non-synthetic callable
+#   5. captured_binding_types omits unresolvable captures
+#   6. member param SHADOWS an enclosing capture — the hint reflects the
+#      PARAM's type (hint == callgraph truth; the ISSUE-1 regression pin)
+#   7. the u49 capture path remains a hint source when nothing shadows it
+#
+# EDGE A/B: ZERO callgraph edge delta (the hints live entirely in the
+#   GR-12 bridge layer; the callgraph is untouched by the CLI wiring) —
+#   the u45/u47 A/B method confirms the change is surgically scoped.
+#
+# FIXTURES (3 new, cb54..cb56; consolidated manifest 107 -> 110) — HONEST
+#   SCOPE (ISSUE-2b): the CB fixtures pin the u49 callgraph CAPTURE
+#   behavior at the edge layer and pass IDENTICALLY at base — they do NOT
+#   exercise the hint mechanism itself (the hints live in the GR-12 bridge,
+#   below the edge layer).  The proof-layer expression is covered by the
+#   BOARD evidence (the 10 rows' movement) and by the 7 unit tests above —
+#   no resolver-level pin claims for the fixtures.
+#   cb54 BH-pos: synthetic member capturing `val barrier` param +
+#        `barrier.check(...)` + a DAO mutation after it — the capture-
+#        typed subject resolves exact (edge-layer pin)
+#   cb55 BH-neg: hint absent -> the pre-hint unresolved edge (current
+#        behavior preserved)
+#   cb56 BH-neg-override: a real `val x: Cb56Dao` local declaration — the
+#        declaration path wins over any (hypothetical) hint (edge-layer
+#        pin of the u49 resolution order)
+#
+# OUTCOME (board, pre a1460813... -> post 8b1b5d03c2def53a, double run
+# byte-identical; ISSUE-1 fix re-verified — the hints now come from
+# receiver_fqcn_for_call and the SAME 10-row movement holds):
+#   proven_helper 328 -> 338 (+10); ambiguous 13 -> 3; async 23; restore 1;
+#   worker 14; counterexamples 0.  THE 10 RETENTIONMODULE ROWS PROVED —
+#   all unproven_ambiguous_call/GR13_UNCERTAIN_CALL_EDGE ->
+#   proven_helper/GR13_ALL_PATHS_GUARDED with localGuard=direct and
+#   decidingResolution=exact_canonical_scope (the u51b entry check is now
+#   recognized as the canonical barrier dominating every site):
+#     anon1@37 RawNotificationDao.updateRawContentPurged
+#     anon2@89 ScannedReceiptDao.updateRawOcrTextPurged
+#     anon3@130 AiArtifactDao.deleteExpired
+#     anon4@165 AiChatMessageDao.deleteOlderThan
+#     anon5@200 EmailReceiptDao.redactSensitiveFieldsOlderThan
+#     anon6@237 NotificationIntakeDao.purgeRawPayload
+#     anon7@283 PipelineDiagnosticEventDao.deleteOlderThan
+#     anon8@321 PendingReviewDao.redactNotificationTextOlderThan
+#     anon9@358 BackgroundJobRunDao.redactErrorMessagesOlderThan
+#     anon10@395 BankStatementImportItemDao.redactMerchantOlderThan
+#   The remaining 3 ambiguous rows are the pre-existing open-interface
+#   dispatch rows (Handle.increment + the 2 u48-reclassified) — the u50
+#   owner-decision surface.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+#   regressed, 0 rows in unproven_external_entry, 0 unexpected delta
+#   (exactly the 10 declared rows moved, all in the proven direction).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 102/102 checked, 102 passed, exit 0 (99 prior + 3)
+#   - unit tests: scripts/ci/test_gr14u52_receiver_hints.py — 7 passed
+#     (resolver gap-fill / declaration-beats-hint / non-dotted-hint pins;
+#     accessor {} gate / unresolvable-omission / param-shadow
+#     callgraph-truth pins / capture-path pin)
+#   - scripts/ci: 1258 passed, 14 failed — byte-identical to the base
+#     commit's failure set (stash/re-run verified; freshness-stamp and
+#     platform-conditional tests, environment-dependent, pre-existing)
+#   - board double run byte-identical 8b1b5d03c2def53a
+#   - edge A/B: zero callgraph edge delta
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the 3 open-interface ambiguous rows (u50 owner decision);
+#   the tracked candidate/accounting pair regeneration (pre-existing
+#   --verify drift, u51b disclosure); the single-star-import fabrication
+#   fix (own batch); the F-PROCESSBATCH (8) / F-POSTCOMMIT (6) families
+#   (u43 table).
+status: COMPLETE_AT_BOARD_8b1b5d03

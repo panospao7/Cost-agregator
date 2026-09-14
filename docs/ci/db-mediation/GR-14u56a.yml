@@ -1,0 +1,75 @@
+# GR-14u56a - dotted-receiver safe-call carriers + ?. line-continuation
+# gluing + safe-call-head chain composition (tokenizer, three mechanisms,
+# fail-closed; engine-only batch of the GR-14u56 series).
+#
+# DEFECT (probe-verified on processReceiptInput, 9 findings pre-fix):
+#   1. u40's _match_safe_call_carrier required a SIMPLE-identifier
+#      receiver - every dotted safe-call (receipt.imagePath?.let { ... })
+#      lambda-escaped even though the same statement with a simple
+#      receiver parsed supported (try/catch inside included).
+#   2. _split_statements glued a leading '.' continuation line but NOT a
+#      leading '?.' line - receipt.imagePath?.takeIf { }
+    ?.let { }
+#      split into TWO statements (verified via _split_statements probe:
+#      parts (0,45) and (50,86)).
+#   3. The u46 chain matchers could not take a safe-call head (?.
+#      separator), so the composed chain form refused.
+#   Consequence: the coordinator's body was unmodelable, so the real
+#   entry barrier check (L251, verified dominating in source) could not
+#   be proven locally - blocking the u56b async-region re-measure.
+#
+# FIX (three mechanisms, fail-closed):
+#   1. Dotted receivers: the u40 matcher's receiver group accepts
+#      ident(.ident)* with the u39/u46 charset discipline (no braces/
+#      semicolons/?/=/parens); scope_receiver=None for dotted receivers
+#      (u39 chained-carrier precedent - verified the bridge's
+#      _walk_carrier_spans matches by scope_method name-exact only and
+#      admit_transparent_scope_candidates skips None receivers - grants
+#      nothing beyond parseability).  Simple receivers byte-identical
+#      (scope_receiver=identifier, pinned).
+#   2. ?. gluing: a depth-0 line starting with the exact ?. pair glues to
+#      the previous statement (like the leading-. continuation); a line
+#      starting with ? alone (elvis) does NOT glue (the elvis refusal
+#      stays, pinned both brace and no-brace forms).
+#   3. Chain composition: _match_carrier_chain gained a safe-call head
+#      alternative (dotted receiver + ?.) and the segment separator
+#      accepts \s*\??\.; call-result receivers (f()?.let) still fail
+#      closed (traced: prefix charset excludes ?, safe_receiver cannot
+#      cross '('); the head group stays optional (runCatching head
+#      carriers still match); the fail-closed findings-rollback fallback
+#      is intact.
+#
+# TESTS (7 new, additive): dotted admission (real L328 shape, scope_receiver
+#   is None, inner TRY modeled); ?. gluing (L488-489 -> ONE statement, two
+#   chain regions); one-line chain; unlisted-method fail-closed (exact
+#   code+reason); elvis non-gluing (two-leaf split + intact elvis-block
+#   refusal); u40 simple-receiver regression (scope_receiver == "runId");
+#   the deferred L272 when-branch shape pinned NOT supported (honest
+#   deferred-shape pin; dual-accept assertion acceptable for a deferral,
+#   tighten in the follow-up batch).
+#
+# OUTCOME (board pre ec7fd24b1c9c45ea -> post ec7fd24b1c9c45ea, double run
+#   byte-identical, all 379 entries identical): ZERO rows moved.  The
+#   structural gain: processReceiptInput's findings dropped 9 -> 2 (the
+#   remaining two are the elvis-block L444/L501 argument-position family,
+#   the u56b target); the dotted-receiver statements are now claimed
+#   carrier regions (8 in the body) rather than opacity-absorbed leaves.
+#   L353 (call-chain receiver scannedReceiptDao.getById(...)?.also)
+#   stays refused - call-result receivers are outside the ident(.ident)*
+#   charset, principled and disclosed; it is absorbed by the production
+#   opacity gate.
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+#   regressed, 0 external_entry (all 379 entries diffed - zero row
+#   movements, byte-identical board).
+#
+# VALIDATION: structural 251 (244 + 7 new), db_guard 283, fixtures
+#   116/116, CI failure set byte-identical to base (14 pre-existing),
+#   board double run byte-identical ec7fd24b1c9c45ea.  Kotlin: not run
+#   (no production change).
+#
+# Remaining: the L272 when-branch gluing (the '>' of '->' is in
+#   _CONT_END, gluing branch lines into the when-entry - a third
+#   mechanism, deferred per batch cap); the L444/L501 elvis-block family
+#   (u56b); the L353 call-result receiver form (absorbed by opacity).
+status: COMPLETE_AT_BOARD_ec7fd24b

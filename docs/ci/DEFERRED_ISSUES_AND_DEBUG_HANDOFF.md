@@ -8,6 +8,15 @@ out, the exact feedback output, and candidate next steps.  Nothing here is
 speculative debt: every "pre-existing" claim was stash-A/B-proved at the
 pre-batch state during this arc.
 
+> **START HERE: [`GUARDRAIL_STATE_REPORT.md`](./GUARDRAIL_STATE_REPORT.md)** — the
+> consolidated state report (2026-09-10): what the guardrails are, the measured board,
+> every known issue with status, the production-code findings, the owed merge gates,
+> and the prioritized backlog.  This handoff is the per-defect narrative; that report
+> is the index and the standalone summary.  Current board (GR-14u21, sha fe40d369...):
+> proven_helper 155 / proven_worker_mediated 14 / ambiguous 77 / async 133 /
+> external_entry 27 — proven 169 / unproven 237, **counterexamples 0**, policy
+> 7851adc2 unchanged.
+
 Board state after GR-14u2 (build/guard-debug/gr14u2/shadow_after.json,
 sha 82e4fc9f..., double-run byte-identical):
 proven_helper 48 / proven_worker_mediated 14 / counterexample **0** /
@@ -194,26 +203,339 @@ inside the body, or the allowlist with owner+issue+expiry.
 ## D. Mediation-engine issues (proof bugs / visibility gaps — do NOT remove
 ##    the code below; it is ALIVE despite engine zero-inbound)
 
-### D1. ReviewQueueRepository.recoverStuckReviews — REAL caller missed
-The engine classifies it `unproven_external_entry` (zero inbound), but
-`ReviewViewModel.kt:218` calls `reviewQueueRepository.recoverStuckReviews()`.
-Investigate why the ViewModel→repository edge is invisible (call site's
-enclosing construct: check whether it sits in a construct the lambda-region
-admission treats as opaque, or a dispatch the resolver misses).  Until
-understood, this row must stay unproven — removal is forbidden.
+### D1. `ReviewQueueRepository.recoverStuckReviews` — REAL caller missed
+This item SPLIT into two defects during the GR-14u5 investigation.  Both
+are stated here; only Defect I is fixed.
 
-### D1. Class `init {}` blocks are invisible to the engine (root-caused)
-`ReviewQueueRepository.recoverStuckReviews` is engine zero-inbound, yet
-`ReviewViewModel.kt:218` calls it — inside `viewModelScope.launch { }` in
-the ViewModel's **`init { }` block**.  The structured-launch admission
-(GR-14j) can only admit a launch that the scanner attaches to a callable;
-calls inside class-init blocks belong to no callable, so the whole region
-(including the launch lambda and every call in it) never enters the
-callgraph — hence ZERO inbound rather than async-uncertain.  **Candidate
-engine fix**: attribute init-block regions to a synthetic class-initialiser
-callable, or walk init blocks as context-inherited.  Until then: any
-callee first-called from an `init {}` block will read as
-`unproven_external_entry` — audit for this shape before removing.
+**Defect I — self-scoped helper misreported as external entry (RESOLVED in
+GR-14u5, commit + docs/ci/db-mediation/GR-14u5.yml).**  The row is
+`barrierMode: helper` and guards its OWN mutation:
+`writeBarrier.runWrite(...) { pendingReviewDao.recoverStuckProcessing() }`
+(`runWrite` is the sole `guarded_scope_method` on `DatabaseWriteBarrier`).
+It registered zero inbound (its only caller sits in `ReviewViewModel`'s
+`init {}`), and `MediationProver.prove()` step 4 returned
+`UNPROVEN_EXTERNAL_ENTRY` / `GR13_ZERO_INBOUND_CALL_SITES` for ANY
+non-`doWork` subject with zero inbound — before the local-direct evidence
+could award `PROVEN_HELPER`.  The fix exempts a `helper` whose site-local
+context is `direct` from that short-circuit (step 5, the uncertain-inbound
+stop, is untouched).  Board delta: `recoverStuckReviews`
+`unproven_external_entry -> proven_helper`; exactly 1 row, 0 regressions.
+The row is now PROVEN but the code is still ALIVE (real caller) — removal
+remains forbidden.  Symmetry note: a zero-inbound helper whose OWN worker
+guard (`runGuarded`) covers the mutation is NOT exempted and still reads
+`unproven_external_entry` — same class as Defect I but fail-closed
+(under-proves) and 0 current rows; deferred deliberately.
+
+**Defect II — class `init {}` blocks are invisible to the engine
+(MEASURED in GR-14u8: real but LATENT — 0 current fail-open instances).**  The
+regex call-graph parser attaches calls to `fun` callables only; calls inside
+class-init blocks belong to no callable (`_FUN_DECL_RE` discovery in
+`mediation_analysis/callgraph.py`), so the whole region (including a
+`viewModelScope.launch { }` and every call in it) never enters the callgraph —
+ZERO inbound rather than async-uncertain.  Confirmed at the engine level by a
+synthetic probe (`build/guard-debug/gr14u8/probe_init_visibility.py`): a class
+whose `init {}` calls a writer produces NO callable and NO edge for that region.
+
+**Measured impact (GR-14u8 census, read-only, 1073 production files):**
+- Of the 29 `unproven_external_entry` rows, **0** are called from any `init {}`
+  block (`census_init_broad.py`) — so there is **no current fail-open instance**.
+  All 29 are zero-inbound for other reasons (the ExpenseWriteStore /
+  GroupLifecycleCoordinator / InvestmentTracker dead-or-owner-decision tail).
+- Latent surface = **6 rows** whose method IS called from an `init {}` block
+  (`census_latent_surface.py`): `ReviewViewModel.recoverStuckReviews`
+  (proven_helper — the historical Defect I case), 4×
+  `CategoryViewModel.ensureDefaultCategories` (already
+  unproven_ambiguous_call), and 1× `ReviewViewModel.emit` (already async
+  unproven).  None is mis-labeled as a safe external entry.
+
+So the earlier "fail-OPEN, higher severity" framing does not hold against
+current code: the gap is real but has no live effect.  **Deferred (owner call).**
+**Candidate engine fix** (when taken): attribute `init {}` regions to a synthetic
+class-initialiser callable AND make class construction of a framework-instantiated
+owner (ViewModel/Activity/Fragment/Service, or any owner whose zero-inbound
+member is already `FRAMEWORK_CALLBACK`) inherit that root kind — a synthetic
+`<init>` callable ALONE is insufficient, because it would itself be zero-inbound
+and re-classify as `PUBLIC_OR_PROTECTED_EXTERNAL`, leaving the verdict unchanged.
+Larger engine change: own fixture-first plan + projection + shadow delta (closed
+set + pin fixture + delta, per GR-14f/j/l precedent).  Until then: audit any
+callee first-called from an `init {}` block before removing it, and do not trust
+its `unproven_external_entry` label.
+
+### D6. Multi-star imports are unresolved, so `RoomDatabase` never resolves
+###     (GR-14u10 finding — measured, HARD-STOPPED, needs owner triage)
+`_resolve_type` (mediation_analysis/callgraph.py) skips `entry.is_star` in the
+exact-import loop and only handles the wildcard case when a file has EXACTLY ONE
+star import (`if len(star_prefixes) == 1`).  `AppDatabase.kt` has THREE
+(`…database.entity.*`, `…database.dao.*`, `androidx.room.*`), so `RoomDatabase`
+stays `unknown`.  Consequence: `AppDatabase.onCreate`'s `super.onCreate(db)` —
+which lives in an anonymous `object : RoomDatabase.Callback()` — fails closed in
+`_super_receiver_fqcn` and still falls back to `_name_match_targets("onCreate")`.
+That single wrong edge is the tier-5 deciding edge for **137 of the 169
+remaining `unproven_ambiguous_call` rows** (re-census of the gr14u7 board:
+`build/guard-debug/gr14u10/`).  This is the SAME defect class as GR-14u6, which
+fixed the four other `super.onCreate` sites (MainApplication, RescueActivity,
+NotificationCaptureService, MainActivity — all with explicit imports).
+
+**Step-0 projection (multi-star resolution, monkey-patch): HARD STOP.**
+Resolving a simple name through multiple star imports when exactly one candidate
+is confident (a corpus owner, or a known external root package) gives:
+  - `unproven_ambiguous_call` 169 -> 142, `proven_helper` 61 -> 70 (**+9**),
+  - **18 rows become `counterexample_unguarded_call_path`** (0 regressions).
+Resolver stats: 97 external / 5 corpus resolutions; 1910 ambiguous names stayed
+fail-closed unknown; 38 found no candidate.  All 18 counterexamples reach a
+`framework_callback` root by an ALL-EXACT path (`deciding=exact_synchronous`) and
+are unguarded: `updateExpenseCategoryBulk`, `updateUserCorrection`,
+`clearAllScannedReceipts`, `expireOld`, `processBankStatement` (x7),
+`bulkUpdateCategory` (x2), `updateTypeAndTransferDetails` (x4),
+`migrateCategories`.  Reproduce: `build/guard-debug/gr14u10/project_multistar.py`
+(+ `projected_board.json`, `projection.log`).
+
+**Why deferred (not landed):** 18 new definite-violation claims require human
+triage before they can be recorded, exactly like the GR-14u6 gate.  Two things
+must be resolved first: (a) are those 18 genuine unguarded framework-reachable
+paths, or an artifact of resolving a receiver to a GUESSED external FQCN?  The
+guess (`starPrefix + "." + simple`) is inherently heuristic — the existing
+single-star path makes the same assumption, but at 3 star imports the chance of
+a wrong package match grows.  (b) each 18 needs a disposition (fix the guard, or
+prove the path is unreachable).  Note the projection's own guard: 1910
+multi-candidate names stayed `unknown`, so the change is fail-closed for
+ambiguity — the risk is only the confident-by-luck single candidate.
+
+**Recommended when taken:** land the multi-star resolution with a projection
+gate (as here), a fixture pin for (i) one-star, (ii) multi-star unambiguous,
+(iii) multi-star ambiguous => unknown, and (iv) `super.onCreate` under multi-star
+resolving external with no targets.  **BUT the 18 counterexamples are FALSE
+POSITIVES from two pre-existing bugs — see §D7 — so fix §D7 first, then re-run
+this projection and expect them to disappear.**
+
+### D7. TRIAGE of the 18 D6 counterexamples: ALL FALSE POSITIVES — three
+###     `local=none` bugs (GR-14u11 triage; Bug 1 FIXED in GR-14u12)
+Every one of the 18 rows carries `localGuard: none` BOTH before and after the
+multi-star change, yet the writers are genuinely guarded (e.g.
+`ReceiptRepository.clearAllScannedReceipts` has
+`writeBarrier.checkWritesAllowed(...)` as its first statement at ReceiptRepository
+:535; `BankStatementLifecycleProcessor.processBankStatement` at :140).  The
+multi-star fix did not create violations — it exposed three pre-existing defects
+in the mediation direct-site path that make guards invisible.  **Do NOT land D6
+(multi-star) until all three are fixed**, or false counterexamples surface.
+
+**Bug 1 — D4 observation key vs GRAPH callable key mismatch — FIXED (GR-14u12,
+docs/ci/db-mediation/GR-14u12.yml).**
+`_DirectSiteProver` is constructed with `obs_by_callable`, keyed by the D4
+`observation.callable_key` (canonical, FULLY-QUALIFIED parameter types), while
+`_compute` looks up `self._observations.get(callable_key)` with the GRAPH
+callable key (SIMPLE / normalized parameter types).  Measured on the current
+board: of **252** callables with observations, **157 (62%)** have a D4 key that is
+NOT present in `builder.callables` at all, so `_compute` returns `{}` before
+proving anything and the guard can never be seen.  Examples:
+  - D4  `…|function|processBankStatement|null|android.net.Uri`
+    GRAPH `…|function|processBankStatement|null|Uri`
+  - D4  `…|function|insertOrUpdate|null|…domain.currency.DomainExchangeRate`
+    GRAPH `…|function|insertOrUpdate|null|DomainExchangeRate`
+  - D4  `…|insertOrUpdateAll|null|List<…DomainExchangeRate>`
+    GRAPH `…|insertOrUpdateAll|null|List`
+  - D4  `…|addMemberToGroup|null|Long,String,String?,Boolean,(Long) -> Unit`
+    GRAPH `…|addMemberToGroup|null|Long,String,String,Boolean,suspend (memberId: Long) -> Unit`
+  (nullability, FQ vs simple, generic arguments, and lambda spelling all differ.)
+  This was the dominant cause: it silently disabled the GR-12 direct proof for
+  most guarded writers, which is why so many rows sat at `local=none`.
+  **FIXED in GR-14u12**: `_observations_by_graph_callable` re-keys observations
+  by the span-exact graph key (via `_correlate_subject_callable` — offset
+  containment, exact and overload-safe).  Measured delta: proven_helper 61 -> 68,
+  external_entry 29 -> 22 (7 rows), 0 counterexamples, 0 regressions.
+  Effect on the D6 projection: counterexample flips 18 -> 16 (it fixed 2 only).
+
+**Bug 2 — pseudo-site opacity interference — FIXED (GR-14u13,
+docs/ci/db-mediation/GR-14u13.yml).**  `_compute` proves
+over the observation sites PLUS a `_pseudo_site` per requested edge offset.  For
+`ReceiptRepository.clearAllScannedReceipts` (key DOES match, so Bug 1 does not
+apply):
+  - proof over the observation site alone  -> site 27427 = **PROVEN**
+  - proof with the 2 requested pseudo sites -> site 27427 = **UNSUPPORTED**
+    (`DB_DIRECT_BARRIER_PROOF_UNSUPPORTED`)
+A pseudo-site landing inside a lambda region flips the whole callable's proof to
+UNSUPPORTED, so a correctly-dominated guard reads as `none`.
+**FIXED in GR-14u13**: `prove_callable_direct_barriers` gained an optional
+`opacity_sites` keyword, so the proof still runs over every site (results exist
+for pseudo offsets) while the opacity gate is built from the REAL mutation sites
+only.  Defaults to `mutation_sites`, so the D4 gate is unchanged by
+construction (verified: D4 CLI 28/28 direct, 0 fail).  Measured delta:
+proven_helper 68 -> 69, external_entry 22 -> 21 (1 row), 0 regressions.  Effect
+on the D6 projection: counterexample flips 16 -> 15.
+
+**Bug 2b — conservative body-model rejections + a mediator conflation
+(RE-SCOPED in GR-14u14; my earlier `withLock` root cause was TOO NARROW —
+`withLock` explains only 1 of 82).**
+
+MEASURED: of the 252 callables carrying mutation observations, **82 (33%)** are
+UNSUPPORTED even with observation sites only (`build/guard-debug/gr14u14/
+size_bug2b.py`).  The `withLock` case (`ExpenseRepository.updateExpenseCategoryBulk`)
+is ONE of them.  Construct frequency among the 82: `try`/`catch` 43,
+`withTransaction` 34, `withContext` 23, `.let` 18, `when` 14, `for` 13,
+`runInTransaction` 7, `.forEach` 5, `withLock` 1.  These are DELIBERATE
+conservative rejections — the tokenizer's unsupported reasons include
+`exception-flow` (`DB_STRUCTURAL_MODEL_EXCEPTION_FLOW_UNSUPPORTED`),
+`coroutine-builder`, `labelled-return`, `elvis-block`, `local-function`,
+`anonymous-object`, `lambda-escape` (see
+`scripts/db_guard/structural_analysis/test_tokenizer.py::TestConservativeUnsupported`).
+So this is NOT a bug in the parser: it is the engine refusing to model constructs
+it cannot model safely (exception flow above all).
+
+THE ACTUAL DEFECT is in the MEDIATOR, not the parser.  `_local_site_context`
+returns `"none"` whenever the direct-site probe does not return True, and
+`MediationProver.prove()` then (step 7/8, proof.py:627-657) turns
+`"none" in effective` into `COUNTEREXAMPLE_UNGUARDED_CALL_PATH`.  That conflates
+"there is no guard" with "we could not model the body to prove a guard".  Pre-GR-14u10
+this was masked (an uncertain `super.onCreate` edge short-circuited these rows to
+`unproven_ambiguous_call`); the D6 multi-star fix made the paths exact, so the
+conflation now surfaces as false counterexamples.
+
+WHY A BLANKET DOWNGRADE IS UNSAFE (my first instinct — rejected):
+measured with `build/guard-debug/gr14u14/measure_guards.py`, of the 82
+unmodelable bodies **57** carry `checkWritesAllowed` strictly before their first
+mutation, **9** carry a `runWrite` scope, and **16 carry NEITHER** — including
+`DataRetentionWorker.doWork`, `WarrantyExpirationWorker.doWork`,
+`NotificationIntakeWorker.doWork`, `SourceLinkBackfillWorker.backfillLegacySource/
+backfillNotificationLinks`, `DatabaseBackupRepositoryImpl.restoreReceiptAssets`,
+`RestoreJournalImporter.importLastFailureJournalIfPresent`,
+`LegacyDataMigrationService.migrateCategories`.  Reclassifying "unmodelable" as
+"unproven" wholesale would hide those 16.
+
+SOUND DIRECTION (design, not yet implemented): make the local proof TRI-STATE —
+PROVEN (dominance proven) / UNGUARDED (body fully modeled and no dominating
+barrier) / UNMODELABLE (parse unsupported).  Declare a counterexample ONLY on a
+definitive UNGUARDED.  On UNMODELABLE, classify as an explicitly-labelled
+unproven state — justified because a visible canonical barrier on the write-barrier
+receiver is positive evidence AGAINST "definitely unguarded", whereas its absence
+leaves the counterexample intact (the 16 above).  `canonical_barrier_call_sites`
+already works on masked text + body span WITHOUT a CFG, so the barrier-presence
+evidence is obtainable even when the parse is unsupported.
+
+**PROJECTION OF THE TRI-STATE DESIGN (GR-14u14, read-only monkey-patch,
+`build/guard-debug/gr14u14/project_tristate.py` = D6 multi-star + "unmodelable
+with a visible barrier ⇒ not a counterexample"):**
+  baseline (gr14u13) -> projected: proven_helper 69 -> **81** (+12),
+  counterexample 0 -> 7, unproven_ambiguous 169 -> 179,
+  unproven_async 133 -> 116, external_entry 21 -> 9; 48 rows changed,
+  **0 regressions**, 30 unmodelable-with-barrier callables touched.
+  NEW counterexamples fall 15 (D6 alone) -> **7**, i.e. the design removes 8 of the
+  15 false positives while KEEPING a counterexample wherever no barrier is visible.
+
+**MEDIATOR CONFLATION — FIXED (GR-14u15, docs/ci/db-mediation/GR-14u15.yml).**
+The mediator now uses a TRI-STATE local proof (`proven` | `unmodelable` |
+`unguarded`) and only reports a counterexample for a definitively `unguarded`
+site; an unmodelable site whose mutation is PRECEDED by a canonical barrier call
+is reported as unproven with the new reason `GR13_LOCAL_GUARD_UNMODELABLE`
+(family GR14_SPLIT_UNMODELABLE_BODY).  On the current board this is a ZERO-ROW
+change (report byte-identical, da296160...).  With the D6 multi-star patch it
+discards 8 of the 15 false counterexamples (15 -> 7), +12 proven_helper, 0
+regressions.
+
+**GR-14u16 — THE BARRIER-SCOPE FORM DID NOT MATCH THE REAL API — FIXED
+(GR-14u16, docs/ci/db-mediation/GR-14u16.yml).  Largest single cause: 47 of the
+82 unmodelable bodies.**
+`DatabaseWriteBarrier.runWrite` is declared
+`suspend fun <T> runWrite(operation: DatabaseAccessOperation, block: suspend () -> T): T`
+(DatabaseWriteBarrier.kt:33) — the operation argument is REQUIRED.  So the only
+legal call shape is `writeBarrier.runWrite(op) { ... }` (or `runWrite(op, { ... })`).
+But the tokenizer's `_RE_BARRIER_SCOPE` is
+`r"\bwriteBarrier\s*\.\s*runWrite\s*\{"` (tokenizer.py:39) — it demands the brace
+IMMEDIATELY after `runWrite`, i.e. a bare `runWrite { ... }` that cannot be written
+against this signature.  Real usage therefore misses the BARRIER_SCOPE branch and
+falls into `_RE_LIKE_BARRIER` (tokenizer.py:49), which fails the WHOLE body with
+`DB_STRUCTURAL_MODEL_BARRIER_FORM_UNRECOGNIZED` ("barrier-form-unrecognized").
+
+MEASURED (`build/guard-debug/gr14u15/probe_forms.py`, real masked source):
+  - `checkWritesAllowed(op)` then write    -> parses, 1 barrier site
+  - `runWrite(op) { ... }`                 -> **barrier-form-unrecognized**
+  - `runWrite(op, { ... })`                -> **barrier-form-unrecognized**
+  - `runWrite { ... }` (bare)              -> parses ... but is not legal Kotlin here
+Note `_RE_WORKER_GUARD` (tokenizer.py:45) ALREADY allows the parenthesised form
+(`runGuardedWithContext|runGuarded\s*(?:\([^()]*\))?\s*\{`) — the barrier scope is
+the odd one out, which looks like an oversight rather than a design choice.
+
+WHY IT MATTERS: every callable that guards with the canonical `runWrite(op) { ... }`
+has an UNMODELABLE body, so it can never be proven and (pre-GR-14u15) would be
+reported as an unguarded call path as soon as its paths become exact.  This
+includes the notification-capture writers guarded in GR-14u6
+(`NotificationIntakeCoordinator.capture` / `.captureForRetry`, see
+NotificationIntakeCoordinator.kt:140 and :248) and
+`TransactionLifecycleCoordinator.createExpenseMutation`.
+
+CANDIDATE FIX (LANDED): the barrier-scope branch now accepts the optional
+parenthesised argument list, mirroring `_RE_WORKER_GUARD`'s existing precedent,
+with one level of nesting for `runWrite(DatabaseAccessOperation("...")) {`.  Every
+safety guard is untouched (canonical receiver only, `lambda-before-barrier-scope`
+escape check, like-barrier tripwire for other receivers), and the
+`runWrite(op, { ... })` argument-list shape remains deliberately fail-closed.
+MEASURED: unmodelable observed callables **82 -> 59**; D4 gate **0 changed
+entries** (28/28 identical); mediation board **0 rows** (byte-identical,
+da296160...); 5 new pins (the real form was RED pre-fix).  With GR-14u15 the D6
+projection is proven_helper +12, NEW counterexamples 15 -> **7**, 0 regressions.
+
+**SUB-CAUSE 2b-ii — locally-delegated guard helpers are invisible — FIXED
+(GR-14u17, docs/ci/db-mediation/GR-14u17.yml).**
+`TransactionLifecycleCoordinator` defines
+`private fun checkWritesAllowed(operation: String)` (TransactionLifecycleCoordinator.kt:102)
+forwards to `writeBarrier.checkWritesAllowed(...)`, and its mutating methods call it
+UNQUALIFIED (`:1560`, `:1830`).  `canonical_barrier_call_sites` matches
+`receiver.method(` only (`_CALL_RE`), so an intra-class delegating guard is
+invisible to both the direct proof and the barrier-presence evidence.  Accounts for
+6 of the 7 remaining D6 counterexamples.
+FIXED by the PRODUCTION route (not an engine change — the pattern occurs in this
+one file only): the 14 call sites are now
+`writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.<method>")` and
+the unused private wrapper is deleted.  This is the form the rest of the codebase
+already uses, and GR-14u6 adopted the same approach for the notification writers.
+The rewrite is semantically identical (the wrapper performed exactly that
+delegation) and mechanical.  MEASURED under the D6 projection: NEW counterexamples
+**7 -> 1**, proven_helper **69 -> 87 (+18)**, 0 regressions.  Kotlin compile +
+coordinator tests were still owed at the time of writing (AGENTS.md: ask before
+expensive Gradle) — the batch is marked PARTIAL until they run.
+
+**The 7th is a REAL FINDING, not noise:** `LegacyDataMigrationService.migrateCategories`
+(`:143`) writes `categoryDao.insert(...)` inside nested try/catch with NO guard —
+that file contains ZERO occurrences of `checkWritesAllowed` / `runWrite` /
+`writeBarrier`.  D6 exposes it correctly, and it should be handled as its own
+finding (guard it, or document why a debug-only legacy migration may write
+unguarded) rather than suppressed.
+
+OWNER SIGN-OFF was given for the tri-state change and it LANDED as GR-14u15; its
+projection was reviewed first, and the safety property is pinned (an unknown
+callable still reads `unguarded`, and a mutation that precedes every barrier is
+never excused — that pin is verified RED when the rule is weakened).
+
+(NOTE: the projected tri-state run also carried the D6 multi-star change, so its
+"+12 proven_helper" mixes both effects; the two were landed separately, D6 still
+held back.)
+
+(NOTE: the `withLock`-as-transparent-scope idea was considered and set aside: it
+fixes 1 row, needs a shared-contract V2->V3 bump, AND needs the resolver extended
+for untyped constructor-initialised properties — `_PROP_RE` requires a type
+annotation but `private val categoryUpdateMutex = Mutex()` has none, so admission
+would fail even after a contract bump.  GR-14u16 addresses the same body by fixing
+the recognized `runWrite` form instead, which is cheaper and broader.)
+
+**D6 (multi-star) — LANDED as GR-14u19, and the one real finding FIXED as
+GR-14u18.**  Final state: proven_helper **69 -> 87 (+18)**, unproven_ambiguous_call
+**169 -> 151**, **0 counterexamples**, **0 regressions**, live board byte-identical
+across a double run (2b282860...), policy bytes unchanged (7851adc2...).  The whole
+D7 chain (GR-14u11 triage → u12/u13/u15/u16/u17 engine + production fixes → u18
+guard → u19 land) is closed.  Reproduce:
+`build/guard-debug/gr14u11/{trace_counterexamples,probe_two_bugs,probe_size_bugs}.py`,
+`build/guard-debug/gr14u12/probe_after_bug13.py`,
+`build/guard-debug/gr14u15/project_d6.py`,
+`build/guard-debug/gr14u17/{recon_helper,project_d6}.py`,
+`build/guard-debug/gr14u18/project_d6.py`.
+
+**TEST-VALIDATION NOTE (important for anything that follows).**  Kotlin
+verification for the production guards (GR-14u17/u18) is `:app:compileDebugKotlin`
+— **PASSED**.  The full test suite is NOT a usable gate: `TEST_FAILURE_LEDGER.md`
+records 121 pre-existing `domain.*` + 53 `data.*` failures plus a JVM
+instrumentation-agent crash, and `TEST_FAILURE_TRACKER.md:154` already lists
+`TransactionLifecycleCoordinatorDbContractTest` as failing (the one assertion that
+failed in the targeted run — an event-count expectation, unrelated to guard form).
+Prefer targeted `--tests "*Class*"` filters over whole-suite runs.
 
 ### D2. ExpenseWriteStore — OWNER DECISION (designed-but-unwired layer)
 The only reference outside its own file is a stale doc comment in
@@ -244,7 +566,223 @@ Room/Activity `onCreate`-style overrides collide via name-matched edges and
 taint several closures.  Any admission here is an owner-gated engine change
 (closed reviewed set + pin fixture + shadow delta, per GR-14f/j/l precedent).
 
-### D4. Interface-dispatch residue after the GR-14t negative (17 rows)
+**GR-14u5 census MEASURED it — and it is the single biggest remaining
+blocker, not a small tail.**  A read-only tier-5 replay over the post-u5
+board (`build/guard-debug/gr14u5/census.py` + `probe_super.py`, reproduces
+every row's proofStatus exactly) shows the 174 unproven_ambiguous rows'
+deciding resolutions are: 143 `unresolved_target`, 17 `interface_dispatch`,
+14 `function_reference`.  Of the 143 `unresolved_target` rows, **137 are
+decided by ONE call site** — `super.onCreate(...)` in
+`MainApplication.onCreate` (a 5-target name-match on `onCreate`), plus 5 by
+`super.onListenerConnected(...)` in NotificationCaptureService and 1 real
+row.  Root cause: `CallGraphBuilder.receiver_fqcn_for_call` handles `this` /
+`this@X` but has NO `super` / `super@X` case, so `super.onCreate()` resolves
+to an unknown receiver and falls back to `_name_match_targets` — which then
+taints the ancestor closure of essentially every writer reachable from the
+app-startup root (`MainApplication.onCreate` is itself one of the matched
+`onCreate` callables → self-taint).
+
+Implication for prioritization (CORRECTED by the GR-14u6 Step-0 projection —
+see below): a `super.<member>()` receiver-resolution fix removes the WRONG
+edge (~137 rows), but the taint is LAYERED: removing it just promotes the next
+uncertain edge for ~132 of those rows, so the batch proved only 5 rows, not
+137.  The previously-hypothesized "ViewModel default-DI owner-property
+initializer type inference" shape is NOT dominant: only ~9 rows of
+`initializer-ctor` shape (all `tempZip`/`File`).  The async half (123
+`async_dispatch`) is spread thin across lambda carriers (`coroutineScope` 37,
+a privacy-gate lambda 23, `PostCommitAction` 19, `navigation.launch` 17,
+`confirmQuickApprove` 9, `photon.coroutineScope` 6) with no single dominant
+fix — each carrier would be its own closed reviewed admission.
+
+**RESOLVED in GR-14u6** (docs/ci/db-mediation/GR-14u6.yml).  The `super`
+resolution was implemented (`CallGraphBuilder._super_receiver_fqcn`), and its
+Step-0 projection HARD-STOPPED on 5 counterexample flips — revealing that the
+false `super.onCreate`/`super.onListenerConnected` taint had been HIDING 5
+genuinely unguarded notification-capture DB writers.  Those writers were fixed
+(production: `DatabaseWriteBarrier` guards added to NotificationIntakeCoordinator,
+NotificationIntakePayloadRepairer, NotificationIntakeRecoveryScheduler), after
+which the gate passed and all 5 rows proved.  Board delta: proven_helper
+49 -> 54, ambiguous 174 -> 169.
+
+### D5. Direct-site prover never sees bare `checkWritesAllowed` at a subject
+###     mutation site (GR-14u6 finding — RESOLVED in GR-14u7)
+While fixing D3, adding `writeBarrier.checkWritesAllowed("...")` at the TOP of a
+writer did NOT register as local-direct in the mediation proof.  Root cause:
+`_DirectSiteProver._compute` (scripts/ci/inspect_db_mediation_proof.py) computes
+the GR-12 proof over the callable's REAL mutation sites PLUS the requested
+mediation pseudo-sites, but read results back ONLY for the requested offsets
+(`edge.name_start`), while `MediationProver._local_site_context` queries
+`subject.site_start` = `MutationObservation.source_start` (the mutation call
+start).  Those offsets differ, so a bare dominating `checkWritesAllowed` was
+invisible; `runWrite { ... }` worked only because the callgraph marks the lambda
+a `canonical_direct` region (offset-independent).
+
+**RESOLVED in GR-14u7** (docs/ci/db-mediation/GR-14u7.yml): `_compute` now
+records results for `requested | {site.span.start for site in sites}`.  The
+already-guarded writers became visible: 7 rows moved `unproven_external_entry ->
+proven_helper` (proven_helper 54 -> 61, external_entry 36 -> 29), 0
+counterexamples, 0 regressions.  Fixture pin
+`scripts/ci/test_gr14u7_direct_site_offsets.py` was RED before the fix (prover
+returned `{}` at the mutation offset while the underlying GR-12 proof already
+said PROVEN).
+
+### D8. A Kotlin arrow (`->`) was counted as a generic close bracket (GR-14u20
+###     — FIXED; found by a fresh census of the post-u19 board)
+After GR-14u19 the remaining 284 ambiguous+async rows were re-censused
+(`build/guard-debug/gr14w0/census.log`, exact reconstruction fidelity).  The
+deciding resolutions were 123 `async_dispatch`, 108 `unresolved_target`, 20
+`interface_dispatch`, 14 `function_reference` — and one receiver name dominated
+the `unresolved_target` half: **91 rows were decided by a member call on a
+receiver called `viewModel`** with no `val`/`var` declaration, i.e. a Compose
+screen's ViewModel *function parameter*.
+
+Root cause: the parameter-list comma splitter in `CallGraphBuilder` tracked
+bracket depth over `"(<["` / `")>]"`, so in a function type like
+`onDismiss: () -> Unit` the ARROW's `>` counted as a CLOSING bracket and drove
+the depth negative; no later comma was ever at depth 0 and the whole parameter
+list collapsed into one unnamed piece.  With no parameter names recorded,
+`receiver_fqcn_for_call`'s parameter branch could never match.  Measured blast
+radius: 195 callables with a collapsed list, 239 unresolved `viewModel` call
+sites, 91 ambiguous rows.  `_skip_return_type` already carried the exact guard
+("Kotlin arrow (`->`): not a generic close bracket") — the splitters never got it.
+
+**RESOLVED in GR-14u20** (docs/ci/db-mediation/GR-14u20.yml): the splitter is now
+arrow-aware.  Unresolved `viewModel` call sites 239 -> 0.  The Step-0 gate
+HARD-STOPPED the engine fix alone on **2 counterexample flips** — resolving
+`viewModel` turned two previously name-matched paths exact, and both were real
+unguarded direct DAO writes:
+`ExpenseRepository.updateExpenseMerchant` (`pendingReviewDao.bulkRenameMerchant`
+on the `applyToAll` branch) and `BankApiIntegration.refreshToken`
+(`bankConnectionDao.updateToken`).  Both classes already injected
+`DatabaseWriteBarrier`; both now check it (same shape as GR-14u6).  Board delta:
+proven_helper 87 -> 155 (+68), ambiguous 151 -> 77, external_entry 21 -> 27, 0
+counterexamples, 0 regressions, deterministic (fe40d369...), policy bytes
+unchanged.  The 6 lateral ambiguous -> external_entry moves are a CORRECTION:
+identical callable keys, and the `unresolved_target` edge was a name-match false
+inbound (those are the §E item 3 dead callables, genuinely zero-inbound).
+
+**Still open in the same class.**  The ARGUMENT-list splitter in
+`_select_overload` and the supertype-list splitter in `_supertype_texts` carry
+the identical `"(<["` / `")>]"` pattern (callgraph.py).  Neither is currently
+triggered in production (1 supertype header, and the arg path fails closed to
+`None` -> uncertain), so they were deliberately left alone to keep GR-14u20 a
+closed reviewed set.  Fix them with the same one-line guard if a census ever
+shows them deciding rows.
+
+### D9. Carrier admissions have a MEASURED near-zero ceiling — the remaining
+###     rows are gated on RESOLUTION, not carrier classification (GR-14w1)
+The post-GR-14u20 census pointed at `coroutineScope` as the single largest
+deciding carrier (**37 rows**), and `kotlinx.coroutines.coroutineScope { }` is
+squarely admissible on the inline table's own stated criteria: it is structured
+concurrency that runs its block in the caller's coroutine context and does not
+return until the block and all its children complete, so it neither creates nor
+removes guard context (criterion 2, verbatim).  The table already admits the
+same category in `withTimeout`, `withTimeoutOrNull`, `withLock`, `collect` and
+`withPermit`.  A tree-wide scan confirmed the name cannot be shadowed: no
+project member or extension declares `coroutineScope` with a lambda parameter
+(the only other uses are `val coroutineScope = rememberCoroutineScope()`, whose
+calls are `launch`).
+
+**It was projected and NOT landed, because it buys nothing.**
+`build/guard-debug/gr14w0/project_coroutinescope.py` (runtime patch of
+`PRODUCTION_TRANSPARENT_INLINE_METHODS`, baseline the committed GR-14u20 board
+fe40d369...):
+
+```
+proven_helper            155 -> 155   (+0)
+unproven_ambiguous_call   77 ->  82
+unproven_async           133 -> 128
+changed rows: 5, ALL `unproven_async_or_escaping_callback -> unproven_ambiguous_call`
+new counterexamples: 0   regressions: 0
+```
+
+Five rows move sideways; **not one row is proven.**  The cause is the GR-14f
+resolution-preservation rule (callgraph.py `_resolve_call`, the
+`_chain_admitted_by_engine_carriers` branch): when an admitted carrier's call
+does not bind to corpus targets, the conservative name-matched uncertain edge is
+DELIBERATELY kept — "otherwise reverse-reachability would shrink and reclassify
+real recursion/inbound evidence as zero-inbound external entry."  So admitting a
+carrier only helps when the calls *inside* it already resolve exactly; where they
+do not, the carrier is not the real blocker and admission just promotes the next
+uncertain edge.
+
+**Consequence — recalibrated plan.**  Do NOT spend cycles admitting
+`PrivacyGate` (23), `PostCommitAction` (19), `navigation.launch` (17),
+`confirmQuickApprove` (9) or `photon`-region (6) one at a time on the assumption
+that the largest carrier is the largest win: each is capped the same way, and
+each costs a pinned-set change plus fixture coverage for ~0 rows.  The remaining
+210 rows are gated on **receiver/target RESOLUTION** — which is exactly where
+every recent win came from (GR-14u6 `super`, GR-14u19 multi-star, GR-14u20 the
+arrow).  Triage the residual by deciding-edge *resolution*, not by carrier name
+(`build/guard-debug/gr14w0/triage_resolution.py`, full bucket listing):
+133 `async_dispatch` (carrier-decided, see above — capped),
+27 `external_entry` (the §E item-3 dead/owner-decision tail: ExpenseWriteStore,
+GroupLifecycleCoordinator, InvestmentTracker, BankApiIntegration.completeConnection,
+ExpenseGroupDao.insertGroupWithMembers, RecurringLifecycleEventWriter.writeDiagnostic),
+24 `exact_synchronous` (unproven through CLOSURE/exact reasoning rather than one
+uncertain call — BankStatementLifecycleProcessor.processBankStatement,
+ReceiptLinkService.unlinkReceiptFromExpense, CategoryRepository.ensureDefaultCategories,
+SubscriptionManagerEngine.acceptCandidate/validateAndCreate, ExpenseRepository.updateExpenseCategoryBulk),
+20 `interface_dispatch` (§D4 — blocked on the A1 interface/impl concretization),
+19 `unresolved_target` (RecurringRuleLifecycleCoordinator activate/deactivate/advanceNextDate,
+RestoreJournalImporter, JsonExpenseImporter.parseV1Row/V2Row,
+NotificationRepository.save, RecommendationRepository.save, OperationRunRecorder.increment,
+CsvExpenseImporter.getOrCreateCategory),
+14 `function_reference` (ReviewQueueRepository.approveReview, AiChatRepositoryImpl,
+AiArtifactRepositoryImpl.markDismissed, MerchantNormalizationRepository.updateAlias,
+SpendingChallengeRepository.deactivateChallenges, BankConnectionLifecycleCoordinator.disconnectConnection).
+
+### D10. `_inherits_from` followed only the FIRST supertype (latent fail-OPEN —
+###      FIXED in GR-14u21, 0 rows by design)
+`CallGraphBuilder._inherits_from` walked only the first resolvable corpus supertype at
+each hop, so `class Impl : Other, Iface` never reached `Iface`.  Both call sites are
+override enumeration (`_override_targets`, `_has_override_named`); there are no other
+callers.  Two under-approximations, both in the fail-OPEN direction: implementation
+sets were under-counted (11 (interface, method) pairs, with the decisive false-unique
+`WorkerDrainController.requestStopAndAwaitDrain` = engine 1 / complete 2), and a missed
+override let `_resolve_invocation` (callgraph.py:1968) fall through to an EXACT edge on
+a virtually-dispatched member.  **FIXED in GR-14u21** (docs/ci/db-mediation/GR-14u21.yml):
+the traversal is complete, transitive and cycle-safe.  Projected 0 changed rows and the
+live board is byte-identical afterwards, so no live row was ever mis-proved — it is
+landed as its own batch with its own pins precisely so it is not credited with a delta
+it does not have.  This is also the prerequisite that made the §D4 interface rule
+evaluable at all (it removed false-uniqueness from the enumeration); the remaining §D4
+blocker is anonymous `object :` implementors, which are not owners.
+
+Artifacts: `build/guard-debug/gr14w0/probe_iface*.py`,
+`probe_iface_safety4.py`, `probe_anon.py`, `project_inherits.py`, `inherits_projection.log`.
+
+### D11. The 24 `exact_synchronous` ambiguous rows are the GR-14u15 tri-state
+###      working as designed — NOT a defect (measured, do not re-investigate)
+These rows read `unproven_ambiguous_call` with an `exact_synchronous` deciding edge,
+which looks self-contradictory.  It is not: all 24 are `GR13_LOCAL_GUARD_UNMODELABLE`,
+`barrierMode=helper`, `localGuard=none`.  Measured (`build/guard-debug/gr14w0/probe_unmodelable*.py`):
+
+- **24 / 24 contain a canonical `checkWritesAllowed` call** — the guard IS present.
+- **20 / 24 contain `try`/`catch`**, which the GR-12 body model refuses (exception flow).
+- The remaining 4 — `ExpenseRepository.updateExpenseCategoryBulk`,
+  `SubscriptionManagerEngine.acceptCandidate`, `SubscriptionManagerEngine.validateAndCreate` —
+  put the guard first and mutate inside `withLock` / `database.withTransaction` lambdas; the
+  CFG never wires scope children, so the mutation node is disconnected from entry and the
+  body is unmodelable.
+
+Because a barrier call PRECEDES the mutation in every case, "definitely unguarded" is not
+established, so the tri-state correctly reports unproven instead of inventing a violation.
+The representative shape is `BankStatementLifecycleProcessor.processBankStatement:139`
+(guard in `try`, `catch` does `return Result.failure(e)` — fail-closed).  These are the
+lowest-risk unproven rows on the board; proving them would require the GR-12 model to handle
+exception flow, which is a large engine change, not a quick fix.
+
+### D12. Carrier admissions are capped at ~0 rows (measured — plan recalibrated)
+See §D9.  Recording the number here so the next agent does not re-derive it: admitting
+`coroutineScope` (the largest deciding carrier, 37 rows) projected
+**proven_helper +0**, 5 rows moving sideways `async -> ambiguous`.  The GR-14f
+resolution-preservation rule keeps the name-matched edge whenever an admitted carrier's
+calls do not resolve, so a carrier admission can only help where resolution already works.
+
+Artifacts: `build/guard-debug/gr14w0/project_coroutinescope.py` + `.log`.
+
+### D4. Interface-dispatch residue after the GR-14t negative (20 rows)
 Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
  callers (addExpenseToGroup, createGroupWithMembers[Atomic],
  deleteGroupAtomic, removeMember, archiveGroup, restoreGroup),
@@ -258,6 +796,43 @@ Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
  binding count first (`grep -rn "GroupTransactionCoordinator" app/src/main
  --include=*.kt | grep -i binds`), then the remaining interfaces per row
  (CurrencySettingsRepository is also interface-typed in several closures).
+
+ **GR-14w2 INVESTIGATION — the engine-side rule is UNSOUND without two
+ prerequisites, and one of them is already fixed.**  Measured with
+ `build/guard-debug/gr14w0/probe_iface*.py`, `probe_iface_safety4.py` and
+ `probe_anon.py`:
+
+ * Every one of the 20 deciding `interface_dispatch` edges already has exactly
+ ONE override target, and a COMPLETE implementor walk AGREES (1 == 1) for all
+ six receivers — so the shape really is "single implementation", and an
+ engine-side rule (no production change, so the A1 test-mocking blocker does
+ NOT apply) is the attractive route.
+ * BUT a general "exactly one implementor => exact dispatch" rule is UNSOUND,
+ for two measured reasons:
+ 1. `_override_targets` used to under-count.  The decisive false-unique is
+    `WorkerDrainController.requestStopAndAwaitDrain`: engine 1 target
+    (`NoOpWorkerDrainController`), complete walk 2 (`+ WorkerLeaseRegistryImpl`).
+    A rule built on the old count would have claimed exactness on a
+    two-implementor interface.  **This is fixed in GR-14u21** (the traversal is
+    now complete and transitive; 11 under-count pairs, projected and verified
+    to move 0 rows, so it is landed as a latent fail-OPEN fix, not a proving
+    batch).
+ 2. **Anonymous `object : Iface { }` implementors are NOT owners.**  The owner
+    table contains ZERO anonymous entries, yet the corpus has 12
+    `object : PrivacyGate` and `object : WorkerLeaseRegistry`
+    (RestoreMaintenanceMode.kt:36) expressions.  So even a COMPLETE owner walk
+    cannot see them, and `WorkerLeaseRegistry` is a second false-unique by this
+    route.  (`PrivacyGate` looks safe only because it has 6 named implementors
+    anyway; it would not be safe if it had one.)
+ * Therefore the remaining work for this bucket is: (a) DONE in GR-14u21;
+ (b) teach the engine to recognise `object : T { }` expressions as
+ implementations of a resolved corpus interface T (a new capability, with its
+ own fixture corpus and projection); (c) THEN an exactness rule requiring
+ exactly one implementor across named AND anonymous implementations, with no
+ generic/unknown caveat.  For the six row receivers specifically, a textual
+ scan shows ZERO anonymous implementors, so step (c) would resolve all 20 rows
+ — but it must not be built before (b), or it will be unsound on other
+ interfaces.
 
 ---
 
@@ -297,6 +872,40 @@ Rows decided by `interface_dispatch` live in: GroupTransactionCoordinator
    RetentionModule.provideRetentionTargets (DI module pattern).
 5. GR-15 must NOT start until the GR-14 zero gate (§8 of the handoff).
 
-Artifacts this arc: build/guard-debug/{gr14s,gr14t,gr14u,gr14u2}/
-(shadows before/after + double-runs, compile logs, targeted-test logs,
-A/B failure lists, the abandoned GR-14t patch, edit scripts).
+**GR-14u6 -> GR-14u20 outcome (measured; see §D3/§D5/§D6/§D7/§D8).**  The engine
+batches are DONE.  Board now (GR-14u20, sha fe40d369...):
+proven_helper 155 / proven_worker_mediated 14 / ambiguous 77 / async 133 /
+external_entry 27 — **proven 169 / unproven 237, counterexamples 0**.
+GR-14u6 removed the wrong `super` edge and (via its Step-0 hard-stop) guarded 5
+genuinely unguarded notification-capture writers; GR-14u7 made the direct-site
+prover report dominance at the real mutation offset; GR-14u11-u17 triaged the D6
+counterexample flips into three real engine defects plus one unguarded write;
+GR-14u19 landed the multi-star resolution (+18); GR-14u20 made the parameter
+splitter arrow-aware (+68) and, again via the Step-0 hard-stop, guarded 2 more
+genuinely unguarded DAO writers.  Neither `super` (u6) nor multi-star (u19) nor
+the arrow (u20) proved the rows on its own — the taint is LAYERED, and each fix
+promotes the next uncertain edge.
+
+Recommended order from here (RECALIBRATED by the §D9 measurement — carrier
+admissions are capped at ~0 rows, so they are NOT the next win):
+  (a) RESOLUTION triage of the 210 remaining rows, by deciding resolution rather
+      than by carrier name: 20 `interface_dispatch` (§D4), 19 `unresolved_target`,
+      14 `function_reference`, 34 closure/exact-decided.  Every recent win came
+      from this axis (`super` u6, multi-star u19, the arrow u20).
+  (b) dead-writer tail (mechanical, steady movement) — well signaled now that
+      receivers resolve properly and a genuinely zero-inbound row is trustworthy;
+  (c) Defect II — init-block invisibility (§D1 remainder; measured LATENT, 0 live
+      fail-open instances, so lower priority than its earlier framing suggested);
+  (d) carrier admissions last, and only if a census ever shows one whose calls
+      ALREADY resolve exactly (see §D9 for why: the GR-14f resolution-preservation
+      rule keeps the name-matched edge whenever resolution does not bind, so
+      admitting a carrier cannot help until resolution works).
+
+Artifacts this arc: build/guard-debug/{gr14s,gr14t,gr14u,gr14u2,gr14u3,
+gr14u4,gr14u5,gr14u6,gr14u7,gr14u8,gr14u9,gr14u10,gr14u11,gr14u12,gr14u13,
+gr14u14,gr14u15,gr14u16,gr14u17,gr14u18,gr14w0}/ (shadows before/after +
+double-runs, compile logs, targeted-test logs, A/B failure lists, edit scripts).
+`gr14w0` is the GR-14u20 workspace: the post-u19 census, the arrow fix's board
+(`board_arrow.json`, the HARD-STOP state with 2 counterexamples), the re-projected
+clean board (`board_arrow2.json`), the determinism double-run and the delta
+scripts (`project_arrow*.py`, `triage.py`, `detail6.py`).

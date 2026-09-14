@@ -1,0 +1,94 @@
+# GR-14u44b — canonical write-barrier remediation of the 3 u44-exposed
+# true-positive counterexamples (production Kotlin + tests).
+#
+# DEFECT: u44's caller-side receiver resolution exposed 3 true-positive
+# counterexamples — the CSV/JSON import write paths had ZERO
+# writeBarrier.checkWritesAllowed calls anywhere on their reachable
+# paths (CsvExpenseImporter.getOrCreateCategory -> CategoryDao.insert
+# via MainActivity.onCreate -> MainScreen -> DebugScreen ->
+# DatabaseManagementSection -> CsvExpenseImporter.importFromContent ->
+# parseAndImportLine; JsonExpenseImporter.parseV1Row/parseV2Row ->
+# CategoryDao.insert via ImportCoordinator.importFromContent ->
+# JsonExpenseImporter.importFromContent), bypassing the
+# DatabaseWriteBarrier contract the campaign enforces.  These rows were
+# the DECLARED batch inputs (u44 remediation schedule, reviewer
+# PROCEED-OPTION-A).
+#
+# FIX (production Kotlin, minimal):
+#   - CsvExpenseImporter.kt: `private val writeBarrier:
+#     DatabaseWriteBarrier` added to the @Inject constructor (4th param)
+#     + import com.yourname.expensetracker.data.backup.
+#     DatabaseWriteBarrier (same package as
+#     BankStatementLifecycleProcessor's import — verified); guarded
+#     check at the ENTRY of importFromContent (L54-68), BEFORE the
+#     outer try/catch — CRITICAL placement: the whole body is wrapped
+#     in `catch (e: Exception) { ImportResult.Error("Import failed:
+#     ${e.message}") }`, so a check inside the try would swallow
+#     DatabaseAccessBlockedException into a generic import failure.
+#     Mirrors the BankStatementLifecycleProcessor.processBankStatement
+#     entry pattern exactly: CancellationException is rethrown, every
+#     other failure becomes the CONTROLLED CONSTANT "Import blocked:
+#     database maintenance in progress" (never e.message — repo
+#     privacy rule).
+#   - JsonExpenseImporter.kt: same pattern — `writeBarrier` added to
+#     the @Inject constructor (4th param), guarded check at the entry
+#     of importFromContent (L27-41) before the outer
+#     `catch (e: Exception) { ... "Parse error: ${e.message}" }`, with
+#     the result adapted to the shared positional ImportResult shape
+#     (success=false, errorCount=1, single controlled-constant error
+#     message, empty expenseIds).
+#   - Test updates (the constructor change breaks manual positional
+#     construction): CsvExpenseImporterTest (setup + instantiation test
+#     now pass a NORMAL-mode DatabaseWriteBarrier built from a mocked
+#     RestoreMaintenanceMode — the DatabaseBarrierTest construction
+#     pattern), JsonExpenseImporterTest (newImporter helper updated),
+#     ExportImportRoundtripTest (setup updated).  NEW tests: blocked
+#     mode (RESTORE_PREPARING) -> controlled-constant
+#     ImportResult.Error with categoryDao.insert/getByName and
+#     coordinator.createExpense NEVER invoked (mockk coVerify
+#     exactly = 0), for BOTH importers; CancellationException from the
+#     barrier propagates (rethrown, not converted) for BOTH importers.
+#     Existing tests cover the NORMAL-mode proceed path unchanged.
+#   - NOT touched: RestoreJournalImporter (restore-internal — must not
+#     get a plain barrier check), ImportCoordinator (zero production
+#     callers, no DAO access), the engine scripts, and the importers'
+#     pre-existing cancellation-swallowing / e.message debts (recorded
+#     below as follow-up debt).
+#
+# OUTCOME (board, pre 5173b347... -> post bee88087..., double run
+# byte-identical): counterexample_unguarded_call_path 3 -> 0;
+# proven_helper 321 -> 324 (+3); ambiguous 5 unchanged; async 35
+# unchanged; restore 1 / worker 14 unchanged.  Moved rows (all
+# counterexample_unguarded_call_path/GR13_UNGUARDED_CALL_PATH ->
+# proven_helper/GR13_ALL_PATHS_GUARDED, decidingResolution
+# exact_canonical_scope — the entry check is a canonical direct-barrier
+# scope dominating every path):
+#     CsvExpenseImporter.getOrCreateCategory -> CategoryDao.insert
+#     JsonExpenseImporter.parseV1Row -> CategoryDao.insert
+#     JsonExpenseImporter.parseV2Row -> CategoryDao.insert
+#   The entry-of-importFromContent placement SUFFICED — the fallback
+#   (checks in getOrCreateCategory/parseV1Row/parseV2Row) was NOT
+#   needed.
+#
+# HARD STOP CHECKS: 0 counterexamples remaining, 0 previously-proven
+#   rows regressed, 0 unexpected delta (all 379 entries diffed; only
+#   the 3 declared rows moved, in the proven direction).
+#
+# VALIDATION:
+#   - scripts/db_guard: 269 passed (engine untouched)
+#   - board double run byte-identical bee88087...
+#   - Kotlin: NOT RUN — production Kotlin changed (2 constructor
+#     params + 2 entry checks); human/CI compile validation OWED; the
+#     3 updated test files are compile-critical (positional
+#     constructors)
+#   - test files updated: CsvExpenseImporterTest.kt,
+#     JsonExpenseImporterTest.kt, ExportImportRoundtripTest.kt
+#
+# Remaining (pre-existing debt, NOT fixed here — recorded for a later
+#   batch): the importers' generic `catch (e: Exception)` blocks still
+#   swallow CancellationException (CsvExpenseImporter L~106 "Import
+#   failed: ${e.message}", JsonExpenseImporter row-loop and parse
+#   catches interpolate e.message) — privacy rule violations and
+#   cancellation-propagation debts that predate this batch and are
+#   outside its scope.
+status: COMPLETE_AT_BOARD_bee88087

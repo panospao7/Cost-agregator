@@ -1,0 +1,96 @@
+# GR-14u13 (§D7 Bug 2) — pseudo-sites must not drive the opacity gate
+# (proven_helper 68 -> 69; unproven_external_entry 22 -> 21).
+#
+# ROOT CAUSE (found by the GR-14u11 triage; GR-14u12 §D7 Bug 2):
+#   `_DirectSiteProver._compute` proves over the callable's REAL mutation sites
+#   PLUS a `_pseudo_site` per requested mediation edge offset, and passed them
+#   all to `prove_callable_direct_barriers`.  That function derives its opacity
+#   predicate from the site set, so a pseudo-site landing inside a lambda forced
+#   that lambda to be modeled — which can flip the WHOLE callable's parse to
+#   UNSUPPORTED (`DB_DIRECT_BARRIER_PROOF_UNSUPPORTED`) and hide a correctly
+#   dominating barrier.  Measured on `ReceiptRepository.clearAllScannedReceipts`
+#   (whose key matches, so Bug 1 never applied):
+#     proof over the observation site alone   -> site 27427 = PROVEN
+#     proof with the 2 requested pseudo sites -> site 27427 = UNSUPPORTED
+#   A pseudo-site is a call-EDGE offset, not a mutation, so it has no business
+#   widening the opacity gate.
+#
+# FIX:
+#   `prove_callable_direct_barriers` gains an optional `opacity_sites` keyword;
+#   the proof still runs over every `mutation_sites` entry (so results exist for
+#   the pseudo offsets), but the opacity predicate is built from `opacity_sites`
+#   when given.  Defaults to `mutation_sites` — provably unchanged for every
+#   other caller (the D4 gate passes nothing).  `_DirectSiteProver._compute`
+#   passes `opacity_sites=<real observation sites>`.
+#
+# SHADOW DELTA (baseline = committed GR-14u12 board 2a624722...):
+#   entries 406 -> 406 (key sets EQUAL); summary moves EXACTLY:
+#     proven_helper           68 -> 69
+#     unproven_external_entry 22 -> 21
+#   changed rows: EXACTLY 1, `ReceiptRepository.deleteReceipt`
+#   `unproven_external_entry -> proven_helper` (localGuard none -> direct,
+#   GR13_ALL_PATHS_GUARDED — it carries `checkWritesAllowed` at
+#   ReceiptRepository:528).  0 counterexample flips, 0 regressions.
+#   Deterministic double-run BYTE-IDENTICAL
+#   (da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e).
+#   Policy bytes UNCHANGED (7851adc2...).
+#
+# BLAST RADIUS: `prove_callable_direct_barriers` is shared with the D4 gate
+# (`scanner.py`, `inspect_direct_write_barrier_proof.py`).  Those callers do not
+# pass `opacity_sites`, so their behavior is identical by construction; confirmed
+# by running the D4 CLI (28 direct entries, 0 fails, 0 unknown) and the
+# source-scope matrix test.
+#
+# DEAD-END NOTE: only 1 row flipped.  The other 14 of the 15 remaining D6
+# counterexample flips are §D7 Bug 2b — bodies that are UNSUPPORTED even with
+# observation sites only (`BankStatementLifecycleProcessor.processBankStatement`
+# 20 observations, `ExpenseRepository.updateExpenseCategoryBulk`).  D6 stays
+# BLOCKED on that deeper GR-11/GR-12 parser limitation.
+#
+# Validation:
+#   - engine battery: 73 passed (gr14u12 + gr14u7 + gr14u6 + gr14u5 +
+#     gr14f/j/r/l + shadow-CLI + gr10b source-scope matrix);
+#     fixture_runner 58/58; mediation direct units OK.
+#   - D4 direct-write-barrier CLI smoke: 28/28 direct, 0 fail, 0 unknown.
+#   - Python-only; no Kotlin/Gradle change.
+schemaVersion: 1
+batchId: GR-14u13
+startSha: 85b992ad
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: 2a624722a19219e3219a6861584d8e5356617885ecd7a1e02b88d6862fb9e480
+mediationReportSha256After: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/direct_barrier_bridge.py:
+      prove_callable_direct_barriers gains optional opacity_sites; opacity gate
+      built from it when supplied (defaults to mutation_sites — unchanged)
+  - scripts/ci/inspect_db_mediation_proof.py:
+      _compute passes opacity_sites=<real observation sites>
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - ReceiptRepository.deleteReceipt -> ScannedReceiptDao.delete
+rootCause: GR13_ALL_PATHS_GUARDED # guard was hidden by pseudo-site opacity interference
+selectedPattern: ENGINE
+tests:
+  - engine battery 73 passed; fixture_runner 58/58
+  - D4 direct-write-barrier CLI: 28/28 direct, 0 fail, 0 unknown
+  - live shadow before/after delta: 1 row, 0 counterexamples, 0 regressions
+
+status: COMPLETE # Bug 2 of 3; D6 still blocked on Bug 2b (handoff §D7)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch stops mediation pseudo-sites (call-edge offsets, not mutations) from
+  widening the GR-11/GR-12 opacity gate, so a callable whose real mutation sites
+  are correctly dominated by a write barrier is no longer flipped to UNSUPPORTED
+  by an incidental lambda region.  It changes no policy, baseline, exception or
+  authorization bytes, and it is shadow-only (reportOnly: true).  Every other
+  caller of the shared proof entrypoint is unaffected by construction, and the
+  reclassification is evidence-backed: 1 policy row moves from unproven to
+  proven_helper with 0 counterexample flips and 0 regressions.

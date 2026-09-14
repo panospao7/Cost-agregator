@@ -1,0 +1,94 @@
+# GR-14u54 — admit `safeExecute` into PRODUCTION_TRANSPARENT_INLINE_METHODS
+# (the F2 family from GR-14_FINAL26_DECISION_MEMO.md; u38-precedent set
+# extension).
+#
+# DEFECT: the 6 F2-family rows (DiagnosticEventWriter.emit,
+# PrivacyAuditLoggerImpl.logDecision, RoomReceiptLifecycleEventWriter.
+# write, RecurringPlanProjectionService.
+# projectFromOccurrencesInCurrentTransaction,
+# RoomTransactionLifecycleEventWriter.write,
+# WarrantyTrackerRepository.toWarrantyEntityOrNull) carried async_dispatch
+# edges from the HybridDedupeJudgeService judge callables whose argument
+# lambdas classified `carrier: async method: safeExecute` — the evidenced
+# wrapper was not in the closed carrier set.
+#
+# EVIDENCE (the u38 bar — orchestrator-confirmed, file:line verified):
+# HybridDedupeJudgeService.safeExecute (L79-89): private suspend,
+# `block: suspend () -> AiServiceResult<DedupeJudgeSuggestion>` invoked
+# EXACTLY ONCE inline at L84 inside a try/catch; never stored, never
+# conditionally invoked, never escapes.  4 call sites, all in the same
+# class.  Corpus-wide name-collision check: `safeExecute` appears ONLY in
+# this file (5 hits = 1 definition + 4 call sites) — no other definitions,
+# no divergent semantics.
+#
+# FIX (set extension, u48 commit pattern):
+#   - `safeExecute` added to PRODUCTION_TRANSPARENT_INLINE_METHODS with
+#     the full evidence comment (mirrors the guardTerminal comment).  The
+#     comment records the two composition verifications: the try/catch is
+#     the ENCLOSING statement of the call (the trailing-lambda carrier
+#     claim is on the call itself, composing with the tokenizer's
+#     TRY-region handling), and the block has ZERO params (the u48
+#     premise correction applies — no Shape-A binding expected; the win
+#     is the lambda REGION becoming transparent so
+#     _uncertain_region_state stops returning async).
+#   - Pin amended in test_gr14f_inline_carriers.py (test_production_set_
+#     is_pinned).
+#   - Fixture cb60: a safeExecute-shaped inline wrapper (private suspend
+#     fun invoking block exactly once in try/catch; caller passes a
+#     trailing lambda calling a corpus method) -> the lambda region is
+#     transparent (probe-verified: `carrier: transparent method:
+#     safeExecute`) and the edge resolves EXACT_CANONICAL_SCOPE.
+#     Consolidated manifest 113 -> 114.
+#
+# EDGE A/B EVIDENCE (all 53,789 corpus edges compared pre/post):
+#   4 changed positions: 4 async_dispatch(uncertain) ->
+#   exact_synchronous — the judge callables' own safeExecute carrier
+#   edges (the false async classification removed).  ZERO previously-
+#   exact edges changed (hard-stop clean).  The judge callables' regions
+#   are now transparent (probe-verified) and their safeExecute edges
+#   resolve exact_canonical_scope.
+#
+# OUTCOME (board, pre dc8c91b8... -> post f0dfd6531a78111e, double run
+# byte-identical): ZERO rows moved.  proofStates byte-identical:
+#   proven_helper 338, restore 1, worker 14, ambiguous 3, async 23,
+#   counterexamples 0.  REPORTED HONESTLY, NOT fabricated: the 6 F2 rows
+#   did NOT move because their DECIDING edges were never the
+#   safeExecute-carrier edges — the taint trace (run post-change) shows
+#   the first tier-5 decider for DiagnosticEventWriter.emit is the
+#   `backup :: guardedDatabaseRead` async_dispatch edge at
+#   DatabaseReadBarrierFlowExt.kt L19 (the `collect { emit(it) }` region —
+#   the u43 F-TRANSPARENT-CHAIN-NOISE family), with the RestoreJournal*
+#   and CompositeGeocodingService edges following in the sort.  The
+#   safeExecute admission removed the family's OWN false async edges and
+#   made the judge callables' regions transparent, but the rows' taint
+#   flows from the NEXT deciders — the u47 next-decider lesson, again.
+#   The set extension is still CORRECT and permanent (the false async
+#   classification for an exactly-once-inline wrapper is gone; any future
+#   caller of safeExecute-shaped wrappers benefits), and the F2 family's
+#   remediation path now routes through the F-TRANSPARENT-CHAIN-NOISE
+#   owner-sign-off gate (u43: ANY change there is an
+#   uncertainty-semantics change requiring explicit owner approval).
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+#   regressed, 0 rows in unproven_external_entry, 0 previously-exact
+#   edges changed, 0 unexpected board delta (379 entries diffed — zero
+#   row movements).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 106/106 checked, 106 passed, exit 0 (105 prior + 1)
+#   - scripts/ci: 1259 passed, 14 failed — byte-identical to the base
+#     commit's failure set (freshness-stamp and platform-conditional
+#     tests, environment-dependent, pre-existing)
+#   - board double run byte-identical f0dfd6531a78111e
+#   - edge A/B: 4 async->exact (the carrier edges), zero previously-exact
+#     edges changed
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the F-TRANSPARENT-CHAIN-NOISE family (DatabaseReadBarrierFlow
+#   Ext L19 collect-region et al.) — OWNER SIGN-OFF required before any
+#   change (u43: uncertainty-semantics change); the F1 withPermit (11) /
+#   F3 PostCommitAction (6) families (FINAL26 memo); the 3 open-interface
+#   ambiguous rows (u50 owner decision); the tracked candidate/accounting
+#   pair regeneration (pre-existing --verify drift, u51b disclosure).
+status: COMPLETE_AT_BOARD_f0dfd653

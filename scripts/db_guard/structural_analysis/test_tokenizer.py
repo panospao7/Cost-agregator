@@ -27,10 +27,15 @@ from scripts.db_guard.structural_analysis.tokenizer import (
 )
 
 
-def parse(body: str):
+def parse(body: str, transparent_scope_methods=(), transparent_inline_methods=()):
     masked = mask_kotlin_source(body)
     assert len(masked) == len(body), "masking must preserve offsets"
-    return parse_callable_body(masked, SourceSpan(0, len(masked), 1, 1))
+    return parse_callable_body(
+        masked,
+        SourceSpan(0, len(masked), 1, 1),
+        transparent_scope_methods=tuple(transparent_scope_methods),
+        transparent_inline_methods=tuple(transparent_inline_methods),
+    )
 
 
 def kinds(parse_result):
@@ -42,6 +47,109 @@ class TestGraphShapeMatrix:
         result = parse("val x = 1\nval y = 2\ndao.insert(x)\n")
         assert result.is_supported
         assert kinds(result) == [RegionKind.STATEMENT] * 3
+
+    def test_postfix_increment_terminates_statement(self):
+        # GR-14u41: a statement-ending `++` must terminate the statement
+        # like a `;` instead of gluing the following lines into one
+        # composite (the `+` of `++` is a _CONT_END continuation char).
+        result = parse("x++\ny = 1\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+
+    def test_postfix_decrement_terminates_statement(self):
+        result = parse("x--\ny = 1\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+
+    def test_increment_glued_with_runInTransaction_now_parses(self):
+        # GR-14u41: the real BankStatementLifecycleProcessor L594-L613
+        # shape — `duplicatesSkipped++` followed by a masked-comment gap
+        # and the multi-line runInTransaction(...) { checkWritesAllowed()
+        # } call.  Pre-fix the glued composite hit the barrier tail check
+        # and refused unknown-construct; post-fix the increment is its
+        # own statement and the scope is claimed separately.
+        result = parse(
+            "duplicatesSkipped++\n"
+            "// P3-BLOCKER-H2: Wrap duplicate decision + item insert.\n"
+            "transactionRunner.runInTransaction(\n"
+            "  correlationId = java.util.UUID.randomUUID().toString(),\n"
+            "  operationId = \"op\",\n"
+            "  source = \"src\"\n"
+            ") { context ->\n"
+            "  writeBarrier.checkWritesAllowed(\"tx\")\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_scope_methods=("runInTransaction",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.STATEMENT,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+        scope = result.regions[1]
+        assert scope.scope_method == "runInTransaction"
+        assert [child.kind for child in scope.children] == [
+            RegionKind.DIRECT_CHECK,
+            RegionKind.STATEMENT,
+        ]
+
+    def test_plus_plus_inside_expression_not_terminator(self):
+        # GR-14u41: the binary/unary continuation path must survive — a
+        # single `+` at end of line followed by a line starting with a
+        # unary `+` stays ONE statement (adjacency, not next-non-ws
+        # peek, is the increment discriminator).
+        result = parse("val y = a +\n +b\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT]
+        result = parse("val z = a + b\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT]
+
+    def test_plus_eq_not_terminator(self):
+        # GR-14u41: `+=`/`-=` never match the adjacent-doubled-char rule
+        # (the char after `+` is `=`).  `x +=\n 1` splits into two plain
+        # leaves because the line ends with `=`, which is NOT in
+        # _CONT_END, so the newline terminates the statement — no
+        # continuation glue is involved (pinned as-is, historical shape);
+        # `x += 1` on one line terminates the same way.
+        result = parse("x +=\n 1\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+        result = parse("x += 1\ny = 2\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+
+    def test_mid_statement_increment_not_terminator(self):
+        # GR-14u41 refinement: a mid-statement `++` (`if (cond) x++ else
+        # y`, the SourceLinkBackfillWorker shape) must NOT terminate — the
+        # line-remainder guard keeps the one-line if/else glued so
+        # _parse_if handles it exactly as before this batch (IF region
+        # with an unbraced then-BLOCK and an else STATEMENT).
+        result = parse("if (cond) x++ else y\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.IF]
+        assert [child.kind for child in result.regions[0].children] == [
+            RegionKind.BLOCK,
+            RegionKind.STATEMENT,
+        ]
+
+    def test_prefix_increment_not_terminator(self):
+        # GR-14u41 refinement: a statement-INITIAL prefix `++x` must NOT
+        # fire the terminator (the `stmt_start < i` guard) — the line
+        # splits at the newline into the same two plain leaves as before
+        # this batch.
+        result = parse("++x\ny = 1\n")
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
 
     def test_nested_blocks(self):
         # A leading brace pair is the callable's own body braces, so a plain
@@ -412,7 +520,13 @@ class TestClassification:
         assert self._classify(source) == self._classify(source)
 
 
-def parse_with_predicate(body: str, site_starts=(), barrier_spans=()):
+def parse_with_predicate(
+    body: str,
+    site_starts=(),
+    barrier_spans=(),
+    transparent_inline_methods=(),
+    transparent_scope_methods=(),
+):
     """Parse with a soundness gate over the given site starts / barrier spans."""
     from scripts.db_guard.structural_analysis.barrier_markers import (
         lambda_opacity_predicate,
@@ -424,7 +538,13 @@ def parse_with_predicate(body: str, site_starts=(), barrier_spans=()):
         type("S", (), {"span": SourceSpan(s, s + 1, 1, 1)})() for s in site_starts
     )
     predicate = lambda_opacity_predicate(masked, sites, tuple(barrier_spans))
-    return parse_callable_body(masked, SourceSpan(0, len(masked), 1, 1), lambda_opacity_predicate=predicate)
+    return parse_callable_body(
+        masked,
+        SourceSpan(0, len(masked), 1, 1),
+        lambda_opacity_predicate=predicate,
+        transparent_scope_methods=tuple(transparent_scope_methods),
+        transparent_inline_methods=tuple(transparent_inline_methods),
+    )
 
 
 class TestReturnConstructs:
@@ -521,6 +641,947 @@ class TestReturnConstructs:
         assert result.is_supported
         assert kinds(result) == [RegionKind.STATEMENT, RegionKind.RETURN]
         assert result.regions[1].children == ()
+
+    def test_return_try_with_labelled_return_inside_wrapper_supported(self):
+        # GR-14u29: the campaign guard idiom — `return try { ... }` whose
+        # rest text merely CONTAINS a `@label` inside a nested wrapper
+        # lambda.  The `@` is not a label on the return itself, so the
+        # statement must reach the try-construct parser instead of failing
+        # as an unsupported labelled return.
+        result = parse(
+            "return try {\n"
+            "  database.withTransaction {\n"
+            "    return@withTransaction\n"
+            "    dao.delete(id)\n"
+            "  }\n"
+            "  Result.success(Unit)\n"
+            "} catch (e: E) {\n"
+            "  Result.failure(e)\n"
+            "}\n",
+            transparent_scope_methods=("withTransaction",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.RETURN]
+        try_children = result.regions[0].children[0].children
+        assert [child.kind for child in try_children] == [
+            RegionKind.TRY,
+            RegionKind.CATCH,
+        ]
+        wrapper = try_children[0].children[0]
+        assert wrapper.kind == RegionKind.TRANSPARENT_SCOPE
+        assert wrapper.children[0].kind == RegionKind.LAMBDA_RETURN
+
+    def test_return_try_named_arg_transaction_wrapper_supported(self):
+        # GR-14u29: ReceiptLinkService shape — a named-argument
+        # `runInTransaction(...) { ctx -> ... }` wrapper with a label-led
+        # return inside a braced if, inside `return try { ... }`.
+        result = parse(
+            "return try {\n"
+            "  runner.runInTransaction(\n"
+            "    correlationId = id.toString(),\n"
+            "    operationId = op\n"
+            "  ) { ctx ->\n"
+            "    if (bad) {\n"
+            "      return@runInTransaction Result.failure(err)\n"
+            "    }\n"
+            "    dao.insert(link)\n"
+            "    Result.success(Unit)\n"
+            "  }\n"
+            "} catch (e: E) {\n"
+            "  Result.failure(e)\n"
+            "}\n",
+            transparent_scope_methods=("runInTransaction",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.RETURN]
+        wrapper = result.regions[0].children[0].children[0].children[0]
+        assert wrapper.kind == RegionKind.TRANSPARENT_SCOPE
+        braced_if = wrapper.children[0]
+        assert braced_if.kind == RegionKind.IF
+        assert braced_if.children[0].children[0].kind == RegionKind.LAMBDA_RETURN
+
+    def test_transparent_scope_with_embedded_barrier_check_supported(self):
+        # GR-14u31: the campaign guard idiom inside a wrapper — the barrier
+        # branches match barrier text ANYWHERE in a statement, so a
+        # `withContext(...) { checkWritesAllowed(...); ... }` statement was
+        # captured by the barrier-check branch and refused on its trailing
+        # lambda instead of being owned by the transparent-scope branch.
+        result = parse(
+            "withContext(ioDispatcher) {\n"
+            '  writeBarrier.checkWritesAllowed("m")\n'
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_scope_methods=("withContext",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert [child.kind for child in wrapper.children] == [
+            RegionKind.DIRECT_CHECK,
+            RegionKind.STATEMENT,
+        ]
+
+    def test_transparent_scope_with_try_catch_and_nested_wrapper_supported(self):
+        # GR-14u31: production shape (BankApiIntegration.syncTransactions /
+        # GroupTransactionCoordinator) — a withContext wrapper whose body
+        # carries the guarded try/catch + nested withTransaction.
+        result = parse(
+            "withContext(ioDispatcher) {\n"
+            "  try {\n"
+            '    writeBarrier.checkWritesAllowed("m")\n'
+            "    database.withTransaction {\n"
+            "      dao.insert(x)\n"
+            "    }\n"
+            "  } catch (e: Exception) {\n"
+            "    throw e\n"
+            "  }\n"
+            "}\n",
+            transparent_scope_methods=("withContext", "withTransaction"),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        try_region = result.regions[0].children[0]
+        assert try_region.kind == RegionKind.TRY
+        assert [child.kind for child in try_region.children] == [
+            RegionKind.TRY,
+            RegionKind.CATCH,
+        ]
+
+    def test_carrier_lambda_statement_admitted(self):
+        # GR-14u33: a bare call headed by an admitted inline carrier name
+        # parses its trailing lambda recursively instead of refusing the
+        # whole statement as a lambda escape.
+        result = parse(
+            "items.forEach { item ->\n"
+            "  dao.insert(item)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].children[0].kind == RegionKind.STATEMENT
+
+    def test_val_init_carrier_lambda_admitted(self):
+        result = parse(
+            "val n = items.count { it > 0 }\n",
+            transparent_inline_methods=("count",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
+    def test_receiver_carrier_lambda_admitted(self):
+        result = parse(
+            "CancellationSafe.runCatchingCancellable {\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("runCatchingCancellable",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
+    def test_unlisted_carrier_still_fails_closed(self):
+        # Pin: only the closed reviewed carrier set is admitted.
+        result = parse(
+            "mysteryCarrier {\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_chained_carrier_still_fails_closed(self):
+        # u33 pinned chained shapes as a batch limitation; GR-14u39
+        # lifted it for carriers reached through a balanced call chain
+        # whose trailing lambda ends the statement.  This pin keeps the
+        # boundary honest from the other side: an UNLISTED chain name
+        # still refuses (only the closed reviewed set is admitted).
+        result = parse(
+            "db.rawQuery(q, null).unknownScope { cursor ->\n"
+            "  val oldId = cursor.getLong(0)\n"
+            "  oldId\n"
+            "}\n",
+            transparent_inline_methods=("use",),
+        )
+        assert not result.is_supported
+
+    def test_labelled_return_inside_carrier_supported(self):
+        result = parse(
+            "withContext(ioDispatcher) {\n"
+            "  items.forEach { item ->\n"
+            "    if (item == 0) return@forEach\n"
+            "    dao.insert(item)\n"
+            "  }\n"
+            "}\n",
+            transparent_scope_methods=("withContext",),
+            transparent_inline_methods=("forEach",),
+        )
+        assert result.is_supported
+        wrapper = result.regions[0]
+        assert wrapper.kind == RegionKind.TRANSPARENT_SCOPE
+        carrier = wrapper.children[0]
+        assert carrier.kind == RegionKind.TRANSPARENT_SCOPE
+        guarded_if = carrier.children[0]
+        assert guarded_if.kind == RegionKind.IF
+        assert guarded_if.children[0].children[0].kind == RegionKind.LAMBDA_RETURN
+
+    def test_associate_carrier_lambda_admitted(self):
+        # GR-14u38: 'associate' joined the closed carrier set (corpus
+        # census: 35 head call sites; eager synchronous stdlib operator,
+        # same family as the admitted map/filter/associateBy).
+        result = parse(
+            "val categoryIdMap = categories.associate { it.name to it.id }\n",
+            transparent_inline_methods=("associate",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
+    def test_find_carrier_lambda_admitted(self):
+        # GR-14u38: 'find' joined the closed carrier set (60 head sites).
+        result = parse(
+            'val uncategorized = defaults.find { it.name == "Uncategorized" }\n',
+            transparent_inline_methods=("find",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+
+    def test_chained_carrier_head_admitted(self):
+        # GR-14u39: `x().forEach { }` — the carrier is reached through a
+        # balanced call chain; the trailing lambda ends the statement.
+        result = parse(
+            "dao.getMappings().forEach { mapping ->\n"
+            "  dao.update(mapping)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "forEach"
+        assert result.regions[0].children[0].kind == RegionKind.STATEMENT
+
+    def test_chained_carrier_with_args_admitted(self):
+        # GR-14u39: `db.rawQuery(q, null).use { cursor -> }` — production
+        # shape from LegacyDataMigrationService.migrateCategories.
+        result = parse(
+            "db.rawQuery(query, null).use { cursor ->\n"
+            "  val oldId = cursor.getLong(0)\n"
+            "  oldId\n"
+            "}\n",
+            transparent_inline_methods=("use",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "use"
+
+    def test_chained_carrier_unlisted_name_fails_closed(self):
+        result = parse(
+            "dao.getMappings().mysteryCarrier { m ->\n"
+            "  dao.update(m)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert not result.is_supported
+
+    def test_chained_carrier_with_lambda_in_prefix_fails_closed(self):
+        # An earlier lambda in the chain escapes before the carrier —
+        # never a chained-carrier candidate (same rule as u31 heads).
+        result = parse(
+            "dao.query { q -> q }.forEach { m ->\n"
+            "  dao.update(m)\n"
+            "}\n",
+            transparent_inline_methods=("forEach",),
+        )
+        assert not result.is_supported
+
+    def test_chained_carrier_not_ending_statement_not_claimed(self):
+        # u33 rule preserved: a carrier whose lambda does not END the
+        # statement is not claimed (falls to generic opacity handling).
+        result = parse(
+            "dao.getX().map { it.id }.toSet()\n",
+            transparent_inline_methods=("map",),
+        )
+        assert not result.is_supported
+
+    def test_safe_call_let_carrier_admitted(self):
+        # GR-14u40: `runId?.let { rid -> }` — the safe-call receiver
+        # blocks every `.`-requiring head matcher, so the composite used
+        # to fall to the generic opacity gate and, where the lambda
+        # carried real content, refuse the whole callable.  An admitted
+        # inline carrier after `?.` now claims the trailing lambda.
+        result = parse(
+            "runId?.let { rid ->\n"
+            "  val x = 1\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "let"
+        assert result.regions[0].scope_receiver == "runId"
+        assert [child.kind for child in result.regions[0].children] == [
+            RegionKind.STATEMENT,
+            RegionKind.STATEMENT,
+        ]
+
+    def test_safe_call_let_carrier_with_inner_withContext_admitted(self):
+        # GR-14u40: the BankStatementLifecycleProcessor.processBankStatement
+        # cancellation-cleanup composite — the outer `runId?.let {` was
+        # never claimed, so the inner `withContext(NonCancellable) { }`
+        # refused as coroutine-builder at statement level.  Once the outer
+        # statement is claimed, the inner statements parse normally
+        # (withContext is a canonical scope; withTimeout is an admitted
+        # carrier).
+        result = parse(
+            "runId?.let { rid ->\n"
+            "  try {\n"
+            "    withContext(NonCancellable) {\n"
+            "      withTimeout(2000L) {\n"
+            "        val processedItems = itemDao.countByRunAndStatus(rid, S.CREATED)\n"
+            "        runDao.finalize(\n"
+            "          runId = rid,\n"
+            "          status = S.CANCELLED\n"
+            "        )\n"
+            "      }\n"
+            "    }\n"
+            "  } catch (cleanupError: Throwable) {\n"
+            "    cancellation.addSuppressed(cleanupError)\n"
+            "  }\n"
+            "}\n",
+            transparent_scope_methods=("withContext",),
+            transparent_inline_methods=("let", "withTimeout"),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert wrapper.scope_method == "let"
+        try_region = wrapper.children[0]
+        assert try_region.kind == RegionKind.TRY
+        # try/catch model: nested TRY body first, CATCH sibling second.
+        assert [child.kind for child in try_region.children] == [
+            RegionKind.TRY,
+            RegionKind.CATCH,
+        ]
+        assert try_region.children[0].children[0].kind == (
+            RegionKind.TRANSPARENT_SCOPE
+        )
+
+    def test_safe_call_let_carrier_with_inner_elvis_admitted(self):
+        # GR-14u40: the failure-finalization composite — the inner
+        # `e::class.simpleName ?: "Unknown"` sits in a .put(...) argument
+        # inside a runInTransaction lambda; the outer refusal was the
+        # elvis-block on the never-claimed `runId?.let {` statement.
+        # Claiming the outer statement lets the inner elvis parse as a
+        # plain argument-position expression.
+        result = parse(
+            "runId?.let { rid ->\n"
+            "  transactionRunner.runInTransaction(\n"
+            "    operationId = \"op\"\n"
+            "  ) { context ->\n"
+            "    runDao.finalize(runId = rid)\n"
+            "    writer.write(context, Event(\n"
+            "      metadata = Builder()\n"
+            "        .put(\"errorClass\", e::class.simpleName ?: \"Unknown\")\n"
+            "        .build()\n"
+            "    ))\n"
+            "  }\n"
+            "}\n",
+            transparent_scope_methods=("runInTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert wrapper.scope_method == "let"
+        assert wrapper.children[0].kind == RegionKind.TRANSPARENT_SCOPE
+        assert wrapper.children[0].scope_method == "runInTransaction"
+
+    def test_safe_call_unlisted_method_fails_closed(self):
+        # Pin: only the closed reviewed carrier set is admitted after
+        # `?.` — an unlisted method keeps today's lambda-escape refusal.
+        result = parse(
+            "x?.foo {\n"
+            "  dao.insert(y)\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_safe_call_carrier_not_ending_statement_not_claimed(self):
+        # u33/u39 rule preserved: a `?.`-carrier whose trailing lambda
+        # does not END the statement is never claimed; the argument-position
+        # lambda keeps the generic lambda-escape refusal.
+        result = parse(
+            "runId?.let { }.plus(1)\n",
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_carrier_chain_runCatching_onFailure_admitted(self):
+        # GR-14u46: the idiomatic `runCatching { }.onFailure { }` chain
+        # matched neither the u33 head rule (its first lambda does not end
+        # the statement) nor the u39 chained rule (the first carrier's
+        # lambda is followed by `.onFailure`), so the composite fell to the
+        # generic opacity gate and refused whole callables.  Each segment
+        # now claims its own TRANSPARENT_SCOPE region with its own
+        # scope_method (per-segment, u39 scope_receiver=None precedent).
+        result = parse(
+            "runCatching {\n"
+            "  val a = 1\n"
+            "  dao.insert(a)\n"
+            "}\n"
+            ".onFailure {\n"
+            "  log()\n"
+            "}\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+        assert result.regions[0].scope_method == "runCatching"
+        assert result.regions[1].scope_method == "onFailure"
+        assert result.regions[0].scope_receiver is None
+        assert result.regions[1].scope_receiver is None
+
+    def test_carrier_chain_with_mutation_parses(self):
+        # The parse claims the chain; the mutation inside stays
+        # dominance-gated at the proof layer (parse-level pin only).
+        result = parse(
+            "runCatching { dao.insert(x) }.onFailure { log() }\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+
+    def test_carrier_chain_non_carrier_middle_refused_falls_back(self):
+        # A lambda hanging off a NON-carrier name mid-chain is not an
+        # admitted chain shape: the attempt is abandoned and the statement
+        # falls back to the generic path — pre-u46 outcome exactly
+        # (lambda-escape, no absorbed claim).
+        result = parse(
+            "runCatching { x }\n"
+            ".customThing { y }\n"
+            ".onFailure { z }\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_carrier_chain_trailing_content_refused_falls_back(self):
+        # Trailing content after the last lambda (`... .toString()`) means
+        # the chain does not end the statement: fallback, pre-u46 outcome.
+        result = parse(
+            "runCatching { x }\n"
+            ".onFailure { y }\n"
+            ".toString()\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_carrier_chain_previously_absorbed_stays_supported(self):
+        # HARD-STOP regression guard: a no-mutation chain that the opacity
+        # gate previously absorbed as an opaque leaf must never produce a
+        # HARD finding.  Post-u46 the cleanly-parsing chain is CLAIMED (the
+        # u33 precedent: carrier children are individually modeled instead
+        # of hidden — same as `val x = y.count { }`), which is an
+        # improvement, not a regression.  The claim-then-REJECT danger
+        # (hard finding on a previously-absorbed site) is pinned by the
+        # three fallback fixtures above: non-carrier middle, trailing
+        # content, and unlisted segment names all keep the exact pre-u46
+        # lambda-escape outcome with no absorbed-site regression.
+        result = parse_with_predicate(
+            "runCatching { 1 }.onFailure { 2 }\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert [region.kind for region in result.regions] == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+
+    def test_carrier_chain_three_segments_with_unlisted_name_refused(self):
+        # `onSuccess` is NOT in the closed carrier set: the chain attempt
+        # is abandoned and the statement keeps the pre-u46 lambda-escape
+        # outcome.
+        result = parse(
+            "runCatching { x }\n"
+            ".onSuccess { y }\n"
+            ".onFailure { z }\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_carrier_chain_real_shape_restore_journal_import(self):
+        # The real RestoreJournalImporter L101-124 shape: the per-event
+        # `runCatching { dao.insert(OperationRunEvent(...)) }.onFailure {
+        # ... }` inside a for-loop — the last blocker for the 4
+        # GR13_LOCAL_GUARD_UNMODELABLE rows (barrier checks are real since
+        # u45b; GR-12 could not prove dominance over an unmodelable body).
+        result = parse(
+            "for (event in events) {\n"
+            "  if (!importedIds.add(event.eventId)) continue\n"
+            "  runCatching {\n"
+            "    operationRunEventDao.insert(\n"
+            "      OperationRunEvent(\n"
+            "        operationRunId = runId,\n"
+            "        eventId = event.eventId\n"
+            "      )\n"
+            "    )\n"
+            "  }.onFailure {\n"
+            "    if (it is CancellationException) throw it\n"
+            "    Timber.w(it, \"failed to insert event\")\n"
+            "    allSucceeded = false\n"
+            "  }\n"
+            "}\n",
+            transparent_inline_methods=("runCatching", "onFailure"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        loop = result.regions[0]
+        assert loop.kind == RegionKind.LOOP
+        # The `if (!importedIds.add(...)) continue` guard statement, then
+        # the two chain segments as sibling carrier regions.
+        assert [child.kind for child in loop.children] == [
+            RegionKind.IF,
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+        assert loop.children[1].scope_method == "runCatching"
+        assert loop.children[2].scope_method == "onFailure"
+
+    def test_dotted_receiver_safe_call_admitted(self):
+        # GR-14u56a mechanism 1: the u40 safe-call receiver may be a DOTTED
+        # identifier chain (`receipt.imagePath?.let { }`).  Pre-u56a the
+        # simple-identifier receiver regex blocked every property-chain
+        # carrier, so the ReceiptLifecycleCoordinator.processReceiptInput
+        # val-initializer shape (L328, try/catch inside the lambda) refused
+        # as lambda-escape and blanked the whole callable.  scope_receiver
+        # mirrors the u39 chained-carrier precedent: None for a chain (the
+        # bridge's carrier-span walk matches by scope_method name only, so
+        # this grants nothing beyond parseability).
+        result = parse(
+            "val fileHash = receipt.imagePath?.let { path ->\n"
+            "  try {\n"
+            "    assetStore.computeFileHash(path).getOrNull()\n"
+            "  } catch (e: Exception) {\n"
+            "    CancellationSafe.rethrowIfCancellation(e)\n"
+            "    null\n"
+            "  }\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert wrapper.scope_method == "let"
+        assert wrapper.scope_receiver is None
+        assert wrapper.children[0].kind == RegionKind.TRY
+
+    def test_safe_call_continuation_glued(self):
+        # GR-14u56a mechanism 2: a line starting with `?.` continues the
+        # previous statement exactly like the leading-`.` continuation.
+        # Pre-u56a `x?.takeIf { }\n?.let { }` split into TWO statements, so
+        # the `?.let` half lost its carrier head and refused as a bare
+        # lambda-escape.  Post-fix the composite is ONE statement claimed as
+        # a carrier chain (the u46 chain parser handles the segments; the
+        # head is a safe call).
+        result = parse(
+            "receipt.imagePath?.takeIf { it.isNotBlank() }\n"
+            "    ?.let { assetStore.deleteAsset(it) }\n",
+            transparent_inline_methods=("takeIf", "let"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+        assert result.regions[0].scope_method == "takeIf"
+        assert result.regions[0].scope_receiver is None
+        assert result.regions[1].scope_method == "let"
+        assert result.regions[1].scope_receiver is None
+
+    def test_one_line_safe_call_chain_admitted(self):
+        # GR-14u56a composition: the one-line chained safe-call form
+        # (`x?.takeIf { }?.let { }`) — the u40 head rule declines (its
+        # lambda does not END the statement) and the u46 chain rule claims
+        # the composite with the safe-call head.
+        result = parse(
+            "receipt.imagePath?.takeIf { it.isNotBlank() }?.let { assetStore.deleteAsset(it) }\n",
+            transparent_inline_methods=("takeIf", "let"),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [
+            RegionKind.TRANSPARENT_SCOPE,
+            RegionKind.TRANSPARENT_SCOPE,
+        ]
+
+    def test_dotted_receiver_unlisted_method_fails_closed(self):
+        # Pin: only the closed reviewed carrier set is admitted after a
+        # dotted-receiver `?.` — an unlisted method keeps the pre-u56a
+        # lambda-escape refusal (fail closed).
+        result = parse(
+            "receipt.imagePath?.foo {\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_question_mark_alone_does_not_glue(self):
+        # Fail-closed continuation: ONLY the exact `?.` pair glues a line to
+        # its predecessor.  A line starting with `?` alone (elvis) does NOT
+        # glue — it stays its own statement part (two plain leaves below),
+        # and the elvis-block refusal for a brace-bearing elvis line stays
+        # intact (pre-u56a behavior pinned exactly).
+        result = parse(
+            "val x = foo\n"
+            "    ?: bar\n",
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.STATEMENT, RegionKind.STATEMENT]
+        glued = parse(
+            "val x = foo\n"
+            "    ?: bar { dao.insert(x) }\n",
+        )
+        assert not glued.is_supported
+        assert glued.unsupported[0].code == "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
+        assert glued.unsupported[0].reason == "elvis-block"
+
+    def test_simple_receiver_still_works(self):
+        # u40 regression guard: the simple-identifier safe-call carrier
+        # keeps its exact pre-u56a behavior, including the recorded
+        # scope_receiver (a simple receiver is NOT a chain).
+        result = parse(
+            "runId?.let { rid ->\n"
+            "  val x = 1\n"
+            "  dao.insert(x)\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "let"
+        assert result.regions[0].scope_receiver == "runId"
+
+    def test_when_branch_carrier_line_gluing_is_deferred(self):
+        # GR-14u56a DEFERRED shape (documented, not fixed): the
+        # ReceiptLifecycleCoordinator L270-277 subject-less `when { }` whose
+        # branch conditions end with `->` — the `>` of the arrow is a
+        # _CONT_END continuation char, so every branch line glues into ONE
+        # when-entry and the when parser misreads the composite (the
+        # remaining branches become the first branch's arrow body).  The
+        # production opacity gate absorbs the no-mutation shape today, so
+        # this pins the parse-level finding honestly instead of widening
+        # this batch: a when-branch-aware entry split is a THIRD mechanism,
+        # deferred to a follow-up batch (batch cap discipline).
+        result = parse(
+            "val reasonCode = when {\n"
+            "                validation.errors.any { it.contains("
+            + chr(34) + "not readable" + chr(34) + ") } -> "
+            + chr(34) + "URI_NOT_READABLE" + chr(34) + "\n"
+            "                validation.errors.any { it.contains("
+            + chr(34) + "MIME type" + chr(34) + ") || it.contains("
+            + chr(34) + "determine MIME" + chr(34) + ") } -> "
+            + chr(34) + "MIME_UNKNOWN" + chr(34) + "\n"
+            "                else -> "
+            + chr(34) + "VALIDATION_FAILED" + chr(34) + "\n"
+            "            }\n",
+            transparent_inline_methods=("any",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code in (
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED",
+        )
+        assert result.unsupported[0].reason in (
+            "lambda-escape",
+            "dangling-clause",
+        )
+
+    def test_elvis_inside_parens_with_trailing_carrier_admitted(self):
+        # GR-14u56b mechanism 1 + the gated-admission deviation (documented):
+        # the L501 shape — an elvis inside argument parentheses
+        # (`imageHash = fileHash ?: receipt.imageHash`) followed by a
+        # brace-bearing `.also { }` carrier — is admitted ONLY through the
+        # production-style opacity gate (parse_with_predicate,
+        # site_starts=()).  WITHOUT the gate the u46 chain-prefix charset
+        # `[^{};?=]` still refuses this composite with lambda-escape (the
+        # `=` of the named arguments excludes the prefix), so this test
+        # pins the gated admission, NOT the ungated chain claim — a known
+        # limitation recorded in the manifest (GR-14u56b Remaining).
+        result = parse_with_predicate(
+            "val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(\n"
+            "    sourceType = ReceiptSourceType.CAMERA.name,\n"
+            "    documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,\n"
+            "    processingStatus = processingStatus,\n"
+            "    imageHash = fileHash ?: receipt.imageHash,\n"
+            "    textFingerprint = textFingerprint,\n"
+            "    semanticFingerprint = semanticFingerprint\n"
+            "), now).also { it.taxInclusive = taxInclusive }\n",
+            site_starts=(),
+            transparent_inline_methods=("also",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+
+    def test_call_result_receiver_safe_call_admitted(self):
+        # GR-14u56b mechanism 2: the u40 safe-call receiver may be a CALL
+        # RESULT with balanced parentheses (`dao.getById(x!!)?.let { }` —
+        # the real L444 head).  Regexes cannot count nested parentheses, so
+        # the receiver group is located by regex and validated structurally
+        # by _safe_call_receiver_ok.  scope_receiver mirrors the u39/u56a
+        # chain precedent: None for any receiver containing a dot or a call
+        # parenthesis (grants nothing beyond parseability).
+        result = parse(
+            "dao.getById(x!!)?.let { existing ->\n"
+            "  val now = timeProvider.now()\n"
+            "  existing\n"
+            "}\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        wrapper = result.regions[0]
+        assert wrapper.scope_method == "let"
+        assert wrapper.scope_receiver is None
+
+    def test_unbalanced_parens_receiver_fails_closed(self):
+        # Fail-closed pin for mechanism 2: an UNBALANCED receiver must not
+        # match (the structural validation requires balanced, never-negative
+        # `()`/`[]`), so the statement keeps the pre-u56b generic outcome.
+        result = parse(
+            "foo(bar(x?.let { it.go() }\n",
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_SYNTAX_UNBALANCED"
+        assert result.unsupported[0].reason == "unbalanced-delimiter"
+
+    def test_nested_call_receiver_admitted(self):
+        # GR-14u56b: the depth-aware receiver scan accepts NESTED balanced
+        # call parentheses (`foo(bar(x))?.let { }`); a regex receiver group
+        # cannot count nesting, which is why the validation is structural.
+        # scope_receiver stays None (the receiver contains a parenthesis).
+        result = parse(
+            "foo(bar(x))?.let { it.go() }\n",
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+        assert kinds(result) == [RegionKind.TRANSPARENT_SCOPE]
+        assert result.regions[0].scope_method == "let"
+        assert result.regions[0].scope_receiver is None
+
+    def test_elvis_at_depth_zero_still_refused(self):
+        # u39 pin stays intact under mechanism 1: an elvis at PAREN DEPTH 0
+        # whose RHS opens a brace is still the control-flow form the
+        # elvis-block refusal exists for (the depth check gates ONLY the
+        # argument-parenthesis form; the depth-0 refusal is byte-identical).
+        # (test_elvis_block_form already pins this shape; this explicit pin
+        # documents the u56b mechanism boundary next to the depth>0
+        # admission test.)
+        result = parse("val x = foo() ?: {\n  val y = 1\n  y\n}\n")
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED"
+        assert result.unsupported[0].reason == "elvis-block"
+
+    def test_call_result_receiver_labelled_outer_return_absorbed_with_gate(self):
+        # GR-14u56b hard-stop regression pin: the real
+        # GroupTransactionCoordinator.addMemberToGroup L220-224 shape —
+        # `memberDao.getCurrentUser(groupId)?.let { currentUser ->`
+        # `    return@withTransaction ... }` inside
+        # `database.withTransaction { ... }`.  The call-result receiver is
+        # a NEWLY-EXPOSED claim class (pre-u56b it fell to the generic
+        # opacity gate), and the lambda's labelled return targets the
+        # OUTER withTransaction label, not the let.  The claim attempt
+        # records that labelled-return finding, so the attempt must roll
+        # back and fall through to the generic path: with a
+        # production-style gate the whole statement is absorbed as one
+        # opaque STATEMENT (supported, zero findings) — the pre-u56b
+        # behavior.  A claim that kept the finding would hard-fail the
+        # whole callable (the actual u56b board regression).
+        result = parse_with_predicate(
+            "database.withTransaction {\n"
+            "  if (isCurrentUser) {\n"
+            "    memberDao.getCurrentUser(groupId)?.let { currentUser ->\n"
+            "      return@withTransaction Result.Error(\n"
+            "        GroupValidationError.CurrentUserAlreadyExists(currentUser.id)\n"
+            "      )\n"
+            "    }\n"
+            "  }\n"
+            "  val memberId = memberDao.insert(member)\n"
+            "}\n",
+            site_starts=(),
+            transparent_scope_methods=("withTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        assert result.is_supported
+        assert result.unsupported == ()
+
+    def test_call_result_receiver_labelled_outer_return_refused_without_gate(self):
+        # Same shape WITHOUT the production-style gate: the attempt still
+        # rolls back and falls through, and the generic lambda-escape
+        # refusal fires exactly as pre-u56b (fail closed, honest).
+        result = parse(
+            "database.withTransaction {\n"
+            "  if (isCurrentUser) {\n"
+            "    memberDao.getCurrentUser(groupId)?.let { currentUser ->\n"
+            "      return@withTransaction Result.Error(\n"
+            "        GroupValidationError.CurrentUserAlreadyExists(currentUser.id)\n"
+            "      )\n"
+            "    }\n"
+            "  }\n"
+            "  val memberId = memberDao.insert(member)\n"
+            "}\n",
+            transparent_scope_methods=("withTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_call_result_receiver_claim_hiding_mutation_fails_closed(self):
+        # Fail-closed pin: a `(`-receiver claim attempt that would hide a
+        # REAL mutation site must never succeed.  Mutation sites are
+        # proof-layer facts (the tokenizer never sees them), so the pin
+        # composes the two layers the way the production pipeline does:
+        # the let lambda holds a labelled return to the OUTER scope (the
+        # attempt records that finding and is abandoned -> rollback ->
+        # fall through) AND a registered mutation site inside the brace
+        # group (the opacity gate then refuses the whole statement).  A
+        # claim that KEPT its finding would surface `labelled-return`
+        # from the inner span instead; this assertion pins the
+        # rollback-then-gate path by its outer `lambda-escape` outcome.
+        source = (
+            "database.withTransaction {\n"
+            "  memberDao.getCurrentUser(groupId)?.let { currentUser ->\n"
+            "    return@withTransaction memberDao.insert(member)\n"
+            "  }\n"
+            "}\n"
+        )
+        site = source.index("memberDao.insert")
+        result = parse_with_predicate(
+            source,
+            site_starts=(site,),
+            transparent_scope_methods=("withTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        assert not result.is_supported
+        assert result.unsupported[0].code == "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE"
+        assert result.unsupported[0].reason == "lambda-escape"
+
+    def test_call_result_receiver_clean_claim_hiding_site_refused_at_proof(self):
+        # Complementary fail-closed pin: a `(`-receiver claim attempt that
+        # parses CLEANLY (no labelled return) is claimed, but carrier
+        # regions are never contract-admitted (scope_receiver=None, u39
+        # precedent), so a mutation site inside the lambda stays
+        # disconnected from the scope entry and the proof layer refuses
+        # it UNSUPPORTED — the claim can never launder a hidden site.
+        source = (
+            "database.withTransaction {\n"
+            "  memberDao.getCurrentUser(groupId)?.let { currentUser ->\n"
+            "    memberDao.insert(member)\n"
+            "  }\n"
+            "}\n"
+        )
+        site = source.index("memberDao.insert")
+        result = parse_with_predicate(
+            source,
+            site_starts=(site,),
+            transparent_scope_methods=("withTransaction",),
+            transparent_inline_methods=("let",),
+        )
+        # Tokenizer level: the claim parses (that is the u56b exposure).
+        assert result.is_supported
+        # Proof level: the site inside the never-admitted carrier is
+        # refused, never PROVEN.
+        from scripts.db_guard.structural_analysis.cfg import build_callable_cfg
+        from scripts.db_guard.structural_analysis.barrier_markers import (
+            collect_barrier_markers,
+        )
+        from scripts.db_guard.structural_analysis.barrier_proof import (
+            ProofStatus,
+            prove_direct_barrier,
+        )
+
+        masked = mask_kotlin_source(source)
+        assert len(masked) == len(source)
+        markers = collect_barrier_markers(result, masked)
+        sites = (
+            type(
+                "MS",
+                (),
+                {
+                    "span": SourceSpan(
+                        start=site,
+                        end=site + len("memberDao.insert"),
+                        line=source.count("\n", 0, site) + 1,
+                        column=1,
+                    ),
+                    "callable_key": "p|o|function|m|null|",
+                    "dao_fqcn": "example.Dao",
+                    "operation": "insert",
+                    "mutation_kind": "ROOM_ABSTRACT_INSERT",
+                    "source_identity": "example.Dao::insert",
+                },
+            )(),
+        )
+        cfg, _ = build_callable_cfg(
+            result,
+            sites,
+            markers,
+            path="app/src/main/java/Repo.kt",
+            callable_key="p|o|function|m|null|",
+            admitted_transparent_spans=frozenset(),
+        )
+        from scripts.db_guard.structural_analysis.barrier_proof import (
+            ReceiverTypeResolver,
+            admit_transparent_scope_candidates,
+        )
+        from scripts.db_guard.structural_analysis.barrier_proof import (
+            CANONICAL_BARRIER_CONTRACT_V2,
+        )
+
+        resolver = ReceiverTypeResolver(masked)
+        admitted = admit_transparent_scope_candidates(
+            result, CANONICAL_BARRIER_CONTRACT_V2, resolver
+        )
+        assert admitted == frozenset()  # the let carrier is never admitted
+        results, _ = prove_direct_barrier(
+            masked,
+            SourceSpan(0, len(masked), 1, 1),
+            cfg,
+            sites,
+            CANONICAL_BARRIER_CONTRACT_V2,
+            resolver,
+            path="app/src/main/java/Repo.kt",
+            callable_key="p|o|function|m|null|",
+        )
+        assert results[0].status is ProofStatus.UNSUPPORTED
 
 
 class TestValConstructInitializers:

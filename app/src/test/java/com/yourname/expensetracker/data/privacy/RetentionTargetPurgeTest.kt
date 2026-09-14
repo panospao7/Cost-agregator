@@ -3,12 +3,17 @@ package com.yourname.expensetracker.data.privacy
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
+import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.database.entity.PipelineDiagnosticEvent
 import com.yourname.expensetracker.di.RetentionModule
 import com.yourname.expensetracker.domain.privacy.RetentionTarget
 import com.yourname.expensetracker.domain.util.TimeProvider
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -44,8 +49,22 @@ class RetentionTargetPurgeTest {
     private val cutoffMs = now - TimeUnit.DAYS.toMillis(30)
     private val olderThanCutoff = cutoffMs - TimeUnit.DAYS.toMillis(1)
 
+    // GR-14u51b: the retention targets now require the canonical write
+    // barrier; NORMAL mode keeps the purge behavior unchanged.
+    private val maintenanceMode = mockk<RestoreMaintenanceMode>()
+
+    private fun writeBarrier(mode: RestoreMaintenanceMode.Mode): DatabaseWriteBarrier {
+        val barrier = DatabaseWriteBarrier(maintenanceMode)
+        every { maintenanceMode.currentMode() } returns mode
+        every { maintenanceMode.isWritesAllowed() } returns
+            (mode == RestoreMaintenanceMode.Mode.NORMAL)
+        return barrier
+    }
+
     @Before
     fun setUp() {
+        every { maintenanceMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        every { maintenanceMode.isWritesAllowed() } returns true
         val context = ApplicationProvider.getApplicationContext<Context>()
         database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
@@ -58,7 +77,7 @@ class RetentionTargetPurgeTest {
     }
 
     private fun targetNamed(name: String): RetentionTarget =
-        RetentionModule.provideRetentionTargets(database, timeProvider)
+        RetentionModule.provideRetentionTargets(database, timeProvider, writeBarrier(RestoreMaintenanceMode.Mode.NORMAL))
             .first { it.name == name }
 
     private fun intakeRow(fingerprint: String, capturedAt: Long) = NotificationIntakeEntity(
@@ -131,5 +150,60 @@ class RetentionTargetPurgeTest {
         val remaining = dao.getRecent(50)
         assertEquals(1, remaining.size)
         assertEquals("recent message", remaining.first().message)
+    }
+
+    // ── GR-14u51b write-barrier gating ────────────────────────────────────────
+
+    @Test
+    fun `blocked mode returns the controlled constant and performs zero writes`() = runTest {
+        // The write barrier must gate the purge entry BEFORE the
+        // runCatchingCancellable wrapper (a check inside it would swallow
+        // DatabaseAccessBlockedException into RETENTION_PURGE_FAILED) and
+        // report the CONTROLLED CONSTANT "WRITE_BARRIER_BLOCKED" — never
+        // e.message.
+        val dao = database.pipelineDiagnosticEventDao()
+        dao.insert(diagnosticRow(olderThanCutoff, "old PII message"))
+        val before = dao.getRecent(50).size
+
+        val blockedTargets = RetentionModule.provideRetentionTargets(
+            database,
+            timeProvider,
+            writeBarrier(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
+        )
+        val result = blockedTargets
+            .first { it.name == "pipeline_diagnostic_events" }
+            .purge(cutoffMs)
+
+        assertEquals("WRITE_BARRIER_BLOCKED", result.errorMessage)
+        assertEquals("WRITE_BARRIER_BLOCKED", result.errorCode)
+        assertEquals(false, result.success)
+        assertEquals(0, result.rowsPurged)
+        // Zero DAO writes: the row is untouched.
+        val after = dao.getRecent(50)
+        assertEquals(before, after.size)
+        assertEquals("old PII message", after.first().message)
+    }
+
+    @Test
+    fun `cancellation from the barrier propagates`() = runTest {
+        val cancellingMode = mockk<RestoreMaintenanceMode>()
+        every { cancellingMode.currentMode() } returns RestoreMaintenanceMode.Mode.NORMAL
+        every { cancellingMode.isWritesAllowed() } returns true
+        val cancellingBarrier = mockk<DatabaseWriteBarrier>()
+        io.mockk.coEvery {
+            cancellingBarrier.checkWritesAllowed(any<String>())
+        } throws CancellationException("cancelled")
+
+        val targets = RetentionModule.provideRetentionTargets(
+            database,
+            timeProvider,
+            cancellingBarrier
+        )
+
+        val thrown = runCatching {
+            targets.first { it.name == "ai_artifacts" }.purge(cutoffMs)
+        }.exceptionOrNull()
+
+        assertTrue(thrown is CancellationException)
     }
 }

@@ -1,0 +1,112 @@
+# GR-14u12 (§D7 Bug 1) — re-key observations by the GRAPH callable key
+# (proven_helper 61 -> 68; unproven_external_entry 29 -> 22).
+#
+# ROOT CAUSE (found by the GR-14u11 triage of the D6 counterexamples):
+#   `_DirectSiteProver` is keyed by the GRAPH callable key, but observations were
+#   bucketed under `observation.callable_key` — the D4 canonical key, whose
+#   parameter types are spelled FULLY QUALIFIED (`android.net.Uri`,
+#   `List<…DomainExchangeRate>`, `(Long) -> Unit`) while the graph key is
+#   normalized/simple (`Uri`, `List`, `suspend (groupId: Long) -> Unit`).
+#   Measured: of 252 callables with observations, 157 (62%) had a D4 key absent
+#   from `builder.callables` entirely, so `_compute` bailed before proving and a
+#   dominating `writeBarrier.checkWritesAllowed(...)` could never be seen
+#   (`localGuard: none`).  This silently disabled the GR-12 direct proof for most
+#   guarded writers.
+#
+# FIX:
+#   new `_observations_by_graph_callable(builder, declaration_index, observations)`
+#   re-keys observations by the span-exact GRAPH callable key via the existing
+#   `_correlate_subject_callable` (offset containment — exact and overload-safe,
+#   no string normalization).  Uncorrelated observations keep their D4 key, so
+#   nothing is silently dropped (fail closed).
+#   `obs_by_callable` (the old D4-keyed bucket) is deleted — it had no other
+#   consumer.
+#
+# FIXTURE PINS: scripts/ci/test_gr14u12_observation_key_correlation.py (5)
+#   - wiring pin: the re-keying maps the FQ-param D4 observation onto the GRAPH
+#     key and NOT onto the D4 key (a revert to `observation.callable_key` fails);
+#   - uncorrelated observation keeps its D4 key (never dropped);
+#   - offset outside any declaration => fail-closed None;
+#   - unknown owner => fail-closed None;
+#   - FQ-param key correlates to the graph key.
+#
+# SHADOW DELTA (baseline = committed GR-14u7 board be78c28c...):
+#   entries 406 -> 406 (key sets EQUAL); summary moves EXACTLY:
+#     proven_helper           61 -> 68
+#     unproven_external_entry 29 -> 22
+#   changed rows: EXACTLY 7, all `unproven_external_entry -> proven_helper`
+#   (localGuard none -> direct, GR13_ALL_PATHS_GUARDED):
+#     BusinessExpenseRepository.addMileage, MerchantNormalizationRepository
+#     .insertAlias (x3), GroupLifecycleCoordinator.recordSettlement,
+#     RecurringPlanProjectionService.projectFromRule,
+#     SubscriptionManagerEngine.recordPriceChange.
+#   0 counterexample flips, 0 proven->unproven regressions.  Deterministic
+#   double-run BYTE-IDENTICAL
+#   (2a624722a19219e3219a6861584d8e5356617885ecd7a1e02b88d6862fb9e480).
+#   Policy bytes UNCHANGED (7851adc2...).
+#
+# SCOPE NOTE (honest): this is Bug 1 of three.  It does NOT make the D6
+# (multi-star) projection safe to land — 16 counterexample flips remain, from
+# two further causes, both diagnosed in the GR-14u11 triage and recorded in the
+# handoff §D7:
+#   - Bug 2 pseudo-site opacity interference: for
+#     `ReceiptRepository.clearAllScannedReceipts` the proof over the observation
+#     site alone is PROVEN, but adding the requested `_pseudo_site`s makes it
+#     UNSUPPORTED (DB_DIRECT_BARRIER_PROOF_UNSUPPORTED);
+#   - Bug 2b body-parse limitation: `BankStatementLifecycleProcessor
+#     .processBankStatement` and `ExpenseRepository.updateExpenseCategoryBulk`
+#     are UNSUPPORTED even with observation sites only.
+#   Both leave genuinely-guarded writers reading `local=none`, so the D6
+#   counterexamples remain FALSE POSITIVES.  Do not land D6 until they are fixed.
+#
+# Validation:
+#   - engine battery: 68 passed (gr14u12 5/5 + gr14u7 + gr14u6 + gr14u5 +
+#     gr14f/j/r/l + shadow-CLI); fixture_runner 58/58; mediation direct units OK.
+#   - Python-only; no Kotlin/Gradle change.
+#   - policy bytes unchanged (7851adc2...) => GATE-00R owed at merge as before.
+schemaVersion: 1
+batchId: GR-14u12
+startSha: c8c7af48
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: be78c28c231f348a277f394058b7868b16168e4af65f7b01a78a4b285eae8ea7
+mediationReportSha256After: 2a624722a19219e3219a6861584d8e5356617885ecd7a1e02b88d6862fb9e480
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/ci/inspect_db_mediation_proof.py:
+      add _observations_by_graph_callable; re-key the direct-site prover's
+      observations by the span-exact graph callable key; delete the unused
+      D4-keyed obs_by_callable
+  - scripts/ci/test_gr14u12_observation_key_correlation.py: new pins (5)
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - BusinessExpenseRepository.addMileage -> MileageTrackingDao.insert
+  - MerchantNormalizationRepository.insertAlias -> MerchantNormalizationDao.insertAlias
+  - MerchantNormalizationRepository.insertAlias -> MerchantNormalizationDao.updateAlias
+  - MerchantNormalizationRepository.insertAlias -> MerchantNormalizationDao.incrementAliasOccurrence
+  - GroupLifecycleCoordinator.recordSettlement -> GroupSettlementDao.insert
+  - RecurringPlanProjectionService.projectFromRule -> PlannedExpenseDao.insertPlannedExpense
+  - SubscriptionManagerEngine.recordPriceChange -> SubscriptionPriceHistoryDao.insert
+rootCause: GR13_ZERO_INBOUND_CALL_SITES # guard invisible because the observation key never matched the graph key
+selectedPattern: ENGINE
+tests:
+  - test_gr14u12_observation_key_correlation.py 5/5 (wiring pin fails on a revert)
+  - engine battery 68 passed; fixture_runner 58/58; direct units OK
+  - live shadow before/after delta: 7 rows, 0 counterexamples, 0 regressions, deterministic
+
+status: COMPLETE # Bug 1 of 3; D6 still blocked on Bug 2 / Bug 2b (handoff §D7)
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  This batch re-keys mediation mutation observations onto the graph callable key
+  so the GR-12 direct-barrier proof actually runs for writers whose D4 key spelled
+  parameter types differently.  It changes no policy, baseline, exception or
+  authorization bytes, and it is shadow-only (reportOnly: true).  The
+  reclassification is evidence-backed: 7 policy rows move from unproven to
+  proven_helper, each because its own dominating checkWritesAllowed is now
+  visible, with 0 counterexample flips and 0 regressions.

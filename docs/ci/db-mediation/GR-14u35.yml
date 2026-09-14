@@ -1,0 +1,43 @@
+# GR-14u35 — A9 dead-writer tranche 2: ExpenseWriteStore (owner-approved
+# disposition; defect D2; plan track A9).
+#
+# OWNER APPROVAL: session 2026-09-11.  The class is the designed-but-
+# never-wired alternative expense write path; TransactionLifecycleCoordinator
+# is both the live path and the one AGENTS.md mandates, so an unwired
+# bypass is a hazard, not an asset (GR-14A9 disposition table).
+#
+# PRODUCTION REMOVALS:
+#   - app/src/main/java/com/yourname/expensetracker/data/store/
+#     ExpenseWriteStore.kt (whole class, 11 policy rows)
+#   - ExpenseWriteStoreObservabilityTest.kt (dedicated suite)
+#   - ExpenseStoreTest.kt trimmed to the two ExpenseReadStore tests (the
+#     11 write-store tests die with the class; read coverage kept)
+#   - ExpenseReadStore.kt stale doc comment fixed (write path reference
+#     now points at TransactionLifecycleCoordinator only)
+#   - config/db_access_allowlist.yml: ExpenseWriteStore entry removed;
+#     the ExpenseRepository entry's dangling allowed_until ("migrate to
+#     ExpenseWriteStore (PR 11)") reworded to the real remaining target
+#
+# POLICY TRUTH SYNC:
+#   - active 432 -> 421; combined seeds 379 -> 368
+#   - tracked pair regenerated; --verify --seed-rows FULL MATCH exit 0;
+#     folds unchanged 53/40/43
+#   - _CANDIDATE_ENTRIES 432 -> 421; seed-drift ledger extended 42 -> 53
+#     (ExpenseWriteStore x11, keys from the frozen GR-08j2 batch file);
+#     combined pin 368; the j2 near-miss machinery tests are untouched
+#     (they exercise the migration machinery on historical rows, not the
+#     combined doc contents)
+#
+# OUTCOME (board, pre 0ab27b26... -> post fe1edae4...):
+#   unproven 73 -> 62 (external_entry 13 -> 5, async 39 -> 36); proven
+#   unchanged 331; counterexamples 0; moved rows = exactly the 11 deleted
+#   ExpenseWriteStore rows (8 external + 3 async); 0 regressions.
+#   activePolicySha256 advanced again; GATE-00R recapture owed at merge.
+#
+# VALIDATION:
+#   - seed-rows suite: 210 passed (ledger + pins updated)
+#   - current-repo + db_guard: 248 passed
+#   - verify_db_access_boundaries --fail-on-violation: exit 0
+#   - :app:compileDebugKotlin: exit 0
+#   - board double run byte-identical fe1edae4...
+status: COMPLETE_AT_BOARD_fe1edae4

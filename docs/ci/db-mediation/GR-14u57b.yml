@@ -1,0 +1,146 @@
+# GR-14u57b — the GR-14f/GR-14j resolution-preservation rule must not count
+# canonical scopes as engine-carrier chains (engine; the restoreReceiptAssets
+# 34-target async fiction dissolved; honest zero-row outcome with the
+# prover-exact decider census).
+#
+# DEFECT: the preservation rule
+# (`_chain_admitted_by_engine_carriers`, callgraph.py) classified a region
+# as an admitted engine carrier when its METHOD NAME was in the GR-14f
+# inline-transparent table — regardless of the region's carrier kind.  The
+# V3 restore-internal scope (RestoreInternalWriteScope.run, contract V3 /
+# GR-14u25) shares its method name `run` with the stdlib inline transparent
+# method in PRODUCTION_TRANSPARENT_INLINE_METHODS (the u25 admission is
+# RECEIVER-EXACT precisely because of that shared name), so the
+# canonical_restore region was counted as an "engine-carrier chain".
+# Consequence: the `dao.update` call INSIDE
+# restoreInternalWriteScope.run("restoreReceiptAssets.updateImagePath") { }
+# (DatabaseBackupRepositoryImpl.restoreReceiptAssets L1253) — whose exact
+# resolution is the V3 receiver-exact interface dispatch with no corpus
+# implementors bound — could not bind corpus targets and was converted by
+# the preservation rule into a conservative async_dispatch with a 34-target
+# name-match fan-out (logDecision, toWarrantyEntityOrNull,
+# RoomReceiptLifecycleEventWriter.write,
+# RoomTransactionLifecycleEventWriter.write, ...) — a dispatch fiction that
+# decided 4 board rows as unproven_async.
+#
+# PREMISE CORRECTION (honest, correcting the batch brief): the brief
+# claimed the restore region classified `carrier=async`.  It did NOT — V3
+# receiver-exact admission already works: the region classifies
+# `carrier=canonical_restore` (verified against the engine source and by
+# the fixtures below).  The defect is purely the preservation rule
+# counting a CANONICAL region as an engine carrier because of the `run`
+# name collision with the stdlib inline table.
+#
+# FIX (one predicate, engine-only): the inline-table branch of
+# `_chain_admitted_by_engine_carriers` now requires
+# `region.carrier == "transparent"`.  Canonical scopes (worker guard /
+# direct barrier / restore-internal) are guard SOURCES, not engine-carrier
+# chains: their own contract shapes resolution (the scope-shaped call
+# resolves EXACT_CANONICAL_SCOPE) and their context propagates as
+# direct/worker/restore_internal.  A site inside a canonical scope has NO
+# carrier-escape concern — the region is a guard, not a deferred dispatch —
+# so the preservation rule has nothing to preserve there.  Nested ADMITTED
+# transparent regions inside a canonical scope still qualify through their
+# own carrier (the runGuarded+forEach shape is unchanged; pinned by Test B
+# below).  The docstring is rewritten with the u57b evidence.  Diff: 25
+# insertions, 3 deletions, one file (callgraph.py).
+#
+# EDGE A/B (probe-verified, both sides): exactly 1 transition —
+# DatabaseBackupRepositoryImpl.restoreReceiptAssets L1253:
+# async_dispatch(uncertain, 34-target name-match fan-out) ->
+# interface_dispatch(uncertain, 0 targets).  0 previously-exact edges
+# regressing; no other edge changed.  The interface_dispatch edge is the
+# honest tier-5 evidence for the V3 receiver-exact dispatch with an
+# unbound implementor set.
+#
+# OUTCOME (board pre anchor 26caaadaf19642ae re-verified -> post
+# 03acbb044721e9dc, double run byte-identical modulo targetSha, 379
+# entries): ZERO rows moved.  proofStates identical: proven_helper 344,
+# restore 1, worker 14, ambiguous 2, async 18, counterexamples 0.
+# REPORTED HONESTLY, NOT fabricated: the 4 rows' next prover-exact decider
+# is FinancialWeatherRepository.getFinancialWeather L67 (a flow{}-emit
+# async edge — see D2 below), so removing the L1253 fiction cannot move
+# them this batch.  The change is still CORRECT and permanent: the
+# 34-target dispatch fiction is gone from the graph and the L1253 site now
+# carries its honest interface_dispatch evidence.
+#
+# POST-FIX PROVER-EXACT DECIDER CENSUS (measured over all 18 async rows,
+# first-decider semantics of proof.py step 5): 6x
+# ReceiptSideEffectPlanner L305, 4x FinancialWeatherRepository.
+# getFinancialWeather L67, 3x RescueActivity.onCreate L31, 3x
+# ReceiptOcrService.processImage L237, 1x backup.guardedDatabaseRead L19,
+# 1x RestoreJournalImporter L210.
+#
+# DECIDER 2 — DEFERRED (OWNER-DECISION surface, route as D2): the
+# guardedDatabaseRead L19 `emit` edge.  `flow {}` can never be admitted as
+# a transparent carrier: the block is invoked ONCE PER COLLECTOR and
+# re-invoked on every re-collection, so the exactly-once-inline bar fails
+# STRUCTURALLY (not corpus-observationally).  Additionally the emit
+# receiver is the FlowCollector implicit `this` — an EXTERNAL lambda
+# RECEIVER the engine cannot type (u45/u55b type lambda PARAMS, not
+# receivers).  Census: 8 flow{}-emit async edges corpus-wide; only
+# guardedDatabaseRead L19 decides a row today.  Both remediation legs
+# (admission impossible; receiver typing = engine capability) are owner
+# decisions.
+#
+# DECIDER 3 — SKIPPED (documented, no action): suggest L143 (the
+# response.body?.string() OkHttp chain).  Board-inert: its async edge has
+# 0 targets and decides 0 rows under the prover's step-5 semantics
+# (verified over all 18 async rows).  Noise only; the u57a manifest
+# already disclosed it as a next decider for the Cloud* family.
+#
+# TESTS (scripts/ci/test_gr14u57b_preservation_rule_scopes.py, new, 3
+# tests, probe-then-pin against the REAL production contract):
+#   * test_unbindable_call_inside_restore_scope_stays_off_carrier_path —
+#     Test A: a corpus interface with zero implementors called inside a
+#     canonical_restore scope resolves interface_dispatch (0 targets), NOT
+#     async_dispatch (pre-fix probe: async_dispatch with the name-match
+#     target).
+#   * test_stdlib_run_name_collision_does_not_create_async_fanout — the
+#     corpus-shaped variant: the unbindable callee shares its name with
+#     another corpus callable; the edge keeps the honest uncertain
+#     member-miss resolution (unresolved_target with the name-match
+#     target), never the async fiction (pre-fix probe: async_dispatch,
+#     0-target).
+#   * test_transparent_carrier_inside_canonical_scope_still_preserves —
+#     Test B: a genuinely-admitted transparent carrier (forEach) nested
+#     INSIDE a canonical_restore scope still qualifies through its OWN
+#     carrier — the preservation rule still fires and the unbindable
+#     callee keeps the conservative async_dispatch name-match edge
+#     (behavior unchanged; identical pre/post — probed both sides).
+#
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows regressed,
+# 0 external_entry rows (board delta zero — proofStates and per-entry
+# states identical), 0 previously-exact edges regressing (the 1-edge A/B
+# is uncertain->uncertain).
+#
+# VALIDATION:
+#   - scripts/db_guard: 292 passed (pytest -q with
+#     PYTHONPATH=scripts\db_guard\mediation_analysis)
+#   - fixture corpus: 121/121 checked, 121 passed, exit 0 (129-row
+#     manifest)
+#   - scripts/ci: 1266 passed, 14 failed — byte-identical pre-existing set
+#     (test_verify_known_good_state.py freshness-stamp/scorecard rows,
+#     test_test_result_freshness.py CLI row, one
+#     test_inspect_direct_write_barrier_proof.py exit-contract row, one
+#     test_verify_production_source_roots.py custom-dir row —
+#     environment-dependent, pre-existing; 1263 + 3 new = 1266)
+#   - new pin tests: 3/3 passed
+#   - board double run byte-identical (targetSha-normalized sha16
+#     03acbb044721e9dc, both runs; pre anchor 26caaadaf19642ae
+#     re-verified before the batch; the recipe: file bytes, targetSha ->
+#     "", first 16 hex)
+#   - Kotlin: NOT RUN (no production change)
+#
+# Remaining: D2 (guardedDatabaseRead L19 flow{} emit — owner decision, the
+#   exactly-once bar fails structurally and the emit receiver is an
+#   untypeable external lambda receiver; 8 corpus-wide flow{}-emit async
+#   edges, only this one decides a row); the 5 other measured deciders
+#   (ReceiptSideEffectPlanner L305 x6, getFinancialWeather L67 x4,
+#   RescueActivity.onCreate L31 x3, ReceiptOcrService.processImage L237
+#   x3, RestoreJournalImporter L210 x1); the extension-carve-out x
+#   preservation-rule interaction (owner-decision surface); the
+#   F-TRANSPARENT-CHAIN-NOISE family (owner sign-off gate); the F1
+#   withPermit / F3 PostCommitAction families (FINAL26 memo); the 3
+#   open-interface ambiguous rows (u50 owner decision).
+status: COMPLETE_AT_BOARD_03acbb04

@@ -1,0 +1,83 @@
+# GR-14 owner-acceptance registry (GR-15 batch 1 gate input).
+# GENERATED from board 03acbb044721e9dc (build/guard-debug/gr15batch1/board_baseline.json)
+# - the 20 rows carry the exact canonical mutationKey strings from that board.
+# Human/owner document: GR-14_OWNER_ACCEPTANCE_RECORD.md. Fail-closed gate contract:
+# GR-15_GATE_AMENDMENT.md. Do not hand-edit rows; regenerate from a cold board.
+schemaVersion: 1
+record: docs/ci/db-mediation/GR-14_OWNER_ACCEPTANCE_RECORD.md
+amendment: docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md
+caveat: owner_accepted means proven OR honestly accepted with recorded reasons. Two of the accepted rows
+  (the Handle pair) are known to mask counterexamples that surface under any future engine typing improvement
+  - see the acceptance record caveats 1 and 2.
+rows:
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/privacy/PrivacyAuditLoggerImpl.kt|com.yourname.expensetracker.data.privacy.PrivacyAuditLoggerImpl|function|logDecision|null|com.yourname.expensetracker.domain.privacy.PrivacyCapability,com.yourname.expensetracker.domain.privacy.PrivacyDecision,Map<String,
+    String>|dao|com.yourname.expensetracker.data.database.dao.PrivacyAuditDao|insert
+  family: familyB_combine
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/data/repository/WarrantyTrackerRepository.kt|com.yourname.expensetracker.data.repository.WarrantyTrackerRepository|function|toWarrantyEntityOrNull|com.yourname.expensetracker.domain.ai.model.WarrantyExtractionResult|com.yourname.expensetracker.data.database.entity.ScannedReceipt|warrantyLifecycleEventDao|com.yourname.expensetracker.data.database.dao.WarrantyLifecycleEventDao|insert
+  family: familyB_combine
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DiagnosticEventWriter.kt|com.yourname.expensetracker.domain.diagnostics.RoomDiagnosticEventWriter|function|emit|null|com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent|dao|com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao|insert
+  family: familyF_flow_emit
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|function|event|null|String,com.yourname.expensetracker.domain.diagnostics.EventOutcome,com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode?,com.yourname.expensetracker.domain.diagnostics.EventSeverity,com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata,String?,Long?,Throwable?,Boolean|eventDao|com.yourname.expensetracker.data.database.dao.OperationRunEventDao|insert
+  family: familyC_ui_callback
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder.Handle|function|finalizeNonCancellable|null|String,String?,Throwable?|runDao|com.yourname.expensetracker.data.database.dao.OperationRunDao|finalizeIfRunning
+  family: pair_handle_masked
+  caveats:
+  - 'MASK: the unproven_ambiguous_call label masks a by-design unguarded diagnostic path (DDL-81-07) that
+    the engine reports as a counterexample once the typing noise is removed (GR-14 addendum Correction
+    1, caveat 1).'
+  - 'STABILITY: this acceptance holds only while the engine stays uncertain; any future engine typing
+    improvement re-opens this row as a counterexample (GR-14 addendum Correction 1, caveat 2).'
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|function|start|null|String,String?,com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata|runDao|com.yourname.expensetracker.data.database.dao.OperationRunDao|insert
+  family: familyC_ui_callback
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkWriterImpl.kt|com.yourname.expensetracker.domain.provenance.SourceLinkWriterImpl|function|linkTarget|null|com.yourname.expensetracker.domain.provenance.TargetEntityType,Long,com.yourname.expensetracker.domain.provenance.SourceLinkPayload,String?|sourceLinkDao|com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao|insert
+  family: familyD_run_with_retry
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleEventWriter.kt|com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter|function|write|null|com.yourname.expensetracker.domain.transaction.TransactionContext,com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent|dao|com.yourname.expensetracker.data.database.dao.ReceiptEventDao|insert
+  family: familyB_combine
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|linkReceiptToExpense|null|Long,Long,String,String,String?,Float?,Boolean,com.yourname.expensetracker.data.database.entity.MatchStatus?,Boolean,Boolean|receiptExpenseLinkDao|com.yourname.expensetracker.data.database.dao.ReceiptExpenseLinkDao|insert
+  family: familyA_post_commit_action
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|linkReceiptToExpense|null|Long,Long,String,String,String?,Float?,Boolean,com.yourname.expensetracker.data.database.entity.MatchStatus?,Boolean,Boolean|receiptItemCategorizationDao|com.yourname.expensetracker.data.database.dao.ReceiptItemCategorizationDao|linkToExpense
+  family: familyA_post_commit_action
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|linkReceiptToExpense|null|Long,Long,String,String,String?,Float?,Boolean,com.yourname.expensetracker.data.database.entity.MatchStatus?,Boolean,Boolean|returnWindowDao|com.yourname.expensetracker.data.database.dao.ReturnWindowDao|updateExpenseIdByReceiptId
+  family: familyA_post_commit_action
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|linkReceiptToExpense|null|Long,Long,String,String,String?,Float?,Boolean,com.yourname.expensetracker.data.database.entity.MatchStatus?,Boolean,Boolean|scannedReceiptDao|com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|claimForAutoMatch
+  family: familyA_post_commit_action
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|linkReceiptToExpense|null|Long,Long,String,String,String?,Float?,Boolean,com.yourname.expensetracker.data.database.entity.MatchStatus?,Boolean,Boolean|scannedReceiptDao|com.yourname.expensetracker.data.database.dao.ScannedReceiptDao|update
+  family: familyA_post_commit_action
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLinkService.kt|com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLinkService|function|linkReceiptToExpense|null|Long,Long,String,String,String?,Float?,Boolean,com.yourname.expensetracker.data.database.entity.MatchStatus?,Boolean,Boolean|warrantyDao|com.yourname.expensetracker.data.database.dao.WarrantyDao|updateExpenseIdByReceiptId
+  family: familyA_post_commit_action
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/RecurringPlanProjectionService.kt|com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService|function|projectFromOccurrencesInCurrentTransaction|null|Long,Long,Long,Long|plannedExpenseDao|com.yourname.expensetracker.data.database.dao.PlannedExpenseDao|insertPlannedExpense
+  family: familyE_projection_as_is
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter|function|writeCritical|null|Long?,String,String?,String?,String?,Long|dao|com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|insert
+  family: familyD_run_with_retry
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|createExpenseMutation|null|com.yourname.expensetracker.domain.transaction.CreateExpenseRequest|transactionEventDao|com.yourname.expensetracker.data.database.dao.TransactionEventDao|insert
+  family: familyD_run_with_retry
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleEventWriter.kt|com.yourname.expensetracker.domain.transaction.lifecycle.RoomTransactionLifecycleEventWriter|function|write|null|com.yourname.expensetracker.domain.transaction.TransactionContext,com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleEvent|dao|com.yourname.expensetracker.data.database.dao.TransactionEventDao|insert
+  family: familyB_combine
+  caveats: []
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle|function|terminal|null|String,com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl.Handle.TerminalArgs|dao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|completeTerminal
+  family: pair_handle_masked
+  caveats:
+  - 'MASK: the unproven_ambiguous_call label masks a by-design unguarded diagnostic path (DDL-81-07) that
+    the engine reports as a counterexample once the typing noise is removed (GR-14 addendum Correction
+    1, caveat 1).'
+  - 'STABILITY: this acceptance holds only while the engine stays uncertain; any future engine typing
+    improvement re-opens this row as a counterexample (GR-14 addendum Correction 1, caveat 2).'
+- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/workers/WorkerRunLogger.kt|com.yourname.expensetracker.domain.workers.WorkerRunLoggerImpl|function|start|null|String,String?,String?,Int?,Int?,String?|dao|com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao|insert
+  family: familyC_ui_callback
+  caveats: []

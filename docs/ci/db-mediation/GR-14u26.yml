@@ -1,0 +1,130 @@
+# GR-14u26 — receiver-aware `::` function-reference resolution.
+# unproven_ambiguous_call 58 -> 45 (-13); proven_helper 173 -> 186; the
+# function_reference bucket is DRAINED.  0 counterexamples; 0 regressions.
+#
+# ROOT CAUSE (engine): a `::` member reference was always emitted as ONE
+#   uncertain FUNCTION_REFERENCE edge carrying name-matched targets, whatever its
+#   receiver.  The reference record carried NO receiver at all: the dedicated
+#   `::` scan used `_REFERENCE_RE = re.compile(r"::\s*(name)")`, which captured
+#   only the method name, so the invocation path's receiver-typing machinery
+#   never had a chance to run for references.
+#
+#   Measured consequence: 14 rows were decided by such an edge, all of the shape
+#   `viewModel::method` where the receiver is a COMPOSE SCREEN PARAMETER with a
+#   declared type (`viewModel: ReviewViewModel = hiltViewModel()`) — exactly the
+#   parameter typing GR-14u20/u22 already resolve for invocations.  The
+#   name-match target counts were 1, 2, 3 and 13, i.e. the engine was guessing
+#   among same-named corpus methods when the receiver type was already known.
+#
+# FIX (engine):
+#   * `_REFERENCE_RE` now captures the optional dotted receiver as well as the
+#     name, and the scan records it in `receiver_text`.
+#   * `_resolve_call`'s reference branch tries `_bound_reference_target()` first:
+#     resolve the receiver through `receiver_fqcn_for_call` (local binding,
+#     enclosing parameter, owner property, corpus type — the same machinery as
+#     an invocation), then require a single non-generic member of that name in
+#     the receiver's declaring owner.  On success the edge is EXACT_SYNCHRONOUS
+#     bound to that one callable; otherwise today's uncertain name-matched edge
+#     is kept unchanged.
+#
+#   FAIL-CLOSED by construction.  `_bound_reference_target` returns None (so the
+#   historical uncertain edge stands) for: no receiver (`::name` could be a
+#   top-level function); a CHAINED receiver (`a.b::name` — the qualification path
+#   is not modelled for references and guessing it would be unsound); an
+#   unresolved or non-corpus receiver; a member absent from the receiver type; a
+#   GENERIC member; and an OVERLOADED name (more than one member of that name in
+#   the declaring owner).  Each of those is pinned.
+#
+# BEHAVIOUR CHANGE THE FIXTURE CORPUS CAUGHT (kept, not suppressed): HP-04
+#   (`this::writeRow`) previously read FUNCTION_REFERENCE /
+#   UNPROVEN_AMBIGUOUS_CALL.  Now the reference binds exactly, so the helper is
+#   REACHABLE — and it mutates with no guard of its own, so the honest verdict is
+#   COUNTEREXAMPLE_UNGUARDED_CALL_PATH.  The fixture expectations were updated to
+#   the new truth, and HP-04 therefore no longer pins "references stay
+#   uncertain".  This is the strictness model working: a newly-reachable
+#   unguarded writer must surface, not stay hidden behind an uncertain edge.
+#   (On the LIVE board no such flip occurs — all 13 rows that moved are already
+#   guarded — so the counterexample count stays 0.)
+#
+# PINS (scripts/ci/test_gr14u26_reference_resolution.py, 7; 3 RED pre-fix):
+#   proving: typed receiver + unique member resolves exactly / is not uncertain /
+#   `this::member` resolves to the owner.
+#   fail-closed (green before and after): bare `::name`; overloaded member;
+#   unresolved receiver type; member absent from the typed receiver.
+#   Fixture CB-18 (bound reference -> EXACT_SYNCHRONOUS) added; consolidated rows
+#   69 -> 70; fixture_runner 62/62.
+#
+# BOARD (captured twice, byte-identical):
+#   sha256 04e6a21a976bad3f3dfb93a9529250761cb963afb1f06c1d35f33f4a8c58d986
+#   proven_helper 173 -> 186 | proven_restore_internal 1 | worker 14 |
+#   unproven_ambiguous_call 58 -> 45 | async 133 | external_entry 27
+#   counterexamples 0 -> 0
+#   changed rows: EXACTLY 13, ALL `unproven_ambiguous_call -> proven_helper`:
+#     markDismissed, clearAllHistory, clearSession, updateAlias,
+#     approveReview (x8), deactivateChallenges.
+#   The 14th function_reference row moved to `unresolved_target` and stays
+#   UNPROVEN — the bucket is drained (0 remaining) without claiming 14 proofs.
+#   Policy bytes UNCHANGED (7851adc2...); baseline/exception bytes unchanged.
+#
+# Validation:
+#   - test_gr14u26_reference_resolution.py 7/7 (3 RED pre-fix).
+#   - engine battery 1227 passed / 13 failed / 14 skipped — and the 13 are the
+#     IDENTICAL pre-existing set (verified by listing them: freshness x1,
+#     verify_known_good_state x11, production_source_roots x1), i.e. zero new
+#     failures.  The +7 over the u25 run is exactly this batch's pins.
+#   - scripts/db_guard 235 passed; fixture_runner 62/62; test_fixtures 5/5.
+#   - room-inventory production-root boundary tests 4/4 (unaffected).
+schemaVersion: 1
+batchId: GR-14u26
+startSha: 89844c7f
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: 35de3592eaedbc2e90d7da33ca9bcc0ffdef8b8863805f14b03dd0e7b5933106
+mediationReportSha256After: 04e6a21a976bad3f3dfb93a9529250761cb963afb1f06c1d35f33f4a8c58d986
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+      _REFERENCE_RE captures the receiver; the reference scan records it;
+      _resolve_call binds a reference exactly via _bound_reference_target()
+      (new), falling back to the historical uncertain edge
+  - scripts/ci/test_gr14u26_reference_resolution.py: 7 pins (new)
+  - fixtures: CB-18 new (bound reference exact); HP-04 expectations updated to
+    COUNTEREXAMPLE_UNGUARDED_CALL_PATH (behaviour change the corpus caught);
+    consolidated rows 69 -> 70
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - (13 rows) unproven_ambiguous_call -> proven_helper — see the list above
+  - (1 row)  function_reference -> unresolved_target (still unproven)
+rootCause: GR13_REFERENCE_RECEIVER_UNRESOLVED
+selectedPattern: ENGINE
+
+tests:
+  - test_gr14u26_reference_resolution.py 7/7 (3 RED pre-fix)
+  - engine battery 1227 passed; the 13 failures are the identical pre-existing set
+  - scripts/db_guard 235 passed; fixture_runner 62/62
+  - board 04e6a21a deterministic double-run; 0 counterexamples; policy unchanged
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  A bound member reference such as viewModel::confirmQuickApprove was treated as
+  an uncertain name match even though the receiver's type is declared in the
+  same parameter list, so the engine guessed among same-named methods when it
+  could have known.  This batch captures the receiver of a `::` reference and
+  resolves it exactly when the receiver type is known and declares exactly one
+  member of that name, keeping the previous uncertain edge for every shape it
+  cannot decide - no receiver, a chained receiver, an unresolved type, or a
+  missing, generic or overloaded member.  Thirteen of the fourteen affected rows
+  become proven helpers and the remaining one moves to a different unresolved
+  edge and stays unproven, so the bucket is emptied without over-claiming.
+  Making a referenced member reachable also means an unguarded writer reached
+  only through a reference now surfaces as a definite counterexample, which the
+  fixture corpus demonstrates (HP-04) and the live board confirms costs nothing
+  there.  The board is deterministic with zero counterexamples and zero
+  regressions, and policy, baseline and exception bytes are unchanged.

@@ -63,8 +63,7 @@ class SharedExpenseGroupScenarioTest {
     // ── Helper: create an ExpenseGroup with N members ───────────────────────
 
     /**
-     * Creates an [ExpenseGroup] and [memberNames.size] [GroupMember] rows in a
-     * single atomic insert (via [ExpenseGroupDao.insertGroupWithMembers]).
+     * Creates an [ExpenseGroup] and [memberNames.size] [GroupMember] rows.
      *
      * @param groupName        Display name for the group.
      * @param memberNames      Names of each member. The first member is designated

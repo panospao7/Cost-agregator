@@ -37,7 +37,13 @@ _RE_COROUTINE = re.compile(
     r"(?:^|[^\w$.])(?:launch|async|withContext|runBlocking)\s*[\(\{]"
 )
 _RE_BARRIER_SCOPE = re.compile(
-    r"\bwriteBarrier\s*\.\s*runWrite\s*\{"
+    # `DatabaseWriteBarrier.runWrite(operation, block)` REQUIRES the operation,
+    # so the canonical call is `runWrite(op) { ... }`.  The optional argument
+    # list (mirroring _RE_WORKER_GUARD below) is what makes real guarded bodies
+    # modelable; without it they fell through to _RE_LIKE_BARRIER and failed the
+    # whole body with BARRIER_FORM_UNRECOGNIZED (GR-14u16).  One level of
+    # parenthesis nesting covers `runWrite(DatabaseAccessOperation("...")) {`.
+    r"\bwriteBarrier\s*\.\s*runWrite\s*(?:\((?:[^()]|\([^()]*\))*\))?\s*\{"
 )
 _RE_BARRIER_CHECK = re.compile(
     r"\bwriteBarrier\s*\.\s*checkWritesAllowed\s*\("
@@ -70,7 +76,18 @@ _RE_LAMBDA_PARAMS = re.compile(
     r"\s*[A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*\s*->"
 )
 _RE_TS_SCOPE = re.compile(
-    r"^(?:(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?"
+    # GR-14u28: an optional declaration/assignment prefix.  A transparent scope is
+    # just as transparent when its result is bound (`val id = db.withTransaction { }`)
+    # as when the call stands alone — but the pattern used to be anchored straight
+    # onto `receiver.method`, so a bound scope never matched, its lambda took the
+    # escape path, and the ENTIRE callable became UNSUPPORTED (hiding an already-
+    # dominating barrier).  Recognising the candidate here grants nothing: admission
+    # stays receiver-exact / import-exact in the proof layer, so a bound scope that
+    # fails admission is still fail-closed.
+    r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+    r"(?:\s*:\s*[A-Za-z_][A-Za-z0-9_<>,.?\s]*)?\s*=\s*"
+    r"|[A-Za-z_][A-Za-z0-9_]*\s*=\s*)?"
+    r"(?:(?P<receiver>[A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?"
     r"(?P<method>[A-Za-z_][A-Za-z0-9_]*)\s*"
     r"(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{"
 )
@@ -205,6 +222,14 @@ class _Cursor:
         # transparent-scope candidacy.  Empty (default) preserves exact v1
         # behavior; admission happens in the proof layer.
         self.transparent_scope_methods: tuple[str, ...] = ()
+        # GR-14u33: closed inline-carrier method names (e.g. the reviewed
+        # PRODUCTION_TRANSPARENT_INLINE_METHODS set) whose trailing-lambda
+        # statements parse recursively as context-preserving regions.  This
+        # makes bodies parseable; it authorizes nothing — the proof layer
+        # never admits these as canonical scopes, so mutations inside them
+        # stay disconnected (fail closed).  Empty (default) preserves exact
+        # pre-u33 behavior.
+        self.transparent_inline_methods: tuple[str, ...] = ()
         # While parsing the direct child sequence of a transparent-scope
         # candidate, holds the wrapper method name (the implicit label for
         # `return@label`); None inside any nested lambda.
@@ -265,6 +290,52 @@ def _at_clause(text: str, pos: int, end: int) -> bool:
     return False
 
 
+def _paren_depth_before(text: str, start: int, pos: int) -> int:
+    """Nesting depth of ``()``/``[]`` at ``pos``, counting from ``start``.
+
+    GR-14u56b mechanism 1: masked text contains no comments or strings, so a
+    flat scan is exact.  Braces are NOT counted here: the caller asks whether
+    an elvis sits inside argument parentheses, and a depth-0 elvis whose RHS
+    opens a brace is the control-flow form the refusal exists for.
+    """
+    depth = 0
+    i = start
+    while i < pos:
+        ch = text[i]
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        i += 1
+    return depth
+
+
+def _safe_call_receiver_ok(receiver: str) -> bool:
+    """Structural validation of a safe-call carrier receiver (GR-14u56b).
+
+    GR-14u40 accepted only ``ident(.ident)*`` receivers; u56b extends the
+    shape to balanced call-result receivers (``dao.getById(x!!)``) via a
+    depth-aware scan (regexes cannot count nested parentheses).  The u39/u46
+    charset exclusions hold otherwise: no brace, semicolon, ``?`` (an elvis
+    or a second safe call in the receiver), or ``=`` anywhere; parentheses
+    and brackets must balance and never dip negative.  Anything else fails
+    closed (no match -> pre-change handling).
+    """
+    if not receiver or not receiver.strip(_WS):
+        return False
+    depth = 0
+    for ch in receiver:
+        if ch in ";?={}":
+            return False
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
 def _split_statements(cur: _Cursor, start: int, end: int) -> list[tuple[int, int]] | None:
     parts: list[tuple[int, int]] = []
     depth = 0
@@ -297,12 +368,60 @@ def _split_statements(cur: _Cursor, start: int, end: int) -> list[tuple[int, int
             if ch == ";":
                 parts.append((stmt_start, i))
                 stmt_start = None
+            elif (
+                ch in "+-"
+                and stmt_start < i
+                and i + 1 < end
+                and text[i + 1] == ch
+                and _line_remainder_blank(text, i + 2, end)
+            ):
+                # GR-14u41: a STATEMENT-ENDING postfix increment/decrement
+                # (`duplicatesSkipped++`) must terminate the statement like
+                # a `;`.  `+`/`-` sit in _CONT_END for binary-operator line
+                # continuations (`val x = a +\n b`), so without this branch
+                # the `++` glued the statement with every following line
+                # until a line ended without a continuation char — in
+                # processBankStatement the glued composite swallowed the
+                # next runInTransaction(...) { checkWritesAllowed(...) }
+                # call and refused unknown-construct at the barrier tail
+                # check.  TWO guards keep every other shape on its pre-fix
+                # path: `stmt_start < i` excludes statement-INITIAL prefix
+                # forms (`++x` opens the statement, so the branch cannot
+                # fire and the line still splits at the newline as the one
+                # `++x` leaf it was before), and the line-remainder check
+                # excludes MID-STATEMENT forms (`if (c) x++ else y` keeps
+                # gluing into the one if/else statement _parse_if handled
+                # before, and `a++ + b` stays a continuation composite).
+                # ADJACENCY remains the increment discriminator, NOT a
+                # next-non-whitespace peek: `val y = a +\n +b` (single `+`
+                # at end of line, unary `+` leading the next line) keeps
+                # the continuation path as ONE statement.  Masked text
+                # contains no strings or comments (mask_kotlin_source
+                # guarantee), so a doubled `+`/`-` inside a literal can
+                # never reach this scan.  A single `+`/`-` followed by any
+                # other char keeps the existing continuation behavior —
+                # including `+=`/`-=` assignment continuations (the `=`
+                # never matches), intentionally unchanged.  The scan
+                # position jumps past the second operator char so it
+                # cannot re-trigger.
+                parts.append((stmt_start, i + 2))
+                stmt_start = None
+                i += 2
+                continue
             elif ch == "\n":
                 prev = text[stmt_start:i].rstrip(_WS)
                 nxt = cur.non_ws(i + 1, end)
                 cont = bool(prev) and prev[-1] in _CONT_END
                 dot_cont = nxt < end and text[nxt] == "."
-                if not cont and not dot_cont:
+                # GR-14u56a: a line starting with `?.` is a safe-call
+                # continuation of the previous statement, exactly like the
+                # leading-`.` dot continuation (`x?.takeIf { }\n?.let { }`
+                # split into two statements, so the `?.let` half lost its
+                # carrier head and refused as a bare lambda-escape).  ONLY
+                # the exact `?.` pair glues: a line starting with `?` alone
+                # (elvis) does NOT — the elvis-block refusal stays intact.
+                safe_dot_cont = nxt + 1 < end and text[nxt] == "?" and text[nxt + 1] == "."
+                if not cont and not dot_cont and not safe_dot_cont:
                     parts.append((stmt_start, i))
                     stmt_start = None
         i += 1
@@ -321,6 +440,13 @@ def _split_statements(cur: _Cursor, start: int, end: int) -> list[tuple[int, int
 
 def _strip(stmt: str) -> str:
     return stmt.strip(_WS)
+
+
+def _line_remainder_blank(text: str, pos: int, end: int) -> bool:
+    """True when text[pos:next-newline-or-end] strips to empty (GR-14u41)."""
+    nl = text.find("\n", pos, end)
+    stop = nl if nl >= 0 else end
+    return not text[pos:stop].strip(_WS)
 
 
 def _leading_kw(stmt: str, word: str) -> bool:
@@ -419,6 +545,315 @@ def _parse_transparent_scope(cur: _Cursor, base: int, stmt_e: int, match) -> Par
         scope_method=method,
         scope_receiver=receiver,
     )
+
+
+def _match_chained_carrier(stripped: str, methods: tuple[str, ...]):
+    """GR-14u39: `chain.name(args?) { ... }` trailing-lambda candidate.
+
+    The carrier is reached through a balanced call chain instead of
+    leading the statement.  Conservative charset: the prefix may contain
+    no brace, semicolon, question mark, or assignment (an earlier lambda,
+    elvis, or assignment target disqualifies — same fail-closed family as
+    the u31 head rules).  Purely syntactic; admission happens in the
+    proof layer.
+    """
+    if not methods:
+        return None
+    names = "|".join(re.escape(m) for m in methods)
+    m = re.match(
+        r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*\s*(?::\s*[^=\n{};]+)?=\s*)?"
+        r"(?P<prefix>[^{};?=]+?)"
+        r"\.(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names,
+        stripped,
+    )
+    if m is None or m.group("method") not in methods:
+        return None
+    return m
+
+
+_RE_CARRIER_CHAIN_CACHE: dict[tuple[str, ...], "re.Pattern[str] | None"] = {}
+
+
+def _match_carrier_chain(stripped: str, methods: tuple[str, ...]):
+    """GR-14u46: carrier-CHAIN candidate — N>=2 admitted segments.
+
+    ``[val/var prefix]? chain.c1(args?) { }.c2(args?) { }...`` where EVERY
+    segment name is name-exact against the closed inline-carrier set.  The
+    idiomatic ``runCatching { ... }.onFailure { ... }`` shape matched
+    neither the u33 head rule (its lambda does not end the statement) nor
+    the u39 chained rule (the first carrier's lambda is followed by
+    ``.onFailure``), so the whole composite fell to the generic opacity
+    gate and refused whole callables on the outer statement.
+
+    The regex only LOCATES the first segment; segment-by-segment scanning
+    (including the last-lambda-ends-the-statement requirement) happens in
+    the parser.  The first segment may be a HEAD carrier (empty prefix —
+    ``runCatching { }`` leading the statement, which the u33 head branch
+    rejects only because its lambda does not end the statement), a
+    u39-style chained form, or — GR-14u56a — a SAFE-CALL head
+    (``receipt.imagePath?.takeIf { }``: the u40 head structure whose
+    lambda does not end the statement, so only the chain rule can claim
+    the composite).  A ``?`` or ``=`` anywhere in a plain-chain prefix
+    keeps the u39 exclusions; the safe-call head variant accepts ONLY a
+    dotted identifier-chain receiver (no call parentheses — the
+    ``f()?.let { }`` call-result form keeps today's fail-closed
+    handling).  Mid-chain segments are scanned structurally, where any
+    non-carrier name with a lambda fails the attempt (caller falls back).
+    """
+    if not methods:
+        return None
+    pattern = _RE_CARRIER_CHAIN_CACHE.get(methods)
+    if pattern is None:
+        names = "|".join(re.escape(m) for m in methods)
+        pattern = re.compile(
+            r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+            r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
+            r"(?:(?:(?:(?P<prefix>[^{};?=]+?)\s*\.)"
+            r"|(?P<safe_receiver>[A-Za-z_][A-Za-z0-9_.]*)\s*\?\.\s*))?"
+            r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
+        )
+        _RE_CARRIER_CHAIN_CACHE[methods] = pattern
+    m = pattern.match(stripped)
+    if m is None or m.group("method") not in methods:
+        return None
+    return m
+
+
+_RE_SAFE_CALL_CARRIER_CACHE: dict[tuple[str, ...], "re.Pattern[str] | None"] = {}
+
+
+def _match_safe_call_carrier(stripped: str, methods: tuple[str, ...]):
+    """GR-14u40: `receiver?.name(args?) { ... }` trailing-lambda candidate.
+
+    The safe-call receiver (`runId?.let { }`) blocks every other head
+    matcher (the `.`-requiring scope regex cannot cross the `?.`), so the
+    whole composite used to fall to the generic opacity gate and, where
+    the lambda carried real content, refuse the ENTIRE callable
+    (coroutine-builder / elvis-block on the outer statement).
+
+    Conservative shape: optional val/var binding prefix (no brace,
+    semicolon, or `?.` in the type/annotation text), then a receiver,
+    `?.`, and an admitted carrier name.  GR-14u56a: the receiver may be a
+    dotted identifier chain (`receipt.imagePath?.let { }`).  GR-14u56b: the
+    receiver may also be a CALL RESULT with balanced parentheses
+    (`scannedReceiptDao.getById(x!!)?.let { }`) — regexes cannot count
+    nested parentheses, so the receiver group is located by regex and then
+    validated structurally by ``_safe_call_receiver_ok`` (no brace,
+    semicolon, `?`, or `=`; balanced `()`/`[]`).  Anything richer
+    (`a?.b?.let { }`, `f()?.g()?.let { }`, `x?.foo { }` for an unlisted
+    `foo`) does not match here and keeps today's fail-closed handling.
+    Purely syntactic; admission happens in the proof layer.
+    """
+    if not methods:
+        return None
+    pattern = _RE_SAFE_CALL_CARRIER_CACHE.get(methods)
+    if pattern is None:
+        names = "|".join(re.escape(m) for m in methods)
+        pattern = re.compile(
+            r"^(?:(?:val|var)\s+[A-Za-z_][A-Za-z0-9_]*"
+            r"\s*(?::\s*[^=\n{};?]+)?=\s*)?"
+            r"(?P<receiver>[^?]*?)"
+            r"\s*\?\.\s*"
+            r"(?P<method>%s)\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{" % names
+        )
+        _RE_SAFE_CALL_CARRIER_CACHE[methods] = pattern
+    m = pattern.match(stripped)
+    if m is None or m.group("method") not in methods:
+        return None
+    if not _safe_call_receiver_ok(m.group("receiver")):
+        return None
+    return m
+
+
+def _parse_safe_call_carrier(cur: _Cursor, base: int, stmt_e: int, match):
+    """Build the TRANSPARENT_SCOPE region for a safe-call carrier candidate.
+
+    Mirrors _parse_chained_carrier's fail-closed body handling (prefix
+    brace check, tail check, param header skip, recursive parse,
+    scope-label save/restore).  scope_receiver mirrors the u39
+    chained-carrier precedent for a CHAIN receiver (GR-14u56a dotted
+    chains, GR-14u56b call-result receivers — any receiver containing a
+    dot or a call parenthesis): the receiver is not a simple identifier,
+    so it stays None — carrier regions are never canonical scopes, the
+    bridge's carrier-span walk matches by scope_method name only, and the
+    proof layer admits by contract only, so this grants nothing beyond
+    parseability.  A SIMPLE receiver keeps the u40 behavior: it is
+    recorded exactly as _parse_transparent_scope does.
+    """
+    receiver = match.group("receiver")
+    method = match.group("method")
+    brace_rel = match.end() - 1
+    brace_abs = base + brace_rel
+    prefix = cur.text[base:brace_abs]
+    if "{" in prefix:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            base,
+            stmt_e,
+            "lambda-before-transparent-scope",
+        )
+        return None
+    close = _match_forward(cur.text, brace_abs, stmt_e)
+    tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unknown-construct",
+        )
+        return None
+    saved = cur.scope_label
+    cur.scope_label = method
+    try:
+        body_start = brace_abs + 1
+        param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+        if param_match is not None:
+            body_start += param_match.end()
+        inner = _parse_sequence(cur, body_start, close - 1, True)
+    finally:
+        cur.scope_label = saved
+    return ParsedRegion(
+        kind=RegionKind.TRANSPARENT_SCOPE,
+        span=cur.span(base, close),
+        children=tuple(inner),
+        scope_method=method,
+        scope_receiver=(
+            None if ("." in receiver or "(" in receiver) else receiver
+        ),
+    )
+
+
+def _parse_chained_carrier(cur: _Cursor, base: int, stmt_e: int, match):
+    """Build the TRANSPARENT_SCOPE region for a chained carrier candidate.
+
+    Mirrors _parse_transparent_scope's fail-closed body handling (param
+    header skip, recursive parse, scope-label save/restore); the receiver
+    is a whole chain, so scope_receiver stays None (carrier regions are
+    never canonical scopes — the proof layer admits by contract only).
+    """
+    method = match.group("method")
+    brace_rel = match.end() - 1
+    brace_abs = base + brace_rel
+    prefix = cur.text[base:brace_abs]
+    if "{" in prefix:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE",
+            base,
+            stmt_e,
+            "lambda-before-transparent-scope",
+        )
+        return None
+    close = _match_forward(cur.text, brace_abs, stmt_e)
+    tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else ""
+    if close < 0 or tail:
+        cur.fail(
+            "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",
+            base,
+            stmt_e,
+            "unknown-construct",
+        )
+        return None
+    saved = cur.scope_label
+    cur.scope_label = method
+    try:
+        body_start = brace_abs + 1
+        param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+        if param_match is not None:
+            body_start += param_match.end()
+        inner = _parse_sequence(cur, body_start, close - 1, True)
+    finally:
+        cur.scope_label = saved
+    return ParsedRegion(
+        kind=RegionKind.TRANSPARENT_SCOPE,
+        span=cur.span(base, close),
+        children=tuple(inner),
+        scope_method=method,
+    )
+
+
+def _parse_carrier_chain(cur: _Cursor, base: int, stmt_e: int, first_match):
+    """Build per-segment TRANSPARENT_SCOPE regions for a carrier chain.
+
+    GR-14u46: each segment's lambda parses recursively as its own carrier
+    region (param-header skip, scope-label save/restore), nested inside the
+    previous segment's region; ``scope_receiver`` stays None (chain — the
+    u39 precedent: carrier regions are never canonical scopes) and each
+    segment carries its OWN ``scope_method`` (the bridge unions all
+    carrier spans by name-exact membership, so intermediate segments join
+    exactly like nested transparent scopes already do).  GR-14u56a: the
+    head may be a safe-call carrier (dotted identifier-chain receiver,
+    ``receipt.imagePath?.takeIf { }``) and mid-chain segments may be
+    reached through ``?.`` — the head regex and the segment scanner accept
+    the exact ``?.`` separator; a bare ``?`` (elvis) never matches, and
+    every other fail-closed rule is unchanged.
+
+    Fail-closed fallback (u33 hard-stop precedent): on ANY structural
+    failure the attempt is abandoned WITHOUT keeping its findings — the
+    caller re-parses the statement through the generic opacity gate,
+    behaving exactly as pre-u46.  A claim-then-reject that hard-fails a
+    currently-absorbed no-mutation site would be a corpus-wide regression.
+
+    Returns (regions, findings) — the caller decides claim vs fallback
+    from the regions and rolls the findings back on fallback.
+    """
+    findings_before = len(cur.findings)
+    regions: list[ParsedRegion] = []
+    pos = base
+    # First segment: anchored head match (end() is relative to `stripped`,
+    # i.e. relative to `base` in absolute offsets).
+    match = first_match
+    while True:
+        method = match.group("method")
+        brace_abs = pos + match.end() - 1
+        close = _match_forward(cur.text, brace_abs, stmt_e)
+        if close < 0:
+            return None, cur.findings[findings_before:]
+        saved = cur.scope_label
+        cur.scope_label = method
+        try:
+            body_start = brace_abs + 1
+            param_match = _RE_LAMBDA_PARAMS.match(cur.text[body_start:close - 1])
+            if param_match is not None:
+                body_start += param_match.end()
+            inner = _parse_sequence(cur, body_start, close - 1, True)
+        finally:
+            cur.scope_label = saved
+        regions.append(
+            ParsedRegion(
+                kind=RegionKind.TRANSPARENT_SCOPE,
+                span=cur.span(pos, close),
+                children=tuple(inner),
+                scope_method=method,
+            )
+        )
+        # Next segment: `.name(args?) {` or `?.name(args?) {` immediately
+        # after this lambda (GR-14u56a: the safe-call continuation
+        # `?.let { }` is a chain segment exactly like the plain-dot one;
+        # the elvis `?` alone never matches — the separator is the exact
+        # `?.` pair).
+        seg = cur.text[close:stmt_e]
+        seg_match = re.match(
+            r"\s*\??\.\s*(?P<method>[A-Za-z_][A-Za-z0-9_]*)"
+            r"\s*(?P<args>\((?:[^()]|\([^()]*\))*\))?\s*\{",
+            seg,
+        )
+        if seg_match is None:
+            break
+        if seg_match.group(1) not in cur.transparent_inline_methods:
+            # A lambda hangs off a non-carrier name: the chain shape is
+            # not fully admitted — abandon the attempt (caller falls
+            # back to the generic path).
+            return None, cur.findings[findings_before:]
+        pos = close
+        # The remainder match's end() is relative to `seg`, i.e. relative
+        # to `close` in absolute offsets — exactly what the loop head
+        # adds to `pos`.
+        match = seg_match
+    tail = cur.text[regions[-1].span.end:stmt_e].strip(_WS) if regions else "?"
+    if not regions or tail:
+        return None, cur.findings[findings_before:]
+    return regions, cur.findings[findings_before:]
 
 
 def _parse_block(
@@ -597,12 +1032,17 @@ def _parse_sequence(
                     # (the callable stays unmodelable).
                     idx += 1
                     continue
-            if "@" in rest:
-                label_match = _RE_LABEL_NAME.match(rest_s)
-                label = label_match.group(1) if label_match else None
+            # A labelled return is one whose label LEADS the rest
+            # (`return@scope expr`).  An `@` anywhere else in the rest text
+            # (an annotation, or a label inside a nested wrapper lambda of a
+            # `return try { ... }` statement) is not a labelled return: the
+            # statement must fall through to the construct/plain-return
+            # handling below instead of refusing as unsupported.
+            label_match = _RE_LABEL_NAME.match(rest_s)
+            if label_match is not None:
+                label = label_match.group(1)
                 if (
                     word == "return"
-                    and label is not None
                     and cur.scope_label == label
                     and cur.transparent_scope_methods
                 ):
@@ -716,6 +1156,160 @@ def _parse_sequence(
         acc = _RE_ACCESSOR.match(stripped)
         if acc and ("get" in stripped[:8] or "set" in stripped[:8]):
             region = _parse_accessor(cur, base, stmt_e, in_lambda)
+            if region is not None:
+                out.append(region)
+            idx += 1
+            continue
+
+        # GR-14u31: a transparent-scope candidate is owned by its HEAD
+        # method, whatever its lambda body contains.  The barrier branches
+        # below match barrier text ANYWHERE in the statement, so a
+        # `withContext(...) { checkWritesAllowed(...); ... }` body used to
+        # be captured and refused there (unknown-construct) before the
+        # transparent-scope branch was ever reached.  Here the wrapper's
+        # lambda parses recursively and an embedded check proves as its own
+        # DIRECT_CHECK part; inner statements keep their own fail-closed
+        # handling.
+        #
+        # GR-14u33: the same head-ownership applies to statements headed by
+        # an admitted inline-carrier name (closed reviewed set) — ordinary
+        # `val x = y.count { }` / `require(x) { }` idioms no longer blank
+        # the whole body.  Carrier regions still carry kind
+        # TRANSPARENT_SCOPE, but the proof layer only admits names from the
+        # canonical scope contract, so carrier children stay disconnected
+        # in the CFG (fail closed).  Chained forms (`...().use { }`) are
+        # NOT head matches and keep refusing.
+        ts_match = _match_transparent_scope(stripped, cur.transparent_scope_methods)
+        if ts_match is None:
+            # GR-14u33: a carrier candidate claims the statement ONLY when
+            # its trailing lambda cleanly ends the statement.  Chained or
+            # argument-position shapes (`a.map { }.toSet()`,
+            # `f(x.map { })`) must keep falling through to the generic
+            # opacity-gated absorption below — claiming and then rejecting
+            # them on the tail check would regress bodies that parsed
+            # before (GR-14u33 saveAll hard stop).
+            carrier_match = _match_transparent_scope(
+                stripped, cur.transparent_inline_methods
+            )
+            if carrier_match is not None:
+                close = _match_forward(
+                    cur.text, base + carrier_match.end() - 1, stmt_e
+                )
+                tail = cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                if close > 0 and not tail:
+                    ts_match = carrier_match
+            if ts_match is None:
+                # GR-14u39: same trailing-lambda-ends-the-statement rule
+                # for a carrier reached through a balanced call chain.
+                chained = _match_chained_carrier(
+                    stripped, cur.transparent_inline_methods
+                )
+                if chained is not None:
+                    close = _match_forward(
+                        cur.text, base + chained.end() - 1, stmt_e
+                    )
+                    tail = (
+                        cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                    )
+                    if close > 0 and not tail:
+                        region = _parse_chained_carrier(
+                            cur, base, stmt_e, chained
+                        )
+                        if region is not None:
+                            out.append(region)
+                        idx += 1
+                        continue
+                # GR-14u40: same rule for a carrier reached through a
+                # simple-identifier safe call (`runId?.let { rid -> }`).
+                # The `?.` blocks every `.`-requiring head matcher, so the
+                # composite used to fall to the generic opacity gate and
+                # refuse whole callables on the outer statement's inner
+                # content.  An UNLISTED method after `?.` still refuses,
+                # and a lambda that does not END the statement is never
+                # claimed (same tail check as u33/u39).
+                safe_call = _match_safe_call_carrier(
+                    stripped, cur.transparent_inline_methods
+                )
+                if safe_call is not None:
+                    close = _match_forward(
+                        cur.text, base + safe_call.end() - 1, stmt_e
+                    )
+                    tail = (
+                        cur.text[close:stmt_e].strip(_WS) if close > 0 else "?"
+                    )
+                    if close > 0 and not tail:
+                        _rcv = safe_call.group("receiver")
+                        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", _rcv):
+                            # Pre-u56b claim classes (simple/dotted
+                            # receivers): byte-identical claim behavior.
+                            region = _parse_safe_call_carrier(
+                                cur, base, stmt_e, safe_call
+                            )
+                            if region is not None:
+                                out.append(region)
+                            idx += 1
+                            continue
+                        # GR-14u56b hard-stop lesson: a call-result receiver
+                        # is a NEWLY-EXPOSED claim class (pre-u56b these
+                        # statements fell to the generic opacity gate).  A
+                        # claim attempt that records ANY finding — e.g. a
+                        # labelled return to an OUTER scope's label
+                        # (`getCurrentUser(groupId)?.let {
+                        # return@withTransaction ... }` in
+                        # GroupTransactionCoordinator.addMemberToGroup) —
+                        # must roll the attempt's findings back and fall
+                        # through to the generic path, mirroring the u46
+                        # chain attempt below: claiming while keeping the
+                        # finding hard-fails currently-absorbed no-mutation
+                        # sites (corpus-wide regression).  Simple and dotted
+                        # receivers keep the pre-u56b behavior: their
+                        # prefix/tail failures were already reachable before
+                        # u56b, and rolling those back would change pinned
+                        # u40/u56a tests.
+                        findings_before = len(cur.findings)
+                        region = _parse_safe_call_carrier(
+                            cur, base, stmt_e, safe_call
+                        )
+                        if (
+                            region is not None
+                            and len(cur.findings) == findings_before
+                        ):
+                            out.append(region)
+                            idx += 1
+                            continue
+                        del cur.findings[findings_before:]
+                        # Fall through to the generic handling below (the
+                        # opacity gate), exactly as pre-u56b.
+                # GR-14u46: carrier CHAINS (N>=2 admitted segments).  The
+                # idiomatic `runCatching { ... }.onFailure { ... }` matched
+                # neither the u33 head rule (its lambda does not END the
+                # statement) nor the u39 chained rule (the first carrier's
+                # lambda is followed by `.onFailure`), so the composite fell
+                # to the generic opacity gate and refused whole callables on
+                # the outer statement.  The chain is claimed ONLY when the
+                # attempt parses cleanly: every segment name is in the
+                # closed set, the last lambda ends the statement, and no
+                # structural failure occurred.  On ANY failure the attempt's
+                # findings are rolled back and the statement re-parses
+                # through the generic opacity gate — pre-u46 behavior
+                # exactly (u33 hard-stop precedent: a claim-then-reject that
+                # hard-fails a currently-absorbed no-mutation site would be
+                # a corpus-wide regression).
+                chain_match = _match_carrier_chain(
+                    stripped, cur.transparent_inline_methods
+                )
+                if chain_match is not None:
+                    findings_before = len(cur.findings)
+                    regions, _attempt_findings = _parse_carrier_chain(
+                        cur, base, stmt_e, chain_match
+                    )
+                    if regions is not None:
+                        out.extend(regions)
+                        idx += 1
+                        continue
+                    del cur.findings[findings_before:]
+        if ts_match is not None:
+            region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
             if region is not None:
                 out.append(region)
             idx += 1
@@ -853,14 +1447,6 @@ def _parse_sequence(
             idx += 1
             continue
 
-        ts_match = _match_transparent_scope(stripped, cur.transparent_scope_methods)
-        if ts_match is not None:
-            region = _parse_transparent_scope(cur, base, stmt_e, ts_match)
-            if region is not None:
-                out.append(region)
-            idx += 1
-            continue
-
         if _RE_COROUTINE.search(stripped):
             m = _RE_COROUTINE.search(stripped)
             assert m is not None
@@ -925,16 +1511,25 @@ def _parse_sequence(
 
         if "?:" in stripped and "{" in stripped:
             qpos = stripped.find("?:")
-            bpos = stripped.find("{", qpos)
-            if bpos >= 0:
-                cur.fail(
-                    "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
-                    base,
-                    stmt_e,
-                    "elvis-block",
-                )
-                idx += 1
-                continue
+            # GR-14u56b mechanism 1: only a DEPTH-0 elvis forms a control-flow
+            # alternative whose brace-bearing result needs the refusal.  An
+            # elvis inside argument parentheses (depth > 0) is an expression,
+            # not control flow (`receipt.copy(imageHash = a ?: b)`), and the
+            # statement falls through to the ordinary handling below (the
+            # opacity gate still refuses any brace group hiding a mutation
+            # site or barrier-like call).  The depth-0 refusal is
+            # byte-identical: same code, span, and reason.
+            if _paren_depth_before(cur.text, base, base + qpos) == 0:
+                bpos = stripped.find("{", qpos)
+                if bpos >= 0:
+                    cur.fail(
+                        "DB_STRUCTURAL_MODEL_CONTROL_FLOW_UNSUPPORTED",
+                        base,
+                        stmt_e,
+                        "elvis-block",
+                    )
+                    idx += 1
+                    continue
 
         if "{" in stripped or "}" in stripped:
             if (
@@ -1706,6 +2301,7 @@ def parse_callable_body(
     *,
     lambda_opacity_predicate=None,
     transparent_scope_methods: tuple[str, ...] = (),
+    transparent_inline_methods: tuple[str, ...] = (),
 ) -> CallableBodyParse:
     if not isinstance(masked_text, str):
         raise TypeError("masked_text must be a string")
@@ -1718,9 +2314,17 @@ def parse_callable_body(
         raise TypeError(
             "transparent_scope_methods must be a tuple of plain identifiers"
         )
+    if not isinstance(transparent_inline_methods, tuple) or not all(
+        isinstance(item, str) and item.isidentifier()
+        for item in transparent_inline_methods
+    ):
+        raise TypeError(
+            "transparent_inline_methods must be a tuple of plain identifiers"
+        )
     cur = _Cursor(masked_text)
     cur.opacity_predicate = lambda_opacity_predicate
     cur.transparent_scope_methods = tuple(transparent_scope_methods)
+    cur.transparent_inline_methods = tuple(transparent_inline_methods)
     if '"' in masked_text or "'" in masked_text:
         cur.fail(
             "DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED",

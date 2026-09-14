@@ -1,0 +1,98 @@
+# GR-14u44 — caller-side receiver-resolution source fixes (2 typed
+# locals, no behavior change intended).
+#
+# DEFECT: caller-side unresolvable receivers produce unresolved_target
+# edges whose name-match ambiguity masked real reachability analysis for
+# 7 subject rows (GR-14 Pattern-A-adjacent, GR-08k1 precedent):
+#   - DebugScreen.kt L1446 (inside scope.launch in the CSV import
+#     dialog): `val importer = viewModel.csvExpenseImporter` — an
+#     inferred-type local val the static callgraph cannot resolve, so
+#     `importer.importFromContent(...)` became unresolved_target with
+#     name-match targets across both importers;
+#   - AppStartupDelegate.kt L15:
+#     `EntryPointAccessors.fromApplication(...).appStartupCoordinator().
+#     initialize(application)` — a multi-hop chain whose `.initialize`
+#     resolved as unresolved_target with name-match targets = all 6
+#     corpus callables named `initialize`.
+# The taint propagated into the subjects' ancestor closures and held 7
+# board rows at unproven_ambiguous_call / GR13_UNCERTAIN_CALL_EDGE
+# (3 importer rows + 4 RestoreJournalImporter rows; the 8th ambiguous
+# row, Handle.increment, is a separate u45 subject).
+#
+# FIX (2 typed locals, no casts, no behavior change):
+#   - Fix 1 DebugScreen.kt L1446:
+#       val importer: CsvExpenseImporter = viewModel.csvExpenseImporter
+#     (+ import com.yourname.expensetracker.util.CsvExpenseImporter).
+#     Verified: DebugViewModel L50 declares exactly
+#     `val csvExpenseImporter: CsvExpenseImporter` (concrete class,
+#     @Inject constructor) — the annotation states the DECLARED type,
+#     no cast.
+#   - Fix 2 AppStartupDelegate.kt: hoisted typed local
+#       val coordinator: AppStartupCoordinator =
+#           EntryPointAccessors.fromApplication(
+#               application, AppStartupEntryPoint::class.java
+#           ).appStartupCoordinator()
+#       coordinator.initialize(application)
+#     Verified: AppStartupEntryPoint.appStartupCoordinator() declares
+#     return type AppStartupCoordinator (same package, concrete
+#     @Singleton class) — no import needed, no cast.
+#
+# OUTCOME (board, pre 508ad587... -> post 5173b347b2217655, double run
+# byte-identical): ambiguous 8 -> 5.
+#   THE 3 TARGETED ROWS DID NOT SIMPLY PROVE — resolving the edge
+#   EXPOSED 3 TRUE-POSITIVE COUNTEREXAMPLES:
+#     CsvExpenseImporter.getOrCreateCategory -> CategoryDao.insert
+#     JsonExpenseImporter.parseV1Row -> CategoryDao.insert
+#     JsonExpenseImporter.parseV2Row -> CategoryDao.insert
+#   now counterexample_unguarded_call_path / GR13_UNGUARDED_CALL_PATH
+#   with concrete bounded paths:
+#     MainActivity.onCreate -> MainScreen -> DebugScreen ->
+#     DatabaseManagementSection -> CsvExpenseImporter.importFromContent
+#     -> parseAndImportLine -> getOrCreateCategory
+#     (roots: framework_callback, public_or_protected_external)
+#     ImportCoordinator.importFromContent ->
+#     JsonExpenseImporter.importFromContent -> parseV1Row / parseV2Row
+#     (root: public_or_protected_external)
+#   The importers contain ZERO writeBarrier.checkWritesAllowed calls
+#   (verified in CsvExpenseImporter.kt, JsonExpenseImporter.kt,
+#   ImportCoordinator.kt) — the CSV/JSON import write paths genuinely
+#   bypass the DatabaseWriteBarrier contract; the pre-change rows were
+#   unproven_ambiguous_call with EMPTY boundedPath, i.e. the ambiguity
+#   was fail-closed masking, and the typed local surfaced a real defect
+#   the campaign exists to find.  Remediation is scheduled as the NEXT
+#   batch (u44b: canonical writeBarrier checks at the importer entries,
+#   Pattern A local direct proof, with the 3 counterexample rows as
+#   declared batch inputs).
+#   Fix 2 was proven board-neutral in isolation (0-row delta vs the u41
+#   board when Fix 1 was stashed) — the `initialize` name-match edge was
+#   not the RestoreJournalImporter rows' deciding taint; u43's
+#   F-ANON-OBJECT analysis remains their leading decider, and those 4
+#   rows did NOT move.
+#
+# HARD STOP CHECKS: 0 previously-proven rows regressed (321
+#   proven_helper / 1 restore / 14 worker unchanged; all 379 entries
+#   diffed — only the 3 importer rows changed state).  The 3 new
+#   counterexamples are EXPOSED true positives (documented above,
+#   remediation scheduled as u44b), not regressions introduced by
+#   behavior change — the source changes are receiver-type annotations
+#   only.
+#
+# VALIDATION:
+#   - scripts/db_guard: 269 passed (no engine change)
+#   - board double run byte-identical 5173b347b2217655; proofStates
+#     proven_helper 321, restore 1, worker 14, ambiguous 5, async 35,
+#     counterexample 3
+#   - Kotlin: NOT RUN — production Kotlin changed (2 typed locals);
+#     flagged for human/CI compile validation
+#   - independent review: strict reviewer ruled PROCEED-OPTION-A with
+#     verified evidence (two-batch structure: u44 exposes, u44b
+#     remediates)
+#
+# Remaining: 5 ambiguous rows (4 RestoreJournalImporter — F-ANON-OBJECT
+#   decider per u43; Handle.increment — u45 subject) + 35 async rows
+#   (u43 family table) + the 3 counterexample rows pending u44b
+#   remediation.
+status: COMPLETE_AT_BOARD_5173b347
+# NOTE: the board carries 3 DISCLOSED true-positive counterexamples
+#   pending u44b remediation — this status reflects the exposed state,
+#   not a clean board.

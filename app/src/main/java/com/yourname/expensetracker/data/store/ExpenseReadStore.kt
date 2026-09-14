@@ -10,7 +10,7 @@ import javax.inject.Singleton
 /**
  * Read-only facade over [ExpenseDao].
  * Inject this into UI/read repositories instead of [ExpenseDao] directly.
- * Write paths must use [ExpenseWriteStore] or [TransactionLifecycleCoordinator].
+ * Write paths must use [TransactionLifecycleCoordinator].
  */
 @Singleton
 class ExpenseReadStore @Inject constructor(

@@ -1216,7 +1216,7 @@ class GroupTransactionCoordinatorTest {
         val all = memberDao.getMembersForGroup(groupId).first()
         val bobId = all.first { it.name == "Bob" }.id
 
-        // Soft-delete Bob directly via DAO update (removeMember lives in GroupLifecycleCoordinator, not this coordinator)
+        // Soft-delete Bob directly via DAO update (member removal is not this coordinator's concern)
         val bobBefore = memberDao.getById(bobId)!!
         memberDao.update(bobBefore.copy(leftAt = TEST_DATE))
 

@@ -399,28 +399,6 @@ entries:
     inside the same transaction'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08I
-- path: app/src/main/java/com/yourname/expensetracker/data/database/dao/ExpenseGroupDao.kt
-  ownerFqcn: com.yourname.expensetracker.data.database.dao.ExpenseGroupDao
-  kind: function
-  method: insertGroupWithMembers
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.ExpenseGroup
-  - com.yourname.expensetracker.data.database.dao.GroupMemberDao
-  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
-  daoAccessor: memberDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
-  operation: insertAll
-  barrierMode: helper
-  reason: 'GR-08p2 EXACT_POLICY: THE DAO-default-method special case -- body-carrying
-    @Transaction convenience ON the DAO whose flagged mutation is the cross-DAO memberDao.insertAll
-    inside its body (GroupMemberDao arrives as an explicit DAO-typed method parameter);
-    atomic group+members creation (insert -> remap members to the new groupId -> insertAll
-    -> throw when any rowId <= 0 rolls back the whole @Transaction); the self-DAO
-    insert(group) call is the DAO''s own abstract @Insert and is never flagged; zero
-    production callers today (census)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P2
 - path: app/src/main/java/com/yourname/expensetracker/data/privacy/DataRetentionWorker.kt
   ownerFqcn: com.yourname.expensetracker.data.privacy.DataRetentionWorker
   kind: function
@@ -3470,181 +3448,6 @@ entries:
     behind the write barrier'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08E
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: conditionallySetLocation
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  - Double
-  - String
-  - String?
-  - String?
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: conditionallySetLocation
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked conditional location write delegate
-    (guarded enrichment; returns affected-row count)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: delete
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.Expense
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: delete
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked expense entity delete delegate behind
-    the coordinator delete path'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: deleteAll
-  receiver: null
-  parameterTypes: []
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: deleteAll
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked debug-only expense wipe delegate
-    (doc comment requires BuildConfig.DEBUG at the caller; the dangerous half of the
-    debug reset, mirroring the GR-08e1 NotificationRepository.deleteAll expenseDao.deleteAll
-    row)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: incrementBackfillAttempts
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: incrementBackfillAttempts
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked backfill-attempt counter delegate
-    (bounded enrichment retry bookkeeping)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: insert
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.Expense
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked expense insert delegate -- the write
-    facade coordinators call for single-expense persistence'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: insertAll
-  receiver: null
-  parameterTypes:
-  - List<com.yourname.expensetracker.data.database.entity.Expense>
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: insertAll
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked bulk expense insert delegate (debug/migration
-    bulk paths per LEGAL_PATHS.md)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: update
-  receiver: null
-  parameterTypes:
-  - com.yourname.expensetracker.data.database.entity.Expense
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: update
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked expense entity update delegate behind
-    the coordinator write path'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: updateCategory
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: updateCategory
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked category re-key delegate (coordinator
-    bulk-update path)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: updateCategoryNullable
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long?
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: updateCategoryNullable
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked nullable-category clear/set delegate
-    (coordinator bulk-update path)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: updateMerchant
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: updateMerchant
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked merchant rename delegate (coordinator
-    update path)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
-- path: app/src/main/java/com/yourname/expensetracker/data/store/ExpenseWriteStore.kt
-  ownerFqcn: com.yourname.expensetracker.data.store.ExpenseWriteStore
-  kind: function
-  method: updateMerchantKey
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: updateMerchantKey
-  barrierMode: helper
-  reason: 'GR-08j2 EXACT_POLICY: barrier-checked merchantKey re-key delegate (merchant
-    normalization path)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08J
 - path: app/src/main/java/com/yourname/expensetracker/di/RetentionModule.kt
   ownerFqcn: com.yourname.expensetracker.di.RetentionModule
   kind: function
@@ -3653,6 +3456,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: aiArtifactDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.AiArtifactDao
   operation: deleteExpired
@@ -3669,6 +3473,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: aiChatMessageDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.AiChatMessageDao
   operation: deleteOlderThan
@@ -3685,6 +3490,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: backgroundJobRunDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.BackgroundJobRunDao
   operation: redactErrorMessagesOlderThan
@@ -3702,6 +3508,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: bankStatementImportItemDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.BankStatementImportItemDao
   operation: redactMerchantOlderThan
@@ -3718,6 +3525,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: emailReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.EmailReceiptDao
   operation: redactSensitiveFieldsOlderThan
@@ -3735,6 +3543,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: notificationIntakeDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
   operation: purgeRawPayload
@@ -3752,6 +3561,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: pendingReviewDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PendingReviewDao
   operation: redactNotificationTextOlderThan
@@ -3769,6 +3579,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: pipelineDiagnosticEventDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.PipelineDiagnosticEventDao
   operation: deleteOlderThan
@@ -3786,6 +3597,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: rawNotificationDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.RawNotificationDao
   operation: updateRawContentPurged
@@ -3803,6 +3615,7 @@ entries:
   parameterTypes:
   - com.yourname.expensetracker.data.database.AppDatabase
   - com.yourname.expensetracker.domain.util.TimeProvider
+  - com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
   daoAccessor: scannedReceiptDao
   daoFqcn: com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
   operation: updateRawOcrTextPurged
@@ -3901,24 +3714,6 @@ entries:
     every current path)'
   owner: '@panospao7'
   linkedIssue: GR-14a
-- path: app/src/main/java/com/yourname/expensetracker/domain/budget/BudgetForecastingEngine.kt
-  ownerFqcn: com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
-  kind: function
-  method: updateForecastAccuracy
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: budgetForecastDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.BudgetForecastDao
-  operation: update
-  barrierMode: helper
-  reason: 'GR-08p2 EXACT_POLICY: barrier-checked post-period forecast accuracy write
-    -- get-if-missing guard, accuracy = 1 - |predicted-actual| / max(predicted, actual)
-    clamped to [-1, 1] (a dimensionless metric, not currency math), then the targeted
-    entity update'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P2
 - path: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/DiagnosticEventWriter.kt
   ownerFqcn: com.yourname.expensetracker.domain.diagnostics.RoomDiagnosticEventWriter
   kind: function
@@ -4020,173 +3815,6 @@ entries:
     diagnostic on failure'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08M
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: addExpense
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - Double
-  - Long
-  - String?
-  - com.yourname.expensetracker.data.database.entity.SplitType
-  - String?
-  - Long
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: GROUP_EXPENSE_ADDED audit event written by the coordinator''s
-    callback into the port''s add-expense transaction after the G03 single-currency
-    gate'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: addMember
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - String?
-  - Boolean
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: GROUP_MEMBER_ADDED audit event written by the coordinator''s
-    callback into the port''s add-member transaction after the duplicate/single-currentUser
-    gates'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: archiveGroup
-  receiver: null
-  parameterTypes:
-  - Long
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: GROUP_ARCHIVED audit event written by the coordinator''s
-    callback into the port''s soft-delete transaction (G07)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: createGroup
-  receiver: null
-  parameterTypes:
-  - String
-  - String?
-  - String
-  - List<com.yourname.expensetracker.data.database.entity.GroupMember>
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: GROUP_CREATED audit event written by the coordinator''s
-    callback into the GroupTransactionCoordinator creation transaction (G01-validated
-    members)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: deleteGroupPermanently
-  receiver: null
-  parameterTypes:
-  - Long
-  - Boolean
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: GROUP_PERMANENTLY_DELETED audit event written by
-    the coordinator''s callback into the port''s hard-delete transaction (G08 explicit-confirmation
-    + G04 archive-first gates)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: emitLifecycleEvent
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - Long
-  - Long
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: private audit-trail helper recordSettlement invokes
-    inside its transaction (SETTLEMENT_RECORDED with the settlement id); the coordinator
-    is the legal GroupLifecycleEventDao writer'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: recordSettlement
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  - Long
-  - Double
-  - String
-  - String?
-  - Long?
-  daoAccessor: settlementDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupSettlementDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: persists the G04-validated settlement record inside
-    database.withTransaction (LEGAL_PATHS.md: GroupSettlementDao.insert outside GroupLifecycleCoordinator
-    is FORBIDDEN -- this IS the legal writer)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: removeMember
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  daoAccessor: lifecycleEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: GROUP_MEMBER_REMOVED audit event written atomically
-    with the leftAt soft-remove inside the same transaction'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
-- path: app/src/main/java/com/yourname/expensetracker/domain/groups/GroupLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.groups.GroupLifecycleCoordinator
-  kind: function
-  method: removeMember
-  receiver: null
-  parameterTypes:
-  - Long
-  - Long
-  daoAccessor: memberDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.GroupMemberDao
-  operation: update
-  barrierMode: helper
-  reason: 'GR-08k2 EXACT_POLICY: G05/G06-gated soft remove -- stamps leftAt inside
-    the E4-006 balance-check transaction (LEGAL_PATHS.md: ''GroupMemberDao.delete
-    or leftAt update'')'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08K
 - path: app/src/main/java/com/yourname/expensetracker/domain/groups/SettlementCalculator.kt
   ownerFqcn: com.yourname.expensetracker.domain.groups.SettlementCalculator
   kind: function
@@ -4337,42 +3965,6 @@ entries:
     snapshot (purchasePrice * quantity) inside the same database.withTransaction as
     the holding insert; InvestmentValueDao.insert outside the addHolding/updatePrice
     transactions is FORBIDDEN'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08N
-- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
-  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
-  kind: function
-  method: updatePrice
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: investmentDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentDao
-  operation: updatePrice
-  barrierMode: helper
-  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS UPDATE PRICE -- barrier-checked, require(newPrice
-    finite && > 0) validated price update inside database.withTransaction (atomic
-    with the value-history snapshot); InvestmentDao.updatePrice outside the tracker
-    validation + value history is FORBIDDEN'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08N
-- path: app/src/main/java/com/yourname/expensetracker/domain/investment/InvestmentTracker.kt
-  ownerFqcn: com.yourname.expensetracker.domain.investment.InvestmentTracker
-  kind: function
-  method: updatePrice
-  receiver: null
-  parameterTypes:
-  - Long
-  - Double
-  daoAccessor: investmentValueDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.InvestmentValueDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08n2 EXACT_POLICY: LEGAL_PATHS UPDATE PRICE -- InvestmentValue snapshot
-    with dayChange/dayChangePercent inside the same database.withTransaction as the
-    price update; InvestmentValueDao.insert outside the updatePrice/addHolding transactions
-    is FORBIDDEN'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08N
 - path: app/src/main/java/com/yourname/expensetracker/domain/negotiation/SmartBillNegotiationEngine.kt
@@ -5880,28 +5472,6 @@ entries:
     defaults to TimeProvider.now() only when the caller passes 0'
   owner: '@panospao7'
   linkedIssue: MIT-DB-08P1
-- path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt
-  ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter
-  kind: function
-  method: writeDiagnostic
-  receiver: null
-  parameterTypes:
-  - Long?
-  - String
-  - String?
-  - String?
-  - String?
-  - Long
-  daoAccessor: dao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08p1 EXACT_POLICY: best-effort diagnostic event branch of the sanctioned
-    lifecycle event writer -- non-cancellation failures are logged and swallowed so
-    diagnostics can never regress a lifecycle transition; CancellationException is
-    rethrown'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08P1
 - path: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringOccurrenceMaterializer.kt
   ownerFqcn: com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer
   kind: function
@@ -6682,26 +6252,6 @@ entries:
   method: deleteExpense
   receiver: null
   parameterTypes:
-  - Long
-  - String
-  - String?
-  - String?
-  - String?
-  daoAccessor: expenseDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
-  operation: delete
-  barrierMode: helper
-  reason: 'GR-08l2 EXACT_POLICY: by-id hard delete, mutation half -- removes the expense
-    row in the same transaction after the DELETED event (the documented LEGAL_PATHS
-    delete path; post-delete side effects run best-effort after commit via runBestEffortAfterCommit)'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-  kind: function
-  method: deleteExpense
-  receiver: null
-  parameterTypes:
   - com.yourname.expensetracker.data.database.entity.Expense
   - String
   - String?
@@ -6711,31 +6261,10 @@ entries:
   daoFqcn: com.yourname.expensetracker.data.database.dao.ExpenseDao
   operation: delete
   barrierMode: helper
-  reason: 'GR-08l2 EXACT_POLICY: by-entity hard delete overload, mutation half --
-    removes the freshly re-read row in the same transaction after the DELETED event;
-    authorized separately because the overload''s callable identity differs'
+  reason: "Canonical expense deletion \u2014 hard delete of expense row; barrier via\
+    \ checkWritesAllowed helper"
   owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
-- path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
-  ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
-  kind: function
-  method: deleteExpense
-  receiver: null
-  parameterTypes:
-  - Long
-  - String
-  - String?
-  - String?
-  - String?
-  daoAccessor: transactionEventDao
-  daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
-  operation: insert
-  barrierMode: helper
-  reason: 'GR-08l2 EXACT_POLICY: by-id hard delete, audit half -- writes the DELETED
-    TransactionEvent with the full beforeSnapshot loaded INSIDE the transaction (P2-08
-    TOCTOU-safe) before the row is removed'
-  owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function
@@ -6751,12 +6280,10 @@ entries:
   daoFqcn: com.yourname.expensetracker.data.database.dao.TransactionEventDao
   operation: insert
   barrierMode: helper
-  reason: 'GR-08l2 EXACT_POLICY: by-entity hard delete overload, audit half -- re-reads
-    the fresh row inside the transaction (P2-08) and writes the DELETED event with
-    its snapshot; authorized separately because the overload''s callable identity
-    differs'
+  reason: "Canonical expense deletion \u2014 DELETED lifecycle event insert before\
+    \ row delete; barrier via checkWritesAllowed helper"
   owner: '@panospao7'
-  linkedIssue: MIT-DB-08L
+  linkedIssue: MIT-003
 - path: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt
   ownerFqcn: com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
   kind: function

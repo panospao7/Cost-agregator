@@ -95,14 +95,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
 ) {
     // ---- Write-barrier guard ----
 
-    /**
-     * Centralized write permission check. All mutating methods must call this
-     * instead of querying RestoreMaintenanceMode directly.
-     */
-    private fun checkWritesAllowed(operation: String) {
-        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.$operation")
-    }
-
     // ---- Canonical dedupe key helpers ----
 
     private fun strictExternalIdentityKey(request: CreateExpenseRequest): String? {
@@ -256,7 +248,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
 
         // Guard: block writes during restore maintenance mode
         try {
-            checkWritesAllowed("createExpense")
+            writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.createExpense")
         } catch (blocked: DatabaseAccessBlockedException) {
             emitCreateBlockedDiagnosticBestEffort(
                 request = request,
@@ -833,7 +825,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ) {
         // Guard: block writes during restore maintenance mode
-        checkWritesAllowed("updateExpense")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateExpense")
 
         val now = timeProvider.now()
 
@@ -1017,7 +1009,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         correlationId: String? = null
     ) {
         // Guard: block writes during restore maintenance mode
-        checkWritesAllowed("updateCategory")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateCategory")
 
         val now = timeProvider.now()
 
@@ -1087,7 +1079,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ) {
-        checkWritesAllowed("updateLocation")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateLocation")
         require(latitude in -90.0..90.0) { "Latitude out of range" }
         require(longitude in -180.0..180.0) { "Longitude out of range" }
 
@@ -1143,7 +1135,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ): BusinessExpenseUpdateResult {
-        checkWritesAllowed("updateBusinessExpensePatch")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateBusinessExpensePatch")
 
         if (patch.isEmpty()) {
             return BusinessExpenseUpdateResult.NoChange
@@ -1309,7 +1301,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ) {
-        checkWritesAllowed("updateMerchant")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateMerchant")
 
         val now = timeProvider.now()
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
@@ -1390,7 +1382,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ) {
-        checkWritesAllowed("updateType")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateType")
 
         val now = timeProvider.now()
 
@@ -1476,7 +1468,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         source: String = "USER_EDIT"
     ) {
-        checkWritesAllowed("updateTransferDetails")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateTransferDetails")
 
         val now = timeProvider.now()
 
@@ -1557,7 +1549,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         transferAccountName: String?,
         source: String = "USER_EDIT"
     ) {
-        checkWritesAllowed("updateTypeAndTransferDetails")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateTypeAndTransferDetails")
 
         val now = timeProvider.now()
 
@@ -1728,7 +1720,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         source: String = "USER_EDIT",
         correlationId: String? = null
     ): MutationResult<OwnershipUpdateResult> {
-        checkWritesAllowed("updateOwnershipDbOnlyV2")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2")
 
         val corrId = correlationId ?: com.yourname.expensetracker.domain.diagnostics.CorrelationIds.newId()
         val now = timeProvider.now()
@@ -1827,7 +1819,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ) {
-        checkWritesAllowed("bulkUpdateCategory")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.bulkUpdateCategory")
         val merchantKey = MerchantKeyGenerator.generate(merchant)
         val now = timeProvider.now()
         var affectedCount = 0
@@ -1899,7 +1891,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
         reason: String? = null,
         correlationId: String? = null
     ) {
-        checkWritesAllowed("bulkUpdateMerchant")
+        writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.bulkUpdateMerchant")
         if (oldMerchant == newMerchant) return
         val oldMerchantKey = MerchantKeyGenerator.generate(oldMerchant)
         val newMerchantKey = MerchantKeyGenerator.generate(newMerchant)
@@ -1942,95 +1934,6 @@ class TransactionLifecycleCoordinator @Inject constructor(
     }
 
     /**
-     * Deletes an expense by its ID with full lifecycle handling:
-     * load → write DELETED event → delete.
-     *
-     * ## Delete Semantics
-     * - **Hard delete** is the chosen strategy. The row is permanently removed
-     *   from the `expenses` table. There is no undo or trash folder at the DB
-     *   level — callers must implement their own confirmation UI.
-     * - **Audit trail** is preserved via [TransactionEvent.beforeSnapshot]:
-     *   the full expense snapshot (amount, merchant, currency, category, etc.)
-     *   is written to the `transaction_events` table with eventType = DELETED
-     *   BEFORE the row is removed. This snapshot is the authoritative record
-     *   of what was deleted.
-     * - **Receipt/group/recurring links** are NOT cleaned up by the delete
-     *   path itself. They are managed by post-delete side effects:
-     *   [TransactionSideEffectDispatcher.dispatchOnDeleted] handles budget
-     *   re-check and anomaly clearing, while
-     *   [RecurringLifecycleCoordinator.unlinkExpenseFromOccurrence] detaches
-     *   the expense from any recurring rule. Receipt links and group settlement
-     *   references must be handled by their respective domains.
-     * - **No soft-delete** (`deletedAt` column) is planned. The chosen approach
-     *   relies on the event audit trail for recovery and avoids the complexity
-     *   of filtering soft-deleted rows from every query.
-     *
-     * @param expenseId The ID of the expense to delete.
-     * @param source    The origin of the deletion (e.g. "USER_ACTION", "GROUP_DELETE", "RESTORE").
-     * @param reason    Optional human-readable explanation for the deletion.
-     * @param actor     Optional actor identifier (user ID, worker name, etc.).
-     * @return [Result.success] if the expense was found and deleted,
-     *         [Result.failure] if the expense was not found or an error occurred.
-     */
-    suspend fun deleteExpense(
-        expenseId: Long,
-        source: String = "USER_ACTION",
-        reason: String? = null,
-        actor: String? = null,
-        correlationId: String? = null
-    ): Result<Unit> {
-        try {
-            checkWritesAllowed("deleteExpense")
-        } catch (blocked: DatabaseAccessBlockedException) {
-            return Result.failure(blocked)
-        } catch (blocked: RuntimeException) {
-            if (blocked is CancellationException) throw blocked
-            return Result.failure(blocked)
-        }
-        // P2-08: Load snapshot inside the transaction to prevent TOCTOU stale snapshots.
-        val now = timeProvider.now()
-        return try {
-            var loadedExpense: Expense? = null
-            database.withTransaction {
-                loadedExpense = expenseDao.getById(expenseId)
-                    ?: return@withTransaction
-                val snapshot = expenseToSnapshot(loadedExpense!!)
-                transactionEventDao.insert(
-                    TransactionEvent(
-                        expenseId = expenseId,
-                        eventType = LifecycleEventType.DELETED.name,
-                        source = source,
-                        actor = actor,
-                        occurredAt = now,
-                        dedupeKey = loadedExpense!!.dedupeKey,
-                        duplicateExpenseId = null,
-                        beforeSnapshot = snapshot,
-                        afterSnapshot = null,
-                        metadata = null,
-                        reason = reason,
-                        correlationId = correlationId  // DDL-F876-10
-                    )
-                )
-                expenseDao.delete(loadedExpense!!)
-            }
-            if (loadedExpense == null) {
-                return Result.failure(IllegalArgumentException("Expense not found: $expenseId"))
-            }
-            // Post-delete side effects via planner + runner (best-effort)
-            val batch = planner.planDeleted(expenseId, source, correlationId)
-            runner.runBestEffortAfterCommit(
-                batch = batch,
-                logMessage = "Non-critical: side effects failed after deleting expense",
-                targetId = expenseId
-            )
-            Result.success(Unit)
-        } catch (e: Exception) {
-            if (e is kotlinx.coroutines.CancellationException) throw e
-            Result.failure(e)
-        }
-    }
-
-    /**
      * Deletes an expense with full lifecycle handling:
      * write DELETED event → delete.
      *
@@ -2049,7 +1952,7 @@ class TransactionLifecycleCoordinator @Inject constructor(
     ): Result<Unit> {
         // Guard: block writes during restore maintenance mode
         try {
-            checkWritesAllowed("deleteExpense")
+            writeBarrier.checkWritesAllowed("TransactionLifecycleCoordinator.deleteExpense")
         } catch (blocked: DatabaseAccessBlockedException) {
             return Result.failure(blocked)
         } catch (blocked: RuntimeException) {

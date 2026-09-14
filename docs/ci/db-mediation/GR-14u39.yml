@@ -1,0 +1,58 @@
+# GR-14u39 — chained-carrier head matching (lifts the u33 batch
+# limitation for balanced call chains).
+#
+# DEFECT: u33 admitted only HEAD-position carriers
+# (`x.forEach { }`, `val y = x.map { }`).  A carrier reached through a
+# balanced call chain (`merchantCategoryDao.getX().forEach { }`,
+# `db.rawQuery(q, null).use { cursor -> }`) kept falling to the generic
+# opacity path - and where the lambda carried relevant content, the whole
+# guarded body refused (u38's 0-row Step-0: ensureDefaultCategories held
+# 4 rows on exactly this).
+#
+# FIX (tokenizer, one feature):
+#   - _match_chained_carrier: prefix-anchored match of
+#     `[val/var prefix]? chain.name(args?) {` where the chain charset
+#     excludes braces, semicolons, question marks, and assignments (an
+#     earlier lambda, elvis, or assignment target disqualifies - the u31
+#     fail-closed family).  Name-exact against the closed carrier set.
+#   - _parse_chained_carrier: mirrors _parse_transparent_scope (tail
+#     check, param header skip, recursive parse, scope-label
+#     save/restore); scope_receiver stays None because the receiver is a
+#     chain - carrier regions are never canonical scopes (proof-layer
+#     admission is contract-only), and the bridge's carrier-span walk
+#     matches by scope_method name, so chained regions join the flow
+#     identically.
+#   - The u33 trailing-lambda-ENDS-the-statement rule is preserved (the
+#     tail check); `a().map { }.toSet()` still falls to the generic path.
+#   - The u33 pin test_chained_carrier_still_fails_closed is AMENDED: it
+#     pinned the limitation this batch lifts; it now pins that an
+#     UNLISTED chain name still refuses.
+#
+# OUTCOME (board, pre 52445e8d... -> post 85d102da...):
+#   proven_helper 308 -> 314 (+6); ambiguous 20 -> 15; async 36 -> 35;
+#   unproven 56 -> 50; counterexamples 0.
+#   Moved rows (all unproven -> proven_helper):
+#     ensureDefaultCategories x4 (the u38 target)
+#     LegacyDataMigrationService.migrateCategories (the chained
+#       rawQuery(...).use row; its elvis-block refusal fired only at the
+#       outer statement level, so claiming the chain resolved both)
+#     ReceiptItemCategorizationRepository.saveCategorizationResult (bonus:
+#       another chained-carrier body)
+#
+# HARD STOP CHECKS: 0 counterexample flips, 0 regressions.
+#
+# VALIDATION:
+#   - structural_analysis: 225 passed (6 new chained fixtures; 1 amended pin)
+#   - scripts/db_guard: 252 passed; fixture corpus 64/64 (adversarial
+#     expectations intact)
+#   - test_inspect_db_mediation_proof + test_gr14*: 141 passed
+#   - board double run byte-identical 85d102da...
+#   - Kotlin: not run (no production change)
+#
+# Remaining unmodelable subjects after u39 (6 rows / 1 callable):
+#   processBankStatement (async 35-bucket): lambda-escape x6
+#     (argument-position lambdas in constructor calls - D19-adjacent
+#     modeling decision, NOT carriers), unknown-construct x1
+#     ('duplicatesSkipped++'), coroutine-builder x1, elvis-block x1
+#     ('runId?.let').
+status: COMPLETE_AT_BOARD_85d102da

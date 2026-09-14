@@ -22,21 +22,13 @@ allowed_writers:
     owner: "@panospao7"
     linked_issue: "MIT-003"
 
-  - class: ExpenseWriteStore
-    daos:
-      - expenseDao
-    requires_write_barrier: false
-    reason: "write facade — calls check() inline before every DAO mutation"
-    owner: "@panospao7"
-    linked_issue: "MIT-003"
-
   - class: ExpenseRepository
     daos:
       - expenseDao
     reason: "approved maintenance/backfill methods — each calls writeBarrier"
     owner: "@panospao7"
     linked_issue: "MIT-003"
-    allowed_until: "migrate to ExpenseWriteStore (PR 11)"
+    allowed_until: "migrate remaining maintenance/backfill methods onto TransactionLifecycleCoordinator paths"
 
   # ── Notifications ───────────────────────────────────────────────
 
@@ -195,7 +187,7 @@ allowed_writers:
     reason: "location backfill — routes through ExpenseRepository guarded methods"
     owner: "@panospao7"
     linked_issue: "MIT-003"
-    allowed_until: "migrate to ExpenseWriteStore (PR 11)"
+    allowed_until: "migrate remaining maintenance/backfill methods onto TransactionLifecycleCoordinator paths"
 
   - class: MerchantKeyBackfillWorker
     daos:
@@ -206,7 +198,7 @@ allowed_writers:
     reason: "merchant key backfill — routes through ExpenseRepository guarded methods"
     owner: "@panospao7"
     linked_issue: "MIT-003"
-    allowed_until: "migrate to ExpenseWriteStore (PR 11)"
+    allowed_until: "migrate remaining maintenance/backfill methods onto TransactionLifecycleCoordinator paths"
 
   # ── Bank ────────────────────────────────────────────────────────
 

@@ -1,0 +1,66 @@
+# GR-14u31 — A3 transparent-scope ownership precision (plan item A3
+# as-diagnosed on the post-u29 board; the ledger's "unknown-construct 5"
+# scoped to 9 findings over 5 callables, GR-14u30.yml census).
+#
+# DEFECT: the statement loop's barrier branches (_RE_BARRIER_SCOPE,
+# _RE_WORKER_GUARD, _RE_BARRIER_CHECK, _RE_LIKE_BARRIER) all match barrier
+# text ANYWHERE in a statement via .search().  A transparent-scope
+# statement whose lambda body contains barrier text — the campaign's own
+# guard idiom `withContext(...) { writeBarrier.checkWritesAllowed(...); ...
+# }` — was therefore captured by a barrier branch, which then refused
+# (unknown-construct / barrier-form-unrecognized) because the wrapper's
+# trailing lambda leaves a non-empty tail after the inner call's closing
+# paren/brace.  The transparent-scope branch sat BELOW those branches and
+# was never reached.  Production bodies refusing this way on the u29
+# board: addExpenseToGroup, syncTransactions, processBankStatement (x5,
+# mixed with the D19 lambda-escape family), createGroupWithMembers,
+# archiveGroup, deleteGroupAtomic (as part of the census mix).
+#
+# FIX (tokenizer.py, one hoist): the transparent-scope admission moved
+# ABOVE the barrier branches.  A wrapper statement is owned by its HEAD
+# method (the admission regex is anchored, and the wrapper set is disjoint
+# from the barrier heads), so its lambda body now parses recursively and
+# an embedded check proves as its own DIRECT_CHECK part; inner statements
+# keep their own fail-closed handling (LIKE_BARRIER, lambda-escape etc.
+# still fire on inner statements individually).  The old admission block
+# below the barrier branches was removed (unreachable).  No contract,
+# policy, baseline, or production-Kotlin change.
+#
+# FIXTURES (test_tokenizer.py, added BEFORE the fix, both failed pre-fix):
+#   - test_transparent_scope_with_embedded_barrier_check_supported
+#   - test_transparent_scope_with_try_catch_and_nested_wrapper_supported
+#
+# OUTCOME (board diff, pre 5f23aabd... -> post 8b634e35...):
+#   proven_helper 297 -> 314 (+17), ambiguous 30 -> 23, async 42 -> 39,
+#   external_entry 22 -> 15; unproven 94 -> 77; counterexamples 0.
+#   Moved rows (all unproven -> proven_helper):
+#     GroupTransactionCoordinator: deleteGroupAtomic x4 (ambiguous;
+#       ledger §B3's CFG scope-wiring family — proved WITHOUT the declined
+#       contract change), createGroupWithMembers x2, archiveGroup x1
+#       (ambiguous), addExpenseWithLink x1, addMemberToGroup x1,
+#       deleteGroup x1 (async)
+#     A9 zero-inbound rows proving via the u27 self-guarded rule once
+#       their bodies parse: completeConnection, updateForecastAccuracy,
+#       GroupLifecycleCoordinator.recordSettlement + removeMember x2,
+#       InvestmentTracker.updatePrice x2 (all external_entry -> proven)
+#   Still unmodelable: processBankStatement (D19 anonymous-object family,
+#     A6), ensureDefaultCategories (coroutine-builder, A4),
+#     migrateCategories (elvis-block + lambda-escape, A5-adjacent),
+#     updateExpenseCategoryBulk (withLock — the ledger §B3 declined row).
+#
+# HARD STOP CHECKS: 0 counterexample flips, 0 proven->unproven regressions.
+#
+# OWNER-DECISION NOTE: the 7 proved A9 rows remain zero-inbound in
+# production — proof status and dead-code status are independent quantities
+# (ledger §A4 discipline).  The GR-14A9 dispositions stand.
+#
+# VALIDATION:
+#   - structural_analysis pytest: 212 passed (2 new fixtures + all pins)
+#   - scripts/db_guard pytest (excl. test_models.py pre-existing): 239 passed
+#   - fixture corpus: 64/64 (adversarial counterexample expectations intact)
+#   - test_inspect_db_mediation_proof.py + test_gr14*.py: 141 passed
+#   - Kotlin: not run (no production change)
+#   - Board determinism: post run1 == run2, byte-identical
+#     sha256 8b634e35519d1c526b2899cb4c3dfb9c8bc673fd3596e606ad6cba5e781415fb
+#   - Pre-baseline: u29 board 5f23aabd... (deterministic, see GR-14u29.yml)
+status: COMPLETE_AT_BOARD_8b634e35

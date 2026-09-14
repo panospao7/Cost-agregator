@@ -14,13 +14,18 @@ dominance engine the active gate uses (the bridge runs per-callable with
 the callable's real mutation sites plus the mediation pseudo-sites), so no
 second barrier proof exists.
 
-Exit contract (per docs/guardrails/PR-GR-13_helper_worker_mediation_proof_plan.md):
-  0  every helper/worker entry PROVEN
-  1  valid analysis with one or more UNPROVEN / COUNTEREXAMPLE entries
+Exit contract (per docs/guardrails/PR-GR-13_helper_worker_mediation_proof_plan.md;
+amended by docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md, GR-15 batch 1 —
+the owner-accepted tier):
+  0  every helper/worker entry PROVEN or owner_accepted per the tracked
+     acceptance registry (counterexamples can never be registered; any
+     registry mismatch forces exit 1)
+  1  valid analysis with one or more UNPROVEN / COUNTEREXAMPLE entries,
+     or any acceptance-registry mismatch
   2  infrastructure or unsupported source uncertainty (invalid policy or
      roots, a policy row with no exact D4 observation, an uncorrelatable
-     subject callable, any UNSUPPORTED_SOURCE / INFRASTRUCTURE result, any
-     crash)
+     subject callable, any UNSUPPORTED_SOURCE / INFRASTRUCTURE result,
+     any crash, an invalid or missing acceptance registry)
 
 The report is deterministic JSON: sorted entries, bounded identity strings
 and line numbers, no raw source, no absolute paths, no timestamps.
@@ -41,7 +46,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from scripts.db_guard.structural_analysis.barrier_proof import (  # noqa: E402
-    CANONICAL_BARRIER_CONTRACT_V2,
+    CANONICAL_BARRIER_CONTRACT_V3,
     ProofStatus,
 )
 from scripts.db_guard.declaration_scanner import (  # noqa: E402
@@ -126,7 +131,7 @@ def _production_contract() -> AnalysisContract:
     """The production contract, derived from the GR-12 + GR-13 records.
 
     The direct-scope receiver/methods come from the immutable
-    ``CANONICAL_BARRIER_CONTRACT_V2`` (single source of truth); the worker
+    ``CANONICAL_BARRIER_CONTRACT_V3`` (single source of truth); the worker
     guard identity comes from the recorded GR-13 worker-guard contract; the
     inline-carrier table comes from the reviewed GR-14f closed set
     (``PRODUCTION_TRANSPARENT_INLINE_METHODS`` — carrier classification
@@ -135,15 +140,19 @@ def _production_contract() -> AnalysisContract:
     return AnalysisContract(
         worker_guard_receiver_fqcn=_WORKER_GUARD_RECEIVER_FQCN,
         worker_guard_scope_methods=_WORKER_GUARD_SCOPE_METHODS,
-        direct_scope_receiver_fqcn=CANONICAL_BARRIER_CONTRACT_V2.receiver_fqcn,
-        direct_scope_methods=CANONICAL_BARRIER_CONTRACT_V2.guarded_scope_methods,
+        direct_scope_receiver_fqcn=CANONICAL_BARRIER_CONTRACT_V3.receiver_fqcn,
+        direct_scope_methods=CANONICAL_BARRIER_CONTRACT_V3.guarded_scope_methods,
         worker_base_fqcns=_WORKER_BASE_FQCNS,
         transparent_scope_methods=tuple(
             wrapper.method
-            for wrapper in CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_wrappers
+            for wrapper in CANONICAL_BARRIER_CONTRACT_V3.transparent_scope_wrappers
         ),
         transparent_inline_methods=PRODUCTION_TRANSPARENT_INLINE_METHODS,
         structured_launch_receivers=_PRODUCTION_STRUCTURED_LAUNCH_RECEIVERS,
+        restore_scope_receiver_fqcn=(
+            CANONICAL_BARRIER_CONTRACT_V3.restore_scope_receiver_fqcn
+        ),
+        restore_scope_methods=CANONICAL_BARRIER_CONTRACT_V3.restore_scope_methods,
     )
 
 
@@ -155,6 +164,144 @@ def _sha256_of_file(path: str) -> str | None:
         return None
 
 
+#: GR-15 batch 1 (owner-sanctioned gate amendment): the acceptance
+#: registry is the ONLY acceptance mechanism and it fails closed.  A
+#: missing/invalid registry is an infrastructure failure (the amended
+#: gate cannot run without it); a registry row that matches no board row,
+#: matches an already-proven row, or matches a counterexample row is an
+#: acceptance mismatch that forces exit 1 — the registry can satisfy the
+#: gate, never silence it, and no registry entry can ever absorb a
+#: counterexample.  See docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md and
+#: GR-14_OWNER_ACCEPTANCE_RECORD.md.
+_ACCEPTANCE_REGISTRY_RELATIVE_PATH = (
+    "docs/ci/db-mediation/GR-14_OWNER_ACCEPTANCE_REGISTRY.yml"
+)
+_ACCEPTANCE_REGISTRY_SCHEMA_VERSION = 1
+
+
+def _load_acceptance_registry(path: str) -> tuple[dict | None, tuple[str, ...]]:
+    """Load the owner-acceptance registry without ever exiting.
+
+    Returns ``(document, error_codes)`` from a closed code set.
+    ``document`` is None unless the file loads, parses, and validates
+    against the exact contract (unknown fields rejected, so the registry
+    cannot drift silently)::
+
+        {schemaVersion: 1, record: str, caveat: str,
+         rows: [{mutationKey: str, family: str, caveats: [str]}]}
+    """
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover - environment contract
+        return None, ("GR15_ACCEPTANCE_REGISTRY_INVALID",)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            document = yaml.safe_load(handle)
+    except OSError:
+        return None, ("GR15_ACCEPTANCE_REGISTRY_UNAVAILABLE",)
+    except yaml.YAMLError:
+        return None, ("GR15_ACCEPTANCE_REGISTRY_INVALID",)
+    validation_error = _validate_acceptance_registry(document)
+    if validation_error is not None:
+        return None, (validation_error,)
+    return document, ()
+
+
+def _validate_acceptance_registry(document) -> str | None:
+    """Exact registry contract; returns a controlled code or None."""
+    required = {"schemaVersion", "record", "caveat", "rows"}
+    optional = {"amendment"}
+    if not isinstance(document, dict):
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    keys = set(document)
+    if not required <= keys or keys - required - optional:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    if document["schemaVersion"] != _ACCEPTANCE_REGISTRY_SCHEMA_VERSION:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    if not isinstance(document["record"], str) or not document["record"]:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    if "amendment" in document and (
+        not isinstance(document["amendment"], str) or not document["amendment"]
+    ):
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    if not isinstance(document["caveat"], str) or not document["caveat"]:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    rows = document["rows"]
+    if not isinstance(rows, list) or not rows:
+        return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    seen_keys: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict) or set(row) != {"mutationKey", "family", "caveats"}:
+            return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+        key = row["mutationKey"]
+        if not isinstance(key, str) or not key:
+            return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+        if key in seen_keys:
+            return "GR15_ACCEPTANCE_REGISTRY_DUPLICATE_ROW"
+        seen_keys.add(key)
+        if not isinstance(row["family"], str) or not row["family"]:
+            return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+        caveats = row["caveats"]
+        if not isinstance(caveats, list) or not all(
+            isinstance(caveat, str) and caveat for caveat in caveats
+        ):
+            return "GR15_ACCEPTANCE_REGISTRY_INVALID"
+    return None
+
+
+def _apply_acceptance_registry(
+    entry_rows: list[dict], registry: dict, summary_counts: dict[str, int]
+) -> tuple[list[str], list[dict]]:
+    """Reclassify registry-matched rows to ``owner_accepted`` (pure).
+
+    Exact ``mutationKey`` equality only.  A registry row that matches no
+    board row, matches an already-proven row, or matches a counterexample
+    row is an acceptance MISMATCH — reported, never applied.  Board rows
+    absent from the registry are untouched (fail closed).  Mutates
+    ``entry_rows``/``summary_counts`` in place for the matched rows only.
+
+    Returns ``(applied_mutation_keys, mismatches)``; mismatches carry
+    ``{mutationKey, code}`` with codes GR15_ACCEPTANCE_ROW_UNMATCHED,
+    GR15_ACCEPTANCE_ROW_PROVEN, GR15_ACCEPTANCE_ROW_COUNTEREXAMPLE.
+    """
+    rows_by_key = {row["mutationKey"]: row for row in entry_rows}
+    applied: list[str] = []
+    mismatches: list[dict] = []
+    for registry_row in registry["rows"]:
+        key = registry_row["mutationKey"]
+        row = rows_by_key.get(key)
+        if row is None:
+            mismatches.append(
+                {"mutationKey": key, "code": "GR15_ACCEPTANCE_ROW_UNMATCHED"}
+            )
+            continue
+        status = row["proofStatus"]
+        if status.startswith("proven"):
+            mismatches.append(
+                {"mutationKey": key, "code": "GR15_ACCEPTANCE_ROW_PROVEN"}
+            )
+            continue
+        if "counterexample" in status:
+            mismatches.append(
+                {"mutationKey": key, "code": "GR15_ACCEPTANCE_ROW_COUNTEREXAMPLE"}
+            )
+            continue
+        summary_counts[status] = summary_counts.get(status, 0) - 1
+        if summary_counts[status] <= 0:
+            del summary_counts[status]
+        summary_counts["owner_accepted"] = summary_counts.get("owner_accepted", 0) + 1
+        row["proofStatus"] = "owner_accepted"
+        row["acceptance"] = {
+            "family": registry_row["family"],
+            "caveats": list(registry_row["caveats"]),
+            "record": registry["record"],
+        }
+        applied.append(key)
+    applied.sort()
+    mismatches.sort(key=lambda mismatch: mismatch["mutationKey"])
+    return applied, mismatches
+
+
 class _DirectSiteProver:
     """GR-12 dominance proofs for helper call sites (lazy, per callable).
 
@@ -162,7 +309,8 @@ class _DirectSiteProver:
     the site dominated by a canonical direct-barrier check/scope.  The proof
     consumes the callable's REAL mutation sites plus every mediation
     pseudo-site requested for that callable, so a lambda hiding a real
-    mutation is never modeled opaque.
+    mutation is never modeled opaque.  Results are recorded for BOTH sets of
+    offsets: subjects query by mutation offset, edges query by name offset.
     """
 
     def __init__(self, builder: CallGraphBuilder, observations_by_callable) -> None:
@@ -170,6 +318,11 @@ class _DirectSiteProver:
         self._observations = observations_by_callable
         self._requested: dict[str, set[int]] = {}
         self._results: dict[str, dict[int, bool]] = {}
+        # Tri-state per offset, alongside the boolean proof map: a body the GR-12
+        # engine refuses to model yields "unmodelable" (which is NOT evidence of
+        # an unguarded mutation) rather than collapsing into "not proven"
+        # (GR-14u15).  Only "unguarded" may become a counterexample.
+        self._status: dict[str, dict[int, str]] = {}
 
     def request(self, callable_key: str, site_start: int) -> None:
         self._requested.setdefault(callable_key, set()).add(site_start)
@@ -185,31 +338,89 @@ class _DirectSiteProver:
         body_span = callable_body_span(masked, model)
         if body_span is None:
             return
-        sites = list(mutation_sites_from_observations(
+        real_sites = list(mutation_sites_from_observations(
             self._observations.get(callable_key, ())
         ))
+        sites = list(real_sites)
         for offset in sorted(self._requested.get(callable_key, ())):
             sites.append(
                 _pseudo_site(masked, callable_key, model.file, offset)
             )
         if not sites:
             return
+        # GR-14u52: receiver hints for SYNTHETIC anonymous-object members
+        # only — the u49 capture typing resolves captured vals in the
+        # callgraph, but the GR-12 bridge's file-level resolver cannot see
+        # them (a captured val is a fun PARAMETER of the enclosing callable,
+        # never a `val` declaration).  Hints are gap-fillers only (the
+        # declaration path always wins), and non-synthetic callables pass
+        # nothing — byte-identical behavior for the rest of the corpus.
+        receiver_hints = None
+        if "#anon" in model.owner_fqcn:
+            hints = self._builder.captured_binding_types(callable_key)
+            if hints:
+                receiver_hints = hints
         outcome = prove_callable_direct_barriers(
             masked,
             body_span,
             tuple(sites),
             path=model.file,
             callable_key=callable_key,
+            receiver_hints=receiver_hints,
+            # Only REAL mutation sites drive the opacity gate: a pseudo-site is
+            # a call-edge offset, and letting it force a lambda to be modeled
+            # could flip the whole callable to UNSUPPORTED and hide a dominating
+            # barrier (GR-14u13).
+            opacity_sites=tuple(real_sites),
         )
         proven: dict[int, bool] = {}
-        for offset in sorted(self._requested.get(callable_key, ())):
+        # Record BOTH the requested pseudo-site offsets (mediation call edges)
+        # and the callable's REAL mutation-site offsets.  Mediation subjects ask
+        # by ``observation.source_start`` (the mutation site), which is never an
+        # edge name offset, so reading back only the requested offsets left a
+        # bare dominating ``checkWritesAllowed`` invisible ("none" instead of
+        # "direct") for every guarded writer whose guard is not a runWrite scope.
+        offsets = set(self._requested.get(callable_key, ()))
+        offsets.update(site.span.start for site in sites)
+        unmodelable = outcome.diagnostics == ("DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",)
+        barrier_offsets = outcome.barrier_call_offsets
+        proven: dict[int, bool] = {}
+        status: dict[int, str] = {}
+        for offset in sorted(offsets):
             result = outcome.result_for_site_start(offset)
-            proven[offset] = result.status == ProofStatus.PROVEN
+            is_proven = result.status == ProofStatus.PROVEN
+            proven[offset] = is_proven
+            if is_proven:
+                status[offset] = "proven"
+            elif unmodelable and any(b < offset for b in barrier_offsets):
+                # The body could not be modeled, but a canonical barrier call
+                # PRECEDES this mutation, so "definitely unguarded" is not
+                # established: not a counterexample.  Position matters — a
+                # barrier that comes after the mutation does not cover it.
+                status[offset] = "unmodelable"
+            else:
+                status[offset] = "unguarded"
         self._results[callable_key] = proven
+        self._status[callable_key] = status
 
     def proven_sites(self, callable_key: str) -> dict[int, bool]:
         self._compute(callable_key)
         return self._results.get(callable_key, {})
+
+    def local_status(self, callable_key: str, site_start: int) -> str:
+        """``proven`` | ``unmodelable`` | ``unguarded`` for one mutation site.
+
+        ``unmodelable`` means the body could not be modeled AND a canonical
+        barrier call precedes the site, so the engine must not report a
+        counterexample from it (it lacks the evidence of an unguarded path).
+        ``unguarded`` is the only value that permits a counterexample.  A site
+        with no recorded status (no body span, unknown callable) stays
+        ``unguarded``, i.e. exactly today's behaviour — this change only ever
+        suppresses a counterexample where a preceding barrier was actually seen.
+        """
+        self._compute(callable_key)
+        recorded = self._status.get(callable_key, {})
+        return recorded.get(site_start, "unguarded")
 
     def as_callback(self):
         """Callback for the propagation: precomputed results only."""
@@ -256,10 +467,58 @@ def _correlate_subject_callable(builder: CallGraphBuilder, declaration_index, ob
         start = model.decl_start if model.decl_start is not None else -1
         end = model.decl_end if model.decl_end is not None else -1
         if start <= observation.source_start < max(end, model.body_end):
-            matches.append(key)
-    if len(matches) == 1:
-        return matches[0]
-    return None
+            matches.append((max(end, model.body_end) - start, key))
+    # GR-14u49: a mutation site inside an anonymous-object member body belongs to the
+    # SYNTHETIC member callable (the real executing scope), not the enclosing provider
+    # the D4 scanner named.  The member models (owner kind anonymous_object, "#anon"
+    # in the owner FQCN) carry the member's own span, strictly nested inside the
+    # provider's span; the SMALLEST containing span is the innermost executing
+    # callable (Kotlin nesting semantics).  Synthetic candidates are scanned across
+    # the whole callable table (their method/owner differ from the observation's
+    # declared identity).  Fail closed: zero containing spans -> None.
+    synthetic = []
+    for key, model in builder.callables.items():
+        if "#anon" not in model.owner_fqcn or model.file != path:
+            continue
+        start = model.decl_start if model.decl_start is not None else -1
+        end = max(model.decl_end if model.decl_end is not None else -1, model.body_end)
+        if 0 <= start <= observation.source_start < end:
+            synthetic.append((end - start, key))
+    # Fail-closed for declared matches (historical gate): ambiguous declared
+    # spans attribute to nothing.  Synthetic members are brace-disjoint by
+    # construction, so the smallest-span rule only ever resolves nesting.
+    if len(matches) > 1:
+        return None
+    pool = matches + synthetic
+    if not pool:
+        return None
+    pool.sort()
+    return pool[0][1]
+
+
+def _observations_by_graph_callable(builder, declaration_index, observations):
+    """Observations keyed by the GRAPH callable key (span-exact correlation).
+
+    The D4 scanner's ``observation.callable_key`` spells parameter types FULLY
+    QUALIFIED (``android.net.Uri``), while the graph parser normalizes them
+    (``Uri``).  The mediation direct prover is keyed by the graph key, so a
+    direct D4-key lookup silently disabled the GR-12 proof for most callables
+    (GR-14u11 Bug 1: 157/252 observed callables) and left guarded writers at
+    ``local=none``.  Correlation is offset-based, so it is exact and
+    overload-safe.  Uncorrelated observations keep their D4 key (fail closed,
+    never silently dropped).
+    """
+    by_graph_key: dict[str, list[MutationObservation]] = {}
+    for observation in observations:
+        graph_key = None
+        if builder is not None:
+            graph_key = _correlate_subject_callable(
+                builder, declaration_index, observation
+            )
+        by_graph_key.setdefault(
+            graph_key if graph_key is not None else observation.callable_key, []
+        ).append(observation)
+    return by_graph_key
 
 
 def build_mediation_shadow(
@@ -306,6 +565,23 @@ def build_mediation_shadow(
         if policy_entries is None:
             failure_reasons.append("DB_POLICY_SOURCE_EVIDENCE_INVALID")
 
+    # GR-15 batch 1: the acceptance registry is a mandatory gate input.
+    # Missing/invalid fails closed as infrastructure (exit 2) — the
+    # amended gate cannot run without it.
+    acceptance_registry = None
+    acceptance_registry_sha256 = None
+    if not failure_reasons:
+        acceptance_registry_file = os.path.join(
+            project_root, _ACCEPTANCE_REGISTRY_RELATIVE_PATH
+        )
+        acceptance_registry, _registry_errors = _load_acceptance_registry(
+            acceptance_registry_file
+        )
+        if acceptance_registry is None:
+            failure_reasons.extend(_registry_errors)
+        else:
+            acceptance_registry_sha256 = _sha256_of_file(acceptance_registry_file)
+
     helper_worker_entries = []
     if policy_entries is not None:
         helper_worker_entries = [
@@ -332,7 +608,6 @@ def build_mediation_shadow(
 
     # Mutation-key correlation (same contract as the GR-12 shadow CLI).
     obs_by_mutation_key: dict[str, list[MutationObservation]] = {}
-    obs_by_callable: dict[str, list[MutationObservation]] = {}
     for observation in observations:
         mutation_key = (
             observation.callable_key
@@ -344,7 +619,6 @@ def build_mediation_shadow(
             + observation.operation
         )
         obs_by_mutation_key.setdefault(mutation_key, []).append(observation)
-        obs_by_callable.setdefault(observation.callable_key, []).append(observation)
 
     # Per-invocation file-text cache shared by the declaration index and the
     # graph corpus.  NOT a module global: two runs in one process (the PR-02
@@ -496,7 +770,17 @@ def build_mediation_shadow(
         )
 
     # Pre-request every call site needing a GR-12 direct proof.
-    direct_prover = _DirectSiteProver(builder, obs_by_callable) if graph is not None else None
+    #
+    # The prover is keyed by the GRAPH callable key, so the observations must be
+    # re-keyed off the D4 canonical key (see
+    # ``_observations_by_graph_callable``).
+    direct_prover = (
+        _DirectSiteProver(
+            builder, _observations_by_graph_callable(builder, declaration_index, observations)
+        )
+        if graph is not None
+        else None
+    )
     if graph is not None and direct_prover is not None:
         # Bounded prefilter: only callables whose masked body mentions a
         # canonical barrier method can ever gain direct context.  Every
@@ -534,6 +818,9 @@ def build_mediation_shadow(
             ambiguous_worker_classes=frozenset(discovery.ambiguous_worker_classes),
             direct_site_prover=(
                 direct_prover.as_callback() if direct_prover is not None else None
+            ),
+            direct_site_status=(
+                direct_prover.local_status if direct_prover is not None else None
             ),
         )
 
@@ -579,6 +866,19 @@ def build_mediation_shadow(
         entry_rows.append(row)
     entry_rows.sort(key=lambda row: row["mutationKey"])
 
+    # GR-15 batch 1: apply the owner-acceptance registry BEFORE the
+    # unproven inventory and the exit decision.  A registry row that
+    # matches nothing (or a proven/counterexample row) is a mismatch and
+    # forces exit 1 — the registry can satisfy the gate, never silence it.
+    applied_acceptances: list[str] = []
+    acceptance_mismatches: list[dict] = []
+    acceptance_caveat: str | None = None
+    if acceptance_registry is not None:
+        applied_acceptances, acceptance_mismatches = _apply_acceptance_registry(
+            entry_rows, acceptance_registry, summary_counts
+        )
+        acceptance_caveat = acceptance_registry["caveat"]
+
     edge_counts: dict[str, int] = {}
     if graph is not None:
         for edge in graph.edges:
@@ -610,6 +910,7 @@ def build_mediation_shadow(
         row
         for row in entry_rows
         if not row["proofStatus"].startswith("proven")
+        and row["proofStatus"] != "owner_accepted"
     ]
 
     active_policy_sha = _sha256_of_file(policy_file)
@@ -626,7 +927,7 @@ def build_mediation_shadow(
         "workerGuardContract": {
             "receiverFqcn": _WORKER_GUARD_RECEIVER_FQCN,
             "scopeMethods": list(_WORKER_GUARD_SCOPE_METHODS),
-            "directBarrierReceiverFqcn": CANONICAL_BARRIER_CONTRACT_V2.receiver_fqcn,
+            "directBarrierReceiverFqcn": CANONICAL_BARRIER_CONTRACT_V3.receiver_fqcn,
         },
         "summary": {
             "helperWorkerEntryCount": len(helper_worker_entries),
@@ -639,6 +940,8 @@ def build_mediation_shadow(
             "workerRegistryMismatches": registry_mismatches,
             "scanFindingCount": scan_finding_count,
             "scanDiagnosticCodes": scan_diagnostic_codes,
+            "ownerAcceptedCount": len(applied_acceptances),
+            "ownerAcceptedCaveat": acceptance_caveat,
         },
         "entries": entry_rows,
         "workerRootInventory": worker_root_inventory,
@@ -651,6 +954,13 @@ def build_mediation_shadow(
                 }
                 for record in disposition_records
             ],
+        },
+        "acceptanceRegistry": {
+            "path": _ACCEPTANCE_REGISTRY_RELATIVE_PATH,
+            "sha256": acceptance_registry_sha256,
+            "appliedCount": len(applied_acceptances),
+            "appliedMutationKeys": applied_acceptances,
+            "mismatches": acceptance_mismatches,
         },
         "unprovenInventory": [
             {
@@ -669,6 +979,8 @@ def build_mediation_shadow(
     elif summary_counts.get("unsupported_source"):
         exit_code = _EXIT_INFRASTRUCTURE
     elif unproven_inventory:
+        exit_code = _EXIT_UNPROVEN
+    elif acceptance_mismatches:
         exit_code = _EXIT_UNPROVEN
     else:
         exit_code = _EXIT_ALL_PROVEN

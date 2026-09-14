@@ -42,6 +42,7 @@ import com.yourname.expensetracker.domain.intelligence.ClassifierStats
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
 import com.yourname.expensetracker.R
 import com.yourname.expensetracker.service.debug.MigrationResult
+import com.yourname.expensetracker.util.CsvExpenseImporter
 import kotlinx.coroutines.launch
 import java.util.*
 
@@ -1442,7 +1443,7 @@ private fun DatabaseManagementSection(viewModel: DebugViewModel) {
                 
                 csvContent?.let { content ->
                     scope.launch {
-                        val importer = viewModel.csvExpenseImporter
+                        val importer: CsvExpenseImporter = viewModel.csvExpenseImporter
                         val result = importer.importFromContent(content) { progress, total ->
                             // Could update UI with progress here
                         }

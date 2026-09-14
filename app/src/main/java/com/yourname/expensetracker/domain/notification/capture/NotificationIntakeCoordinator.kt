@@ -1,6 +1,9 @@
 package com.yourname.expensetracker.domain.notification.capture
 
 import androidx.work.*
+import com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeEntity
 import com.yourname.expensetracker.data.database.entity.NotificationIntakeStatus
@@ -27,7 +30,8 @@ class NotificationIntakeCoordinator @Inject constructor(
     private val workManager: WorkManager,
     private val diagnostics: NotificationDiagnosticEmitter,
     private val timeProvider: TimeProvider,
-    private val crypto: NotificationTransientPayloadCrypto
+    private val crypto: NotificationTransientPayloadCrypto,
+    private val writeBarrier: DatabaseWriteBarrier
 ) {
     suspend fun capture(
         packageName: String,
@@ -44,6 +48,16 @@ class NotificationIntakeCoordinator @Inject constructor(
         correlationId: String,
         source: String // "listener" or "refresh"
     ): NotificationIntakeCaptureResult {
+        try {
+            writeBarrier.checkWritesAllowed("NotificationIntakeCoordinator.capture")
+        } catch (blocked: DatabaseAccessBlockedException) {
+            Timber.w("Intake capture skipped: database writes blocked during restore")
+            return NotificationIntakeCaptureResult.Dropped(
+                correlationId,
+                "Database writes blocked during restore"
+            )
+        }
+
         val dedupeFingerprint = RawNotificationFingerprint.compute(
             packageName = packageName,
             title = title,
@@ -122,7 +136,19 @@ class NotificationIntakeCoordinator @Inject constructor(
             updatedAt = now
         )
 
-        val intakeId = intakeDao.insertOrIgnore(entity)
+        val intakeId = try {
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationIntakeCoordinator.capture")
+            ) {
+                intakeDao.insertOrIgnore(entity)
+            }
+        } catch (blocked: DatabaseAccessBlockedException) {
+            Timber.w("Intake capture skipped: database writes blocked during restore")
+            return NotificationIntakeCaptureResult.Dropped(
+                correlationId,
+                "Database writes blocked during restore"
+            )
+        }
         if (intakeId == -1L) {
             Timber.d("Intake insert conflict: $packageName")
             return NotificationIntakeCaptureResult.Dropped(correlationId, "Insert conflict")
@@ -164,6 +190,13 @@ class NotificationIntakeCoordinator @Inject constructor(
         bigText: String? = null,
         subText: String? = null
     ) {
+        try {
+            writeBarrier.checkWritesAllowed("NotificationIntakeCoordinator.captureForRetry")
+        } catch (blocked: DatabaseAccessBlockedException) {
+            Timber.w("captureForRetry skipped: database writes blocked during restore")
+            return
+        }
+
         val now = timeProvider.now()
         val notificationKeyHash = notificationKey.sha256().take(32)
 
@@ -211,7 +244,16 @@ class NotificationIntakeCoordinator @Inject constructor(
             updatedAt = now
         )
 
-        val intakeId = intakeDao.insertOrIgnore(entity)
+        val intakeId = try {
+            writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationIntakeCoordinator.captureForRetry")
+            ) {
+                intakeDao.insertOrIgnore(entity)
+            }
+        } catch (blocked: DatabaseAccessBlockedException) {
+            Timber.w("captureForRetry skipped: database writes blocked during restore")
+            return
+        }
         if (intakeId == -1L) {
             Timber.d("captureForRetry: insert conflict for $packageName")
             return

@@ -1,0 +1,117 @@
+# GR-14u54b — extend the u49 bounded fan-out dispatch admission to
+# NAMED-implementor interfaces (the F4 family from
+# GR-14_FINAL26_DECISION_MEMO.md; owner-sanctioned admission-semantics
+# extension).
+#
+# DEFECT: `_bounded_fanout_targets` returned [] at its second gate —
+# `if scanned_anon <= 0: return []` — a precondition written for the u49
+# RetentionTarget anonymous-object shape.  OperationRunHandle has 3 NAMED
+# corpus implementors and 0 anonymous sites: the set IS enumerable-complete
+# (the per-run re-derivation applies identically), the receiver resolves
+# exactly via u45 Shape A, and every implementor owns exactly one override
+# member — but the anon-precondition rejected the admission BEFORE
+# completeness was ever evaluated.  WorkerRunHandle (1 named implementor):
+# same blocker.  The 3 F4 rows stayed
+# unproven_ambiguous_call/GR13_UNCERTAIN_CALL_EDGE on 3-target
+# interface_dispatch edges.
+#
+# SIGN-OFF BASIS: the owner's u49 Option A approval (bounded fan-out for
+# enumerable-complete implementor sets) extended to named-implementor
+# interfaces, per the FINAL26 memo F4 recommendation and the session
+# delegation.  This is a recorded admission-semantics decision: dispatch
+# to a fully-enumerable implementor set becomes exact for NAMED-only
+# interfaces.
+#
+# FIX (one gate, fail-closed; every other gate preserved):
+#   - the `scanned_anon <= 0` precondition is REMOVED.  The completeness
+#     gate is now exactly: the set of corpus implementors (named +
+#     anonymous, deduplicated) is fully enumerated AND every implementor's
+#     relevant member is modelled with an override-of-base — the existing
+#     gates, without the anon-only precondition.  PRESERVED INTACT:
+#     per-run completeness re-derivation (a new implementor changes the
+#     set and the admission re-derives), the modelled==scanned anon
+#     equality (now also required to hold for ZERO anon sites), the
+#     ISSUE-7 override-only target gate, the all-or-nothing withdrawal,
+#     and the interface-kind gate.  Fail-closed: any unmodelled
+#     implementor or 0/2+ member mismatch withdraws the whole set.
+#   - CAUTION probe (run BEFORE the board, per the batch instruction):
+#     OperationRunHandle fans out 3 targets for event/increment/success/
+#     cancelled/failedFinal/partialSuccess; WorkerRunHandle fans out 1
+#     target for success/cancelled.  `terminal` and
+#     `finalizeNonCancellable` do NOT fire — WorkerRunHandle does not
+#     DECLARE those members (the methods are defined directly on
+#     WorkerRunLoggerImpl.Handle without an interface override), so the
+#     ISSUE-7 gate correctly refuses.  Honest fail-closed behavior; no
+#     second mechanism needed.
+#
+# FIXTURES (2 new, cb61/cb62; consolidated manifest 114 -> 116) + 1
+#   amendment:
+#   cb61 named-implementor fan-out positive: 2 named classes implementing
+#        one override member -> exact fan-out edges to BOTH implementors.
+#   cb62 completeness negative: 2 named implementors where ONE inherits
+#        the interface's DEFAULT member (overrides nothing) ->
+#        _members_named finds 0 members of the name on that implementor ->
+#        the gate withdraws the whole admission -> INTERFACE_DISPATCH.
+#        (First draft used a non-implementing same-name helper — flawed:
+#        the implementor set was a SINGLE implementor, which the u24
+#        single-implementor rule already resolved exact.  Rewritten to
+#        the default-implementation shape, which is the reachable
+#        negative.)
+#   CB-06 amendment (disclosed): the pre-existing fixture pinned
+#        INTERFACE_DISPATCH for a 2-named-implementor interface — the u54b
+#        extension intentionally changes that to exact 2-target fan-out;
+#        the fixture header and both manifest rows updated with the
+#        disclosure (the old expectation pinned the pre-extension
+#        uncertainty).
+#
+# OUTCOME (board, pre f0dfd653... -> post 8a93c402e8eb4bf9, double run
+# byte-identical): proven_helper 338 -> 339 (+1); ambiguous 3 -> 2;
+# async 23; restore 1; worker 14; counterexamples 0.  ONE of the 3 F4
+# rows PROVED (verbatim):
+#     Handle.increment (OperationRunDao.incrementCounters):
+#     unproven_ambiguous_call/GR13_UNCERTAIN_CALL_EDGE ->
+#     proven_helper/GR13_ALL_PATHS_GUARDED (localGuard none — the proof
+#     is the exact 3-target fan-out delivering the caller-side write-
+#     barrier context (BankApiIntegration.syncTransactions checkWritesAllowed
+#     precedes all increment sites - verified via the board boundedPath),
+#     not a local barrier in the Handle itself).
+#   The other 2 F4 rows did NOT move (verbatim):
+#     Handle.finalizeNonCancellable (OperationRunDao.finalizeIfRunning):
+#     stays unproven_ambiguous_call/GR13_UNCERTAIN_CALL_EDGE, deciding
+#     interface_dispatch — OperationRunHandle does not declare
+#     finalizeNonCancellable as an interface member (defined directly on
+#     the Handle class), so the ISSUE-7 override gate correctly refuses
+#     fan-out; the honest fix is a SOURCE change (promote the method to
+#     the interface) or owner accept — NOT an engine workaround.
+#     Handle.terminal (BackgroundJobRunDao.completeTerminal): same shape
+#     on WorkerRunHandle (terminal not declared on the interface) — same
+#     refusal, same disposition.
+#
+# COMPLETENESS SCOPE (disclosed): completeness is corpus-relative - the
+# engine analyzes the declared main-source roots only; build-generated
+# implementors (Room/Hilt) are outside the model. Currently vacuous (DAO
+# interfaces have zero corpus implementors -> the gate returns []), and
+# all admitted interfaces' implementors are source-visible (3/3 and 1/1
+# verified).
+# HARD STOP CHECKS: 0 counterexamples, 0 previously-proven rows
+#   regressed, 0 rows in unproven_external_entry, 0 unexpected delta
+#   (exactly 1 row moved, in the proven direction).
+#
+# VALIDATION:
+#   - scripts/db_guard: 276 passed
+#   - fixture corpus: 108/108 checked, 108 passed, exit 0 (106 prior + 2)
+#   - scripts/ci: 1259 passed, 14 failed — byte-identical to the base
+#     commit's failure set (the u24 pin amendment included; 1258+1 from
+#     u54's cb60 runner row; freshness-stamp and platform-conditional
+#     tests, environment-dependent, pre-existing)
+#   - board double run byte-identical 8a93c402e8eb4bf9
+#   - Kotlin: not run (no production change)
+#
+# Remaining: the 2 remaining ambiguous rows (finalizeNonCancellable/
+#   terminal — interface-member promotion is a SOURCE decision, or owner
+#   accept); the F1 withPermit (11) / F3 PostCommitAction (6) families
+#   (FINAL26 memo — owner accept or design decisions); the
+#   F-TRANSPARENT-CHAIN-NOISE family (owner sign-off gate); the tracked
+#   candidate/accounting pair regeneration (pre-existing --verify drift,
+#   u51b disclosure).
+status: COMPLETE_AT_BOARD_8a93c402

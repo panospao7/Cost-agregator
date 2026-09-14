@@ -157,12 +157,17 @@ class MediationProver:
         registered_do_work_roots: frozenset[str] = frozenset(),
         ambiguous_worker_classes: frozenset[str] = frozenset(),
         direct_site_prover=None,
+        direct_site_status=None,
     ) -> None:
         self.builder = builder
         self.graph = graph
         self.registered_do_work_roots = frozenset(registered_do_work_roots)
         self.ambiguous_worker_classes = frozenset(ambiguous_worker_classes)
         self._direct_site_prover = direct_site_prover
+        # Tri-state probe ("proven" | "unmodelable" | "unguarded").  A body the
+        # GR-12 engine refuses to model is NOT evidence of an unguarded mutation,
+        # so it must not produce a counterexample (GR-14u15).
+        self._direct_site_status = direct_site_status
         self._reverse_exact: dict[str, list[CallEdge]] = {}
         self._reverse_all: dict[str, list[CallEdge]] = {}
         for edge in graph.edges:
@@ -192,8 +197,9 @@ class MediationProver:
     def _local_site_context(self, callable_key: str, site_start: int) -> tuple[str, ResolutionState | None]:
         """(context, uncertain-state) at one site, innermost lambda first.
 
-        Context: none|direct|worker (a waived worker scope contributes none
-        but is reported via the returned waiver flag through context
+        Context: none|direct|worker|restore_internal (GR-14u25: the mode-gated
+        restore-internal scope; a waived worker scope contributes none but is
+        reported via the returned waiver flag through context
         ``waived``→none and a dedicated marker in ``local_guard`` strings).
         """
         regions = self.builder.lambda_regions_by_callable.get(callable_key, ())
@@ -211,6 +217,8 @@ class MediationProver:
                 return "worker", None, False
             if best.carrier == "canonical_direct":
                 return "direct", None, False
+            if best.carrier == "canonical_restore":
+                return "restore_internal", None, False
             if best.carrier == "transparent":
                 rest = tuple(r for r in region_list if r is not best)
                 return _walk(rest)
@@ -228,6 +236,22 @@ class MediationProver:
             ):
                 context = "direct"
         return context, uncertain, waived
+
+    def _local_guard_unmodelable(self, subject) -> bool:
+        """True when this subject's guard could not be evaluated, not disproved.
+
+        The GR-12 body model refuses constructs it cannot prove safe (exception
+        flow above all), so "not proven" there is absence of evidence, not
+        evidence of absence.  Only this tri-state probe can tell the two apart;
+        without it every unmodelable body would be reported as an unguarded call
+        path (GR-14u15).
+        """
+        if self._direct_site_status is None:
+            return False
+        return (
+            self._direct_site_status(subject.callable_key, subject.site_start)
+            == "unmodelable"
+        )
 
     # ── propagation ──
 
@@ -279,6 +303,13 @@ class MediationProver:
                         delivered = set(caller_facts.entry_contexts)
                     elif local == "direct":
                         delivered = {"direct"}
+                    elif local == "restore_internal":
+                        # GR-14u25: the restore-internal context must propagate
+                        # as itself, not be collapsed into the worker default,
+                        # or a callee reached out of a restore scope proves
+                        # under the wrong state (GR13_ALL_PATHS_GUARDED instead
+                        # of GR13_ALL_PATHS_RESTORE_INTERNAL_GUARDED).
+                        delivered = {"restore_internal"}
                     else:
                         delivered = {"worker"}
                     target_facts = facts[target]
@@ -334,6 +365,9 @@ class MediationProver:
                 return
             if best.carrier == "canonical_direct":
                 context = "direct"
+                return
+            if best.carrier == "canonical_restore":
+                context = "restore_internal"
                 return
             if best.carrier == "transparent":
                 _walk(tuple(r for r in region_list if r is not best))
@@ -455,6 +489,21 @@ class MediationProver:
             subject.callable_key, subject.site_start
         )
         local_guard = "waived" if local_waived else local
+        # GR-14u27: a mutation whose LOCAL guard is ``direct`` (the dominance
+        # engine proved a canonical barrier dominates the mutation inside the
+        # callable's own body, or the mutation sits in a canonical direct scope
+        # region) or ``restore_internal`` is guarded on EVERY execution.  The
+        # canonical barrier is evaluated at the mutation site against app-global
+        # maintenance state, so the identity of the caller cannot change the
+        # outcome.  Step 7 already encodes exactly this — ``effective`` is
+        # collapsed to the single local context when ``local`` is one of these —
+        # so caller-side uncertainty must not stop the proof either.  This is the
+        # GR-14j principle on which the zero-inbound exemption below was already
+        # granted: it is a property of the mutation site, not of the call graph.
+        self_guarded_helper = mode == "helper" and local in (
+            "direct",
+            "restore_internal",
+        )
 
         # 1. Recursion: any EXACT-edge cycle in the ancestor closure stops
         # the proof (uncertain-edge cycles are uncertainty, tier 5).
@@ -532,8 +581,20 @@ class MediationProver:
             key=lambda edge: (edge.state.value, edge.caller_key, edge.name_start)
         )
         if not exact_in and not uncertain_in:
-            if mode == "workerMediated" and model.method == "doWork":
-                pass  # the root path starts at doWork itself
+            # GR-14u5: a self-scoped helper (its mutation sits inside the
+            # writer's own canonical direct scope, e.g. DatabaseWriteBarrier
+            # .runWrite) proves INDEPENDENT of callers — any caller, detected
+            # or not, reaches a guarded mutation (the GR-14j principle).  The
+            # GR-14u25 restore-internal scope has the same self-scoping
+            # property.  This exemption covers the zero-inbound case; the
+            # GR-14u27 widening below additionally covers the uncertain-inbound
+            # case, but only for a guard the dominance PROVER established.
+            self_scoped_helper = mode == "helper" and local in (
+                "direct",
+                "restore_internal",
+            )
+            if (mode == "workerMediated" and model.method == "doWork") or self_scoped_helper:
+                pass  # doWork: root path starts at itself; helper: self-guarded
             else:
                 return SubjectProof(
                     mutation_key=subject.mutation_key,
@@ -544,8 +605,10 @@ class MediationProver:
                     deciding_resolution=ResolutionState.EXTERNAL_ENTRY,
                     local_guard=local_guard,
                 )
-        # 5. Uncertain edges reaching the subject stop the proof.
-        if deduped_uncertain:
+        # 5. Uncertain edges reaching the subject stop the proof — unless the
+        # mutation is self-guarded, in which case the caller side is irrelevant
+        # (see GR-14u27 above) and the row proves on its local evidence.
+        if deduped_uncertain and not self_guarded_helper:
             first = deduped_uncertain[0]
             if first.state in _UNCERTAIN_ASYNC_STATES:
                 state = ProofState.UNPROVEN_ASYNC_OR_ESCAPING_CALLBACK
@@ -563,13 +626,19 @@ class MediationProver:
                 local_guard=local_guard,
                 reaching_root_kinds=ancestor_kinds,
             )
-        # 6. No exact production path (S empty) — honest external entry.
+        # 6. No exact production path (S empty) — honest external entry.  A
+        # self-guarded mutation does not depend on a discoverable path at all
+        # (GR-14u27), so it proceeds to the local-evidence proof instead of
+        # being mislabelled zero-inbound: its uncertain inbound edges are real
+        # evidence and must not be reported as absence of callers.
         subject_facts = self._facts.get(subject.callable_key)
         entry_contexts: set[str] = set()
         if subject_facts is not None:
             entry_contexts = set(subject_facts.entry_contexts)
-        if not entry_contexts and not (
-            mode == "workerMediated" and model.method == "doWork"
+        if (
+            not entry_contexts
+            and not (mode == "workerMediated" and model.method == "doWork")
+            and not self_guarded_helper
         ):
             return SubjectProof(
                 mutation_key=subject.mutation_key,
@@ -586,6 +655,8 @@ class MediationProver:
             effective = {"direct"}
         elif local == "worker":
             effective = {"worker"}
+        elif local == "restore_internal":
+            effective = {"restore_internal"}
         else:
             effective = set(entry_contexts)
         convertible = local == "direct" and mode == "helper" and "none" in entry_contexts
@@ -633,6 +704,29 @@ class MediationProver:
                         reaching_root_kinds=ancestor_kinds,
                         convertible_to_direct=convertible,
                     )
+                # A counterexample asserts a DEFINITELY unguarded call path.
+                # When the GR-12 engine could not model this callable's body and
+                # a canonical barrier call precedes the mutation, that assertion
+                # is not established: the guard may exist but be unprovable
+                # (try/catch and other conservatively-rejected constructs).
+                # Report unproven instead, so no violation is invented.  Rows
+                # whose body is unmodelable with NO preceding barrier keep the
+                # counterexample (GR-14u15).
+                if self._local_guard_unmodelable(subject):
+                    return SubjectProof(
+                        mutation_key=subject.mutation_key,
+                        callable_key=subject.callable_key,
+                        barrier_mode=mode,
+                        proof_state=ProofState.UNPROVEN_AMBIGUOUS_CALL,
+                        reason_code="GR13_LOCAL_GUARD_UNMODELABLE",
+                        deciding_resolution=ResolutionState.EXACT_SYNCHRONOUS,
+                        local_guard=local_guard,
+                        bounded_path=self._reconstruct_path(
+                            subject.callable_key, "none"
+                        ),
+                        reaching_root_kinds=ancestor_kinds,
+                        convertible_to_direct=convertible,
+                    )
                 return SubjectProof(
                     mutation_key=subject.mutation_key,
                     callable_key=subject.callable_key,
@@ -647,17 +741,28 @@ class MediationProver:
                     reaching_root_kinds=ancestor_kinds,
                     convertible_to_direct=convertible,
                 )
+            # GR-14u25: a path covered by the restore-internal scope proves
+            # under its own state; mixed coverage (direct/worker/restore)
+            # reports the restore state, which is the distinctive form.
+            if "restore_internal" in effective:
+                proven_state = ProofState.PROVEN_RESTORE_INTERNAL
+                proven_reason = "GR13_ALL_PATHS_RESTORE_INTERNAL_GUARDED"
+                proven_context = "restore_internal"
+            else:
+                proven_state = ProofState.PROVEN_HELPER
+                proven_reason = "GR13_ALL_PATHS_GUARDED"
+                proven_context = "worker" if "worker" in effective else "direct"
             return SubjectProof(
                 mutation_key=subject.mutation_key,
                 callable_key=subject.callable_key,
                 barrier_mode=mode,
-                proof_state=ProofState.PROVEN_HELPER,
-                reason_code="GR13_ALL_PATHS_GUARDED",
+                proof_state=proven_state,
+                reason_code=proven_reason,
                 deciding_resolution=ResolutionState.EXACT_CANONICAL_SCOPE,
                 local_guard=local_guard,
                 bounded_path=self._reconstruct_path(
                     subject.callable_key,
-                    "worker" if "worker" in effective else "direct",
+                    proven_context,
                 ),
                 reaching_root_kinds=ancestor_kinds,
             )

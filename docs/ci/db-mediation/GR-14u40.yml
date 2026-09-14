@@ -1,0 +1,105 @@
+# GR-14u40 — safe-call `?.let { }` head-carrier admission (tokenizer,
+# one feature).
+#
+# DEFECT: u33/u39 admitted head-position and chained carriers, but a
+# carrier reached through a SAFE-CALL receiver (`runId?.let { rid -> }`)
+# matched nothing: _RE_TS_SCOPE requires a literal `.` between receiver
+# and method, and the chained matcher's prefix charset excludes `?`.
+# The whole composite fell to the generic opacity gate and, where the
+# lambda carried real content, refused the ENTIRE callable —
+# processBankStatement refused with coroutine-builder (L842: the inner
+# `withContext(NonCancellable) { }` seen at statement level) and
+# elvis-block (L869: the inner `e::class.simpleName ?: "Unknown"` inside
+# a .put(...) argument).
+#
+# FIX (tokenizer, one feature):
+#   - _match_safe_call_carrier: prefix-anchored match of
+#     `[val/var prefix]? receiver?.name(args?) {` where receiver is a
+#     SIMPLE identifier and name is exact against the closed carrier
+#     set (mirrors the u39 matcher's structure and fail-closed family).
+#   - _parse_safe_call_carrier: mirrors _parse_chained_carrier (prefix
+#     brace check, tail check, param header skip, recursive parse,
+#     scope-label save/restore).  scope_receiver mirrors the HEAD
+#     carrier precedent (_parse_transparent_scope records the regex
+#     receiver group): the receiver IS a simple identifier, so it is
+#     recorded.  The proof layer never admits inline-carrier names as
+#     canonical scopes (name-exact against the contract only), and the
+#     bridge's carrier-span walk matches by scope_method name, so this
+#     grants nothing beyond parseability.
+#   - The u33 trailing-lambda-ENDS-the-statement rule is preserved
+#     (same tail check as u33/u39); `runId?.let { }.plus(1)` and
+#     argument-position `x?.let { }` still fall to the generic path.
+#   - Unlisted methods after `?.` still refuse (lambda-escape).
+#   - The generic elvis-block check (`?:` + `{` on unclaimed
+#     statements) and _RE_COROUTINE handling are untouched.
+#
+# OUTCOME (board, pre 85d102da... -> post c15d5385...):
+#   proofStates UNCHANGED: proven_helper 314, proven_restore_internal 1,
+#   proven_worker_mediated 14, ambiguous 15, async 35.  0 rows moved.
+#   The 7 processBankStatement rows STAY unproven_ambiguous_call /
+#   GR13_LOCAL_GUARD_UNMODELABLE: the tokenizer refusals this batch
+#   targets (coroutine-builder L842, elvis-block L869) are gone from the
+#   model.  Settled by an orchestrator-run probe with FULL PRODUCTION
+#   PARAMETERS (mask_kotlin_source + canonical transparent-scope
+#   contract + PRODUCTION_TRANSPARENT_INLINE_METHODS + the production
+#   opacity predicate built from the real in-body mutation
+#   observations): the callable carries EXACTLY ONE remaining tokenizer
+#   finding — DB_STRUCTURAL_MODEL_BODY_UNSUPPORTED / unknown-construct
+#   at L594-L613, the `duplicatesSkipped++` statement gluing into the
+#   following runInTransaction(...) { checkWritesAllowed(...) ... }
+#   composite ('+' is a _CONT_END continuation char, so the statement
+#   never splits; the glued statement then hits the _RE_BARRIER_CHECK
+#   tail check) — that single finding is the next batch's target
+#   (GR-14u41).  The lambda-escape shapes listed in earlier drafts
+#   (require(x) {} heads, chained .mapIndexed { },
+#   CancellationSafe.runCatchingCancellable { }, argument-position
+#   insert(...)/?.let, PendingReview(...) constructor lambda) are
+#   opacity-absorbed under the production predicate and are not
+#   blockers.  Until the remaining finding is lifted the callable stays
+#   unmodelable, so the GR13 local-guard probe still answers
+#   "unmodelable" and the rows cannot move yet.
+#   Board bytes changed (hash moved) for a side-effect upgrade: 4
+#   already-proven rows in GroupTransactionCoordinator.deleteGroupAtomic
+#   (ExpenseDao.clearSharedExpenseFlags, ExpenseGroupDao.delete,
+#   GroupExpenseDao.deleteAllForGroup, GroupMemberDao.deleteAllForGroup)
+#   report localGuard none -> direct — their callable contains
+#   `group?.let { groupDao.delete(it) }` (L985), which previously
+#   lambda-escaped the body model; with the safe-call carrier claimed
+#   the body now models and the GR-12 direct-site prover proves those
+#   sites.  proofStatus/reasonCode are unchanged (already proven); no
+#   row regressed, no counterexample appeared.
+#
+# HARD STOP CHECKS: 0 counterexample flips, 0 regressions (all 379
+#   entries compared pre/post; only the 4 localGuard fields above
+#   differ).
+#
+# VALIDATION:
+#   - structural_analysis: 230 passed (5 new safe-call fixtures; the
+#     elvis-block-form pin test_elvis_block_form passes unchanged)
+#   - scripts/db_guard: 257 passed (test_models.py excluded —
+#     pre-existing stale pin, untouched); fixture corpus 64/64
+#   - scripts/ci: 1243 passed, 14 failed — the 14 failures are
+#     byte-identical to the base commit's failure set (verified by
+#     stashing the change and re-running: freshness-stamp and
+#     platform-conditional tests, environment-dependent, pre-existing)
+#   - board double run byte-identical c15d5385...
+#   - Kotlin: not run (no production change)
+#   - independent review: strict reviewer static soundness PASS;
+#     execution evidence re-run by orchestrator — structural 230,
+#     db_guard 257 (test_models.py excluded, pre-existing stale pin),
+#     fixture corpus 64/64, board double run byte-identical
+#     c15d5385..., 4-entry localGuard delta verified by JSON diff
+#   - known conservative gap (review finding, not a blocker): a
+#     line-leading safe-call continuation (`val x = foo` newline
+#     `?.let { }`) still splits into two statements because
+#     _CONT_END/dot-continuation handles a leading '.' but not a
+#     leading '?' — future batch note.
+#
+# Remaining unmodelable subjects after u40 (7 rows / 1 callable):
+#   processBankStatement (async bucket): unknown-construct x1
+#     (duplicatesSkipped++ statement gluing) — the single remaining
+#     tokenizer finding under production parameters (GR-14u41 target).
+#   Plus the 6 argument-position constructor-lambda rows: those are
+#     mediation-layer (callgraph) classifications, not tokenizer
+#     findings (D19-adjacent decision batch).
+status: COMPLETE_AT_BOARD_c15d5385

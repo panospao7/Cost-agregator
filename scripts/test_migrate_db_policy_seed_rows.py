@@ -1230,6 +1230,134 @@ def _gr08b_seed_rows():
     return rows
 
 
+def _seed_removal_key(entry):
+    """Compact identity of a documented seed removal.
+
+    Includes the parameter-type signature so two overloads of one method
+    (GR-14u34: TransactionLifecycleCoordinator.bulkUpdateCategory kept its
+    (String, Long, ...) overload while the (Long, Long, String) overload's
+    rows were removed) do not collide on a coarser key.
+    """
+    return (
+        entry.path.replace("\\", "/").split("/")[-1],
+        entry.owner_fqcn.split(".")[-1],
+        entry.method,
+        entry.dao_fqcn.split(".")[-1],
+        entry.operation,
+        ",".join(entry.parameter_types),
+    )
+
+
+# GR-14u34: documented removals from the combined generation input.  The
+# per-batch seed files are FROZEN historical review records -- the combined
+# doc is the living --seed-rows input, and the GR-14 dead-writer tranches
+# pruned it without maintaining this drift guard (pre-existing red, seeds
+# pin 421 vs actual 381 at GR-14u4; found 2026-09-11).  Every discrepancy
+# between the frozen batch files and the living combined doc must appear
+# here with its removing batch, and every ledger row must BE a real
+# discrepancy (no rot in either direction):
+#   GR-14u  (42f464f0): recoverStaleRunningOperationRuns x2,
+#     EnhancedSplitManager x5, SubscriptionManagementRepository x3
+#   GR-14u2 (7815d0d4): WarrantyTrackerRepository x4,
+#     MerchantNormalizationRepository x3, SavingsGoalRepository x4
+#   GR-14u3 (335758ff): SourceStatsRepository x8,
+#     ReceiptMatchLifecycleService.approveMatchSuggestion x2
+#   GR-14u4 (7a07d184): SourceStatsRepository.incrementTotal,
+#     ReceiptRepository x2 (clearMatchForReceipt, writeReceiptEvent),
+#     writeLifecycleEvent x2 (ManualRecurring + RecurringExpense),
+#     MerchantCategoryRepository.deleteAll, UserCorrectionRepository.deleteAll
+#   pre-u tranche (combined 421 -> 418, see GR-08-seeds.yml history):
+#     TransactionLifecycleCoordinator.bulkUpdateCategory x2
+#   GR-14u34: ExpenseGroupDao.insertGroupWithMembers,
+#     RoomRecurringLifecycleEventWriter.writeDiagnostic
+#   GR-14u35: ExpenseWriteStore x11 (owner-approved delete; the class, its
+#     observability test, and its allowlist entry are gone)
+#   GR-14u36: GroupLifecycleCoordinator x9 (owner-approved delete; routing was
+#     never built, class + scenario suites removed)
+#   GR-14u37: deleteExpense ID overload x2, updatePrice x2,
+#     updateForecastAccuracy x1 (owner-approved deletes), PLUS the entity
+#     deleteExpense seed rows x2 - after the ID overload's deletion the
+#     legacy fold resolves the entity overload directly, so its seed rows
+#     would shadow legacy-resolved keys (duplicate check, GR-14b precedent)
+_SEED_REMOVAL_LEDGER = frozenset({
+    "EnhancedSplitManager.kt|EnhancedSplitManager|assignItemsToParticipants|SplitItemAssignmentDao|deleteAllForExpense|Long,List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>",
+    "EnhancedSplitManager.kt|EnhancedSplitManager|assignItemsToParticipants|SplitItemAssignmentDao|insertAssignments|Long,List<com.yourname.expensetracker.domain.split.EnhancedSplitManager.ItemAssignment>",
+    "EnhancedSplitManager.kt|EnhancedSplitManager|markAssignmentAsPaid|SplitItemAssignmentDao|markAsPaid|Long",
+    "EnhancedSplitManager.kt|EnhancedSplitManager|updateTemplate|SplitTemplateDao|updateTemplate|com.yourname.expensetracker.data.database.entity.SplitTemplate",
+    "EnhancedSplitManager.kt|EnhancedSplitManager|useTemplate|SplitTemplateDao|incrementUseCount|Long",
+    "ExpenseGroupDao.kt|ExpenseGroupDao|insertGroupWithMembers|GroupMemberDao|insertAll|com.yourname.expensetracker.data.database.entity.ExpenseGroup,com.yourname.expensetracker.data.database.dao.GroupMemberDao,List<com.yourname.expensetracker.data.database.entity.GroupMember>",
+    "ManualRecurringExpenseRepository.kt|ManualRecurringExpenseRepository|writeLifecycleEvent|RecurringLifecycleEventDao|insert|Long,String,Long,String?",
+    "MerchantCategoryRepository.kt|MerchantCategoryRepository|deleteAll|MerchantCategoryDao|deleteAll|",
+    "MerchantNormalizationRepository.kt|MerchantNormalizationRepository|deleteUnusedAliasesOlderThan|MerchantNormalizationDao|deleteUnusedAliasesOlderThan|Long",
+    "MerchantNormalizationRepository.kt|MerchantNormalizationRepository|updateCanonicalCategory|MerchantNormalizationDao|updateCanonicalCategory|Long,Long?",
+    "MerchantNormalizationRepository.kt|MerchantNormalizationRepository|updateCanonical|MerchantNormalizationDao|updateCanonical|com.yourname.expensetracker.data.database.entity.MerchantCanonical",
+    "OperationRunRecorder.kt|RoomOperationRunRecorder|recoverStaleRunningOperationRuns|OperationRunDao|finalizeIfRunning|Long",
+    "OperationRunRecorder.kt|RoomOperationRunRecorder|recoverStaleRunningOperationRuns|OperationRunEventDao|insert|Long",
+    "ReceiptMatchLifecycleService.kt|ReceiptMatchLifecycleService|approveMatchSuggestion|ReceiptEventDao|insert|Long",
+    "ReceiptMatchLifecycleService.kt|ReceiptMatchLifecycleService|approveMatchSuggestion|ScannedReceiptDao|update|Long",
+    "ReceiptRepository.kt|ReceiptRepository|clearMatchForReceipt|ScannedReceiptDao|update|Long",
+    "ReceiptRepository.kt|ReceiptRepository|writeReceiptEvent|ReceiptEventDao|insert|Long,String,Long,String,String,String,String,String?",
+    "RecurringExpenseRepository.kt|RecurringExpenseRepository|writeLifecycleEvent|RecurringLifecycleEventDao|insert|Long,String,Long,String?,String?,String?",
+    "RecurringLifecycleEventWriter.kt|RoomRecurringLifecycleEventWriter|writeDiagnostic|RecurringLifecycleEventDao|insert|Long?,String,String?,String?,String?,Long",
+    "SavingsGoalRepository.kt|SavingsGoalRepository|addToGoalAmount|SavingsGoalDao|addToGoalAmount|Long,Double",
+    "SavingsGoalRepository.kt|SavingsGoalRepository|deleteGoal|SavingsGoalDao|deleteGoal|com.yourname.expensetracker.data.database.entity.SavingsGoal",
+    "SavingsGoalRepository.kt|SavingsGoalRepository|updateGoalAmount|SavingsGoalDao|updateGoalAmount|Long,Double",
+    "SavingsGoalRepository.kt|SavingsGoalRepository|updateSavingsGoalAmount|SavingsGoalDao|updateGoalAmount|Long,Double",
+    "SourceStatsRepository.kt|SourceStatsRepository|decrementPending|SourceStatsDao|decrementPending|String",
+    "SourceStatsRepository.kt|SourceStatsRepository|deleteAll|SourceStatsDao|deleteAll|",
+    "SourceStatsRepository.kt|SourceStatsRepository|incrementAccepted|SourceStatsDao|incrementAccepted|String",
+    "SourceStatsRepository.kt|SourceStatsRepository|incrementAutoRejected|SourceStatsDao|incrementAutoRejected|String",
+    "SourceStatsRepository.kt|SourceStatsRepository|incrementDuplicate|SourceStatsDao|incrementDuplicate|String",
+    "SourceStatsRepository.kt|SourceStatsRepository|incrementPending|SourceStatsDao|incrementPending|String",
+    "SourceStatsRepository.kt|SourceStatsRepository|incrementRejected|SourceStatsDao|incrementRejected|String",
+    "SourceStatsRepository.kt|SourceStatsRepository|incrementTotal|SourceStatsDao|incrementTotal|String,Long",
+    "SourceStatsRepository.kt|SourceStatsRepository|resetAllPendingCounts|SourceStatsDao|resetAllPendingCounts|",
+    "SubscriptionManagementRepository.kt|SubscriptionManagementRepository|insertPriceHistory|SubscriptionPriceHistoryDao|insert|com.yourname.expensetracker.data.database.entity.SubscriptionPriceHistory",
+    "SubscriptionManagementRepository.kt|SubscriptionManagementRepository|insertSubscription|ManualRecurringExpenseDao|insert|com.yourname.expensetracker.data.database.entity.ManualRecurringExpense",
+    "SubscriptionManagementRepository.kt|SubscriptionManagementRepository|markCandidateAsConverted|SubscriptionCandidateDao|markAsConverted|Long,Long,Long",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|bulkUpdateCategory|ExpenseDao|updateCategoryForCategory|Long,Long,String",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|bulkUpdateCategory|TransactionEventDao|insert|Long,Long,String",
+    "UserCorrectionRepository.kt|UserCorrectionRepository|deleteAll|UserCorrectionDao|deleteAll|",
+    "WarrantyTrackerRepository.kt|WarrantyTrackerRepository|addReturnWindow|ReturnWindowDao|insertReturnWindow|com.yourname.expensetracker.data.database.entity.ReturnWindow",
+    "WarrantyTrackerRepository.kt|WarrantyTrackerRepository|deleteReturnWindow|ReturnWindowDao|deleteReturnWindow|com.yourname.expensetracker.data.database.entity.ReturnWindow",
+    "WarrantyTrackerRepository.kt|WarrantyTrackerRepository|markAsReturned|ReturnWindowDao|updateReturnWindow|Long,Double?,String?",
+    "WarrantyTrackerRepository.kt|WarrantyTrackerRepository|updateReturnWindow|ReturnWindowDao|updateReturnWindow|com.yourname.expensetracker.data.database.entity.ReturnWindow",
+
+    "ExpenseWriteStore.kt|ExpenseWriteStore|conditionallySetLocation|ExpenseDao|conditionallySetLocation|Long,Double,Double,String,String?,String?",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|deleteAll|ExpenseDao|deleteAll|",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|delete|ExpenseDao|delete|com.yourname.expensetracker.data.database.entity.Expense",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|incrementBackfillAttempts|ExpenseDao|incrementBackfillAttempts|Long",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|insertAll|ExpenseDao|insertAll|List<com.yourname.expensetracker.data.database.entity.Expense>",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|insert|ExpenseDao|insert|com.yourname.expensetracker.data.database.entity.Expense",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|updateCategoryNullable|ExpenseDao|updateCategoryNullable|Long,Long?",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|updateCategory|ExpenseDao|updateCategory|Long,Long",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|updateMerchantKey|ExpenseDao|updateMerchantKey|Long,String",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|updateMerchant|ExpenseDao|updateMerchant|Long,String",
+    "ExpenseWriteStore.kt|ExpenseWriteStore|update|ExpenseDao|update|com.yourname.expensetracker.data.database.entity.Expense",
+
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|addExpense|GroupLifecycleEventDao|insert|Long,String,Double,Long,String?,com.yourname.expensetracker.data.database.entity.SplitType,String?,Long",
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|addMember|GroupLifecycleEventDao|insert|Long,String,String?,Boolean",
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|archiveGroup|GroupLifecycleEventDao|insert|Long",
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|createGroup|GroupLifecycleEventDao|insert|String,String?,String,List<com.yourname.expensetracker.data.database.entity.GroupMember>",
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|deleteGroupPermanently|GroupLifecycleEventDao|insert|Long,Boolean",
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|emitLifecycleEvent|GroupLifecycleEventDao|insert|Long,String,Long,Long",
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|recordSettlement|GroupSettlementDao|insert|Long,Long,Long,Double,String,String?,Long?",
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|removeMember|GroupLifecycleEventDao|insert|Long,Long",
+    "GroupLifecycleCoordinator.kt|GroupLifecycleCoordinator|removeMember|GroupMemberDao|update|Long,Long",
+
+    "BudgetForecastingEngine.kt|BudgetForecastingEngine|updateForecastAccuracy|BudgetForecastDao|update|Long,Double",
+    "InvestmentTracker.kt|InvestmentTracker|updatePrice|InvestmentDao|updatePrice|Long,Double",
+    "InvestmentTracker.kt|InvestmentTracker|updatePrice|InvestmentValueDao|insert|Long,Double",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|deleteExpense|ExpenseDao|delete|Long,String,String?,String?,String?",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|deleteExpense|ExpenseDao|delete|com.yourname.expensetracker.data.database.entity.Expense,String,String?,String?,String?",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|deleteExpense|TransactionEventDao|insert|Long,String,String?,String?,String?",
+    "TransactionLifecycleCoordinator.kt|TransactionLifecycleCoordinator|deleteExpense|TransactionEventDao|insert|com.yourname.expensetracker.data.database.entity.Expense,String,String?,String?,String?",
+})
+
+
+def _seed_ledger_keys(entries):
+    return {"|".join(_seed_removal_key(entry)) for entry in entries}
+
 def _entry_fields(entry):
     """Field-exact identity of a loaded seed entry (verbatim comparison)."""
     return (
@@ -7208,17 +7336,38 @@ def test_combined_seed_file_concatenates_all_twenty_seven_batch_seed_files():
     assert len(gr08p1) == 23
     assert len(gr08p2) == 15
     assert len(gr14) == 6
-    assert len(combined) == 421
+    # GR-14u34: the combined doc is the living --seed-rows input and the
+    # GR-14 dead-writer tranches pruned it (421 -> 379 through GR-14u34 -> 368 through GR-14u35 -> 359 through GR-14u36 -> 352 through GR-14u37);
+    # the frozen per-batch files above keep their historical counts.  The
+    # contract is now: combined == concat(batch files) MINUS the
+    # documented removal ledger, with the ledger itself validated against
+    # both sides so it can rot in neither direction.
+    assert len(combined) == 352
     combined_fields = sorted(_entry_fields(entry) for entry in combined)
-    batch_fields = sorted(
-        _entry_fields(entry)
-        for entry in list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
+    batch_all = (
+        list(gr08a) + list(gr08b) + list(gr08c1) + list(gr08c2)
         + list(gr08d) + list(gr08e1) + list(gr08e2) + list(gr08f)
         + list(gr08g) + list(gr08h) + list(gr08i1) + list(gr08i2)
         + list(gr08i3) + list(gr08j1) + list(gr08j2) + list(gr08k1)
         + list(gr08k2) + list(gr08l1) + list(gr08l2) + list(gr08m1)
         + list(gr08m2) + list(gr08n1) + list(gr08n2) + list(gr08o)
         + list(gr08p1) + list(gr08p2) + list(gr14)
+    )
+    ledger_keys = _seed_ledger_keys(batch_all)
+    assert len(_SEED_REMOVAL_LEDGER) == 69
+    # every ledger row is a real frozen-batch row (no invented removals)
+    assert _SEED_REMOVAL_LEDGER <= ledger_keys, sorted(
+        _SEED_REMOVAL_LEDGER - ledger_keys
+    )
+    combined_ledger_keys = _seed_ledger_keys(combined)
+    # no ledger row survived into the combined doc (no stale authorization)
+    assert not (_SEED_REMOVAL_LEDGER & combined_ledger_keys), sorted(
+        _SEED_REMOVAL_LEDGER & combined_ledger_keys
+    )
+    batch_fields = sorted(
+        _entry_fields(entry)
+        for entry in batch_all
+        if "|".join(_seed_removal_key(entry)) not in _SEED_REMOVAL_LEDGER
     )
     assert combined_fields == batch_fields
     keys = [entry.mutation_key().canonical_key() for entry in combined]

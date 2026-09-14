@@ -9,10 +9,11 @@ import dagger.hilt.components.SingletonComponent
 object AppStartupDelegate {
 
     fun initialize(application: Application) {
-        EntryPointAccessors.fromApplication(
+        val coordinator: AppStartupCoordinator = EntryPointAccessors.fromApplication(
             application,
             AppStartupEntryPoint::class.java
-        ).appStartupCoordinator().initialize(application)
+        ).appStartupCoordinator()
+        coordinator.initialize(application)
     }
 }
 

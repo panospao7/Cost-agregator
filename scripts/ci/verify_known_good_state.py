@@ -181,7 +181,7 @@ _EXPECTED_INPUT_COUNT = 97
 # Post-GR-14b reconciliation (2026-09-04): the approved EXACT_IDENTITY_MOVE
 # (writeAssetDeleteFailedEvent) removed one emitting legacy key, so the fold
 # truth moved 57/42 -> 56/43 and the tracked candidate was regenerated
-# 472 -> 471 (GR-14h) -> 461 (GR-14u) -> 451 (GR-14u2) -> 441 (GR-14u3) -> 434 (GR-14u4) entries via the sanctioned --generate path.
+# 472 -> 471 (GR-14h) -> 461 (GR-14u) -> 451 (GR-14u2) -> 441 (GR-14u3) -> 434 (GR-14u4) -> 432 (GR-14u34) -> 421 (GR-14u35) -> 412 (GR-14u36) -> 407 (GR-14u37, dead-overload/method removals) entries via the sanctioned --generate path.
 # Post-GR-14c truth sync (2026-09-06): the candidate/active 8-key drift was
 # closed -- the 2 dead legacy keys GR-14c removed from the active policy were
 # removed from the migration input (fold 56/43/46 -> 54/43/44, input
@@ -194,7 +194,7 @@ _CANDIDATE_SCHEMA_VERSION = 2
 # GR-14h Pattern E tranche (2026-09-07): the 3 dead callables' 4 rows
 # left the generation inputs; tracked pair regenerated at 471 and the
 # active policy realigned by controlled promotion.
-_CANDIDATE_ENTRIES = 434
+_CANDIDATE_ENTRIES = 407
 _STRUCTURAL_ENTRIES = 64
 _STRUCTURAL_EXPECTED = 60
 _STRUCTURAL_FIXTURES = 4

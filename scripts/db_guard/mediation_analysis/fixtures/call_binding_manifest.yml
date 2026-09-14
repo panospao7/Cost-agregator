@@ -1,6 +1,26 @@
 # GR-13 call-binding resolution fixtures (shadow slice S2a).
 # One row per fixture file; expectedResolution uses the controlled
-# resolution-state vocabulary only.
+# resolution-state vocabulary only.  CB-19/CB-20 are the GR-14u45
+# lambda-parameter typing positives (callee-signature / receiver-generic
+# binding); CB-21..CB-26 are its fail-closed pins (arity mismatch, generic
+# component, two distinct signatures, async-region param, no explicit type
+# argument, named non-trailing argument).  CB-27..CB-29 are the GR-14u47
+# external-exact rows (preservation-rule exemption, unique-extension
+# carve-out, ambiguous-extension carve-out); CB-30 is the GR-14u48
+# inline-wrapper carrier positive.  CB-31..CB-40 are the GR-14u49
+# anonymous-object rows (member modelling, phantom suppression, naming
+# determinism, capture fail-closed, bounded fan-out positive/incomplete/
+# all-or-nothing, multi-supertype, wrapped-supertype pin); CB-41..CB-48
+# are its loop-variable typing rows (explicit-annotation positive,
+# unannotated/destructuring/map/string/scope-leak negatives, shadow and
+# inferred-only pins, set-headed fan-out positive).  CB-68..CB-70 are the
+# GR-14u55 kotlinx known-root rows (kotlinx star-import positive,
+# dual-star ambiguity/fiction-dissolution pin, non-root fail-closed pin).
+# CB-71..CB-73 are the GR-14u56c structured-suspend-scope rows
+# (coroutineScope positive, async-inside-coroutineScope positive,
+# async-on-unowned-receiver receiver-gate negative); CB-74 is the
+# GR-14u56d safeLookup-shaped wrapper row; CB-75 is the GR-14u56e
+# withRateLimit-shaped wrapper row.
 fixtures:
   - id: CB-01
     file: call_binding/cb01_overloads_diff_params.kt
@@ -19,7 +39,7 @@ fixtures:
     expectedResolution: UNRESOLVED_TARGET
   - id: CB-06
     file: call_binding/cb06_interface_dispatch.kt
-    expectedResolution: INTERFACE_DISPATCH
+    expectedResolution: EXACT_SYNCHRONOUS
   - id: CB-07
     file: call_binding/cb07_overridden_open_method.kt
     expectedResolution: VIRTUAL_DISPATCH
@@ -47,3 +67,184 @@ fixtures:
   - id: CB-15
     file: call_binding/cb15_final_class_override_member.kt
     expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-16
+    file: call_binding/cb16_lazy_get_chain.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-17
+    file: call_binding/cb17_single_implementor_exact.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-18
+    file: call_binding/cb18_bound_reference_exact.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-19
+    file: call_binding/cb19_lambda_param_callee_signature.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-20
+    file: call_binding/cb20_lambda_param_receiver_generic.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-21
+    file: call_binding/cb21_lambda_param_arity_mismatch.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-22
+    file: call_binding/cb22_lambda_param_generic_component.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-23
+    file: call_binding/cb23_lambda_param_two_signatures.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-24
+    file: call_binding/cb24_lambda_param_async_region.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-25
+    file: call_binding/cb25_lambda_param_no_type_arg.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-26
+    file: call_binding/cb26_lambda_param_named_arg.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-27
+    file: call_binding/cb27_external_exact_in_carrier.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-28
+    file: call_binding/cb28_extension_carveout.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-29
+    file: call_binding/cb29_extension_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-30
+    file: call_binding/cb30_inline_wrapper_carrier.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-31
+    file: call_binding/cb31_anon_member_modelled.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-32
+    file: call_binding/cb32_phantom_suppressed.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-33
+    file: call_binding/cb33_two_anon_one_file.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-34
+    file: call_binding/cb34_captured_var_failclosed.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-35
+    file: call_binding/cb35_fanout_loopvar_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-36
+    file: call_binding/cb36_fanout_incomplete.kt
+    expectedResolution: INTERFACE_DISPATCH
+  - id: CB-37
+    file: call_binding/cb37_capture_val_param.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-38
+    file: call_binding/cb38_fanout_all_or_nothing.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-39
+    file: call_binding/cb39_multi_supertype.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-40
+    file: call_binding/cb40_wrapped_supertypes.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-41
+    file: call_binding/cb41_loopvar_unannotated.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-42
+    file: call_binding/cb42_loopvar_destructuring.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-43
+    file: call_binding/cb43_loopvar_map.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-44
+    file: call_binding/cb44_loopvar_string.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-45
+    file: call_binding/cb45_loopvar_scope_leak.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-46
+    file: call_binding/cb46_loopvar_shadow.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-47
+    file: call_binding/cb47_loopvar_inferred_only.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-48
+    file: call_binding/cb48_loopvar_set_fanout.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-49
+    file: call_binding/cb49_returntype_chain.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-50
+    file: call_binding/cb50_returntype_missing.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-51
+    file: call_binding/cb51_returntype_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-52
+    file: call_binding/cb52_returntype_generic.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-53
+    file: call_binding/cb53_returntype_two_segment.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-54
+    file: call_binding/cb54_receiver_hint_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-55
+    file: call_binding/cb55_receiver_hint_absent.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-56
+    file: call_binding/cb56_hint_never_overrides.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-57
+    file: call_binding/cb57_star_import_fabrication.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-58
+    file: call_binding/cb58_star_import_corpus.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-59
+    file: call_binding/cb59_star_import_external.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-60
+    file: call_binding/cb60_safeexecute_wrapper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-61
+    file: call_binding/cb61_named_fanout_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-62
+    file: call_binding/cb62_named_fanout_incomplete.kt
+    expectedResolution: INTERFACE_DISPATCH
+  - id: CB-63
+    file: call_binding/cb63_bare_call_init.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-64
+    file: call_binding/cb64_lambda_shadow.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-65
+    file: call_binding/cb65_lambda_escaping.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-66
+    file: call_binding/cb66_lambda_generic.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-67
+    file: call_binding/cb67_outer_level_binding_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-68
+    file: call_binding/cb68_kx_pos.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-69
+    file: call_binding/cb69_kx_neg_ambiguous.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-70
+    file: call_binding/cb70_kx_neg_nonroot.kt
+    expectedResolution: UNRESOLVED_TARGET
+  - id: CB-71
+    file: call_binding/cb71_coroutinescope_carrier_positive.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-72
+    file: call_binding/cb72_async_in_coroutinescope_positive.kt
+    expectedResolution: EXACT_SYNCHRONOUS
+  - id: CB-73
+    file: call_binding/cb73_async_unowned_receiver_negative.kt
+    expectedResolution: ASYNC_DISPATCH
+  - id: CB-74
+    file: call_binding/cb74_safelookup_wrapper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+  - id: CB-75
+    file: call_binding/cb75_withratelimit_wrapper.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+

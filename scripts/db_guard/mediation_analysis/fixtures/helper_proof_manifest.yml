@@ -17,8 +17,8 @@ fixtures:
     expectedProof: UNPROVEN_EXTERNAL_ENTRY
   - id: HP-04
     file: helper_proof/hp04_function_reference.kt
-    expectedResolution: FUNCTION_REFERENCE
-    expectedProof: UNPROVEN_AMBIGUOUS_CALL
+    expectedResolution: EXACT_SYNCHRONOUS
+    expectedProof: COUNTEREXAMPLE_UNGUARDED_CALL_PATH
   - id: HP-05
     file: helper_proof/hp05_coroutine_launch.kt
     expectedResolution: ASYNC_DISPATCH
@@ -101,5 +101,17 @@ fixtures:
     expectedProof: PROVEN_HELPER
   - id: HP-22
     file: helper_proof/hp22_default_parameter_di_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-23
+    file: helper_proof/hp23_restore_scope_positive.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_RESTORE_INTERNAL
+  - id: HP-24
+    file: helper_proof/hp24_self_guarded_async_only.kt
+    expectedResolution: EXACT_CANONICAL_SCOPE
+    expectedProof: PROVEN_HELPER
+  - id: HP-25
+    file: helper_proof/hp25_self_guarded_mixed_callers.kt
     expectedResolution: EXACT_CANONICAL_SCOPE
     expectedProof: PROVEN_HELPER

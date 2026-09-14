@@ -1,0 +1,94 @@
+# GR-14u21 (§D4 investigation) — inherit/override enumeration must traverse ALL
+# supertypes. Zero board movement by design; this is a latent fail-OPEN fix.
+#
+# ROOT CAUSE (engine): `CallGraphBuilder._inherits_from` walked only the FIRST
+#   resolvable corpus supertype at each hop:
+#       for supertype in supertypes:
+#           if supertype in self.owners: nxt = supertype; break
+#   so it returned False whenever the base was listed as a NON-FIRST supertype:
+#       class Impl : Other, Iface { override fun go() {} }
+#   Both call sites are override enumeration (`_override_targets`,
+#   `_has_override_named`) — there are no other callers.
+#
+# WHY IT MATTERS (two under-approximations, both in the fail-OPEN direction):
+#   1. `_override_targets` UNDER-COUNTS implementors: 11 (interface, method)
+#      pairs on the production corpus.  One is a FALSE UNIQUE:
+#        WorkerDrainController.requestStopAndAwaitDrain
+#          engine  : 1 target  (NoOpWorkerDrainController)
+#          complete: 2 targets (NoOpWorkerDrainController + WorkerLeaseRegistryImpl)
+#      This is recorded because it is the exact reason a naive
+#      "exactly one implementor => exact dispatch" rule MUST NOT be built on the
+#      old enumeration.
+#   2. `_has_override_named` can return False although an override exists, which
+#      lets `_resolve_invocation` (callgraph.py:1968) fall through to an EXACT
+#      edge on an overridden member — the engine would prove a call exact when
+#      it is virtually dispatched.  That is under-approximation, i.e. the
+#      fail-OPEN direction this campaign exists to close.
+#
+# WHY THIS IS A SEPARATE, ZERO-EFFECT BATCH: the COMPLETE board was projected
+#   before landing (build/guard-debug/gr14w0/project_inherits.py, same traversal
+#   as committed):
+#       changed rows: 0 ; new counterexamples: 0 ; proven -> unproven: 0
+#       summary identical: proven_helper 155 / proven_worker_mediated 14 /
+#       ambiguous 77 / async 133 / external_entry 27
+#   So no live row was ever mis-proved or mis-counted by this defect — which is
+#   exactly why the fix is safe to land but also why it is landed as its own
+#   batch with its own pins rather than smuggled into a proving batch: it must
+#   not be credited with a delta it does not have.
+#
+# PINS (scripts/ci/test_gr14u21_supertype_traversal.py, 5) — all RED pre-fix:
+#   - `_inherits_from` finds a NON-FIRST supertype;
+#   - `_override_targets` finds the non-first-supertype implementation;
+#   - `_has_override_named` finds a non-first-supertype override;
+#   - an unrelated owner is not an implementor (no over-reach);
+#   - diamond reachability terminates (no loop).
+#
+# Validation:
+#   - engine battery 99 passed (+5 pins); scripts/db_guard 235 passed
+#     (test_models.py excluded — pre-existing bare `import models`); fixture_runner
+#     58/58.
+#   - live board re-captured after the fix: BYTE-IDENTICAL to the GR-14u20 board
+#     fe40d369... (0 rows move), confirming the projection.
+#   - policy, baseline and exception bytes unchanged.
+schemaVersion: 1
+batchId: GR-14u21
+startSha: 14d1a550
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: fe40d36915c153dc4894acf0905dc572cee8767bc9d49284f85c9b6082b7133a
+mediationReportSha256After: fe40d36915c153dc4894acf0905dc572cee8767bc9d49284f85c9b6082b7133a
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+      _inherits_from traverses ALL resolvable supertypes transitively instead of
+      only the first resolvable hop at each step
+  - scripts/ci/test_gr14u21_supertype_traversal.py: new pins (5)
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - none (0 rows move; latent fix)
+rootCause: GR13_INCOMPLETE_IMPLEMENTOR_WALK
+selectedPattern: ENGINE
+tests:
+  - test_gr14u21_supertype_traversal.py 5/5 (all RED pre-fix)
+  - engine battery 99 passed; scripts/db_guard 235 passed; fixture_runner 58/58
+  - live board byte-identical to GR-14u20 (0 rows move)
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  The inherit check used for override and implementor enumeration followed only
+  the first resolvable supertype at each hop, so a class that listed an
+  interface as a non-first supertype was not recognised as implementing it.  Two
+  consequences followed, both weakening the analysis: implementation sets were
+  under-counted, and an override could be missed, letting a virtually dispatched
+  call be treated as exact.  This batch makes the traversal complete and
+  transitive, with cycle-safe termination.  No policy row changes status - the
+  defect was latent - so the change is landed as its own batch with its own pins
+  rather than credited with a delta, and the board remains byte-identical at
+  fe40d369 with policy, baseline and exception bytes unchanged.

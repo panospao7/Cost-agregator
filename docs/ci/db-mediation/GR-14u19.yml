@@ -1,0 +1,112 @@
+# GR-14u19 (§D6) — LAND the multi-star import resolution.
+# proven_helper 69 -> 87 (+18); unproven_ambiguous_call 169 -> 151;
+# 0 counterexamples; 0 regressions.
+#
+# ROOT CAUSE (the headline of the whole D7 investigation):
+#   `_resolve_type` skipped `entry.is_star` in the exact-import loop and only
+#   handled the wildcard case when a file had EXACTLY ONE star import
+#   (`if len(star_prefixes) == 1`).  `AppDatabase.kt` has THREE
+#   (`…database.entity.*`, `…database.dao.*`, `androidx.room.*`), so
+#   `RoomDatabase` stayed `unknown`.  Consequently the `super.onCreate(db)` inside
+#   its anonymous `object : RoomDatabase.Callback()` failed closed in
+#   `_super_receiver_fqcn` (owner IS registered, supertype text is the SIMPLE name
+#   `RoomDatabase`, unresolved) and fell back to `_name_match_targets("onCreate")`
+#   — a 5-target match.  That single wrong edge was the tier-5 deciding edge for
+#   137 of the 169 `unproven_ambiguous_call` rows.  Same defect class as GR-14u6,
+#   which fixed the four other `super.onCreate` sites (all of which had explicit
+#   imports, so `_super_receiver_fqcn` succeeded there and the multi-star gap stayed
+#   hidden).
+#
+# FIX: with SEVERAL star imports, resolve a simple name only when exactly ONE
+# candidate is confident — a corpus owner, or a package under a known external root
+# (`_KNOWN_EXTERNAL_ROOTS`).  Two plausible candidates stays fail-closed `unknown`.
+# The single-star path is untouched.
+#
+# SHADOW DELTA (baseline = the committed GR-14u17 board state, da296160...):
+#   entries 406 -> 406 (key sets EQUAL); summary:
+#     proven_helper           69 -> 87   (+18)
+#     unproven_ambiguous_call 169 -> 151
+#     proven_worker_mediated  14 (unchanged); async 133 (unchanged);
+#     unproven_external_entry 21 (unchanged)
+#   changed rows: EXACTLY 18, ALL `unproven_ambiguous_call -> proven_helper`
+#   (`GR13_ALL_PATHS_GUARDED`, localGuard direct):
+#     clearExpenseLocation, updateUserCorrection, clearAllScannedReceipts,
+#     dismiss, expireOld, rejectReview (x5), updatePendingReviewCategoryBulk,
+#     updatePendingReviewMerchantBulk, bulkUpdateCategory (x2),
+#     updateTypeAndTransferDetails (x4).
+#   **0 counterexample flips, 0 proven->unproven regressions.**
+#   Deterministic double-run BYTE-IDENTICAL
+#   (2b282860fae306c52a1542b6965523023e26c008d252cd23952c60ede7e51c1f).
+#   Policy bytes UNCHANGED (7851adc2...).
+#
+# THE STEP-0 GATE EARNED ITS KEEP: a first projection of this SAME change (before
+# GR-14u12/u13/u15/u16/u17) showed **18 counterexample flips**.  Hard-stopping there
+# rather than landing it is what uncovered the entire GR-14u11-u17 chain — three
+# real engine defects (D4/graph key mismatch, pseudo-site opacity interference, the
+# unrecognized `runWrite` form), a mediator conflation, and one genuine unguarded
+# write.  The flips were false positives caused by guards the engine could not see.
+# Only after those were fixed does the same change land with ZERO flips.
+#
+# FIXTURE PINS (scripts/ci/test_gr14u18_multistar_resolution.py, 5):
+#   - the AppDatabase shape (three wildcards, one confident external candidate)
+#     resolves — verified RED before the fix (returned ("", "unknown"));
+#   - single star import still resolves (pre-existing behaviour preserved);
+#   - MULTIPLE matching external roots stays `unknown` (fail closed, no guessing);
+#   - no matching candidate stays `unknown`;
+#   - a fully-qualified spelling resolves without any import.
+#
+# D6 (from the handoff) is now DRAINED: the 137 rows that this one wrong edge
+# tainted are resolved, the 18 above are proven, and the remaining ambiguous rows
+# fall to the ordinary GR-14 D4 residue (interface_dispatch / function_reference)
+# and the async carriers.
+#
+# Validation:
+#   - engine battery 89 passed; scripts/db_guard 235 passed (test_models.py
+#     excluded — bare `import models`, runs only from its own directory;
+#     pre-existing and unrelated); fixture_runner 58/58.
+#   - live board deterministic double-run (2b282860...); policy bytes unchanged.
+#   - Python-only; no Kotlin change in THIS batch.
+schemaVersion: 1
+batchId: GR-14u19
+startSha: 50c0b8bc
+gateEvidenceSha256: null # policy unchanged; GATE-00R owed at merge as before
+mediationReportSha256Before: da2961609c55dfa4f04bbeb5c416477f9c69968fb7e3adc77f4614596a21835e
+mediationReportSha256After: 2b282860fae306c52a1542b6965523023e26c008d252cd23952c60ede7e51c1f
+activePolicySha256: 7851adc2f21805246df175790993a0677dadcac4604acb8f78a98b89b7ab6a31
+baselineSha256: unchanged
+
+codeFixes:
+  - scripts/db_guard/mediation_analysis/callgraph.py:
+      _resolve_type resolves a simple name through MULTIPLE star imports when
+      exactly one candidate is confident (corpus owner, or known external root),
+      otherwise stays fail-closed unknown
+  - scripts/ci/test_gr14u18_multistar_resolution.py: new pins (5)
+
+policyFixes:
+  - none (policy bytes unchanged)
+
+selectedMutationKeys:
+  - (18 rows) see the delta list in the header
+rootCause: GR13_UNCERTAIN_CALL_EDGE # multi-star sibling of the GR-14u6 super-resolution defect
+selectedPattern: ENGINE
+tests:
+  - test_gr14u18_multistar_resolution.py 5/5 (positive pin RED pre-fix)
+  - engine battery 89 passed; scripts/db_guard 235 passed; fixture_runner 58/58
+  - live board: +18 proven_helper, 0 counterexamples, 0 regressions, deterministic
+
+status: COMPLETE
+owner: "@panospao7"
+linkedIssue: GR-14
+
+manifestStatement: >
+  A file importing several packages with wildcards could not resolve any simple
+  type name, so RoomDatabase stayed unknown in AppDatabase.kt and the super.onCreate
+  inside its anonymous RoomDatabase.Callback fell back to matching onCreate by name,
+  which tainted the reachability of 137 policy rows.  This batch resolves a simple
+  name through multiple star imports only when exactly one candidate is confident,
+  and stays fail-closed unknown when two packages could both provide it, so no
+  ambiguity is ever resolved by guessing.  The change is evidence-backed and
+  regression-free: 18 rows move from unproven_ambiguous to proven_helper with zero
+  counterexample flips and zero regressions, on a deterministic board, with policy,
+  baseline and exception bytes unchanged, and the report remains shadow-only
+  (reportOnly: true).

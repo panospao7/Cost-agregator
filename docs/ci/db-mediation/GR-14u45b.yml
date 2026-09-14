@@ -1,0 +1,109 @@
+# GR-14u45b — canonical write-barrier remediation of the 4 u45-exposed
+# true-positive counterexamples (production Kotlin + tests).
+#
+# DEFECT: u45's lambda-parameter typing resolved the ESPM `initialize`
+# edge exactly, which unmasked the real startup reachability of the
+# restore-journal import: MainApplication.onCreate ->
+# AppStartupDelegate.initialize -> AppStartupCoordinator.initialize ->
+# importRestoreJournals -> importLastSuccessJournalIfPresent /
+# importLastFailureJournalIfPresent -> OperationRunDao.insert /
+# OperationRunEventDao.insert (root: framework_callback).  The importer
+# contained ZERO writeBarrier.checkWritesAllowed calls; the only gate was
+# the isWritesAllowed() branch in AppStartupCoordinator.initialize L38 —
+# a read-query boolean the proof layer does not model as a canonical
+# barrier.  These 4 rows were the DECLARED batch inputs (u45 remediation
+# schedule, reviewer PROCEED-OPTION-A).
+#
+# FIX (production Kotlin, minimal):
+#   - RestoreJournalImporter.kt: `private val writeBarrier:
+#     DatabaseWriteBarrier` added as the LAST param of the @Inject
+#     constructor.  NO import statement needed — the file is in package
+#     com.yourname.expensetracker.data.backup, the same package as
+#     DatabaseWriteBarrier (verified).
+#   - Guarded check at the ENTRY of BOTH importLastSuccessJournalIfPresent
+#     and importLastFailureJournalIfPresent, BEFORE the outer try/catch —
+#     a check inside the try would be swallowed by the generic
+#     `catch (e: Exception)` blocks and misreported as an import failure.
+#     Mirrors the BankStatementLifecycleProcessor.processBankStatement /
+#     u44b importer-entry pattern: CancellationException is rethrown,
+#     every other failure logs the CONTROLLED CONSTANT "Restore journal
+#     import skipped: database maintenance in progress" (never e.message —
+#     repo privacy rule) and early-returns (Unit functions), leaving the
+#     journal unmarked so a later healthy startup retries.
+#   - Test updates: RestoreJournalImporterFailureTest.kt (the ONLY test
+#     file constructing the importer — verified by repo-wide grep; Hilt
+#     provides the rest) — setUp passes a NORMAL-mode DatabaseWriteBarrier
+#     built from a mocked RestoreMaintenanceMode (the DatabaseBarrierTest
+#     pattern, as in u44b).  NEW tests: blocked mode (RESTORE_PREPARING)
+#     early-return per FUNCTION (success + failure journals) with
+#     coVerify exactly = 0 on both DAO inserts AND the journal left
+#     unmarked (assertFalse isSuccess/isFailureJournalImported — a later
+#     healthy startup retries); CancellationException from the barrier
+#     propagates unconverted.  A writeSuccessJournal helper mirrors the
+#     existing writeFailureJournal (beginJournal -> appendEvent ->
+#     commitJournal).
+#   - NOT touched: AppStartupCoordinator (the L38 boolean gate is a
+#     scheduling decision, not a barrier; adding a canonical check there
+#     was not in the approved design), ImportCoordinator, the engine
+#     scripts.
+#
+# OUTCOME (board, pre ddbd76ff... -> post fa065dfeb785d0c9, double run
+# byte-identical): counterexample_unguarded_call_path 4 -> 0;
+# proven_helper 324 UNCHANGED; ambiguous 1 -> 5.
+#   Moved rows (all counterexample_unguarded_call_path/
+#   GR13_UNGUARDED_CALL_PATH -> unproven_ambiguous_call/
+#   GR13_LOCAL_GUARD_UNMODELABLE):
+#     RestoreJournalImporter.importLastSuccessJournalIfPresent ->
+#       OperationRunDao.insert
+#     RestoreJournalImporter.importLastSuccessJournalIfPresent ->
+#       OperationRunEventDao.insert
+#     RestoreJournalImporter.importLastFailureJournalIfPresent ->
+#       OperationRunDao.insert
+#     RestoreJournalImporter.importLastFailureJournalIfPresent ->
+#       OperationRunEventDao.insert
+#   THE EXPECTED proven_helper TERMINAL STATE WAS NOT REACHED — reported
+#   honestly, not fabricated.  Root cause: the RestoreJournalImporter
+#   callables were ALREADY unmodelable by the GR-12 tokenizer BEFORE this
+#   batch (probed both ways: pre-existing DB_STRUCTURAL_MODEL_LAMBDA_ESCAPE
+#   findings on the `.mapNotNull { }` chained call and the `runCatching
+#   { }` block inside importLastSuccessJournalIfPresent — the same
+#   u33-era debt that held processBankStatement at
+#   GR13_LOCAL_GUARD_UNMODELABLE until u41).  With an unmodelable body the
+#   GR-12 direct-site prover cannot establish dominance (which is how
+#   u44b's fully-modelable importers proved exact_canonical_scope);
+#   instead the GR-14u15 tri-state applies: the body could not be modeled,
+#   but the canonical barrier call PRECEDES each mutation site, so
+#   "definitely unguarded" is NOT established and the counterexample
+#   correctly dissolves into GR13_LOCAL_GUARD_UNMODELABLE — the same
+#   honest guarded-but-unmodelable state processBankStatement carried
+#   before u41.  The defect this batch targets (unguarded startup write
+#   path) IS fixed: the barrier is real, detected by the engine, and the
+#   counterexamples are gone.  The remaining ambiguity is the pre-existing
+#   tokenizer debt, not a new finding; lifting it (a u41-style
+#   `.mapNotNull`-chain / runCatching tokenizer batch) would move these 4
+#   rows to proven_helper.
+#
+# HARD STOP CHECKS: 0 counterexamples remaining, 0 previously-proven rows
+#   regressed (324 proven_helper / 1 restore / 14 worker byte-identical;
+#   all 379 entries diffed — only the 4 declared rows changed state, from
+#   counterexample to the unmodelable-ambiguous tri-state), 0 unexpected
+#   delta.
+#
+# VALIDATION:
+#   - scripts/db_guard: 269 passed (engine untouched in u45b)
+#   - fixture corpus: 72/72, exit 0
+#   - board double run byte-identical fa065dfeb785d0c9
+#   - Kotlin: NOT RUN — production Kotlin changed (1 constructor param +
+#     2 entry checks); human/CI compile validation OWED; the updated test
+#     file is compile-critical (positional constructor)
+#   - test file updated: RestoreJournalImporterFailureTest.kt (1 file;
+#     +4 tests: 2 blocked-mode per function, 1 cancellation propagation,
+#     plus the writeSuccessJournal helper)
+#
+# Remaining: the 4 rows sit at GR13_LOCAL_GUARD_UNMODELABLE pending a
+#   u41-style tokenizer batch for the `.mapNotNull`-chain / runCatching
+#   lambda-escape findings (pre-existing debt, same family
+#   processBankStatement carried before u41); the Handle.increment
+#   ambiguous row (interface_dispatch uncertainty); the async 35 (u43
+#   family table).
+status: COMPLETE_AT_BOARD_fa065dfe

@@ -74,6 +74,17 @@ FIXTURE_CONTRACT = AnalysisContract(
     # fixture-local receiver name stands in for the production set, and the
     # negative fixture proves unlisted receivers stay async.
     structured_launch_receivers=("viewModelScope", "fixtureScope"),
+    # HP-23 exercises the V3 restore-internal scope form (receiver-exact, like
+    # the worker guard).  A fixture-local scope class stands in for the
+    # production `RestoreInternalWriteScope`; the method name `run` is
+    # deliberately the same as the stdlib inline transparent method, because
+    # restore admission is receiver-exact and must not widen to other receivers.
+    restore_scope_receiver_fqcn="fixtures.helperproof.Hp23RestoreScope",
+    restore_scope_methods=("run",),
+    # CB-73 exercises the GR-14u56c async receiver-evidence gate: the
+    # fixture-local unowned receiver name stays OUTSIDE the closed set, so
+    # the negative row keeps its ASYNC_DISPATCH edge.
+    async_owned_receivers=(),
 )
 
 # CB rows: every listed (caller method, callee name) pair must resolve to
@@ -94,6 +105,123 @@ CB_SUBJECT_CALLS = {
     "CB-13": (("exercise", "uniqueNormalize"),),
     "CB-14": (("exerciseCb14", "qualifiedTopLevel"),),
     "CB-15": (("exerciseCb15", "accept"),),
+    "CB-16": (("exerciseCb16", "put"),),
+    "CB-17": (("exerciseCb17", "push"),),
+    "CB-18": (("exerciseCb18", "save"),),
+    # GR-14u45 lambda-parameter typing: positives bind the lambda param
+    # through the carrier (callee signature / receiver generic); the pins
+    # keep the fail-closed edges (arity mismatch, generic component, two
+    # distinct signatures, async-region param, no explicit type argument,
+    # named non-trailing argument).
+    "CB-19": (("exerciseCb19", "event"),),
+    "CB-20": (("exerciseCb20", "initialize"),),
+    "CB-21": (("exerciseCb21", "event"),),
+    "CB-22": (("exerciseCb22", "event"),),
+    "CB-23": (("exerciseCb23", "event"),),
+    "CB-24": (("exerciseCb24", "event"),),
+    "CB-25": (("exerciseCb25", "initialize"),),
+    "CB-26": (("exerciseCb26", "event"),),
+    # GR-14u47 external-exact rows: the preservation-rule exemption keeps
+    # a provably-external edge exact inside admitted carriers (CB-27);
+    # a corpus extension candidate — unique (CB-28) or ambiguous (CB-29) —
+    # keeps the uncertain name-match edge (carve-out).
+    "CB-27": (("exerciseCb27", "success"),),
+    "CB-28": (("exerciseCb28", "persist"),),
+    "CB-29": (("exerciseCb29", "persist"),),
+    # GR-14u48 inline-wrapper carrier: a guardTerminal-shaped private
+    # wrapper (block invoked exactly once inline) admits its trailing
+    # lambda; the corpus method inside resolves exact.
+    "CB-30": (("exercise", "markImported"),),
+    # GR-14u49 anonymous-object + loop-variable fixtures.  Subjects whose
+    # callee lives inside a synthetic anon member use the member's method
+    # name as the caller (the synthetic callable shares the fixture file).
+    "CB-31": (("run", "purge"),),
+    # CB-32 is a structural pin: the phantom supertype-token call record
+    # must not exist (verified by probe; documented in the GR-14u49
+    # manifest).  The row pins the fixture's own marker call.
+    "CB-32": (("exerciseCb32", "cb32Marker"),),
+    "CB-33": (("emit", "cb33Record"),),
+    "CB-34": (("run", "purge"),),
+    "CB-35": (("exerciseCb35", "purge"),),
+    "CB-36": (("exerciseCb36", "drain"),),
+    "CB-37": (("run", "purge"),),
+    "CB-38": (("exerciseCb38", "purge"),),
+    "CB-39": (("exerciseCb39", "runA"),),
+    "CB-40": (("exerciseCb40", "purge"),),
+    "CB-41": (("exerciseCb41", "purge"),),
+    "CB-42": (("exerciseCb42", "purge"),),
+    "CB-43": (("exerciseCb43", "purge"),),
+    "CB-44": (("exerciseCb44", "purge"),),
+    "CB-45": (("exerciseCb45", "drain"),),
+    "CB-46": (("exerciseCb46", "purgeInner"),),
+    "CB-47": (("exerciseCb47", "purge"),),
+    "CB-48": (("exerciseCb48", "purge"),),
+    # GR-14u50 return-type capture + chain typing: positives bind the val
+    # through explicit declared return types (single and two-segment
+    # chains); the pins fail closed on missing return types, distinct
+    # return types, and generic components.
+    "CB-49": (("exerciseCb49", "insert"),),
+    "CB-50": (("exerciseCb50", "insert"),),
+    "CB-51": (("exerciseCb51", "insert"),),
+    "CB-52": (("exerciseCb52", "insert"),),
+    "CB-53": (("exerciseCb53", "insert"),),
+    # GR-14u52 receiver-hint fixtures: the BH-pos subject resolves through
+    # u49 capture typing; the BH-neg keeps the pre-hint unresolved edge;
+    # the override pin proves the declaration path wins over any hint.
+    "CB-54": (("run", "insert"),),
+    "CB-55": (("run", "insert"),),
+    "CB-56": (("run", "insert"),),
+    # GR-14u53 star-import discipline fixtures: the fabrication pin (a
+    # non-known-root star candidate stays unresolved), corpus resolution
+    # through a star import, and the legitimate known-root external case.
+    "CB-57": (("exerciseCb57", "foo"),),
+    "CB-58": (("exerciseCb58", "bar"),),
+    "CB-59": (("exerciseCb59", "append"),),
+    # GR-14u54 inline-wrapper carrier: a safeExecute-shaped private
+    # wrapper (block invoked exactly once inside try/catch) admits its
+    # trailing lambda; the corpus method inside resolves exact.
+    "CB-60": (("exercise", "markImported"),),
+    # GR-14u54b named-implementor fan-out: the positive emits exact edges
+    # to BOTH named implementors; the completeness negative (an implementor
+    # inheriting the interface's DEFAULT member, overriding nothing)
+    # withdraws the admission.
+    "CB-61": (("exerciseCb61", "accept"),),
+    "CB-62": (("exerciseCb62", "accept"),),
+    # GR-14u55b lambda-scope fixtures: the bare-call initializer positive
+    # (the callee's declared return type types the val), the shadow pin
+    # (innermost binding wins), and the two fail-closed pins (an
+    # async-carrier lambda param keeps the ASYNC_DISPATCH region state;
+    # a generic component never binds).
+    "CB-63": (("exercise", "success"),),
+    "CB-64": (("exerciseCb64", "ping"),),
+    "CB-65": (("exerciseCb65", "success"),),
+    "CB-66": (("exerciseCb66", "success"),),
+    "CB-67": (("exerciseCb67", "success"),),
+    # GR-14u55 kotlinx known-root fixtures: the kotlinx star-import positive
+    # (a MutableStateFlow-typed local val's member call resolves
+    # exact-external), the dual-star fiction-dissolution pin (java.util +
+    # kotlinx star imports -> honest ambiguity, no fabricated FQCN), and the
+    # non-root fail-closed pin (the roots list is not a wildcard).
+    "CB-68": (("exercise", "update"),),
+    "CB-69": (("exercise", "emitNow"),),
+    "CB-70": (("exercise", "emitNow"),),
+    # GR-14u56c structured-suspend-scope rows: the coroutineScope positive
+    # and the async-inside-coroutineScope positive (the processBatch
+    # shape) resolve exact; the unowned-receiver async keeps the
+    # fail-closed ASYNC_DISPATCH edge (receiver-evidence gate).
+    "CB-71": (("exerciseCb71", "put"),),
+    "CB-72": (("exerciseCb72", "put"),),
+    "CB-73": (("exerciseCb73", "put"),),
+    # GR-14u56d inline-wrapper carrier: a safeLookup-shaped private suspend
+    # wrapper (block invoked exactly once inside try/catch with
+    # CancellationException rethrown) admits its trailing lambda; the
+    # corpus method inside resolves exact.
+    "CB-74": (("exercise", "markImported"),),
+    # GR-14u56e inline-wrapper carrier: a withRateLimit-shaped private
+    # suspend wrapper (block invoked exactly once inside an admitted
+    # withLock scope) admits its trailing lambda; the corpus method
+    # inside resolves exact.
+    "CB-75": (("exercise", "markImported"),),
 }
 
 # HP rows: (helper method) owning the synthetic store.put mutation.
@@ -123,6 +251,9 @@ HP_SUBJECT_HELPERS = {
     "SL-03": "writeRow",
     "HP-21": "writeRow",
     "HP-22": "writeRow",
+    "HP-23": "writeRow",
+    "HP-24": "writeRow",
+    "HP-25": "writeRow",
 }
 
 # WP rows: (owner simple name, callable method, site selector).

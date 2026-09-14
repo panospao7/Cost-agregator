@@ -46,6 +46,7 @@ from .structural_analysis.cfg import build_callable_cfg
 from .structural_analysis.model import MutationSite, SourceSpan
 from .structural_analysis.shadow_report import _default_opacity_predicate
 from .structural_analysis.tokenizer import parse_callable_body
+from .mediation_analysis.callgraph import PRODUCTION_TRANSPARENT_INLINE_METHODS
 
 __all__ = [
     "CallableDirectBarrierProof",
@@ -54,6 +55,18 @@ __all__ = [
     "prove_callable_direct_barriers",
     "prove_evidence_callable",
 ]
+
+#: GR-14u56c reviewed OWNED-receiver spellings for the `async` inline
+#: carrier (name-exact, closed set).  Evidence standard identical to the
+#: GR-14j structured-launch receivers: a class-owned CoroutineScope
+#: property tied to its owner's lifetime.  Empty today — the production
+#: census found ZERO receiver-qualified `async` calls (all 25 sites are
+#: receiverless `async {`); any future receiver form must be added here
+#: after its own reviewed census, never by widening the gate.
+_PRODUCTION_ASYNC_OWNED_RECEIVERS: tuple[str, ...] = ()
+
+#: Sentinel for the carrier-span walk: "this region is gated OUT".
+_SKIP = object()
 
 
 def _unsupported_result(site: MutationSite, callable_key: str) -> DirectBarrierProofResult:
@@ -104,6 +117,11 @@ class CallableDirectBarrierProof:
     results: tuple[DirectBarrierProofResult, ...] = ()
     callable_wide_failure: DirectBarrierProofResult | None = None
     has_canonical_barrier: bool = False
+    # Start offsets of every canonical barrier call site in the body, computed
+    # from masked text alone (no CFG).  Available even when the body cannot be
+    # modeled, where it is the only evidence that a guard exists at all
+    # (GR-14u15).  NOT a proof: presence never implies dominance.
+    barrier_call_offsets: tuple[int, ...] = ()
     diagnostics: tuple[str, ...] = ()
     _by_site_start: dict[int, DirectBarrierProofResult] = field(
         default_factory=dict, init=False, repr=False, compare=False
@@ -184,6 +202,8 @@ def prove_callable_direct_barriers(
     *,
     path: str,
     callable_key: str,
+    opacity_sites=None,
+    receiver_hints: dict[str, str] | None = None,
 ) -> CallableDirectBarrierProof:
     """Prove every mutation site of one callable; never raises.
 
@@ -192,6 +212,15 @@ def prove_callable_direct_barriers(
     CFG construction -> ``prove_direct_barrier``.  All sites of the callable
     must be passed: a lambda hiding any other row's mutation must never be
     modeled opaque, so partial site sets are caller bugs, not optimizations.
+
+    ``opacity_sites`` optionally overrides which sites drive the opacity
+    predicate (the proof itself still runs over every ``mutation_sites`` entry).
+    The mediation caller passes the callable's REAL mutation sites here while
+    still passing its pseudo-sites in ``mutation_sites`` so results exist for
+    their offsets: a pseudo-site is a call-edge offset, not a mutation, and
+    letting it force a lambda to be modeled can flip the whole callable to
+    UNSUPPORTED and hide a dominating barrier (GR-14u13).  Defaults to
+    ``mutation_sites`` — unchanged for every other caller.
     """
     sites = tuple(sorted(mutation_sites, key=lambda site: (site.span.start, site.span.end)))
     if not sites:
@@ -203,23 +232,103 @@ def prove_callable_direct_barriers(
             diagnostics=("DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",),
         )
 
-    opacity = _default_opacity_predicate(masked, body_span, sites)
+    gate_sites = (
+        sites
+        if opacity_sites is None
+        else tuple(sorted(opacity_sites, key=lambda site: (site.span.start, site.span.end)))
+    )
+
+    # Barrier call sites come from masked text alone, so this evidence survives
+    # a body the tokenizer refuses to model.
+    barrier_offsets = tuple(
+        sorted(
+            {
+                site.span.start
+                for site in canonical_barrier_call_sites(
+                    masked,
+                    body_span,
+                    CANONICAL_BARRIER_CONTRACT_V2,
+                    ReceiverTypeResolver(masked, hints=receiver_hints),
+                )
+            }
+        )
+    )
+
+    opacity = _default_opacity_predicate(masked, body_span, gate_sites)
     parse_result = parse_callable_body(
         masked,
         body_span,
         lambda_opacity_predicate=opacity,
         transparent_scope_methods=CANONICAL_BARRIER_CONTRACT_V2.transparent_scope_methods,
+        # GR-14u33: closed inline-carrier names make guarded bodies
+        # parseable over ordinary stdlib lambda idioms.  Parseability only:
+        # admission below still refuses every name outside the canonical
+        # scope contract, so mutations inside carrier lambdas stay
+        # disconnected (fail closed).
+        transparent_inline_methods=PRODUCTION_TRANSPARENT_INLINE_METHODS,
     )
     if parse_result.unsupported:
         return CallableDirectBarrierProof(
             results=tuple(_unsupported_result(site, callable_key) for site in sites),
-            has_canonical_barrier=False,
+            has_canonical_barrier=bool(barrier_offsets),
+            barrier_call_offsets=barrier_offsets,
             diagnostics=("DB_DIRECT_BARRIER_PROOF_UNSUPPORTED",),
         )
     markers = collect_barrier_markers(parse_result, masked)
-    resolver = ReceiverTypeResolver(masked)
+    resolver = ReceiverTypeResolver(masked, hints=receiver_hints)
     admitted = admit_transparent_scope_candidates(
         parse_result, CANONICAL_BARRIER_CONTRACT_V2, resolver
+    )
+
+    def _walk_carrier_spans(regions, async_owned_receivers=()):
+        for region in regions:
+            if (
+                region.kind.value == "TRANSPARENT_SCOPE"
+                and (region.scope_method or "") in PRODUCTION_TRANSPARENT_INLINE_METHODS
+            ):
+                # GR-14u56c receiver-evidence gate: the `async` carrier joins
+                # the enclosing flow only when its syntactic receiver is
+                # empty (kotlinx.coroutines.async on the enclosing scope) or
+                # one of the reviewed owned-receiver spellings;
+                # `coroutineScope` is receiverless by nature (a
+                # receiver-qualified spelling is a different, unmodeled
+                # method).  Fail closed: an unreviewed receiver keeps the
+                # carrier's span OUT of the admitted set, so its lambda body
+                # builds as a disconnected scope.
+                receiver = region.scope_receiver
+                if (region.scope_method or "") == "async":
+                    if receiver is not None and receiver not in async_owned_receivers:
+                        receiver = _SKIP
+                elif (region.scope_method or "") == "coroutineScope":
+                    if receiver is not None:
+                        receiver = _SKIP
+                if receiver is not _SKIP:
+                    yield (region.span.start, region.span.end)
+            yield from _walk_carrier_spans(
+                region.children, async_owned_receivers
+            )
+
+    # GR-14u33: inline-carrier regions (closed reviewed name set) execute
+    # their lambda body inline, so their children join the enclosing flow.
+    # This restores the pre-u33 effective semantics, where such statements
+    # were modeled as opaque sequence leaves and their inner writes were
+    # dominated by any preceding barrier; now the children are individually
+    # modeled instead of hidden.  Name-exact from the closed set only.
+    #
+    # GR-14u56c receiver-evidence gate: `async` (and receiverless-by-design
+    # `coroutineScope`) joined the closed set, but `async` is transparent
+    # ONLY when the syntactic receiver is empty or one of the reviewed
+    # owned-receiver spellings — a `GlobalScope.async { }` lambda is a
+    # genuinely detached dispatch and must never join the enclosing flow.
+    # Mirrors the mediation layer's `_lambda_regions` async gate.
+    admitted = frozenset(
+        admitted
+        | set(
+            _walk_carrier_spans(
+                parse_result.regions,
+                async_owned_receivers=_PRODUCTION_ASYNC_OWNED_RECEIVERS,
+            )
+        )
     )
     try:
         cfg, _cfg_diagnostics = build_callable_cfg(
@@ -269,6 +378,7 @@ def prove_callable_direct_barriers(
         results=per_site_results,
         callable_wide_failure=callable_wide_failure,
         has_canonical_barrier=has_canonical_barrier,
+        barrier_call_offsets=barrier_offsets,
         diagnostics=tuple(proof_diagnostics),
     )
 
