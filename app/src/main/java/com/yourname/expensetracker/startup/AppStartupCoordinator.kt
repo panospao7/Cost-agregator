@@ -8,6 +8,7 @@ import androidx.lifecycle.lifecycleScope
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.RestoreDatabaseOpener
 import com.yourname.expensetracker.data.backup.RestoreInternalWriteScope
+import com.yourname.expensetracker.domain.util.CancellationSafe
 import com.yourname.expensetracker.data.backup.RestoreJournal
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.ScannedReceiptDao
@@ -194,7 +195,7 @@ class AppStartupCoordinator @Inject constructor(
             Timber.e(e, "Startup: safety-restored DB PRAGMA check threw exception")
             return false
         } finally {
-            runCatching { db.close() }
+            CancellationSafe.runCatchingCancellable { db.close() }
         }
         // 2. Room open attempt (triggers migration validation)
         try {
@@ -381,7 +382,7 @@ class AppStartupCoordinator @Inject constructor(
                 current = resumeSingleAssetTask(current, task, sourceDir, receiptsDir, dao)
             }
         } finally {
-            runCatching { db.close() }
+            CancellationSafe.runCatchingCancellable { db.close() }
         }
         return current
     }
@@ -414,7 +415,7 @@ class AppStartupCoordinator @Inject constructor(
                 java.io.FileOutputStream(tempFile).use { output ->
                     input.copyTo(output)
                     output.flush()
-                    runCatching { output.fd.sync() }
+                    CancellationSafe.runCatchingCancellable { output.fd.sync() }
                 }
             }
             if (!tempFile.renameTo(finalFile)) {
@@ -429,8 +430,8 @@ class AppStartupCoordinator @Inject constructor(
             val receipt = dao.getById(task.receiptId)
             if (receipt == null) {
                 Timber.w("Startup: receipt row missing for restored asset receiptId=%d", task.receiptId)
-                runCatching { tempFile.delete() }
-                runCatching { finalFile.delete() }
+                CancellationSafe.runCatchingCancellable { tempFile.delete() }
+                CancellationSafe.runCatchingCancellable { finalFile.delete() }
                 return updateAssetTask(entry, task, RestoreJournal.AssetRestoreStatus.FAILED, "RECEIPT_ROW_MISSING")
             }
             restoreInternalWriteScope.run("startupAssetResume.updateImagePath") {
