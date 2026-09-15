@@ -98,7 +98,12 @@ email-path failures (a subset of the 10 recorded at the lane base in
 > under every mode except STORE_RAW. Remaining P3-007 step (conditional): ephemeral
 > item pass-through INTO categorization for fresh inserts under restricted modes —
 > requires a CategorizeReceiptItemsUseCase API change; the controlled skip covers
-> the privacy contract today. 12c not started.
+> the privacy contract today. 12c (P3-008) landed in `0a96e99a`:
+> AssetCleanupCoordinator with reference-counted, attempt-claimed cleanup on
+> every uncommitted-asset exit, typed OcrRecognitionFailedException carrying
+> the owned path (double-copy removed), cancellation-safe best-effort cleanup.
+> RP-12 core sequence 12a-12b-12c is now complete (conditional remainder
+> above).
 
 ### P3-004 — Use fresh reads and column-scoped receipt writes
 
