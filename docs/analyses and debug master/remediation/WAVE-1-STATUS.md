@@ -62,3 +62,40 @@
 
 RP-05→06→07→08→09 money chain ∥ RP-10 ∥ RP-12→13 (RP-13 carries the one
 Room-schema bump of the wave). Cut lanes from the current integration tip.
+
+### Wave 2 progress — 2026-09-15
+
+Integration line (`atomicity-pr21-enforcement-final`): `6fe6294f` guard
+deterministic U-003 expiry clock + negative controls (22/22); `0f3fe9ac`
+skills/agent-config guard hardening; `0c563b42` this status doc.
+
+Lane commits (lanes based at `8c11ecb3`, serial merges + registry
+regeneration still owed at endgame):
+
+- `rp-05-wip`: `bb4bd9f1` shared-expense round-trip test (P5-004);
+  `6b95ce7a` batch 2 — P5-005 six-month trend window, P5-003 completed-
+  history synthesis baseline (`historicalMonthAggregates`, MTD never the
+  baseline, null keeps confidence penalty), P5-012 uncategorized pseudo-
+  category with sum-complete percentages. Validated: 111 PASSED incl. 7 new
+  tests; 7 failures pre-existing at lane base (4 × P5AnalyticsFixesTest
+  statically proven; 3 × ForecastInputAssemblerTest statically proven
+  independent of the diff).
+- `rp-10-wip`: `09680da5` batch 10a — canonical deferred intake fingerprint,
+  atomic legacy transition (`LEGACY_DEFERRED_SUPERSEDED`) in one
+  DomainTransactionRunner transaction inside the barrier `runWrite`,
+  DO_NOT_STORE fail-closed, controlled deferred reason codes. 23/23 + guards.
+- `rp-12-wip`: `7c825df6` batch 12a — `ReceiptProcessOutcome` typed contract,
+  five duplicate exits with no side-effect batch, in-transaction planning +
+  single post-commit dispatch, `resolveRawStorageMode` fail-closed, P3-009
+  unmatched-claim CAS, batch `duplicateCount` surfaced; two stale-protective
+  RP-12 CE allowlist entries removed (guard green without them). New tests
+  11/11 + guard 20/20; the 6 remaining coordinator failures are the
+  baseline-proven pre-existing email-path set, owned by 12b. Note: the new
+  `ReviewViewModelBatchDuplicateMessageTest` initially did not compile
+  (missing `override setup()`/`super.setup()`; constructor param is
+  `repository`) — fixed in the same commit.
+
+Next in wave 2: RP-12b (P3-004 fresh reads / column-scoped writes, owns the
+6 email-path failures), RP-10b, then the RP-06→07→08→09 chain; RP-13 schema
+bump last. RP-04/RP-11 wave-1 lane tails still owed (RP-04 exemption expires
+2026-10-31).
