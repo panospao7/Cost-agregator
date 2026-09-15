@@ -120,8 +120,21 @@ regeneration still owed at endgame):
   planner gating) + column-scope/12a/guard suites green; only the 6
   baseline email-path failures remain. 12b conditional-complete (`e5711069`
   plan status); conditional remainder: ephemeral item pass-through into
-  categorization (needs CategorizeReceiptItemsUseCase API change). Next:
-  12c asset cleanup, RP-10b.
+  categorization (needs CategorizeReceiptItemsUseCase API change).
+  12c P3-008 landed in `0a96e99a` (plan status `37cd5f88`): new
+  `AssetCleanupCoordinator` — reference-counted
+  (ScannedReceiptDao.countReferencesToImagePath) and attempt-claimed cleanup
+  under a write transaction — now owns every uncommitted-asset exit: both
+  exact-hash duplicate deletes, the post-OCR duplicate delete, the insert-
+  rollback path (DuplicateReceiptInsertException now carries
+  attemptedAssetPath), and caller cancellation (NonCancellable best-effort
+  before rethrow). Typed OcrRecognitionFailedException carries the attempt's
+  owned path so ReceiptRepository never double-saves an image. AssetCleanup
+  CoordinatorTest 5/5 with real Room + real files; all coordinator asset pins
+  held. A newly visible ReceiptRepositoryStatementDuplicateTest failure
+  (bank-statement count assertion, previously outside the battery filters)
+  cannot reach this diff and is recorded for the RP-21 feed. RP-12 core
+  sequence 12a-12b-12c complete. Next: RP-10b, then the RP-06 chain.
 
 Next in wave 2: RP-12b P3-007 (structured-data mode matrix), then 12c
 (asset cleanup); RP-10b; then the RP-06→07→08→09 chain; RP-13 schema bump
