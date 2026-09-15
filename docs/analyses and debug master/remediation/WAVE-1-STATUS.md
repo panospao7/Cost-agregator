@@ -90,12 +90,31 @@ regeneration still owed at endgame):
   unmatched-claim CAS, batch `duplicateCount` surfaced; two stale-protective
   RP-12 CE allowlist entries removed (guard green without them). New tests
   11/11 + guard 20/20; the 6 remaining coordinator failures are the
-  baseline-proven pre-existing email-path set, owned by 12b. Note: the new
-  `ReviewViewModelBatchDuplicateMessageTest` initially did not compile
-  (missing `override setup()`/`super.setup()`; constructor param is
+  baseline-proven pre-existing email-path set, owned by the 12b follow-up.
+  Note: the new `ReviewViewModelBatchDuplicateMessageTest` initially did not
+  compile (missing `override setup()`/`super.setup()`; constructor param is
   `repository`) — fixed in the same commit.
+  `b25dc3d8` batch 12b (P3-004 only) — privacy-resurrection fix: eligibility
+  reads moved inside the link/unlink transactions; full-row `@Update` calls in
+  link/unlink/suggestion paths replaced with five column-scoped DAO
+  operations (match status, link ids, confidence, timestamps only); events
+  built from the fresh in-transaction row. Plan-required interleaving DB test
+  added (real in-memory Room + real `RoomDomainTransactionRunner`): purge +
+  concurrent categorization commit before link/unlink/suggestion; purged
+  fields stay purged. 3/3 new tests pass; 10 failures in the battery all
+  proven pre-existing — the 6 email-path ones plus ReceiptMatchingViewModel
+  Test x3 and ReceiptMatchingE2ETest x1, proven by running both classes at
+  the 12a tip `7c825df6` in a scratch detached worktree with identical
+  results (relaxed `transactionRunner` stub in the E2E harness; StateFlow
+  conflation order-dependence in the ViewModel tests — carried
+  test-robustness debt for the RP-21 feed). 12b P3-007 (structured-data mode
+  matrix across persistence/review/categorization/price-protection/warranty/
+  export) is the next sub-batch, then 12c.
 
-Next in wave 2: RP-12b (P3-004 fresh reads / column-scoped writes, owns the
-6 email-path failures), RP-10b, then the RP-06→07→08→09 chain; RP-13 schema
-bump last. RP-04/RP-11 wave-1 lane tails still owed (RP-04 exemption expires
-2026-10-31).
+Next in wave 2: RP-12b P3-007 (structured-data mode matrix), then 12c
+(asset cleanup); RP-10b; then the RP-06→07→08→09 chain; RP-13 schema bump
+last. RP-04/RP-11 wave-1 lane tails still owed (RP-04 exemption expires
+2026-10-31). Inert worktree dirs pending user-approved force-clear:
+`build/worktrees/rp-01|02|03` leftovers and `build/worktrees/scratch-12b-baseline`
+(unregistered, checked out at committed tips, only Gradle output inside —
+Windows "Filename too long" blocks plain removal).
