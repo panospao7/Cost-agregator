@@ -187,6 +187,9 @@ class DashboardContractsAdapter @Inject constructor(
         categoryId = categoryId,
         isNotMine = isNotMine,
         isManualEntry = isManualEntry,
+        // P5-004 (RP-05): carry shared-expense identity across the adapter
+        // boundary so the deposit exclusion is no longer tautological.
+        isSharedExpense = isSharedExpense,
         currency = currency
     )
 

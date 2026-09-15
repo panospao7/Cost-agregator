@@ -93,6 +93,34 @@ class DashboardContractsAdapterTest {
         assertEquals(com.yourname.expensetracker.domain.budget.BudgetHealthStatus.UNKNOWN, result[0].healthStatus)
     }
 
+    @Test
+    fun `observeDashboardExpenses carries shared-expense identity across the boundary`() = runTest {
+        // P5-004 (RP-05): the isSharedExpense flag must survive the adapter
+        // mapping — downstream deposit exclusion is otherwise tautological.
+        val now = 1_712_000_000_000L
+        every { timeBoundaryTicker.dayBoundaryTicks() } returns flowOf(now)
+        val sharedDeposit = com.yourname.expensetracker.data.database.entity.Expense(
+            id = 1L, amount = 100.0, currency = "EUR",
+            merchant = "Shared rent", transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT,
+            date = now, categoryId = null, isNotMine = false,
+            isSharedExpense = true, isManualEntry = false
+        )
+        val ownDeposit = sharedDeposit.copy(id = 2L, merchant = "Salary", isSharedExpense = false)
+        every { expenseRepository.getExpensesWithCategoryInPeriod(any(), any()) } returns flowOf(
+            listOf(
+                com.yourname.expensetracker.data.database.model.ExpenseWithCategory(expense = sharedDeposit, category = null),
+                com.yourname.expensetracker.data.database.model.ExpenseWithCategory(expense = ownDeposit, category = null)
+            )
+        )
+
+        val result = adapter.observeDashboardExpenses().first()
+
+        assertEquals(2, result.size)
+        val byId = result.associateBy { it.id }
+        assertEquals(true, byId[1L]?.isSharedExpense)
+        assertEquals(false, byId[2L]?.isSharedExpense)
+    }
+
     private fun recurringPattern(merchant: String, amount: Double): RecurringPattern {
         return RecurringPattern(
             merchantName = merchant,

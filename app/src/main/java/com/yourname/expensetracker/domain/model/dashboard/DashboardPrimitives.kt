@@ -19,6 +19,7 @@ data class DashboardExpense(
     val categoryId: Long?,
     val isNotMine: Boolean,
     val isManualEntry: Boolean,
+    val isSharedExpense: Boolean = false,
     val currency: String = "EUR"
 ) {
     val moneyAmount: MoneyAmount get() = MoneyAmount(amount, CurrencyCode(currency))

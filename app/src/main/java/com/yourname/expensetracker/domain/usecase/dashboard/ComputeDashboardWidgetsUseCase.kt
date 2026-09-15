@@ -356,12 +356,25 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val todayStart = TimePeriodUtils.getStartOfDay(periodEnd)
         val weekStart = TimePeriodUtils.getStartOfWeek(periodEnd)
 
-        val purchases = expenses.filter {
+        // P5-001 (RP-05): the adapter fetches a TWO-month window (current +
+        // previous) so month-over-month comparison works. Every aggregate the
+        // dashboard consumes as CURRENT-month must be scoped to
+        // [periodStart, periodEnd); only previousMonthAggregate and
+        // normalizedExpenses (the forecast baseline) may see the wider fetch.
+        val currentPeriodExpenses = expenses.filter { it.date >= periodStart && it.date < periodEnd }
+        val previousMonthBounds = TimePeriodUtils.getMonthRange(periodStart, -1)
+        val previousMonthExpenses = expenses.filter {
+            it.date >= previousMonthBounds.first && it.date < previousMonthBounds.second
+        }
+
+        val purchases = currentPeriodExpenses.filter {
             it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
         }
         // NEW-P5-003: Exclude shared-expense deposits (isSharedExpense=true) so deposit
         // totals reflect only the user's own income, not shared-expense repayments.
-        val deposits = expenses.filter {
+        // P5-004 (RP-05): the exclusion is live now that the identity survives the
+        // adapter boundary (DashboardExpense.isSharedExpense -> toExpenseEntity).
+        val deposits = currentPeriodExpenses.filter {
             it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT
                 && !it.isNotMine
                 && !it.isSharedExpense
@@ -373,10 +386,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val monthAggregate = engine.aggregateExpenses(purchases.filter { it.date >= periodStart }, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
         val depositAggregate = engine.aggregateExpenses(deposits, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.INCOME_ONLY)
 
-        // Compute previous month aggregate
-        val previousMonthEnd = periodStart - 1L
-        val previousMonthStart = TimePeriodUtils.getStartOfMonth(previousMonthEnd)
-        val previousMonthPurchases = purchases.filter { it.date >= previousMonthStart && it.date < periodStart }
+        // P5-001 (RP-05): previous month via calendar-safe bounds (not
+        // day-arithmetic on the period start), aggregated from the previous-
+        // month slice of the fetched window.
+        val previousMonthPurchases = previousMonthExpenses.filter {
+            it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
+        }
         val previousMonthAggregate = if (previousMonthPurchases.isEmpty()) {
             null
         } else {
@@ -507,7 +522,10 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             date = date,
             categoryId = categoryId,
             isNotMine = isNotMine,
-            isManualEntry = isManualEntry
+            isManualEntry = isManualEntry,
+            // P5-004 (RP-05): preserve shared-expense identity through the
+            // boundary so downstream deposit exclusion is not tautological.
+            isSharedExpense = isSharedExpense
         )
     }
 
