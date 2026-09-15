@@ -96,16 +96,16 @@ class ReceiptSideEffectPlanner @Inject constructor(
         val actions = when (docType) {
             ReceiptDocumentType.RETAIL_RECEIPT -> listOfNotNull(
                 makeWarrantyExtractionAction(input, corrId, causationId),
-                makeItemCategorizationAction(input.receipt, corrId, causationId),
+                makeItemCategorizationAction(input, corrId, causationId),
                 // RP-12 12a / P3-001: autoMatchExistingExpense=false omits ONLY the
                 // matching action — unrelated actions are not suppressed.
                 if (alreadyLinked || !input.autoMatchExistingExpense) null
                 else makeTransactionMatchAction(input.receipt, corrId, causationId),
-                makePriceProtectionAction(input.receipt, corrId, causationId)
+                makePriceProtectionAction(input, corrId, causationId)
             )
 
             ReceiptDocumentType.EMAIL_RECEIPT -> listOfNotNull(
-                makeItemCategorizationAction(input.receipt, corrId, causationId)
+                makeItemCategorizationAction(input, corrId, causationId)
             )
 
             // BANK_STATEMENT, MANUAL_PLACEHOLDER, PDF_RECEIPT, UNKNOWN → no automatic side effects
@@ -223,11 +223,20 @@ class ReceiptSideEffectPlanner @Inject constructor(
     }
 
     private fun makeItemCategorizationAction(
-        receipt: ScannedReceipt,
+        input: ReceiptSideEffectInput,
         correlationId: String,
         causationId: String?
     ): PostCommitAction {
+        val receipt = input.receipt
         val receiptId = receipt.id
+        // RP-12 12b (P3-007): item categorization is name-dependent. Only
+        // STORE_RAW persists nameable items — redacted items carry prices only,
+        // and metadata-only/DO_NOT_STORE persist none. In every other mode the
+        // action runs as a CONTROLLED skip (never a silent read of disallowed
+        // persisted data and never a retryable failure). The ephemeral
+        // pass-through into the use case is the documented remaining P3-007
+        // step; until then a fresh insert under a restricted mode skips too.
+        val categorizationPermitted = input.rawStorageMode == RawStorageMode.STORE_RAW
         return PostCommitAction(
             pipeline = AppPipeline.RECEIPT,
             name = "receipt_item_categorization",
@@ -245,6 +254,12 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
+                if (!categorizationPermitted) {
+                    writeMatchEvent(receipt, "SIDE_EFFECT_SKIPPED_PRIVACY",
+                        "Item categorization skipped: structured receipt data unavailable for storage mode")
+                    return@PostCommitAction SideEffectOutcome.Skipped(
+                        com.yourname.expensetracker.domain.sideeffect.SideEffectSkipReason.STRUCTURED_RECEIPT_DATA_UNAVAILABLE)
+                }
                 categorizeReceiptItemsUseCase(receiptId)
                 SideEffectOutcome.Completed
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -445,34 +460,42 @@ class ReceiptSideEffectPlanner @Inject constructor(
     }
 
     private fun makePriceProtectionAction(
-        receipt: ScannedReceipt,
+        input: ReceiptSideEffectInput,
         correlationId: String,
         causationId: String?
     ): PostCommitAction {
-        val capturedReceipt = receipt
+        val capturedReceipt = input.receipt
+        // RP-12 12b (P3-007): price protection reads persisted line items. Only
+        // STORE_RAW may feed it; restricted modes produce the controlled skip.
+        val priceCheckPermitted = input.rawStorageMode == RawStorageMode.STORE_RAW
         return PostCommitAction(
             pipeline = AppPipeline.RECEIPT,
             name = "price_protection_check",
             category = SideEffectCategory.PRICE_PROTECTION,
             triggerType = SideEffectTriggerType.RECEIPT_SAVED,
             targetEntityType = "RECEIPT",
-            targetEntityId = receipt.id,
-            source = receipt.sourceType,
+            targetEntityId = capturedReceipt.id,
+            source = capturedReceipt.sourceType,
             correlationId = correlationId,
             causationId = causationId,
-            idempotencyKey = "receipt:${receipt.id}:saved:price_protection_check",
+            idempotencyKey = "receipt:${capturedReceipt.id}:saved:price_protection_check",
             priority = SideEffectPriority.LOW,
             metadata = SafeEventMetadata.builder()
-                .put("receiptId", receipt.id.toString())
+                .put("receiptId", capturedReceipt.id.toString())
                 .build()
         ) {
             try {
-                priceProtectionTracker.findBetterDeals(capturedReceipt)
-                SideEffectOutcome.Completed
+                if (!priceCheckPermitted) {
+                    SideEffectOutcome.Skipped(
+                        com.yourname.expensetracker.domain.sideeffect.SideEffectSkipReason.STRUCTURED_RECEIPT_DATA_UNAVAILABLE)
+                } else {
+                    priceProtectionTracker.findBetterDeals(capturedReceipt)
+                    SideEffectOutcome.Completed
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Timber.w(e, "Price protection check failed for receipt %d", receipt.id)
+                Timber.w(e, "Price protection check failed for receipt %d", capturedReceipt.id)
                 SideEffectOutcome.FailedRetryable(
                     "price_protection_check_failed",
                     e::class.simpleName

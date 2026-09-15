@@ -47,5 +47,8 @@ enum class DiagnosticReasonCode {
     DAILY_BRIEFING_PIPELINE_TIMEOUT,
     RETENTION_PARTIAL_FAILURE,
     INCONSISTENCY_DETECTED,
-    INCONSISTENCY_CHECK
+    INCONSISTENCY_CHECK,
+    // RP-12 12b (P3-007): item-dependent side effect had no permitted
+    // structured receipt data (restricted storage mode / process restart).
+    STRUCTURED_RECEIPT_DATA_UNAVAILABLE
 }

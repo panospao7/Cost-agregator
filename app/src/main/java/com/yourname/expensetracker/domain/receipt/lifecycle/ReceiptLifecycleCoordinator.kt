@@ -550,13 +550,29 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // (same pattern as P11-CURRENT-020 on the email path).
             val rawStorageMode = resolveRawStorageMode()
             val now = timeProvider.now()
+            // RP-12 12b (P3-007): single structured-data transformer before
+            // insert. Fingerprints above were computed from the ephemeral values
+            // (hashes, not payloads); what is PERSISTED is shaped by the policy:
+            // STORE_RAW keeps the parser JSON, STORE_REDACTED keeps the typed
+            // RedactedReceiptItem projection, restricted modes keep neither
+            // items nor merchant.
             val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
                 sourceType = ReceiptSourceType.CAMERA.name,
                 documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
                 processingStatus = processingStatus,
                 imageHash = fileHash ?: receipt.imageHash,
                 textFingerprint = textFingerprint,
-                semanticFingerprint = semanticFingerprint
+                semanticFingerprint = semanticFingerprint,
+                parsedItems = ReceiptStructuredDataPolicy.persistedItems(
+                    fullItemsJson = receipt.parsedItems,
+                    items = processResult.parsed.lineItems,
+                    currency = receipt.currency,
+                    mode = rawStorageMode
+                ),
+                parsedMerchant = ReceiptStructuredDataPolicy.persistedMerchant(
+                    receipt.parsedMerchant,
+                    rawStorageMode
+                )
             ), now).also { it.taxInclusive = taxInclusive }
 
             // P3-BLOCKER-04: Use resolver for fallback insert.
@@ -951,12 +967,16 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 parsedTotal = emailData.amount,
                 parsedMerchant = emailData.merchant,
                 parsedDate = emailData.date,
-                // PRIV-441-10: Sanitize parsed items by storage mode
-                parsedItems = when (emailStorageMode) {
-                    RawStorageMode.STORE_RAW -> emailData.items
-                    RawStorageMode.STORE_REDACTED -> emailData.items?.let { "[REDACTED_ITEMS]" }
-                    RawStorageMode.STORE_METADATA_ONLY, RawStorageMode.DO_NOT_STORE -> null
-                },
+                // PRIV-441-10 / RP-12 12b (P3-007): sanitize parsed items by
+                // storage mode via the SINGLE structured-data policy — STORE_RAW
+                // keeps the parser JSON, STORE_REDACTED persists the typed
+                // RedactedReceiptItem projection (replaces the old
+                // "[REDACTED_ITEMS]" marker), restricted modes persist nothing.
+                parsedItems = ReceiptStructuredDataPolicy.persistedItemsFromParserJson(
+                    fullItemsJson = emailData.items,
+                    currency = emailData.currency ?: homeCurrency,
+                    mode = emailStorageMode
+                ),
                 parsedTaxAmount = null,
                 currency = emailData.currency ?: homeCurrency,
                 // P11-CURRENT-009: persist real parser confidence (was hardcoded)
