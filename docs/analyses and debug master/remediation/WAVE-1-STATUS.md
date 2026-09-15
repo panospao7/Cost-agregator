@@ -107,9 +107,21 @@ regeneration still owed at endgame):
   the 12a tip `7c825df6` in a scratch detached worktree with identical
   results (relaxed `transactionRunner` stub in the E2E harness; StateFlow
   conflation order-dependence in the ViewModel tests — carried
-  test-robustness debt for the RP-21 feed). 12b P3-007 (structured-data mode
-  matrix across persistence/review/categorization/price-protection/warranty/
-  export) is the next sub-batch, then 12c.
+  test-robustness debt for the RP-21 feed). 12b P3-007 core landed in
+  `f305103e`: single `ReceiptStructuredDataPolicy` transformer on both insert
+  paths (STORE_RAW passthrough; STORE_REDACTED = typed RedactedReceiptItem
+  JSON {schema REDACTED_V1: quantity/unitPrice/totalPrice/currency} replacing
+  the "[REDACTED_ITEMS]" marker; restricted modes persist nothing; fail
+  closed), and mode-gated item-dependent side effects — categorization and
+  price protection skip with the new controlled
+  STRUCTURED_RECEIPT_DATA_UNAVAILABLE reason under every mode except
+  STORE_RAW (also the post-restart behavior). ReceiptScanViewModel never
+  parses the redacted wrapper. Validated: 9/9 new tests (7 policy + 2
+  planner gating) + column-scope/12a/guard suites green; only the 6
+  baseline email-path failures remain. 12b conditional-complete (`e5711069`
+  plan status); conditional remainder: ephemeral item pass-through into
+  categorization (needs CategorizeReceiptItemsUseCase API change). Next:
+  12c asset cleanup, RP-10b.
 
 Next in wave 2: RP-12b P3-007 (structured-data mode matrix), then 12c
 (asset cleanup); RP-10b; then the RP-06→07→08→09 chain; RP-13 schema bump
