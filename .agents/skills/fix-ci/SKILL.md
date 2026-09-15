@@ -18,7 +18,7 @@ Delegate the diagnosis to the `ci-build-debugger` agent.
 5. Prefer targeted commands over broad suite commands.
 6. Ask before running Gradle or expensive checks.
 7. Apply a minimal fix only if the root cause is clear.
-8. Do not weaken tests/guards to hide failures unless explicitly approved and justified.
+8. Do not weaken tests/guards to hide failures unless explicitly approved and justified. For guard infrastructure this concretely means: do not grow `config/baselines/*.json` ratchets, do not broaden `config/db_access_allowlist.yml` or `config/guards/*` exceptions, and do not add allowlist/exception entries to mask failures without explicit human approval (see `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` FG-06/FG-07, path + FG-ID only).
 9. Stop if the fix requires unapproved schema, privacy, security, or broad architecture changes.
 
 ## Preferred targeted checks

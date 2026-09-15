@@ -17,9 +17,10 @@ Delegate the review to the `reviewer-strict` agent.
 4. Read surrounding code and relevant call sites.
 5. Compare against the provided plan/context if any.
 6. Check architecture, privacy/security, tests, and regression risk.
-7. Do not edit files.
-8. Report only concrete, evidence-backed issues.
-9. If no approved plan is available, say so and review against the diff and repository rules.
+7. If the diff touches guard scripts, baselines, allowlists, or exceptions, verify none are weakened and cite `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` FG-03/FG-06/FG-07/FG-23.
+8. Do not edit files.
+9. Report only concrete, evidence-backed issues.
+10. If no approved plan is available, say so and review against the diff and repository rules.
 
 ## Strict focus
 

@@ -12,13 +12,38 @@ Optimize for correctness, privacy safety, and minimal diffs.
 
 Before non-trivial work, inspect the relevant architecture docs if present:
 
-1. `CODEBASE_SEGMENTS.md`
-2. `CODEBASE_INVENTORY.md`
-3. `LEGAL_PATHS.md`
-4. `ENGINE_INTERACTION_MAP.md`
-5. Relevant files under `docs/`
+1. `docs/architecture/CODEBASE_SEGMENTS.md` — segment ownership (39 segments, verified 2026-09-07)
+2. `docs/architecture/CODEBASE_INVENTORY.md` — snapshot inventory (DB v148, 68 DAOs, 40 ViewModels)
+3. `docs/architecture/LEGAL_PATHS.md` — ONE legal path per operation (enforced by CI guards — see "CI guard implementation (by reference)" below)
+4. `docs/architecture/ENGINE_INTERACTION_MAP.md` — engine → pipeline impact matrix
+5. Relevant files under `docs/` — on-demand only, do NOT preload big maps
 
 Do not blindly grep the whole repo before checking segment/inventory docs.
+Do NOT inject full 50-180KB maps into context. Use Router below to scope, then read exact files.
+
+## CI guard implementation (by reference)
+
+Refer by path + FG-ID from `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` (FG-00..FG-27); never paste gate content inline.
+
+- Scripts: `scripts/verify_*.py` (20 files) + `scripts/ci/run_static_guard_suite.py`, `scripts/ci/guard_registry.py`, `scripts/ci/verify_guard_registry.py`, `scripts/ci/verify_guard_docs_truth.py`
+- Config: `config/guards/`, `config/baselines/`, `config/db_access_allowlist.yml`, `config/release_block_denylist.yml`
+- Fail-closed (FG-03): missing/skipped/unknown guard = infra failure (exit 2) = fail, never GREEN — a guard result is never assumed passing.
+- No-weakening (FG-06/FG-07): no baseline growth, allowlist broadening, or exception additions without explicit human approval.
+- Self-protection (FG-23): a PR must not weaken its own check.
+
+## Router (lightweight signpost, <30 lines — read disk truth after scoping)
+
+- Expense create/update/delete → `TransactionLifecycleCoordinator` → `ExpenseDao.insertAtomic()` only. See `docs/architecture/LEGAL_PATHS.md#expense-mutations`.
+- Receipt scan/OCR → `ReceiptLifecycleCoordinator.processReceiptInput()` → `ReceiptRepository` (draft only) → `createExpenseAndLinkReceipt()` + `ReceiptLinkService`. See `LEGAL_PATHS.md#receipt-mutations`.
+- Receipt matching → `ReceiptMatchLifecycleService` (MATCH_SUGGESTED/APPROVED/REJECTED/CLEARED). Segment 38.
+- Recurring rules → `RecurringRuleLifecycleCoordinator` (single-writer) + `RecurringLifecycleEventWriter`. Segment 7.
+- Notification/email/bank intake → `NotificationIntakeWorker` (Segment 12) / parser registry / review queue (Segment 3) → must funnel into `TransactionLifecycleCoordinator`.
+- Workers → all 10 CoroutineWorkers run via `WorkerExecutionGuard` + `DatabaseWriteBarrier`. Check `ENGINE_INTERACTION_MAP.md` + `docs/workers/`.
+- Money → `CurrencyConverter.convert()/convertAsOf()` → `MultiCurrencyRepository` → `MoneyAggregate/Builder`, `domain/core/money/`. CRITICAL blast radius.
+- Groups/shared → `SharedExpenseManager` / `SharedExpenseDataPortAdapter` + `data/database/GroupTransactionCoordinator.kt` (atomic via `RoomDomainTransactionRunner`). Segments 24-25.
+- Export/backup/restore → `AccountingExportPolicy` / `BackupVerifier` (TIER_1_EXACT) + restore barrier. Segment 18.
+- AI/cloud → `HybridRouter` (Segment 20) + `PrivacyGate`/`CloudPayloadPolicy` (fail-closed, Segment 28).
+- Rule: grep exact coordinator/service name first, read its file, then follow calls. Do not trust map method lists without reading source.
 
 ## General workflow
 

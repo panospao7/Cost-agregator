@@ -20,7 +20,8 @@ Execute one approved batch only. The batch description comes from the invoking m
 6. Do not broaden scope.
 7. Require targeted tests for behavior changes.
 8. Require strict review (reviewer-strict agent) for risky batches.
-9. Stop on reviewer fail, test fail, privacy ambiguity, architecture ambiguity, schema surprises, or unexpected broad diff.
+9. When a batch touches guard scripts, baselines, allowlists, or exceptions, verify against `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` (path + FG-ID only) that nothing is weakened and fail-closed semantics (FG-03) are preserved.
+10. Stop on reviewer fail, test fail, privacy ambiguity, architecture ambiguity, schema surprises, or unexpected broad diff.
 
 ## Default batch loop
 

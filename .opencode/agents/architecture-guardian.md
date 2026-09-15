@@ -50,6 +50,7 @@ Before judging risky diffs, inspect relevant architecture docs when present:
 - `CODEBASE_INVENTORY.md`
 - `LEGAL_PATHS.md`
 - `ENGINE_INTERACTION_MAP.md`
+- `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` (refer by path + FG-ID, never paste content)
 - architecture docs under `docs/`
 
 ## Focus areas
@@ -81,6 +82,7 @@ Check for:
    - missing negative fixtures
    - rules that encode the wrong semantics
    - tests that only prove text patterns, not architectural intent
+   - guard wiring drifted from `FINAL_CI_GUARD_ACCEPTANCE_GATE.md`: `scripts/verify_*.py` vs `scripts/ci/guard_registry.py` + `scripts/ci/run_static_guard_suite.py`, `config/guards/`, `config/baselines/`, `config/db_access_allowlist.yml`
 
 5. Optional side-effect boundaries
    - notification permission blocking unrelated DB/core work
