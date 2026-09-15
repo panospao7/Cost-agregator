@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.provenance
 
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao
 import com.yourname.expensetracker.data.database.entity.EntitySourceLink
 import com.yourname.expensetracker.domain.privacy.SensitiveHashingService
@@ -17,7 +18,9 @@ import javax.inject.Singleton
 class SourceLinkWriterImpl @Inject constructor(
     private val sourceLinkDao: EntitySourceLinkDao,
     private val hashingService: SensitiveHashingService,
-    private val timeProvider: TimeProvider
+    private val timeProvider: TimeProvider,
+    // RP-02 U-004: barrier ownership at the single source-link write funnel.
+    private val writeBarrier: DatabaseWriteBarrier
 ) : SourceLinkWriter {
 
     override suspend fun linkExpense(
@@ -82,6 +85,10 @@ class SourceLinkWriterImpl @Inject constructor(
             metadataSchemaVersion = 1
         )
 
+        // RP-02 U-004: structural barrier check immediately before the insert.
+        // linkTarget() is the single write funnel: linkExpense() and
+        // linkExpenseSourcesFromRequest() both delegate here.
+        writeBarrier.checkWritesAllowed("provenance.source_link.insert")
         val insertedId = sourceLinkDao.insert(link)
         return if (insertedId > 0) {
             SourceLinkWriteResult.Created(insertedId)

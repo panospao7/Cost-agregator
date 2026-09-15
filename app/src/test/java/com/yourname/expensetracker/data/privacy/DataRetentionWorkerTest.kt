@@ -6,7 +6,9 @@ import androidx.work.ListenableWorker.Result
 import androidx.work.WorkerFactory
 import androidx.work.WorkerParameters
 import androidx.work.testing.TestListenableWorkerBuilder
+import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.database.dao.PrivacyAuditDao
 import com.yourname.expensetracker.domain.diagnostics.AppPipeline
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticEventWriter
 import com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode
@@ -24,6 +26,7 @@ import com.yourname.expensetracker.domain.workers.WorkerGuardResult
 import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
@@ -64,6 +67,7 @@ class DataRetentionWorkerTest {
     private lateinit var executionGuard: WorkerExecutionGuard
     private lateinit var retentionRegistry: RetentionRegistry
     private lateinit var diagnosticEventWriter: DiagnosticEventWriter
+    private lateinit var writeBarrier: DatabaseWriteBarrier
 
     private val timeProvider: TimeProvider = object : TimeProvider { override fun now() = 1_700_000_000_000L }
 
@@ -79,6 +83,7 @@ class DataRetentionWorkerTest {
         executionGuard = mockk(relaxed = true)
         retentionRegistry = mockk()
         diagnosticEventWriter = mockk(relaxed = true)
+        writeBarrier = mockk(relaxed = true)
         ctx = mockk(relaxed = true)
 
         coEvery { privacySettingsRepository.getSettings() } returns PrivacySettings()
@@ -111,7 +116,8 @@ class DataRetentionWorkerTest {
                     timeProvider,
                     executionGuard = executionGuard,
                     retentionRegistry = retentionRegistry,
-                    diagnosticEventWriter = diagnosticEventWriter
+                    diagnosticEventWriter = diagnosticEventWriter,
+                    writeBarrier = writeBarrier
                 )
             })
             .build()
@@ -374,6 +380,52 @@ class DataRetentionWorkerTest {
                 event.metadata.toJson().contains("IllegalArgumentException")
             })
         }
+    }
+
+    // ── RP-02 U-004: per-insert barrier ownership for audit writes ───
+
+    @Test
+    fun `audit insert is barrier-checked immediately before the write`() = runTest {
+        val auditDao = mockk<PrivacyAuditDao>(relaxed = true)
+        every { appDatabase.privacyAuditDao() } returns auditDao
+        coEvery { auditDao.insert(any()) } returns 1L
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("raw_notifications", 5)
+        )
+
+        val result = buildWorker().doWork()
+
+        assertEquals(Result.success(), result)
+        coVerifyOrder {
+            writeBarrier.checkWritesAllowed("privacy.retention.audit")
+            auditDao.insert(any())
+        }
+    }
+
+    @Test
+    fun `blocked audit write prevents the insert and surfaces typed barrier exception`() = runTest {
+        val auditDao = mockk<PrivacyAuditDao>(relaxed = true)
+        every { appDatabase.privacyAuditDao() } returns auditDao
+        every { writeBarrier.checkWritesAllowed(any<String>()) } throws
+            com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException(
+                accessType = com.yourname.expensetracker.data.backup.DatabaseAccessType.WRITE,
+                operation = com.yourname.expensetracker.data.backup.DatabaseAccessOperation("privacy.retention.audit"),
+                mode = com.yourname.expensetracker.data.backup.RestoreMaintenanceMode.Mode.RESTORE_STAGING
+            )
+        every { retentionRegistry.allTargets() } returns setOf(
+            target("raw_notifications", 5)
+        )
+
+        try {
+            buildWorker().doWork()
+            fail("Expected DatabaseAccessBlockedException")
+        } catch (e: com.yourname.expensetracker.data.backup.DatabaseAccessBlockedException) {
+            // In production WorkerExecutionGuard maps this per the worker's
+            // blockedPolicy; the invariant under test is that no audit row is
+            // written during restore/maintenance.
+        }
+
+        coVerify(exactly = 0) { auditDao.insert(any()) }
     }
 
     // ── PR12M-3: No legacy raw-purge helpers ──────────────────────────
