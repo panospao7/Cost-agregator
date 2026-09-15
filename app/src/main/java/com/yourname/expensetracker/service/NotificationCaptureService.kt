@@ -41,6 +41,7 @@ import org.json.JSONObject
 import javax.inject.Inject
 
 import com.yourname.expensetracker.domain.notification.capture.CaptureSource
+import com.yourname.expensetracker.domain.notification.capture.DeferredCaptureStorageSnapshot
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCaptureResult
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakeCoordinator
 import com.yourname.expensetracker.domain.notification.capture.NotificationIntakePayloadRepairer
@@ -447,21 +448,62 @@ class NotificationCaptureService : NotificationListenerService() {
                             .build(),
                         isTerminal = false
                     ))
-                    // Gate not ready — persist deferred intake row for retry
-                    // Extract basic text fields before deferring so the worker
-                    // has content to process when the gate becomes available.
-                    val deferredParts = NotificationTextParts.extract(sbn.notification.extras)
-                    withContext(NonCancellable) {
-                        intakeCoordinator.captureForRetry(
-                            packageName = packageName,
-                            notificationKey = notificationKey,
-                            postTime = sbn.postTime,
+                    // Gate not ready — persist deferred intake row for retry.
+                    // RP-10 10a (P1-002): resolve ONE bounded privacy snapshot (a
+                    // single settings read through the same policy resolver the
+                    // capture gate uses) so the deferred row carries the user's
+                    // actual RawStorageMode instead of a hardcoded metadata mode.
+                    // If the policy cannot be resolved, fail closed: no extraction,
+                    // no row, no payload.
+                    val settings = try {
+                        privacySettingsRepository.getSettings()
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        Timber.w("Deferred capture skipped: storage policy unavailable")
+                        notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                            pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                            stage = "capture_gate",
+                            outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.DROPPED,
+                            reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.DEFERRED_STORAGE_POLICY_UNAVAILABLE,
                             correlationId = correlationId,
-                            title = deferredParts.title,
-                            text = deferredParts.text,
-                            bigText = deferredParts.bigText,
-                            subText = deferredParts.subText
-                        )
+                            sourceType = "notification",
+                            metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                .putHashed("packageName", packageName).build(),
+                            isTerminal = true
+                        ))
+                        null
+                    }
+                    if (settings != null) {
+                        // Extract basic text fields before deferring so the worker
+                        // has content to process when the gate becomes available.
+                        val deferredParts = NotificationTextParts.extract(sbn.notification.extras)
+                        // Same per-mode extras contract as the live path below: the
+                        // coordinator persists extrasJson as a visible column only
+                        // under STORE_RAW (built with the same sanitization); other
+                        // modes keep it inside the transient payload only.
+                        val deferredExtrasJson = when (settings.rawNotificationStorageMode) {
+                            RawStorageMode.STORE_RAW -> buildExtrasJson(sbn.notification.extras)
+                            RawStorageMode.STORE_REDACTED -> """{"redacted":true}"""
+                            RawStorageMode.STORE_METADATA_ONLY -> null
+                            RawStorageMode.DO_NOT_STORE -> null
+                        }
+                        withContext(NonCancellable) {
+                            intakeCoordinator.captureForRetry(
+                                packageName = packageName,
+                                notificationKey = notificationKey,
+                                postTime = sbn.postTime,
+                                correlationId = correlationId,
+                                title = deferredParts.title,
+                                text = deferredParts.text,
+                                combinedBody = deferredParts.combinedBody,
+                                subText = deferredParts.subText,
+                                storage = DeferredCaptureStorageSnapshot(
+                                    storageMode = settings.rawNotificationStorageMode,
+                                    appName = resolveAppName(packageName),
+                                    extrasJson = deferredExtrasJson
+                                )
+                            )
+                        }
                     }
                     return@launch
                 }
@@ -563,12 +605,7 @@ class NotificationCaptureService : NotificationListenerService() {
                         RawStorageMode.DO_NOT_STORE -> null
                     }
 
-                    val appName = try {
-                        val appInfo = packageManager.getApplicationInfo(packageName, 0)
-                        packageManager.getApplicationLabel(appInfo).toString()
-                    } catch (e: PackageManager.NameNotFoundException) {
-                        null
-                    }
+                    val appName = resolveAppName(packageName)
 
                     val notificationKeyHash = sha256(notificationKey).take(32)
                     val captureResult = intakeCoordinator.capture(
@@ -608,6 +645,19 @@ class NotificationCaptureService : NotificationListenerService() {
                             if (pipelineOutcome == null || pipelineOutcome is NotificationPipelineOutcome.Error) {
                                 deduper.remove(dedupeKey)
                             }
+                        }
+                        is NotificationIntakeCaptureResult.NotStored -> {
+                            // RP-10 10a (P1-002): resolved privacy policy forbade
+                            // durable storage; the coordinator persisted no row and
+                            // no payload. Remove the dedupe key so a genuine repost
+                            // is not swallowed.
+                            deduper.remove(dedupeKey)
+                        }
+                        is NotificationIntakeCaptureResult.StorageFailure -> {
+                            // RP-10 10a (P1-002): durable intake failed before insert
+                            // (controlled reason code on the result). Remove the
+                            // dedupe key so the notification can be re-processed.
+                            deduper.remove(dedupeKey)
                         }
                         is NotificationIntakeCaptureResult.Dropped -> {
                             deduper.remove(dedupeKey)
@@ -805,6 +855,14 @@ class NotificationCaptureService : NotificationListenerService() {
         } catch (e: Exception) {
             Timber.e(e, "Error refreshing active notifications")
         }
+    }
+
+    /** Resolve the human-readable app label for a package, or null when unknown. */
+    private fun resolveAppName(packageName: String): String? = try {
+        val appInfo = packageManager.getApplicationInfo(packageName, 0)
+        packageManager.getApplicationLabel(appInfo).toString()
+    } catch (e: PackageManager.NameNotFoundException) {
+        null
     }
 
     @VisibleForTesting

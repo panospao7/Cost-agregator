@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import io.mockk.coVerify
 import io.mockk.every
@@ -50,7 +51,8 @@ class NotificationIntakeRestoreBarrierTest {
             Dispatchers.Unconfined,
         )
         return NotificationIntakeCoordinator(
-            intakeDao, workManager, emitter, timeProvider, crypto, DatabaseWriteBarrier(mode)
+            intakeDao, workManager, emitter, timeProvider, crypto, DatabaseWriteBarrier(mode),
+            transactionRunner = mockk<DomainTransactionRunner>(relaxed = true)
         )
     }
 
@@ -93,6 +95,11 @@ class NotificationIntakeRestoreBarrierTest {
             postTime = 1L,
             correlationId = "corr",
             title = "Title",
+            storage = DeferredCaptureStorageSnapshot(
+                storageMode = RawStorageMode.STORE_METADATA_ONLY,
+                appName = null,
+                extrasJson = null
+            )
         )
         coVerify(exactly = 0) { intakeDao.insertOrIgnore(any()) }
     }

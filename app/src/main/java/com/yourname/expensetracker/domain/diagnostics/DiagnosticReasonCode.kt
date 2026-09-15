@@ -47,5 +47,10 @@ enum class DiagnosticReasonCode {
     DAILY_BRIEFING_PIPELINE_TIMEOUT,
     RETENTION_PARTIAL_FAILURE,
     INCONSISTENCY_DETECTED,
-    INCONSISTENCY_CHECK
+    INCONSISTENCY_CHECK,
+    // RP-10 10a (P1-001/P1-002): deferred notification capture outcomes —
+    // controlled constants only, never payload-derived.
+    DEFERRED_NOT_STORED,
+    DEFERRED_STORAGE_POLICY_UNAVAILABLE,
+    DEFERRED_TRANSIENT_ENCRYPT_FAILED
 }

@@ -202,6 +202,14 @@ interface NotificationIntakeDao {
     @Query("SELECT EXISTS(SELECT 1 FROM notification_intake WHERE dedupeFingerprint = :fingerprint)")
     suspend fun existsByFingerprint(fingerprint: String): Boolean
 
+    /**
+     * RP-10 10a (P1-001): resolves an intake row by fingerprint so callers can
+     * report the existing row (Duplicate) or transition a legacy
+     * `DEFERRED_<keyHash>` row. Read-only; no schema/index change.
+     */
+    @Query("SELECT * FROM notification_intake WHERE dedupeFingerprint = :fingerprint LIMIT 1")
+    suspend fun getByFingerprint(fingerprint: String): NotificationIntakeEntity?
+
     @Query("""
         UPDATE notification_intake
         SET transientPayloadCiphertext = NULL,
