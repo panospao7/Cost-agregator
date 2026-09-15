@@ -59,8 +59,7 @@ class RecurringPaymentMatchE2ETest : GoldenTestBase() {
             reminderDeliveryDao = database.recurringReminderDeliveryDao(),
             timeProvider = timeProvider,
             lifecycleEventDao = database.recurringLifecycleEventDao(),
-            plannedExpenseDao = database.plannedExpenseDao(),
-            writeBarrier = writeBarrier
+            plannedExpenseDao = database.plannedExpenseDao()
         )
 
         recurringCoordinator = RecurringLifecycleCoordinator(
