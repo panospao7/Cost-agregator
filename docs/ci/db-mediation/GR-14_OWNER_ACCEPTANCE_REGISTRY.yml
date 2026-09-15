@@ -1,6 +1,13 @@
 # GR-14 owner-acceptance registry (GR-15 batch 1 gate input).
 # GENERATED from board 03acbb044721e9dc (build/guard-debug/gr15batch1/board_baseline.json)
-# - the 20 rows carry the exact canonical mutationKey strings from that board.
+# - the 18 rows carry the exact canonical mutationKey strings from that board.
+# REGENERATED 2026-09-15 (wave-1 merge): SourceLinkWriterImpl.linkTarget and
+# RoomRecurringLifecycleEventWriter.writeCritical became PROVEN via RP-02
+# barrier ownership; the registry shrunk 20 -> 18 rows (familyD 3 -> 1).
+# NOTE: one unsupported_source subject (DatabaseBackupRepositoryImpl.restoreReceiptAssets
+# ScannedReceiptDao.update, GR13_NO_D4_OBSERVATION after the RP-03 P7-009 reorder)
+# is GR-engine debt - it is NOT owner-acceptable and keeps the gate at exit 2
+# (fail-closed) until the parked engine-typing batch resolves it.
 # Human/owner document: GR-14_OWNER_ACCEPTANCE_RECORD.md. Fail-closed gate contract:
 # GR-15_GATE_AMENDMENT.md. Do not hand-edit rows; regenerate from a cold board.
 schemaVersion: 1
@@ -34,9 +41,6 @@ rows:
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/diagnostics/OperationRunRecorder.kt|com.yourname.expensetracker.domain.diagnostics.RoomOperationRunRecorder|function|start|null|String,String?,com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata|runDao|com.yourname.expensetracker.data.database.dao.OperationRunDao|insert
   family: familyC_ui_callback
   caveats: []
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/provenance/SourceLinkWriterImpl.kt|com.yourname.expensetracker.domain.provenance.SourceLinkWriterImpl|function|linkTarget|null|com.yourname.expensetracker.domain.provenance.TargetEntityType,Long,com.yourname.expensetracker.domain.provenance.SourceLinkPayload,String?|sourceLinkDao|com.yourname.expensetracker.data.database.dao.EntitySourceLinkDao|insert
-  family: familyD_run_with_retry
-  caveats: []
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/receipt/lifecycle/ReceiptLifecycleEventWriter.kt|com.yourname.expensetracker.domain.receipt.lifecycle.RoomReceiptLifecycleEventWriter|function|write|null|com.yourname.expensetracker.domain.transaction.TransactionContext,com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEvent|dao|com.yourname.expensetracker.data.database.dao.ReceiptEventDao|insert
   family: familyB_combine
   caveats: []
@@ -60,9 +64,6 @@ rows:
   caveats: []
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/RecurringPlanProjectionService.kt|com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService|function|projectFromOccurrencesInCurrentTransaction|null|Long,Long,Long,Long|plannedExpenseDao|com.yourname.expensetracker.data.database.dao.PlannedExpenseDao|insertPlannedExpense
   family: familyE_projection_as_is
-  caveats: []
-- mutationKey: app/src/main/java/com/yourname/expensetracker/domain/recurring/lifecycle/RecurringLifecycleEventWriter.kt|com.yourname.expensetracker.domain.recurring.lifecycle.RoomRecurringLifecycleEventWriter|function|writeCritical|null|Long?,String,String?,String?,String?,Long|dao|com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao|insert
-  family: familyD_run_with_retry
   caveats: []
 - mutationKey: app/src/main/java/com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt|com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator|function|createExpenseMutation|null|com.yourname.expensetracker.domain.transaction.CreateExpenseRequest|transactionEventDao|com.yourname.expensetracker.data.database.dao.TransactionEventDao|insert
   family: familyD_run_with_retry
