@@ -53,14 +53,18 @@ class DashboardContractsAdapter @Inject constructor(
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeDashboardExpenses(): Flow<List<DashboardExpense>> {
         return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { now ->
-            val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
-            // P5-001 (RP-05 batch 1): intentionally keeps the two-month fetch window
-            // [previousMonthStart, monthEnd) for month-over-month comparison per the
-            // RP-05 plan (current-month aggregates are re-scoped downstream). P5-005's
-            // six-month trendStart window is batch 2.
-            val previousMonthStart = TimePeriodUtils.getStartOfMonth(monthStart - 1L)
+            // P5-005 (RP-05 batch 2): the trend emits six calendar keys (M-5..M-0),
+            // so the source window must span six months. Calendar-safe helpers only —
+            // day-arithmetic (5 * 30d) is wrong across month lengths and DST.
+            // Bounded-memory trade-off is intentional: at most six months of
+            // already-materialized dashboard rows; never an unbounded full-history
+            // query. Current/previous-month aggregates stay scoped downstream
+            // (P5-001 slices); only the trend and the completed-history baseline
+            // (P5-003) consume the wider list.
+            val trendStart = TimePeriodUtils.getMonthRange(now, -5).first
+            val monthEnd = TimePeriodUtils.getMonthRange(now, 0).second
             expenseRepository
-                .getExpensesWithCategoryInPeriod(previousMonthStart, monthEnd)
+                .getExpensesWithCategoryInPeriod(trendStart, monthEnd)
                 .map { list -> list.map { it.expense.toDomainDashboard() } }
         }
     }

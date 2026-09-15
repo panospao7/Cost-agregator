@@ -20,6 +20,22 @@ sealed interface DashboardNormalizedInputResult {
 }
 
 /**
+ * RP-05 batch 2 (P5-003): one completed historical calendar month used as the
+ * synthesis baseline. Buckets are complete months M-1..M-5 sliced from the
+ * already-fetched six-month source window — no DAO re-read and no second
+ * normalization pass (aggregates reuse the same engine and rate basis).
+ *
+ * [hasPurchases] distinguishes a real zero-spend month (rows exist) from a
+ * month with no observed data; both carry a zero [aggregate].
+ */
+data class HistoricalMonthAggregate(
+    val monthStart: Long,
+    val monthEnd: Long,
+    val aggregate: MoneyAggregate,
+    val hasPurchases: Boolean
+)
+
+/**
  * CURR-70F-13: Canonical normalized input for all dashboard widgets.
  *
  * All dashboard widgets should consume from this single source to ensure
@@ -37,6 +53,8 @@ data class DashboardNormalizedInput(
     val previousMonthAggregate: MoneyAggregate? = null,
     val categoryAggregates: Map<Long?, MoneyAggregate>,
     val depositAggregate: MoneyAggregate? = null,
+    /** RP-05 batch 2 (P5-003): completed months M-1..M-5, oldest first; additive. */
+    val historicalMonthAggregates: List<HistoricalMonthAggregate> = emptyList(),
     val dataQuality: CurrencyDataQuality
 )
 

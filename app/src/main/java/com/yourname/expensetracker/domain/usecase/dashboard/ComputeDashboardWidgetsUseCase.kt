@@ -218,7 +218,9 @@ data class CategorySpending(
     val category: CategoryInfo,
     val total: Double,
     val percentage: Float,
-    val currency: String  // S4-023: no default — callers must pass home currency explicitly
+    val currency: String,  // S4-023: no default — callers must pass home currency explicitly
+    /** RP-05 batch 2 (P5-012): true for the reserved uncategorized pseudo-category (id 0L) — never clickable/filterable as a real category. */
+    val isUncategorized: Boolean = false
 ) {
     val moneyTotal: MoneyAmount get() = MoneyAmount(total, CurrencyCode(currency))
 }
@@ -398,6 +400,26 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             engine.aggregateExpenses(previousMonthPurchases, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY)
         }
 
+        // P5-003 (RP-05 batch 2): completed calendar months M-1..M-5 sliced from
+        // the already-fetched six-month window (P5-005) — no DAO re-read, same
+        // normalization engine and rate basis. Every month in the window is
+        // present in the list (a month without rows still carries a zero
+        // aggregate with hasPurchases=false) so the baseline policy can decide
+        // with the full shape.
+        val historicalMonthAggregates = (5 downTo 1).map { offset ->
+            val bounds = TimePeriodUtils.getMonthRange(periodStart, -offset)
+            val monthPurchases = expenses.filter {
+                it.date >= bounds.first && it.date < bounds.second &&
+                    it.transactionType == com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE && !it.isNotMine
+            }
+            HistoricalMonthAggregate(
+                monthStart = bounds.first,
+                monthEnd = bounds.second,
+                aggregate = engine.aggregateExpenses(monthPurchases, homeCurrency, rateBasis, com.yourname.expensetracker.domain.core.money.TransactionTypeFilter.PURCHASE_ONLY),
+                hasPurchases = monthPurchases.isNotEmpty()
+            )
+        }
+
         // Compute per-day aggregates for the current period
         val dailyAggregates = purchases
             .groupBy { TimePeriodUtils.getStartOfDay(it.date) }
@@ -422,7 +444,11 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
 
         val dataQuality = CurrencyDataQuality.fromAggregates(
             listOf(periodAggregate, todayAggregate, weekAggregate, monthAggregate, depositAggregate) +
-                categoryAggregates.values,
+                categoryAggregates.values +
+                // P5-003 (RP-05 batch 2): baseline-feeding aggregates participate in
+                // data quality — a missing historical rate is visible as partial input
+                // and never triggers a raw-currency fallback.
+                historicalMonthAggregates.map { it.aggregate },
             rateBasis
         )
 
@@ -438,6 +464,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             previousMonthAggregate = previousMonthAggregate,
             categoryAggregates = categoryAggregates,
             depositAggregate = depositAggregate,
+            historicalMonthAggregates = historicalMonthAggregates,
             dataQuality = dataQuality
         ))
     }
@@ -586,13 +613,28 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // Build spending pace from normalized aggregates
         val daysInMonth = TimePeriodUtils.getDaysInMonth(ctx.now)
         val daysElapsed = ctx.dayOfMonth
+        // P5-003 (RP-05 batch 2): the synthesis baseline (averageMonthlyTotal) is
+        // COMPLETED-month history, never current MTD — MTD early in the month gave
+        // SynthesisEngine a tiny baseline and bypassed the null-baseline confidence
+        // penalty. Policy: with ≥2 completed months holding history, use their mean
+        // (a recorded zero-spend month is real history and stays in the mean);
+        // with fewer, fall back to the previous complete month only when it has
+        // spend; otherwise null keeps the confidence penalty. Months with no
+        // observed rows (e.g. pre-install) are not counted as zero history.
+        // previousMonthTotal stays the separate comparison baseline.
+        val monthsWithHistory = normalized.historicalMonthAggregates.filter { it.hasPurchases }
+        val historicalAverage: Double? = when {
+            monthsWithHistory.size >= 2 ->
+                monthsWithHistory.sumOf { it.aggregate.displayAmount } / monthsWithHistory.size
+            else -> normalized.previousMonthAggregate?.displayAmount?.takeIf { it > 0 }
+        }
         val spendingPace = SpendingPace(
             currentMonthSpent = normalized.monthAggregate.displayAmount,
             daysElapsed = daysElapsed,
             daysInMonth = daysInMonth,
             projectedTotal = if (daysElapsed > 0) normalized.monthAggregate.displayAmount / daysElapsed * daysInMonth else normalized.monthAggregate.displayAmount,
             previousMonthTotal = normalized.previousMonthAggregate?.displayAmount,
-            averageMonthlyTotal = normalized.monthAggregate.displayAmount.takeIf { it > 0 },
+            averageMonthlyTotal = historicalAverage,
             pacePercentage = 100f,
             paceStatus = PaceStatus.NO_BASELINE, // Will be refined by synthesis
             displayCurrency = normalized.homeCurrency.code
@@ -783,30 +825,47 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         }
     }
 
+    // RP-05 batch 2 (P5-012): same reserved pseudo-category convention as
+    // TotalsAggregationEngine (SRH-13). Room auto-generated ids start at 1, so
+    // id 0L cannot collide with a persisted user category.
+    private val uncategorizedPseudoCategory = CategoryInfo(
+        id = 0L,
+        name = "Uncategorized",
+        icon = "?",
+        color = "#808080",
+        isIncome = false
+    )
+
     private fun computeCategoryTotals(ctx: ComputeContext): List<CategorySpending> {
         val normalized = ctx.normalizedInputResult as? DashboardNormalizedInputResult.Available
             ?: return emptyList() // unavailable — no raw fallback
 
         val input = normalized.input
+        // P5-012: the denominator is the sum of ALL buckets, including the null
+        // (uncategorized) one, so percentages stay sum-complete. The current-period
+        // fallback applies only when there are no category aggregates at all.
         val total = input.categoryAggregates.values.sumOf { it.displayAmount }
-            .takeIf { it > 0.0 } ?: input.periodAggregate.displayAmount.coerceAtLeast(0.0)
+            .takeIf { input.categoryAggregates.isNotEmpty() && it > 0.0 }
+            ?: input.periodAggregate.displayAmount.coerceAtLeast(0.0)
 
         val categoryNameById = ctx.data.data.categories.associate { it.id to it }
         return input.categoryAggregates.mapNotNull { (categoryId, aggregate) ->
-            val cat = categoryNameById[categoryId] ?: return@mapNotNull null
+            val isUncategorized = categoryId == null
+            val cat: CategoryInfo = if (isUncategorized) {
+                uncategorizedPseudoCategory
+            } else {
+                categoryNameById[categoryId]
+                    ?.let { CategoryInfo(id = it.id, name = it.name, icon = it.icon, color = it.color, isIncome = false) }
+                    ?: return@mapNotNull null
+            }
             CategorySpending(
-                category = CategoryInfo(
-                    id = cat.id,
-                    name = cat.name,
-                    icon = cat.icon,
-                    color = cat.color,
-                    isIncome = false
-                ),
+                category = cat,
                 total = aggregate.displayAmount,
                 percentage = if (total > 0.0) ((aggregate.displayAmount / total) * 100).toFloat() else 0f,
-                currency = input.homeCurrency.code
+                currency = input.homeCurrency.code,
+                isUncategorized = isUncategorized
             )
-        }.sortedByDescending { it.total }
+        }.sortedByDescending { it.total } // P5-012: sort AFTER the pseudo-category maps in, so it competes for top slots
     }
 
     // CURR-587-08: SpendingTrend now consumes DashboardNormalizedInput — no direct conversion.

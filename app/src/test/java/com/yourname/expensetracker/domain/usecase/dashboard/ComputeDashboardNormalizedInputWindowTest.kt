@@ -19,11 +19,15 @@ import org.junit.Test
 
 /**
  * RP-05 batch 1 (P5-001 + P5-004): dashboard aggregates must be scoped to the
- * CURRENT period even though the adapter fetches a two-month window, and the
+ * CURRENT period even though the adapter fetches a wider window, and the
  * shared-expense identity must survive the boundary so deposit exclusion is
  * live. Direct behavioral coverage of
  * [ComputeDashboardWidgetsUseCase.produceDashboardNormalizedInput] — the
  * previous P5AnalyticsFixesTest re-implemented the filters inline.
+ *
+ * RP-05 batch 2 (P5-003): the completed-history baseline buckets (M-1..M-5)
+ * sliced from the six-month fetch window, and their conversion-quality
+ * contribution, are covered here as well.
  */
 class ComputeDashboardNormalizedInputWindowTest {
 
@@ -40,6 +44,9 @@ class ComputeDashboardNormalizedInputWindowTest {
         override suspend fun insertOrUpdateAll(rates: List<com.yourname.expensetracker.domain.currency.DomainExchangeRate>) { rates.forEach { insertOrUpdate(it) } }
         override suspend fun deleteOldRates(olderThan: Long) { /* no-op */ }
     }
+
+    /** Empty by default — tests add rates explicitly (or rely on same-currency identity). */
+    private val rateStore = TestRateStore()
 
     private val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
 
@@ -62,7 +69,7 @@ class ComputeDashboardNormalizedInputWindowTest {
             stressForecastEngine = mockk(relaxed = true),
             forecastInputAssembler = mockk(relaxed = true),
             currencyConverter = CurrencyConverter(
-                TestRateStore(),
+                rateStore,
                 object : TimeProvider { override fun now() = NOW }
             ),
             currencySettingsRepository = currencySettingsRepository
@@ -168,5 +175,78 @@ class ComputeDashboardNormalizedInputWindowTest {
             result.input.normalizedExpenses.any { it.id == 2L }
         )
         assertEquals(2, result.input.normalizedExpenses.size)
+    }
+
+    @Test
+    fun `completed history buckets carry per-month aggregates for M-1 to M-5`() = runTest {
+        val (periodStart, periodEnd) = TimePeriodUtils.getMonthRange(NOW)
+        val m1 = TimePeriodUtils.getMonthRange(NOW, -1)
+        val m2 = TimePeriodUtils.getMonthRange(NOW, -2)
+        val m3 = TimePeriodUtils.getMonthRange(NOW, -3)
+        val expenses = listOf(
+            purchase(1, 250.0, m1.first + 86_400_000L),
+            purchase(2, 75.0, m3.first + 86_400_000L),
+            // A recorded zero-spend month is real history — it must keep its bucket.
+            purchase(3, 0.0, m2.first + 86_400_000L)
+        )
+
+        val result = useCase.produceDashboardNormalizedInput(expenses, periodStart, periodEnd)
+            as DashboardNormalizedInputResult.Available
+
+        val buckets = result.input.historicalMonthAggregates
+        assertEquals(5, buckets.size)
+        // Oldest first: M-5 .. M-1, calendar-safe bounds.
+        assertEquals(TimePeriodUtils.getMonthRange(NOW, -5).first, buckets[0].monthStart)
+        assertEquals(TimePeriodUtils.getMonthRange(NOW, -1).first, buckets[4].monthStart)
+        assertEquals(250.0, buckets[4].aggregate.displayAmount, 0.001)
+        assertEquals(true, buckets[4].hasPurchases)
+        assertEquals(75.0, buckets[2].aggregate.displayAmount, 0.001)
+        assertEquals(true, buckets[2].hasPurchases)
+        // Recorded zero-spend month retained; months with no rows carry zero + flag.
+        assertEquals(0.0, buckets[3].aggregate.displayAmount, 0.001)
+        assertEquals(true, buckets[3].hasPurchases)
+        assertEquals(false, buckets[0].hasPurchases)
+        assertEquals(false, buckets[1].hasPurchases)
+    }
+
+    @Test
+    fun `missing historical rate marks input partial and excludes the raw amount`() = runTest {
+        val (periodStart, periodEnd) = TimePeriodUtils.getMonthRange(NOW)
+        val m1 = TimePeriodUtils.getMonthRange(NOW, -1)
+        val m2 = TimePeriodUtils.getMonthRange(NOW, -2)
+        val expenses = listOf(
+            purchase(1, 250.0, m1.first + 86_400_000L),
+            // No USD->EUR rate in the store: the row must be excluded (never
+            // summed at raw currency) and the input must be visibly partial.
+            purchase(2, 100.0, m2.first + 86_400_000L).copy(currency = "USD")
+        )
+
+        val result = useCase.produceDashboardNormalizedInput(expenses, periodStart, periodEnd)
+            as DashboardNormalizedInputResult.Available
+
+        val m2Bucket = result.input.historicalMonthAggregates.single { it.monthStart == m2.first }
+        assertEquals(0.0, m2Bucket.aggregate.displayAmount, 0.001)
+        assertEquals(true, m2Bucket.hasPurchases)
+        assertEquals(
+            "missing historical FX must mark the baseline-feeding input partial",
+            true,
+            result.input.dataQuality.isPartial
+        )
+    }
+
+    @Test
+    fun `no completed history leaves all baseline buckets empty-flagged`() = runTest {
+        val (periodStart, periodEnd) = TimePeriodUtils.getMonthRange(NOW)
+        val current = purchase(1, 100.0, periodStart + 86_400_000L)
+
+        val result = useCase.produceDashboardNormalizedInput(listOf(current), periodStart, periodEnd)
+            as DashboardNormalizedInputResult.Available
+
+        // Fresh user: five completed buckets exist but none holds history, so the
+        // baseline policy (mean requires >=2 history months; single fallback needs
+        // previous-month data) must resolve to null at the SpendingPace layer.
+        val buckets = result.input.historicalMonthAggregates
+        assertEquals(5, buckets.size)
+        assertTrue(buckets.none { it.hasPurchases })
     }
 }
