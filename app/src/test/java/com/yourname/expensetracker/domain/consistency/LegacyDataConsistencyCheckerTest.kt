@@ -48,6 +48,7 @@ class LegacyDataConsistencyCheckerTest {
         override suspend fun updateMatchRejected(receiptId: Long, now: Long): Int = 0
         override suspend fun clearMatchFields(receiptId: Long, now: Long): Int = 0
         override suspend fun updatePrimaryExpenseId(receiptId: Long, expenseId: Long, now: Long): Int = 0
+        override suspend fun countReferencesToImagePath(path: String): Int = 0
         override suspend fun getUnmatchedReceipts() = throw NotImplementedError()
         override suspend fun getReceiptsWithSuggestions() = throw NotImplementedError()
         override suspend fun getProcessableReceipts() = throw NotImplementedError()

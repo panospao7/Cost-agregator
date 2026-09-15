@@ -76,6 +76,7 @@ class ReceiptLifecycleCoordinatorTest {
     private lateinit var receiptRepository: ReceiptRepository
     private lateinit var receiptLinkService: ReceiptLinkService
     private lateinit var assetStore: ReceiptAssetStore
+    private lateinit var assetCleanupCoordinator: AssetCleanupCoordinator
     private lateinit var inputValidator: ReceiptInputValidator
     private lateinit var scannedReceiptDao: ScannedReceiptDao
     private lateinit var receiptExpenseLinkDao: ReceiptExpenseLinkDao
@@ -123,6 +124,12 @@ class ReceiptLifecycleCoordinatorTest {
         privacySettingsRepository = mockk(relaxed = true)
         transactionLifecycleCoordinator = mockk(relaxed = true)
         transactionRunner = mockk(relaxed = true)
+        assetCleanupCoordinator = AssetCleanupCoordinator(
+            scannedReceiptDao = scannedReceiptDao,
+            assetStore = assetStore,
+            writeBarrier = writeBarrier,
+            transactionRunner = transactionRunner
+        )
         receiptLifecycleEventWriter = mockk(relaxed = true)
         // Ingest/delete paths run inside transactionRunner blocks — execute them by default.
         stubTransactionRunnerExecutesBlocks()
@@ -161,6 +168,7 @@ class ReceiptLifecycleCoordinatorTest {
             writeBarrier = writeBarrier,
             transactionLifecycleCoordinator = transactionLifecycleCoordinator,
             postCommitActionRunner = postCommitActionRunner,
+            assetCleanupCoordinator = assetCleanupCoordinator,
             merchantNormalizer = mockk(relaxed = true),
             hybridClassifier = mockk(relaxed = true),
             privacySettingsRepository = privacySettingsRepository,

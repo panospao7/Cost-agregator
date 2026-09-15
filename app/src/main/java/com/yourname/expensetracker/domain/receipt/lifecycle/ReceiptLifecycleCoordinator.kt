@@ -117,6 +117,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val postCommitActionRunner: PostCommitActionRunner,
+    private val assetCleanupCoordinator: AssetCleanupCoordinator,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val privacySettingsRepository: PrivacySettingsRepository,
@@ -280,6 +281,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
         // P3-NEW-08: Write INPUT_RECEIVED diagnostic before validation
         val correlationId = java.util.UUID.randomUUID().toString()
+        // RP-12 12c (P3-008): the attempt id owns every asset this attempt saves;
+        // uncommittedAssetPath tracks the live candidate for cancellation cleanup.
+        var uncommittedAssetPath: String? = null
         emitIntakeDiagnostic("input", com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
             correlationId, "INPUT_RECEIVED", mimeType = null, fileSizeBytes = null)
 
@@ -345,6 +349,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
             val receipt = processResult.receipt
             val parsed = processResult.parsed
+            uncommittedAssetPath = receipt.imagePath
 
             // RCP-14 / RCP-6: Capture taxInclusive from the parser result for
             // downstream propagation. The flag is not stored in the DB entity
@@ -388,7 +393,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         // If id <= 0, this is a draft; only delete the temp asset.
                         // Legacy persisted duplicates still get full DB cleanup.
                         if (receipt.id <= 0L) {
-                            receipt.imagePath?.let { assetStore.deleteAsset(it) }
+                            assetCleanupCoordinator.cleanupUncommittedAsset(
+                                path = receipt.imagePath,
+                                attemptId = correlationId,
+                                reason = "EXACT_HASH_DUPLICATE_DRAFT"
+                            )
                             Timber.i("Duplicate draft detected by exact hash: existingId=%d", existing.id)
                         } else {
                             transactionRunner.runInTransaction(
@@ -411,7 +420,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                                 )))
                                 scannedReceiptDao.delete(receipt)
                             }
-                            receipt.imagePath?.let { assetStore.deleteAsset(it) }
+                            assetCleanupCoordinator.cleanupUncommittedAsset(
+                                path = receipt.imagePath,
+                                attemptId = correlationId,
+                                reason = "EXACT_HASH_DUPLICATE_COMMITTED"
+                            )
                         }
                         Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
                         return Result.success(
@@ -527,8 +540,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
                     val existing = scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)
                     if (existing != null) {
-                        receipt.imagePath?.takeIf { it.isNotBlank() }
-                            ?.let { assetStore.deleteAsset(it) }
+                        assetCleanupCoordinator.cleanupUncommittedAsset(
+                                path = receipt.imagePath,
+                                attemptId = correlationId,
+                                reason = "POST_OCR_DUPLICATE_DRAFT"
+                            )
                         existing.taxInclusive = taxInclusive
                         Timber.d("Post-OCR duplicate draft detected (match=%s, existingId=%d)",
                             postOcrDup.matchType, existing.id)
@@ -598,7 +614,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         )))
                         res.receiptId
                     }
-                    is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason, attemptedAssetPath = null)
+                    is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason, attemptedAssetPath = updated.imagePath)
                     is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(res.reason)
                 }
 
@@ -666,6 +682,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // pre-existing receipt and the save transaction rolled back cleanly.
             // Return the existing receipt with inserted=false and no batch instead
             // of a failure (mirrors the other duplicate exits).
+            // RP-12 12c (P3-008): the attempt's asset is uncommitted after the
+            // rollback — clean it up (best-effort, never masks the outcome).
+            assetCleanupCoordinator.cleanupUncommittedAsset(
+                path = e.attemptedAssetPath,
+                attemptId = correlationId,
+                reason = "INSERT_ROLLBACK_DUPLICATE"
+            )
             Timber.d("processReceiptInput: insert-race duplicate resolved, existingId=%d", e.existingReceipt.id)
             Result.success(
                 ReceiptProcessOutcome(
@@ -674,6 +697,17 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     postCommitBatch = null
                 )
             )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // RP-12 12c (P3-008): best-effort cleanup of this attempt's
+            // uncommitted asset before propagating; cancellation is never swallowed.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                assetCleanupCoordinator.cleanupUncommittedAsset(
+                    path = uncommittedAssetPath,
+                    attemptId = correlationId,
+                    reason = "CALLER_CANCELLED"
+                )
+            }
+            throw e
         } catch (e: Exception) {
             CancellationSafe.rethrowIfCancellation(e)
             Timber.e(e, "processReceiptInput failed")

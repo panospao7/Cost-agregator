@@ -212,8 +212,12 @@ class ReceiptRepository @Inject constructor(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 Timber.e(e, "OCR failed for receipt input")
-                // P3-0D5-02: Never persist uri.toString() as imagePath
-                val path = try { ocrService.persistImageCopy(imageUri) } catch (_: Exception) { null }
+                // P3-0D5-02: Never persist uri.toString() as imagePath.
+                // P3-008 (RP-12 12c): prefer the path this attempt already saved,
+                // passed through the typed recognition failure — persistImageCopy
+                // is only a fallback for failures BEFORE any save (no double copy).
+                val path = (e as? com.yourname.expensetracker.domain.receipt.OcrRecognitionFailedException)?.savedImagePath
+                    ?: try { ocrService.persistImageCopy(imageUri) } catch (_: Exception) { null }
                 val homeCur = homeCurrency()
                 val now = timeProvider.now()
                 val fallbackReceipt = ReceiptTimestampPolicy.forInsert(ScannedReceipt(

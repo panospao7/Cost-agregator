@@ -41,6 +41,16 @@ import kotlin.coroutines.resumeWithException
 internal fun uniqueTempFileName(prefix: String, extension: String): String =
     "${prefix}_${UUID.randomUUID().toString()}.$extension"
 
+/**
+ * RP-12 12c (P3-008): typed recognition failure carrying the path this
+ * attempt already saved (save-first design). The caller uses [savedImagePath]
+ * instead of making a second persistImageCopy for the same attempt.
+ */
+class OcrRecognitionFailedException(
+    val savedImagePath: String?,
+    cause: Throwable?
+) : RuntimeException("OCR recognition failed", cause)
+
 data class OcrResult(
     val fullText: String,
     val blocks: List<TextBlock>,
@@ -233,8 +243,16 @@ class ReceiptOcrService @Inject constructor(
 
             // 3. Run ML Kit OCR with retry
             val inputImage = InputImage.fromBitmap(bitmap, 0)
-            val visionText = runWithRetry(maxAttempts = 3) {
-                recognizeText(inputImage)
+            val visionText = try {
+                runWithRetry(maxAttempts = 3) {
+                    recognizeText(inputImage)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // P3-008: pass the owned saved path through the typed failure —
+                // the caller must not double-save the same attempt's asset.
+                throw OcrRecognitionFailedException(savedPath, e)
             }
 
             // 4. Extract blocks with confidence filtering

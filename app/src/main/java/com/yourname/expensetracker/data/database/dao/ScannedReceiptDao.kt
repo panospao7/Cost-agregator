@@ -41,6 +41,10 @@ interface ScannedReceiptDao {
     @Query("SELECT * FROM scanned_receipts WHERE id = :id")
     suspend fun getById(id: Long): ScannedReceipt?
 
+    /** RP-12 12c (P3-008): asset-ownership check — a path referenced by any receipt row is never deletable. */
+    @Query("SELECT COUNT(*) FROM scanned_receipts WHERE imagePath = :path")
+    suspend fun countReferencesToImagePath(path: String): Int
+
     @Query("SELECT * FROM scanned_receipts WHERE expenseId = :expenseId")
     suspend fun getByExpenseId(expenseId: Long): ScannedReceipt?
 
