@@ -97,7 +97,10 @@ class ReceiptSideEffectPlanner @Inject constructor(
             ReceiptDocumentType.RETAIL_RECEIPT -> listOfNotNull(
                 makeWarrantyExtractionAction(input, corrId, causationId),
                 makeItemCategorizationAction(input.receipt, corrId, causationId),
-                if (alreadyLinked) null else makeTransactionMatchAction(input.receipt, corrId, causationId),
+                // RP-12 12a / P3-001: autoMatchExistingExpense=false omits ONLY the
+                // matching action — unrelated actions are not suppressed.
+                if (alreadyLinked || !input.autoMatchExistingExpense) null
+                else makeTransactionMatchAction(input.receipt, corrId, causationId),
                 makePriceProtectionAction(input.receipt, corrId, causationId)
             )
 
@@ -343,19 +346,34 @@ class ReceiptSideEffectPlanner @Inject constructor(
                     source = "RECEIPT_MATCHER",
                     confidence = matchResult.score.toFloat(),
                     matchStatus = MatchStatus.AUTO_MATCHED,
-                    writeSourceLink = true
+                    writeSourceLink = true,
+                    // RP-12 12a / P3-009: idempotent auto-match — use the link
+                    // service's atomic unmatched-state CAS (same gate as
+                    // ReceiptMatchingWorker) so an already linked, suggested,
+                    // rejected, or concurrently claimed receipt is never
+                    // overwritten by a stale full-row update.
+                    requireUnmatchedClaim = true
                 )
                 if (linkResult.isFailure) {
-                    Timber.w("Auto-match link failed for receipt %d: %s",
-                        receipt.id, linkResult.exceptionOrNull()?.message)
-                    writeMatchEvent(receipt, "MATCH_FAILED",
-                        "Auto-match link failed",
-                        expenseId = matchResult.transaction.id, score = matchResult.score.toFloat(),
-                        errorDetails = "auto_match_link_failed")
-                    SideEffectOutcome.FailedRetryable(
-                        "auto_match_link_failed",
-                        linkResult.exceptionOrNull()?.let { it::class.simpleName }
-                    )
+                    val linkError = linkResult.exceptionOrNull()
+                    if (linkError is ReceiptAlreadyClaimedException) {
+                        // P3-009: a concurrent matching run already claimed this
+                        // receipt. Controlled skipped outcome — never an error,
+                        // never an overwrite (mirrors ReceiptMatchingWorker).
+                        Timber.d("Auto-match skipped for receipt %d: already claimed by a concurrent matching run", receipt.id)
+                        SideEffectOutcome.Skipped(SideEffectSkipReason.ALREADY_PROCESSED)
+                    } else {
+                        Timber.w("Auto-match link failed for receipt %d: %s",
+                            receipt.id, linkError?.message)
+                        writeMatchEvent(receipt, "MATCH_FAILED",
+                            "Auto-match link failed",
+                            expenseId = matchResult.transaction.id, score = matchResult.score.toFloat(),
+                            errorDetails = "auto_match_link_failed")
+                        SideEffectOutcome.FailedRetryable(
+                            "auto_match_link_failed",
+                            linkError?.let { it::class.simpleName }
+                        )
+                    }
                 } else {
                     Timber.d("Auto-matched receipt %d to expense %d (score=%.3f)",
                         receipt.id, matchResult.transaction.id, matchResult.score)

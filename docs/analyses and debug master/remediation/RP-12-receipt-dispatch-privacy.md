@@ -78,6 +78,17 @@ Required tests:
 * interactive categorization runs exactly once and obeys its status gate;
 * side-effect failure leaves the successful receipt result intact.
 
+#### Batch 12a review follow-up (ISSUE-2) — validated
+
+Strict review follow-up: duplicates are surfaced separately. `ReceiptRepository.BatchResult`
+gains `duplicateCount` (and `BatchItemResult` gains `isDuplicate`), so duplicates are no longer
+counted as saves; `ReviewViewModel`'s batch message reports them distinctly. Validated by the
+12a targeted battery: all three new test classes (11 tests) and the cancellation-safety guard
+(20 tests, passing with the two stale-protective RP-12 CE allowlist entries removed) are green.
+The 6 remaining `ReceiptLifecycleCoordinatorTest` failures are the baseline-proven pre-existing
+email-path failures (a subset of the 10 recorded at the lane base in
+`build/guard-debug/rp12-baseline.log`); batch 12b owns them.
+
 ## 12b — Prevent privacy resurrection
 
 ### P3-004 — Use fresh reads and column-scoped receipt writes

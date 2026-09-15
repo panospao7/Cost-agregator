@@ -66,7 +66,8 @@ import javax.inject.Singleton
  * import, etc.).  It orchestrates the full lifecycle:
  *
  *   validate → OCR / parse → dedupe → save → event logging
- *   → post-save side effects (via [ReceiptSideEffectDispatcher])
+ *   → post-save side effects (planned in-transaction via
+ *   [ReceiptSideEffectPlanner], executed post-commit via [PostCommitActionRunner])
  *
  * Full lifecycle phases:
  * 1. **Input Validation** — [ReceiptInputValidator] checks the URI is readable
@@ -82,9 +83,10 @@ import javax.inject.Singleton
  *    processingStatus, asset info).
  * 6. **Lifecycle Event** — A `RECEIPT_SAVED` (and optionally `OCR_FAILED`)
  *    event is written to the [ReceiptEventDao] audit trail.
- * 7. **Post-Save Side Effects** — [ReceiptSideEffectDispatcher] dispatches
- *    downstream operations based on document type: warranty extraction,
- *    item categorization, transaction matching, and price protection checks.
+ * 7. **Post-Save Side Effects** — [ReceiptSideEffectPlanner] plans downstream
+ *    operations inside the save transaction (warranty extraction, item
+ *    categorization, transaction matching, price protection checks) and the
+ *    batch is executed ONCE after commit via [PostCommitActionRunner].
  *
  * As each existing processing path is migrated (PRs 4-8), its logic is moved
  * into this class and the old path is thinned or removed.
@@ -223,6 +225,27 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     )
 
     /**
+     * RP-12 12a / P3-001: coordinator-owned outcome for [processReceiptInput].
+     *
+     * Contract:
+     * - a newly inserted receipt returns `inserted = true`; its
+     *   [postCommitBatch] is planned exactly once from the committed receipt id
+     *   and is executed by the coordinator after the save transaction commits;
+     * - every duplicate path (pre-OCR hash, exact hash, post-OCR text/semantic,
+     *   draft, insert-race resolver duplicate) returns the EXISTING receipt with
+     *   `inserted = false` and `postCommitBatch = null` — no side effects run;
+     * - processing failures surface as `Result.failure` — no outcome, no batch.
+     *
+     * The batch may carry ephemeral raw OCR input in memory only; actions must
+     * not persist it or include it in diagnostics.
+     */
+    data class ReceiptProcessOutcome(
+        val savedReceipt: ScannedReceipt,
+        val inserted: Boolean,
+        val postCommitBatch: PostCommitActionBatch?
+    )
+
+    /**
      * Processes a receipt input URI through the full lifecycle.
      *
      * Full implementation (PR 4):
@@ -239,13 +262,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *
      * @param uri The content URI of the receipt image / PDF.
      * @param options Processing options controlling review creation and auto-matching.
-     * @return [Result.success] with the saved [ScannedReceipt] on success,
-     *         [Result.failure] on validation or processing error.
+     * @return [Result.success] with a [ReceiptProcessOutcome] on success (see its
+     *         duplicate/inserted contract), [Result.failure] on validation or
+     *         processing error.
      */
     suspend fun processReceiptInput(
         uri: Uri,
         options: ReceiptProcessingOptions = ReceiptProcessingOptions()
-    ): Result<ScannedReceipt> {
+    ): Result<ReceiptProcessOutcome> {
         // Guard: block writes during restore maintenance mode
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.processReceiptInput")
@@ -310,7 +334,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // cleanup against a pre-existing receipt.
             if (processResult.isPreExistingDuplicate) {
                 Timber.d("Pre-OCR duplicate detected: existingId=%d", processResult.receipt.id)
-                return Result.success(processResult.receipt)
+                return Result.success(
+                    ReceiptProcessOutcome(
+                        savedReceipt = processResult.receipt,
+                        inserted = false,
+                        postCommitBatch = null
+                    )
+                )
             }
 
             val receipt = processResult.receipt
@@ -384,7 +414,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                             receipt.imagePath?.let { assetStore.deleteAsset(it) }
                         }
                         Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
-                        return Result.success(existing)
+                        return Result.success(
+                            ReceiptProcessOutcome(
+                                savedReceipt = existing,
+                                inserted = false,
+                                postCommitBatch = null
+                            )
+                        )
                     }
                 }
             }
@@ -472,7 +508,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
                 if (existingDuplicate != null) {
                     existingDuplicate.taxInclusive = taxInclusive
-                    return Result.success(existingDuplicate)
+                    return Result.success(
+                        ReceiptProcessOutcome(
+                            savedReceipt = existingDuplicate,
+                            inserted = false,
+                            postCommitBatch = null
+                        )
+                    )
                 }
             } else {
                 // Draft path: no DB writes needed, check outside transaction
@@ -490,13 +532,23 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         existing.taxInclusive = taxInclusive
                         Timber.d("Post-OCR duplicate draft detected (match=%s, existingId=%d)",
                             postOcrDup.matchType, existing.id)
-                        return Result.success(existing)
+                        return Result.success(
+                            ReceiptProcessOutcome(
+                                savedReceipt = existing,
+                                inserted = false,
+                                postCommitBatch = null
+                            )
+                        )
                     }
                 }
             }
 
             // 5. Save receipt with lifecycle metadata and fingerprints,
             //    and carry the taxInclusive flag for downstream consumers.
+            // RP-12 12a (P3-001): resolve the privacy mode BEFORE opening the DB
+            // transaction so no DataStore I/O happens under the Room write lock
+            // (same pattern as P11-CURRENT-020 on the email path).
+            val rawStorageMode = resolveRawStorageMode()
             val now = timeProvider.now()
             val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
                 sourceType = ReceiptSourceType.CAMERA.name,
@@ -508,6 +560,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             ), now).also { it.taxInclusive = taxInclusive }
 
             // P3-BLOCKER-04: Use resolver for fallback insert.
+            var receiptPlan: PostCommitActionBatch? = null
             val savedId = transactionRunner.runInTransaction(
                 correlationId = java.util.UUID.randomUUID().toString(),
                 operationId = "receipt.save_with_review",
@@ -554,14 +607,76 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     pendingReviewDao.insert(review)
                 }
 
+                // RP-12 12a (P3-001): plan post-commit side effects INSIDE the insert
+                // transaction from a fresh in-transaction read of the committed row
+                // (mirror of the email path). Planning is pure — execution happens
+                // only after the transaction commits, via postCommitActionRunner below.
+                // Interactive (camera) and batch import take the same path here.
+                val freshReceipt = scannedReceiptDao.getById(insertedId)
+                if (freshReceipt != null) {
+                    receiptPlan = receiptSideEffectPlanner.planAfterReceiptSaved(
+                        input = ReceiptSideEffectInput(
+                            receipt = freshReceipt,
+                            ephemeralRawOcrText = processResult.ephemeralRawOcrText,
+                            rawStorageMode = rawStorageMode,
+                            correlationId = correlationId,
+                            autoMatchExistingExpense = options.autoMatchExistingExpense
+                        )
+                    )
+                }
+
                 insertedId
             }
 
-            Result.success(updated.copy(id = savedId))
+            // RP-12 12a (P3-001): single post-commit dispatch — the coordinator is the
+            // only runner owner for the camera/batch path. Best-effort: a side-effect
+            // failure must not turn the committed save into a failure, while
+            // CancellationException still propagates (runBestEffortAfterCommit rethrows).
+            postCommitActionRunner.runBestEffortAfterCommit(
+                batch = receiptPlan ?: PostCommitActionBatch.empty(correlationId),
+                logMessage = "Receipt post-commit side effects failed",
+                targetId = savedId
+            )
+
+            Result.success(
+                ReceiptProcessOutcome(
+                    savedReceipt = updated.copy(id = savedId),
+                    inserted = true,
+                    postCommitBatch = receiptPlan
+                )
+            )
+        } catch (e: DuplicateReceiptInsertException) {
+            // RP-12 12a (P3-001): insert-race duplicate — the resolver detected a
+            // pre-existing receipt and the save transaction rolled back cleanly.
+            // Return the existing receipt with inserted=false and no batch instead
+            // of a failure (mirrors the other duplicate exits).
+            Timber.d("processReceiptInput: insert-race duplicate resolved, existingId=%d", e.existingReceipt.id)
+            Result.success(
+                ReceiptProcessOutcome(
+                    savedReceipt = e.existingReceipt,
+                    inserted = false,
+                    postCommitBatch = null
+                )
+            )
         } catch (e: Exception) {
             CancellationSafe.rethrowIfCancellation(e)
             Timber.e(e, "processReceiptInput failed")
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Resolves the raw OCR storage mode for side-effect planning. Fails closed:
+     * on a settings read failure (non-cancellation) the most restrictive
+     * persisted representation is used instead of failing the save.
+     */
+    private suspend fun resolveRawStorageMode(): RawStorageMode {
+        return try {
+            privacySettingsRepository.getSettings().rawOcrStorageMode
+        } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
+            Timber.w("processReceiptInput: rawOcrStorageMode unavailable, using most restrictive mode")
+            RawStorageMode.DO_NOT_STORE
         }
     }
 

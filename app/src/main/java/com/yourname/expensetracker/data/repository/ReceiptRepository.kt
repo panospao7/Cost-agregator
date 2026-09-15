@@ -550,6 +550,13 @@ class ReceiptRepository @Inject constructor(
         val successCount: Int,
         val failureCount: Int,
         val errors: List<String>,
+        /**
+         * RP-12 12a review follow-up: items the coordinator reported as duplicates
+         * (`inserted = false`). They are NOT failures and are NOT counted in
+         * [successCount]'s "newly saved" meaning — they are surfaced separately so
+         * the UI can distinguish "saved" from "already existed".
+         */
+        val duplicateCount: Int = 0,
         val debugData: DebugData? = null
     )
 
@@ -564,8 +571,12 @@ class ReceiptRepository @Inject constructor(
      * - OCR + parsing (delegated to [processReceipt])
      * - File hash computation and duplicate detection (hash, text fingerprint, semantic fingerprint)
      * - Lifecycle event audit trail (RECEIPT_SAVED, OCR_FAILED, DUPLICATE_DETECTED)
-     * - Post-save side effects via [ReceiptSideEffectDispatcher] (warranty extraction,
-     *   item categorization, price protection checks)
+     * - Post-save side effects (warranty extraction, item categorization, transaction
+     *   matching, price protection): planned by the coordinator's
+     *   [com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptSideEffectPlanner]
+     *   inside the save transaction and executed exactly ONCE after commit — one batch
+     *   per INSERTED receipt and none for duplicates (RP-12 12a / P3-001). This
+     *   repository is NOT a second dispatcher; it only observes the save outcome.
      */
     suspend fun processBatch(uris: List<Uri>, onProgress: (Int, Int) -> Unit): BatchResult {
         val uniqueUris = uris.distinctBy { it.toString() }
@@ -579,7 +590,12 @@ class ReceiptRepository @Inject constructor(
         val processedCount = AtomicInteger(0)
         val progressMutex = Mutex()
 
-        data class BatchItemResult(val success: Boolean, val error: String?)
+        data class BatchItemResult(
+            val success: Boolean,
+            val error: String?,
+            /** RP-12 12a review follow-up: coordinator reported this item as a duplicate (`inserted = false`). */
+            val isDuplicate: Boolean = false
+        )
 
         val results = coroutineScope {
             uniqueUris.map { uri ->
@@ -594,9 +610,18 @@ class ReceiptRepository @Inject constructor(
                                         createReview = true
                                     )
                                 )
+                                // RP-12 12a (P3-001): the coordinator owns post-commit
+                                // dispatch — it runs exactly one side-effect batch per
+                                // INSERTED receipt and none for duplicates (duplicates
+                                // come back as a success outcome with inserted=false).
+                                val savedOutcome = outcome.getOrNull()
                                 BatchItemResult(
-                                    success = outcome.isSuccess,
-                                    error = outcome.exceptionOrNull()?.message
+                                    success = savedOutcome != null,
+                                    error = outcome.exceptionOrNull()?.message,
+                                    // RP-12 12a review follow-up: duplicates come back as
+                                    // a success outcome with inserted=false — classify
+                                    // them separately instead of counting them as saves.
+                                    isDuplicate = savedOutcome != null && !savedOutcome.inserted
                                 )
                             } catch (e: CancellationException) {
                                 throw e
@@ -619,12 +644,14 @@ class ReceiptRepository @Inject constructor(
             }.awaitAll()
         }
 
-        val successCount = results.count { it.success }
+        val successCount = results.count { it.success && !it.isDuplicate }
+        val duplicateCount = results.count { it.isDuplicate }
         val errors = results.mapNotNull { it.error }
         return BatchResult(
             successCount = successCount,
-            failureCount = total - successCount,
-            errors = errors
+            failureCount = total - successCount - duplicateCount,
+            errors = errors,
+            duplicateCount = duplicateCount
         )
     }
 

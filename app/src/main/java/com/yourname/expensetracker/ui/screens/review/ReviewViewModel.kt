@@ -984,7 +984,16 @@ class ReviewViewModel @Inject constructor(
                     val firstError = result.errors.firstOrNull()?.let {
                         if (it.length > 60) it.take(57) + "..." else it
                     }
-                    _errorMessage.value = "Processed ${result.successCount} ok. ${result.failureCount} failed: $firstError"
+                    if (result.duplicateCount > 0) {
+                        _errorMessage.value =
+                            "Processed ${result.successCount} saved, ${result.duplicateCount} duplicates. " +
+                                "${result.failureCount} failed: $firstError"
+                    } else {
+                        _errorMessage.value = "Processed ${result.successCount} ok. ${result.failureCount} failed: $firstError"
+                    }
+                } else if (result.duplicateCount > 0) {
+                    _errorMessage.value =
+                        "Processed ${result.successCount} saved, ${result.duplicateCount} duplicates."
                 } else {
                     _errorMessage.value = "Successfully processed all ${result.successCount} receipts!"
                 }

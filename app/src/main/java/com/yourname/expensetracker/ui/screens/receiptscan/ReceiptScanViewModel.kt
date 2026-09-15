@@ -294,7 +294,9 @@ class ReceiptScanViewModel @Inject constructor(
                     )
                 )
                 if (receiptResult.isFailure) throw receiptResult.exceptionOrNull()!!
-                val receipt = receiptResult.getOrThrow()
+                // RP-12 12a (P3-001): coordinator returns a typed outcome; duplicates
+                // arrive as a success outcome with inserted=false and the existing receipt.
+                val receipt = receiptResult.getOrThrow().savedReceipt
 
                 // S7-003: Discard result if a newer scan has started
                 if (requestId != scanRequestSeq) return@launch
