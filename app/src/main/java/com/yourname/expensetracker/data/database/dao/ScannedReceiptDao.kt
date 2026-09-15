@@ -87,6 +87,65 @@ interface ScannedReceiptDao {
     @Query("UPDATE scanned_receipts SET itemCategorizationStatus = :status WHERE id = :receiptId")
     suspend fun updateCategorizationStatus(receiptId: Long, status: String)
 
+    // ── RP-12 12b (P3-004): column-scoped match/link writes ──────────────────
+    // These exist so link/unlink/suggestion paths never issue a full-row
+    // @Update: a stale full-row write after a retention purge would restore
+    // purged rawOcrText/parsed* columns (privacy resurrection). Only match
+    // status, link ids, and timestamps are touched; raw OCR, parsed fields,
+    // itemCategorizationStatus and other concurrent fields are never written.
+
+    /** Link-path write (non-CAS): mirrors [claimForAutoMatch]'s field set. */
+    @Query(
+        "UPDATE scanned_receipts " +
+            "SET expenseId = :expenseId, suggestedExpenseId = NULL, matchStatus = :matchStatus, " +
+            "matchConfidence = :confidence, updatedAt = :now " +
+            "WHERE id = :receiptId"
+    )
+    suspend fun updateLinkTargets(
+        receiptId: Long,
+        expenseId: Long,
+        matchStatus: String,
+        confidence: Float?,
+        now: Long
+    ): Int
+
+    /** MATCH_SUGGESTED write: suggestion id + status + confidence only. */
+    @Query(
+        "UPDATE scanned_receipts " +
+            "SET suggestedExpenseId = :suggestedExpenseId, matchStatus = 'SUGGESTED', " +
+            "matchConfidence = :confidence, updatedAt = :now " +
+            "WHERE id = :receiptId"
+    )
+    suspend fun updateMatchSuggestion(
+        receiptId: Long,
+        suggestedExpenseId: Long,
+        confidence: Float?,
+        now: Long
+    ): Int
+
+    /** MATCH_REJECTED write: status + suggestion clear only. */
+    @Query(
+        "UPDATE scanned_receipts " +
+            "SET matchStatus = 'REJECTED', suggestedExpenseId = NULL, updatedAt = :now " +
+            "WHERE id = :receiptId"
+    )
+    suspend fun updateMatchRejected(receiptId: Long, now: Long): Int
+
+    /** MATCH_CLEARED / unlink-reset write: clears link + status fields only. */
+    @Query(
+        "UPDATE scanned_receipts " +
+            "SET expenseId = NULL, matchStatus = 'UNMATCHED', suggestedExpenseId = NULL, " +
+            "matchConfidence = NULL, updatedAt = :now " +
+            "WHERE id = :receiptId"
+    )
+    suspend fun clearMatchFields(receiptId: Long, now: Long): Int
+
+    /** Re-point to another primary link's expense after unlink: id + timestamp only. */
+    @Query(
+        "UPDATE scanned_receipts SET expenseId = :expenseId, updatedAt = :now WHERE id = :receiptId"
+    )
+    suspend fun updatePrimaryExpenseId(receiptId: Long, expenseId: Long, now: Long): Int
+
     @Query("SELECT * FROM scanned_receipts WHERE matchStatus = 'UNMATCHED' ORDER BY createdAt DESC")
     suspend fun getUnmatchedReceipts(): List<ScannedReceipt>
 
