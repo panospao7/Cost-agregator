@@ -3,7 +3,9 @@ package com.yourname.expensetracker.data.repository
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import android.net.Uri
 import android.os.Environment
+import android.provider.DocumentsContract
 import com.yourname.expensetracker.BuildConfig
 import com.yourname.expensetracker.data.backup.BackupVerifier
 import com.yourname.expensetracker.data.backup.CostbackupBundle
@@ -19,6 +21,7 @@ import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.entity.ScannedReceipt
 import com.yourname.expensetracker.data.security.SecureKeyStorage
 import com.yourname.expensetracker.di.IoDispatcher
+import com.yourname.expensetracker.domain.backup.BackupDestinationException
 import com.yourname.expensetracker.domain.backup.BackupPrivacyMode
 import com.yourname.expensetracker.domain.backup.DatabaseBackupRepository
 import com.yourname.expensetracker.domain.backup.DatabaseImportResult
@@ -134,6 +137,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         private const val BACKUP_PREFIX = "expense_tracker_backup_"
         private const val DATE_FORMAT = "yyyy-MM-dd_HH-mm-ss"
         private const val EXPORT_SUBDIR = "exports"
+
+        /** RP-03A (P7-003): app-private home for legacy/test-delegate .costbackup files. */
+        private const val COSTBACKUP_SUBDIR = "costbackups"
         private const val MIN_SUPPORTED_SCHEMA_VERSION = 6
         private const val BUDGETS_SCHEMA_GUARD_VERSION = 86
         private const val IMPORT_STAGING_PREFIX = "expense_tracker_db_import_stage_"
@@ -508,6 +514,11 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
      * Creates a .costbackup bundle (encrypted ZIP with manifest, checksums,
      * database snapshot, and receipt images).
      *
+     * RP-03A (P7-003): the File destination is a test/legacy delegate that
+     * writes to app-private storage only. Production exports use the SAF
+     * [Uri] overload below — public-Documents fallback and its storage
+     * permissions were removed.
+     *
      * @param password The user-provided encryption password
      * @param includeReceiptImages Whether to include receipt image assets
      * @param redacted Whether to sanitize sensitive data (default: true)
@@ -518,7 +529,73 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         includeReceiptImages: Boolean,
         redacted: Boolean,
         privacyMode: BackupPrivacyMode?
-    ): Result<File> = withContext(ioDispatcher) {
+    ): Result<File> = runCostBackupExport(password, includeReceiptImages, redacted, privacyMode) { snapshot ->
+        val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US)
+            .format(Instant.ofEpochMilli(snapshot.snapshotEpochMs).atZone(ZoneId.systemDefault()).toLocalDateTime())
+        val backupsDir = File(context.filesDir, COSTBACKUP_SUBDIR).apply { mkdirs() }
+        val shortUuid = UUID.randomUUID().toString().take(8)
+        val outputFile = File(backupsDir, "expense_tracker_backup_${timestamp}_${shortUuid}.costbackup")
+
+        CostbackupBundle.create(
+            outputFile = outputFile,
+            databaseFile = snapshot.tempDb,
+            receiptFiles = snapshot.receiptFiles,
+            password = password,
+            nowEpochMs = snapshot.snapshotEpochMs,
+            tableCounts = snapshot.tableCounts,
+            databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+            redacted = snapshot.redacted,
+            includeReceiptImages = snapshot.includeReceiptImages,
+            encryptionService = backupEncryptionService,
+            privacyModeName = privacyMode?.name
+        )
+    }
+
+    /**
+     * RP-03A (P7-003): Creates a .costbackup bundle streamed to the SAF document
+     * at [destination]. The destination is opened only after the snapshot has
+     * been created and verified; on a destination failure the partially written
+     * document is best-effort deleted and the export fails closed with a typed
+     * [BackupDestinationException] (bounded message, no URI/exception text).
+     */
+    override suspend fun createCostBackup(
+        destination: Uri,
+        password: String,
+        includeReceiptImages: Boolean,
+        redacted: Boolean,
+        privacyMode: BackupPrivacyMode?
+    ): Result<Unit> = runCostBackupExport(password, includeReceiptImages, redacted, privacyMode) { snapshot ->
+        writeCostBackupToSafDocument(snapshot, destination, password, privacyMode)
+    }
+
+    /**
+     * RP-03A (P7-003): frozen, verified snapshot inputs handed to the
+     * destination-specific bundle writer.
+     */
+    private data class CostBackupSnapshot(
+        val tempDb: File,
+        val snapshotEpochMs: Long,
+        val tableCounts: Map<String, Int>,
+        val receiptFiles: Map<String, File>,
+        val includeReceiptImages: Boolean,
+        val redacted: Boolean
+    )
+
+    /**
+     * Shared .costbackup export pipeline — privacy gate, BACKUP_EXPORTING
+     * entry/drain, WAL checkpoint, write-barrier double-check, frozen snapshot
+     * creation, sanitisation, strict table counts, snapshot verification, and
+     * receipt asset collection. The destination-specific [writeBundle] step
+     * runs only after the snapshot has been created and verified, so no
+     * destination is opened before the encryption inputs are ready.
+     */
+    private suspend fun <T> runCostBackupExport(
+        password: String,
+        includeReceiptImages: Boolean,
+        redacted: Boolean,
+        privacyMode: BackupPrivacyMode?,
+        writeBundle: (CostBackupSnapshot) -> Result<T>
+    ): Result<T> = withContext(ioDispatcher) {
         val run = operationRunRecorder.start("BACKUP_EXPORT", actor = "user")
         try {
             // If privacyMode is provided, derive booleans from it
@@ -584,8 +661,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
 
             // Copy DB to temp for snapshot
             val snapshotEpochMs = timeProvider.now()
-            val timestamp = DateTimeFormatter.ofPattern(DATE_FORMAT, Locale.US)
-                .format(Instant.ofEpochMilli(snapshotEpochMs).atZone(ZoneId.systemDefault()).toLocalDateTime())
             val tempDb = java.io.File(context.cacheDir, "costbackup_snapshot_${UUID.randomUUID()}.db")
             try {
                 // Capture live counts under drain before snapshot (for equivalence verification)
@@ -652,29 +727,17 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     emptyMap()
                 }
 
-                // Save to public Documents for easy access
-                val backupsDir = java.io.File(
-                    android.os.Environment.getExternalStoragePublicDirectory(
-                        android.os.Environment.DIRECTORY_DOCUMENTS
-                    ), "CostAggregatorBackups"
-                ).apply { mkdirs() }
-                val shortUuid = UUID.randomUUID().toString().take(8)
-                val outputName = "expense_tracker_backup_${timestamp}_${shortUuid}.costbackup"
-                val outputFile = java.io.File(backupsDir, outputName)
-
-                val result = CostbackupBundle.create(
-                    outputFile = outputFile,
-                    databaseFile = tempDb,
-                    receiptFiles = receiptFiles,
-                    password = password,
-                    nowEpochMs = snapshotEpochMs,
+                val snapshot = CostBackupSnapshot(
+                    tempDb = tempDb,
+                    snapshotEpochMs = snapshotEpochMs,
                     tableCounts = tableCounts,
-                    databaseVersion = APP_DATABASE_SCHEMA_VERSION,
-                    redacted = resolvedRedacted,
+                    receiptFiles = receiptFiles,
                     includeReceiptImages = resolvedIncludeReceiptImages,
-                    encryptionService = backupEncryptionService,
-                    privacyModeName = privacyMode?.name
+                    redacted = resolvedRedacted
                 )
+
+                // Destination-specific write (SAF Uri or legacy File delegate)
+                val result = writeBundle(snapshot)
 
                 if (result.isFailure) {
                     run.failedFinal("Bundle creation failed", result.exceptionOrNull())
@@ -687,7 +750,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 Timber.d("Created .costbackup bundle")
                 Timber.d("BackupOperationEvent.BACKUP_COMPLETED: backup finished successfully")
                 run.success()
-                Result.success(outputFile)
+                result
             } finally {
                 tempDb.delete()
             }
@@ -699,6 +762,74 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         } finally {
             runCatching { restoreMaintenanceMode.exit(forceRestartRequired = false) }
         }
+    }
+
+    /**
+     * RP-03A (P7-003): streams the bundle into the SAF document at [destination].
+     *
+     * Failure contract (remediation RP-03A):
+     * - `openOutputStream` returning null or throwing is a typed failed export;
+     * - the stream is closed exactly once (via `use`);
+     * - on any failure the partially written document is best-effort deleted via
+     *   [DocumentsContract.deleteDocument];
+     * - diagnostics/messages stay bounded — no URI, path, or raw exception text.
+     */
+    private fun writeCostBackupToSafDocument(
+        snapshot: CostBackupSnapshot,
+        destination: Uri,
+        password: String,
+        privacyMode: BackupPrivacyMode?
+    ): Result<Unit> {
+        val stream = try {
+            context.contentResolver.openOutputStream(destination, "wt")
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w("SAF backup destination open failed: %s", e.javaClass.simpleName)
+            deleteSafDocumentBestEffort(destination)
+            return Result.failure(BackupDestinationException("Backup destination could not be opened"))
+        }
+        if (stream == null) {
+            Timber.w("SAF backup destination open returned no stream")
+            deleteSafDocumentBestEffort(destination)
+            return Result.failure(BackupDestinationException("Backup destination could not be opened"))
+        }
+
+        val writeResult = try {
+            stream.use { out ->
+                CostbackupBundle.create(
+                    outputStream = out,
+                    databaseFile = snapshot.tempDb,
+                    receiptFiles = snapshot.receiptFiles,
+                    password = password,
+                    nowEpochMs = snapshot.snapshotEpochMs,
+                    tableCounts = snapshot.tableCounts,
+                    databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+                    redacted = snapshot.redacted,
+                    includeReceiptImages = snapshot.includeReceiptImages,
+                    encryptionService = backupEncryptionService,
+                    privacyModeName = privacyMode?.name,
+                    tempDir = context.cacheDir
+                )
+            }
+        } catch (t: Throwable) {
+            // Close failures surface here via `use`; never swallow cancellation.
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            Timber.w("SAF backup destination write failed: %s", t.javaClass.simpleName)
+            Result.failure(BackupDestinationException("Backup destination write failed", t))
+        }
+
+        if (writeResult.isFailure) {
+            deleteSafDocumentBestEffort(destination)
+        }
+        return writeResult
+    }
+
+    /** Best-effort cleanup of a partially written SAF document; never throws. */
+    private fun deleteSafDocumentBestEffort(destination: Uri) {
+        runCatching { DocumentsContract.deleteDocument(context.contentResolver, destination) }
+            .onFailure { t ->
+                Timber.w("SAF backup document cleanup failed: %s", t.javaClass.simpleName)
+            }
     }
 
     override suspend fun restoreCostBackup(
@@ -731,6 +862,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             correlationId = run.correlationId,
             operationType = "RESTORE_COSTBACKUP"
         )
+        // P7-006: declared outside the try so every failure path (incl. the outer
+        // catch) can clean the extraction workspace.
+        val tempDir = File(context.cacheDir, "costbackup_extract_${UUID.randomUUID()}")
         try {
             // 1. Enter maintenance mode + drain workers — RESTORE_PREPARING, blocks all writes
             maintenanceOperationRunner.enterAndDrain(RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
@@ -742,7 +876,6 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             restoreEvents.event("JOURNAL_CREATED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED)
 
             // 3. Extract bundle to temp workspace
-            val tempDir = File(context.cacheDir, "costbackup_extract_${UUID.randomUUID()}")
             val extractionResult = CostbackupBundle.extract(bundleFile, tempDir, password, nowEpochMs = timeProvider.now())
                 .getOrElse { error ->
                     // Wrong password or corrupt bundle — exit maintenance, live DB never touched
@@ -828,8 +961,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreEvents.finalizeRunFailed("Staged verification failed", e)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "STAGED_VERIFICATION_FAILED")
-                stagedDbFile.delete()
-                tempDir.deleteRecursively()
+                cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
                     Exception("STAGED_VERIFICATION_FAILED")
                 )
@@ -861,10 +993,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                         restoreEvents.finalizeRunFailed("Post-migration verification failed", error as? Exception)
                         restoreMaintenanceMode.exit(forceRestartRequired = false)
                         restoreJournal.failJournal(journalEntry, "POST_MIGRATION_VERIFICATION_FAILED")
-                        stagedDbFile.delete()
-                        File(stagedDbPath + "-wal").delete()
-                        File(stagedDbPath + "-shm").delete()
-                        tempDir.deleteRecursively()
+                        cleanupRestoreStaging(stagedDbPath, tempDir)
                         return@withContext Result.failure(
                             Exception("POST_MIGRATION_VERIFICATION_FAILED")
                         )
@@ -884,11 +1013,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreEvents.finalizeRunFailed("Staged migration failed", e)
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "STAGED_MIGRATION_FAILED")
-                stagedDbFile.delete()
-                tempDir.deleteRecursively()
                 // Delete any migrated WAL/SHM files Room may have created
-                File(stagedDbPath + "-wal").delete()
-                File(stagedDbPath + "-shm").delete()
+                cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
                     Exception("STAGED_MIGRATION_FAILED")
                 )
@@ -906,8 +1032,7 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreEvents.finalizeRunFailed("Safety backup failed: $reason", safetyBackupResult.exceptionOrNull())
                 restoreMaintenanceMode.exit(forceRestartRequired = false)
                 restoreJournal.failJournal(journalEntry, "Safety backup failed: $reason")
-                stagedDbFile.delete()
-                tempDir.deleteRecursively()
+                cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
                     Exception("Restore cancelled because safety backup failed: $reason")
                 )
@@ -919,6 +1044,9 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR, isTerminal = true)
                 restoreEvents.finalizeRunFailed("Safety backup path unavailable")
                 restoreJournal.failJournal(journalEntry, "Safety backup path unavailable")
+                // P7-006: this path previously cleaned nothing — the staged trio and
+                // the extraction workspace leaked.
+                cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(Exception("Safety backup created but path unavailable"))
             }
 
@@ -961,7 +1089,14 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // Swap failed — attempt rollback
                 Timber.e(e, "Swap failed, attempting rollback")
-                restoreFromSafetyBackup(safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile)
+                val rollbackOk = restoreFromSafetyBackup(
+                    safetyBackupFile, liveDbFile, liveDbWalFile, liveDbShmFile
+                ).isSuccess
+                if (rollbackOk) {
+                    // P7-004: rollback completed — the pre-swap snapshot is now residue
+                    // (the safety backup has been restored over the live files).
+                    runCatching { preRestoreFile.delete() }
+                }
                 // DDL-512-01: emit terminal event BEFORE failJournal
                 restoreEvents.event("LIVE_DB_SWAP_FAILED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.FAILED_FINAL,
                     severity = com.yourname.expensetracker.domain.diagnostics.EventSeverity.ERROR,
@@ -970,7 +1105,8 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreEvents.finalizeRunFailed("Database swap failed", e)
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
                 restoreJournal.failJournal(journalEntry, "DB_SWAP_FAILED")
-                tempDir.deleteRecursively()
+                // P7-006: the staged trio used to leak here — only tempDir was deleted.
+                cleanupRestoreStaging(stagedDbPath, tempDir)
                 return@withContext Result.failure(
                     Exception("DB_SWAP_FAILED_AND_ROLLED_BACK")
                 )
@@ -1084,7 +1220,10 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     restoreMaintenanceMode.enterCriticalRecoveryRequired(
                         "Restore verification failed and safety backup rollback also failed"
                     )
-                    tempDir.deleteRecursively()
+                    // P7-006: staged trio + extract dir are residue. The .pre_restore
+                    // snapshot is intentionally KEPT — it is the last on-device recovery
+                    // source for the startup crash-recovery path.
+                    cleanupRestoreStaging(stagedDbPath, tempDir)
                     return@withContext Result.failure(
                         Exception(                            "CRITICAL: Restore failed and safety backup rollback also failed. " +
                             "Manual recovery required.")
@@ -1095,19 +1234,76 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                 restoreEvents.event("ROLLBACK_COMPLETED", com.yourname.expensetracker.domain.diagnostics.EventOutcome.COMPLETED, isTerminal = true)
                 restoreJournal.failJournal(journalEntry, "VERIFICATION_FAILED_ROLLED_BACK")
                 restoreMaintenanceMode.exit(forceRestartRequired = true)
-                tempDir.deleteRecursively()
+                // P7-004: rollback completed — the pre-swap snapshot is residue now.
+                runCatching { preRestoreFile.delete() }
+                // P7-006: the staged trio used to leak here — only tempDir was deleted.
+                cleanupRestoreStaging(stagedDbPath, tempDir)
 
                 // F6: DB was swapped — do not use old run handle. Journal is authoritative.
                 Result.failure(Exception("VERIFICATION_FAILED_ROLLED_BACK"))
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // RP-03B: cancellation must always propagate, but never leave the session
+            // writable against a swapped DB. Post-swap states stay resumable: journal
+            // and extraction dir remain on disk (the extraction dir is the asset-resume
+            // source) and the exit forces a restart; startup resume (P7-002) finishes
+            // the job. Pre-swap cancellation exits normally after a terminal failed
+            // journal and staging cleanup.
+            if (isPostSwapJournalState(journalEntry.state)) {
+                restoreMaintenanceMode.exit(forceRestartRequired = true)
+            } else {
+                restoreJournal.failJournal(journalEntry, "RESTORE_CANCELLED")
+                cleanupRestoreStaging(stagedDbPath, tempDir)
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+            }
+            runCatching { restoreEvents.finalizeRunFailed("RESTORE_CANCELLED", null) }
+            throw e
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Failed to restore .costbackup bundle")
-            restoreMaintenanceMode.exit(forceRestartRequired = false)
+            // P7-008: exiting to NORMAL here used to let session writes run against a
+            // DB the next startup crash recovery could roll back (journal said
+            // SWAPPING/VERIFYING). Honor the journal state: post-swap failures keep
+            // writes blocked and require a restart, and the journal must be preserved
+            // as the resumable/recoverable state. Pre-swap failures exit normally only
+            // after staging cleanup and a terminal failed journal (RP-03B).
+            if (isPostSwapJournalState(journalEntry.state)) {
+                restoreMaintenanceMode.exit(forceRestartRequired = true)
+            } else {
+                restoreJournal.failJournal(journalEntry, "RESTORE_FAILED")
+                restoreMaintenanceMode.exit(forceRestartRequired = false)
+            }
+            // P7-006: the outer failure path previously cleaned nothing — staged trio
+            // and extraction workspace leaked. (.pre_restore is kept as a recovery
+            // source for the startup path.)
+            cleanupRestoreStaging(stagedDbPath, tempDir)
             // Use finalizeRunFailed which respects roomAllowed flag
             restoreEvents.finalizeRunFailed("RESTORE_FAILED", e)
             Result.failure(e)
         }
+    }
+
+    /**
+     * P7-008: journal states at or after the destructive swap. Failures (or
+     * cancellations) observed while the journal is in one of these states must not
+     * return the session to NORMAL — the live DB may be the staged one and could be
+     * rolled back by the next startup's crash recovery.
+     */
+    private fun isPostSwapJournalState(state: RestoreJournal.JournalState): Boolean =
+        state == RestoreJournal.JournalState.SWAPPING ||
+            state == RestoreJournal.JournalState.VERIFYING ||
+            state == RestoreJournal.JournalState.ASSETS_RESTORING ||
+            state == RestoreJournal.JournalState.ROLLING_BACK
+
+    /**
+     * P7-006: best-effort cleanup of restore staging residue — the staged DB trio
+     * (db/-wal/-shm) and the bundle extraction workspace. Never throws.
+     */
+    private fun cleanupRestoreStaging(stagedDbPath: String, tempDir: File?) {
+        runCatching { File(stagedDbPath).delete() }
+        runCatching { File(stagedDbPath + "-wal").delete() }
+        runCatching { File(stagedDbPath + "-shm").delete() }
+        runCatching { tempDir?.deleteRecursively() }
     }
 
     /**
@@ -1205,10 +1401,16 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     .substringBefore("_")
                     .toLongOrNull()
                 if (receiptId != null && receiptId > 0L) {
+                    // P7-009: deterministic per-asset identity — the final file name is
+                    // chosen once and journaled while the task is PENDING, so retries
+                    // and startup resume reuse the same final path instead of
+                    // regenerating a UUID (which would leak an orphan per attempt).
+                    val extension = assetFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
                     RestoreJournal.AssetRestoreTask(
                         receiptId = receiptId,
                         sourceRelativePath = assetFile.name,
-                        status = RestoreJournal.AssetRestoreStatus.PENDING
+                        status = RestoreJournal.AssetRestoreStatus.PENDING,
+                        targetPath = java.io.File(receiptsDir, "${UUID.randomUUID()}.$extension").absolutePath
                     )
                 } else null
             }
@@ -1241,27 +1443,42 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
                     continue
                 }
 
-                // 3. Copy asset to temp, then update DB, then rename to final
+                // 3. Copy asset to a durable final file FIRST, then update the DB pointer.
+                //    P7-009: the DB update must follow the successful rename so a failed
+                //    copy/rename never leaves imagePath targeting a missing file, and the
+                //    final name is deterministic across retries (journal-recorded target).
                 val extension = assetFile.extension.takeIf { it.isNotBlank() } ?: "jpg"
-                val finalFile = java.io.File(receiptsDir, "${UUID.randomUUID()}.$extension")
-                val tempFile = java.io.File(receiptsDir, "${finalFile.name}.tmp")
+                val finalName = currentJournalEntry?.assetTasks
+                    ?.firstOrNull { it.receiptId == receiptId }
+                    ?.targetPath
+                    ?.let { java.io.File(it).name }
+                    ?: "${UUID.randomUUID()}.$extension"
+                val finalFile = java.io.File(receiptsDir, finalName)
+                val tempFile = java.io.File(receiptsDir, "$finalName.tmp")
                 try {
                     assetFile.inputStream().use { input ->
-                        tempFile.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    restoreInternalWriteScope.run("restoreReceiptAssets.updateImagePath") {
-                        dao.update(receipt.copy(imagePath = finalFile.absolutePath))
+                        java.io.FileOutputStream(tempFile).use { output ->
+                            input.copyTo(output)
+                            output.flush()
+                            // RP-03B (TEMP_WRITTEN): fsync so the rename target is durable.
+                            runCatching { output.fd.sync() }
+                        }
                     }
                     if (!tempFile.renameTo(finalFile)) {
                         tempFile.copyTo(finalFile, overwrite = true)
                         tempFile.delete()
+                    }
+                    restoreInternalWriteScope.run("restoreReceiptAssets.updateImagePath") {
+                        dao.update(receipt.copy(imagePath = finalFile.absolutePath))
                     }
                     Timber.d("Restored receipt asset: receiptId=%d",
                         receiptId)
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     runCatching { tempFile.delete() }
-                    runCatching { finalFile.delete() }
+                    // P7-009: finalFile is intentionally NOT deleted here — with a
+                    // deterministic name it may be a valid output of this or an earlier
+                    // attempt; periodic orphan cleanup owns residue.
                     throw e
                 }
                 restoredCount++
@@ -1866,6 +2083,22 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * RP-03B: stream-copy [sourceFile] to [destinationFile], then flush + fsync so
+     * the bytes survive a crash/power loss before any later step trusts the copy.
+     * Same pattern as [createSafetyBackupInternalAssumingMaintenance] / RestoreJournal.
+     */
+    private fun copyFileSynced(sourceFile: File, destinationFile: File) {
+        destinationFile.parentFile?.mkdirs()
+        FileOutputStream(destinationFile).use { output ->
+            sourceFile.inputStream().use { input ->
+                input.copyTo(output)
+            }
+            output.flush()
+            runCatching { output.fd.sync() }
+        }
+    }
+
     private fun SourceValidationSummary.toImportSummary(): DatabaseImportSummary {
         return DatabaseImportSummary(
             transactionCount = transactionCount,
@@ -2231,26 +2464,16 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             dbWalFile.delete()
             dbShmFile.delete()
 
-            safetyBackupFile.inputStream().use { input ->
-                dbFile.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            }
+            // RP-03B (deferred P7-005): fsync'd copies — rollback must not trust a
+            // partially flushed copy after a crash/power loss.
+            copyFileSynced(safetyBackupFile, dbFile)
 
             if (backupWalFile.exists()) {
-                backupWalFile.inputStream().use { input ->
-                    dbWalFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
+                copyFileSynced(backupWalFile, dbWalFile)
             }
 
             if (backupShmFile.exists()) {
-                backupShmFile.inputStream().use { input ->
-                    dbShmFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
+                copyFileSynced(backupShmFile, dbShmFile)
             }
 
             // Use fresh Room — injected singleton is stale after DB file copy
@@ -2337,8 +2560,21 @@ class DatabaseBackupRepositoryImpl @Inject constructor(
             val safetyBackupDir = File(context.filesDir, "safety_backups").apply { mkdirs() }
             val safetyBackupFile = File(safetyBackupDir, "${BACKUP_PREFIX}SAFETY_${timestamp}.db")
 
-            dbFile.inputStream().use { input ->
-                safetyBackupFile.outputStream().use { output -> input.copyTo(output) }
+            // RP-03A (P7-003): fsync'd safety copy — a crash/power loss right after
+            // creation must not leave a partial safety backup that rollback would
+            // then trust. Same flush+fd.sync() pattern as RestoreJournal.writeTextSynced
+            // (sync failure is guarded so a device sync limitation never aborts the copy).
+            FileOutputStream(safetyBackupFile).use { fos ->
+                dbFile.inputStream().use { input ->
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n == -1) break
+                        fos.write(buffer, 0, n)
+                    }
+                }
+                fos.flush()
+                runCatching { fos.fd.sync() }
             }
 
             cleanupOldSafetyBackups(safetyBackupDir)

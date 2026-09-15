@@ -71,9 +71,13 @@ class BackupRestoreViewModel @Inject constructor(
     }
 
     /**
-     * Creates a .costbackup bundle with the given password.
+     * RP-03A (P7-003): Creates a .costbackup bundle streamed to the SAF document
+     * at [destination] (picked by the user via CreateDocument). The repository
+     * owns opening/writing/closing the destination stream; this method only
+     * maps typed failures to bounded messages — raw exception text is never
+     * surfaced.
      */
-    fun createBackup(password: String) {
+    fun createBackup(destination: Uri, password: String) {
         if (password.isBlank()) {
             _uiState.value = _uiState.value.copy(errorMessage = "Password cannot be empty")
             return
@@ -88,14 +92,14 @@ class BackupRestoreViewModel @Inject constructor(
                 successMessage = null
             )
 
-            val result = databaseBackupRepository.createCostBackup(password)
+            val result = databaseBackupRepository.createCostBackup(destination, password)
 
             result.fold(
-                onSuccess = { file ->
+                onSuccess = {
                     Timber.d("Backup created successfully")
                     _uiState.value = _uiState.value.copy(
                         isBackingUp = false,
-                        successMessage = "Backup created successfully: ${file.name}",
+                        successMessage = "Backup created successfully",
                         lastBackupDate = java.time.format.DateTimeFormatter.ofPattern(
                             "yyyy-MM-dd HH:mm",
                             java.util.Locale.getDefault()
@@ -110,6 +114,9 @@ class BackupRestoreViewModel @Inject constructor(
                     val message = when {
                         error is com.yourname.expensetracker.data.backup.CostbackupBundle.WrongBackupPasswordException ->
                             "Encryption error: Incorrect password or corrupt backup file"
+                        // RP-03A: typed SAF destination failure (open/write/close) — bounded text only
+                        error is com.yourname.expensetracker.domain.backup.BackupDestinationException ->
+                            "Could not save the backup to the selected location. Please try again."
                         error.message?.contains("denied", ignoreCase = true) == true ->
                             "Backup denied by privacy settings"
                         else -> "Backup failed. Please try again."

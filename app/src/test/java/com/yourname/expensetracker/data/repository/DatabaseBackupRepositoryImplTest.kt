@@ -5,6 +5,7 @@ import android.database.MatrixCursor
 import android.database.sqlite.SQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteOpenHelper
+import androidx.test.core.app.ApplicationProvider
 import com.yourname.expensetracker.data.database.APP_DATABASE_SCHEMA_VERSION
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.privacy.BackupEncryptionService
@@ -665,11 +666,133 @@ class DatabaseBackupRepositoryImplTest {
         assertTrue(result.exceptionOrNull()?.message?.contains("restored from safety backup") == true)
     }
 
+    // ── RP-03B batch 3b: restoreCostBackup state machine tests ─────
+
+    private val realAppContext: Context by lazy { ApplicationProvider.getApplicationContext() }
+
+    private fun stubCacheDir() {
+        every { context.cacheDir } answers { File(tempDir, "cache").apply { mkdirs() } }
+        every { context.applicationContext } returns realAppContext
+    }
+
+    /** Fresh on-disk journal (real file-backed instance over the stubbed filesDir). */
+    private fun newRealJournal(): RestoreJournal {
+        listOf(
+            "restore_journal.json",
+            "restore_journal_last_failure.json",
+            RestoreJournal.SUCCESS_JOURNAL_FILENAME
+        ).forEach { File(tempDir, it).delete() }
+        return RestoreJournal(context, FakeTimeProvider(fixedTime))
+    }
+
+    private fun tier1Manifest(counts: Map<String, Int>): CostbackupBundle.BackupManifest =
+        CostbackupBundle.BackupManifest(
+            databaseVersion = APP_DATABASE_SCHEMA_VERSION,
+            createdAt = fixedTime,
+            tableCounts = counts
+        )
+
+    private fun stubExtractionResult(
+        manifest: CostbackupBundle.BackupManifest,
+        dbFile: File?,
+        withReceiptAsset: Boolean = false
+    ) {
+        mockkObject(CostbackupBundle)
+        // The production call site passes nowEpochMs and relies on defaults for
+        // encryptionService/limits — the defaults are filled before dispatch, so the
+        // stub must match the FULL parameter list or the real method runs.
+        every {
+            CostbackupBundle.extract(any(), any(), any(), any(), any(), any())
+        } answers {
+            val outputDir = secondArg<File>()
+            outputDir.mkdirs()
+            if (withReceiptAsset) {
+                val receiptsDir = File(outputDir, "receipts")
+                receiptsDir.mkdirs()
+                File(receiptsDir, "5_photo.jpg").writeBytes(byteArrayOf(9, 8, 7))
+            }
+            Result.success(
+                CostbackupBundle.ExtractionResult(
+                    manifest = manifest,
+                    dbFile = dbFile ?: File(outputDir, "database.sqlite"),
+                    assetsDir = null,
+                    checksumsVerified = true,
+                    warnings = emptyList(),
+                    extractedFiles = emptyMap()
+                )
+            )
+        }
+    }
+
+    private fun stagedResidueFiles(): List<File> =
+        tempDir.listFiles { f -> f.name.startsWith("expense_tracker_db_import_stage_") }?.toList() ?: emptyList()
+
+    private fun extractionResidueFiles(): List<File> =
+        File(tempDir, "cache").listFiles { f -> f.name.startsWith("costbackup_extract_") }?.toList() ?: emptyList()
+
+    @Test
+    fun `staged verification failure cleans staged trio and extraction dir and exits without restart`() = runTest(testDispatcher) {
+        stubCacheDir()
+        val journal = newRealJournal()
+        val repo = createRepository(journal = journal)
+        val garbageDb = File(tempDir, "garbage_extracted.sqlite").apply { writeText("not a database") }
+        stubExtractionResult(
+            tier1Manifest(BackupVerifier.requiredManifestTables(1).associateWith { 1 }),
+            dbFile = garbageDb
+        )
+
+        try {
+            val result = repo.restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            assertEquals("STAGED_VERIFICATION_FAILED", result.exceptionOrNull()?.message)
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+            // P7-006: staged trio and extraction workspace must not leak.
+            assertTrue("staged residue leaked: ${stagedResidueFiles()}", stagedResidueFiles().isEmpty())
+            assertTrue("extraction residue leaked: ${extractionResidueFiles()}", extractionResidueFiles().isEmpty())
+            assertEquals(
+                "Pre-swap failure must leave a terminal failed journal",
+                "STAGED_VERIFICATION_FAILED",
+                journal.readFailureJournal()?.error
+            )
+        } finally {
+            unmockkObject(CostbackupBundle)
+        }
+    }
+
+    @Test
+    fun `pre-swap generic failure writes terminal failed journal cleans residue and exits normally`() = runTest(testDispatcher) {
+        stubCacheDir()
+        val journal = newRealJournal()
+        val repo = createRepository(journal = journal)
+        // Extraction "succeeds" but the extracted DB file is missing — the staging copy
+        // throws and lands in the OUTER catch with a pre-swap (STAGED) journal.
+        // (stubExtractionResult never creates the db file when dbFile=null.)
+        stubExtractionResult(
+            tier1Manifest(BackupVerifier.requiredManifestTables(1).associateWith { 1 }),
+            dbFile = null
+        )
+
+        try {
+            val result = repo.restoreCostBackup(File(tempDir, "bundle.costbackup"), "pw")
+
+            assertTrue(result.isFailure)
+            // P7-008 (pre-swap branch): nothing destructive happened — exit to NORMAL.
+            verify { mockRestoreMaintenanceMode.exit(forceRestartRequired = false) }
+            assertNotNull("Outer catch must write a terminal failed journal", journal.readFailureJournal())
+            assertTrue(stagedResidueFiles().isEmpty())
+            assertTrue(extractionResidueFiles().isEmpty())
+        } finally {
+            unmockkObject(CostbackupBundle)
+        }
+    }
+
     private fun createRepository(
-        stagedVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary,
+        stagedVerifier: suspend (Context, String, File, Int, DatabaseImportSummary) -> DatabaseImportSummary = { _, _, _, _, summary -> summary },
         liveVerifier: suspend (AppDatabase, File, Int, DatabaseImportSummary) -> DatabaseImportSummary = { _, _, _, summary -> summary },
         encryptionService: BackupEncryptionService = backupEncryptionService,
-        timeProvider: TimeProvider = FakeTimeProvider(fixedTime)
+        timeProvider: TimeProvider = FakeTimeProvider(fixedTime),
+        journal: RestoreJournal = mockRestoreJournal
     ): DatabaseBackupRepositoryImpl {
         return DatabaseBackupRepositoryImpl(
             context = context,
@@ -682,7 +805,7 @@ class DatabaseBackupRepositoryImplTest {
             secureKeyStorage = secureKeyStorage,
             receiptAssetStore = mockk(relaxed = true),
             restoreMaintenanceMode = mockRestoreMaintenanceMode,
-            restoreJournal = mockRestoreJournal,
+            restoreJournal = journal,
             stagedImportVerifier = stagedVerifier,
             liveImportVerifier = liveVerifier,
             timeProvider = timeProvider

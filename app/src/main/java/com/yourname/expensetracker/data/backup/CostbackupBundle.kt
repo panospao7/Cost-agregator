@@ -195,7 +195,7 @@ object CostbackupBundle {
      * Encryption metadata (salt, IV) is handled by [BackupEncryptionService]
      * and embedded in the ciphertext payload.
      */
-    private fun writeHeader(stream: FileOutputStream) {
+    private fun writeHeader(stream: java.io.OutputStream) {
         stream.write(MAGIC.toByteArray(Charsets.US_ASCII))
         stream.write(byteArrayOf(
             (FORMAT_VERSION.toInt() shr 8).toByte(),
@@ -263,6 +263,11 @@ object CostbackupBundle {
     /**
      * Creates a .costbackup bundle at [outputFile].
      *
+     * RP-03A (P7-003): the File destination is a test/legacy delegate only —
+     * production exports stream to a SAF `content://` destination via the
+     * [OutputStream] overload below. This variant is a thin delegate so
+     * existing File-based tests keep working unchanged.
+     *
      * @param outputFile destination bundle file
      * @param databaseFile the Room DB file to include
      * @param receiptFiles map of relative path (e.g. "files/receipts/r1.jpg") → original file
@@ -286,23 +291,98 @@ object CostbackupBundle {
         encryptionService: BackupEncryptionService = BackupEncryptionService(),
         privacyModeName: String? = null
     ): Result<File> = runCatching {
-        // 1. Create a temp file alongside the output for streaming ZIP construction
         val parentDir = outputFile.parentFile ?: File(".")
         parentDir.mkdirs()
-        val tempZip = File(parentDir, "backup_${UUID.randomUUID()}.tmp")
+        FileOutputStream(outputFile).use { fos ->
+            writeToStream(
+                outputStream = fos,
+                tempDir = parentDir,
+                databaseFile = databaseFile,
+                receiptFiles = receiptFiles,
+                password = password,
+                nowEpochMs = nowEpochMs,
+                tableCounts = tableCounts,
+                databaseVersion = databaseVersion,
+                redacted = redacted,
+                includeReceiptImages = includeReceiptImages,
+                encryptionService = encryptionService,
+                privacyModeName = privacyModeName
+            )
+        }
+        Timber.d("Created .costbackup bundle (%d bytes)", outputFile.length())
+        outputFile
+    }
+
+    /**
+     * RP-03A (P7-003): creates a .costbackup bundle streamed directly into
+     * [outputStream] (e.g. a SAF `content://` destination opened by the caller
+     * via `ContentResolver.openOutputStream`). The ZIP body is built into a
+     * temp file under [tempDir] (or the system temp dir when null) and then
+     * encrypted into the stream — the destination is never opened by this
+     * method and the caller owns closing the stream. If writing fails partway,
+     * the stream may hold a partial bundle; the caller is responsible for
+     * best-effort destination cleanup.
+     */
+    fun create(
+        outputStream: java.io.OutputStream,
+        databaseFile: File,
+        receiptFiles: Map<String, File>,
+        password: String,
+        nowEpochMs: Long,
+        tableCounts: Map<String, Int>,
+        databaseVersion: Int,
+        redacted: Boolean = true,
+        includeReceiptImages: Boolean = true,
+        encryptionService: BackupEncryptionService = BackupEncryptionService(),
+        privacyModeName: String? = null,
+        tempDir: File? = null
+    ): Result<Unit> = runCatching {
+        writeToStream(
+            outputStream = outputStream,
+            tempDir = tempDir ?: File(System.getProperty("java.io.tmpdir") ?: "."),
+            databaseFile = databaseFile,
+            receiptFiles = receiptFiles,
+            password = password,
+            nowEpochMs = nowEpochMs,
+            tableCounts = tableCounts,
+            databaseVersion = databaseVersion,
+            redacted = redacted,
+            includeReceiptImages = includeReceiptImages,
+            encryptionService = encryptionService,
+            privacyModeName = privacyModeName
+        )
+        Unit
+    }
+
+    /**
+     * Shared bundle writer: build the (unencrypted) ZIP into a temp file, then
+     * write the .costbackup header + salt/IV/ciphertext to [outputStream].
+     */
+    private fun writeToStream(
+        outputStream: java.io.OutputStream,
+        tempDir: File,
+        databaseFile: File,
+        receiptFiles: Map<String, File>,
+        password: String,
+        nowEpochMs: Long,
+        tableCounts: Map<String, Int>,
+        databaseVersion: Int,
+        redacted: Boolean,
+        includeReceiptImages: Boolean,
+        encryptionService: BackupEncryptionService,
+        privacyModeName: String?
+    ) {
+        // 1. Create a temp file for streaming ZIP construction (avoids OOM)
+        tempDir.mkdirs()
+        val tempZip = File(tempDir, "backup_${UUID.randomUUID()}.tmp")
 
         try {
             // 2. Build ZIP streaming to temp file (avoids OOM from ByteArrayOutputStream)
             buildZip(tempZip, databaseFile, receiptFiles, tableCounts, databaseVersion, redacted, includeReceiptImages, nowEpochMs, privacyModeName)
 
-            // 3. Encrypt from temp file + write header + ciphertext to output file
-            FileOutputStream(outputFile).use { fos ->
-                writeHeader(fos)
-                encryptionService.encrypt(tempZip, fos, password)
-            }
-
-            Timber.d("Created .costbackup bundle (%d bytes)", outputFile.length())
-            outputFile
+            // 3. Encrypt from temp file + write header + ciphertext to the output stream
+            writeHeader(outputStream)
+            encryptionService.encrypt(tempZip, outputStream, password)
         } finally {
             // 4. Always clean up the temp ZIP file
             if (tempZip.exists() && !tempZip.delete()) {

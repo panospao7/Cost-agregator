@@ -63,6 +63,17 @@ fun BackupRestoreScreen(
         }
     }
 
+    // RP-03A (P7-003): SAF destination picker for creating a .costbackup bundle.
+    // The user picks where to save; the repository streams the encrypted bundle
+    // to the returned content Uri (no public-storage permissions needed).
+    val createDestinationLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.createBackup(uri, createPassword)
+        }
+    }
+
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
@@ -172,7 +183,13 @@ fun BackupRestoreScreen(
                     )
 
                     Button(
-                        onClick = { viewModel.createBackup(createPassword) },
+                        onClick = {
+                            // RP-03A (P7-003): pick the SAF destination first, then create.
+                            val timestamp = java.time.format.DateTimeFormatter
+                                .ofPattern("yyyy-MM-dd_HH-mm-ss")
+                                .format(java.time.LocalDateTime.now())
+                            createDestinationLauncher.launch("expense_tracker_backup_${timestamp}.costbackup")
+                        },
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !uiState.isBackingUp && createPassword.isNotBlank()
                     ) {
