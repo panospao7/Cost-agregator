@@ -91,6 +91,15 @@ email-path failures (a subset of the 10 recorded at the lane base in
 
 ## 12b — Prevent privacy resurrection
 
+> **Status (2026-09-15):** P3-004 landed in `b25dc3d8`, P3-007 core in
+> `f305103e` — conditional-complete. Both insert paths (camera + email) route
+> through the single `ReceiptStructuredDataPolicy` transformer; item-dependent
+> post-commit actions skip with the controlled STRUCTURED_RECEIPT_DATA_UNAVAILABLE
+> under every mode except STORE_RAW. Remaining P3-007 step (conditional): ephemeral
+> item pass-through INTO categorization for fresh inserts under restricted modes —
+> requires a CategorizeReceiptItemsUseCase API change; the controlled skip covers
+> the privacy contract today. 12c not started.
+
 ### P3-004 — Use fresh reads and column-scoped receipt writes
 
 `ReceiptLinkService` and match-suggestion code can write a stale full `ScannedReceipt` after a
