@@ -134,7 +134,34 @@ regeneration still owed at endgame):
   held. A newly visible ReceiptRepositoryStatementDuplicateTest failure
   (bank-statement count assertion, previously outside the battery filters)
   cannot reach this diff and is recorded for the RP-21 feed. RP-12 core
-  sequence 12a-12b-12c complete. Next: RP-10b, then the RP-06 chain.
+  sequence 12a-12b-12c complete.
+
+- `rp-10-wip`: `442411b8` batch 10b (plan status `c39dddb1`) — awaited
+  WorkManager enqueue inside the NonCancellable region; ONE atomic,
+  idempotent markEnqueueFailed transition (attempts increment once,
+  FAILED_FINAL at maxAttempts else FAILED_RETRYABLE on the shared
+  NotificationIntakeRetryPolicy ladder, controlled code, locks cleared,
+  status-conditional); EnqueueFailed result + controlled diagnostics; the
+  recovery scheduler's promised app-start hook is now concrete via
+  AppStartupCoordinator; cancellation accounting (one bounded terminal
+  CAPTURE_CANCELLED diagnostic from NonCancellable, rethrow — never a
+  retry/success); unused SHUTDOWN_DRAIN_TIMEOUT_MS removed. Validated:
+  RetryPolicy 2/2, Coordinator 18/18, RestoreBarrier 5/5, worker suites green.
+
+### Hang-family findings (RP-21 feed, thread-dump evidence, 2026-09-15/16)
+
+The 10b work surfaced three concrete members of the known MockK + suspend
+hang family: (1) a RELAXED mock's suspend extension (Operation.await) never
+resumes; (2) creating a mock inside a coEvery answer deadlocks the recorder
+(JvmAutoHinter runBlocking); (3) intercepting a REAL suspend extension
+(OperationKt.await) deadlocks MockK's auto-hint recording — the working
+pattern is a hand-written real Operation fake (CompletedOperation, private
+SUCCESS ctor via reflection). Additionally, DeferredPolicyTest NEVER
+COMPILED at 10a (proven via scratch worktree at 09680da5) — its 5 tests are
+unvalidated carryover and its first run hangs in the same family;
+EnqueueFailureTest (new, real Room) hangs identically and is @Ignore'd with
+evidence. Both belong to the RP-21 withTransaction/mock-hang workstream.
+Next: RP-10c hygiene, then the RP-06 chain.
 
 Next in wave 2: RP-12b P3-007 (structured-data mode matrix), then 12c
 (asset cleanup); RP-10b; then the RP-06→07→08→09 chain; RP-13 schema bump
