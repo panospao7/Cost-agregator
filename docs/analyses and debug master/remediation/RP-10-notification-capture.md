@@ -106,6 +106,17 @@ messages, or stack traces.
 
 ## 10b - Enqueue, retry, and cancellation state machine
 
+> **Status (2026-09-16):** P1-003/P1-004 landed in `442411b8`. Awaited
+> enqueue + atomic markEnqueueFailed (shared backoff ladder via
+> NotificationIntakeRetryPolicy), EnqueueFailed result, app-start recovery
+> hook via AppStartupCoordinator, cancellation diagnostics (CAPTURE_CANCELLED,
+> NonCancellable emission, rethrow), SHUTDOWN_DRAIN_TIMEOUT_MS removed.
+> Validated: RetryPolicy 2/2, Coordinator 18/18, RestoreBarrier 5/5, worker
+> suites green. Conditional: EnqueueFailureTest @Ignore'd (MockK suspend
+> hang family — RP-21 feed); DeferredPolicyTest never compiled at 10a
+> (proven) and its first run hangs in the same family — unvalidated 10a
+> carryover. 10c (P1-005/006/008 hygiene) not started.
+
 ### P1-003 - Await enqueue and transition failures atomically
 
 Inside the existing `NonCancellable` write/enqueue region, await the WorkManager `Operation` using
