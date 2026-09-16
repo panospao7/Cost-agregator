@@ -65,3 +65,6 @@ nul
 # Python
 __pycache__/
 *.pyc
+
+# Nested live worktree (branch gr-00-local) - never commit worktree internals
+GR00-worktree/
