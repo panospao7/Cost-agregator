@@ -3,8 +3,8 @@
 
   "default_agent": "orchestrator",
 
-  "model": "4router-gift/glm-5.3-flash",
-  "small_model": "4router-gift/glm-5.3-flash",
+  "model": "merge-gateway/glm-5.3-flash",
+  "small_model": "merge-gateway/glm-5.3-flash",
 
   "provider": {
     "freemodel": {

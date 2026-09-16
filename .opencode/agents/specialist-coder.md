@@ -1,7 +1,7 @@
 ---
 description: Senior implementation agent for complex domain logic, algorithms, and risky refactors.
 mode: subagent
-model: merge-gateway/glm-5.3-flash
+model: 4router-gift/glm-5.3-flash
 variant: max
 temperature: 0.1
 steps: 200

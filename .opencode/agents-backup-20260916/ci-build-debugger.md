@@ -1,7 +1,7 @@
 ---
 description: CI, Gradle, Kotlin, Hilt, KSP, Room, and Android build failure debugger.
 mode: subagent
-model: 4router-gift/glm-5.3-flash
+model: merge-gateway/glm-5.3-flash
 variant: max
 temperature: 0.1
 steps: 200
