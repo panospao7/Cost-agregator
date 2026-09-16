@@ -155,6 +155,20 @@ diagnostic, cancellation propagates, and no durable row is left in `RECEIVED`.
 
 ## 10c - Hygiene (unchanged scope, corrected contracts)
 
+> **Status (2026-09-16):** P1-005/P1-006/P1-008 landed on rp-10-wip. Four
+> sensitive Android keys added (STORE_RAW gate unchanged, pinned test
+> extended); deduper on MonotonicTimeProvider via the existing TimeModule
+> binding (nanos→millis once per read; window/TTL semantics unchanged;
+> forward-jump testing impossible-by-construction with a single time source
+> — documented in the test KDoc); transient payload now length-prefixed
+> framing with a presence bit behind a 0xFF first-byte marker inside the
+> ciphertext (legacy NUL-joined rows still decrypt via a preserved verbatim
+> legacy parser; no Room migration, no key bump). Validated: static review
+> green (tester + strict reviewer); NEW tests authored but NOT RUN (9
+> deduper, 12 crypto, 4-assertion key-set extension) — human validation
+> required. With this slice RP-10 is complete (P1-007 folded into P1-003,
+> REVAL-4, landed in 10b).
+
 ### P1-005 - Sensitive extras key set
 
 Add `android.messages`, `android.textLines`, `android.remoteInputHistory`, and
