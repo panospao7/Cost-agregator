@@ -48,13 +48,19 @@ enum class DiagnosticReasonCode {
     RETENTION_PARTIAL_FAILURE,
     INCONSISTENCY_DETECTED,
     INCONSISTENCY_CHECK,
+    // RP-12 12b (P3-007): item-dependent side effect had no permitted
+    // structured receipt data (restricted storage mode / process restart).
+    STRUCTURED_RECEIPT_DATA_UNAVAILABLE,
+
     // RP-10 10a (P1-001/P1-002): deferred notification capture outcomes —
     // controlled constants only, never payload-derived.
     DEFERRED_NOT_STORED,
     DEFERRED_STORAGE_POLICY_UNAVAILABLE,
     DEFERRED_TRANSIENT_ENCRYPT_FAILED,
+
     // RP-10 10b (P1-003): WorkManager enqueue failure transitioned the row.
     ENQUEUE_FAILED,
+
     // RP-10 10b (P1-004): caller cancellation accounted for, never swallowed.
     CAPTURE_CANCELLED
 }

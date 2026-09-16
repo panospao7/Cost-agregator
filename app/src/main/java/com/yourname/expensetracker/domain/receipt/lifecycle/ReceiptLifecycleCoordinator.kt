@@ -66,7 +66,8 @@ import javax.inject.Singleton
  * import, etc.).  It orchestrates the full lifecycle:
  *
  *   validate → OCR / parse → dedupe → save → event logging
- *   → post-save side effects (via [ReceiptSideEffectDispatcher])
+ *   → post-save side effects (planned in-transaction via
+ *   [ReceiptSideEffectPlanner], executed post-commit via [PostCommitActionRunner])
  *
  * Full lifecycle phases:
  * 1. **Input Validation** — [ReceiptInputValidator] checks the URI is readable
@@ -82,9 +83,10 @@ import javax.inject.Singleton
  *    processingStatus, asset info).
  * 6. **Lifecycle Event** — A `RECEIPT_SAVED` (and optionally `OCR_FAILED`)
  *    event is written to the [ReceiptEventDao] audit trail.
- * 7. **Post-Save Side Effects** — [ReceiptSideEffectDispatcher] dispatches
- *    downstream operations based on document type: warranty extraction,
- *    item categorization, transaction matching, and price protection checks.
+ * 7. **Post-Save Side Effects** — [ReceiptSideEffectPlanner] plans downstream
+ *    operations inside the save transaction (warranty extraction, item
+ *    categorization, transaction matching, price protection checks) and the
+ *    batch is executed ONCE after commit via [PostCommitActionRunner].
  *
  * As each existing processing path is migrated (PRs 4-8), its logic is moved
  * into this class and the old path is thinned or removed.
@@ -115,6 +117,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val writeBarrier: DatabaseWriteBarrier,
     private val transactionLifecycleCoordinator: TransactionLifecycleCoordinator,
     private val postCommitActionRunner: PostCommitActionRunner,
+    private val assetCleanupCoordinator: AssetCleanupCoordinator,
     private val merchantNormalizer: MerchantNormalizer,
     private val hybridClassifier: HybridExpenseClassifier,
     private val privacySettingsRepository: PrivacySettingsRepository,
@@ -223,6 +226,27 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     )
 
     /**
+     * RP-12 12a / P3-001: coordinator-owned outcome for [processReceiptInput].
+     *
+     * Contract:
+     * - a newly inserted receipt returns `inserted = true`; its
+     *   [postCommitBatch] is planned exactly once from the committed receipt id
+     *   and is executed by the coordinator after the save transaction commits;
+     * - every duplicate path (pre-OCR hash, exact hash, post-OCR text/semantic,
+     *   draft, insert-race resolver duplicate) returns the EXISTING receipt with
+     *   `inserted = false` and `postCommitBatch = null` — no side effects run;
+     * - processing failures surface as `Result.failure` — no outcome, no batch.
+     *
+     * The batch may carry ephemeral raw OCR input in memory only; actions must
+     * not persist it or include it in diagnostics.
+     */
+    data class ReceiptProcessOutcome(
+        val savedReceipt: ScannedReceipt,
+        val inserted: Boolean,
+        val postCommitBatch: PostCommitActionBatch?
+    )
+
+    /**
      * Processes a receipt input URI through the full lifecycle.
      *
      * Full implementation (PR 4):
@@ -239,13 +263,14 @@ class ReceiptLifecycleCoordinator @Inject constructor(
      *
      * @param uri The content URI of the receipt image / PDF.
      * @param options Processing options controlling review creation and auto-matching.
-     * @return [Result.success] with the saved [ScannedReceipt] on success,
-     *         [Result.failure] on validation or processing error.
+     * @return [Result.success] with a [ReceiptProcessOutcome] on success (see its
+     *         duplicate/inserted contract), [Result.failure] on validation or
+     *         processing error.
      */
     suspend fun processReceiptInput(
         uri: Uri,
         options: ReceiptProcessingOptions = ReceiptProcessingOptions()
-    ): Result<ScannedReceipt> {
+    ): Result<ReceiptProcessOutcome> {
         // Guard: block writes during restore maintenance mode
         try {
             writeBarrier.checkWritesAllowed("ReceiptLifecycleCoordinator.processReceiptInput")
@@ -256,6 +281,9 @@ class ReceiptLifecycleCoordinator @Inject constructor(
 
         // P3-NEW-08: Write INPUT_RECEIVED diagnostic before validation
         val correlationId = java.util.UUID.randomUUID().toString()
+        // RP-12 12c (P3-008): the attempt id owns every asset this attempt saves;
+        // uncommittedAssetPath tracks the live candidate for cancellation cleanup.
+        var uncommittedAssetPath: String? = null
         emitIntakeDiagnostic("input", com.yourname.expensetracker.domain.diagnostics.EventOutcome.RECEIVED,
             correlationId, "INPUT_RECEIVED", mimeType = null, fileSizeBytes = null)
 
@@ -310,11 +338,18 @@ class ReceiptLifecycleCoordinator @Inject constructor(
             // cleanup against a pre-existing receipt.
             if (processResult.isPreExistingDuplicate) {
                 Timber.d("Pre-OCR duplicate detected: existingId=%d", processResult.receipt.id)
-                return Result.success(processResult.receipt)
+                return Result.success(
+                    ReceiptProcessOutcome(
+                        savedReceipt = processResult.receipt,
+                        inserted = false,
+                        postCommitBatch = null
+                    )
+                )
             }
 
             val receipt = processResult.receipt
             val parsed = processResult.parsed
+            uncommittedAssetPath = receipt.imagePath
 
             // RCP-14 / RCP-6: Capture taxInclusive from the parser result for
             // downstream propagation. The flag is not stored in the DB entity
@@ -358,7 +393,11 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         // If id <= 0, this is a draft; only delete the temp asset.
                         // Legacy persisted duplicates still get full DB cleanup.
                         if (receipt.id <= 0L) {
-                            receipt.imagePath?.let { assetStore.deleteAsset(it) }
+                            assetCleanupCoordinator.cleanupUncommittedAsset(
+                                path = receipt.imagePath,
+                                attemptId = correlationId,
+                                reason = "EXACT_HASH_DUPLICATE_DRAFT"
+                            )
                             Timber.i("Duplicate draft detected by exact hash: existingId=%d", existing.id)
                         } else {
                             transactionRunner.runInTransaction(
@@ -381,10 +420,20 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                                 )))
                                 scannedReceiptDao.delete(receipt)
                             }
-                            receipt.imagePath?.let { assetStore.deleteAsset(it) }
+                            assetCleanupCoordinator.cleanupUncommittedAsset(
+                                path = receipt.imagePath,
+                                attemptId = correlationId,
+                                reason = "EXACT_HASH_DUPLICATE_COMMITTED"
+                            )
                         }
                         Timber.i("Duplicate receipt detected by exact hash: existingId=${existing.id}")
-                        return Result.success(existing)
+                        return Result.success(
+                            ReceiptProcessOutcome(
+                                savedReceipt = existing,
+                                inserted = false,
+                                postCommitBatch = null
+                            )
+                        )
                     }
                 }
             }
@@ -472,7 +521,13 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 }
                 if (existingDuplicate != null) {
                     existingDuplicate.taxInclusive = taxInclusive
-                    return Result.success(existingDuplicate)
+                    return Result.success(
+                        ReceiptProcessOutcome(
+                            savedReceipt = existingDuplicate,
+                            inserted = false,
+                            postCommitBatch = null
+                        )
+                    )
                 }
             } else {
                 // Draft path: no DB writes needed, check outside transaction
@@ -485,29 +540,59 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                 if (postOcrDup.isDuplicate && postOcrDup.matchType != "EXACT_HASH") {
                     val existing = scannedReceiptDao.getById(postOcrDup.existingReceiptId!!)
                     if (existing != null) {
-                        receipt.imagePath?.takeIf { it.isNotBlank() }
-                            ?.let { assetStore.deleteAsset(it) }
+                        assetCleanupCoordinator.cleanupUncommittedAsset(
+                                path = receipt.imagePath,
+                                attemptId = correlationId,
+                                reason = "POST_OCR_DUPLICATE_DRAFT"
+                            )
                         existing.taxInclusive = taxInclusive
                         Timber.d("Post-OCR duplicate draft detected (match=%s, existingId=%d)",
                             postOcrDup.matchType, existing.id)
-                        return Result.success(existing)
+                        return Result.success(
+                            ReceiptProcessOutcome(
+                                savedReceipt = existing,
+                                inserted = false,
+                                postCommitBatch = null
+                            )
+                        )
                     }
                 }
             }
 
             // 5. Save receipt with lifecycle metadata and fingerprints,
             //    and carry the taxInclusive flag for downstream consumers.
+            // RP-12 12a (P3-001): resolve the privacy mode BEFORE opening the DB
+            // transaction so no DataStore I/O happens under the Room write lock
+            // (same pattern as P11-CURRENT-020 on the email path).
+            val rawStorageMode = resolveRawStorageMode()
             val now = timeProvider.now()
+            // RP-12 12b (P3-007): single structured-data transformer before
+            // insert. Fingerprints above were computed from the ephemeral values
+            // (hashes, not payloads); what is PERSISTED is shaped by the policy:
+            // STORE_RAW keeps the parser JSON, STORE_REDACTED keeps the typed
+            // RedactedReceiptItem projection, restricted modes keep neither
+            // items nor merchant.
             val updated = ReceiptTimestampPolicy.forInsert(receipt.copy(
                 sourceType = ReceiptSourceType.CAMERA.name,
                 documentType = ReceiptDocumentType.RETAIL_RECEIPT.name,
                 processingStatus = processingStatus,
                 imageHash = fileHash ?: receipt.imageHash,
                 textFingerprint = textFingerprint,
-                semanticFingerprint = semanticFingerprint
+                semanticFingerprint = semanticFingerprint,
+                parsedItems = ReceiptStructuredDataPolicy.persistedItems(
+                    fullItemsJson = receipt.parsedItems,
+                    items = processResult.parsed.lineItems,
+                    currency = receipt.currency,
+                    mode = rawStorageMode
+                ),
+                parsedMerchant = ReceiptStructuredDataPolicy.persistedMerchant(
+                    receipt.parsedMerchant,
+                    rawStorageMode
+                )
             ), now).also { it.taxInclusive = taxInclusive }
 
             // P3-BLOCKER-04: Use resolver for fallback insert.
+            var receiptPlan: PostCommitActionBatch? = null
             val savedId = transactionRunner.runInTransaction(
                 correlationId = java.util.UUID.randomUUID().toString(),
                 operationId = "receipt.save_with_review",
@@ -529,7 +614,7 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         )))
                         res.receiptId
                     }
-                    is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason, attemptedAssetPath = null)
+                    is ReceiptInsertResult.Duplicate -> throw DuplicateReceiptInsertException(res.existingReceipt, res.reason, attemptedAssetPath = updated.imagePath)
                     is ReceiptInsertResult.ConflictUnresolved -> throw IllegalStateException(res.reason)
                 }
 
@@ -554,14 +639,94 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                     pendingReviewDao.insert(review)
                 }
 
+                // RP-12 12a (P3-001): plan post-commit side effects INSIDE the insert
+                // transaction from a fresh in-transaction read of the committed row
+                // (mirror of the email path). Planning is pure — execution happens
+                // only after the transaction commits, via postCommitActionRunner below.
+                // Interactive (camera) and batch import take the same path here.
+                val freshReceipt = scannedReceiptDao.getById(insertedId)
+                if (freshReceipt != null) {
+                    receiptPlan = receiptSideEffectPlanner.planAfterReceiptSaved(
+                        input = ReceiptSideEffectInput(
+                            receipt = freshReceipt,
+                            ephemeralRawOcrText = processResult.ephemeralRawOcrText,
+                            rawStorageMode = rawStorageMode,
+                            correlationId = correlationId,
+                            autoMatchExistingExpense = options.autoMatchExistingExpense
+                        )
+                    )
+                }
+
                 insertedId
             }
 
-            Result.success(updated.copy(id = savedId))
+            // RP-12 12a (P3-001): single post-commit dispatch — the coordinator is the
+            // only runner owner for the camera/batch path. Best-effort: a side-effect
+            // failure must not turn the committed save into a failure, while
+            // CancellationException still propagates (runBestEffortAfterCommit rethrows).
+            postCommitActionRunner.runBestEffortAfterCommit(
+                batch = receiptPlan ?: PostCommitActionBatch.empty(correlationId),
+                logMessage = "Receipt post-commit side effects failed",
+                targetId = savedId
+            )
+
+            Result.success(
+                ReceiptProcessOutcome(
+                    savedReceipt = updated.copy(id = savedId),
+                    inserted = true,
+                    postCommitBatch = receiptPlan
+                )
+            )
+        } catch (e: DuplicateReceiptInsertException) {
+            // RP-12 12a (P3-001): insert-race duplicate — the resolver detected a
+            // pre-existing receipt and the save transaction rolled back cleanly.
+            // Return the existing receipt with inserted=false and no batch instead
+            // of a failure (mirrors the other duplicate exits).
+            // RP-12 12c (P3-008): the attempt's asset is uncommitted after the
+            // rollback — clean it up (best-effort, never masks the outcome).
+            assetCleanupCoordinator.cleanupUncommittedAsset(
+                path = e.attemptedAssetPath,
+                attemptId = correlationId,
+                reason = "INSERT_ROLLBACK_DUPLICATE"
+            )
+            Timber.d("processReceiptInput: insert-race duplicate resolved, existingId=%d", e.existingReceipt.id)
+            Result.success(
+                ReceiptProcessOutcome(
+                    savedReceipt = e.existingReceipt,
+                    inserted = false,
+                    postCommitBatch = null
+                )
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // RP-12 12c (P3-008): best-effort cleanup of this attempt's
+            // uncommitted asset before propagating; cancellation is never swallowed.
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                assetCleanupCoordinator.cleanupUncommittedAsset(
+                    path = uncommittedAssetPath,
+                    attemptId = correlationId,
+                    reason = "CALLER_CANCELLED"
+                )
+            }
+            throw e
         } catch (e: Exception) {
             CancellationSafe.rethrowIfCancellation(e)
             Timber.e(e, "processReceiptInput failed")
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Resolves the raw OCR storage mode for side-effect planning. Fails closed:
+     * on a settings read failure (non-cancellation) the most restrictive
+     * persisted representation is used instead of failing the save.
+     */
+    private suspend fun resolveRawStorageMode(): RawStorageMode {
+        return try {
+            privacySettingsRepository.getSettings().rawOcrStorageMode
+        } catch (e: Exception) {
+            CancellationSafe.rethrowIfCancellation(e)
+            Timber.w("processReceiptInput: rawOcrStorageMode unavailable, using most restrictive mode")
+            RawStorageMode.DO_NOT_STORE
         }
     }
 
@@ -836,12 +1001,16 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                 parsedTotal = emailData.amount,
                 parsedMerchant = emailData.merchant,
                 parsedDate = emailData.date,
-                // PRIV-441-10: Sanitize parsed items by storage mode
-                parsedItems = when (emailStorageMode) {
-                    RawStorageMode.STORE_RAW -> emailData.items
-                    RawStorageMode.STORE_REDACTED -> emailData.items?.let { "[REDACTED_ITEMS]" }
-                    RawStorageMode.STORE_METADATA_ONLY, RawStorageMode.DO_NOT_STORE -> null
-                },
+                // PRIV-441-10 / RP-12 12b (P3-007): sanitize parsed items by
+                // storage mode via the SINGLE structured-data policy — STORE_RAW
+                // keeps the parser JSON, STORE_REDACTED persists the typed
+                // RedactedReceiptItem projection (replaces the old
+                // "[REDACTED_ITEMS]" marker), restricted modes persist nothing.
+                parsedItems = ReceiptStructuredDataPolicy.persistedItemsFromParserJson(
+                    fullItemsJson = emailData.items,
+                    currency = emailData.currency ?: homeCurrency,
+                    mode = emailStorageMode
+                ),
                 parsedTaxAmount = null,
                 currency = emailData.currency ?: homeCurrency,
                 // P11-CURRENT-009: persist real parser confidence (was hardcoded)

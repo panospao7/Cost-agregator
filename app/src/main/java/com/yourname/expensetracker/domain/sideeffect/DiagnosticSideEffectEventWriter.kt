@@ -128,6 +128,7 @@ class DiagnosticSideEffectEventWriter @Inject constructor(
     private fun mapSkipReasonToDiagnosticReasonCode(reason: SideEffectSkipReason): DiagnosticReasonCode? {
         return when (reason) {
             SideEffectSkipReason.PRIVACY_DENIED -> DiagnosticReasonCode.PRIVACY_DENIED
+            SideEffectSkipReason.STRUCTURED_RECEIPT_DATA_UNAVAILABLE -> DiagnosticReasonCode.STRUCTURED_RECEIPT_DATA_UNAVAILABLE
             SideEffectSkipReason.RESTORE_BLOCKED -> DiagnosticReasonCode.RESTORE_BLOCKED
             SideEffectSkipReason.DUPLICATE -> DiagnosticReasonCode.DUPLICATE
             SideEffectSkipReason.PERMISSION_DENIED -> DiagnosticReasonCode.PERMISSION_DENIED

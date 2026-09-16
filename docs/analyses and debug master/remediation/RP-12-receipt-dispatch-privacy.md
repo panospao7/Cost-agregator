@@ -78,7 +78,32 @@ Required tests:
 * interactive categorization runs exactly once and obeys its status gate;
 * side-effect failure leaves the successful receipt result intact.
 
+#### Batch 12a review follow-up (ISSUE-2) — validated
+
+Strict review follow-up: duplicates are surfaced separately. `ReceiptRepository.BatchResult`
+gains `duplicateCount` (and `BatchItemResult` gains `isDuplicate`), so duplicates are no longer
+counted as saves; `ReviewViewModel`'s batch message reports them distinctly. Validated by the
+12a targeted battery: all three new test classes (11 tests) and the cancellation-safety guard
+(20 tests, passing with the two stale-protective RP-12 CE allowlist entries removed) are green.
+The 6 remaining `ReceiptLifecycleCoordinatorTest` failures are the baseline-proven pre-existing
+email-path failures (a subset of the 10 recorded at the lane base in
+`build/guard-debug/rp12-baseline.log`); batch 12b owns them.
+
 ## 12b — Prevent privacy resurrection
+
+> **Status (2026-09-15):** P3-004 landed in `b25dc3d8`, P3-007 core in
+> `f305103e` — conditional-complete. Both insert paths (camera + email) route
+> through the single `ReceiptStructuredDataPolicy` transformer; item-dependent
+> post-commit actions skip with the controlled STRUCTURED_RECEIPT_DATA_UNAVAILABLE
+> under every mode except STORE_RAW. Remaining P3-007 step (conditional): ephemeral
+> item pass-through INTO categorization for fresh inserts under restricted modes —
+> requires a CategorizeReceiptItemsUseCase API change; the controlled skip covers
+> the privacy contract today. 12c (P3-008) landed in `0a96e99a`:
+> AssetCleanupCoordinator with reference-counted, attempt-claimed cleanup on
+> every uncommitted-asset exit, typed OcrRecognitionFailedException carrying
+> the owned path (double-copy removed), cancellation-safe best-effort cleanup.
+> RP-12 core sequence 12a-12b-12c is now complete (conditional remainder
+> above).
 
 ### P3-004 — Use fresh reads and column-scoped receipt writes
 

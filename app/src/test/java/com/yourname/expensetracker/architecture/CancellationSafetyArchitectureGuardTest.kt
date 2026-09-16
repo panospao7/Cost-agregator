@@ -186,8 +186,12 @@ class CancellationSafetyArchitectureGuardTest {
             // remediation plan and the entry MUST be removed when that plan
             // lands. Do not renew without a named owner. ──
             ArchitectureAllowlistEntry("NotificationProcessingPipeline.kt", "CATCH_WITHOUT_CE_RETHROW", category = "REPOSITORY", owner = "RP-10", "Broad catch exposed by executable-evidence guard; CE fix owned by RP-10", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReceiptLinkService.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "RP-12", "Broad catch exposed by executable-evidence guard; CE fix owned by RP-12", "MIT-034", LocalDate.of(2026, 12, 31)),
-            ArchitectureAllowlistEntry("ReceiptSideEffectPlanner.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "RP-12", "Broad catch exposed by executable-evidence guard; CE fix owned by RP-12", "MIT-034", LocalDate.of(2026, 12, 31)),
+            // RP-12 12a: ReceiptLinkService.kt and ReceiptSideEffectPlanner.kt
+            // CATCH_WITHOUT_CE_RETHROW entries REMOVED — all their broad catches in
+            // suspend functions already carry executable CE evidence (rethrowIfCancellation
+            // / is-CancellationException-then-throw / preceding sibling CE catch), so the
+            // entries were stale-protective. Verified by CancellationSafetyArchitectureGuardTest
+            // passing with the entries absent.
             ArchitectureAllowlistEntry("CsvExpenseImporter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "RP-19", "Broad catch exposed by executable-evidence guard; CE fix owned by RP-19", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("JsonExpenseImporter.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "RP-19", "Broad + raw runCatching exposed by executable-evidence guard; CE fix owned by RP-19", "MIT-034", LocalDate.of(2026, 12, 31)),
             ArchitectureAllowlistEntry("SideEffectDiagnosticRecorder.kt", "CATCH_WITHOUT_CE_RETHROW", category = "DOMAIN", owner = "UNASSIGNED", "Broad catch exposed by executable-evidence guard; triage owner required", "MIT-034", LocalDate.of(2026, 12, 31)),

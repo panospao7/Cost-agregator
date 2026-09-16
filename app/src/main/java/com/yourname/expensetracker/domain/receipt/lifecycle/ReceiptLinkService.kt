@@ -164,24 +164,17 @@ class ReceiptLinkService @Inject constructor(
             return Result.failure(e)
         }
 
-        // 1. Load receipt — fail fast if not found
-        val receipt = scannedReceiptDao.getById(receiptId)
-            ?: return Result.failure(
-                IllegalArgumentException("Receipt not found: $receiptId")
-            )
-
         // 1b. Validate expense exists — fail fast if not found
         val expense = expenseDao.getById(expenseId)
             ?: return Result.failure(
                 IllegalArgumentException("Expense not found: $expenseId")
             )
 
-        val isBankStatement =
-            receipt.documentType == ReceiptDocumentType.BANK_STATEMENT.name
-
         val now = timeProvider.now()
 
         // 2. Insert + legacy update + event inside a single database transaction
+        //    The receipt eligibility read is also inside the transaction (P3-004,
+        //    RP-12 12b) so existence and documentType are fresh at write time.
         //    The existing-links check is inside the transaction to prevent race conditions.
         //    S6: when requireUnmatchedClaim is set, the receipt status transition is an
         //    atomic compare-and-set; if a concurrent run already claimed the receipt the
@@ -193,6 +186,16 @@ class ReceiptLinkService @Inject constructor(
                 operationId = "receipt.link_to_expense",
                 source = "ReceiptLinkService"
             ) { ctx ->
+            // P3-004 (RP-12 12b): fresh in-transaction read. The match/link field
+            // write below is column-scoped, so no full-row update can resurrect
+            // raw OCR / parsed columns purged by a retention pass that committed
+            // before this transaction.
+            val receipt = scannedReceiptDao.getById(receiptId)
+                ?: return@runInTransaction Result.failure(
+                    IllegalArgumentException("Receipt not found: $receiptId")
+                )
+            val isBankStatement =
+                receipt.documentType == ReceiptDocumentType.BANK_STATEMENT.name
             // For non-BANK_STATEMENT receipts: check if already linked (inside transaction)
             if (!isBankStatement && !allowRelink) {
                 val existingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
@@ -226,8 +229,9 @@ class ReceiptLinkService @Inject constructor(
             }
 
             // 4. For non-BANK_STATEMENT receipts: update legacy ScannedReceipt.expenseId
-            // RCP-8: Ensure updatedAt is set on every ScannedReceipt update.
-            // RCP-22: Clear suggestedExpenseId to prevent stale suggestion reuse.
+            //    P3-004 (RP-12 12b): column-scoped write — never a full-row update,
+            //    so purged rawOcrText/parsed* columns cannot be resurrected here.
+            //    RCP-22: clears suggestedExpenseId to prevent stale suggestion reuse.
             val resolvedMatchStatus = matchStatus ?: when (linkType) {
                 "AUTO_MATCH" -> MatchStatus.AUTO_MATCHED
                 "DIRECT_SAVE", "REVIEW_APPROVAL" -> MatchStatus.MANUALLY_MATCHED
@@ -249,14 +253,12 @@ class ReceiptLinkService @Inject constructor(
                         throw ReceiptAlreadyClaimedException(receiptId)
                     }
                 } else {
-                    scannedReceiptDao.update(
-                        receipt.copy(
-                            expenseId = expenseId,
-                            suggestedExpenseId = null,
-                            matchStatus = resolvedMatchStatus,
-                            matchConfidence = confidence,
-                            updatedAt = now
-                        )
+                    scannedReceiptDao.updateLinkTargets(
+                        receiptId = receiptId,
+                        expenseId = expenseId,
+                        matchStatus = resolvedMatchStatus.name,
+                        confidence = confidence,
+                        now = now
                     )
                 }
             }
@@ -378,12 +380,7 @@ class ReceiptLinkService @Inject constructor(
         }
 
         return try {
-            // Load receipt for metadata (may be null if already deleted)
-            val receipt = scannedReceiptDao.getById(receiptId)
             val now = timeProvider.now()
-
-            val isBankStatement =
-                receipt?.documentType == ReceiptDocumentType.BANK_STATEMENT.name
 
             var affectedRows = 0
             // All operations inside a single database transaction
@@ -392,6 +389,13 @@ class ReceiptLinkService @Inject constructor(
                 operationId = "receipt.unlink_from_expense",
                 source = "ReceiptLinkService"
             ) { ctx ->
+                // P3-004 (RP-12 12b): fresh in-transaction read for metadata and
+                // documentType; the receipt writes below are column-scoped so a
+                // retention purge cannot be resurrected by a full-row update.
+                val receipt = scannedReceiptDao.getById(receiptId)
+                val isBankStatement =
+                    receipt?.documentType == ReceiptDocumentType.BANK_STATEMENT.name
+
                 // 1. Delete link row and capture affected row count
                 affectedRows = receiptExpenseLinkDao.unlink(receiptId, expenseId)
 
@@ -403,21 +407,19 @@ class ReceiptLinkService @Inject constructor(
                 }
 
                 // 2. Determine correct ScannedReceipt.expenseId after unlinking
+                //    P3-004 (RP-12 12b): column-scoped writes — only link/status
+                //    fields and timestamps, never raw OCR / parsed columns.
                 if (!isBankStatement && receipt != null) {
                     val remainingLinks = receiptExpenseLinkDao.getLinksForReceipt(receiptId)
                     val primaryLinks = remainingLinks.filter { it.isPrimary }
 
                     if (primaryLinks.isEmpty()) {
-                        scannedReceiptDao.update(receipt.copy(
-                            expenseId = null,
-                            matchStatus = MatchStatus.UNMATCHED,
-                            matchConfidence = null,
-                            suggestedExpenseId = null,
-                            updatedAt = now
-                        ))
+                        scannedReceiptDao.clearMatchFields(receiptId = receiptId, now = now)
                     } else {
-                        scannedReceiptDao.update(
-                            receipt.copy(expenseId = primaryLinks.first().expenseId, updatedAt = now)
+                        scannedReceiptDao.updatePrimaryExpenseId(
+                            receiptId = receiptId,
+                            expenseId = primaryLinks.first().expenseId,
+                            now = now
                         )
                     }
                 }

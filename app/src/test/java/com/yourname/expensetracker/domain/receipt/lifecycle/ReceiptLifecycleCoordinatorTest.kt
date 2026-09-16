@@ -76,6 +76,7 @@ class ReceiptLifecycleCoordinatorTest {
     private lateinit var receiptRepository: ReceiptRepository
     private lateinit var receiptLinkService: ReceiptLinkService
     private lateinit var assetStore: ReceiptAssetStore
+    private lateinit var assetCleanupCoordinator: AssetCleanupCoordinator
     private lateinit var inputValidator: ReceiptInputValidator
     private lateinit var scannedReceiptDao: ScannedReceiptDao
     private lateinit var receiptExpenseLinkDao: ReceiptExpenseLinkDao
@@ -123,6 +124,12 @@ class ReceiptLifecycleCoordinatorTest {
         privacySettingsRepository = mockk(relaxed = true)
         transactionLifecycleCoordinator = mockk(relaxed = true)
         transactionRunner = mockk(relaxed = true)
+        assetCleanupCoordinator = AssetCleanupCoordinator(
+            scannedReceiptDao = scannedReceiptDao,
+            assetStore = assetStore,
+            writeBarrier = writeBarrier,
+            transactionRunner = transactionRunner
+        )
         receiptLifecycleEventWriter = mockk(relaxed = true)
         // Ingest/delete paths run inside transactionRunner blocks — execute them by default.
         stubTransactionRunnerExecutesBlocks()
@@ -161,6 +168,7 @@ class ReceiptLifecycleCoordinatorTest {
             writeBarrier = writeBarrier,
             transactionLifecycleCoordinator = transactionLifecycleCoordinator,
             postCommitActionRunner = postCommitActionRunner,
+            assetCleanupCoordinator = assetCleanupCoordinator,
             merchantNormalizer = mockk(relaxed = true),
             hybridClassifier = mockk(relaxed = true),
             privacySettingsRepository = privacySettingsRepository,
@@ -218,6 +226,8 @@ class ReceiptLifecycleCoordinatorTest {
         val result = coordinator.processReceiptInput(uri)
 
         assertTrue("Expected success, got $result", result.isSuccess)
+        // RP-12 12a / P3-001: a fresh insert reports inserted=true.
+        assertTrue("Expected inserted=true, got ${result.getOrThrow()}", result.getOrThrow().inserted)
         coVerify(exactly = 1) { inputValidator.validate(uri) }
         coVerify(exactly = 1) { receiptRepository.processReceipt(uri, false) }
     }
@@ -257,26 +267,45 @@ class ReceiptLifecycleCoordinatorTest {
         return PostCommitActionBatch("test", listOf(action))
     }
 
+    // ── RP-12 12a fixtures ───────────────────────────────────────────────────────
+
+    private fun scanValidationResult() = ReceiptInputValidator.ValidationResult(
+        isValid = true, errors = emptyList(), mimeType = "image/jpeg", fileSizeBytes = 1024L
+    )
+
+    private fun scanDraftReceipt(id: Long = 0L) = ScannedReceipt(
+        id = id, imagePath = "/tmp/receipt.jpg", rawOcrText = "OCR text",
+        parsedTotal = 25.0, parsedMerchant = "Test Shop", parsedDate = now,
+        parsedItems = "[]", parsedTaxAmount = null, confidence = 0.95f
+    )
+
+    private fun parsedScanReceipt() = ReceiptParser.ParsedReceipt(
+        merchantName = "Test Shop", total = 25.0, subtotal = null, tax = null,
+        date = null, currency = "EUR", lineItems = emptyList(),
+        confidence = 0.95f, taxInclusive = false
+    )
+
+    // NOTE: resolvedMimeType must be spelled out — the production call always passes
+    // it, and MockK fills an unspecified nullable arg with a null() matcher that can
+    // never match (root cause of the pre-existing 2-arg stub drift in this class).
+    private fun stubNonDuplicateScan(uri: Uri) {
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns
+            ReceiptRepository.ProcessReceiptResult(receipt = scanDraftReceipt(), parsed = parsedScanReceipt())
+        coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
+            isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
+        )
+    }
+
+    // RP-12 12a / P3-001: REAL post-commit dispatch pin. The coordinator plans inside
+    // the save transaction and runs the batch exactly once after commit; a
+    // CancellationException from the post-commit run must propagate (never swallow CE).
     @Test
     fun `processReceiptInput post-commit cancellation rethrows`() = runTest {
         val uri = mockk<Uri>(relaxed = true)
-        val validationResult = ReceiptInputValidator.ValidationResult(
-            isValid = true, errors = emptyList(), mimeType = "image/jpeg", fileSizeBytes = 1024L
-        )
-        val savedReceipt = ScannedReceipt(
-            id = 0L, imagePath = "/tmp/receipt.jpg", rawOcrText = "OCR text",
-            parsedTotal = 25.0, parsedMerchant = "Test Shop", parsedDate = now,
-            parsedItems = "[]", parsedTaxAmount = null, confidence = 0.95f
-        )
-        val parsedReceipt = ReceiptParser.ParsedReceipt(
-            merchantName = "Test Shop", total = 25.0, subtotal = null, tax = null,
-            date = null, currency = "EUR", lineItems = emptyList(),
-            confidence = 0.95f, taxInclusive = false
-        )
-
-        coEvery { inputValidator.validate(uri) } returns validationResult
-        coEvery { receiptRepository.processReceipt(uri, false) } returns ReceiptRepository.ProcessReceiptResult(receipt = savedReceipt, parsed = parsedReceipt)
-        coEvery { scannedReceiptDao.insert(any()) } returns 1L
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns
+            ReceiptRepository.ProcessReceiptResult(receipt = scanDraftReceipt(), parsed = parsedScanReceipt())
         coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
             isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
         )
@@ -286,6 +315,11 @@ class ReceiptLifecycleCoordinatorTest {
         assertFailsWith<CancellationException> {
             coordinator.processReceiptInput(uri)
         }
+
+        // One save → one plan → one runner invocation after commit, then the rethrow.
+        coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }
+        coVerify(exactly = 1) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 1) { postCommitActionRunner.run(any()) }
     }
 
     @Test
@@ -317,28 +351,21 @@ class ReceiptLifecycleCoordinatorTest {
                 provider = "unknown"
             )
         }
+
+        // RP-12 12a: email path keeps its own single post-commit dispatch contract.
+        coVerify(exactly = 1) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 1) { postCommitActionRunner.run(any()) }
     }
 
+    // RP-12 12a / P3-001: best-effort dispatch — a non-cancellation failure of the
+    // post-commit run must NOT turn the committed save into a failure. The outcome
+    // still reports inserted=true with its batch.
     @Test
     fun `processReceiptInput post-commit failure does not fail saved receipt`() = runTest {
         val uri = mockk<Uri>(relaxed = true)
-        val validationResult = ReceiptInputValidator.ValidationResult(
-            isValid = true, errors = emptyList(), mimeType = "image/jpeg", fileSizeBytes = 1024L
-        )
-        val savedReceipt = ScannedReceipt(
-            id = 0L, imagePath = "/tmp/receipt.jpg", rawOcrText = "OCR text",
-            parsedTotal = 25.0, parsedMerchant = "Test Shop", parsedDate = now,
-            parsedItems = "[]", parsedTaxAmount = null, confidence = 0.95f
-        )
-        val parsedReceipt = ReceiptParser.ParsedReceipt(
-            merchantName = "Test Shop", total = 25.0, subtotal = null, tax = null,
-            date = null, currency = "EUR", lineItems = emptyList(),
-            confidence = 0.95f, taxInclusive = false
-        )
-
-        coEvery { inputValidator.validate(uri) } returns validationResult
-        coEvery { receiptRepository.processReceipt(uri, false) } returns ReceiptRepository.ProcessReceiptResult(receipt = savedReceipt, parsed = parsedReceipt)
-        coEvery { scannedReceiptDao.insert(any()) } returns 1L
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns
+            ReceiptRepository.ProcessReceiptResult(receipt = scanDraftReceipt(), parsed = parsedScanReceipt())
         coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
             isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
         )
@@ -348,7 +375,13 @@ class ReceiptLifecycleCoordinatorTest {
         val result = coordinator.processReceiptInput(uri)
 
         assertTrue("Expected success despite runner failure, got $result", result.isSuccess)
+        val outcome = result.getOrThrow()
+        assertTrue("Expected inserted=true, got $outcome", outcome.inserted)
+        assertNotNull(outcome.postCommitBatch)
         coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }
+        // The batch was planned once and dispatched once (the runner swallowed the failure).
+        coVerify(exactly = 1) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 1) { postCommitActionRunner.run(any()) }
     }
 
     @Test
@@ -381,6 +414,152 @@ class ReceiptLifecycleCoordinatorTest {
 
         assertTrue("Expected Success despite runner failure, got $result", result is EmailReceiptProcessResult.Success)
         coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }
+        coVerify(exactly = 1) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 1) { postCommitActionRunner.run(any()) }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // RP-12 12a / P3-001: outcome contract — one save → one plan → one post-commit
+    // run; every duplicate path returns the existing receipt with inserted=false
+    // and ZERO planning/dispatch.
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    @Test
+    fun `processReceiptInput saves once plans once and runs one post-commit batch`() = runTest {
+        val uri = mockk<Uri>(relaxed = true)
+        stubNonDuplicateScan(uri)
+        val plannedBatch = nonEmptyBatch()
+        val inputSlot = slot<ReceiptSideEffectInput>()
+        val batchSlot = slot<PostCommitActionBatch>()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(capture(inputSlot), any(), any()) } returns plannedBatch
+        coEvery { postCommitActionRunner.run(capture(batchSlot)) } returns mockk(relaxed = true)
+
+        val result = coordinator.processReceiptInput(uri)
+
+        val outcome = result.getOrThrow()
+        assertTrue("Expected inserted=true, got $outcome", outcome.inserted)
+        assertEquals(1L, outcome.savedReceipt.id)
+        // The outcome carries the same batch instance that was executed post-commit.
+        assertTrue("Expected postCommitBatch to be the planned batch", outcome.postCommitBatch === plannedBatch)
+        assertTrue("Expected runner to execute the planned batch", batchSlot.captured === plannedBatch)
+        // Planning input: default options carry autoMatch=true; camera path carries
+        // the ephemeral raw OCR (null unless the repository provided one).
+        assertTrue(inputSlot.captured.autoMatchExistingExpense)
+        assertNull(inputSlot.captured.ephemeralRawOcrText)
+        // Exactly once, end to end.
+        coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }
+        coVerify(exactly = 1) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 1) { postCommitActionRunner.run(any()) }
+    }
+
+    @Test
+    fun `processReceiptInput pre-ocr duplicate returns existing receipt with no batch`() = runTest {
+        val uri = mockk<Uri>(relaxed = true)
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns ReceiptRepository.ProcessReceiptResult(
+            receipt = scanDraftReceipt(id = 5L),
+            parsed = parsedScanReceipt(),
+            isPreExistingDuplicate = true
+        )
+
+        val outcome = coordinator.processReceiptInput(uri).getOrThrow()
+
+        assertFalse("Expected inserted=false for pre-OCR duplicate", outcome.inserted)
+        assertEquals(5L, outcome.savedReceipt.id)
+        assertNull(outcome.postCommitBatch)
+        coVerify(exactly = 0) { receiptInsertResolver.insertOrResolve(any()) }
+        coVerify(exactly = 0) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 0) { postCommitActionRunner.run(any()) }
+    }
+
+    @Test
+    fun `processReceiptInput exact-hash duplicate returns existing receipt with no batch`() = runTest {
+        val uri = mockk<Uri>(relaxed = true)
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns
+            ReceiptRepository.ProcessReceiptResult(receipt = scanDraftReceipt(), parsed = parsedScanReceipt())
+        coEvery { assetStore.computeFileHash("/tmp/receipt.jpg") } returns Result.success("hash-1")
+        coEvery {
+            duplicateDetector.checkDuplicate(imageHash = "hash-1", textFingerprint = null, semanticFingerprint = null, externalSourceId = null)
+        } returns ReceiptDuplicateDetector.DuplicateResult(
+            isDuplicate = true, confidence = 1.0f, existingReceiptId = 5L, reason = "hash", matchType = "EXACT_HASH"
+        )
+        coEvery { scannedReceiptDao.getById(5L) } returns scanDraftReceipt(id = 5L)
+
+        val outcome = coordinator.processReceiptInput(uri).getOrThrow()
+
+        assertFalse("Expected inserted=false for exact-hash duplicate", outcome.inserted)
+        assertEquals(5L, outcome.savedReceipt.id)
+        assertNull(outcome.postCommitBatch)
+        // Draft asset of the discarded attempt is cleaned up, but no side effects run.
+        verify(exactly = 1) { assetStore.deleteAsset("/tmp/receipt.jpg") }
+        coVerify(exactly = 0) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 0) { postCommitActionRunner.run(any()) }
+    }
+
+    @Test
+    fun `processReceiptInput post-ocr duplicate returns existing receipt with no batch`() = runTest {
+        val uri = mockk<Uri>(relaxed = true)
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns
+            ReceiptRepository.ProcessReceiptResult(receipt = scanDraftReceipt(), parsed = parsedScanReceipt())
+        coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
+            isDuplicate = true, confidence = 0.9f, existingReceiptId = 7L, reason = "semantic", matchType = "SEMANTIC"
+        )
+        coEvery { scannedReceiptDao.getById(7L) } returns scanDraftReceipt(id = 7L)
+
+        val outcome = coordinator.processReceiptInput(uri).getOrThrow()
+
+        assertFalse("Expected inserted=false for post-OCR duplicate", outcome.inserted)
+        assertEquals(7L, outcome.savedReceipt.id)
+        assertNull(outcome.postCommitBatch)
+        coVerify(exactly = 0) { receiptInsertResolver.insertOrResolve(any()) }
+        coVerify(exactly = 0) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 0) { postCommitActionRunner.run(any()) }
+    }
+
+    // RP-12 12a behavior change: a resolver-detected insert-race duplicate used to
+    // surface as Result.failure; it now returns the existing receipt (inserted=false,
+    // no batch) like every other duplicate exit.
+    @Test
+    fun `processReceiptInput insert-race duplicate returns existing receipt with no batch`() = runTest {
+        val uri = mockk<Uri>(relaxed = true)
+        stubNonDuplicateScan(uri)
+        coEvery { receiptInsertResolver.insertOrResolve(any()) } returns
+            ReceiptInsertResult.Duplicate(scanDraftReceipt(id = 9L), "insert_ignored")
+
+        val outcome = coordinator.processReceiptInput(uri).getOrThrow()
+
+        assertFalse("Expected inserted=false for insert-race duplicate", outcome.inserted)
+        assertEquals(9L, outcome.savedReceipt.id)
+        assertNull(outcome.postCommitBatch)
+        coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }
+        coVerify(exactly = 0) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        coVerify(exactly = 0) { postCommitActionRunner.run(any()) }
+    }
+
+    // RP-12 12a / P3-001: autoMatchExistingExpense=false must reach planning so the
+    // planner omits ONLY the matching action; unrelated actions are not suppressed.
+    @Test
+    fun `processReceiptInput threads autoMatchExistingExpense=false into planning`() = runTest {
+        val uri = mockk<Uri>(relaxed = true)
+        stubNonDuplicateScan(uri)
+        val inputSlot = slot<ReceiptSideEffectInput>()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(capture(inputSlot), any(), any()) } returns
+            PostCommitActionBatch.empty("test")
+
+        coordinator.processReceiptInput(
+            uri,
+            ReceiptLifecycleCoordinator.ReceiptProcessingOptions(
+                createReview = false,
+                autoMatchExistingExpense = false
+            )
+        )
+
+        assertFalse("Expected autoMatchExistingExpense=false carried into planning", inputSlot.captured.autoMatchExistingExpense)
+        coVerify(exactly = 1) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
+        // Empty planned batch → nothing dispatched.
+        coVerify(exactly = 0) { postCommitActionRunner.run(any()) }
     }
 
     // P11-CURRENT-020: home-currency DataStore read must happen BEFORE the Room transaction is

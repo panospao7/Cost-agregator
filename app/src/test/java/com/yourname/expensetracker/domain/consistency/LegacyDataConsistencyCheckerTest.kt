@@ -42,6 +42,13 @@ class LegacyDataConsistencyCheckerTest {
         override suspend fun linkToExpense(receiptId: Long, expenseId: Long) {}
         override suspend fun claimForAutoMatch(receiptId: Long, expenseId: Long, confidence: Float?, now: Long): Int = 0
         override suspend fun updateCategorizationStatus(receiptId: Long, status: String) {}
+        // RP-12 12b (P3-004) column-scoped writes — not exercised by this fake.
+        override suspend fun updateLinkTargets(receiptId: Long, expenseId: Long, matchStatus: String, confidence: Float?, now: Long): Int = 0
+        override suspend fun updateMatchSuggestion(receiptId: Long, suggestedExpenseId: Long, confidence: Float?, now: Long): Int = 0
+        override suspend fun updateMatchRejected(receiptId: Long, now: Long): Int = 0
+        override suspend fun clearMatchFields(receiptId: Long, now: Long): Int = 0
+        override suspend fun updatePrimaryExpenseId(receiptId: Long, expenseId: Long, now: Long): Int = 0
+        override suspend fun countReferencesToImagePath(path: String): Int = 0
         override suspend fun getUnmatchedReceipts() = throw NotImplementedError()
         override suspend fun getReceiptsWithSuggestions() = throw NotImplementedError()
         override suspend fun getProcessableReceipts() = throw NotImplementedError()

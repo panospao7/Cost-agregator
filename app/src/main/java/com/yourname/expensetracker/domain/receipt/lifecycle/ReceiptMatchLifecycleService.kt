@@ -49,12 +49,14 @@ class ReceiptMatchLifecycleService @Inject constructor(
         val now = timeProvider.now()
         database.withTransaction {
             val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
-            scannedReceiptDao.update(receipt.copy(
+            // P3-004 (RP-12 12b): column-scoped write — no full-row update that
+            // could resurrect purged raw OCR / parsed columns.
+            scannedReceiptDao.updateMatchSuggestion(
+                receiptId = receiptId,
                 suggestedExpenseId = suggestedExpenseId,
-                matchStatus = MatchStatus.SUGGESTED,
-                matchConfidence = confidence.toFloat(),
-                updatedAt = now
-            ))
+                confidence = confidence.toFloat(),
+                now = now
+            )
             receiptEventDao.insert(ReceiptEvent(
                 receiptId = receiptId, sourceType = receipt.sourceType,
                 documentType = receipt.documentType,
@@ -72,11 +74,8 @@ class ReceiptMatchLifecycleService @Inject constructor(
         val now = timeProvider.now()
         database.withTransaction {
             val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
-            scannedReceiptDao.update(receipt.copy(
-                matchStatus = MatchStatus.REJECTED,
-                suggestedExpenseId = null,
-                updatedAt = now
-            ))
+            // P3-004 (RP-12 12b): column-scoped write — no full-row update.
+            scannedReceiptDao.updateMatchRejected(receiptId = receiptId, now = now)
             receiptEventDao.insert(ReceiptEvent(
                 receiptId = receiptId, sourceType = receipt.sourceType,
                 documentType = receipt.documentType,
@@ -94,13 +93,8 @@ class ReceiptMatchLifecycleService @Inject constructor(
         val now = timeProvider.now()
         database.withTransaction {
             val receipt = scannedReceiptDao.getById(receiptId) ?: return@withTransaction
-            scannedReceiptDao.update(receipt.copy(
-                expenseId = null,
-                matchStatus = MatchStatus.UNMATCHED,
-                suggestedExpenseId = null,
-                matchConfidence = null,
-                updatedAt = now
-            ))
+            // P3-004 (RP-12 12b): column-scoped write — no full-row update.
+            scannedReceiptDao.clearMatchFields(receiptId = receiptId, now = now)
             receiptEventDao.insert(ReceiptEvent(
                 receiptId = receiptId, sourceType = receipt.sourceType,
                 documentType = receipt.documentType,

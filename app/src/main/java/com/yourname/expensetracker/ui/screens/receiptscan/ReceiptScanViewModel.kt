@@ -39,6 +39,7 @@ import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifier
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleCoordinator
+import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptStructuredDataPolicy
 import com.yourname.expensetracker.domain.util.AmountUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.ui.screens.debug.DebugData
@@ -294,7 +295,9 @@ class ReceiptScanViewModel @Inject constructor(
                     )
                 )
                 if (receiptResult.isFailure) throw receiptResult.exceptionOrNull()!!
-                val receipt = receiptResult.getOrThrow()
+                // RP-12 12a (P3-001): coordinator returns a typed outcome; duplicates
+                // arrive as a success outcome with inserted=false and the existing receipt.
+                val receipt = receiptResult.getOrThrow().savedReceipt
 
                 // S7-003: Discard result if a newer scan has started
                 if (requestId != scanRequestSeq) return@launch
@@ -370,9 +373,18 @@ class ReceiptScanViewModel @Inject constructor(
                         ).clearItemAnalysisState()
                     }
                 } else {
-                    val lineItems = receipt.parsedItems?.let {
-                        try { receiptParser.lineItemsFromJson(it) } catch (_: Exception) { emptyList() }
-                    } ?: emptyList()
+                    // RP-12 12b (P3-007): redacted persisted items carry prices
+                    // only — never parse them as full line items; item-dependent
+                    // flows degrade gracefully (structured data unavailable).
+                    val structuredUnavailable =
+                        ReceiptStructuredDataPolicy.isRedactedItemsJson(receipt.parsedItems)
+                    val lineItems = if (structuredUnavailable) {
+                        emptyList()
+                    } else {
+                        receipt.parsedItems?.let {
+                            try { receiptParser.lineItemsFromJson(it) } catch (_: Exception) { emptyList() }
+                        } ?: emptyList()
+                    }
 
                     val computedTaxInclusive = ReceiptParser.isTaxInclusive(
                         receipt.parsedTotal, receipt.parsedTaxAmount, lineItems
