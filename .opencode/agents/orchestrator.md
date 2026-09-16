@@ -151,6 +151,8 @@ Forbidden scope:
 - destructive migrations unless explicitly approved
 ```
 
+CI guard gates apply by reference: `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` (path + FG-ID only, never paste content), `scripts/verify_*.py`, `scripts/ci/run_static_guard_suite.py` + `guard_registry.py`, `config/guards/`, `config/baselines/`. Fail-closed (FG-03): missing/skipped/unknown guard = infra failure (exit 2) = fail, never GREEN. Self-protection (FG-23): a PR must not weaken its own check.
+
 ---
 
 # Required workflow

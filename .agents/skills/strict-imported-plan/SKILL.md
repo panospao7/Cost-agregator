@@ -18,8 +18,9 @@ Execute an external review/debug document plus implementation plan one strict ba
 7. If the plan matches, execute only the requested batch.
 8. If no batch is specified, start with Batch 1.
 9. Use strict gates for workers, privacy, security, permissions, diagnostics, Room/migrations, lifecycle paths, architecture guards, backup/export/cloud AI, or cross-layer changes.
-10. Do not implement all batches at once.
-11. Do not mark docs/status work complete until code, tests, guardian review, and strict review pass.
+10. When a batch touches guard scripts, baselines, allowlists, or exceptions, check them against `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` (path + FG-ID only) and do not weaken fail-closed or no-growth ratchet semantics.
+11. Do not implement all batches at once.
+12. Do not mark docs/status work complete until code, tests, guardian review, and strict review pass.
 
 ## Default strict batch loop
 

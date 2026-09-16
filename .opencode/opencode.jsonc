@@ -6,6 +6,31 @@
   "model": "merge-gateway/glm-5.3-flash",
   "small_model": "merge-gateway/glm-5.3-flash",
 
+  "provider": {
+    "freemodel": {
+      "npm": "@ai-sdk/anthropic",
+      "options": {
+        "baseURL": "https://cc-t2.freemodel.dev/v1",
+        "apiKey": "{env:FREEMODEL_API_KEY}"
+      },
+      "models": {
+        "claude-sonnet-5": {
+          "name": "Sonnet 5",
+          "options": {
+            "thinking": { "type": "enabled", "budgetTokens": 4096 },
+            "maxTokens": 8000
+          }
+        },
+        "claude-opus-5": {
+          "name": "Opus 5",
+          "options": {
+            "thinking": { "type": "enabled", "budgetTokens": 20000 },
+            "maxTokens": 32000
+          }
+        }
+      }
+    }
+  },
 
   "share": "manual",
 

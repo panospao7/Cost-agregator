@@ -74,6 +74,10 @@ Check whether tests prove:
 - permission denial is fail-closed or locally suppressed as appropriate
 - diagnostics remain structured
 
+## For guard changes
+
+Guard scripts have their own pytest files (`scripts/test_verify_*.py`, `scripts/ci/test_*.py`). When a diff touches a guard script, verify statically that a matching test exercises the real detector logic, not just text-pattern matching or trivially-passing fixtures.
+
 ## Output format
 
 ```markdown

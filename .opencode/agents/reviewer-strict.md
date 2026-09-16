@@ -62,8 +62,9 @@ You review the current uncommitted diff against the user request, approved plan,
 4. Read surrounding code and call sites where needed.
 5. Compare against the approved plan if available.
 6. Check architecture/legal-path implications.
-7. Check whether tests prove the changed semantics.
-8. Report only evidence-backed issues.
+7. If the diff touches guard scripts, baselines, allowlists, or exceptions, verify none are weakened (ratchet growth, allowlist broadening, exception additions without explicit human approval); cite `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` FG-03/FG-06/FG-07/FG-23.
+8. Check whether tests prove the changed semantics.
+9. Report only evidence-backed issues.
 
 ## Review priorities
 

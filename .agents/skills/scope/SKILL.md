@@ -31,7 +31,8 @@ Find the relevant files, architecture docs, tests, risk level, and recommended w
    - money/currency
    - lifecycle paths
    - architecture guards
-6. Recommend trivial, standard, or strict handling.
+6. If the task touches guard infrastructure, consult `FINAL_CI_GUARD_ACCEPTANCE_GATE.md` (by path + FG-ID, never pasted inline) and `scripts/verify_*.py` / `scripts/ci/` guard scripts.
+7. Recommend trivial, standard, or strict handling.
 
 ## Output format
 
