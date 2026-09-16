@@ -1,7 +1,7 @@
 ---
 description: Read-only Room database, DAO, schema, and migration guardian.
 mode: subagent
-model: 4router-gift/glm-5.3-flash
+model: merge-gateway/glm-5.3-flash
 variant: max
 temperature: 0
 steps: 100
