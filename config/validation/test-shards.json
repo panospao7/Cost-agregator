@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "description": "Named serial unit-test shards. Every shard uses one Gradle worker and bounded fork recycling.",
+  "shards": {
+    "architecture-contracts": {
+      "filters": [
+        "com.yourname.expensetracker.architecture.*",
+        "com.yourname.expensetracker.consistency.*",
+        "com.yourname.expensetracker.contracts.*",
+        "com.yourname.expensetracker.guard.*",
+        "com.yourname.expensetracker.guards.*",
+        "com.yourname.expensetracker.verification.*"
+      ]
+    },
+    "data": {
+      "filters": ["com.yourname.expensetracker.data.*"]
+    },
+    "domain-a-m": {
+      "filters": [
+        "com.yourname.expensetracker.domain.ai.*",
+        "com.yourname.expensetracker.domain.alerts.*",
+        "com.yourname.expensetracker.domain.analytics.*",
+        "com.yourname.expensetracker.domain.bank.*",
+        "com.yourname.expensetracker.domain.budget.*",
+        "com.yourname.expensetracker.domain.business.*",
+        "com.yourname.expensetracker.domain.carbon.*",
+        "com.yourname.expensetracker.domain.cashflow.*",
+        "com.yourname.expensetracker.domain.categorization.*",
+        "com.yourname.expensetracker.domain.challenge.*",
+        "com.yourname.expensetracker.domain.common.*",
+        "com.yourname.expensetracker.domain.consistency.*",
+        "com.yourname.expensetracker.domain.core.*",
+        "com.yourname.expensetracker.domain.currency.*",
+        "com.yourname.expensetracker.domain.dashboard.*",
+        "com.yourname.expensetracker.domain.debug.*",
+        "com.yourname.expensetracker.domain.dto.*",
+        "com.yourname.expensetracker.domain.engine.*",
+        "com.yourname.expensetracker.domain.export.*",
+        "com.yourname.expensetracker.domain.forecasting.*",
+        "com.yourname.expensetracker.domain.groups.*",
+        "com.yourname.expensetracker.domain.health.*",
+        "com.yourname.expensetracker.domain.income.*",
+        "com.yourname.expensetracker.domain.intelligence.*",
+        "com.yourname.expensetracker.domain.investment.*",
+        "com.yourname.expensetracker.domain.location.*",
+        "com.yourname.expensetracker.domain.logic.*",
+        "com.yourname.expensetracker.domain.model.*"
+      ]
+    },
+    "domain-n-z": {
+      "filters": [
+        "com.yourname.expensetracker.domain.naturallanguage.*",
+        "com.yourname.expensetracker.domain.negotiation.*",
+        "com.yourname.expensetracker.domain.notification.*",
+        "com.yourname.expensetracker.domain.parser.*",
+        "com.yourname.expensetracker.domain.price.*",
+        "com.yourname.expensetracker.domain.privacy.*",
+        "com.yourname.expensetracker.domain.provenance.*",
+        "com.yourname.expensetracker.domain.receipt.*",
+        "com.yourname.expensetracker.domain.receiptmatching.*",
+        "com.yourname.expensetracker.domain.recurring.*",
+        "com.yourname.expensetracker.domain.reminder.*",
+        "com.yourname.expensetracker.domain.savings.*",
+        "com.yourname.expensetracker.domain.sideeffect.*",
+        "com.yourname.expensetracker.domain.split.*",
+        "com.yourname.expensetracker.domain.subscription.*",
+        "com.yourname.expensetracker.domain.tax.*",
+        "com.yourname.expensetracker.domain.transaction.*",
+        "com.yourname.expensetracker.domain.usecase.*",
+        "com.yourname.expensetracker.domain.util.*",
+        "com.yourname.expensetracker.domain.widget.*",
+        "com.yourname.expensetracker.domain.workers.*"
+      ]
+    },
+    "runtime-ui": {
+      "filters": [
+        "com.yourname.expensetracker.diagnostics.*",
+        "com.yourname.expensetracker.metrics.*",
+        "com.yourname.expensetracker.receiver.*",
+        "com.yourname.expensetracker.service.*",
+        "com.yourname.expensetracker.startup.*",
+        "com.yourname.expensetracker.ui.*",
+        "com.yourname.expensetracker.util.*",
+        "com.yourname.expensetracker.worker.*",
+        "com.yourname.expensetracker.workers.*"
+      ]
+    },
+    "integration-golden": {
+      "filters": [
+        "com.yourname.expensetracker.e2e.*",
+        "com.yourname.expensetracker.golden.*",
+        "com.yourname.expensetracker.integration.*",
+        "com.yourname.expensetracker.scenarios.*"
+      ]
+    }
+  },
+  "trusted": {
+    "evidence": "Structural suites selected for the fast trusted gate; this label does not exempt any other test from broader validation.",
+    "filters": [
+      "com.yourname.expensetracker.architecture.*",
+      "com.yourname.expensetracker.contracts.*",
+      "com.yourname.expensetracker.guard.*",
+      "com.yourname.expensetracker.guards.*",
+      "com.yourname.expensetracker.verification.*"
+    ]
+  }
+}

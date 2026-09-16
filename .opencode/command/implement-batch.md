@@ -31,8 +31,9 @@ $ARGUMENTS
 ```text
 @scout if needed
 → @coder or @specialist-coder
-→ @tester-runtime or @tester-static
+→ @tester-runtime authors tests and/or @tester-static assesses coverage
 → @reviewer-fast or @reviewer-strict
+→ @validation-runner runs the narrowest applicable live profile
 ```
 
 For risky work:
@@ -41,10 +42,15 @@ For risky work:
 @scout
 → relevant guardian
 → @coder/@specialist-coder
-→ @tester-runtime
+→ @tester-runtime authors tests + @tester-static assesses coverage
 → relevant guardian re-check if needed
 → @reviewer-strict
+→ @validation-runner runs targeted compile/tests/guards
 ```
+
+If live validation fails, route the persisted run logs to
+`@ci-build-debugger`/the coder, repeat affected static gates, and request a new
+validation run. Never run validation concurrently or reuse an old result.
 
 ## Output format
 

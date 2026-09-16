@@ -204,7 +204,24 @@ android {
         execution = "ANDROIDX_TEST_ORCHESTRATOR"
 
         unitTests.all {
-            it.maxParallelForks = (Runtime.getRuntime().availableProcessors() / 2).takeIf { forks -> forks > 0 } ?: 1
+            val requestedForks = project.findProperty("validationMaxParallelForks")
+                ?.toString()
+                ?.toIntOrNull()
+            val requestedForkEvery = project.findProperty("validationForkEvery")
+                ?.toString()
+                ?.toLongOrNull()
+            if (requestedForks != null && requestedForks !in 1..8) {
+                throw GradleException("validationMaxParallelForks must be between 1 and 8")
+            }
+            if (requestedForkEvery != null && requestedForkEvery !in 0L..1000L) {
+                throw GradleException("validationForkEvery must be between 0 and 1000")
+            }
+
+            it.maxParallelForks = requestedForks
+                ?: ((Runtime.getRuntime().availableProcessors() / 2).takeIf { forks -> forks > 0 } ?: 1)
+            if (requestedForkEvery != null) {
+                it.forkEvery = requestedForkEvery
+            }
 
             it.systemProperty("updateGoldens", project.findProperty("updateGoldens") ?: "false")
 
