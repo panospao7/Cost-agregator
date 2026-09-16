@@ -1,9 +1,10 @@
 ---
 description: Bulk mechanical implementation agent for repetitive independent edits across many files.
 mode: subagent
-model: opencode-go/deepseek-v4-flash
+model: merge-gateway/glm-5.3-flash
+variant: max
 temperature: 0.1
-steps: 35
+steps: 200
 color: accent
 permission:
   read:

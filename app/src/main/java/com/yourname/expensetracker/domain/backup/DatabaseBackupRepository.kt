@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.backup
 
+import android.net.Uri
 import java.io.File
 
 /**
@@ -43,6 +44,30 @@ interface DatabaseBackupRepository {
     ): Result<File>
 
     /**
+     * RP-03A (P7-003): Create a .costbackup bundle streamed to a SAF document
+     * at [destination] (obtained via `ActivityResultContracts.CreateDocument`).
+     *
+     * The destination is not opened until the snapshot has been created and
+     * verified. Destination open/write/close failures fail the export with a
+     * [BackupDestinationException] and the partially written document is
+     * best-effort deleted via [android.provider.DocumentsContract.deleteDocument].
+     *
+     * @param destination SAF `content://` Uri of the document to write
+     * @param password The user-provided encryption password
+     * @param includeReceiptImages Whether to include receipt image assets (default: true)
+     * @param redacted Whether to sanitize sensitive data (default: true)
+     * @param privacyMode Explicit privacy mode (overrides includeReceiptImages/redacted when set)
+     * @return Result success when the encrypted bundle was fully streamed to the destination
+     */
+    suspend fun createCostBackup(
+        destination: Uri,
+        password: String,
+        includeReceiptImages: Boolean = true,
+        redacted: Boolean = true,
+        privacyMode: BackupPrivacyMode? = null
+    ): Result<Unit>
+
+    /**
      * Restore a .costbackup bundle (encrypted ZIP with manifest + assets).
      * @param bundleFile The .costbackup file to restore
      * @param password The user-provided encryption password
@@ -76,6 +101,17 @@ interface DatabaseBackupRepository {
      */
     suspend fun resetDatabase(): Result<Unit>
 }
+
+/**
+ * RP-03A (P7-003): the SAF backup destination could not be opened, written, or
+ * closed (or the partially written document could not be cleaned up). Carries a
+ * bounded, controlled message only — never raw exception text, URIs, paths, or
+ * provider details.
+ */
+class BackupDestinationException(
+    message: String,
+    cause: Throwable? = null
+) : Exception(message, cause)
 
 data class DatabaseStats(
     val transactionCount: Int,

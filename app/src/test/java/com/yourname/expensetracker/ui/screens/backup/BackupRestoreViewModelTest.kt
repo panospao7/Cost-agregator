@@ -33,6 +33,13 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
         every { it.isWritesAllowed() } returns true
     }
 
+    /**
+     * RP-03A (P7-003): SAF destination Uri for create-backup tests. Built per
+     * test via mockk (established repo pattern) — `Uri.parse` is null-backed on
+     * the JVM android stub, which a class-level property would reject on access.
+     */
+    private fun destinationUri(): Uri = mockk(relaxed = true)
+
     /** A minimal valid .costbackup byte stream: COSTBACKUP1 magic + format version 1 + body. */
     private fun validBundleBytes(bodySize: Int = 64): ByteArray {
         val magic = "COSTBACKUP1".toByteArray(Charsets.US_ASCII)
@@ -78,12 +85,14 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `createBackup sets isBackingUp and shows success on completion`() = runTest(testDispatcher) {
-        val backupFile = File("/tmp/test_backup.costbackup")
-        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any(), any()) } returns Result.success(backupFile)
+        val destination = destinationUri()
+        coEvery {
+            databaseBackupRepository.createCostBackup(destination, "test-password", any(), any(), any())
+        } returns Result.success(Unit)
 
         val vm = createViewModel()
         advanceUntilIdle()
-        vm.createBackup("test-password")
+        vm.createBackup(destination, "test-password")
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -95,12 +104,14 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `createBackup shows error when repository fails`() = runTest(testDispatcher) {
-        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any(), any()) } returns
-            Result.failure(RuntimeException("Storage full"))
+        val destination = destinationUri()
+        coEvery {
+            databaseBackupRepository.createCostBackup(destination, "test-password", any(), any(), any())
+        } returns Result.failure(RuntimeException("Storage full"))
 
         val vm = createViewModel()
         advanceUntilIdle()
-        vm.createBackup("test-password")
+        vm.createBackup(destination, "test-password")
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -112,9 +123,10 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `createBackup with blank password shows error immediately`() = runTest(testDispatcher) {
+        val destination = destinationUri()
         val vm = createViewModel()
         advanceUntilIdle()
-        vm.createBackup("")
+        vm.createBackup(destination, "")
         advanceUntilIdle()
 
         val state = vm.uiState.value
@@ -156,12 +168,14 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
 
     @Test
     fun `clearError resets error message`() = runTest(testDispatcher) {
-        coEvery { databaseBackupRepository.createCostBackup(any(), any(), any(), any()) } returns
-            Result.failure(RuntimeException("Error"))
+        val destination = destinationUri()
+        coEvery {
+            databaseBackupRepository.createCostBackup(destination, "test-password", any(), any(), any())
+        } returns Result.failure(RuntimeException("Error"))
 
         val vm = createViewModel()
         advanceUntilIdle()
-        vm.createBackup("test-password")
+        vm.createBackup(destination, "test-password")
         advanceUntilIdle()
         assertNotNull(vm.uiState.value.errorMessage)
 
@@ -317,5 +331,141 @@ class BackupRestoreViewModelTest : ViewModelTestUtils() {
             "must not fall through to the generic message",
             state.errorMessage!!.startsWith("Restore failed:")
         )
+    }
+
+    // ── RP-03A (P7-003): SAF destination create-backup failure matrix ──
+    // Each SAF failure the repository can produce (null openOutputStream, open
+    // exception, write exception, close exception, failed delete-cleanup) must
+    // surface a bounded typed/generic message — never raw exception text — and
+    // must reset isBackingUp with no success state.
+
+    private fun stubSafCreateFailure(destination: Uri, failure: Throwable) {
+        coEvery {
+            databaseBackupRepository.createCostBackup(destination, "test-password", any(), any(), any())
+        } returns Result.failure(failure)
+    }
+
+    @Test
+    fun `SAF createBackup maps null destination stream to the typed destination message`() = runTest(testDispatcher) {
+        val destination = destinationUri()
+        stubSafCreateFailure(
+            destination,
+            com.yourname.expensetracker.domain.backup.BackupDestinationException(
+                "Backup destination could not be opened"
+            )
+        )
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.createBackup(destination, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isBackingUp)
+        assertNull(state.successMessage)
+        assertEquals(
+            "Could not save the backup to the selected location. Please try again.",
+            state.errorMessage
+        )
+    }
+
+    @Test
+    fun `SAF createBackup maps a destination open exception to the typed destination message`() = runTest(testDispatcher) {
+        val destination = destinationUri()
+        stubSafCreateFailure(
+            destination,
+            com.yourname.expensetracker.domain.backup.BackupDestinationException(
+                "Backup destination could not be opened",
+                java.io.IOException("provider refused /content/secret-path")
+            )
+        )
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.createBackup(destination, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isBackingUp)
+        assertNull(state.successMessage)
+        assertEquals(
+            "Could not save the backup to the selected location. Please try again.",
+            state.errorMessage
+        )
+        assertFalse(
+            "raw cause text must never reach the UI",
+            state.errorMessage!!.contains("secret-path")
+        )
+    }
+
+    @Test
+    fun `SAF createBackup maps write failure to the generic message without raw text`() = runTest(testDispatcher) {
+        val destination = destinationUri()
+        stubSafCreateFailure(destination, java.io.IOException("EPIPE write failed /storage/emulated/0/Downloads"))
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.createBackup(destination, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isBackingUp)
+        assertNull(state.successMessage)
+        assertEquals("Backup failed. Please try again.", state.errorMessage)
+        assertFalse(
+            "raw exception text must never reach the UI",
+            state.errorMessage!!.contains("EPIPE") || state.errorMessage!!.contains("/storage/")
+        )
+    }
+
+    @Test
+    fun `SAF createBackup maps close failure to the typed destination message`() = runTest(testDispatcher) {
+        val destination = destinationUri()
+        stubSafCreateFailure(
+            destination,
+            com.yourname.expensetracker.domain.backup.BackupDestinationException(
+                "Backup destination write failed",
+                java.io.IOException("close failed after partial write")
+            )
+        )
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.createBackup(destination, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isBackingUp)
+        assertNull(state.successMessage)
+        assertEquals(
+            "Could not save the backup to the selected location. Please try again.",
+            state.errorMessage
+        )
+    }
+
+    @Test
+    fun `SAF createBackup stays failed when document delete-cleanup also fails`() = runTest(testDispatcher) {
+        val destination = destinationUri()
+        // The repository performs the best-effort DocumentsContract cleanup itself
+        // and reports the original typed failure; the ViewModel must stay failed
+        // (no success message, no stuck progress) even when cleanup failed too.
+        stubSafCreateFailure(
+            destination,
+            com.yourname.expensetracker.domain.backup.BackupDestinationException(
+                "Backup destination could not be opened",
+                RuntimeException("deleteDocument rejected")
+            )
+        )
+
+        val vm = createViewModel()
+        advanceUntilIdle()
+        vm.createBackup(destination, "test-password")
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertFalse(state.isBackingUp)
+        assertNull(state.successMessage)
+        assertNotNull(state.errorMessage)
+        assertFalse(state.errorMessage!!.contains("deleteDocument"))
     }
 }

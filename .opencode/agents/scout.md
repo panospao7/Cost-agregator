@@ -1,9 +1,10 @@
 ---
 description: Cheap read-only codebase exploration and imported-plan verification.
 mode: subagent
-model: opencode-go/deepseek-v4-flash
+model: merge-gateway/glm-5.3-flash
+variant: max
 temperature: 0.1
-steps: 20
+steps: 40
 color: info
 permission:
   read:

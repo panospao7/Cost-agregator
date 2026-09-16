@@ -2,7 +2,7 @@
 
 > Complete mapping of every `NavigationDestination` to its corresponding ViewModel, screen file, and feature segment.
 >
-> *Last updated: 2026-06-01*
+> *Last updated: 2026-09-07*
 
 ---
 
@@ -22,7 +22,7 @@
 | Route | Destination Class | ViewModel | Screen File | Segment |
 |-------|------------------|-----------|-------------|---------|
 | Budget Detail | `NavigationDestination.BudgetDetail(categoryId?, categoryName?)` | `BudgetViewModel` | Shared with BudgetScreen | 2 |
-| Spending Map | `NavigationDestination.SpendingMap(initialLocationQuery?)` | `SpendingMapViewModel` | `ui/screens/map/SpendingMapScreen.kt` | 19 (Location) |
+| Budget Create | `NavigationDestination.BudgetCreate` | `BudgetViewModel` | Shared with BudgetScreen (create dialog pre-opened, S2-008R) | 2 |
 
 ## Overlay Screens (sheet-style)
 
@@ -30,8 +30,9 @@
 |-------|------------------|-----------|-------------|---------|
 | Add Expense | `NavigationDestination.AddExpense` | `AddExpenseViewModel` | `ui/screens/addexpense/AddExpenseSheet.kt` | 9 (Core Expense) |
 | Scan Receipt | `NavigationDestination.ScanReceipt` | `ReceiptScanViewModel` | `ui/screens/receiptscan/ReceiptScanScreen.kt` | 4 (Receipt/OCR) |
-| Recurring Expenses | `NavigationDestination.RecurringExpenses` | *(no ViewModel — screen manages state internally)* | `ui/screens/recurring/RecurringExpensesScreen.kt` | 7 (Recurring) |
+| Recurring Expenses | `NavigationDestination.RecurringExpenses` | `RecurringExpensesViewModel` *(inline `@HiltViewModel` class declared inside `RecurringExpensesScreen.kt`)* | `ui/screens/recurring/RecurringExpensesScreen.kt` | 7 (Recurring) |
 | Manual Recurring Expense | `NavigationDestination.ManualRecurringExpense` | `ManualRecurringExpenseViewModel` | `ui/screens/recurringmanual/ManualRecurringExpenseScreen.kt` | 7 (Recurring) |
+| AI Assistant | `NavigationDestination.Assistant` | `AssistantViewModel` | `ui/screens/assistant/AssistantSheet.kt` | 20 (AI Platform) |
 
 ## Feature Screens (from FeaturesMenu)
 
@@ -62,16 +63,17 @@
 | Budget Forecasting | `NavigationDestination.BudgetForecasting(budget?)` | `BudgetForecastingViewModel` | `ui/screens/budget/BudgetForecastingScreen.kt` | 1 (Forecast) |
 | Category Management | `NavigationDestination.CategoryManagement` | `CategoryViewModel` | `ui/screens/categories/CategoryScreen.kt` | 6 (Merchant Cat.) |
 | AI Settings | `NavigationDestination.AiSettings` | `AiSettingsViewModel` | `ui/screens/aisettings/AiSettingsScreen.kt` | 20 (AI Platform) |
-| Assistant | `NavigationDestination.Assistant` | `AssistantViewModel` | `ui/screens/assistant/AssistantSheet.kt` | 20 (AI Platform) |
+| Privacy Settings | `NavigationDestination.PrivacySettings` | `PrivacySettingsViewModel` | `ui/screens/privacysettings/PrivacySettingsScreen.kt` | 6 (Privacy) |
 
-### Screens with no NavigationDestination route
+### Debug & Unrouted Support Screens
 
 | Route | Destination Class | ViewModel | Screen File | Segment |
 |-------|------------------|-----------|-------------|---------|
-| Privacy Settings | *(no NavigationDestination)* | `PrivacySettingsViewModel` | `ui/screens/privacysettings/PrivacySettingsScreen.kt` | 6 (Privacy) |
-| Debug | `NavigationDestination.Debug` | `DebugViewModel` | `ui/screens/debug/DebugScreen.kt` | BuildConfig.DEBUG gated |
-| Source Link Debug | *(no NavigationDestination)* | `SourceLinkDebugViewModel` | `ui/screens/debug/SourceLinkDebugScreen.kt` | Debug sub-screen |
-| Source Link Backfill | *(no NavigationDestination)* | `SourceLinkBackfillViewModel` | `ui/screens/settings/` (no dedicated route) | Settings sub-screen |
+| Debug | `NavigationDestination.Debug` (render only when `BuildConfig.DEBUG`) | `DebugViewModel` | `ui/screens/debug/DebugScreen.kt` | BuildConfig.DEBUG gated |
+| Categorization Debug | *(no destination — opened from DebugScreen)* | `CategorizationDebugViewModel` | `ui/screens/debug/CategorizationDebugScreen.kt` | Debug sub-screen |
+| Debug Viewer | *(no destination — embedded in ReceiptScanScreen and ReviewScreen)* | *(host screens' ViewModels)* | `ui/screens/debug/DebugViewerScreen.kt` | Debug sub-screen |
+| Source Link Debug | *(no destination — no in-app entry point found as of 2026-09-07)* | `SourceLinkDebugViewModel` | `ui/screens/debug/SourceLinkDebugScreen.kt` | Debug sub-screen |
+| Source Link Backfill | *(no destination — headless ViewModel, no UI consumer found as of 2026-09-07)* | `SourceLinkBackfillViewModel` | `ui/screens/settings/SourceLinkBackfillViewModel.kt` | Settings sub-screen |
 
 ---
 
@@ -108,11 +110,11 @@ App Chrome (6 tabs)
   │
   ├── Transactions ──► Click expense → VisualSplitEditor
   │
-  ├── Review ────────► Approve → AddExpense (pre-filled)
+  ├── Review ────────► Approve/Edit → expense created from review queue (ReviewViewModel)
   │
   ├── Budget ────────► Click budget → BudgetDetail → BudgetForecasting
   │
-  ├── Analytics ─────► AdvancedAnalytics
+  ├── Analytics ─────► AdvancedAnalytics (via Features Menu)
   │
   └── Spending Map ──► (no sub-navigation)
 ```
@@ -144,4 +146,4 @@ App Chrome (6 tabs)
 | `AnalyticsViewModel` | 15+ dependencies | 🔴 High |
 | Most other VMs | 3-10 dependencies | 🟡 Medium |
 
-**Total ViewModel files:** 40 (39 screen ViewModels + MainViewModel)
+**Total `@HiltViewModel` classes:** 41 — 40 in dedicated files (including `MainViewModel`) + 1 inline (`RecurringExpensesViewModel` declared inside `ui/screens/recurring/RecurringExpensesScreen.kt`). Dependency counts above are approximate.

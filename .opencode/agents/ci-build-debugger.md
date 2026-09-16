@@ -1,9 +1,10 @@
 ---
 description: CI, Gradle, Kotlin, Hilt, KSP, Room, and Android build failure debugger.
 mode: subagent
-model: opencode-go/glm-5.2
+model: merge-gateway/glm-5.3-flash
+variant: max
 temperature: 0.1
-steps: 35
+steps: 200
 color: error
 permission:
   read:

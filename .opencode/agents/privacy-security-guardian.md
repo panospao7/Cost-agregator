@@ -1,9 +1,10 @@
 ---
 description: Read-only privacy and security guardian for fail-closed behavior, diagnostics, permissions, and sensitive data handling.
 mode: subagent
-model: opencode-go/gpt-5.6-luna
+model: merge-gateway/glm-5.3-flash
+variant: max
 temperature: 0
-steps: 32
+steps: 100
 color: error
 permission:
   read:

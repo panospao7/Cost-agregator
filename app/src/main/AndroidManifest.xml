@@ -18,14 +18,11 @@
     <!-- Geolocation & Maps (Segment 17) — foreground only, no background location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    
-    <!-- Database Backup/Restore permissions -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28"
-        tools:ignore="ScopedStorage" />
-    
+
+    <!-- RP-03A (P7-003): READ/WRITE_EXTERNAL_STORAGE removed — .costbackup export
+         and restore now use SAF (CreateDocument / OpenDocument), which needs no
+         storage permissions. -->
+
     <!-- Internet is required for osmdroid tile download + Nominatim/Overpass geocoding -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

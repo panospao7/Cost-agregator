@@ -25,7 +25,12 @@ class NotificationIntakeRecoveryScheduler @Inject constructor(
 
     /**
      * Release stale PROCESSING rows and enqueue ready rows for processing.
-     * Call on: app start, listener connected, restore complete.
+     * Concrete hooks (RP-10 10b, P1-003): app start via
+     * [com.yourname.expensetracker.startup.AppStartupCoordinator], listener
+     * connected via [com.yourname.expensetracker.service.NotificationCaptureService];
+     * restore-complete is served by the next app start (a completed restore
+     * forces a restart). Uses WorkManager unique work only — no second
+     * scheduling path.
      */
     suspend fun recoverPending(limit: Int = 100) {
         try {

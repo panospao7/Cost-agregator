@@ -57,6 +57,11 @@ class CancellationPropagationContractTest {
             "toggleBudget", "Failed to toggle budget"),
         CriticalCatch("com/yourname/expensetracker/data/repository/BudgetRepository.kt",
             "computeAdjustedSpend", "Failed to compute adjusted spend"),
+        // U-001 (RP-01): create/update currency-conversion boundaries must rethrow CE.
+        CriticalCatch("com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt",
+            "createExpense currency conversion", "Cannot convert %s %.2f to %s for expense creation"),
+        CriticalCatch("com/yourname/expensetracker/domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt",
+            "updateExpense currency conversion", "// 3. Persist inside a single transaction"),
     )
 
     private data class CriticalCatch(val filePath: String, val methodLabel: String, val catchMarker: String)

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(ls -la ~/.commandcode/ 2>&1; echo \"---\"; ls -la .commandcode/ 2>&1; echo \"---\"; cmd //c \"echo %APPDATA%\"; ls \"$env:APPDATA/command-code\" 2>&1 || true)",
+      "powershell"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

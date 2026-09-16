@@ -1,8 +1,10 @@
 # Legal Paths — Architecture Law
 
+> **Last updated:** 2026-09-07 (verified against code: DB v148, guarded-worker set, CI guard suite)
+>
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
-> **Enforcement:** Static guards (Detekt/grep) + DeprecationLevel.ERROR + contract tests.
+> **Enforcement:** CI static guard suite (`scripts/ci/run_static_guard_suite.py`, registry in `scripts/ci/guard_registry.py`; policy in `docs/ci/guard-policy.md`), DB ownership policy (`config/guards/db_ownership_policy.yml`), in-repo architecture guard tests (`app/src/test/java/com/yourname/expensetracker/architecture/`), `DeprecationLevel.ERROR`, and contract tests.
 
 ---
 
@@ -20,6 +22,16 @@ FORBIDDEN:
   ❌ ExpenseDao.insert() from any repository directly
   ❌ ExpenseDao.insertAll() outside debug/migration
   ❌ Any expense insert without TransactionEvent (LifecycleEventType.CREATED)
+
+ENFORCEMENT:
+  • Every direct ExpenseDao mutation call site must match an entry in
+    config/guards/db_ownership_policy.yml (exact class + method + DAO +
+    operation contract) or a structural exception — enforced by
+    scripts/verify_db_access_boundaries.py (ratchet mode in CI).
+  • Direct ExpenseDao mutation methods are annotated @RestrictedExpenseDaoMutation
+    (opt-in); ExpenseDaoMutationAccessTest provides hard CI enforcement.
+  • Coordinators write through ExpenseWriteStore (data/store/), a write
+    facade that runs DatabaseWriteBarrier.checkWritesAllowed on every method.
 ```
 
 ```
@@ -180,6 +192,12 @@ FORBIDDEN:
   ❌ Any recurring rule mutation outside RecurringRuleLifecycleCoordinator
   ❌ 0L placeholder occurrenceId in reconcile results
   ❌ Bulk reconciliation using global PAID scan
+
+ENFORCEMENT:
+  • RecurringArchitectureGuardTest (app/src/test/.../architecture/) enforces the
+    single-writer principal: no direct recurring DAO mutation outside
+    RecurringRuleLifecycleCoordinator, no legacy markBillPaid, critical events
+    only via RecurringLifecycleEventWriter.
 ```
 
 ---
@@ -210,7 +228,9 @@ PRIVACY BLOCKED states:
     OverpassDisabled, DebugDataPersistenceDisabled, Custom
   → PrivacyDecision.FailClosed: never proceed; blocks execution unconditionally
   → toPrivacyBlocked() maps any denial + capability to a typed PrivacyBlocked
-  → 30+ callers use blocksExecution() before proceeding
+  → 38 call sites across 26 files use blocksExecution() before proceeding
+    (blocksExecution() metric; `PrivacyGate.check(...)` itself is invoked from
+    48 call sites across 32 production files — different metric, both current)
 
 FORBIDDEN:
   ❌ Cloud HTTP without privacy gate check (must pass through CompositePrivacyGate)
@@ -248,6 +268,11 @@ RESTORE:
   → On startup crash-recovery failure: enter CRITICAL_RECOVERY_REQUIRED (NOT reset on later restarts)
   → Forced restart after success (RESTORE_COMPLETE_RESTART_REQUIRED; auto-reset to NORMAL on next clean start)
   → DatabaseReadBarrier / DatabaseWriteBarrier gate all reads and writes during backup/restore
+  → Barrier violations throw DatabaseAccessBlockedException (typed access type,
+    operation, and current mode); writes are allowed ONLY in NORMAL mode
+  → Reads use explicit DatabaseReadPolicy: NORMAL_APP_READ (NORMAL only),
+    EXPORT_OR_BACKUP_SNAPSHOT_READ (NORMAL or BACKUP_EXPORTING),
+    RESTORE_INTERNAL_STAGED_DB_READ (always denied through the app singleton)
 
 FORBIDDEN:
   ❌ Any DB write outside NORMAL mode (DatabaseWriteBarrier blocks all non-NORMAL modes)
@@ -289,6 +314,9 @@ FORBIDDEN:
 EVERY worker:
   → WorkerExecutionGuard.runGuarded() / runGuardedWithContext()
        [checks write barrier FIRST, then logs run]
+  → All 10 production CoroutineWorkers route through the guard, including
+       NotificationIntakeWorker (previously allowlisted, now gated) and the
+       SnoozeReminderActionWorker / DismissReminderActionWorker pair.
   → WorkerRunLogger records RUNNING → SUCCESS/FAILED/SKIPPED/RETRY
   → Checkpoint before long loops (ensureActive / writeBarrier.checkWritesAllowed)
   → Guard enforces requiresNotificationPermission via NotificationPermissionChecker
@@ -298,8 +326,13 @@ EVERY worker:
 RETRY CONTRACT:
   → To request a WorkManager retry, THROW RetryableWorkerException.
   → Guard catch precedence:
-       CancellationException (rethrow) → RetryableWorkerException (Retry)
-       → classifyTransient(message/IOException) (Retry) → Failed (PERMANENT).
+       WorkerTimeoutPolicy (RETRY → WORKER_TIMEOUT / PROPAGATE_CANCELLATION →
+         WORKER_CANCELLED + rethrow) → CancellationException (recorded
+         CANCELLED, rethrow) → WorkerCheckpointBlockedException (applies
+         BlockedPolicy) → RetryableWorkerException (Retry; sanitized
+         reasonCode takes precedence — PR12J-1)
+         → classifyTransient(message/IOException) (Retry, WORKER_TRANSIENT_ERROR)
+         → Failed (PERMANENT, WORKER_UNHANDLED_EXCEPTION).
   → classifyTransient matches only: timeout / interrupted / deadlock /
        SQLITE_BUSY / database is locked (case-insensitive) OR IOException.
   → A plain RuntimeException with a non-transient message is PERMANENT
@@ -321,6 +354,7 @@ FORBIDDEN:
   ❌ Writing BackgroundJobRun before checking write barrier
   ❌ Throwing a plain RuntimeException to mean "retry" (it is PERMANENT)
   ❌ Bypassing WorkerExecutionGuard in any CoroutineWorker
+       (enforced by WorkerGuardArchitectureGuardTest; its allowlist is empty)
 ```
 
 ---
@@ -495,6 +529,15 @@ FORBIDDEN:
   ❌ GroupLifecycleEventDao.insert() directly (must go through coordinator)
   ❌ Any group mutation without GroupLifecycleEvent
   ❌ Hard-deleting a group without checking for linked system expenses
+
+ENFORCEMENT:
+  • The domain `GroupTransactionCoordinator` interface is implemented by
+    `data/database/GroupTransactionCoordinator.kt`, which executes atomic group/
+    member/expense writes inside `DomainTransactionRunner` (Room withTransaction)
+    with `DatabaseWriteBarrier` checks, `TransactionLifecycleCoordinator` for
+    system-expense creation, and `PostCommitActionRunner` for deferred side effects.
+  • Legal writer set enumerated in config/guards/db_ownership_policy.yml;
+    verified by scripts/verify_db_access_boundaries.py (ratchet) in CI.
 ```
 
 ---
@@ -853,6 +896,10 @@ RESCUE database (last resort — bypasses migration chain):
   → Guard: RescueConfig.ENABLE_FINANCIAL_RESCUE must be true [compile-time toggle, default false]
   → Guard: rescue_completed.txt marker check (one-shot; returns ALREADY_DONE if present)
   → Guard: DB file existence check (returns SKIPPED/NO_DB if no file)
+  → Context: the Room migration baseline is v145 (see DatabaseSchemaPolicy:
+    MIGRATION_BASELINE = 145, UNSUPPORTED_VERSIONS = 1..<145); databases below
+    the baseline are intentionally NOT migrated — this rescue path is their
+    only supported upgrade route.
 
   STEP 1 — Read user version:
     → Raw SQLiteDatabase.openDatabase(READ_ONLY) on old DB
@@ -911,17 +958,19 @@ FORBIDDEN:
 
 ```
 ASSIGN default category to expense:
-  → DefaultExpenseCategoryAssignmentService.assignDefaultCategory(expenseId, categoryId)
+  → DefaultExpenseCategoryAssignmentService.assignCategoryIfUnset(expenseId, categoryId, source, correlationId)
+      [implements ExpenseCategoryAssignmentPort; returns CategoryAssignmentOutcome:
+       Assigned / SkippedAlreadySet / SkippedExpenseMissing / Failed]
   → DatabaseWriteBarrier check
   → Guard: skips if expense already has a category set
   → database.withTransaction {
       ExpenseDao.updateCategory(expenseId, categoryId)
-      TransactionEventDao.insert with LifecycleEventType.UPDATED + category-change metadata
+      TransactionEventDao.insert with eventType "EXPENSE_CATEGORY_ASSIGNED" + correlationId
     }
-  → Returns Unit
+  → CancellationException rethrown; other failures mapped to CategoryAssignmentOutcome.Failed
 
 FORBIDDEN:
-  ❌ ExpenseDao.updateCategory() outside DefaultExpenseCategoryAssignmentService
+  ❌ ExpenseDao.updateCategory() outside DefaultExpenseCategoryAssignmentService / TransactionLifecycleCoordinator
   ❌ Skipping TransactionEvent write during category assignment
   ❌ Assigning category without checking if category already set
 ```
@@ -990,18 +1039,23 @@ FORBIDDEN:
 ## Spending Challenges
 
 ```
-DEACTIVATE expired challenges:
-  → SpendingChallengeManager.refreshChallenges()
-  → Queries ExpenseDao for per-challenge spending aggregates
-  → SpendingChallengeRepository.deactivateChallenges() for expired challenges
-  → Returns updated challenge progress list
-
-CALCULATE challenge progress:
-  → SpendingChallengeManager.calculateProgress(challenge)
-  → Read-only: aggregates expense amounts matching challenge criteria
+READ active challenges + progress:
+  → SpendingChallengeManager.getActiveChallengesSnapshot()
+  → SpendingChallengeManager.getChallengeProgress(challenge)
+  → Read-only; NOTE: progress spend is currently computed via deprecated raw
+    ExpenseDao SUM aggregates (getTotalSpentBetween / getCategorySpentInPeriod,
+    marked for MultiCurrencyRepository migration — no ownership filter)
   → Returns progress percentage against challenge target
 
+CREATE challenge:
+  → SpendingChallengeManager.createChallenge(...)
+
+DEACTIVATE expired challenges:
+  → SpendingChallengeRepository.deactivateChallenges(challengeIds, updatedAt)
+       [write-barrier check inside repository, then SpendingChallengeDao.deactivateChallenges]
+
 FORBIDDEN:
-  ❌ SpendingChallengeRepository.deactivateChallenges() directly without expense check
-  ❌ Challenge progress calculation without considering isNotMine/isReimbursable flags
+  ❌ SpendingChallengeRepository.deactivateChallenges() without a write-barrier check
+  ❌ Adding new raw Double SUM aggregation paths for challenge progress
+     (must migrate to MultiCurrencyRepository — ownership- and currency-safe)
 ```

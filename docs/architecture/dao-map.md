@@ -1,8 +1,8 @@
 # DAO ↔ Entity ↔ Repository Map
 
-> Complete mapping of all ~67 DAOs (~64 in DaoModule + 3 in AiModule) to their entities and consuming repositories/services.
+> Complete mapping of all 68 Room DAOs (64 bound in DaoModule + 3 in AiModule + 1 unbound) to their entities and consuming repositories/services.
 >
-> Last updated: 2026-06-09
+> Last updated: 2026-09-07
 
 ---
 
@@ -12,6 +12,21 @@
 - **Entity** → Room @Entity class
 - **Repository** → Classes that inject this DAO
 - **Consumers** → ViewModels / Services that further depend on the repository
+
+---
+
+## Database Facts (verified against code)
+
+- **Schema version:** `APP_DATABASE_SCHEMA_VERSION = 148` (`data/database/AppDatabase.kt`); migration baseline is **v145** (older DBs use the rescue/import path).
+- **Registered in `@Database`:** 70 entities + 68 DAO accessors; type converters in `data/database/converter/Converters.kt` (22 `@TypeConverter` methods).
+- **Migrations** (`data/database/DatabaseMigrations.kt`, exported snapshots under `app/schemas/.../148.json`):
+  - `MIGRATION_145_146` — creates `negotiation_outcomes` table (FK → `manual_recurring_expenses`, 3 indexes).
+  - `MIGRATION_146_147` — group soft-delete: adds `group_members.leftAt`, `group_expenses.idempotencyKey`; drops the unique `(groupId, name)` index on `group_members` and recreates it as non-unique.
+  - `MIGRATION_147_148` — PR12A: adds 9 worker-run tracing columns to `background_job_runs` (`workId`, `uniqueWorkName`, `specVersion`, `runAttempt`, `leaseId`, `terminalReasonCode`, `terminalDiagnosticCode`, `partialFailureCount`, `failedTargetCount`).
+- **Single source of truth for migration config:** `data/database/DatabaseSchemaPolicy.kt` (`CURRENT_VERSION`, `MIGRATION_BASELINE = 145`, `ALL_MIGRATIONS`) — production, tests, and CI must read from it.
+- **Hilt binding split:** 64 DAOs provided in `di/DaoModule.kt`; the 3 AI DAOs (`AiArtifactDao`, `AiChatSessionDao`, `AiChatMessageDao`) are provided by the `AiModule` companion object (`di/AiModule.kt`); `SourceStatsEventDao` is registered in `AppDatabase` but **not Hilt-bound** (no direct consumer).
+- **Write-restriction:** direct `ExpenseDao` mutations require the `RestrictedExpenseDaoMutation` opt-in (`data/database/dao/RestrictedExpenseDaoMutation.kt`); hard enforcement is via the `ExpenseDaoMutationAccessTest` architecture test.
+- **CI guardrail:** direct DAO access outside the lifecycle/allowlist files is constrained by `scripts/guardrails/dao-access-check.kts` + `scripts/guardrails/dao-approved-files.txt` (tiered allowlist) and `scripts/verify_db_access_boundaries.py`; see `docs/ci/DB_ROOM_INVENTORY.md` and `docs/ci/guard-policy.md`.
 
 ---
 
@@ -62,7 +77,7 @@
 | `RecurringOccurrenceDao` | `RecurringOccurrence` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer`, `RecurringRuleLifecycleCoordinator` (P4) | RecurringExpensesVM, BillReminderWorker |
 | `RecurringReminderDeliveryDao` | `RecurringReminderDelivery` | `RecurringLifecycleCoordinator`, `RecurringOccurrenceMaterializer`, `RecurringRuleLifecycleCoordinator` (P4) | BillReminderWorker |
 | `RecurringLifecycleEventDao` | `RecurringLifecycleEvent` | `RecurringLifecycleCoordinator`, `RecurringLifecycleEventWriter` (P4), `RecurringRuleLifecycleCoordinator` (P4) | Recurring audit log |
-| `RecurringExpenseDao` ⚠️ | `ManualRecurringExpense` | *(deprecated — use `ManualRecurringExpenseDao`)* | — |
+| `RecurringExpenseDao` ⚠️ | `ManualRecurringExpense` (same table) | *(deprecated — queries `manual_recurring_expenses`; use `ManualRecurringExpenseDao`; still bound in `DaoModule`)* | — |
 
 ## Currency Domain
 
@@ -207,4 +222,4 @@
 | `NegotiationOutcomeDao` | **1** consumer | 🟢 LOW — bill negotiation outcome tracking |
 | `BankStatementImportRunDao` | **0** direct | 🟢 LOW — bank statement import |
 | `BankStatementImportItemDao` | **0** direct | 🟢 LOW — bank statement import |
-| **Total: ~67 DAOs (~64 DaoModule + 3 AiModule)** | | |
+| **Total: 68 Room DAOs (64 DaoModule + 3 AiModule + 1 unbound: SourceStatsEventDao)** | | |

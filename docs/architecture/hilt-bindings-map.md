@@ -1,6 +1,7 @@
 # Hilt Module Bindings Map
 
 > Complete interface → implementation binding map for all 33 Hilt @Module files (+ 1 @EntryPoint).
+> **Last updated:** 2026-09-07 (verified against source; DB schema v148).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -12,11 +13,17 @@
 ### `DatabaseModule` — `di/DatabaseModule.kt`
 ```
 Provides:
-  AppDatabase                                 → AppDatabase (Room)
+  AppDatabase                                 → AppDatabase (Room, schema v148)
   GroupTransactionCoordinatorInterface        → GroupTransactionCoordinator
+  DomainTransactionRunner                     → RoomDomainTransactionRunner
+                                                (PR 3: shared withTransaction wrapper; all
+                                                domain coordinators doing atomic state+event
+                                                writes inject this)
 Dependencies:
   Context, ExpenseGroupDao, GroupMemberDao, GroupExpenseDao, ExpenseDao,
-  TransactionLifecycleCoordinator, @IoDispatcher
+  TransactionLifecycleCoordinator, TransactionLifecycleEventWriter,
+  TransactionSideEffectPlanner, PostCommitActionRunner, DatabaseWriteBarrier,
+  TimeProvider, DomainTransactionRunner, @IoDispatcher
 ```
 
 ### `DaoModule` — `di/DaoModule.kt`
@@ -71,6 +78,9 @@ Defines @ApplicationScope qualifier annotation used by DispatchersModule.
 ```
 Binds:
   TimeProvider                                → SystemTimeProvider
+  MonotonicTimeProvider                       → SystemMonotonicTimeProvider
+                                                (java.time-based clock seam; inject for
+                                                elapsed-time measurements)
 Dependencies:
   (none)
 ```
@@ -88,17 +98,22 @@ Lifecycle coordinator wiring:
 ### `WorkerModule` — `di/WorkerModule.kt`
 ```
 Binds:
-  WorkerRunLogger                             → WorkerRunLoggerImpl
+  WorkerLeaseRegistry                         → WorkerLeaseRegistryImpl
+  WorkerDrainController                       → WorkerLeaseRegistryImpl (same impl, dual binding)
   NotificationPermissionChecker               → AndroidNotificationPermissionChecker
+
+Provides:
+  WorkManager                                 → WorkManager.getInstance(context)
 ```
 `NotificationPermissionChecker` is injected into `WorkerExecutionGuard` to enforce
 `WorkerGuardRequest.requiresNotificationPermission` (durable skip with
 `NOTIFICATION_PERMISSION_DENIED` when notifications are disabled).
+Note: `WorkerRunLogger` → `WorkerRunLoggerImpl` is bound by `DiagnosticsModule`, not here.
 
 ### `ServiceModule` — `di/ServiceModule.kt`
 ```
 Provides:
-  Gson                                        → GsonBuilder().create()
+  Gson                                        → GsonBuilder().setLenient().create()
   NotificationService                         → AndroidNotificationService
   GeocodingService                            → CompositeGeocodingService
   NearbyPoiService                            → OverpassNearbyService
@@ -135,7 +150,6 @@ Binds:
   AiPolicy                                    → AiPolicyImpl
   AiCapabilityRouter                          → DefaultAiCapabilityRouter
   CloudProviderConnectionTester               → OkHttpCloudProviderConnectionTester
-  HybridRouter                                → HybridRouter (generic, @Inject constructor)
   AiEnvironmentMonitor                        → DefaultAiEnvironmentMonitor
   AiWorkScheduler                             → AiWorkSchedulerImpl
   DashboardBriefingService                    → HybridDashboardBriefingService
@@ -157,6 +171,10 @@ Provides:
   OnDeviceReceiptItemCategorizationService    → new instance
   CloudReceiptItemCategorizationService       → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
   CloudWarrantyExtractionService              → SecureKeyStorage + OkHttpClient + PrivacyGate + CloudPayloadPolicy + PrivacyAuditLogger
+
+Note: Hybrid services route via `AiCapabilityRouter` + `AiSettingsRepository` directly.
+`HybridRouter` (domain/ai/HybridRouter.kt) is a plain generic helper class (no @Inject
+constructor) — it is NOT bound in this module.
 ```
 
 ### `OcrImprovementsModule` — `di/OcrImprovementsModule.kt`
@@ -194,6 +212,7 @@ Binds:
   CurrencySettingsRepository                  → CurrencySettingsRepositoryImpl
   CurrencyRatesRepository                     → CurrencyRatesRepositoryImpl
   ExchangeRateStore                           → ExchangeRateStoreAdapter
+  UserCurrencyProvider                        → AppConfigCurrencyProvider
 
 Note: CurrencyConverter and MultiCurrencyRepository use @Inject constructors
 ```
@@ -288,12 +307,12 @@ Auto-provided:
 ```
 Provides:
   TaxConfiguration                            → GreeceTaxConfiguration
-
-Auto-provided via @Inject constructor:
-  DemoTaxRateProvider                         → @Singleton @Inject constructor (seed-data impl of TaxRateProvider, no Dagger module needed)
+  TaxRateProvider                             → DemoTaxRateProvider (explicit @Provides binding)
 ```
 
-Note: `TaxRateProvider` interface is consumed by `TaxEstimator`; `DemoTaxRateProvider` is the single `@Inject`-constructor implementation, satisfying Hilt's auto-binding rules for single-implementation interfaces.
+Note: `TaxRateProvider` is consumed by `TaxEstimator`; `DemoTaxRateProvider` is the
+seed-data implementation, now bound explicitly by `TaxModule` (previously satisfied by
+Hilt's single-implementation auto-binding).
 
 ### `ReminderSettingsModule` — `di/ReminderSettingsModule.kt`
 ```
@@ -324,6 +343,7 @@ Provides:
 ```
 Provides:
   SecureKeyStorage                            → SecureKeyStorage(context)
+  NotificationTransientKeyProvider            → AndroidKeystoreNotificationTransientKeyProvider
 ```
 
 ### `PrivacyModule` — `di/PrivacyModule.kt`
@@ -343,6 +363,10 @@ Provides:
 
 ### `BackupRepositoryModule` — `di/BackupRepositoryModule.kt`
 ```
+Binds:
+  MaintenanceSafeDiagnosticSink               → DataStoreMaintenanceSafeDiagnosticSink
+  RestoreDatabaseOpener                       → RestoreDatabaseOpenerImpl
+
 Provides:
   DatabaseBackupRepository                    → DatabaseBackupRepositoryImpl
   RestoreMaintenanceMode                      → @Inject constructor (@Singleton, auto-discovered)
@@ -390,6 +414,7 @@ Provides:
 Binds:
   LocationCachePort                           → MerchantLocationCachePortAdapter
   MerchantClusterPort                         → ExpenseMerchantClusterPortAdapter
+  ExpenseCategoryAssignmentPort               → DefaultExpenseCategoryAssignmentService
 ```
 
 ---
@@ -407,6 +432,9 @@ Binds:
 - `SideEffectEventWriter` → `CompositeSideEffectEventWriter`
 - `TransactionDatePolicy` → `DefaultTransactionDatePolicy`
 
+Provides:
+- `WorkerTerminalDiagnosticSink` → `FileWorkerTerminalDiagnosticSink` (durable file-backed sink, PR12I-1)
+
 ---
 
 ### `RetentionModule` — `di/RetentionModule.kt`
@@ -419,8 +447,10 @@ Binds:
 ---
 
 ### `ProvenanceModule` — `di/ProvenanceModule.kt`
-`@Module @InstallIn(SingletonComponent::class)` providing:
-- Provenance event recording bindings for audit trail tracking
+`@Module @InstallIn(SingletonComponent::class)` bindings:
+- `SourceLinkWriter` → `SourceLinkWriterImpl`
+- `PendingReviewSourceLinkService` → `PendingReviewSourceLinkServiceImpl`
+- `PendingReviewSourceLinkPromoter` → `PendingReviewSourceLinkPromoterImpl`
 
 ---
 
@@ -454,4 +484,4 @@ BackupRepositoryModule ──► Backup/Restore
 ```
 
 ---
-**Stats:** 33 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 64+ entities · DB v147
+**Stats:** 33 Hilt @Module files · 65+ repositories · 68 DAOs (64 DaoModule + 3 AiModule + 1 unbound) · 70 entities · DB v148 (DatabaseSchemaPolicy.CURRENT_VERSION)

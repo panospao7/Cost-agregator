@@ -1,9 +1,10 @@
 ---
 description: Read-only Room database, DAO, schema, and migration guardian.
 mode: subagent
-model: opencode-go/deepseek-v4-pro
+model: merge-gateway/glm-5.3-flash
+variant: max
 temperature: 0
-steps: 32
+steps: 100
 color: warning
 permission:
   read:

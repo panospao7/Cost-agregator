@@ -35,32 +35,73 @@ class RecurringArchitectureGuardTest {
         assertTrue("Architecture guard scanned zero Kotlin files in ${sourceRoot.absolutePath}", kotlinFiles.isNotEmpty())
     }
 
-    /** Files allowed to directly mutate recurring DAOs. */
-    private val allowedMutationFiles = setOf(
-        "RecurringLifecycleCoordinator.kt",
-        "RecurringRuleLifecycleCoordinator.kt",
-        "RecurringOccurrenceMaterializer.kt",
-        "AppDatabase.kt" // migrations only
+    /**
+     * Files allowed to directly mutate recurring-rule DAOs, with justification.
+     *
+     * Entries tagged with owner=/issue=/expiry= are TEMPORARY and must shrink:
+     * they are a justified ratchet, not a silent allowlist, and the reason must
+     * name the remediation owner and expiry date.
+     */
+    private val allowedMutationFiles: Map<String, String> = mapOf(
+        "RecurringLifecycleCoordinator.kt" to "legal single-writer path for recurring mutations",
+        "RecurringRuleLifecycleCoordinator.kt" to "legal single-writer path for rule mutations",
+        "RecurringOccurrenceMaterializer.kt" to "occurrence projection writer invoked inside coordinator-held transactions",
+        "AppDatabase.kt" to "migrations only",
+        // TEMPORARY (RP-04): SubscriptionManagementRepository is writeBarrier-checked
+        // (see WriteBarrierArchitectureGuardTest) but is a non-coordinator mutator.
+        // Remove when coordinator routing lands (RP-04 batch 2-3).
+        "SubscriptionManagementRepository.kt" to
+            "owner=RP-04 issue=recurring-coordinator-routing expiry=2026-10-31 " +
+            "coordinator routing pending (RP-04 batch 2-3); writeBarrier-checked but non-coordinator mutator"
+    )
+
+    /**
+     * Recurring-rule DAO interfaces and their mutating methods
+     * (verified against the DAO sources; keep in sync if a mutator is added).
+     */
+    private val recurringRuleDaos: Map<String, Set<String>> = mapOf(
+        "ManualRecurringExpenseDao" to setOf(
+            "insert", "update", "delete", "deleteById", "setActiveStatus", "updateNextDate"
+        ),
+        "RecurringExpenseDao" to setOf("insert", "update", "delete", "deleteById")
     )
 
     @Test
     fun `no direct recurring rule DAO mutation outside coordinator`() {
-        val forbidden = listOf(
-            Regex("""manualRecurringExpenseDao\s*\.\s*insert\("""),
-            Regex("""manualRecurringExpenseDao\s*\.\s*update\("""),
-            Regex("""manualRecurringExpenseDao\s*\.\s*delete\("""),
-            Regex("""manualRecurringExpenseDao\s*\.\s*deleteById\("""),
-            Regex("""manualRecurringExpenseDao\s*\.\s*setActiveStatus\("""),
-            Regex("""manualRecurringExpenseDao\s*\.\s*updateNextDate\(""")
-        )
-
         val errors = mutableListOf<String>()
-        walkSourceFiles(sourceRoot) { file, text ->
-            if (file.name in allowedMutationFiles) return@walkSourceFiles
-            for (pattern in forbidden) {
-                if (pattern.containsMatchIn(text)) {
-                    errors.add("${file.name}: direct recurring rule DAO mutation found (matches: $pattern)")
-                    break
+        walkSourceFiles(sourceRoot) { file, raw ->
+            if (allowedMutationFiles.containsKey(file.name)) return@walkSourceFiles
+            // Sanitize so a comment/string mention can never fake or hide a mutation.
+            val text = SourceTextSanitizer.stripCommentsAndStringBodies(raw)
+
+            for ((daoInterface, mutatingMethods) in recurringRuleDaos) {
+                val canonical = daoInterface.replaceFirstChar { it.lowercaseChar() }
+                // ANY receiver whose declared type is this DAO, regardless of the
+                // property name (e.g. `subscriptionDao: ManualRecurringExpenseDao`),
+                // plus canonical/interface names and local database aliases.
+                val receivers = mutableSetOf(canonical, daoInterface)
+                receivers += Regex("""\b([A-Za-z_]\w*)\s*:\s*(?:\w+\.)*${Regex.escape(daoInterface)}\b""")
+                    .findAll(text)
+                    .map { it.groupValues[1] }
+                for (dbVar in listOf("appDatabase", "database", "db")) {
+                    receivers += Regex(
+                        """\b(?:val|var)\s+([A-Za-z_]\w*)\s*=\s*$dbVar\s*\.\s*${Regex.escape(canonical)}\s*\(\s*\)"""
+                    ).findAll(text).map { it.groupValues[1] }
+                }
+
+                for (method in mutatingMethods) {
+                    for (receiver in receivers) {
+                        val callPattern = Regex(
+                            """\b${Regex.escape(receiver)}\s*\.\s*${Regex.escape(method)}\s*\("""
+                        )
+                        if (callPattern.containsMatchIn(text)) {
+                            errors.add(
+                                "${file.name}: direct recurring rule DAO mutation " +
+                                    "$daoInterface.$method() via receiver '$receiver' " +
+                                    "(allowed files: ${allowedMutationFiles.keys.joinToString()})"
+                            )
+                        }
+                    }
                 }
             }
         }

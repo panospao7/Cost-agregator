@@ -1,13 +1,19 @@
 package com.yourname.expensetracker.domain.notification.capture
 
 import android.content.Context
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequest
+import androidx.work.Operation
 import androidx.work.WorkManager
+import androidx.work.await
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.dao.NotificationIntakeDao
 import com.yourname.expensetracker.domain.diagnostics.NotificationDiagnosticEmitter
 import com.yourname.expensetracker.domain.privacy.RawStorageMode
+import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
@@ -29,6 +35,9 @@ class NotificationIntakeRestoreBarrierTest {
 
     private val intakeDao = mockk<NotificationIntakeDao>(relaxed = true)
     private val workManager = mockk<WorkManager>(relaxed = true)
+    // RP-10 10b (P1-003): enqueue stubs return the real CompletedOperation
+    // (defined next to NotificationIntakeCoordinatorTest) — MockK must not
+    // touch the await() path (it parks on a future that never fires).
     private val timeProvider = FakeTimeProvider(1716163200000L)
     private val crypto =
         NotificationTransientPayloadCrypto(mockk<NotificationTransientKeyProvider>(relaxed = true))
@@ -49,8 +58,12 @@ class NotificationIntakeRestoreBarrierTest {
             mode,
             Dispatchers.Unconfined,
         )
+        coEvery {
+            workManager.enqueueUniqueWork(any<String>(), any<ExistingWorkPolicy>(), any<OneTimeWorkRequest>())
+        } returns CompletedOperation()
         return NotificationIntakeCoordinator(
-            intakeDao, workManager, emitter, timeProvider, crypto, DatabaseWriteBarrier(mode)
+            intakeDao, workManager, emitter, timeProvider, crypto, DatabaseWriteBarrier(mode),
+            transactionRunner = mockk<DomainTransactionRunner>(relaxed = true)
         )
     }
 
@@ -93,6 +106,11 @@ class NotificationIntakeRestoreBarrierTest {
             postTime = 1L,
             correlationId = "corr",
             title = "Title",
+            storage = DeferredCaptureStorageSnapshot(
+                storageMode = RawStorageMode.STORE_METADATA_ONLY,
+                appName = null,
+                extrasJson = null
+            )
         )
         coVerify(exactly = 0) { intakeDao.insertOrIgnore(any()) }
     }

@@ -1,0 +1,13 @@
+test/java/com/yourname/expensetracker/domain/util/FakeMonotonicTimeProvider.kt	28
+test/java/com/yourname/expensetracker/domain/util/FakeTimeProvider.kt	67
+test/java/com/yourname/expensetracker/metrics/DashboardWidgetConsistencyTest.kt	333
+test/java/com/yourname/expensetracker/metrics/EffectiveAmountConsistencyTest.kt	242
+test/java/com/yourname/expensetracker/metrics/GoldenAnalyticsDataset.kt	244
+test/java/com/yourname/expensetracker/metrics/GoldenAnalyticsDatasetTest.kt	175
+test/java/com/yourname/expensetracker/metrics/TimePeriodAlignmentTest.kt	313
+test/java/com/yourname/expensetracker/testfixtures/TestFixtures.kt	104
+test/java/com/yourname/expensetracker/testfixtures/database/AppDatabaseTestFactory.kt	18
+test/java/com/yourname/expensetracker/testfixtures/golden/GoldenScenarioVerifier.kt	217
+test/java/com/yourname/expensetracker/testfixtures/scenario/ScenarioAssertions.kt	92
+test/java/com/yourname/expensetracker/testfixtures/scenario/ScenarioSeed.kt	108
+test/java/com/yourname/expensetracker/testfixtures/scenario/ScenarioSeeder.kt	167

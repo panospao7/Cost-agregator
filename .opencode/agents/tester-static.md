@@ -1,9 +1,10 @@
 ---
 description: Read-only test coverage and validation strategy reviewer.
 mode: subagent
-model: opencode-go/qwen3.7-plus
+model: merge-gateway/glm-5.3-flash
+variant: max
 temperature: 0.1
-steps: 22
+steps: 60
 color: info
 permission:
   read:

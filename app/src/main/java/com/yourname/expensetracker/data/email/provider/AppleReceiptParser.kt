@@ -33,12 +33,17 @@ class AppleReceiptParser : BaseEmailParser() {
         )
 
         // Order/Document ID patterns
+        // NEW-P11-2026-001: unescaped raw-string regexes — the previous \\s/\\. escapes
+        // made these patterns look for literal backslashes, so they never matched real
+        // receipts and orderNumber was always null. All patterns below (including the
+        // HNY hardware-order line, unescaped in the NEW-P11-2026-002 residual pass)
+        // now use single-escape raw strings.
         private val ORDER_ID_PATTERNS = listOf(
-            Pattern.compile("""Document No\\.?\\s*:?\\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Order ID\\s*:?\\s*([A-Z0-9-]+)""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Invoice\\s*#?\\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Receipt\\s*#?\\s*([A-Z0-9-]+)""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""HNY\\s*#?\\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE) // Apple hardware order format
+            Pattern.compile("""Document No\.?\s*:?\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Order ID\s*:?\s*([A-Z0-9-]+)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Invoice\s*#?\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""Receipt\s*#?\s*([A-Z0-9-]+)""", Pattern.CASE_INSENSITIVE),
+            Pattern.compile("""HNY\s*#?\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE) // Apple hardware order format
         )
 
         // Date patterns for Apple receipts
@@ -51,8 +56,9 @@ class AppleReceiptParser : BaseEmailParser() {
         )
 
         // App/item extraction patterns
+        // NEW-P11-2026-001: unescaped raw-string regexes (same defect class as ORDER_ID_PATTERNS)
         private val ITEM_PATTERN = Pattern.compile(
-            """([^\\n]{10,80})\\s+(?:\\d+\\s+)?[€\\$£]?\\s*([0-9,]+\\.[0-9]{2})""",
+            """([^\n]{10,80})\s+(?:\d+\s+)?[€$£]?\s*([0-9,]+\.[0-9]{2})""",
             Pattern.MULTILINE
         )
 
@@ -76,7 +82,22 @@ class AppleReceiptParser : BaseEmailParser() {
     }
 
     override fun canParse(sender: String, subject: String, body: String): Boolean {
-        val isAppleSender = APPLE_SENDERS.any { sender.contains(it, ignoreCase = true) }
+        // NEW-P11-2026-002 (PARTIAL): sender-gated HERE, like the Amazon/Uber parsers
+        // (P11-PR3 precedent) — subject/body are only corroboration, never standalone
+        // acceptance inside canParse.
+        //
+        // RESIDUAL (pipeline level, deferred as a follow-up to preserve forwarder mail):
+        // canParse is the only sender-gated call site, but detectProvider in
+        // EmailReceiptIngestionService.kt can still route non-Apple-sender mail to
+        // appleParser.parse via (a) its body fallback (apple.com/itunes in body →
+        // provider "apple") and (b) the unknown-provider try-all path. Fixing that
+        // needs a forwarder design pass — gating the body fallback outright would
+        // break Apple mail re-sent from forwarding/aliasing addresses.
+        val isAppleSender = APPLE_SENDERS.any { sender.contains(it, ignoreCase = true) } ||
+            sender.contains("@apple.", ignoreCase = true) ||
+            sender.contains("@email.apple.com", ignoreCase = true)
+        if (!isAppleSender) return false
+
         val isAppleSubject = subject.contains("apple", ignoreCase = true) ||
                             subject.contains("itunes", ignoreCase = true) ||
                             subject.contains("app store", ignoreCase = true) ||
@@ -87,8 +108,8 @@ class AppleReceiptParser : BaseEmailParser() {
                          body.contains("itunes", ignoreCase = true) ||
                          body.contains("app store", ignoreCase = true) ||
                          body.contains("apple id", ignoreCase = true)
-        
-        return isAppleSender || (isAppleSubject && isAppleBody)
+
+        return isAppleSubject || isAppleBody
     }
 
     override fun parse(emailBody: String, receivedAt: Long): ParsedEmailReceipt? {
@@ -216,7 +237,7 @@ class AppleReceiptParser : BaseEmailParser() {
         // Try to extract specific app name for App Store purchases
         if (purchaseType == "App Store" || purchaseType == "iCloud") {
             val appPattern = Pattern.compile(
-                """(?:App|Item)\\s*:?\\s*([^\\n]{5,60})""",
+                """(?:App|Item)\s*:?\s*([^\n]{5,60})""",
                 Pattern.CASE_INSENSITIVE
             )
             val matcher = appPattern.matcher(text)
@@ -238,7 +259,7 @@ class AppleReceiptParser : BaseEmailParser() {
         while (matcher.find()) {
             try {
                 val description = matcher.group(1).trim()
-                    .replace(Regex("""\\s+"""), " ")
+                    .replace(Regex("""\s+"""), " ")
                     .take(100)
                 
                 // Skip lines that are clearly not items

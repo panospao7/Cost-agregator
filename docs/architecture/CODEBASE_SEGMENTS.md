@@ -2,6 +2,8 @@
 
 Canonical guide for segment ownership and AI analysis.
 
+**Last updated:** 2026-09-07 (verified against source). Database schema version: v148 (`data/database/AppDatabase.kt`).
+
 ## Rules
 - One segment list, one ascending order, one owning section per segment.
 - The summary table below matches the section headers exactly.
@@ -17,7 +19,7 @@ Canonical guide for segment ownership and AI analysis.
 | 1 | Forecasting & Runway | spending forecast, runway estimation, deterministic + Monte Carlo forecasting |
 | 2 | Budget Management | budget CRUD, rollover, budget health, budget alerts logic |
 | 3 | Notification Capture, Parsing & Review | notification listener, parser registry, transaction review queue |
-| 4 | Receipt Scanning (OCR) | OCR capture, receipt parsing, statement image parsing, scan review UI |
+| 4 | Receipt Scanning (OCR) & Receipt Lifecycle | OCR capture, receipt parsing, statement image parsing, scan review UI |
 | 5 | AI Receipt Item Categorization | line-item AI categorization, item prompts, confidence, tax split |
 | 6 | Merchant Categorization | merchant normalization, rule/ML categorization pipeline |
 | 7 | Recurring Expenses | recurring pattern detection and planned recurring costs |
@@ -52,6 +54,7 @@ Canonical guide for segment ownership and AI analysis.
 | 36 | Bill Reminders | bill reminder scheduling, due-date tracking, reminder UI |
 | 37 | Spending Challenges | spending challenge creation, tracking, and challenge UI |
 | 38 | Receipt Matching | receipt-to-transaction matching and reconciliation UI |
+| 39 | Static Guardrails & CI Verification | repo-level static guard suite, boundary verifiers, allowlists, CI workflow wiring |
 
 ---
 
@@ -249,6 +252,8 @@ Owns the base expense CRUD surface, shared core expense models, and the **transa
 
 **Boundary note:** The `transaction_events` table is owned by this segment. It is an immutable append-only log; no updates or deletes should be performed on it.
 
+**Boundary note:** entity provenance/source-link persistence (`domain/provenance/` writers, `entity_source_links` table via `EntitySourceLinkDao`, bound in `di/ProvenanceModule.kt`) rides along with expense lifecycle creation; CI enforces it via `scripts/verify_source_provenance_boundaries.py` (Segment 39).
+
 ## SEGMENT 10: Dashboard Totals & Widgets
 
 Owns the dashboard home composition and all totals aggregation logic.
@@ -299,10 +304,15 @@ Owns startup wiring, service lifecycle recovery, and background runtime jobs.
 - `domain/workers/WorkerLease.kt` / `WorkerLeaseRegistry.kt` / `WorkerLeaseRegistryImpl.kt` — Worker lease acquisition for exclusive execution
 - `domain/workers/WorkerRunContext.kt` — Per-run context with rowsScanned/rowsUpdated/notificationsSent tracking
 - `domain/workers/NoOpWorkerDrainController.kt` — No-op drain controller for testing/staging
+- `domain/workers/WorkerGuardVerifier.kt` — Runtime verifier that all known CoroutineWorker subclasses are registered and guard-covered
+- `domain/workers/WorkerReasonCodes.kt` — Central exception → safe structured reason-code mapping (PR12J-1)
+- `domain/workers/WorkerTerminalDiagnosticSink.kt` / `FileWorkerTerminalDiagnosticSink.kt` — Durable file-backed fallback diagnostic when terminal DB status writes fail (PR12H-3)
+- `domain/workers/ScheduleResult.kt` — Scheduling outcome from `WorkerSpecScheduler` for diagnostic emission
 - `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl, NotificationPermissionChecker → AndroidNotificationPermissionChecker
 - `service/reminder/BillReminderWorker.kt`
 - `service/receiptmatching/ReceiptMatchingWorker.kt`
 - `service/warranty/WarrantyExpirationWorker.kt`
+- `service/reminder/SnoozeReminderActionWorker.kt` / `DismissReminderActionWorker.kt` — One-shot reminder action workers enqueued by their receivers; DB mutations run through `WorkerExecutionGuard` (lease/barrier/run-ledger)
 
 ## SEGMENT 13: Cash Flow Planning
 
@@ -500,6 +510,8 @@ Owns the base group/shared-expense model, membership, and transaction coordinati
 - `data/repository/GroupsRepository.kt`
 - `data/repository/GroupsRepositoryImpl.kt`
 - `domain/groups/GroupTransactionCoordinator.kt`
+- `data/database/GroupTransactionCoordinator.kt` — Data-layer executor of the domain coordinator contract; runs group mutations atomically in a single Room transaction via `RoomDomainTransactionRunner` (DB ownership policy v2)
+- `data/database/RoomDomainTransactionRunner.kt` — Room-transaction runner bridging domain coordinators to atomic DB writes
 - `domain/groups/GroupLifecycleCoordinator.kt` — @Singleton domain coordinator wrapping GroupTransactionCoordinator (7 methods, 8 invariants)
 - `domain/groups/GroupBalanceCalculator.kt` — @Singleton @Inject per-member net balance calculator (paidTotal, owedShareTotal, settlementsPaid/Received, netBalance)
 - `domain/groups/usecase/AddGroupExpenseUseCase.kt`
@@ -551,7 +563,7 @@ Owns encrypted key storage and security/network bindings.
 - `domain/privacy/CloudPayloadRedactor.kt` — Unified cloud AI payload redaction interface
 - `data/privacy/DefaultCloudPayloadRedactor.kt` — Wraps CloudPiiSanitizer (ARCH-04 Stage 1)
 - `domain/privacy/CloudPayloadPolicy.kt` — Interface + `DefaultCloudPayloadPolicy`; `PreparedCloudPayload` contract for all 7 cloud providers; replaces `CloudPayloadRedactor` entirely
-- `data/privacy/CloudPayloadPolicy.kt` — Data-layer implementation of cloud payload policy
+- `data/privacy/DefaultCloudPayloadPolicy.kt` — Data-layer implementation of cloud payload policy
 - `domain/privacy/RawStorageMode.kt` — Enum: STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE
 - `domain/privacy/RawContentSanitizer.kt` — Write-time sanitizer applying RawStorageMode to OCR/email content; HMAC-safe variants (removed String.hashCode())
 - `domain/privacy/EffectiveCloudAiPolicy.kt` — Resolves effective cloud AI policy from privacy + AI settings (`cloudAllowed`, `redactBeforeCloud`, `receiptImageUploadAllowed`, `bankStatementCloudAllowed` flags)
@@ -570,13 +582,13 @@ Owns debug surfaces, diagnostics pipeline, pipeline diagnostics, data integrity 
 - `domain/debug/ServiceDiagnostics.kt`
 - `domain/debug/NotificationSeeder.kt`
 - `domain/diagnostics/DatabaseIntegrityScanner.kt` — Scans for 11 invariant violations (duplicate active budgets, current user per group, fingerprint collisions, etc.)
-- `domain/diagnostics/DiagnosticsModule.kt` — Diagnostics DI wiring
+- `di/DiagnosticsModule.kt` — Diagnostics DI wiring
 - `data/database/entity/OperationRunEvent.kt` — Operation run event record
 - `data/database/dao/OperationRunEventDao.kt` — DAO for operation run events
 - `data/database/entity/OperationRun.kt` — Operation run record
 - `data/database/dao/OperationRunDao.kt` — DAO for operation runs
 - `domain/privacy/RetentionTarget.kt` — Interface for retention-purgeable targets (owned here, privacy-aligned)
-- `domain/privacy/RetentionRegistry.kt` — Registry with 5 registered retention targets
+- `domain/privacy/RetentionRegistry.kt` — Registry with 10 registered retention targets (Hilt multibinding)
 - `di/RetentionModule.kt` — DI bindings for retention targets
 
 **Boundary note:** `PipelineDiagnosticEvent` / `PipelineDiagnosticEventDao` are owned by Segment 8 (Analytics) and listed there; this segment consumes them via the diagnostics pipeline.
@@ -595,7 +607,7 @@ Owns Hilt module wiring and app-wide providers.
 - `di/PrivacyModule.kt`
 - `di/ProvenanceModule.kt` — Data provenance bindings
 - `di/ReminderSettingsModule.kt` — BillReminderSettingsRepository binding
-- `di/RetentionModule.kt` — Retention target registry bindings (5 registered targets)
+- `di/RetentionModule.kt` — Retention target registry bindings (10 registered targets)
 - `di/ServiceModule.kt`
 - `di/TimeModule.kt`
 - `di/WorkerModule.kt` — Binds WorkerRunLogger interface → WorkerRunLoggerImpl, NotificationPermissionChecker → AndroidNotificationPermissionChecker
@@ -621,6 +633,10 @@ Owns reusable helpers shared across segments.
 **Representative files**
 - `domain/util/TimeProvider.kt` — Single source of "now" (interface, injected into 50+ classes; also used by `TransactionLifecycleCoordinator` and `TransactionSideEffectDispatcher`)
 - `domain/util/SystemTimeProvider.kt` — Production clock implementation
+- `domain/util/MonotonicTimeProvider.kt` — Single source of elapsed (monotonic) time for duration measurement, immune to wall-clock jumps (kotlin.time `TimeSource` based)
+- `domain/util/SystemMonotonicTimeProvider.kt` — Production monotonic clock implementation
+- `domain/util/TimeBoundaryTicker.kt` — Rollover-aware ticker emitting at calendar day boundaries for "current period" flows
+- `domain/util/CancellationSafe.kt` — Cancellation-safety helpers (`runCatchingCancellable`); `CancellationException` must always propagate
 - `domain/util/AmountUtils.kt`
 - `domain/util/TimePeriodUtils.kt` — Canonical calendar boundary math; 7 new helpers in Phase 2 (parseMonthKeyToRange, getLastNCalendarDaysRange, getLastNCompleteDaysRange, getTrailingElapsedRange, getDayIndexForSparkline, toPeriodRange, daysBetween); `getLastNDaysRange` deprecated
 - `domain/util/DateFormatterUtils.kt` — 13 convenience methods, all accept explicit timestamps (no `Instant.now()`)
@@ -704,18 +720,41 @@ Owns receipt-to-transaction matching and reconciliation UI. Link persistence goe
 
 **Boundary note:** OCR capture stays in Segment 4 and item-level AI categorization stays in Segment 5. Link mutations via `ReceiptLinkService` are owned by Segment 4.
 
+## SEGMENT 39: Static Guardrails & CI Verification
+
+Owns the repo-level static architecture guard suite, boundary verification scripts, allowlists, and CI wiring that enforce the architecture invariants at push/PR time. App segments consume these guards; the guard infrastructure itself is owned here.
+
+**Representative files**
+- `.github/workflows/ci.yml` — CI entry point: workflow lint, static guard suite, Gradle build/test jobs
+- `scripts/ci/guard_registry.py` — Canonical registry of all architecture guards (blocking / ratchet / warning / policy modes); single source of truth for the guard list
+- `scripts/ci/run_static_guard_suite.py` — CI manifest runner for the guard suite
+- `scripts/ci/shared_guard_engine.py` — Shared engine used by guard scripts
+- `scripts/ci/guard_ratchet.py` — Growth-enforcing baselines for ratchet-mode guards
+- `scripts/guards/check_lifecycle_bypasses.kts` — CI guard for direct DAO lifecycle bypasses
+- `scripts/guards/check_direct_time_calls.kts` — CI guard against direct clock access outside the `TimeProvider` seam (java.time migration)
+- `scripts/guards/check_raw_money_aggregates.kts` — CI guard against raw money aggregation outside approved types
+- `scripts/guardrails/dao-access-check.kts` + `dao-approved-files.txt` — DAO access guardrail with approved-file allowlist
+- `scripts/verify_*_boundaries.py` — Standalone boundary verifiers (privacy, DB access, money, time, UI→DAO, worker, receipt link, cloud payload, cancellation, import lifecycle, source provenance, event writers, migration matrix, DI release, PII logging)
+- `scripts/allowlists/*.yml` — Per-guard allowlists
+- `tools/lifecycle-bypass-guard.groovy` — Gradle-side lifecycle bypass guard
+- `docs/ci/guard-policy.md`, `docs/ci/guard-framework.md` — Guard policy and framework documentation
+
+**Boundary note:** `scripts/guardrails/dao-access-check.kts` and `scripts/guards/check_lifecycle_bypasses.kts` enforce Segment 9's lifecycle rules; the tooling itself is owned here. `scripts/currency_guardrails.ps1` remains listed with Segment 16.
+
+**Boundary note:** `AGENTS.md` at the repo root governs agent behavior across all segments; `DatabaseSchemaPolicy.kt` (Segment 9/16-adjacent, in `data/database/`) is the single source of truth for schema version and migration baseline consumed by CI (`scripts/verify_migration_matrix.py`).
+
 ---
 
 ## Segment Quick Reference
 
-File-to-segment mapping for all 38 segments:
+File-to-segment mapping for all 39 segments:
 
 | # | Segment | Key pattern / issue |
 |---|---|---|
 | 1 | Forecasting & Runway | `domain/forecasting/`, `FinancialWeather`, `AccountBalanceProvider`, `NetCashflowBalanceProvider` |
 | 2 | Budget Management | `domain/budget/`, `BudgetScreen` |
 | 3 | Notification Capture, Parsing & Review | `domain/parser/`, `NotificationRepository`, `ReviewQueueRepository` |
-| 4 | Receipt Scanning (OCR) & Lifecycle | `domain/receipt/`, `receipt_events`, `receipt_expense_links`, OCR lifecycle |
+| 4 | Receipt Scanning (OCR) & Receipt Lifecycle | `domain/receipt/`, `receipt_events`, `receipt_expense_links`, OCR lifecycle |
 | 5 | AI Receipt Item Categorization | `domain/ai/usecase/CategorizeReceiptItems`, `ReceiptItemCategorization` |
 | 6 | Merchant Categorization | `domain/categorization/`, `MerchantCanonicalizer`, `HybridExpenseClassifier` |
 | 7 | Recurring Expenses | `domain/recurring/`, `recurring_occurrences`, recurring lifecycle, `RecurringRuleLifecycleCoordinator`, `RecurringLifecycleEventWriter`, `RecurringOccurrenceStatus`, `BillReminderSettings` |
@@ -727,7 +766,7 @@ File-to-segment mapping for all 38 segments:
 | 13 | Cash Flow Planning | `domain/cashflow/`, `CashFlowCalculator` |
 | 14 | Bank Integration | `domain/bank/`, `BankConnection` |
 | 15 | Investment Tracking | `domain/investment/`, `InvestmentTracker`, `InvestmentDataQuality`, `InvestmentPerformance` |
-| 16 | Currency & Exchange | `domain/core/money/` (14 files), `CurrencyConverter`, `MultiCurrencyRepository`, `AnalyticsCurrencyNormalizer` |
+| 16 | Currency & Exchange | `domain/core/money/` (24 files), `CurrencyConverter`, `MultiCurrencyRepository`, `AnalyticsCurrencyNormalizer` |
 | 17 | Tax Calculation & Reporting | `domain/tax/`, `TaxEstimator`, `TaxRateProvider`, `DemoTaxRateProvider` |
 | 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport`, `CsvCellSanitizer`, `AccountingExportPolicy`, `DatabaseReadBarrier`, `DatabaseWriteBarrier` |
 | 19 | Location Enrichment | `domain/location/`, `CompositeGeocodingService` |
@@ -750,6 +789,7 @@ File-to-segment mapping for all 38 segments:
 | 36 | Bill Reminders | `domain/reminder/`, `BillReminderManager`, `BillReminderSettings`, `ReminderSettingsModule` |
 | 37 | Spending Challenges | `domain/challenge/`, `SpendingChallengeManager` |
 | 38 | Receipt Matching | `domain/receiptmatching/`, `ReceiptTransactionMatcher`, `ReceiptMatchLifecycleService` |
+| 39 | Static Guardrails & CI Verification | `scripts/ci/`, `scripts/guards/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `tools/`, `.github/workflows/ci.yml` |
 
 ### Quick checks
 - Forecast issues → Segment 1
@@ -772,3 +812,4 @@ File-to-segment mapping for all 38 segments:
 - Bill reminder issues → Segment 36
 - Spending challenge issues → Segment 37
 - Receipt matching issues → Segment 38
+- Architecture guard / CI boundary failures → Segment 39

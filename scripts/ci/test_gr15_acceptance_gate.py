@@ -206,7 +206,9 @@ def test_tracked_production_registry_loads():
     document, errors = _load_acceptance_registry(path)
     assert errors == ()
     assert document is not None
-    assert len(document["rows"]) == 20
+    # Regenerated 2026-09-15 (wave-1): 18 rows — linkTarget and writeCritical
+    # became PROVEN via RP-02 barrier ownership (familyD 3 -> 1).
+    assert len(document["rows"]) == 18
     families = {}
     for row in document["rows"]:
         families[row["family"]] = families.get(row["family"], 0) + 1
@@ -215,7 +217,7 @@ def test_tracked_production_registry_loads():
         "familyA_post_commit_action": 6,
         "familyB_combine": 4,
         "familyC_ui_callback": 3,
-        "familyD_run_with_retry": 3,
+        "familyD_run_with_retry": 1,
         "familyE_projection_as_is": 1,
         "familyF_flow_emit": 1,
         "pair_handle_masked": 2,

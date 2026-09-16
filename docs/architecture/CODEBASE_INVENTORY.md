@@ -1,7 +1,7 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-06-09 (updated snapshot)  
-**Database Version:** v147  
+**Generated:** 2026-09-07 (verified snapshot)  
+**Database Version:** v148  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
 ---
@@ -9,6 +9,18 @@
 ## EXECUTIVE SUMMARY
 
 Snapshot summary only: this inventory tracks the current UI, domain, data, and DI surfaces without freezing volatile counts.
+
+### Drift Sync (2026-09-07 / Verification Pass)
+
+Verified against production source (`app/src/main/java`): 68 DAO files, 40 ViewModel files, 29 `*Worker*`-named files (including `domain/workers/` infrastructure), DB **v148** with **70** registered entities, 10 registered retention targets.
+
+- **DB v147 → v148** — PR12A: worker-run tracing columns added to `background_job_runs` (`workId`, `uniqueWorkName`, `specVersion`, `runAttempt`, `leaseId`, `terminalReasonCode`, `terminalDiagnosticCode`, `partialFailureCount`, `failedTargetCount`).
+- **`data/database/DatabaseSchemaPolicy.kt`** — single source of truth for schema version, migration baseline (v145), and the registered migration array; consumed by production, tests, and CI (`scripts/verify_migration_matrix.py`).
+- **Worker-run tracing hardening (PR12H/J)** — new `domain/workers/` infrastructure: `WorkerGuardVerifier`, `WorkerReasonCodes` (exception → safe structured reason-code mapping), `WorkerTerminalDiagnosticSink`/`FileWorkerTerminalDiagnosticSink` (durable fallback when terminal DB status writes fail), `ScheduleResult`.
+- **Reminder action workers** — `SnoozeReminderActionWorker` / `DismissReminderActionWorker` (`service/reminder/`) are one-shot workers enqueued by the reminder receivers so reminder mutations run through `WorkerExecutionGuard` (lease/barrier/run-ledger).
+- **Time seam (java.time migration)** — injected `TimeProvider` remains the wall-clock source; new `domain/util/` seam utilities: `MonotonicTimeProvider`/`SystemMonotonicTimeProvider` (elapsed-time only), `TimeBoundaryTicker` (calendar-day rollover flow), `CancellationSafe` (cancellation-safe wrappers). CI guard `scripts/guards/check_direct_time_calls.kts` blocks direct clock access.
+- **Data-layer coordinators** — `data/database/GroupTransactionCoordinator.kt` executes the `domain/groups/GroupTransactionCoordinator` contract atomically via `RoomDomainTransactionRunner` (DB ownership policy v2).
+- **Repo-level CI guardrail tooling** — `scripts/ci/` (guard registry + static guard suite + ratchet), `scripts/guards/`, `scripts/guardrails/`, `scripts/allowlists/`, `scripts/verify_*_boundaries.py`, `tools/`, `.github/workflows/ci.yml`; documented as Segment 39 (Static Guardrails & CI Verification) in `CODEBASE_SEGMENTS.md`.
 
 ### Drift Sync (2026-06-01 / Pipeline 5-12 Completion + Universal PRs)
 
@@ -115,7 +127,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - DebugViewerScreen (no ViewModel)
 - CategorizationDebugScreen + CategorizationDebugViewModel (not navigable)
 - SourceLinkDebugScreen + SourceLinkDebugViewModel (not navigable)
-- DebugDataStorage, DebugIssueDetector (utilities)
+- DebugDataStorage (debug/release source sets), DebugIssueDetector (utilities)
 
 > **Note:** `BackupRestoreScreen` + `BackupRestoreViewModel`, `PrivacySettingsScreen` + `PrivacySettingsViewModel` exist in code and NavigationDestination but share space with settings routes rather than shell/feature destinations.
 
@@ -419,7 +431,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 
 ---
 
-## 6. DATABASE (Version 143)
+## 6. DATABASE (Version 148)
 
 ### Entities
 
@@ -491,8 +503,9 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **RestrictedExpenseDaoMutation** — Restricted DAO mutation wrapper
 
 ### Migration History
-- Database Version: **147** (incremental: 120→121→122→...→145→146→147). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table, 143→145 for schema cleanup (pending_reviews rebuild, index cleanup), 145→146 for `negotiation_outcomes` table, 146→147 for `group_members.leftAt` + `group_expenses.idempotencyKey`.
-- **Active migrations:** `DatabaseMigrations.ALL` = `[MIGRATION_145_146, MIGRATION_146_147]` (defined in `DatabaseMigrations.kt`)
+- Database Version: **148** (incremental: 120→121→122→...→146→147→148). Key milestones: 131→141 for recurring lifecycle hardening (8 bumps), 141→142 for budget_forecasts.budgetId FK CASCADE, 142→143 for warranty_reminder_deliveries table, 143→145 for schema cleanup (pending_reviews rebuild, index cleanup), 145→146 for `negotiation_outcomes` table, 146→147 for `group_members.leftAt` + `group_expenses.idempotencyKey`, 147→148 for `background_job_runs` worker-run tracing columns (PR12A).
+- **Active migrations:** `DatabaseMigrations.ALL` = `[MIGRATION_145_146, MIGRATION_146_147, MIGRATION_147_148]` (defined in `DatabaseMigrations.kt`)
+- **Schema policy:** `data/database/DatabaseSchemaPolicy.kt` — `CURRENT_VERSION`, `MIGRATION_BASELINE = 145`, `UNSUPPORTED_VERSIONS = 1..<145` (destructive fallback below baseline), `ALL_MIGRATIONS`
 - Historical migrations defined in `AppDatabase.kt` companion but **not registered** in the active chain.
 - Export schema: Enabled
 - Type converters: Defined in `converter/Converters.kt`
@@ -521,6 +534,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 - **GroupsModule** - Shared expenses
 - **NegotiationModule** - Negotiation/MarketRateProvider binding (NEW)
 - **OcrImprovementsModule** - OCR & receipts
+- **ParserModule** - Transaction parser providers (e.g., GreekBankParser)
 - **SavingsModule** - Savings engines
 - **SavingsRepositoryBindingsModule** - Savings repository bindings
 - **WorkerModule** - Worker execution infrastructure (binds WorkerLeaseRegistry, WorkerDrainController, NotificationPermissionChecker, WorkManager)
@@ -535,11 +549,10 @@ One DAO per entity (mostly 1-to-1 mapping)
 ### Specialized / Support
 - **BackupRepositoryModule** - Backup/restore
 - **SecurityModule** - Encryption & security
-- **AlertsModule** - Anomaly/alert bindings
 - **PrivacyModule** - Privacy settings bindings
 - **LocationResolverPortsModule** - Location abstractions
 - **EmptyStateModule** - Empty-state wiring
-- **EmptyStatePresentationModule** - Empty-state presentation wiring
+- **EmptyStatePresentationModule** - Empty-state presentation wiring (lives in `ui/components/emptystate/`)
 - **ApplicationScope** - App-scoped coroutine support
 - **EmptyStateRegistryInitializer** - Empty-state bootstrap
 - **Feature bindings** - Current feature modules bind via `@Inject` / `@Provides`
@@ -639,8 +652,9 @@ One DAO per entity (mostly 1-to-1 mapping)
   20. **DataRetentionWorker** - Privacy data purging (RetentionRegistry-based)
 
 ### Non-Registry Workers
-  21. **NotificationIntakeWorker** (`worker/NotificationIntakeWorker.kt`) — Pipeline-1 notification intake worker. Not in WorkerRegistry; explicitly allowlisted from WorkerExecutionGuard requirement. Drains single queued intake rows using DatabaseWriteBarrier + attempt/backoff state machine.
+  21. **NotificationIntakeWorker** (`worker/NotificationIntakeWorker.kt`) — Pipeline-1 notification intake worker. Not in WorkerRegistry; routes through `WorkerExecutionGuard` like all workers (the guard's allowlist is now empty; this worker was previously allowlisted). Drains single queued intake rows using DatabaseWriteBarrier + attempt/backoff state machine.
   22. **SourceLinkBackfillWorker** (`domain/provenance/SourceLinkBackfillWorker.kt`) — PR8 backfill worker migrating legacy source data into entity_source_links. Not a CoroutineWorker — @Singleton injected helper exposing `runBackfill()` suspend function.
+  23. **SnoozeReminderActionWorker / DismissReminderActionWorker** (`service/reminder/`) — One-shot CoroutineWorkers enqueued by `SnoozeReminderReceiver` / `DismissReminderReceiver` so reminder mutations run through `WorkerExecutionGuard` (lease/barrier/run-ledger). Not in WorkerRegistry.
 
 ### Utilities
  21. TransactionFilterSerializer - Serializes filters for dedup signatures
@@ -729,7 +743,7 @@ One DAO per entity (mostly 1-to-1 mapping)
 ✅ Room Database Persistence  
 
 ### Database
-✅ Version 147 with current migration chain (120→121→122→...→145→146→147; active migrations in `DatabaseMigrations.ALL`)  
+✅ Version 148 with current migration chain (120→121→122→...→146→147→148; active migrations in `DatabaseMigrations.ALL`, policy in `DatabaseSchemaPolicy.kt`)  
 ✅ Export schema enabled  
 ✅ Type converters defined
 
@@ -756,4 +770,4 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ## End of Inventory
 
-**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-06-01.**
+**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-09-07.**

@@ -75,6 +75,52 @@ class RestoreJournalDurabilityTest {
         journal.transitionTo(entry, RestoreJournal.JournalState.STAGED)
 
         val events = journal.getEventsByCorrelationId(entry.operationCorrelationId)
-        assertTrue("appended event must persist across transition", events.any { it.stage == "MAINTENANCE_ENTERED" })
+        assertTrue("appended event must persist across transitions", events.any { it.stage == "MAINTENANCE_ENTERED" })
+    }
+
+    /**
+     * RP-03B (P7-002 resume): the asset-task ledger must round-trip through the
+     * fsync'd journal write so a crash mid-asset-loop can be resumed at startup,
+     * and the persisted target must be a basename only (privacy: no absolute paths).
+     */
+    @Test
+    fun `asset task ledger round-trips statuses and basename-only targets`() {
+        var entry = journal.beginJournal("/cache/s.costbackup", "/data/staged.db", "/data/live.db")
+        entry = entry.copy(
+            extractTempDirPath = "/cache/costbackup_extract_x",
+            assetTasks = listOf(
+                RestoreJournal.AssetRestoreTask(
+                    receiptId = 5L,
+                    sourceRelativePath = "5_photo.jpg",
+                    status = RestoreJournal.AssetRestoreStatus.PENDING,
+                    targetPath = "/data/data/app/files/receipts/restored_5.jpg"
+                ),
+                RestoreJournal.AssetRestoreTask(
+                    receiptId = 6L,
+                    sourceRelativePath = "6_photo.jpg",
+                    status = RestoreJournal.AssetRestoreStatus.COMPLETED
+                )
+            )
+        )
+        journal.writeJournal(entry)
+        journal.transitionTo(entry, RestoreJournal.JournalState.ASSETS_RESTORING)
+
+        val readBack = journal.readJournal()!!
+        assertEquals(RestoreJournal.JournalState.ASSETS_RESTORING, readBack.state)
+        assertEquals("/cache/costbackup_extract_x", readBack.extractTempDirPath)
+        assertEquals(2, readBack.assetTasks.size)
+
+        val pending = readBack.assetTasks.first { it.receiptId == 5L }
+        assertEquals(RestoreJournal.AssetRestoreStatus.PENDING, pending.status)
+        assertEquals("5_photo.jpg", pending.sourceRelativePath)
+        assertEquals(
+            "target must round-trip as a basename only (no absolute path in journal)",
+            "restored_5.jpg",
+            pending.targetPath
+        )
+        assertEquals(
+            RestoreJournal.AssetRestoreStatus.COMPLETED,
+            readBack.assetTasks.first { it.receiptId == 6L }.status
+        )
     }
 }

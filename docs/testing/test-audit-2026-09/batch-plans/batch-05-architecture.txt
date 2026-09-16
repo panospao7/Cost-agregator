@@ -1,0 +1,14 @@
+test/java/com/yourname/expensetracker/architecture/BackupRestoreArchitectureGuardTest.kt	131
+test/java/com/yourname/expensetracker/architecture/BankPrivacyModeArchitectureGuardTest.kt	62
+test/java/com/yourname/expensetracker/architecture/CancellationSafetyArchitectureGuardTest.kt	708
+test/java/com/yourname/expensetracker/architecture/DeprecatedApiArchitectureGuardTest.kt	330
+test/java/com/yourname/expensetracker/architecture/DirectEventDaoInsertGuardTest.kt	410
+test/java/com/yourname/expensetracker/architecture/Engine5PrimitiveGuardTest.kt	149
+test/java/com/yourname/expensetracker/architecture/ExpenseDaoMutationAccessTest.kt	129
+test/java/com/yourname/expensetracker/architecture/RawDaoArchitectureGuardTest.kt	94
+test/java/com/yourname/expensetracker/architecture/RecurringArchitectureGuardTest.kt	324
+test/java/com/yourname/expensetracker/architecture/SourceScanningArchitectureGuardTest.kt	686
+test/java/com/yourname/expensetracker/architecture/TransactionContextProvenanceGuardTest.kt	192
+test/java/com/yourname/expensetracker/architecture/WorkerGuardArchitectureGuardTest.kt	138
+test/java/com/yourname/expensetracker/architecture/WorkerGuardStaticVerificationTest.kt	163
+test/java/com/yourname/expensetracker/architecture/WriteBarrierArchitectureGuardTest.kt	385

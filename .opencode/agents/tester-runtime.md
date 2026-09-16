@@ -1,9 +1,10 @@
 ---
 description: Writes tests and runs focused validation with approval.
 mode: subagent
-model: opencode-go/glm-5.2
+model: merge-gateway/glm-5.3-flash
+variant: max
 temperature: 0.1
-steps: 28
+steps: 100
 color: warning
 permission:
   read:

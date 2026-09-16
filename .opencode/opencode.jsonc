@@ -3,6 +3,10 @@
 
   "default_agent": "orchestrator",
 
+  "model": "merge-gateway/glm-5.3-flash",
+  "small_model": "merge-gateway/glm-5.3-flash",
+
+
   "share": "manual",
 
   "permission": {

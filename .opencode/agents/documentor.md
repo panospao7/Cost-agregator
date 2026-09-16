@@ -1,9 +1,10 @@
 ---
 description: Updates docs, status notes, changelogs, and implementation handoffs after code gates pass.
 mode: subagent
-model: opencode-go/mimo-v2.5
+model: merge-gateway/glm-5.3-flash
+variant: max
 temperature: 0.2
-steps: 18
+steps: 60
 color: info
 permission:
   read:

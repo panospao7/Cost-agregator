@@ -132,6 +132,34 @@ interface NotificationIntakeDao {
         failureHash: String?, nowMs: Long
     ): Int
 
+    /** RP-10 10b (P1-003): current attempts count for backoff computation. */
+    @Query("SELECT attempts FROM notification_intake WHERE id = :id")
+    suspend fun getAttemptsById(id: Long): Int?
+
+    /**
+     * RP-10 10b (P1-003): ONE atomic, idempotent transition for enqueue failure.
+     * Increments attempts exactly once, moves to FAILED_FINAL when maxAttempts is
+     * reached (nextAttemptAt cleared) or FAILED_RETRYABLE otherwise, stores only
+     * the controlled failure code/hash, clears the locks, and is conditional on
+     * the enqueue-attempt state so repeated failure handling cannot double-count.
+     */
+    @Query("""
+        UPDATE notification_intake
+        SET attempts = attempts + 1,
+            status = CASE WHEN attempts + 1 >= maxAttempts THEN 'FAILED_FINAL' ELSE 'FAILED_RETRYABLE' END,
+            nextAttemptAt = CASE WHEN attempts + 1 >= maxAttempts THEN NULL ELSE :nextAttemptAt END,
+            lastFailureCode = :failureCode,
+            lastFailureMessageHash = :failureHash,
+            updatedAt = :nowMs,
+            lockedAt = NULL,
+            lockedBy = NULL
+        WHERE id = :id AND status IN ('RECEIVED', 'FAILED_RETRYABLE')
+    """)
+    suspend fun markEnqueueFailed(
+        id: Long, nextAttemptAt: Long, failureCode: String,
+        failureHash: String?, nowMs: Long
+    ): Int
+
     @Query("""
         UPDATE notification_intake
         SET status = 'FAILED_FINAL',
@@ -201,6 +229,14 @@ interface NotificationIntakeDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM notification_intake WHERE dedupeFingerprint = :fingerprint)")
     suspend fun existsByFingerprint(fingerprint: String): Boolean
+
+    /**
+     * RP-10 10a (P1-001): resolves an intake row by fingerprint so callers can
+     * report the existing row (Duplicate) or transition a legacy
+     * `DEFERRED_<keyHash>` row. Read-only; no schema/index change.
+     */
+    @Query("SELECT * FROM notification_intake WHERE dedupeFingerprint = :fingerprint LIMIT 1")
+    suspend fun getByFingerprint(fingerprint: String): NotificationIntakeEntity?
 
     @Query("""
         UPDATE notification_intake

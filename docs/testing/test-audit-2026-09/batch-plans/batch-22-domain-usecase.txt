@@ -1,0 +1,12 @@
+test/java/com/yourname/expensetracker/domain/usecase/budget/CalculateBudgetStatusUseCaseTest.kt	129
+test/java/com/yourname/expensetracker/domain/usecase/budget/GetMonteCarloBudgetImpactUseCaseTest.kt	223
+test/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeDashboardWidgetsUseCaseDaysRemainingBoundaryTest.kt	198
+test/java/com/yourname/expensetracker/domain/usecase/dashboard/ComputeMoneyRadarUseCaseTest.kt	577
+test/java/com/yourname/expensetracker/domain/usecase/dashboard/DashboardProjectionSafetyTest.kt	105
+test/java/com/yourname/expensetracker/domain/usecase/expense/CategorizeExpenseUseCaseTest.kt	112
+test/java/com/yourname/expensetracker/domain/usecase/expense/DetectDuplicateExpenseUseCaseTest.kt	230
+test/java/com/yourname/expensetracker/domain/usecase/forecast/CalculateFinancialForecastUseCaseTest.kt	439
+test/java/com/yourname/expensetracker/domain/usecase/receipt/ProcessReceiptUseCaseHomeCurrencyTest.kt	46
+test/java/com/yourname/expensetracker/domain/usecase/savings/LifestyleSavingsPromptUseCaseTest.kt	292
+test/java/com/yourname/expensetracker/domain/usecase/savings/MonthlySavingsSweepUseCaseTest.kt	418
+test/java/com/yourname/expensetracker/domain/usecase/warranty/AutoCreateWarrantyFromReceiptUseCaseTest.kt	236

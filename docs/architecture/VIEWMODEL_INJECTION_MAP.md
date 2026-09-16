@@ -1,6 +1,6 @@
 # ExpenseTracker ViewModel Injection Reference
 
-**Generated:** June 1, 2026  
+**Generated:** June 1, 2026 · **Last updated:** September 7, 2026 (verified against constructors)  
 **Total ViewModels:** 41 (40 @HiltViewModel files + 1 inline RecurringExpensesViewModel)  
 **Architecture:** Hilt @HiltViewModel with constructor injection
 
@@ -22,8 +22,8 @@
 
 ### MainViewModel
 **File:** `ui/MainViewModel.kt`
-**Injections:** (typically minimal — app-level state, navigation)
-- See source for exact injection list
+**Injections:** ReviewQueueRepository, RestoreMaintenanceMode
+**Complexity:** 🟢 Low (2 dependencies)
 
 ---
 
@@ -36,8 +36,8 @@
 
 ### TransactionsViewModel
 **File:** `ui/screens/transactions/TransactionsViewModel.kt`
-**Injections:** NotificationRepository, ExpenseRepository, CategoryRepository, RecurringExpenseRepository, MerchantLocationRepository, TimeProvider, GeocodingService, CurrencySettingsRepository
-**Complexity:** 🟡 Medium (8 dependencies)
+**Injections:** NotificationRepository, ExpenseRepository, CategoryRepository, RecurringExpenseRepository, MerchantLocationRepository, TimeProvider, GeocodingService, CurrencySettingsRepository, SourceLinkQueryService
+**Complexity:** 🟡 Medium (9 dependencies)
 
 ### ReviewViewModel
 **File:** `ui/screens/review/ReviewViewModel.kt`
@@ -56,8 +56,8 @@
 
 ### SpendingMapViewModel
 **File:** `ui/screens/map/SpendingMapViewModel.kt`
-**Injections:** ExpenseRepository, CategoryRepository, LocationResolver
-**Complexity:** 🟡 Medium (3 dependencies)
+**Injections:** ExpenseRepository, CategoryRepository, LocationResolver, ForegroundLocationProvider, MerchantLocationRepository, SpendingHeatmapEngine, LocationInsightsEngine, GeocodingService, CurrencySettingsRepository, CurrencyConverter, TimeProvider, PrivacyGate
+**Complexity:** 🔴 High (12 dependencies)
 
 ---
 
@@ -75,18 +75,18 @@
 
 ### RecurringExpensesViewModel
 **File:** `ui/screens/recurring/RecurringExpensesScreen.kt` (defined inline)
-**Injections:** RecurringExpenseRepository
-**Complexity:** 🟢 Low
+**Injections:** FinancialWeatherRepository, RecurringExpenseRepository, PlannedExpenseRepository, RecurringExpenseEngine, ExpenseRepository, CurrencySettingsRepository, TimeProvider
+**Complexity:** 🟡 Medium (7 dependencies)
 
 ### ManualRecurringExpenseViewModel
 **File:** `ui/screens/recurringmanual/ManualRecurringExpenseViewModel.kt`
-**Injections:** ManualRecurringExpenseRepository
-**Complexity:** 🟢 Low
+**Injections:** ManualRecurringExpenseRepository, TimeProvider, CurrencySettingsRepository
+**Complexity:** 🟡 Medium (3 dependencies)
 
 ### AssistantViewModel
 **File:** `ui/screens/assistant/AssistantViewModel.kt`
-**Injections:** AiChatRepository, QueryInterpretationService
-**Complexity:** 🟢 Low (2 dependencies)
+**Injections:** Application, AiSettingsRepository, AiChatRepository, GetAiRuntimeStatusUseCase, InterpretFinancialQueryUseCase, ExecuteFinancialQueryUseCase, MapFinancialQueryToNavigationUseCase, PrivacySettingsRepository, MonotonicTimeProvider
+**Complexity:** 🟡 Medium (9 dependencies)
 
 ---
 
@@ -99,18 +99,18 @@
 
 ### SavingsGoalsViewModel
 **File:** `ui/screens/savings/SavingsGoalsViewModel.kt`
-**Injections:** SavingsGoalRepository, SmartSavingsEngine, AutomatedSavingsRuleEngine, SavingsGamificationEngine
-**Complexity:** 🟡 Medium (4 dependencies)
+**Injections:** SavingsGoalRepository, SavingsContributionHistoryRepository, SmartSavingsEngine, SavingsGamificationEngine, LifestyleSavingsPromptUseCase, MonthlySavingsSweepUseCase, TimeProvider, CurrencySettingsRepository
+**Complexity:** 🟡 Medium (8 dependencies)
 
 ### CarbonFootprintViewModel
 **File:** `ui/screens/carbon/CarbonFootprintViewModel.kt`
-**Injections:** ExpenseRepository, CategoryRepository
-**Complexity:** 🟢 Low (2 dependencies)
+**Injections:** CarbonFootprintCalculator, TimeProvider, CurrencySettingsRepository
+**Complexity:** 🟡 Medium (3 dependencies)
 
 ### WarrantyTrackerViewModel
 **File:** `ui/screens/warranty/WarrantyTrackerViewModel.kt`
-**Injections:** WarrantyTrackerRepository
-**Complexity:** 🟢 Low (1 dependency)
+**Injections:** WarrantyTrackerRepository, TimeProvider
+**Complexity:** 🟢 Low (2 dependencies)
 
 ### PriceProtectionViewModel
 **File:** `ui/screens/price/PriceProtectionViewModel.kt`
@@ -129,22 +129,22 @@
 
 ### ReceiptMatchingViewModel
 **File:** `ui/screens/receiptmatching/ReceiptMatchingViewModel.kt`
-**Injections:** ReceiptRepository, ExpenseRepository, ReceiptMatchLifecycleService
-**Complexity:** 🟢 Low (3 dependencies)
+**Injections:** ReceiptRepository, ReceiptTransactionMatcher, ReceiptLinkService, ReceiptMatchLifecycleService
+**Complexity:** 🟡 Medium (4 dependencies)
 
 ### InvestmentViewModel
 **File:** `ui/screens/investment/InvestmentViewModel.kt`
-**Injections:** InvestmentDao, InvestmentValueDao
-**Complexity:** 🟢 Low (2 dependencies — direct DAO usage)
+**Injections:** InvestmentTracker, CurrencySettingsRepository
+**Complexity:** 🟢 Low (2 dependencies)
 
 ### BankConnectionsViewModel
 **File:** `ui/screens/bank/BankConnectionsViewModel.kt`
-**Injections:** BankConnectionDao
-**Complexity:** 🟢 Low (1 dependency — direct DAO usage)
+**Injections:** BankConnectionLifecycleCoordinator
+**Complexity:** 🟢 Low (1 dependency)
 
 ### BillRemindersViewModel
 **File:** `ui/screens/reminder/BillRemindersViewModel.kt`
-**Injections:** BillReminderManager, RecurringLifecycleCoordinator
+**Injections:** BillReminderManager, CurrencySettingsRepository
 **Complexity:** 🟢 Low (2 dependencies)
 
 ### SpendingChallengesViewModel
@@ -154,8 +154,8 @@
 
 ### AdvancedAnalyticsViewModel
 **File:** `ui/screens/analytics/AdvancedAnalyticsViewModel.kt`
-**Injections:** AnalyticsRepository, CategoryRepository
-**Complexity:** 🟢 Low (2 dependencies)
+**Injections:** AdvancedAnalyticsDashboard, CurrencySettingsRepository, TimeProvider
+**Complexity:** 🟡 Medium (3 dependencies)
 
 ### CashFlowCalendarViewModel
 **File:** `ui/screens/cashflow/CashFlowCalendarViewModel.kt`
@@ -169,18 +169,18 @@
 
 ### VisualSplitViewModel
 **File:** `ui/screens/split/VisualSplitViewModel.kt`
-**Injections:** SplitTemplateDao, SplitItemAssignmentDao
-**Complexity:** 🟢 Low (2 dependencies — direct DAO usage)
+**Injections:** EnhancedSplitManager, Gson
+**Complexity:** 🟢 Low (2 dependencies)
 
 ### CurrencyManagementViewModel
 **File:** `ui/screens/currency/CurrencyManagementViewModel.kt`
-**Injections:** CurrencySettingsRepository, CurrencyRatesRepository, MultiCurrencyRepository
-**Complexity:** 🟡 Medium (3 dependencies)
+**Injections:** CurrencyDataRepository, CurrencyConverter, CurrencyRatesRepository, CurrencySettingsRepository, HybridExpenseClassifier
+**Complexity:** 🟡 Medium (5 dependencies)
 
 ### SubscriptionManagementViewModel
 **File:** `ui/screens/subscription/SubscriptionManagementViewModel.kt`
-**Injections:** SubscriptionManagementRepository
-**Complexity:** 🟢 Low (1 dependency)
+**Injections:** SubscriptionManagementRepository, TimeProvider, SubscriptionManagerEngine, CurrencySettingsRepository, CurrencyConverter
+**Complexity:** 🟡 Medium (5 dependencies)
 
 ### TaxConfigurationViewModel
 **File:** `ui/screens/tax/TaxConfigurationViewModel.kt`
@@ -199,8 +199,8 @@
 
 ### BackupRestoreViewModel
 **File:** `ui/screens/backup/BackupRestoreViewModel.kt`
-**Injections:** DatabaseBackupRepository
-**Complexity:** 🟢 Low (1 dependency)
+**Injections:** @ApplicationContext Context, DatabaseBackupRepository, RestoreMaintenanceMode
+**Complexity:** 🟡 Medium (3 dependencies)
 
 ---
 
@@ -208,8 +208,8 @@
 
 ### AiSettingsViewModel
 **File:** `ui/screens/aisettings/AiSettingsViewModel.kt`
-**Injections:** AiSettingsRepository
-**Complexity:** 🟢 Low (1 dependency)
+**Injections:** AiSettingsRepository, GetAiRuntimeStatusUseCase, AiRuntimeDiagnostics, SyncProactiveBriefingWorkUseCase, SecureKeyStorage, PrivacyGate, CloudProviderConnectionTester
+**Complexity:** 🟡 Medium (7 dependencies)
 
 ### CategoryViewModel
 **File:** `ui/screens/categories/CategoryViewModel.kt`
@@ -227,8 +227,8 @@
 
 ### DebugViewModel
 **File:** `ui/screens/debug/DebugViewModel.kt`
-**Injections:** NotificationRepository, ExpenseRepository, BudgetRepository, CategoryRepository
-**Complexity:** 🟡 Medium (4 dependencies)
+**Injections:** @ApplicationContext Context, NotificationRepository, ReviewQueueRepository, ExpenseRepository, BudgetRepository, CategoryRepository, NotificationSeeder, TimeProvider, ServiceDiagnostics, GetAiRuntimeStatusUseCase, AiSettingsRepository, AiEngagementRepository, AiRuntimeDiagnostics, DatabaseBackupRepository, CsvExpenseImporter, LegacyDataMigrationService
+**Complexity:** 🔴 High (16 dependencies)
 
 ### CategorizationDebugViewModel
 **File:** `ui/screens/debug/CategorizationDebugViewModel.kt`
@@ -253,27 +253,27 @@
 
 | Complexity | # VMs | ViewModels |
 |-----------|-------|------------|
-| 🔴 High (10+) | 4 | HomeViewModel (20), ReviewViewModel (17), AnalyticsViewModel (18), ReceiptScanViewModel (18) |
-| 🟡 Medium (3-9) | 16 | TransactionsViewModel (8), BudgetViewModel (7), SavingsGoalsViewModel (4), CashFlowCalendarViewModel (3), CurrencyManagementViewModel (3), ExportOptionsViewModel (9), SharedExpenseGroupsViewModel (7), NaturalLanguageSearchViewModel (4), SpendingChallengesViewModel (3), PriceProtectionViewModel (3), DebugViewModel (4), SpendingMapViewModel (3), AddExpenseViewModel (5), ReceiptMatchingViewModel (3), BudgetForecastingViewModel (3), CashFlowCalendarViewModel (3) |
-| 🟢 Low (1-2) | 22 | MainViewModel, AssistantViewModel (2), ManualRecurringExpenseViewModel (1), RecurringExpensesViewModel (1), CarbonFootprintViewModel (2), WarrantyTrackerViewModel (1), BillRemindersViewModel (2), InvestmentViewModel (2), BankConnectionsViewModel (1), AdvancedAnalyticsViewModel (2), VisualSplitViewModel (2), SubscriptionManagementViewModel (1), TaxConfigurationViewModel (2), BackupRestoreViewModel (1), AiSettingsViewModel (1), CategoryViewModel (1), PrivacySettingsViewModel (1), LifestyleInflationViewModel (2), BillNegotiationViewModel (2), CategorizationDebugViewModel (1), SourceLinkDebugViewModel (1), SourceLinkBackfillViewModel (1) |
+| 🔴 High (10+) | 6 | HomeViewModel (20), ReviewViewModel (17), AnalyticsViewModel (18), ReceiptScanViewModel (18), SpendingMapViewModel (12), DebugViewModel (16) |
+| 🟡 Medium (3-9) | 21 | TransactionsViewModel (9), BudgetViewModel (7), AddExpenseViewModel (5), RecurringExpensesViewModel (7), ManualRecurringExpenseViewModel (3), AssistantViewModel (9), BudgetForecastingViewModel (3), SavingsGoalsViewModel (8), CarbonFootprintViewModel (3), PriceProtectionViewModel (3), NaturalLanguageSearchViewModel (4), ReceiptMatchingViewModel (4), SpendingChallengesViewModel (3), AdvancedAnalyticsViewModel (3), CashFlowCalendarViewModel (3), CurrencyManagementViewModel (5), SubscriptionManagementViewModel (5), ExportOptionsViewModel (9), SharedExpenseGroupsViewModel (7), BackupRestoreViewModel (3), AiSettingsViewModel (7) |
+| 🟢 Low (1-2) | 14 | MainViewModel (2), WarrantyTrackerViewModel (2), BillRemindersViewModel (2), InvestmentViewModel (2), BankConnectionsViewModel (1), LifestyleInflationViewModel (2), VisualSplitViewModel (2), TaxConfigurationViewModel (2), BillNegotiationViewModel (2), CategoryViewModel (1), PrivacySettingsViewModel (1), CategorizationDebugViewModel (1), SourceLinkDebugViewModel (1), SourceLinkBackfillViewModel (1) |
 
 ### Most-Injected Dependencies
 
 | Dependency | Used By (# VMs) |
 |------------|-----------------|
-| **CategoryRepository** | 10+ |
-| **ExpenseRepository** | 8+ |
-| **TimeProvider** | 6+ |
-| **CurrencySettingsRepository** | 5+ |
-| **ReceiptRepository** | 3+ |
+| **CurrencySettingsRepository** | 24 |
+| **TimeProvider** | 18 |
+| **CategoryRepository** | 11 |
+| **ExpenseRepository** | 9 |
+| **AiSettingsRepository** | 6 |
 
 ---
 
 ## Notes
 
-1. **Direct DAO injection** is used by InvestmentViewModel (InvestmentDao, InvestmentValueDao), BankConnectionsViewModel (BankConnectionDao), and VisualSplitViewModel (SplitTemplateDao, SplitItemAssignmentDao). These are grandfathered exceptions to the repository pattern.
+1. **Direct DAO injection** has been retired from the ViewModels that previously used it: InvestmentViewModel now injects `InvestmentTracker`, BankConnectionsViewModel injects `BankConnectionLifecycleCoordinator`, and VisualSplitViewModel injects `EnhancedSplitManager` (+ `Gson`). Workers/engines own DAO access for these flows.
 2. **BackupRestoreViewModel** and **PrivacySettingsViewModel** were added in May 2026 as part of the backup/restore and privacy overhaul pipelines.
-3. ViewModels marked "see source" have their full injection lists documented inline in their source files.
+3. `RecurringExpensesViewModel` is the one inline `@HiltViewModel`, declared inside `ui/screens/recurring/RecurringExpensesScreen.kt` (all others live in their own files).
 4. The complexity classification is: Low = 1-2 deps, Medium = 3-9 deps, High = 10+ deps.
 
 ---

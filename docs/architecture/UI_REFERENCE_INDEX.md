@@ -1,6 +1,6 @@
 # ExpenseTracker Frontend UI/UX - Quick Reference Index
 
-**Scout Analysis Complete** | Generated: June 1, 2026
+**Scout Analysis Complete** | Last Updated: September 7, 2026
 
 ---
 
@@ -42,7 +42,7 @@ Index 4  Analytics/Insights  (AnalyticsScreen.kt)
 Index 5  Map/Spending Map    (SpendingMapScreen.kt)
 ```
 
-### Feature Screens (23 Config-Driven + Debug/Management sub-screens)
+### Feature Screens (24 Config-Driven + Debug/Management sub-screens)
 Accessible from: Home widgets, Features Menu, or deep links
 
 ```
@@ -67,13 +67,14 @@ SubscriptionManagement    (SubscriptionManagementScreen)
 TaxConfiguration          (TaxConfigurationScreen)
 ExportOptions             (ExportOptionsScreen)
 RecurringExpenses         (RecurringExpensesScreen)
+ManualRecurringExpense    (ManualRecurringExpenseScreen)
 SharedExpenseGroups       (SharedExpenseGroupsScreen)
 BackupRestore             (BackupRestoreScreen)
 
 Management Screens:
 - AiSettings                 (AiSettingsScreen)
 - CategoryManagement         (CategoryScreen)
-- PrivacySettings           (PrivacySettingsScreen)
+- PrivacySettings           (PrivacySettingsScreen)   ← also reachable from the Features menu via FeatureConfig id "privacy" (24th menu entry; reuses backup-restore strings)
 
 Debug / Support Screens:
 - DebugScreen                (DebugScreen)
@@ -104,13 +105,15 @@ BudgetForecasting       Full Screen
 ```
 expensetracker://home                  → Home tab (with optional briefingKey param)
 expensetracker://dashboard             → Home tab
-expensetracker://activity              → Transactions tab
+expensetracker://activity              → Transactions tab (optional expenseId param)
 expensetracker://review                → Review tab
 expensetracker://plan                  → Budget tab
 expensetracker://add                   → Add Expense overlay
-expensetracker://analytics             → Analytics tab
-expensetracker://map                   → Map tab
+expensetracker://analytics             → Analytics tab (optional period param)
+expensetracker://map                   → Map tab (optional location param)
 ```
+
+**Security policy** (`ui/navigation/DeepLinkParser.kt`): links parse into `DeepLinkDecision` — `Allow` (home, dashboard, plan, analytics, map, activity without expenseId) or `RequireConfirmation` (activity with expenseId, review, add). Unknown/malformed links are silently `Reject`ed. **Caveat:** `DeepLinkParser` is unit-tested but **not wired into production** — `MainActivity.handleIntent` still parses deep links inline and navigates directly (see `NAVIGATION_ARCHITECTURE.md`).
 
 ---
 
@@ -169,7 +172,8 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 
 ### Dashboard Widgets (Home Screen)
 - TotalsDashboardCard
-- BudgetBlockPartyCard
+- RetroTotalsDashboardCard (Retro variant)
+- BudgetBlockPartyCard / RetroBudgetBlockPartyCard
 - FinancialWeatherCard
 - FinancialRunwayCard
 - FinancialStressForecastCard
@@ -178,15 +182,17 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - RecommendationCard
 - PlaceInsightCard
 - NearbyShopSuggestionCard
-- NoSpendStreakWidget
+- NoSpendStreakWidget (analytics/ subdir)
 
 ### Charts & Visualization
 - CategoryDonutChart
 - SpendingTrendChart
 - SpendingPaceGauge
-- ChartMarker
+- ChartMarker (rememberMarker for Vico charts)
 - ForecastTimeline
-- MoneyRadarWidget
+- MoneyRadarWidget (dashboard/ subdir)
+- StatisticalVisualizations (analytics/ subdir: PercentileGridCard, TransactionHistogramChart)
+- PersonalityProfileCard (analytics/ subdir)
 
 ### AI Components
 - AssistantResultCard
@@ -207,14 +213,16 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - ContextualActionRegistry
 - DefaultEmptyStateRegistryInitializer  
 - EmptyStateAction
+- EmptyStatePresentationModule (emptystate/ subdir, Hilt DI wiring)
 
 ### Navigation Components
 - AppNavigationBar (6 tabs)
 - SmartFAB (inline in MainActivity.kt, context-aware)
 
 ### Support Components
-- FeatureIntegration
-- UiTextExtensions
+- FeatureIntegration (currently unreferenced)
+- UiTextExtensions (currently unreferenced)
+- FeatureComponents / FormComponents / MetricComponents (feature/ subdir; Form/Metric currently unused)
 
 ### Dialogs/Sheets
 - CategoryBreakdownSheet
@@ -234,7 +242,7 @@ Text Muted       #CC94A3B8  Muted (80% alpha)
 - DataQualityWarningChip             ← Data quality warning chip (HomeScreen, BudgetScreen)
 - BentoCard
 
-**Total**: 59 component files
+**Total**: 59 component files under `ui/components/` (see UI_COMPONENT_LIBRARY.md for the authoritative per-component list, including `ui/util/` and `ui/integration/` helpers)
 
 ---
 
@@ -356,11 +364,11 @@ Scaffold(
 | Metric | Count |
 |--------|-------|
 | Screen Packages | 36 |
-| Screen Files | 39 |
+| Screen Files | 83 (39 named `*Screen.kt`, rest are ViewModels/sheets/filters) |
 | Component Files | 59 |
 | ViewModels | 40 (incl. MainViewModel) |
 | Navigation Files | 5 |
-| Feature Destinations | 23 |
+| Feature Destinations | 24 |
 | Management Screens | 3 |
 | Main Tabs | 6 |
 | Overlay Screens | 6 |
@@ -526,6 +534,13 @@ Column {
 <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 <uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 ```
@@ -534,14 +549,14 @@ Column {
 
 ## 📝 SUMMARY
 
-**Total UI Files**: 167 (39 screen files, 59 components, 3 mappers, 7 utils, 5 nav, 4 model, 2 theme, 7 util, 1 integration, 2 root)
+**Total UI Files**: 166 (83 screen-package files, 59 components, 3 mappers, 7 util, 5 navigation, 4 model, 2 theme, 1 integration, 2 root)
 
-**Features**: 23 config-driven features + 3 management screens + 4 debug screens  
+**Features**: 24 config-driven menu entries + 3 management screens + 5 debug/support screens  
 **Accessibility**: Material 3 standards compliant  
 **State Management**: ViewModel + StateFlow pattern  
 **Navigation**: Sealed class + CompositionLocal  
 
-**Status**: ✅ Complete, consistent, and well-organized
+**Status**: ✅ Complete, consistent, and well-organized (index refreshed against source on 2026-09-07)
 
 ---
 
