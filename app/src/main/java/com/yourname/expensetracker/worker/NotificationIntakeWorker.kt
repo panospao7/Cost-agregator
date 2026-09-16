@@ -438,13 +438,9 @@ class NotificationIntakeWorker @AssistedInject constructor(
         e is IOException ||
         e.message?.contains("database is locked", ignoreCase = true) == true
 
-    private fun computeBackoff(attempt: Int): Long = when (attempt) {
-        1 -> 30_000
-        2 -> 120_000
-        3 -> 600_000
-        4 -> 1_800_000
-        else -> 3_600_000
-    }
+    // RP-10 10b (P1-003): single shared ladder (worker retries + enqueue failures).
+    private fun computeBackoff(attempt: Int): Long =
+        com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRetryPolicy.backoffFor(attempt)
 
     /**
      * Build a sanitized storage notification based on [rawStorageMode].

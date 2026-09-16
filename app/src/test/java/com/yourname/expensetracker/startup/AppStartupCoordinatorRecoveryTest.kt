@@ -67,6 +67,7 @@ class AppStartupCoordinatorRecoveryTest {
             restoreInternalWriteScope = com.yourname.expensetracker.data.backup.RestoreInternalWriteScope(mode),
             workerExecutionGuard = mockk(relaxed = true),
             restoreJournalImporter = mockk(relaxed = true),
+            intakeRecoveryScheduler = mockk(relaxed = true),
             timeProvider = timeProvider
         )
 

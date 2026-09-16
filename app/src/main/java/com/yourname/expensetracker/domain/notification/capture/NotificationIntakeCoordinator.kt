@@ -208,11 +208,50 @@ class NotificationIntakeCoordinator @Inject constructor(
             )
             .build()
 
-        workManager.enqueueUniqueWork(
-            "notification-intake-$intakeId",
+// RP-10 10b (P1-003): await the enqueue inside the NonCancellable region; on
+        // failure run ONE atomic, idempotent transition — attempts increment once,
+        // FAILED_RETRYABLE with the shared backoff ladder or FAILED_FINAL at
+        // maxAttempts, controlled code only, locks cleared, conditional on the
+        // enqueue-attempt state.
+        val operation = workManager.enqueueUniqueWork(
+            "$intakeId",
             ExistingWorkPolicy.KEEP,
             request
         )
+        val enqueued = try {
+            operation.await()
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        if (!enqueued) {
+            val transitioned = writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationIntakeCoordinator.enqueueFailed")
+            ) {
+                val attempts = intakeDao.getAttemptsById(intakeId) ?: 0
+                intakeDao.markEnqueueFailed(
+                    id = intakeId,
+                    nextAttemptAt = now + NotificationIntakeRetryPolicy.backoffFor(attempts + 1),
+                    failureCode = "ENQUEUE_FAILED",
+                    failureHash = null,
+                    nowMs = now
+                )
+            }
+            diagnostics.emit(DiagnosticEvent(
+                pipeline = AppPipeline.NOTIFICATION,
+                stage = "intake",
+                outcome = if (transitioned > 0) EventOutcome.FAILED_RETRYABLE else EventOutcome.FAILED_FINAL,
+                reasonCode = DiagnosticReasonCode.ENQUEUE_FAILED,
+                correlationId = correlationId,
+                metadata = SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName)
+                    .build(),
+                isTerminal = transitioned <= 0
+            ))
+            return NotificationIntakeCaptureResult.EnqueueFailed(intakeId, correlationId)
+        }
 
         Timber.d("Intake enqueued: intakeId=$intakeId package=$packageName source=$source")
         return NotificationIntakeCaptureResult.Enqueued(intakeId, correlationId)
@@ -440,11 +479,50 @@ class NotificationIntakeCoordinator @Inject constructor(
             )
             .build()
 
-        workManager.enqueueUniqueWork(
+// RP-10 10b (P1-003): await the enqueue inside the NonCancellable region; on
+        // failure run ONE atomic, idempotent transition — attempts increment once,
+        // FAILED_RETRYABLE with the shared backoff ladder or FAILED_FINAL at
+        // maxAttempts, controlled code only, locks cleared, conditional on the
+        // enqueue-attempt state.
+        val operation = workManager.enqueueUniqueWork(
             "intake_${notificationKeyHash}",
             ExistingWorkPolicy.REPLACE,
             request
         )
+        val enqueued = try {
+            operation.await()
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        if (!enqueued) {
+            val transitioned = writeBarrier.runWrite(
+                DatabaseAccessOperation("NotificationIntakeCoordinator.enqueueDeferredFailed")
+            ) {
+                val attempts = intakeDao.getAttemptsById(outcome.intakeId) ?: 0
+                intakeDao.markEnqueueFailed(
+                    id = outcome.intakeId,
+                    nextAttemptAt = now + NotificationIntakeRetryPolicy.backoffFor(attempts + 1),
+                    failureCode = "ENQUEUE_FAILED",
+                    failureHash = null,
+                    nowMs = now
+                )
+            }
+            diagnostics.emit(DiagnosticEvent(
+                pipeline = AppPipeline.NOTIFICATION,
+                stage = "intake_deferred",
+                outcome = if (transitioned > 0) EventOutcome.FAILED_RETRYABLE else EventOutcome.FAILED_FINAL,
+                reasonCode = DiagnosticReasonCode.ENQUEUE_FAILED,
+                correlationId = correlationId,
+                metadata = SafeEventMetadata.builder()
+                    .putHashed("packageName", packageName)
+                    .build(),
+                isTerminal = transitioned <= 0
+            ))
+            return NotificationIntakeCaptureResult.EnqueueFailed(outcome.intakeId, correlationId)
+        }
 
         Timber.d("captureForRetry: deferred intakeId=${outcome.intakeId} package=$packageName")
         return NotificationIntakeCaptureResult.Enqueued(outcome.intakeId, correlationId)

@@ -37,4 +37,11 @@ sealed interface NotificationIntakeCaptureResult {
 
     /** Policy drop (e.g. insert conflict, barrier-blocked write). */
     data class Dropped(val correlationId: String, val reason: String) : NotificationIntakeCaptureResult
+
+    /**
+     * RP-10 10b (P1-003): the row was persisted but the WorkManager enqueue
+     * failed; the row was transitioned atomically (retryable or final) and the
+     * recovery scheduler owns any retry.
+     */
+    data class EnqueueFailed(val intakeId: Long, val correlationId: String) : NotificationIntakeCaptureResult
 }

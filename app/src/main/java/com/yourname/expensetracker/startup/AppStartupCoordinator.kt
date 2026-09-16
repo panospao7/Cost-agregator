@@ -35,6 +35,7 @@ class AppStartupCoordinator @Inject constructor(
     private val restoreInternalWriteScope: RestoreInternalWriteScope,
     private val workerExecutionGuard: com.yourname.expensetracker.domain.workers.WorkerExecutionGuard,
     private val restoreJournalImporter: com.yourname.expensetracker.data.backup.RestoreJournalImporter,
+    private val intakeRecoveryScheduler: com.yourname.expensetracker.domain.notification.capture.NotificationIntakeRecoveryScheduler,
     private val timeProvider: TimeProvider
 ) {
 
@@ -51,6 +52,25 @@ class AppStartupCoordinator @Inject constructor(
             syncProactiveBriefingWork()
             recoverStaleWorkerRuns()
             importRestoreJournals()
+            recoverPendingIntakeRows()
+        }
+    }
+
+    /**
+     * RP-10 10b (P1-003): app-start hook for pending intake recovery (the
+     * scheduler KDoc promised app-start + restore-complete; both are served by
+     * this central hook — a completed restore forces a restart, so the next
+     * launch reaches here with writes allowed and the barrier guards the rest).
+     */
+    private fun recoverPendingIntakeRows() {
+        ProcessLifecycleOwner.get().lifecycleScope.launch {
+            try {
+                intakeRecoveryScheduler.recoverPending()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Startup: pending intake recovery failed")
+            }
         }
     }
 

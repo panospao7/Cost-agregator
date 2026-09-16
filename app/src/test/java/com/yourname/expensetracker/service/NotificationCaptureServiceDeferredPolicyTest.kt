@@ -112,9 +112,9 @@ class NotificationCaptureServiceDeferredPolicyTest {
             "test-tag",            // tag
             10042,                 // uid
             10042,                 // initialPid
+            0,                     // intended-user id (mockable-jar ctor)
             notification,
             Process.myUserHandle(),
-            null,                  // overrideGroupName
             1_700_000_000_000L     // postTime
         )
     }

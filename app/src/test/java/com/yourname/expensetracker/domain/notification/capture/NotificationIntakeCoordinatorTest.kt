@@ -68,6 +68,14 @@ class NotificationIntakeCoordinatorTest {
     fun setup() {
         intakeDao = mockk(relaxed = true)
         workManager = mockk(relaxed = true)
+        // RP-10 10b (P1-003): the coordinator now awaits the enqueue Operation.
+        // MockK cannot participate in that path at all (the real await extension
+        // parks on a ListenableFuture that never fires on a mock; intercepting
+        // the extension deadlocks the recorder). Hand the tests a REAL completed
+        // operation instead — see CompletedOperation at the end of this file.
+        coEvery {
+            workManager.enqueueUniqueWork(any<String>(), any<ExistingWorkPolicy>(), any<OneTimeWorkRequest>())
+        } returns CompletedOperation()
         diagnostics = mockk(relaxed = true)
         crypto = mockk(relaxed = true)
         maintenanceMode = mockk(relaxed = true)
@@ -516,4 +524,24 @@ class NotificationIntakeCoordinatorTest {
             maintenanceMode.currentMode()
         }
     }
+}
+
+/**
+ * RP-10 10b (P1-003): a REAL already-completed [androidx.work.Operation] for
+ * tests. MockK must not touch the await() path: the suspend extension parks on
+ * the operation's ListenableFuture, which never fires on a mock.
+ */
+internal class CompletedOperation : androidx.work.Operation {
+    private val success: androidx.work.Operation.State.SUCCESS =
+        androidx.work.Operation.State.SUCCESS::class.java
+            .getDeclaredConstructor()
+            .apply { isAccessible = true }
+            .newInstance() as androidx.work.Operation.State.SUCCESS
+    private val liveState: androidx.lifecycle.MutableLiveData<androidx.work.Operation.State> =
+        androidx.lifecycle.MutableLiveData(success)
+    private val future: com.google.common.util.concurrent.ListenableFuture<androidx.work.Operation.State.SUCCESS> =
+        com.google.common.util.concurrent.Futures.immediateFuture(success)
+
+    override fun getState(): androidx.lifecycle.LiveData<androidx.work.Operation.State> = liveState
+    override fun getResult() = future
 }

@@ -52,5 +52,9 @@ enum class DiagnosticReasonCode {
     // controlled constants only, never payload-derived.
     DEFERRED_NOT_STORED,
     DEFERRED_STORAGE_POLICY_UNAVAILABLE,
-    DEFERRED_TRANSIENT_ENCRYPT_FAILED
+    DEFERRED_TRANSIENT_ENCRYPT_FAILED,
+    // RP-10 10b (P1-003): WorkManager enqueue failure transitioned the row.
+    ENQUEUE_FAILED,
+    // RP-10 10b (P1-004): caller cancellation accounted for, never swallowed.
+    CAPTURE_CANCELLED
 }

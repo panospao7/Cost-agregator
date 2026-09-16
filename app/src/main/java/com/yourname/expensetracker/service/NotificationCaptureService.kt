@@ -186,7 +186,6 @@ class NotificationCaptureService : NotificationListenerService() {
         private const val FOREGROUND_ID = 1001
         private const val CHANNEL_ID = "expense_tracker_service"
         private const val DEDUP_WINDOW_MS = 5000L
-        private const val SHUTDOWN_DRAIN_TIMEOUT_MS = 2_000L
         private const val RESTART_INTERVAL_MS = 900_000L // Restart no more than every 15 minutes
 
         /** Sensitive extras keys filtered from raw notification extras JSON. */
@@ -458,7 +457,23 @@ class NotificationCaptureService : NotificationListenerService() {
                     val settings = try {
                         privacySettingsRepository.getSettings()
                     } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        if (e is kotlinx.coroutines.CancellationException) {
+                            // RP-10 10b (P1-004): deferred-path cancellation accounting.
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                                notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                                    pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                                    stage = "capture_gate",
+                                    outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                                    reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CAPTURE_CANCELLED,
+                                    correlationId = correlationId,
+                                    sourceType = "notification",
+                                    metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                        .putHashed("packageName", packageName).build(),
+                                    isTerminal = true
+                                ))
+                            }
+                            throw e
+                        }
                         Timber.w("Deferred capture skipped: storage policy unavailable")
                         notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
                             pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
@@ -662,9 +677,34 @@ class NotificationCaptureService : NotificationListenerService() {
                         is NotificationIntakeCaptureResult.Dropped -> {
                             deduper.remove(dedupeKey)
                         }
+                        is NotificationIntakeCaptureResult.EnqueueFailed -> {
+                            // RP-10 10b (P1-003): row persisted, enqueue failed —
+                            // the atomic failure transition ran and the recovery
+                            // scheduler owns any retry. Remove the dedupe key so a
+                            // genuine repost is not swallowed.
+                            deduper.remove(dedupeKey)
+                        }
                     }
                 } catch (e: Exception) {
-                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    if (e is kotlinx.coroutines.CancellationException) {
+                        // RP-10 10b (P1-004): exactly one bounded terminal
+                        // CANCELLED diagnostic from NonCancellable, then the
+                        // cancellation propagates — never a retry or success.
+                        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                            notificationDiagnosticEmitter.emit(com.yourname.expensetracker.domain.diagnostics.DiagnosticEvent(
+                                pipeline = com.yourname.expensetracker.domain.diagnostics.AppPipeline.NOTIFICATION,
+                                stage = "intake",
+                                outcome = com.yourname.expensetracker.domain.diagnostics.EventOutcome.CANCELLED,
+                                reasonCode = com.yourname.expensetracker.domain.diagnostics.DiagnosticReasonCode.CAPTURE_CANCELLED,
+                                correlationId = correlationId,
+                                sourceType = "notification",
+                                metadata = com.yourname.expensetracker.domain.diagnostics.SafeEventMetadata.builder()
+                                    .putHashed("packageName", packageName).build(),
+                                isTerminal = true
+                            ))
+                        }
+                        throw e
+                    }
                     Timber.e(e, "Failed to capture notification via coordinator from $packageName")
                     val retryable = e is java.io.IOException ||
                         e.message?.contains("database is locked", ignoreCase = true) == true
