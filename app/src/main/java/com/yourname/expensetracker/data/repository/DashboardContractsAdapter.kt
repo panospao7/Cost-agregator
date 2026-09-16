@@ -53,12 +53,18 @@ class DashboardContractsAdapter @Inject constructor(
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun observeDashboardExpenses(): Flow<List<DashboardExpense>> {
         return timeBoundaryTicker.dayBoundaryTicks().flatMapLatest { now ->
-            val (monthStart, monthEnd) = TimePeriodUtils.getMonthRange(now)
-            // P5-PR1 (NEW-P5-001): Include previous month expenses so dashboard can
-            // compute previousMonthAggregate for month-over-month comparison.
-            val previousMonthStart = TimePeriodUtils.getStartOfMonth(monthStart - 1L)
+            // P5-005 (RP-05 batch 2): the trend emits six calendar keys (M-5..M-0),
+            // so the source window must span six months. Calendar-safe helpers only —
+            // day-arithmetic (5 * 30d) is wrong across month lengths and DST.
+            // Bounded-memory trade-off is intentional: at most six months of
+            // already-materialized dashboard rows; never an unbounded full-history
+            // query. Current/previous-month aggregates stay scoped downstream
+            // (P5-001 slices); only the trend and the completed-history baseline
+            // (P5-003) consume the wider list.
+            val trendStart = TimePeriodUtils.getMonthRange(now, -5).first
+            val monthEnd = TimePeriodUtils.getMonthRange(now, 0).second
             expenseRepository
-                .getExpensesWithCategoryInPeriod(previousMonthStart, monthEnd)
+                .getExpensesWithCategoryInPeriod(trendStart, monthEnd)
                 .map { list -> list.map { it.expense.toDomainDashboard() } }
         }
     }
@@ -187,6 +193,9 @@ class DashboardContractsAdapter @Inject constructor(
         categoryId = categoryId,
         isNotMine = isNotMine,
         isManualEntry = isManualEntry,
+        // P5-004 (RP-05): carry shared-expense identity across the adapter
+        // boundary so the deposit exclusion is no longer tautological.
+        isSharedExpense = isSharedExpense,
         currency = currency
     )
 
