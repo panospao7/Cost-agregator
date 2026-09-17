@@ -1,0 +1,46 @@
+# SUPERSEDED - see docs/ci/db-mediation/GR-14f.yml (inline-carrier contract,
+# canonical GR-14f) and the GR-14u24 dispatch resolution in callgraph.py.
+# This prototype (unique-implementation interface dispatch + same-bridge-run
+# mutation-site provisioning) was explored on gr-00-local (2026-09-07) and was
+# superseded by the stronger gr-14f-wip lineage; kept for provenance only.
+# ============================================================
+# GR-14f — RESOLVE_DISPATCH family: unique-implementation interface dispatch.
+#
+# Scope: the 5 GR14_RESOLVE_DISPATCH rows (unproven_ambiguous_call,
+# GR13_UNCERTAIN_CALL_EDGE) of the GR-13 remediation seed.
+#
+# Engine change (mediation_analysis/callgraph.py): an interface-typed call
+# whose interface has EXACTLY ONE production implementation (found via
+# _override_targets over the declared roots) now resolves to an exact edge
+# instead of an unconditionally uncertain INTERFACE_DISPATCH edge -- runtime
+# dispatch provably reaches that single member (no reflection modeled).
+# Zero or multiple implementations stay honestly uncertain.
+#
+# Companion provisioning fix (inspect_db_mediation_proof.py): real mutation
+# sites are now proven in the same bridge run and recorded keyed by site
+# start, and barrier-capable subject callables are precomputed even without
+# exact outbound edges, so a helper row's own local barrier is visible to
+# the subject-local context check (convertibleToDirect no longer stuck
+# false for edge-less subjects).
+#
+# Outcome (shadow_dispatch.json, report sha256
+# 94d2173b08545da96bd27b0e4fc578d7ad194f8c38ae6b1915c9be2f06cadfc0):
+#   - ambiguous 5 -> 1; proven_helper 29 -> 31
+#   - 2 rows honestly reclassified counterexample (the exact edges now
+#     deliver "none" from unguarded roots):
+#     GroupTransactionCoordinator.archiveGroup,
+#     SharedExpenseDataPortAdapter.removeMember -- both implementations
+#     carry local barriers but their bodies/roots need the same remediation
+#     as GR-14e (root guarding) and hit the same parser-UNSUPPORTED
+#     limitation (withContext+withTransaction expression bodies)
+#   - 1 row stays ambiguous: RoomOperationRunRecorder.
+#     recoverStaleRunningOperationRuns (virtual_dispatch -- an open member
+#     with production override candidates; different mechanism, still open)
+#
+# Remediation seed: 408 -> 406 rows.
+validation:
+  - mediation CLI + fixture + worker-disposition tests 42 passed
+  - shadow re-run classification above; seed regenerated from the fixed
+    engine's report
+  - GATE-00R double capture OWED at merge (record conditional on it)
+status: PARTIAL

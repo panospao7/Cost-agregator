@@ -82,6 +82,13 @@ POLICY_ERROR_POLICY_EMPTY = "POLICY_ERROR_POLICY_EMPTY"
 POLICY_ERROR_V2_PATH_NOT_CANONICAL = "POLICY_ERROR_V2_PATH_NOT_CANONICAL"
 POLICY_ERROR_V2_DUPLICATE_MUTATION_KEY = "POLICY_ERROR_V2_DUPLICATE_MUTATION_KEY"
 
+# v3-specific failures (GR-15 proven-mediation activation): an entry whose
+# ``barrierRequirement`` names a mode/contract pair outside the closed
+# mapping, and duplicate mutation identities across v3 entries (reported as
+# a count only -- never raw payloads).
+POLICY_ERROR_V3_BARRIER_CONTRACT_INVALID = "POLICY_ERROR_V3_BARRIER_CONTRACT_INVALID"
+POLICY_ERROR_V3_DUPLICATE_MUTATION_KEY = "POLICY_ERROR_V3_DUPLICATE_MUTATION_KEY"
+
 # ── v2 source-evidence codes (policy_v2_evidence.py) ──────────────────────────
 # Registered one-to-one as DiagnosticProfiles in scripts/ci/finding_rule_catalog.py.
 DB_V2_POLICY_PATH_OUTSIDE_ROOTS = "DB_V2_POLICY_PATH_OUTSIDE_ROOTS"
@@ -141,6 +148,9 @@ KNOWN_POLICY_ERROR_CODES = frozenset(
         # Policy v2 documents.
         POLICY_ERROR_V2_PATH_NOT_CANONICAL,
         POLICY_ERROR_V2_DUPLICATE_MUTATION_KEY,
+        # Policy v3 documents.
+        POLICY_ERROR_V3_BARRIER_CONTRACT_INVALID,
+        POLICY_ERROR_V3_DUPLICATE_MUTATION_KEY,
         # v2 source-evidence codes.
         DB_V2_POLICY_PATH_OUTSIDE_ROOTS,
         DB_V2_POLICY_FILE_UNREADABLE,
@@ -213,6 +223,8 @@ __all__ = [
     "POLICY_ERROR_POLICY_EMPTY",
     "POLICY_ERROR_V2_PATH_NOT_CANONICAL",
     "POLICY_ERROR_V2_DUPLICATE_MUTATION_KEY",
+    "POLICY_ERROR_V3_BARRIER_CONTRACT_INVALID",
+    "POLICY_ERROR_V3_DUPLICATE_MUTATION_KEY",
     "DB_V2_POLICY_PATH_OUTSIDE_ROOTS",
     "DB_V2_POLICY_FILE_UNREADABLE",
     "DB_V2_POLICY_OWNER_MISSING",
