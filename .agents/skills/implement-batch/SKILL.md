@@ -28,8 +28,9 @@ Execute one approved batch only. The batch description comes from the invoking m
 ```text
 scout subagent if needed
 → specialist-coder implements
-→ tester-runtime or tester-static for tests
+→ tester-runtime authors tests and/or tester-static assesses coverage
 → reviewer-strict for risky batches
+→ validation-runner runs the narrowest applicable live profile
 ```
 
 For risky work:
@@ -38,9 +39,10 @@ For risky work:
 scout
 → relevant guardian (architecture-guardian, privacy-security-guardian, room-migration-guardian)
 → specialist-coder
-→ tester-runtime
+→ tester-runtime authors tests + tester-static assesses coverage
 → relevant guardian re-check if needed
 → reviewer-strict
+→ validation-runner runs targeted compile/tests/guards
 ```
 
 ## Output format

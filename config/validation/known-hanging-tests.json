@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "description": "Evidence ledger and isolated routing only. Entries do not add @Ignore, skip tests, or remove them from unit-tests/shards.",
+  "entries": [
+    {
+      "id": "HANG-001",
+      "test_filter": "com.yourname.expensetracker.domain.receipt.lifecycle.*",
+      "status": "suspected",
+      "routing": "legacy",
+      "reason_code": "HISTORICAL_COROUTINE_TIMEOUT",
+      "evidence": "TEST_FAILURE_LEDGER.md F-02 at historical commit 43ca2228",
+      "owner": "unassigned",
+      "review_by": "2026-10-31"
+    },
+    {
+      "id": "HANG-002",
+      "test_filter": "com.yourname.expensetracker.domain.transaction.lifecycle.*",
+      "status": "suspected",
+      "routing": "legacy",
+      "reason_code": "HISTORICAL_COROUTINE_TIMEOUT",
+      "evidence": "TEST_FAILURE_LEDGER.md F-02 at historical commit 43ca2228",
+      "owner": "unassigned",
+      "review_by": "2026-10-31"
+    },
+    {
+      "id": "HANG-003",
+      "test_filter": "com.yourname.expensetracker.data.backup.ExportReadBarrierTest",
+      "status": "suspected",
+      "routing": "legacy",
+      "reason_code": "HISTORICAL_COROUTINE_TIMEOUT",
+      "evidence": "TEST_FAILURE_LEDGER.md F-16 at historical commit 43ca2228",
+      "owner": "unassigned",
+      "review_by": "2026-10-31"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 ---
 description: Updates docs, status notes, changelogs, and implementation handoffs after code gates pass.
 mode: subagent
-model: 4router-gift/glm-5.3-flash
+model: merge-gateway/glm-5.3-flash
 variant: max
 temperature: 0.2
 steps: 60

@@ -33,8 +33,9 @@ Treat the arguments as paths, pasted context, or instructions for an external re
 @scout verifies current source
 → relevant guardian checks architecture/privacy/Room risk
 → @coder or @specialist-coder implements minimal diff
-→ @tester-runtime adds/runs targeted tests with approval
+→ @tester-runtime adds targeted tests; @tester-static assesses coverage
 → @reviewer-strict reviews current diff
+→ @validation-runner executes targeted compile/tests/guards serially
 → stop or continue based on verdict
 ```
 
@@ -67,8 +68,9 @@ Stop and report if:
 1. @scout: verify external docs against current source.
 2. <guardian>: validate risky boundaries if applicable.
 3. @coder/@specialist-coder: implement one batch only.
-4. @tester-runtime: add/run targeted tests.
+4. @tester-runtime/@tester-static: add and statically assess targeted tests.
 5. @reviewer-strict: review final diff.
+6. @validation-runner: run the narrowest applicable live validation profiles.
 
 ## Gates
 - Architecture gate: required if workers/lifecycle/static guards are touched

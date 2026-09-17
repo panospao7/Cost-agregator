@@ -185,6 +185,8 @@ For money/currency logic:
 ## Testing guidance
 
 Prefer targeted checks first.
+The Gradle examples below describe underlying tasks only; agents must execute
+them through `validation-runner`, not invoke Gradle directly.
 
 Common targeted commands:
 
@@ -213,13 +215,14 @@ Do not claim tests passed unless they were actually run.
 
 ## Compilation / Gradle coordination
 
-Only one agent may run Gradle or compilation at a time.
+Only one validation process may run at a time.
 
-Default compile owners:
-- `tester-runtime`
-- `ci-build-debugger`
+The sole live validation owner is `validation-runner`. All Gradle, compilation,
+test, lint, connected-test, and static-guard execution must go through
+`scripts/validation-runner.ps1`. No agent may invoke those tools directly.
 
-Other agents must not start Gradle/test/build commands unless explicitly instructed.
+`tester-runtime` may author tests, and `ci-build-debugger` may diagnose/fix
+failures from persisted validation logs, but neither may execute validation.
 
 Before running Gradle:
 1. check whether another Gradle/test command is already running;
@@ -227,10 +230,19 @@ Before running Gradle:
 3. write output to a log file;
 4. report command, exit code, and log path.
 
-Prefer:
-- `./gradlew :app:testDebugUnitTest --tests "*ClassName*" --console=plain`
-- `./gradlew :app:compileDebugKotlin --console=plain`
-- `./gradlew :app:check --console=plain`
+The validation wrapper enforces this with a global lock, detached execution,
+durable `result.json`/logs, bounded timeouts, a completion marker, and a
+worktree fingerprint. A `RUNNING` result must be polled, never rerun. Missing,
+unknown, timed-out, stale, or infrastructure-error results are never PASS.
+
+Use targeted tests first, then named serial shards when broader evidence is
+needed. `trusted-tests` is a fast structural gate, not a replacement for the
+full suite. `legacy-tests` isolates ledgered hang suspects but never skips them
+from `unit-tests` or normal shards. `app-check` does not replace the full
+`static-guards` suite; run each when required.
+
+Prefer runner profiles `targeted-unit-test`, `compile`, and, only when
+required, `app-check`.
 
 Do not run multiple Gradle commands in parallel.
 

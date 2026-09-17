@@ -1,7 +1,7 @@
 ---
 description: Master orchestrator to plan, delegate, coordinate, and review pipeline-local fixes.
 mode: primary
-model: 4router-gift/glm-5.3-flash
+model: merge-gateway/glm-5.3-flash
 variant: max
 temperature: 0.1
 color: primary
@@ -41,7 +41,6 @@ permission:
     swarm-coder: ask
     tester-static: allow
     tester-runtime: ask
-    validation-runner: ask
     debugger: allow
     ci-build-debugger: ask
     reviewer-fast: allow
@@ -79,12 +78,9 @@ reviewer
 debugger
 ```
 
-## Critical constraint - serialized validation only
+## Critical constraint ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â no compilation or test execution
 
-No agent/tool except `validation-runner` may run build, compile, Gradle, KSP,
-Hilt, Room validation, lint, unit tests, Android tests, static guards, or IDE
-sync. `validation-runner` may execute only through
-`scripts/validation-runner.ps1`; direct tool invocation remains forbidden.
+No agent/tool may run build, compile, Gradle, KSP, Hilt, Room validation, lint, unit tests, Android tests, or IDE sync.
 
 Forbidden commands include but are not limited to:
 
@@ -102,9 +98,10 @@ compileDebugKotlin
 kapt
 ```
 
-All other agents are limited to static review, code edits, grep/search, file
-inspection, test authoring, documentation, and persisted-log diagnosis. Route
-live validation to `validation-runner` only after static test/review gates.
+The human will run validation manually later, possibly in parallel with other fixes.  
+Agents may only do static review, code edits, grep/search, file inspection, test authoring, and documentation updates.
+
+Agents must provide suggested validation commands, but must not execute them.
 
 ---
 
@@ -315,25 +312,6 @@ Only stop when reviewer verdict is green or human explicitly stops the loop.
 
 ---
 
-## Phase 6 — Serialized live validation
-
-After the static tester and reviewer are green, delegate the narrowest
-applicable profile to `validation-runner`. Before final handoff or commit, live
-validation is required whenever the change can affect compilation, tests,
-lint, Room, or a registered guard.
-
-The runner starts one durable run and polls its run ID. `RUNNING` is not a
-failure and must never trigger another run. Route non-green results and their
-persisted log paths to `ci-build-debugger` or the coder, repeat static review
-for the fix, then request a fresh validation run. Never reuse an old result.
-
-Prefer targeted tests, then a named `unit-test-shard`; reserve `unit-tests` for
-an intentional broad gate. `trusted-tests` is fast evidence only, while
-`legacy-tests` isolates ledgered suspects without skipping them elsewhere.
-`app-check` and `static-guards` are distinct gates; request both when required.
-
----
-
 # Reviewer green criteria
 
 Reviewer may give green only if:
@@ -397,12 +375,11 @@ grep -R "Migration(" app/src/main/java/com/yourname/expensetracker/data/database
 grep -R "Dao" app/src/main/java/com/yourname/expensetracker
 ```
 
-Do not execute build/test commands directly. Only `validation-runner` may
-execute them through the serialized wrapper.
+Do not execute build/test commands.
 
 ---
 
-# Final validation handoff
+# Human validation handoff
 
 At the end, produce:
 
@@ -413,20 +390,18 @@ At the end, produce:
 4. Docs updated
 5. Reviewer final verdict
 6. Known risks
-7. Validation-runner profile(s), run IDs, result, and log paths
+7. Commands for human to run
 8. Expected failures if any
 9. Follow-up items
 ```
 
-If further manual validation is needed, provide wrapper profiles rather than
-direct Gradle commands. Connected/device validation may still require a human
-to prepare an emulator or device.
+Suggested commands for human, not agents:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validation-runner.ps1 -Action Start -Profile assemble-debug
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validation-runner.ps1 -Action Start -Profile unit-tests
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validation-runner.ps1 -Action Start -Profile app-check
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/validation-runner.ps1 -Action Start -Profile connected-tests
+```bash
+./gradlew :app:assembleDebug --stacktrace
+./gradlew :app:testDebugUnitTest --stacktrace
+./gradlew :app:check --stacktrace
+./gradlew :app:connectedDebugAndroidTest --stacktrace
 ```
 
 If migrations changed, explicitly ask human to run migration tests.
@@ -450,6 +425,4 @@ If migrations changed, explicitly ask human to run migration tests.
 
 # Final instruction
 
-Be thorough and adversarial. The goal is not to make the diff look fixed; the
-goal is reviewer green followed by applicable serialized live validation with
-a durable, worktree-matched result.
+Be thorough and adversarial. The goal is not to ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œmake the diff look fixedÃƒÂ¢Ã¢â€šÂ¬Ã‚Â; the goal is to reach reviewer green without compiling locally and with enough tests/docs for the human validation run.

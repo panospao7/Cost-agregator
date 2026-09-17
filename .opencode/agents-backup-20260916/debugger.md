@@ -1,7 +1,7 @@
 ---
 description: Root-cause debugger for failing tests, CI errors, flaky behavior, and subtle runtime bugs.
 mode: subagent
-model: 4router-gift/glm-5.3-flash
+model: merge-gateway/glm-5.3-flash
 variant: max
 temperature: 0.1
 steps: 200
