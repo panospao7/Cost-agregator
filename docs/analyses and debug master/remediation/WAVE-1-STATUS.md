@@ -147,6 +147,18 @@ regeneration still owed at endgame):
   CAPTURE_CANCELLED diagnostic from NonCancellable, rethrow — never a
   retry/success); unused SHUTDOWN_DRAIN_TIMEOUT_MS removed. Validated:
   RetryPolicy 2/2, Coordinator 18/18, RestoreBarrier 5/5, worker suites green.
+- `rp-10-wip`: batch 10c (P1-005/006/008 hygiene) landed (pending human
+  validation) on branch `rp-10c-wip` — P1-005 (4 MessagingStyle keys added to
+  SENSITIVE_EXTRAS_KEYS + end-to-end buildExtrasJson filter test), P1-006
+  (deduper switched to MonotonicTimeProvider.nowNanos() with internal nanos
+  storage and ms→ns conversion; new NotificationCaptureDeduperTest), P1-008
+  (presence-bit + 4-byte length-prefixed framing with legacy NUL-split decrypt
+  fallback for in-flight old-framed rows; new NotificationTransientPayload
+  CryptoTest incl. embedded-NUL, null/empty distinction, truncated-frame
+  negative, legacy fallback conflation pin). Strict static review GREEN
+  (overflow-proof bounds check in parseFrame included). Tests NOT yet run —
+  validation command pending human run. Next planned item: the
+  RP-06→07→08→09 money chain scout.
 
 ### Hang-family findings (RP-21 feed, thread-dump evidence, 2026-09-15/16)
 

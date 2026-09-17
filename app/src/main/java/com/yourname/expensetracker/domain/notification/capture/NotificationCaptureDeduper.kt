@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.notification.capture
 
-import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -11,10 +11,17 @@ import javax.inject.Singleton
  * to prevent duplicate processing of the same notification content within
  * a configurable window. Uses SHA-256 content fingerprints and hashed
  * package/key identifiers to avoid storing raw text in the dedupe map.
+ *
+ * Time source: the injected [MonotonicTimeProvider] makes the window immune
+ * to wall-clock jumps (NTP sync, manual clock changes) — a backward jump can
+ * no longer suppress identical re-posts and a forward jump cannot disable
+ * the window. Timestamps are stored internally in **nanoseconds**
+ * ([MonotonicTimeProvider.nowNanos]); the public [windowMs] parameters stay
+ * in milliseconds and are converted to nanos once per call.
  */
 @Singleton
 class NotificationCaptureDeduper @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val timeProvider: MonotonicTimeProvider
 ) {
     private val entries = LinkedHashMap<String, Long>(100, 0.75f, true)
     private val lock = Any()
@@ -25,10 +32,11 @@ class NotificationCaptureDeduper @Inject constructor(
      * If already present and within window, returns true (duplicate).
      */
     fun tryStart(key: String, windowMs: Long): Boolean {
-        val now = timeProvider.now()
+        val now = timeProvider.nowNanos()
+        val windowNanos = windowMs * 1_000_000L
         synchronized(lock) {
             val last = entries[key]
-            if (last != null && (now - last) < windowMs) {
+            if (last != null && (now - last) < windowNanos) {
                 return true // duplicate
             }
             entries[key] = now
@@ -53,9 +61,10 @@ class NotificationCaptureDeduper @Inject constructor(
      * Remove expired entries older than [maxAgeMs].
      */
     fun cleanupExpired(maxAgeMs: Long) {
-        val now = timeProvider.now()
+        val now = timeProvider.nowNanos()
+        val maxAgeNanos = maxAgeMs * 1_000_000L
         synchronized(lock) {
-            entries.entries.removeIf { now - it.value > maxAgeMs }
+            entries.entries.removeIf { now - it.value > maxAgeNanos }
         }
     }
 

@@ -115,7 +115,19 @@ messages, or stack traces.
 > suites green. Conditional: EnqueueFailureTest @Ignore'd (MockK suspend
 > hang family — RP-21 feed); DeferredPolicyTest never compiled at 10a
 > (proven) and its first run hangs in the same family — unvalidated 10a
-> carryover. 10c (P1-005/006/008 hygiene) not started.
+> carryover.
+>
+> **Status 10c (2026-09-16):** implemented on branch `rp-10c-wip` —
+> P1-005 (4 MessagingStyle keys added to SENSITIVE_EXTRAS_KEYS +
+> end-to-end buildExtrasJson filter test), P1-006 (deduper switched to
+> MonotonicTimeProvider.nowNanos() with internal nanos storage and ms→ns
+> conversion; new NotificationCaptureDeduperTest), P1-008 (presence-bit +
+> 4-byte length-prefixed framing with legacy NUL-split decrypt fallback for
+> in-flight old-framed rows; new NotificationTransientPayloadCryptoTest incl.
+> embedded-NUL, null/empty distinction, truncated-frame negative, legacy
+> fallback conflation pin). Strict static review GREEN (overflow-proof
+> bounds check in parseFrame included). Tests NOT yet run — validation
+> command pending human run.
 
 ### P1-003 - Await enqueue and transition failures atomically
 

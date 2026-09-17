@@ -1,16 +1,30 @@
 package com.yourname.expensetracker.service
 
+import android.os.Bundle
 import com.yourname.expensetracker.domain.privacy.PrivacySettings
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.Robolectric
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlinx.coroutines.test.runTest
 
 /**
  * Unit tests covering cleanup changes made in P1-SLICE-A:
  * - Dead code / null-launch removal
  * - CamelCase-sensitive key filtering
+ *
+ * Runs under Robolectric so the real [NotificationCaptureService.buildExtrasJson]
+ * can be exercised against a real android.os.Bundle (P1-005 test gap). The
+ * service is attached WITHOUT onCreate, so Hilt field injection never runs and
+ * no collaborators are needed — buildExtrasJson only touches org.json + the
+ * static sensitive-key set.
  */
+@RunWith(RobolectricTestRunner::class)
+@Config(manifest = Config.NONE, sdk = [33])
 class NotificationCaptureServiceCleanupTest {
 
     // --- Work tracker (NEW-P1-003 / NEW-P1-004) ---
@@ -84,6 +98,63 @@ class NotificationCaptureServiceCleanupTest {
             keys.any { "Card_Number".equals(it, ignoreCase = true) })
         assertTrue("FullName should match fullName (case-insensitive)",
             keys.any { "FullName".equals(it, ignoreCase = true) })
+        // Messaging key case variants (P1-005)
+        assertTrue("ANDROID.MESSAGES should match android.messages (case-insensitive)",
+            keys.any { "ANDROID.MESSAGES".equals(it, ignoreCase = true) })
+        assertTrue("Android.TextLines should match android.textLines (case-insensitive)",
+            keys.any { "Android.TextLines".equals(it, ignoreCase = true) })
+        assertTrue("ANDROID.REMOTEINPUTHISTORY should match android.remoteInputHistory (case-insensitive)",
+            keys.any { "ANDROID.REMOTEINPUTHISTORY".equals(it, ignoreCase = true) })
+        assertTrue("Android.ConversationTitle should match android.conversationTitle (case-insensitive)",
+            keys.any { "Android.ConversationTitle".equals(it, ignoreCase = true) })
+    }
+
+    // ── P1-005: real buildExtrasJson drops messaging keys (Robolectric) ──
+
+    @Test
+    fun `buildExtrasJson_drops_messaging_keys_and_values_but_keeps_benign_key`() {
+        // Real service instance WITHOUT onCreate — Hilt field injection never
+        // runs and buildExtrasJson only needs org.json + the static key set.
+        val service = Robolectric.buildService(NotificationCaptureService::class.java).get()
+
+        val messagesValue = "messaging-messages-value"
+        val textLinesValue = "messaging-textlines-value"
+        val remoteInputValue = "messaging-remoteinput-value"
+        val conversationTitleValue = "messaging-conversation-title-value"
+        val benignValue = "benign-plaintext-value"
+
+        val extras = Bundle().apply {
+            putString("android.messages", messagesValue)
+            putString("Android.TextLines", textLinesValue)
+            putString("android.remoteInputHistory", remoteInputValue)
+            putString("android.conversationTitle", conversationTitleValue)
+            putString("someOtherKey", benignValue)
+        }
+
+        val json = service.buildExtrasJson(extras)
+
+        // Assert on boolean contains checks only — never print values in
+        // failure messages (privacy: no notification content in test output).
+        assertFalse("messaging key android.messages must not appear",
+            json.contains("android.messages"))
+        assertFalse("messaging key Android.TextLines must not appear",
+            json.contains("Android.TextLines"))
+        assertFalse("messaging key android.remoteInputHistory must not appear",
+            json.contains("android.remoteInputHistory"))
+        assertFalse("messaging key android.conversationTitle must not appear",
+            json.contains("android.conversationTitle"))
+        assertFalse("android.messages value must not be persisted",
+            json.contains(messagesValue))
+        assertFalse("Android.TextLines value must not be persisted",
+            json.contains(textLinesValue))
+        assertFalse("android.remoteInputHistory value must not be persisted",
+            json.contains(remoteInputValue))
+        assertFalse("android.conversationTitle value must not be persisted",
+            json.contains(conversationTitleValue))
+        assertTrue("benign key must survive filtering",
+            json.contains("someOtherKey"))
+        assertTrue("benign value must survive filtering",
+            json.contains(benignValue))
     }
 
     @Test
@@ -91,6 +162,15 @@ class NotificationCaptureServiceCleanupTest {
         val keys = NotificationCaptureService.SENSITIVE_EXTRAS_KEYS
         assertTrue("android.largeIcon must be in sensitive keys", keys.contains("android.largeIcon"))
         assertTrue("android.picture must be in sensitive keys", keys.contains("android.picture"))
+    }
+
+    @Test
+    fun `sensitive_key_set_contains_messaging_keys`() {
+        val keys = NotificationCaptureService.SENSITIVE_EXTRAS_KEYS
+        assertTrue("android.messages must be in sensitive keys", keys.contains("android.messages"))
+        assertTrue("android.textLines must be in sensitive keys", keys.contains("android.textLines"))
+        assertTrue("android.remoteInputHistory must be in sensitive keys", keys.contains("android.remoteInputHistory"))
+        assertTrue("android.conversationTitle must be in sensitive keys", keys.contains("android.conversationTitle"))
     }
 
     // ── NonCancellable durability (P1-P1-07) ────────────────────────────

@@ -193,6 +193,10 @@ class NotificationCaptureService : NotificationListenerService() {
             // Android system keys that contain personal data
             "android.largeIcon", "android.picture", "android.icon",
             "android.wearable.EXTENSIONS", "android.people.list",
+            // MessagingStyle content keys (P1-005): carry notification message
+            // text that would otherwise persist in extrasJson under STORE_RAW
+            "android.messages", "android.textLines",
+            "android.remoteInputHistory", "android.conversationTitle",
             // Financial/personal data keys (snake_case)
             "account_number", "account", "card_number", "card_last_four",
             "balance", "amount", "cvv", "pin", "password",
