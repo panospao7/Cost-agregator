@@ -1,6 +1,6 @@
 package com.yourname.expensetracker.domain.notification.capture
 
-import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.domain.util.MonotonicTimeProvider
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -11,10 +11,16 @@ import javax.inject.Singleton
  * to prevent duplicate processing of the same notification content within
  * a configurable window. Uses SHA-256 content fingerprints and hashed
  * package/key identifiers to avoid storing raw text in the dedupe map.
+ *
+ * The dedupe window and TTL run on [MonotonicTimeProvider] (elapsed time),
+ * so they are immune to wall-clock backward/forward jumps (NTP sync, user
+ * clock changes): a backward jump cannot resurrect stale duplicates and a
+ * forward jump cannot void the window. Nanos are converted to millis once
+ * at each read; all window/TTL math and stored values remain millis.
  */
 @Singleton
 class NotificationCaptureDeduper @Inject constructor(
-    private val timeProvider: TimeProvider
+    private val monotonicTimeProvider: MonotonicTimeProvider
 ) {
     private val entries = LinkedHashMap<String, Long>(100, 0.75f, true)
     private val lock = Any()
@@ -25,7 +31,7 @@ class NotificationCaptureDeduper @Inject constructor(
      * If already present and within window, returns true (duplicate).
      */
     fun tryStart(key: String, windowMs: Long): Boolean {
-        val now = timeProvider.now()
+        val now = monotonicTimeProvider.nowNanos() / 1_000_000
         synchronized(lock) {
             val last = entries[key]
             if (last != null && (now - last) < windowMs) {
@@ -53,7 +59,7 @@ class NotificationCaptureDeduper @Inject constructor(
      * Remove expired entries older than [maxAgeMs].
      */
     fun cleanupExpired(maxAgeMs: Long) {
-        val now = timeProvider.now()
+        val now = monotonicTimeProvider.nowNanos() / 1_000_000
         synchronized(lock) {
             entries.entries.removeIf { now - it.value > maxAgeMs }
         }

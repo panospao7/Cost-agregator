@@ -91,6 +91,10 @@ class NotificationCaptureServiceCleanupTest {
         val keys = NotificationCaptureService.SENSITIVE_EXTRAS_KEYS
         assertTrue("android.largeIcon must be in sensitive keys", keys.contains("android.largeIcon"))
         assertTrue("android.picture must be in sensitive keys", keys.contains("android.picture"))
+        assertTrue("android.messages must be in sensitive keys", keys.contains("android.messages"))
+        assertTrue("android.textLines must be in sensitive keys", keys.contains("android.textLines"))
+        assertTrue("android.remoteInputHistory must be in sensitive keys", keys.contains("android.remoteInputHistory"))
+        assertTrue("android.conversationTitle must be in sensitive keys", keys.contains("android.conversationTitle"))
     }
 
     // ── NonCancellable durability (P1-P1-07) ────────────────────────────
