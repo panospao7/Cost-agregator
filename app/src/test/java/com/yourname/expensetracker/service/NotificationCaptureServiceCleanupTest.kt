@@ -227,27 +227,40 @@ class NotificationCaptureServiceCleanupTest {
     @Test
     fun `processNotification_accepts_privacy_settings_parameter`() {
         // Verify that processNotification now accepts PrivacySettings as its
-        // 6th parameter, instead of performing a second independent fetch of
-        // privacySettingsRepository.getSettings() internally. This prevents a
-        // TOCTOU race where settings could change between extras JSON
-        // construction (in captureNotification) and storage notification
+        // 6th Kotlin parameter, instead of performing a second independent
+        // fetch of privacySettingsRepository.getSettings() internally. This
+        // prevents a TOCTOU race where settings could change between extras
+        // JSON construction (in captureNotification) and storage notification
         // construction (in processNotification).
+        //
+        // Note: processNotification is a suspend function, so JVM reflection
+        // (getDeclaredMethods) reports one extra trailing parameter of type
+        // kotlin.coroutines.Continuation. The reflected parameterCount is
+        // therefore 7: the 6 declared Kotlin parameters plus the Continuation.
         val methods = NotificationCaptureService::class.java.declaredMethods
             .filter { it.name == "processNotification" }
 
         assertTrue(
-            "processNotification method must exist (private, 6 params)",
+            "processNotification method must exist (private suspend, 6 Kotlin params + Continuation)",
             methods.isNotEmpty()
         )
         assertEquals(
-            "processNotification must accept 6 parameters " +
-                "(StatusBarNotification, String, NotificationTextParts, Bundle, String, PrivacySettings)",
-            6, methods[0].parameterCount
+            "processNotification must reflect 7 parameters: 6 Kotlin params " +
+                "(StatusBarNotification, String, NotificationTextParts, Bundle, String, PrivacySettings) " +
+                "plus a trailing kotlin.coroutines.Continuation added by the compiler because " +
+                "the method is suspend",
+            7, methods[0].parameterCount
         )
         assertEquals(
-            "6th parameter must be PrivacySettings",
+            "6th Kotlin parameter must be PrivacySettings",
             "com.yourname.expensetracker.domain.privacy.PrivacySettings",
             methods[0].parameterTypes[5].name
+        )
+        assertEquals(
+            "Last reflected parameter must be kotlin.coroutines.Continuation " +
+                "(pins the suspend contract of processNotification)",
+            "kotlin.coroutines.Continuation",
+            methods[0].parameterTypes[6].name
         )
 
         // Also verify captureNotification has not changed its signature

@@ -156,9 +156,19 @@ regeneration still owed at endgame):
   fallback for in-flight old-framed rows; new NotificationTransientPayload
   CryptoTest incl. embedded-NUL, null/empty distinction, truncated-frame
   negative, legacy fallback conflation pin). Strict static review GREEN
-  (overflow-proof bounds check in parseFrame included). Tests NOT yet run —
-  validation command pending human run. Next planned item: the
-  RP-06→07→08→09 money chain scout.
+  (overflow-proof bounds check in parseFrame included). First live execution
+  2026-09-17 (validation-runner; repo relocation had invalidated stale
+  OneDrive-era build caches — app/build regenerated, compile PASS
+  vr-20260917-092331-2f2b5303): DeduperTest initially 6/6 FAIL (the 419e38c0
+  rewrite inverted tryStart polarity; file restored to b0141f43 semantics,
+  9 tests) and CleanupTest initially 8/9 (latent suspend-reflection bug since
+  f4aac79f: processNotification reflects 6 Kotlin params + Continuation;
+  test now pins 7 reflected params). Final: DeduperTest 9/9, CryptoTest 8/8,
+  CleanupTest 9/9 all PASS (vr-20260917-102030 / -103742 / -110151); strict
+  review of the test-only fix PASS. RP-10c validation debt CLOSED.
+  Next planned item: the RP-06→07→08→09 money chain scout (scout
+  completed 2026-09-17: all 8 RP-06 source contracts verified, no blocking
+  discrepancies; slice planning next).
 
 ### Hang-family findings (RP-21 feed, thread-dump evidence, 2026-09-15/16)
 
