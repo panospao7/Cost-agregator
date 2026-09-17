@@ -142,7 +142,9 @@ class DashboardWidgetConsistencyTest {
             },
             multiCurrencyRepository = mockk<MultiCurrencyRepository>(relaxed = true).also {
                 coEvery { it.getHomeCurrencyPurchaseTotal(any(), any()) } returns MoneyAggregate.empty(CurrencyCode("EUR"))
-            }
+            },
+            // RP-06 6a: real calculator + the test's fake TimeProvider so pace math is real.
+            spendingPaceCalculator = com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator(timeProvider)
         )
     }
 

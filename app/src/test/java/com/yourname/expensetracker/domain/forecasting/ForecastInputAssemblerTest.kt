@@ -397,6 +397,31 @@ class ForecastInputAssemblerTest {
         assertEquals(PaceStatus.OVER_PACE, pace.paceStatus)
     }
 
+    /**
+     * NEW-P6-013: the legacy assembler's no-baseline path must carry the canonical
+     * -1f sentinel (paired with NO_BASELINE), not the misleading 0f.
+     */
+    @Test
+    fun `buildSpendingPace no baseline uses canonical minus one sentinel`() {
+        val now = ms(2026, Calendar.JANUARY, 3, 12)
+        val janStart = ms(2026, Calendar.JANUARY, 1, 0)
+        every { timeProvider.now() } returns now
+
+        // Current-month purchases only — no previous-month baseline exists.
+        val expenses = listOf(
+            snapshot(amount = 10.0, date = janStart, type = DomainTransactionType.PURCHASE),
+            snapshot(amount = 20.0, date = janStart + DAY_MS, type = DomainTransactionType.PURCHASE)
+        )
+
+        val pace = assembler.buildSpendingPace(expenses)
+
+        assertEquals(-1f, pace.pacePercentage)
+        assertEquals(PaceStatus.NO_BASELINE, pace.paceStatus)
+        assertEquals(30.0, pace.currentMonthSpent, 0.0001)
+        // No baseline ⇒ no previousMonthTotal (honest null, matching the calculator).
+        assertEquals(null, pace.previousMonthTotal)
+    }
+
     // ── DBG-03: paused-rule materialized occurrence must not leak into forecast ──
 
     @Test

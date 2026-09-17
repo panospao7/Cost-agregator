@@ -272,7 +272,9 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
                 coEvery { assemble(any(), any(), any(), any(), any(), any(), any()) } returns mockk(relaxed = true)
             },
             currencyConverter = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true)
+            currencySettingsRepository = mockk(relaxed = true),
+            // RP-06 6a: real calculator + the test's fake TimeProvider so pace math is real.
+            spendingPaceCalculator = spendingPaceCalculator
         )
 
         val monthSpent = expenses.filter { it.transactionType == TransactionType.PURCHASE && it.date in ms(2026, 3, 1) until ms(2026, 4, 1) }

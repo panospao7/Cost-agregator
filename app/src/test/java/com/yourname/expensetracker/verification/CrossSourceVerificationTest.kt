@@ -257,8 +257,9 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
             displayCurrency = "EUR"
         )
 
-        assertEquals(0f, insightsPace.pacePercentage)
-        assertEquals(0f, calculatorPace.pacePercentage)
+        // NEW-P6-013: canonical -1f sentinel — 0f is indistinguishable from a true 0% pace.
+        assertEquals(-1f, insightsPace.pacePercentage)
+        assertEquals(-1f, calculatorPace.pacePercentage)
         assertEquals(com.yourname.expensetracker.domain.analytics.PaceStatus.NO_BASELINE, insightsPace.paceStatus)
         assertEquals(com.yourname.expensetracker.domain.analytics.PaceStatus.NO_BASELINE, calculatorPace.paceStatus)
     }

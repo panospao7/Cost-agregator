@@ -272,7 +272,13 @@ class DashboardContractsAdapterTest {
             forecastInputAssembler = mockk(relaxed = true),
             currencyConverter = mockk<CurrencyConverter>(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
-            multiCurrencyRepository = multiCurrencyRepository
+            multiCurrencyRepository = multiCurrencyRepository,
+            // RP-06 6a: real calculator + the test's fixed TimeProvider so pace math is real.
+            spendingPaceCalculator = com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator(
+                object : TimeProvider {
+                    override fun now(): Long = now
+                }
+            )
         )
 
         val data = com.yourname.expensetracker.domain.usecase.dashboard.DashboardData(
@@ -510,7 +516,13 @@ class DashboardContractsAdapterTest {
             forecastInputAssembler = forecastInputAssembler,
             currencyConverter = mockk<CurrencyConverter>(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
-            multiCurrencyRepository = multiCurrencyRepository
+            multiCurrencyRepository = multiCurrencyRepository,
+            // RP-06 6a: real calculator + the test's fixed TimeProvider so pace math is real.
+            spendingPaceCalculator = com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator(
+                object : TimeProvider {
+                    override fun now(): Long = now
+                }
+            )
         )
     }
 

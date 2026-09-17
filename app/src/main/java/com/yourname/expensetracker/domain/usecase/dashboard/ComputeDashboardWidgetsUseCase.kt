@@ -4,6 +4,8 @@ import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.PaceStatus
 import com.yourname.expensetracker.domain.analytics.SpendingPace
+import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
+import com.yourname.expensetracker.domain.analytics.toExpenseSnapshot
 import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
@@ -259,7 +261,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     private val stressForecastEngine: com.yourname.expensetracker.domain.forecasting.FinancialStressForecastEngine,
     private val forecastInputAssembler: ForecastInputAssembler,
     private val currencyConverter: com.yourname.expensetracker.domain.currency.CurrencyConverter,
-    private val currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+    private val currencySettingsRepository: com.yourname.expensetracker.domain.currency.CurrencySettingsRepository,
+    private val spendingPaceCalculator: SpendingPaceCalculator
 ) {
 
     /**
@@ -610,9 +613,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         var runningTotal = 0.0
         val pastSumDaily = amountByDay.map { amount -> runningTotal += amount; runningTotal }
 
-        // Build spending pace from normalized aggregates
-        val daysInMonth = TimePeriodUtils.getDaysInMonth(ctx.now)
-        val daysElapsed = ctx.dayOfMonth
         // P5-003 (RP-05 batch 2): the synthesis baseline (averageMonthlyTotal) is
         // COMPLETED-month history, never current MTD — MTD early in the month gave
         // SynthesisEngine a tiny baseline and bypassed the null-baseline confidence
@@ -628,16 +628,37 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 monthsWithHistory.sumOf { it.aggregate.displayAmount } / monthsWithHistory.size
             else -> normalized.previousMonthAggregate?.displayAmount?.takeIf { it > 0 }
         }
+        // P5-002 (RP-06 6a): canonical pace wiring. The previously hard-coded
+        // `pacePercentage = 100f, NO_BASELINE` placeholder made the pace widget
+        // permanently unreachable (assembleWidgets gates on status != NO_BASELINE).
+        // The calculator consumes home-currency-normalized snapshots only — the
+        // same shape InsightsEngine uses via NormalizedExpense.toExpenseSnapshot().
+        // NO_BASELINE means no pace widget is emitted; the -1f sentinel never
+        // reaches UI because of that gate.
+        val paceSnapshots = normalized.normalizedExpenses.map { it.toExpenseSnapshot() }
+        val previousMonthBounds = TimePeriodUtils.getMonthRange(ctx.now, -1)
+        val calculatorPace = spendingPaceCalculator.calculate(
+            currentMonthStart = ctx.monthStart,
+            previousMonthStart = previousMonthBounds.first,
+            previousMonthEnd = previousMonthBounds.second, // exclusive end == current month start (half-open contract)
+            allExpenses = paceSnapshots,
+            displayCurrency = normalized.homeCurrency.code,
+            referenceNowMs = now
+        )
+        // Preserve the dashboard's richer enrichment: averageMonthlyTotal keeps the
+        // completed-month history policy above. previousMonthTotal stays the
+        // calculator's honest result (null when no baseline) — the calculator's
+        // baseline is derived from the same normalized expenses, so its verdict wins.
         val spendingPace = SpendingPace(
-            currentMonthSpent = normalized.monthAggregate.displayAmount,
-            daysElapsed = daysElapsed,
-            daysInMonth = daysInMonth,
-            projectedTotal = if (daysElapsed > 0) normalized.monthAggregate.displayAmount / daysElapsed * daysInMonth else normalized.monthAggregate.displayAmount,
-            previousMonthTotal = normalized.previousMonthAggregate?.displayAmount,
+            currentMonthSpent = calculatorPace.currentMonthSpent,
+            daysElapsed = calculatorPace.daysElapsed,
+            daysInMonth = calculatorPace.daysInMonth,
+            projectedTotal = calculatorPace.projectedTotal,
+            previousMonthTotal = calculatorPace.previousMonthTotal,
             averageMonthlyTotal = historicalAverage,
-            pacePercentage = 100f,
-            paceStatus = PaceStatus.NO_BASELINE, // Will be refined by synthesis
-            displayCurrency = normalized.homeCurrency.code
+            pacePercentage = calculatorPace.pacePercentage,
+            paceStatus = calculatorPace.paceStatus,
+            displayCurrency = calculatorPace.displayCurrency
         )
 
         val normalizedForecastInput = NormalizedForecastInput(
