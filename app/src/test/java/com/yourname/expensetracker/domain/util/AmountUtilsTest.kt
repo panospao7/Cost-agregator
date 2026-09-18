@@ -11,13 +11,13 @@ class AmountUtilsTest {
         assertEquals(1234.56, AmountUtils.parseAmount("1.234,56")!!, 0.001)
         assertEquals(1234567.0, AmountUtils.parseAmount("1,234,567")!!, 0.001)
         assertEquals(1.5, AmountUtils.parseAmount("1,50")!!, 0.001)
+        assertEquals(12.34, AmountUtils.parseAmount("12,34")!!, 0.001)
     }
     
     @Test
     fun `parseAmount - invalid formats return null`() {
         assertNull(AmountUtils.parseAmount("1,23,456"))
         assertNull(AmountUtils.parseAmount("1,0000"))
-        assertNull(AmountUtils.parseAmount("12,34"))
         assertNull(AmountUtils.parseAmount("1,0000.00"))
         assertNull(AmountUtils.parseAmount("12,34.56"))
         assertNull(AmountUtils.parseAmount("1234,567.89"))

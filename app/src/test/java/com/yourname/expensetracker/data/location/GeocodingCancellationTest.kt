@@ -55,7 +55,7 @@ class GeocodingCancellationTest {
             // expected
         }
 
-        assertTrue(factory.wasCancelled())
+        assertTrue(factory.awaitCancelled())
     }
 
     @Test
@@ -67,7 +67,7 @@ class GeocodingCancellationTest {
             .addInterceptor { chain ->
                 requestStarted.countDown()
                 while (!chain.call().isCanceled()) {
-                    Thread.sleep(POLL_INTERVAL_MS)
+                    Thread.yield()
                 }
                 requestCancelled.countDown()
                 throw IOException("Canceled")
@@ -95,6 +95,7 @@ class GeocodingCancellationTest {
 
     private class RecordingCallFactory : Call.Factory {
         private val enqueued = CountDownLatch(1)
+        private val cancellationRequested = CountDownLatch(1)
         private val cancelled = AtomicBoolean(false)
 
         override fun newCall(request: Request): Call {
@@ -107,7 +108,7 @@ class GeocodingCancellationTest {
 
         fun awaitEnqueued(): Boolean = enqueued.await(1, TimeUnit.SECONDS)
 
-        fun wasCancelled(): Boolean = cancelled.get()
+        fun awaitCancelled(): Boolean = cancellationRequested.await(1, TimeUnit.SECONDS)
     }
 
     private class RecordingCall(
@@ -130,6 +131,7 @@ class GeocodingCancellationTest {
 
         override fun cancel() {
             cancelled.set(true)
+            cancellationRequested.countDown()
         }
 
         override fun isExecuted(): Boolean = executed.get()
@@ -143,9 +145,5 @@ class GeocodingCancellationTest {
         )
 
         override fun timeout(): Timeout = Timeout.NONE
-    }
-
-    private companion object {
-        const val POLL_INTERVAL_MS = 10L
     }
 }

@@ -318,8 +318,8 @@ class AnalyticsRepositoryAggregateTest {
 
     @Test
     fun `spendingSummary_invalidCurrencyWarningMessageContainsRawCode`() = runTest {
-        // Expense with invalid currency code "XYZ"
-        val invalidCurrencyExpense = createExpense(id = 99L, amount = 50.0, currency = "XYZ", date = start)
+        // Four-letter currency code is invalid under the current CurrencyCode contract.
+        val invalidCurrencyExpense = createExpense(id = 99L, amount = 50.0, currency = "USDX", date = start)
         val expenses = listOf(invalidCurrencyExpense)
 
         coEvery { expenseDao.getExpensesByTypeBetween(any(), any(), any()) } returnsMany listOf(expenses, emptyList())
@@ -360,8 +360,8 @@ class AnalyticsRepositoryAggregateTest {
 
         assertNotNull("aggregate must not be null", result.aggregate)
         assertNotNull("warningMessage must be present for invalid currency", result.aggregate!!.warningMessage)
-        assertTrue("warningMessage must contain raw invalid code XYZ",
-            result.aggregate!!.warningMessage!!.contains("XYZ"))
+        assertTrue("warningMessage must contain raw invalid code USDX",
+            result.aggregate!!.warningMessage!!.contains("USDX"))
         assertTrue("warningMessage must contain 'Invalid source currency'",
             result.aggregate!!.warningMessage!!.contains("Invalid source currency"))
     }

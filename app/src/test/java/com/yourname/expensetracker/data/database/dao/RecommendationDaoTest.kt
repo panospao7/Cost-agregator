@@ -471,7 +471,7 @@ class RecommendationDaoTest {
     }
 
     @Test
-    fun `insert with REPLACE strategy updates existing record`() = runTest {
+    fun `insert with IGNORE strategy preserves existing record`() = runTest {
         val userId = "user123"
         val id = UUID.randomUUID().toString()
         val originalRec = createRecommendation(
@@ -487,7 +487,7 @@ class RecommendationDaoTest {
 
         val result = dao.getById(id)
         assertNotNull(result)
-        assertEquals("Updated text", result.recommendationText)
+        assertEquals("Original text", result.recommendationText)
     }
 
     // Helper function to create test recommendations

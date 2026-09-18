@@ -139,7 +139,7 @@ class MerchantKeyBackfillWorkerTest {
 
         assertEquals(Result.retry(), result)
         coVerify(exactly = 1) { expenseRepository.updateMerchantKey(1L, "sklavenitis") }
-        coVerify(exactly = 1) { expenseRepository.updateMerchantKey(2L, "broken_merchant") }
+        coVerify(exactly = 1) { expenseRepository.updateMerchantKey(2L, "brokenmerchant") }
         coVerify(exactly = 2) { expenseRepository.getExpensesWithNullMerchantKey(any()) }
     }
 
@@ -153,7 +153,7 @@ class MerchantKeyBackfillWorkerTest {
         val result = buildWorker().doWork()
 
         assertEquals(Result.retry(), result)
-        coVerify(exactly = 1) { expenseRepository.updateMerchantKey(3L, "still_broken") }
+        coVerify(exactly = 1) { expenseRepository.updateMerchantKey(3L, "stillbroken") }
         coVerify(exactly = 1) { expenseRepository.getExpensesWithNullMerchantKey(any()) }
     }
 

@@ -23,11 +23,7 @@ import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
 import com.yourname.expensetracker.domain.model.Result
 import com.yourname.expensetracker.domain.util.TimeBoundaryTicker
 import com.yourname.expensetracker.domain.util.TimeProvider
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
-import io.mockk.mockkStatic
-import io.mockk.slot
+import io.mockk.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -35,6 +31,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 
@@ -68,6 +65,10 @@ class BudgetRepositoryDiagnosticsTest {
 
     @Before
     fun setup() {
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
@@ -86,8 +87,6 @@ class BudgetRepositoryDiagnosticsTest {
         coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns
             listOf(CurrencyTotal("EUR", 0.0, 0))
         every { timeProvider.now() } returns 1_000_000L
-
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         emitted.clear()
         coEvery { diagnosticEventWriter.emit(capture(emitted)) } returns Unit
@@ -117,6 +116,11 @@ class BudgetRepositoryDiagnosticsTest {
             diagnosticEventWriter = diagnosticEventWriter,
             diagnosticSink = diagnosticSink
         )
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     private fun validBudget(amount: Double = 100.0): Budget = Budget(

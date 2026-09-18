@@ -194,6 +194,7 @@ class SharedExpenseTest {
 
     @Test
     fun `addExpense uses group currency from data port when available`() = kotlinx.coroutines.test.runTest {
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
         coEvery { sharedExpenseDataPort.getGroupOnce(1L) } returns SharedExpenseGroup(
             id = 1L,
             name = "Trip",
@@ -298,6 +299,7 @@ class SharedExpenseTest {
 
     @Test
     fun `addExpense rejects non-finite custom split values before persistence`() = kotlinx.coroutines.test.runTest {
+        coEvery { sharedExpenseDataPort.getGroupMembersOnce(1L) } returns members3
         try {
             manager.addExpense(
                 groupId = 1L,

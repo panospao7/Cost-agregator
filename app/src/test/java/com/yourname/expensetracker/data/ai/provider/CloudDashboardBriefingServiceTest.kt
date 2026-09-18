@@ -1,12 +1,21 @@
 package com.yourname.expensetracker.data.ai.provider
 
 import com.yourname.expensetracker.data.security.SecureKeyStorage
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadPolicy
+import com.yourname.expensetracker.data.privacy.DefaultCloudPayloadRedactor
 import com.yourname.expensetracker.domain.ai.model.AiServiceError
 import com.yourname.expensetracker.domain.ai.model.AiServiceResult
 import com.yourname.expensetracker.domain.ai.model.DashboardBriefingInput
 import com.yourname.expensetracker.domain.ai.model.DashboardBudgetWarningInput
 import com.yourname.expensetracker.domain.ai.model.DashboardUpcomingItemInput
 import com.yourname.expensetracker.domain.model.UiText
+import com.yourname.expensetracker.domain.privacy.CloudPayloadPolicy
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicy
+import com.yourname.expensetracker.domain.privacy.EffectiveCloudAiPolicyResolver
+import com.yourname.expensetracker.domain.privacy.PrivacyCapability
+import com.yourname.expensetracker.domain.privacy.PrivacyDecision
+import com.yourname.expensetracker.domain.privacy.PrivacyGate
+import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
 import okhttp3.MediaType.Companion.toMediaType
@@ -103,7 +112,7 @@ class CloudDashboardBriefingServiceTest {
             }
             .build()
 
-        val service = CloudDashboardBriefingService(mockKeyStorage, client)
+        val service = allowedService(mockKeyStorage, client)
 
         val result = service.generate(defaultInput())
 
@@ -145,7 +154,7 @@ class CloudDashboardBriefingServiceTest {
             }
             .build()
 
-        val service = CloudDashboardBriefingService(mockKeyStorage, client)
+        val service = allowedService(mockKeyStorage, client)
 
         val result = service.generate(defaultInput())
 
@@ -184,7 +193,7 @@ class CloudDashboardBriefingServiceTest {
             }
             .build()
 
-        val service = CloudDashboardBriefingService(mockKeyStorage, client)
+        val service = allowedService(mockKeyStorage, client)
 
         val result = service.generate(defaultInput())
 
@@ -212,7 +221,7 @@ class CloudDashboardBriefingServiceTest {
             }
             .build()
 
-        val service = CloudDashboardBriefingService(mockKeyStorage, client)
+        val service = allowedService(mockKeyStorage, client)
 
         val result = service.generate(defaultInput())
 
@@ -241,6 +250,35 @@ class CloudDashboardBriefingServiceTest {
             upcomingItems = listOf(
                 DashboardUpcomingItemInput("Rent", 500.0, 1_774_928_000_000, "EUR")
             )
+        )
+    }
+
+    private fun allowedService(
+        keyStorage: SecureKeyStorage,
+        client: OkHttpClient
+    ): CloudDashboardBriefingService {
+        val resolver = mockk<EffectiveCloudAiPolicyResolver>()
+        coEvery { resolver.resolve() } returns EffectiveCloudAiPolicy(
+            cloudAllowed = true,
+            reason = null,
+            redactBeforeCloud = false,
+            receiptImageUploadAllowed = false,
+            bankStatementCloudAllowed = false
+        )
+        val privacyGate = mockk<PrivacyGate>()
+        coEvery { privacyGate.check(any<PrivacyCapability>(), any()) } returns PrivacyDecision.Allowed
+        val payloadPolicy: CloudPayloadPolicy = DefaultCloudPayloadPolicy(
+            policyResolver = resolver,
+            redactor = DefaultCloudPayloadRedactor()
+        )
+        return CloudDashboardBriefingService(
+            secureKeyStorage = keyStorage,
+            client = client,
+            promptFormatter = DashboardBriefingPromptFormatter(),
+            aiSettingsRepository = null,
+            privacyGate = privacyGate,
+            cloudPayloadPolicy = payloadPolicy,
+            effectiveCloudAiPolicyResolver = resolver
         )
     }
 

@@ -26,7 +26,7 @@ class DeterministicExpenseExportPagerTest {
             expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, null, null)
         } returns pageOne
         coEvery {
-            expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, null, 2L)
+            expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, 2L, 2L)
         } returns pageTwo
 
         val result = pager.fetchAllBetween(startDate, endDate, pageSize)
@@ -36,7 +36,7 @@ class DeterministicExpenseExportPagerTest {
             expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, null, null)
         }
         coVerify(exactly = 1) {
-            expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, null, 2L)
+            expenseRepository.getExpensesBetweenForExportKeyset(startDate, endDate, pageSize, 2L, 2L)
         }
     }
 

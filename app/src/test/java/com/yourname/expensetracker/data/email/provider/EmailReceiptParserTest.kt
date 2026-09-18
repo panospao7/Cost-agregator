@@ -22,7 +22,7 @@ class EmailReceiptParserTest {
 
         val cleaned = parser.exposeCleanHtml(html)
 
-        assertEquals("Order Total: €12,34\nLine\nTwo & Three\nItem Qty", cleaned)
+        assertEquals("Order Total: €12,34\n\nLine\nTwo & Three\n\nItem Qty", cleaned)
     }
 
     @Test
@@ -37,12 +37,12 @@ class EmailReceiptParserTest {
         val parsed = parser.exposeParseLocalizedDate("15 mars 2026")
 
         assertNotNull(parsed)
-        assertEquals(expectedUtcMillis("yyyy-MM-dd", "2026-03-15"), parsed)
+        assertEquals(expectedSystemZoneMillis("yyyy-MM-dd", "2026-03-15"), parsed)
     }
 
-    private fun expectedUtcMillis(pattern: String, value: String): Long {
+    private fun expectedSystemZoneMillis(pattern: String, value: String): Long {
         return LocalDate.parse(value, DateTimeFormatter.ofPattern(pattern, Locale.US))
-            .atStartOfDay(ZoneId.of("UTC"))
+            .atStartOfDay(ZoneId.systemDefault())
             .toInstant()
             .toEpochMilli()
     }

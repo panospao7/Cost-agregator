@@ -61,6 +61,10 @@ class BudgetRepositoryHistoricalStatusTest {
     @Suppress("DEPRECATION_ERROR")
     @Before
     fun setup() {
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
         every { expenseDao.getTotalSpentFlow() } returns flowOf(0.0)
@@ -79,8 +83,6 @@ class BudgetRepositoryHistoricalStatusTest {
             val total = amounts.sumOf { it.first }
             MultiConversionAggregate(total = total, targetCurrency = targetCurrency, failedConversions = emptyList())
         }
-
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         multiCurrencyRepository = MultiCurrencyRepository(
             expenseDao = expenseDao,
@@ -109,7 +111,7 @@ class BudgetRepositoryHistoricalStatusTest {
 
     @After
     fun tearDown() {
-        // withTransaction inline mock removed — general mock cleanup
+        unmockkStatic("androidx.room.RoomDatabaseKt")
         unmockkAll()
     }
 
@@ -400,7 +402,7 @@ class BudgetRepositoryHistoricalStatusTest {
 
         // Historical rate is unavailable (returns null)
         coEvery {
-            currencyConverter.convertAsOf(any<Double>(), any<CurrencyCode>(), any<CurrencyCode>(), any<Long>())
+            currencyConverter.convertAsOf(any<Double>(), any<String>(), any<String>(), any<Long>())
         } returns null
 
         // Latest rate is available

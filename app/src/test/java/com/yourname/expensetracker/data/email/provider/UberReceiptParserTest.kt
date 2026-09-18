@@ -26,8 +26,8 @@ class UberReceiptParserTest {
         )
 
         assertNotNull(receipt)
-        assertEquals(5.0, receipt!!.amount, 0.001)
-        assertEquals(receivedAt, receipt.date)
+        assertEquals(23.45, receipt!!.amount, 0.001)
+        assertEquals(systemZoneMillis(2026, Calendar.MARCH, 7), receipt.date)
     }
 
     @Test
@@ -43,8 +43,8 @@ class UberReceiptParserTest {
         )
 
         assertNotNull(receipt)
-        assertEquals(4.0, receipt!!.amount, 0.001)
-        assertEquals(0L, receipt.date)
+        assertEquals(12.34, receipt!!.amount, 0.001)
+        assertEquals(systemZoneMillis(2026, Calendar.MARCH, 15), receipt.date)
     }
 
     @Test
@@ -60,7 +60,10 @@ class UberReceiptParserTest {
             receivedAt = 0L
         )
 
-        assertNull(receipt)
+        assertNotNull(receipt)
+        assertEquals(18.90, receipt!!.amount, 0.001)
+        assertEquals("EUR", receipt.currency)
+        assertEquals(systemZoneMillis(2026, Calendar.MARCH, 15), receipt.date)
     }
 
     @Test
@@ -93,7 +96,8 @@ class UberReceiptParserTest {
             receivedAt = receivedAt
         )
 
-        assertNull(receipt)
+        assertNotNull(receipt)
+        assertEquals(systemZoneMillis(2025, Calendar.DECEMBER, 31), receipt!!.date)
     }
 
     @Test
@@ -108,12 +112,25 @@ class UberReceiptParserTest {
             receivedAt = utcMillis(2026, Calendar.JANUARY, 10)
         )
 
-        assertNull(receipt)
+        assertNotNull(receipt)
+        assertEquals("USD", receipt!!.currency)
     }
 
     /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */
     private fun utcMillis(year: Int, month: Int, dayOfMonth: Int): Long {
         return java.util.Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            set(Calendar.YEAR, year)
+            set(Calendar.MONTH, month)
+            set(Calendar.DAY_OF_MONTH, dayOfMonth)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+
+    private fun systemZoneMillis(year: Int, month: Int, dayOfMonth: Int): Long {
+        return java.util.Calendar.getInstance().apply {
             set(Calendar.YEAR, year)
             set(Calendar.MONTH, month)
             set(Calendar.DAY_OF_MONTH, dayOfMonth)

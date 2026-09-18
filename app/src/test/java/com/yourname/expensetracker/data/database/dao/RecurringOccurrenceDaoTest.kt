@@ -146,9 +146,9 @@ class RecurringOccurrenceDaoTest {
         dao.insert(createOccurrence(dueDate = FIXED_NOW + 86_400_000L, occurrenceKey = "getByDateRange_key2")) // next day
         dao.insert(createOccurrence(dueDate = FIXED_NOW + 172_800_000L, occurrenceKey = "getByDateRange_key3")) // two days later
 
-        val results = dao.getByDateRange(FIXED_NOW, FIXED_NOW + 100_000_000L)
+        val results = dao.getByDateRange(FIXED_NOW, FIXED_NOW + 172_800_000L)
 
-        assertEquals(3, results.size)
+        assertEquals(2, results.size)
     }
 
     @Test

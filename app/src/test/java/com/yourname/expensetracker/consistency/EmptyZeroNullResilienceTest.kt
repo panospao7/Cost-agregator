@@ -77,8 +77,8 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
-        every { budgetRepository.getBudgetStatuses() } returns flowOf(emptyList())
-        every { savingsGoalRepository.getAllGoals() } returns flowOf(emptyList())
+        coEvery { budgetRepository.getBudgetStatusesAt(any()) } returns emptyList()
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns emptyList()
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
         coEvery {
             recurringExpenseEngine.getPatterns(any<List<com.yourname.expensetracker.data.database.entity.Expense>>())
