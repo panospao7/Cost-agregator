@@ -34,6 +34,7 @@ class InvestmentTrackerTest {
 
     @Before
     fun setup() {
+        every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         tracker = InvestmentTracker(
             database = mockk(relaxed = true),
             investmentDao = investmentDao,

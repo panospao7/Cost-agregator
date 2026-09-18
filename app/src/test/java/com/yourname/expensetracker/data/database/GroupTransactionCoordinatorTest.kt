@@ -673,7 +673,7 @@ class GroupTransactionCoordinatorTest {
     fun `addExpenseWithLink is atomic - validates inside transaction`() = runTest {
         // Arrange
         val group = ExpenseGroup(name = "Link Test Group", defaultCurrency = "EUR")
-        val members = listOf(GroupMember(groupId = 0, name = "Alice"))
+        val members = listOf(GroupMember(groupId = 0, name = "Alice", isCurrentUser = true))
         val groupId = coordinator.createGroupWithMembersAtomic(group, members)
         val savedMembers = memberDao.getMembersForGroup(groupId).first()
         val aliceId = savedMembers.first().id
@@ -1012,7 +1012,7 @@ class GroupTransactionCoordinatorTest {
             )
         )
 
-        coEvery { transactionSideEffectPlanner.planBulkUpdated(any(), any(), any()) } returns nonEmptyBatch()
+        coEvery { transactionSideEffectPlanner.planBulkUpdated(any(), any(), any(), any()) } returns nonEmptyBatch()
         coEvery { postCommitActionRunner.run(any()) } throws CancellationException("Cancelled")
 
         // Act & Assert

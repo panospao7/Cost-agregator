@@ -21,13 +21,16 @@ import io.mockk.coVerify
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GroupsRepositoryImplTest {
@@ -43,7 +46,10 @@ class GroupsRepositoryImplTest {
 
     @Before
     fun setUp() {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
 
         repository = GroupsRepositoryImpl(
             writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
@@ -58,6 +64,11 @@ class GroupsRepositoryImplTest {
         )
     }
 
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
     @Test
     fun `create group returns group with members`() = runTest(testDispatcher) {
         coEvery {
@@ -65,7 +76,8 @@ class GroupsRepositoryImplTest {
                 name = "Trip",
                 description = "Summer trip",
                 currency = "EUR",
-                members = any()
+                members = any(),
+                onInsideTransaction = any()
             )
         } returns GroupCreationResult.Success(groupId = 101L)
 
@@ -88,7 +100,8 @@ class GroupsRepositoryImplTest {
                         members[0].name == "Panos" &&
                         members[0].isCurrentUser &&
                         members[0].groupId == 0L
-                }
+                },
+                onInsideTransaction = any()
             )
         }
     }
@@ -160,7 +173,7 @@ class GroupsRepositoryImplTest {
     }
 
     @Test
-    fun `member delete ignores equal split expenses before joinedAt`() = runTest(testDispatcher) {
+    fun `member delete ignores equal split expenses before joinedAt`() = runTest(testDispatcher, timeout = 60.seconds) {
         val groupId = 57L
         val memberId = 10L
         val joinedAt = 1_700_000_000_000L
