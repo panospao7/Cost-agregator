@@ -133,3 +133,37 @@ After implementation and strict review, run sequentially with output captured:
 ```
 
 No Gradle command was run while preparing this plan.
+
+---
+
+## Ported onto reconciled mainline (2026-09-18, lane `rp-06-wip` refreshed at `a0c4ae0d`)
+
+A parallel session independently landed batch 6a on `bug-fixes` (`0f1f587b`,
+golden-validated, incl. golden-master updates and the stale
+`ForecastInputAssemblerTest` fix) alongside a validated RP-10c with its own
+close-out (`419e38c0`/`2d128468`, deduper `tryStart` polarity fix,
+suspend-`Continuation` CleanupTest pin). The reconciliation merge `a0c4ae0d`
+took origin's implementations for all overlapping code. This lane's original
+6a variant is archived at `rp-06-6a-superseded` (66a0414d) — do not merge it.
+
+Ported from the lane onto the refreshed lane (unique work origin does not
+have):
+
+- **P5-006**: `HomeViewModel` bumps `dashboardReloadTrigger` exactly once per
+  real home-currency change, from the same collector that loads category
+  trends (ordering with the repository's separate cache-invalidation collector
+  cannot be guaranteed, per plan). First emission does not count as a change;
+  no loop (the trigger flow never observes home currency).
+- `ForecastInputAssemblerPaceSentinelTest` — legacy `buildSpendingPace` vs
+  canonical `SpendingPaceCalculator` parity + -1f sentinel pins. Origin's
+  assembler carries the identical sentinel, so the contract holds on this base.
+- `HomeViewModelCurrencyReloadTest` — the P5-006 executable spec; hangs under
+  the runner (MockK + ViewModel-construction family, same as
+  `HomeViewModelStressTest`) and stays `@Ignore`d with evidence; revive with
+  the RP-21 harness.
+- **REVAL-8 evidence** (re-verified on the reconciled tree):
+  `MultiCurrencyRepository.updateExpenseCurrency` still has **zero callers**
+  (declaration only). Removal stays deferred to the designated cleanup change.
+
+Next: batch 6b (synthesis suspend migration, typed conversion outcomes, raw
+fallback removal, block-party tests) on this lane.
