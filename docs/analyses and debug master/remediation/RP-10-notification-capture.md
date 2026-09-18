@@ -202,3 +202,27 @@ all result callers, privacy diagnostics, and the legacy-row tests before this pl
 The plan must stop if source inspection reveals that the chosen legacy transition cannot preserve an
 active claimed row or if a schema/index change is introduced without a Room migration and schema
 snapshot.
+
+---
+
+## Landed and validated (2026-09-17)
+
+10c (`b0141f43` code, `506d8b16` docs) merged into `bug-fixes` at `73a50936`
+(clean auto-merge; zero file overlap with the other parent). Validation via
+`validation-runner` on the merged tree (`73a50936`):
+
+- `NotificationCaptureDeduperTest` — PASS (`vr-20260917-203841-d1920d21`).
+- `NotificationTransientPayloadCryptoTest` — PASS (`vr-20260917-204127-e043333d`).
+- `NotificationCaptureServiceCleanupTest` — 6/7 PASS; all sensitive-key pins
+  (P1-005) pass. The one failure,
+  `processNotification_accepts_privacy_settings_parameter`, is **proven
+  pre-existing**: it fails identically at the pre-merge tip `cbf1eeae`
+  (`vr-20260917-204801-ff3ee631`). Root cause: the P1-009-era reflection guard
+  asserts `parameterCount == 6`, but `processNotification` has been `suspend`
+  since the initial commit, and the Kotlin-compiled JVM signature carries a
+  trailing `Continuation` parameter, so reflection sees 7. The test's intent
+  (6th parameter is `PrivacySettings`) still holds; the count assertion is
+  stale. Fix belongs to test debt, not production.
+
+The 10c surface (P1-005/006/008) is validated. Broader notification battery
+remains time-out-blocked — see WAVE-1-STATUS for the pipeline-suite findings.

@@ -170,3 +170,39 @@ last. RP-04/RP-11 wave-1 lane tails still owed (RP-04 exemption expires
 `build/worktrees/rp-01|02|03` leftovers and `build/worktrees/scratch-12b-baseline`
 (unregistered, checked out at committed tips, only Gradle output inside —
 Windows "Filename too long" blocks plain removal).
+
+---
+
+## 2026-09-17 — RP-10c landed on `bug-fixes`; battery findings (RP-21 feed)
+
+Mainline note: `bug-fixes` is now the integration line — `atomicity-pr21-enforcement-final`
+is fully absorbed (0/23) and unmoved. Landed since the last entry: PR #12
+(`rp-10c-wip`, the serialized validation-runner infrastructure, `69c5bf19` WIP),
+`gr-00-local` merge `cbf1eeae` (GR-14e counterexamples 11→1, GR-14f dispatch
+5→1 seed 408→406, GR-15 step 2 v3 proof-contract loader), and RP-10c
+notification hygiene `73a50936` (the stranded `rp-10-wip` 10c pair — the
+similarly named PR #12 branch does NOT contain it).
+
+Validation (`validation-runner`, tree `73a50936`): Deduper PASS, transient
+crypto PASS, CleanupTest 6/7 with the single failure proven pre-existing at
+`cbf1eeae` (stale P1-009 reflection guard: asserts JVM parameterCount 6 for a
+`suspend` method whose compiled signature carries `Continuation`, so 7; see
+RP-10 doc). GR-15 v3 loader tests: 20/20 via pytest (standalone — not yet
+wired into the static-guard suite; wiring is GR-15 step 3).
+
+Full-battery finding (`vr-20260917-201052-d75db0e2`, `*Notification*` filter,
+TIMEOUT by no-output): 16 real failures in `data/repository`
+`NotificationProcessingPipeline{Atomicity(6),Reliability(8),SourceLink(2)}Test`
+— suites untouched since the pipeline-11 era and never re-run after 10a/10b
+changed the intake semantics they pin; all three use MockK/runTest. The run
+then hung with no output after `NotificationProcessingPipelineStressTest`
+(all SKIPPED); prime suspect is `NotificationCaptureServiceDeferredPolicyTest`
+— the documented first-run MockK+suspend hang — which is still NOT in
+`known-hanging-tests.json` and NOT `@Ignore`d (ledger additions need human
+approval). These belong to the RP-21 workstream together with the stale P1-009
+guard; none of it is 10c surface (10c touched only `domain/notification/capture`).
+
+Next: RP-21 (hang family + pipeline test debt) before trusting the pipeline
+suites; then the RP-06→07→08→09 chain; RP-13 schema bump last. RP-04/RP-11
+wave-1 tails still owed (RP-04 exemption expires 2026-10-31). Cancellation
+allowlist expires 2026-10-01.
