@@ -1,7 +1,7 @@
 package com.yourname.expensetracker.domain.receipt
 
 import com.yourname.expensetracker.data.repository.MerchantRulesRepository
-import io.mockk.mockk
+import com.yourname.expensetracker.domain.util.FakeTimeProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -15,7 +15,10 @@ class ReceiptParserTest {
 
     @Before
     fun setup() {
-        parser = ReceiptParser(MerchantRulesRepository(), timeProvider = mockk())
+        parser = ReceiptParser(
+            MerchantRulesRepository(),
+            timeProvider = FakeTimeProvider.forDate(2026, 6, 1)
+        )
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.ai.provider
 
+import android.graphics.Bitmap
 import com.yourname.expensetracker.domain.ai.model.ReceiptAssistInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -7,7 +8,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.util.Base64
+import java.io.ByteArrayOutputStream
 
 class OnDeviceReceiptAssistServiceTest {
 
@@ -51,7 +52,14 @@ class OnDeviceReceiptAssistServiceTest {
     @Test
     fun `buildRequestForTest attaches image when valid image input exists`() {
         val imageFile = kotlin.io.path.createTempFile(suffix = ".png").toFile().apply {
-            writeBytes(Base64.getDecoder().decode(ONE_BY_ONE_PNG_BASE64))
+            val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
+            val output = ByteArrayOutputStream()
+            try {
+                assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
+                writeBytes(output.toByteArray())
+            } finally {
+                bitmap.recycle()
+            }
         }
 
         try {
@@ -134,8 +142,4 @@ class OnDeviceReceiptAssistServiceTest {
         assertNull(result.taxAmount)
     }
 
-    private companion object {
-        private const val ONE_BY_ONE_PNG_BASE64 =
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+nX4QAAAAASUVORK5CYII="
-    }
 }

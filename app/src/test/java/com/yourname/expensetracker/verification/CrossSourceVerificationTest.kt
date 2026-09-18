@@ -74,7 +74,7 @@ class CrossSourceVerificationTest : AnalyticsEngineTestBase() {
         val recurringExpenseEngine = mockk<RecurringExpenseEngine>(relaxed = true)
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
 
-        val budgetRepository = mockk<BudgetRepository>(relaxed = true)
+        val budgetRepository = mockk<BudgetRepository>()
         coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
         coEvery { budgetRepository.getActiveBudgetSnapshots() } returns emptyList()
         val currencySettingsRepository = TestCurrencySettingsRepository()

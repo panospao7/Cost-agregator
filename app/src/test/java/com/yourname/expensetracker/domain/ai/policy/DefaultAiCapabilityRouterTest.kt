@@ -9,6 +9,7 @@ import com.yourname.expensetracker.domain.ai.model.OnDeviceModelStatus
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.ai.service.AiEnvironmentMonitor
 import com.yourname.expensetracker.domain.debug.AiRuntimeDiagnostics
+import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -24,17 +25,26 @@ class DefaultAiCapabilityRouterTest {
     private lateinit var environmentMonitor: AiEnvironmentMonitor
     private lateinit var aiRuntimeDiagnostics: AiRuntimeDiagnostics
     private lateinit var secureKeyStorage: SecureKeyStorage
+    private lateinit var timeProvider: TimeProvider
     private lateinit var router: DefaultAiCapabilityRouter
 
     @Before
     fun setup() {
         policy = AiPolicyImpl()
         environmentMonitor = mockk()
-        aiRuntimeDiagnostics = mockk(relaxed = true)
         secureKeyStorage = mockk()
+        timeProvider = mockk()
+        every { timeProvider.now() } returns 1_700_000_000_000L
+        aiRuntimeDiagnostics = AiRuntimeDiagnostics(timeProvider)
         // By default, assume API key is present for existing tests
         every { secureKeyStorage.hasKey(SecureKeyStorage.KEY_GEMINI) } returns true
-        router = DefaultAiCapabilityRouter(policy, environmentMonitor, aiRuntimeDiagnostics, secureKeyStorage, mockk(relaxed = true))
+        router = DefaultAiCapabilityRouter(
+            policy,
+            environmentMonitor,
+            aiRuntimeDiagnostics,
+            secureKeyStorage,
+            mockk(relaxed = true),
+        )
     }
 
     @Test

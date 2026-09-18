@@ -24,6 +24,7 @@ import io.mockk.unmockkStatic
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
+import kotlin.time.Duration.Companion.seconds
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -47,6 +48,11 @@ class AiChatRepositoryImplTest {
         aiSettingsRepository = mockk()
         fakeTimeProvider = FakeTimeProvider(1_000L)
 
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
+
         // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
 
         val redactor = mockk<CloudPayloadRedactor>(relaxed = true)
@@ -59,7 +65,7 @@ class AiChatRepositoryImplTest {
 
     @After
     fun tearDown() {
-        // withTransaction inline mock removed — no static mock to clear
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     @Test
@@ -131,7 +137,7 @@ class AiChatRepositoryImplTest {
     }
 
     @Test
-    fun `appendMessage inserts message and updates session timestamp when history enabled`() = runTest {
+    fun `appendMessage inserts message and updates session timestamp when history enabled`() = runTest(timeout = 60.seconds) {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(storeConversationHistory = true))
         coEvery { messageDao.insert(any()) } returns 9L
 

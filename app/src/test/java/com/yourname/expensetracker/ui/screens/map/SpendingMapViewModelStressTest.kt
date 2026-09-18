@@ -12,6 +12,7 @@ import com.yourname.expensetracker.domain.location.LocationResolutionResult
 import com.yourname.expensetracker.domain.location.LocationResolver
 import com.yourname.expensetracker.domain.location.LocatedMoneyExpense
 import com.yourname.expensetracker.domain.location.SpendingHeatmapEngine
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -29,6 +30,11 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+
+private fun testCurrencySettingsRepository(): CurrencySettingsRepository =
+    mockk<CurrencySettingsRepository>(relaxed = true).also {
+        every { it.homeCurrency() } returns flowOf("EUR")
+    }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class SpendingMapViewModelStressTest : ViewModelTestUtils() {
@@ -69,7 +75,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = testCurrencySettingsRepository(),
             currencyConverter = mockk(relaxed = true),
             timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
@@ -134,7 +140,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = testCurrencySettingsRepository(),
             currencyConverter = mockk(relaxed = true),
             timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
@@ -175,7 +181,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             heatmapEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = testCurrencySettingsRepository(),
             currencyConverter = mockk(relaxed = true),
             timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
@@ -218,7 +224,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             realEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = testCurrencySettingsRepository(),
             currencyConverter = mockk(relaxed = true),
             timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
@@ -258,7 +264,7 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
             realEngine,
             insightsEngine,
             geocodingService,
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = testCurrencySettingsRepository(),
             currencyConverter = mockk(relaxed = true),
             timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
@@ -396,7 +402,7 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             expenseRepository, categoryRepository, locationResolver,
             locationProvider, merchantLocationRepository,
             heatmapEngine, insightsEngine, geocodingService,
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = testCurrencySettingsRepository(),
             currencyConverter = mockk(relaxed = true),
             timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),
@@ -426,7 +432,7 @@ class SpendingMapHeatmapFilterTest : ViewModelTestUtils() {
             expenseRepository, categoryRepository, locationResolver,
             locationProvider, merchantLocationRepository,
             heatmapEngine, insightsEngine, geocodingService,
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = testCurrencySettingsRepository(),
             currencyConverter = mockk(relaxed = true),
             timeProvider = mockk(relaxed = true),
             privacyGate = mockk(relaxed = true),

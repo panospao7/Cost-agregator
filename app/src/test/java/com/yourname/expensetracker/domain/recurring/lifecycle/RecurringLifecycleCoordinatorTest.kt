@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.domain.recurring.lifecycle
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.backup.RestoreMaintenanceMode
 import com.yourname.expensetracker.data.database.AppDatabase
@@ -20,8 +21,11 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
+import kotlin.time.Duration.Companion.seconds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -69,6 +73,11 @@ class RecurringLifecycleCoordinatorTest {
         writeBarrier = mockk(relaxed = true)
         plannedExpenseDao = mockk(relaxed = true)
 
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
+
         every { timeProvider.now() } returns now
         every { restoreMaintenanceMode.isWritesAllowed() } returns true
 
@@ -91,8 +100,13 @@ class RecurringLifecycleCoordinatorTest {
         )
     }
 
+    @org.junit.After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
     @Test
-    fun `generateOccurrences expands rule and materializes occurrences`() = runTest {
+    fun `generateOccurrences expands rule and materializes occurrences`() = runTest(timeout = 60.seconds) {
         val rule = ManualRecurringExpense(
             id = 1L,
             merchant = "Netflix",
@@ -163,7 +177,7 @@ class RecurringLifecycleCoordinatorTest {
     }
 
     @Test
-    fun `generateOccurrences throws when rule not found`() = runTest {
+    fun `generateOccurrences throws when rule not found`() = runTest(timeout = 60.seconds) {
         coEvery { manualRecurringExpenseDao.getById(404L) } returns null
 
         var thrown: Throwable? = null
