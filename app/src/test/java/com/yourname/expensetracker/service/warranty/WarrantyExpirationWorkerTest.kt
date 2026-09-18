@@ -21,6 +21,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.workers.RetryableWorkerException
 import com.yourname.expensetracker.domain.workers.WorkerExecutionGuard
 import com.yourname.expensetracker.domain.workers.WorkerGuardResult
+import com.yourname.expensetracker.domain.workers.WorkerRunContext
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -73,10 +74,16 @@ class WarrantyExpirationWorkerTest {
         // maps to Retry, then the classifyTransient keyword heuristic maps to Retry, else
         // Failed. A blanket-Retry mock would LIE about production behavior, so we model the
         // real classification here.
-        coEvery { executionGuard.runGuarded(any(), any<suspend () -> Any>()) } coAnswers {
-            val block = secondArg<suspend () -> Any>()
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any(),
+                any<suspend (WorkerRunContext) -> Any>()
+            )
+        } coAnswers {
+            val block = secondArg<suspend (WorkerRunContext) -> Any>()
+            val ctx = mockk<WorkerRunContext>(relaxed = true)
             try {
-                WorkerGuardResult.Success(block.invoke())
+                WorkerGuardResult.Success(block.invoke(ctx))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -311,7 +318,12 @@ class WarrantyExpirationWorkerTest {
         // The guard owns the notification-permission gate (S1): when notifications are
         // disabled it short-circuits with a durable SKIPPED run and never invokes the
         // worker block, so no notification is sent.
-        coEvery { executionGuard.runGuarded(any(), any<suspend () -> Any>()) } returns
+        coEvery {
+            executionGuard.runGuardedWithContext(
+                any(),
+                any<suspend (WorkerRunContext) -> Any>()
+            )
+        } returns
             WorkerGuardResult.Skipped(DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED.name)
 
         val result = buildWorker().doWork()

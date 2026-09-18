@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
 import com.yourname.expensetracker.domain.budget.BudgetForecastingEngine
 import com.yourname.expensetracker.domain.groups.SettlementCalculator
+import io.mockk.mockk
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -23,9 +24,9 @@ class ConstantsConsistencyTest : AnalyticsEngineTestBase() {
             fieldName = "PACE_UNDER_THRESHOLD"
         ).toFloat()
 
-        val settlementIterationLimit = readNumberConstant(
-            owner = SettlementCalculator::class.java,
-            fieldName = "DFS_ITERATION_LIMIT"
+        val settlementIterationLimit = readNumberProperty(
+            instance = defaultSettlementCalculator(),
+            fieldName = "dfsIterationLimit"
         ).toInt()
 
         val budgetMonitorWarningThresholdPercent = Budget(
@@ -52,9 +53,10 @@ class ConstantsConsistencyTest : AnalyticsEngineTestBase() {
             owner = SpendingPaceCalculator::class.java,
             fieldName = "PACE_UNDER_THRESHOLD"
         )
+        val settlementCalculator = defaultSettlementCalculator()
         val settlementLimitField = findField(
             owner = SettlementCalculator::class.java,
-            fieldName = "DFS_ITERATION_LIMIT"
+            fieldName = "dfsIterationLimit"
         )
 
         assertNotNull(paceThresholdField)
@@ -65,9 +67,10 @@ class ConstantsConsistencyTest : AnalyticsEngineTestBase() {
             Modifier.isStatic(paceThresholdField!!.modifiers)
         )
         assertTrue(
-            "DFS iteration limit should be a compile-time static constant",
-            Modifier.isStatic(settlementLimitField!!.modifiers)
+            "DFS iteration limit should be instance-configurable",
+            !Modifier.isStatic(settlementLimitField!!.modifiers)
         )
+        assertEquals(100_000, readNumberProperty(settlementCalculator, "dfsIterationLimit").toInt())
 
         // Sanity guard for confidence constants relationship.
         assertTrue(BudgetForecastingEngine.CONFIDENCE_THRESHOLD_HIGH > BudgetForecastingEngine.CONFIDENCE_THRESHOLD_MEDIUM)
@@ -86,6 +89,17 @@ class ConstantsConsistencyTest : AnalyticsEngineTestBase() {
             }
         }
     }
+
+    private fun readNumberProperty(instance: Any, fieldName: String): Number {
+        val field = findField(instance.javaClass, fieldName)
+            ?: error("Could not find field '$fieldName' in ${instance.javaClass.name}")
+        return field.get(instance) as Number
+    }
+
+    private fun defaultSettlementCalculator(): SettlementCalculator = SettlementCalculator(
+        currencySettingsRepository = mockk(relaxed = true),
+        writeBarrier = mockk(relaxed = true)
+    )
 
     private fun findField(owner: Class<*>, fieldName: String): Field? {
         owner.declaredFields.firstOrNull { it.name == fieldName }?.let {

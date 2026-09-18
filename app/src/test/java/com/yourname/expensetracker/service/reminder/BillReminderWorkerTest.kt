@@ -156,7 +156,7 @@ class BillReminderWorkerTest {
      * - Snapshot is valid
      */
     private fun setupNotificationDispatchPath(reminder: RecurringReminderDelivery) {
-        coEvery { coordinator.getDueReminders() } returns listOf(reminder)
+        coEvery { coordinator.recoverAndGetDueReminders() } returns listOf(reminder)
         coEvery { coordinator.claimReminderDelivery(reminder.id) } returns true
         coEvery { coordinator.getDispatchableClaimedReminder(reminder.id) } returns testSnapshot(
             deliveryId = reminder.id, occurrenceId = reminder.occurrenceId
@@ -176,8 +176,8 @@ class BillReminderWorkerTest {
         // Skipped returns success (periodic worker should not retry)
         assertEquals(Result.success(), result)
 
-        // Crucially: coordinator.getDueReminders() should NEVER be called
-        coVerify(exactly = 0) { coordinator.getDueReminders() }
+        // Crucially: coordinator.recoverAndGetDueReminders() should NEVER be called
+        coVerify(exactly = 0) { coordinator.recoverAndGetDueReminders() }
     }
 
     // ─── Test 2: Permission revoked after claim unclaims delivery ───
