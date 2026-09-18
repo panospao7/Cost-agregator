@@ -228,3 +228,15 @@ Next: RP-21 (hang family + pipeline test debt) before trusting the pipeline
 suites; then the RP-06→07→08→09 chain; RP-13 schema bump last. RP-04/RP-11
 wave-1 tails still owed (RP-04 exemption expires 2026-10-31). Cancellation
 allowlist expires 2026-10-01.
+
+---
+
+## 2026-09-18 — rp-06-wip refreshed onto reconciled mainline; P5-006 ported
+
+`bug-fixes` reconciled with a parallel session's independent RP-10c + RP-06 6a
+landings (merge `a0c4ae0d`; origin implementations won all overlaps — see
+`RP-06-pace-synthesis.md`). The lane's superseded 6a variant is archived at
+`rp-06-6a-superseded`. Ported onto the refreshed lane: P5-006
+(one-reload-per-currency-change), the assembler/calculator parity test, the
+@Ignore'd P5-006 spec test, and re-verified REVAL-8 zero-caller evidence.
+Remaining: 6b synthesis suspend migration, then 6c.

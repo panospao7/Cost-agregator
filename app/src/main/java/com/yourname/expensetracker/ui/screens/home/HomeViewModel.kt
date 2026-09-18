@@ -219,7 +219,21 @@ class HomeViewModel @Inject constructor(
 
         // S4-011R: collectLatest cancels the suspend body directly — no inner launch
         viewModelScope.launch {
+            // P5-006 (RP-06): one dashboard reload per real home-currency change.
+            // The MultiCurrencyRepository cache invalidation runs in its own
+            // collector, so ordering cannot be guaranteed — bumping from this same
+            // collector keeps exactly one recompute per change (never a loop: this
+            // flow does not observe dashboardReloadTrigger). The first emission is
+            // the initial value already covered by the initial compute, not a change.
+            var seenHomeCurrency: String? = null
+            var isFirstEmission = true
             homeCurrency.filterNotNull().collectLatest { currency ->
+                val isChange = !isFirstEmission && currency != seenHomeCurrency
+                isFirstEmission = false
+                seenHomeCurrency = currency
+                if (isChange) {
+                    dashboardReloadTrigger.update { it + 1 }
+                }
                 loadCategoryTrendsForCurrency(currency)
             }
         }
