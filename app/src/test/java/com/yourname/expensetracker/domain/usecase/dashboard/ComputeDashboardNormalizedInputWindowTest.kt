@@ -72,7 +72,11 @@ class ComputeDashboardNormalizedInputWindowTest {
                 rateStore,
                 object : TimeProvider { override fun now() = NOW }
             ),
-            currencySettingsRepository = currencySettingsRepository
+            currencySettingsRepository = currencySettingsRepository,
+            // RP-06 6a: real calculator + the test's fake TimeProvider so pace math is real.
+            spendingPaceCalculator = com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator(
+                object : TimeProvider { override fun now() = NOW }
+            )
         )
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))

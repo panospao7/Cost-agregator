@@ -72,9 +72,11 @@ class NotificationCaptureDeduperTest {
     }
 
     /**
-     * Monotonic-source proof: the fake is pinned at 5s-since-origin (5 ms in
-     * deduper millis), a value wildly inconsistent with the real wall clock
-     * (~1.7e12 ms). With the old wall-clock TimeProvider, `now` would be
+     * Monotonic-source proof: the fake is pinned at 5s-since-origin
+     * (5_000_000_000 ns — the deduper stores and compares nanos internally;
+     * only the public window parameters stay in millis), a value wildly
+     * inconsistent with the real wall clock (~1.7e12 ms). With the old
+     * wall-clock TimeProvider, `now` would be
      * ~1.7e12 ms while `last` stays fake-derived, so `(now - last)` would be
      * hugely positive (window void) or hugely negative after a backward wall
      * jump (suppressed forever). This test fails if the deduper is reverted

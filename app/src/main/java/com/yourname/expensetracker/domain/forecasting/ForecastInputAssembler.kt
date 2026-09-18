@@ -358,10 +358,14 @@ class ForecastInputAssembler @Inject constructor(
         )
 
         val currentDailyRate = monthSpent / daysElapsed
+        // NEW-P6-013: canonical -1f sentinel when no baseline exists (paceStatus
+        // == NO_BASELINE is the only legal companion). 0f was misleading — it is
+        // indistinguishable from a true 0% pace and consumers must never format,
+        // threshold, or chart the sentinel value.
         val pacePercentage = if (baselineDailyRate > 0.0) {
             (currentDailyRate / baselineDailyRate * 100.0).toFloat()
         } else {
-            0f
+            -1f
         }
 
         val paceStatus = when {

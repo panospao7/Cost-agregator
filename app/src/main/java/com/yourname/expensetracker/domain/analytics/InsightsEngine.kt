@@ -110,7 +110,8 @@ class InsightsEngine @Inject constructor(
                 projectedTotal = 0.0,
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
-                pacePercentage = 0f,
+                // NEW-P6-013: canonical -1f sentinel paired with NO_BASELINE.
+                pacePercentage = -1f,
                 paceStatus = PaceStatus.NO_BASELINE,
                 displayCurrency = input.homeCurrency
             ),
@@ -370,7 +371,8 @@ class InsightsEngine @Inject constructor(
                 projectedTotal = 0.0,
                 previousMonthTotal = null,
                 averageMonthlyTotal = null,
-                pacePercentage = 0f,
+                // NEW-P6-013: canonical -1f sentinel paired with NO_BASELINE.
+                pacePercentage = -1f,
                 paceStatus = PaceStatus.NO_BASELINE,
                 displayCurrency = displayCurrency
             ),

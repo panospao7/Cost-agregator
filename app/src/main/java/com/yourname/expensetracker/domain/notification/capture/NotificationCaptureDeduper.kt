@@ -12,15 +12,16 @@ import javax.inject.Singleton
  * a configurable window. Uses SHA-256 content fingerprints and hashed
  * package/key identifiers to avoid storing raw text in the dedupe map.
  *
- * The dedupe window and TTL run on [MonotonicTimeProvider] (elapsed time),
- * so they are immune to wall-clock backward/forward jumps (NTP sync, user
- * clock changes): a backward jump cannot resurrect stale duplicates and a
- * forward jump cannot void the window. Nanos are converted to millis once
- * at each read; all window/TTL math and stored values remain millis.
+ * Time source: the injected [MonotonicTimeProvider] makes the window immune
+ * to wall-clock jumps (NTP sync, manual clock changes) — a backward jump can
+ * no longer suppress identical re-posts and a forward jump cannot disable
+ * the window. Timestamps are stored internally in **nanoseconds**
+ * ([MonotonicTimeProvider.nowNanos]); the public [windowMs] parameters stay
+ * in milliseconds and are converted to nanos once per call.
  */
 @Singleton
 class NotificationCaptureDeduper @Inject constructor(
-    private val monotonicTimeProvider: MonotonicTimeProvider
+    private val timeProvider: MonotonicTimeProvider
 ) {
     private val entries = LinkedHashMap<String, Long>(100, 0.75f, true)
     private val lock = Any()
@@ -31,10 +32,11 @@ class NotificationCaptureDeduper @Inject constructor(
      * If already present and within window, returns true (duplicate).
      */
     fun tryStart(key: String, windowMs: Long): Boolean {
-        val now = monotonicTimeProvider.nowNanos() / 1_000_000
+        val now = timeProvider.nowNanos()
+        val windowNanos = windowMs * 1_000_000L
         synchronized(lock) {
             val last = entries[key]
-            if (last != null && (now - last) < windowMs) {
+            if (last != null && (now - last) < windowNanos) {
                 return true // duplicate
             }
             entries[key] = now
@@ -59,9 +61,10 @@ class NotificationCaptureDeduper @Inject constructor(
      * Remove expired entries older than [maxAgeMs].
      */
     fun cleanupExpired(maxAgeMs: Long) {
-        val now = monotonicTimeProvider.nowNanos() / 1_000_000
+        val now = timeProvider.nowNanos()
+        val maxAgeNanos = maxAgeMs * 1_000_000L
         synchronized(lock) {
-            entries.entries.removeIf { now - it.value > maxAgeMs }
+            entries.entries.removeIf { now - it.value > maxAgeNanos }
         }
     }
 

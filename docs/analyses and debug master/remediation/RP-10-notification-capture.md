@@ -115,7 +115,28 @@ messages, or stack traces.
 > suites green. Conditional: EnqueueFailureTest @Ignore'd (MockK suspend
 > hang family — RP-21 feed); DeferredPolicyTest never compiled at 10a
 > (proven) and its first run hangs in the same family — unvalidated 10a
-> carryover. 10c (P1-005/006/008 hygiene) not started.
+> carryover.
+>
+> **Status 10c (2026-09-16):** implemented on branch `rp-10c-wip` —
+> P1-005 (4 MessagingStyle keys added to SENSITIVE_EXTRAS_KEYS +
+> end-to-end buildExtrasJson filter test), P1-006 (deduper switched to
+> MonotonicTimeProvider.nowNanos() with internal nanos storage and ms→ns
+> conversion; new NotificationCaptureDeduperTest), P1-008 (presence-bit +
+> 4-byte length-prefixed framing with legacy NUL-split decrypt fallback for
+> in-flight old-framed rows; new NotificationTransientPayloadCryptoTest incl.
+> embedded-NUL, null/empty distinction, truncated-frame negative, legacy
+> fallback conflation pin). Strict static review GREEN (overflow-proof
+> bounds check in parseFrame included). First live execution 2026-09-17
+> (validation-runner, after a repo relocation invalidated stale OneDrive-era build
+> caches): DeduperTest initially 6/6 FAIL — the 419e38c0 rewrite had inverted
+> tryStart polarity; test file restored to the b0141f43 semantics (9 tests,
+> false=admitted/true=suppressed) + KDoc-only nanos note. CleanupTest initially
+> 8/9 — latent suspend-reflection bug since f4aac79f (processNotification is
+> suspend: reflection reports 6 Kotlin params + trailing Continuation); test
+> now pins 7 reflected params incl. the Continuation. Final: DeduperTest 9/9
+> PASS (vr-20260917-102030-bacce99d), CryptoTest 8/8 PASS (vr-20260917-103742-
+> e867125d), CleanupTest 9/9 PASS (vr-20260917-110151-eac23c48), compile PASS
+> (vr-20260917-092331-2f2b5303). Strict review of the test-only fix: PASS.
 
 ### P1-003 - Await enqueue and transition failures atomically
 

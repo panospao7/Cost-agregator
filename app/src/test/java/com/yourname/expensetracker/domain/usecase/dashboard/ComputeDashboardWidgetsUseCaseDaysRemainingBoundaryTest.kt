@@ -124,7 +124,9 @@ class ComputeDashboardWidgetsUseCaseDaysRemainingBoundaryTest {
             forecastInputAssembler = mockk<com.yourname.expensetracker.domain.forecasting.ForecastInputAssembler>(relaxed = true),
             currencyConverter = mockk<CurrencyConverter>(relaxed = true),
             currencySettingsRepository = currencySettingsRepository,
-            multiCurrencyRepository = multiCurrencyRepository
+            multiCurrencyRepository = multiCurrencyRepository,
+            // RP-06 6a: real calculator + the test's fake TimeProvider so pace math is real.
+            spendingPaceCalculator = com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator(timeProvider)
         )
     }
 

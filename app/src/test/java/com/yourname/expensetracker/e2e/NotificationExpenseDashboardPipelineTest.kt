@@ -465,6 +465,8 @@ class NotificationExpenseDashboardPipelineTest : AnalyticsEngineTestBase() {
             forecastInputAssembler = mockk(relaxed = true),
             currencyConverter = currencyConverter,
             currencySettingsRepository = currencySettingsRepository,
+            // RP-06 6a: real calculator + the test's fake TimeProvider so pace math is real.
+            spendingPaceCalculator = SpendingPaceCalculator(timeProvider),
         )
     }
 

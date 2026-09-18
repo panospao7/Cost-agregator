@@ -449,7 +449,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `ERROR PATH - no baseline month yields NO_BASELINE and zero pace`() = runTest {
+    fun `ERROR PATH - no baseline month yields NO_BASELINE and minus-one sentinel pace`() = runTest {
         every { timeProvider.now() } returns NOW_MARCH_30_2026
         val marchOnly = allTransactions.filter { it.date in MARCH_START until APRIL_START }
         mockAnalyticsDaoByRange(marchOnly)
@@ -465,8 +465,9 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
 
         assertEquals(PaceStatus.NO_BASELINE, noBaselineInsights.paceStatus)
         assertEquals(PaceStatus.NO_BASELINE, noBaselineCalculator.paceStatus)
-        assertEquals(0f, noBaselineInsights.pacePercentage)
-        assertEquals(0f, noBaselineCalculator.pacePercentage)
+        // NEW-P6-013: canonical -1f sentinel — 0f is indistinguishable from a true 0% pace.
+        assertEquals(-1f, noBaselineInsights.pacePercentage)
+        assertEquals(-1f, noBaselineCalculator.pacePercentage)
     }
 
     @Test
@@ -765,7 +766,7 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `EDGE CASE - no baseline month yields NO_BASELINE pace and zero projection`() = runTest {
+    fun `EDGE CASE - no baseline month yields NO_BASELINE pace and minus-one sentinel`() = runTest {
         every { timeProvider.now() } returns NOW_MARCH_30_2026
         val marchOnly = allTransactions.filter { it.date in MARCH_START until APRIL_START }
         mockAnalyticsDaoByRange(marchOnly)
@@ -773,7 +774,8 @@ class GoldenMasterVerificationTest : AnalyticsEngineTestBase() {
         val noBaselineInsights = insightsEngine.generateInsights(contractCategories.toAnalyticsCategoryRefs(), marchOnly.toExpenseSnapshots(), "EUR").spendingPace
 
         assertEquals(PaceStatus.NO_BASELINE, noBaselineInsights.paceStatus)
-        assertEquals(0f, noBaselineInsights.pacePercentage)
+        // NEW-P6-013: canonical -1f sentinel — 0f is indistinguishable from a true 0% pace.
+        assertEquals(-1f, noBaselineInsights.pacePercentage)
     }
 
     // ========================================================================
