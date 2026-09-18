@@ -1,5 +1,7 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.AppDatabase
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
@@ -15,6 +17,7 @@ import com.yourname.expensetracker.domain.intelligence.ml.HybridExpenseClassifie
 import com.yourname.expensetracker.domain.intelligence.ml.MerchantNormalizer
 import com.yourname.expensetracker.domain.notification.NotificationPipelineOutcome
 import com.yourname.expensetracker.domain.parser.AppParserRegistry
+import com.yourname.expensetracker.domain.parser.ParseOutcome
 import com.yourname.expensetracker.domain.parser.TransferDirectionDetector
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkResult
 import com.yourname.expensetracker.domain.provenance.PendingReviewSourceLinkService
@@ -29,9 +32,11 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.StandardTestDispatcher
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertTrue
@@ -59,6 +64,7 @@ class NotificationProcessingPipelineSourceLinkTest {
     private val diagnosticEmitter = mockk<NotificationDiagnosticEmitter>(relaxed = true)
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
+    private val parserRegistry = mockk<AppParserRegistry>(relaxed = true)
     private val testDispatcher = StandardTestDispatcher()
     private val applicationScope = TestScope(testDispatcher)
 
@@ -66,7 +72,28 @@ class NotificationProcessingPipelineSourceLinkTest {
 
     @Before
     fun setup() {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
+        // GR-14p: the parsed-path DB phase is scoped in writeBarrier.runWrite
+        // (NotificationProcessingPipeline.kt:553); a relaxed mock would neither
+        // run the block nor return its value (the pipeline casts the result to
+        // ParsedDbOutcome), so pass the block through.
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        // withTransaction compiles to the TOP-LEVEL static facade
+        // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2). Without
+        // mockkStatic, the real Room body runs against the relaxed AppDatabase
+        // mock and either suspends forever or returns a default Object, which
+        // surfaces as a ClassCastException on ParsedDbOutcome (measured:
+        // docs/testing/test-sweep-outcomes-2026-09-18.md). The recorded call
+        // args are positional with the RECEIVER as arg 0 and the block as arg 1,
+        // so the block is secondArg.
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
         every { timeProvider.now() } returns 1_700_000_000_000L
 
         pipeline = NotificationProcessingPipeline(
@@ -76,7 +103,7 @@ class NotificationProcessingPipelineSourceLinkTest {
             pendingReviewDao = pendingReviewDao,
             sourceStatsDao = sourceStatsDao,
             subscriptionCandidateDao = mockk(relaxed = true),
-            parserRegistry = mockk(relaxed = true),
+            parserRegistry = parserRegistry,
             confidenceRouter = mockk(relaxed = true),
             merchantNormalizer = mockk(relaxed = true),
             hybridClassifier = mockk(relaxed = true),
@@ -106,6 +133,11 @@ class NotificationProcessingPipelineSourceLinkTest {
         )
     }
 
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
     /**
      * NEW-P1-015: When pendingReviewSourceLinkService.linkSourcesForReview() reports
      * a fatal failure, the review should STILL be created (transaction not rolled back).
@@ -128,7 +160,24 @@ class NotificationProcessingPipelineSourceLinkTest {
                 failures = listOf("Rejected: test failure")
             )
 
-        val notification = testNotification()
+        // Force the parse-fallback branch (same recipe as the Reliability
+        // suite's NeedsReview tests): a relaxed parser mock "succeeds" with junk
+        // and the flow would auto-accept into the lifecycle coordinator instead
+        // of creating the pending review under test here. The title must carry
+        // a currency-attached amount for detectTransactionSignalCandidate.
+        val notification = testNotification().copy(
+            title = "Payment €4.08",
+            text = "Card payment completed"
+        )
+        coEvery {
+            parserRegistry.parseWithProvenance(
+                notification.title,
+                notification.text,
+                notification.bigText,
+                notification.subText,
+                notification.packageName
+            )
+        } returns ParseOutcome.NoParse(mockk(relaxed = true))
         val outcome = pipeline.process(notification)
 
         // Review should still be created despite link failure

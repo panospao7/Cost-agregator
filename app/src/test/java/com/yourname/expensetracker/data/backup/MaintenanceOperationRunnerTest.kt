@@ -8,7 +8,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -108,34 +108,34 @@ class MaintenanceOperationRunnerTest {
 
     @Test
     fun exception_in_block_still_exits_maintenance() = runTest {
-        assertThrows(RuntimeException::class.java) {
-            runTest {
-                runner.runExclusive(
-                    mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
-                    operationName = "restoreCostBackup",
-                    requireRestartAfterSuccess = false
-                ) {
-                    throw RuntimeException("restore failed")
-                }
+        val exception = runCatching {
+            runner.runExclusive(
+                mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
+                operationName = "restoreCostBackup",
+                requireRestartAfterSuccess = false
+            ) {
+                throw RuntimeException("restore failed")
             }
-        }
+        }.exceptionOrNull()
+        assertNotNull("Block exception must propagate to caller", exception)
+        assertEquals(RuntimeException::class, exception!!::class)
 
         verify { maintenanceMode.exit(forceRestartRequired = false) }
     }
 
     @Test
     fun exception_with_restart_required_exits_with_restart() = runTest {
-        assertThrows(RuntimeException::class.java) {
-            runTest {
-                runner.runExclusive(
-                    mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
-                    operationName = "restoreCostBackup",
-                    requireRestartAfterSuccess = true
-                ) {
-                    throw RuntimeException("restore failed mid-swap")
-                }
+        val exception = runCatching {
+            runner.runExclusive(
+                mode = RestoreMaintenanceMode.Mode.RESTORE_PREPARING,
+                operationName = "restoreCostBackup",
+                requireRestartAfterSuccess = true
+            ) {
+                throw RuntimeException("restore failed mid-swap")
             }
-        }
+        }.exceptionOrNull()
+        assertNotNull("Block exception must propagate to caller", exception)
+        assertEquals(RuntimeException::class, exception!!::class)
 
         verify { maintenanceMode.exit(forceRestartRequired = true) }
     }
@@ -157,7 +157,8 @@ class MaintenanceOperationRunnerTest {
         var blockRan = false
         runner.runExclusive(
             mode = RestoreMaintenanceMode.Mode.RESETTING_DATABASE,
-            operationName = "resetDatabase"
+            operationName = "resetDatabase",
+            drainTimeoutPolicy = DrainTimeoutPolicy.PROCEED_WITH_WARNING
         ) {
             blockRan = true
         }

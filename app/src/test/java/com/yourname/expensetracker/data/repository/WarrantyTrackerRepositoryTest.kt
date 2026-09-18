@@ -1,5 +1,6 @@
 package com.yourname.expensetracker.data.repository
 
+import androidx.room.withTransaction
 import com.yourname.expensetracker.data.ai.provider.CloudWarrantyExtractionService
 import com.yourname.expensetracker.data.database.dao.ReturnWindowDao
 import com.yourname.expensetracker.data.database.dao.WarrantyDao
@@ -22,9 +23,12 @@ import com.yourname.expensetracker.domain.receipt.lifecycle.ReceiptLifecycleEven
 import com.yourname.expensetracker.domain.transaction.DomainTransactionRunner
 import dagger.Lazy
 import io.mockk.*
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -49,6 +53,18 @@ class WarrantyTrackerRepositoryTest {
 
     @Before
     fun setup() {
+        // withTransaction compiles to the TOP-LEVEL static facade
+        // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2), so a
+        // pass-through stub only intercepts with mockkStatic — without it the
+        // real Room body runs against the relaxed AppDatabase mock and suspends
+        // forever (measured: markWarrantyAsClaimed et al. UncompletedCoroutines
+        // 1m timeouts; docs/testing/test-sweep-outcomes-2026-09-18.md §Hangs).
+        // Recorded args are positional with the RECEIVER as arg 0 and the block
+        // as arg 1, so the block is secondArg.
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
         repository = WarrantyTrackerRepository(
             database = database,
             warrantyDao = warrantyDao,
@@ -76,8 +92,21 @@ class WarrantyTrackerRepositoryTest {
         every { aiPolicy.shouldRedact(any(), AiCapability.WARRANTY_EXTRACTION) } returns false
     }
 
-    @Test
-    fun `getActiveWarranties returns flow from dao`() = runTest {
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
+    // NOTE: getActiveWarranties() wraps warrantyDao.getActiveWarranties in an internal
+    // unbounded ticker flow (WarrantyTrackerRepository.activeItemsTickerFlow:
+    // while(true) { emit; delay(1h) }). It is private and the class is final, so it
+    // cannot be stubbed. Collecting it unbounded never terminates: runTest advances
+    // virtual time through delay(1h) forever, re-invoking the mocked DAO on every
+    // virtual tick — a measured OOM/hang (vr-20260918-082037-8ec8f982). Always bound
+    // the collection (take(1)) and keep runTest timeouts fail-fast.
+
+    @Test(timeout = 60_000L)
+    fun `getActiveWarranties returns flow from dao`() = runTest(timeout = 60.seconds) {
         val warranties = listOf(
             Warranty(id = 1, receiptId = 1, productName = "Laptop", merchantName = "Amazon", 
                 purchaseDate = 1000, warrantyDurationMonths = 12, warrantyEndDate = 2000)
@@ -86,14 +115,16 @@ class WarrantyTrackerRepositoryTest {
 
         val result = repository.getActiveWarranties()
         
-        result.collect { 
+        // take(1): terminate after the first emission instead of subscribing to the
+        // repository's internal 1-hour ticker forever (infinite under virtual time).
+        result.take(1).collect { 
             assertEquals(1, it.size)
             assertEquals("Laptop", it[0].productName)
         }
     }
 
     @Test
-    fun `extractWarrantyFromReceipt delegates to cloud service`() = runTest {
+    fun `extractWarrantyFromReceipt delegates to cloud service`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 1,
             imagePath = "/path/to/image.jpg",
@@ -137,7 +168,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `extractWarrantyFromReceipt uses calendar month addition for warranty end date`() = runTest {
+    fun `extractWarrantyFromReceipt uses calendar month addition for warranty end date`() = runTest(timeout = 60.seconds) {
         val purchaseDate = Instant.parse("2024-01-31T00:00:00Z").toEpochMilli()
         val receipt = ScannedReceipt(
             id = 3,
@@ -172,7 +203,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `extractWarrantyFromReceipt skips cloud extraction when route is not cloud`() = runTest {
+    fun `extractWarrantyFromReceipt skips cloud extraction when route is not cloud`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 2,
             imagePath = "/path/to/image.jpg",
@@ -196,7 +227,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `getWarrantiesExpiringSoon calculates correct future time`() = runTest {
+    fun `getWarrantiesExpiringSoon calculates correct future time`() = runTest(timeout = 60.seconds) {
         val days = 7
         val currentStart = com.yourname.expensetracker.domain.util.TimePeriodUtils.getStartOfDay(timeProvider.now())
         val futureExclusive = com.yourname.expensetracker.domain.util.TimePeriodUtils.addDays(currentStart, days)
@@ -221,7 +252,7 @@ class WarrantyTrackerRepositoryTest {
 
     // TODO: Tautological mock test — consider adding real behavior assertion
     @Test
-    fun `markWarrantyAsClaimed updates status`() = runTest {
+    fun `markWarrantyAsClaimed updates status`() = runTest(timeout = 60.seconds) {
         coEvery { warrantyDao.updateWarrantyStatus(1, WarrantyStatus.CLAIMED, any(), any()) } just Runs
         
         repository.markWarrantyAsClaimed(1)
@@ -230,7 +261,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `extractReturnWindow uses default 30 days when no merchant match`() = runTest {
+    fun `extractReturnWindow uses default 30 days when no merchant match`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 1,
             imagePath = "/path/to/image.jpg",
@@ -251,7 +282,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `extractReturnWindow uses Amazon 30 day policy`() = runTest {
+    fun `extractReturnWindow uses Amazon 30 day policy`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 1,
             imagePath = "/path/to/image.jpg",
@@ -271,7 +302,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `extractReturnWindow persists extracted return metadata`() = runTest {
+    fun `extractReturnWindow persists extracted return metadata`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 4,
             imagePath = "/path/to/image.jpg",
@@ -302,7 +333,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `processReceiptForWarranty creates return window for return policy only extraction`() = runTest {
+    fun `processReceiptForWarranty creates return window for return policy only extraction`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 5,
             imagePath = "/path/to/image.jpg",
@@ -336,7 +367,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `reconcileExpiredItems marks active records as expired`() = runTest {
+    fun `reconcileExpiredItems marks active records as expired`() = runTest(timeout = 60.seconds) {
         coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 2
         coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 3
 
@@ -353,8 +384,7 @@ class WarrantyTrackerRepositoryTest {
     // ──────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `addWarrantyIgnoreConflicts sets createdAt and updatedAt when zero`() = runTest {
-        // withTransaction inline mock removed � mockk(relaxed=true) handles underlying RoomDatabase methods
+    fun `addWarrantyIgnoreConflicts sets createdAt and updatedAt when zero`() = runTest(timeout = 60.seconds) {
         val fixedNow = timeProvider.now()
         val warranty = Warranty(
             receiptId = 1,
@@ -378,8 +408,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `addWarrantyIgnoreConflicts preserves existing createdAt`() = runTest {
-        // withTransaction inline mock removed � mockk(relaxed=true) handles underlying RoomDatabase methods
+    fun `addWarrantyIgnoreConflicts preserves existing createdAt`() = runTest(timeout = 60.seconds) {
         val existingCreatedAt = 1_000_000L
         val existingUpdatedAt = 2_000_000L
         val warranty = Warranty(
@@ -404,8 +433,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `addWarrantyIgnoreConflicts writes created event after insert`() = runTest {
-        // withTransaction inline mock removed � mockk(relaxed=true) handles underlying RoomDatabase methods
+    fun `addWarrantyIgnoreConflicts writes created event after insert`() = runTest(timeout = 60.seconds) {
         val warranty = Warranty(
             receiptId = 3,
             productName = "Event Test",
@@ -428,7 +456,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `manualPlaceholder uses documentType ManualPlaceholder`() = runTest {
+    fun `manualPlaceholder uses documentType ManualPlaceholder`() = runTest(timeout = 60.seconds) {
         coEvery { receiptRepository.insertReceipt(any()) } returns 1L
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
@@ -446,7 +474,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `manualPlaceholder uses sourceType ManualRecord`() = runTest {
+    fun `manualPlaceholder uses sourceType ManualRecord`() = runTest(timeout = 60.seconds) {
         coEvery { receiptRepository.insertReceipt(any()) } returns 1L
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
@@ -463,7 +491,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `manualPlaceholder sets createdAt and updatedAt`() = runTest {
+    fun `manualPlaceholder sets createdAt and updatedAt`() = runTest(timeout = 60.seconds) {
         coEvery { receiptRepository.insertReceipt(any()) } returns 1L
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
@@ -481,7 +509,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `manualPlaceholder doesNotStoreProductNameInRawOcrText`() = runTest {
+    fun `manualPlaceholder doesNotStoreProductNameInRawOcrText`() = runTest(timeout = 60.seconds) {
         coEvery { receiptRepository.insertReceipt(any()) } returns 1L
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
@@ -499,7 +527,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `upsertReturnWindowForReceipt skips MANUAL_PLACEHOLDER receipts`() = runTest {
+    fun `upsertReturnWindowForReceipt skips MANUAL_PLACEHOLDER receipts`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 1,
             imagePath = null,
@@ -527,7 +555,7 @@ class WarrantyTrackerRepositoryTest {
     // ──────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `updateWarranty_writesUpdatedEvent`() = runTest {
+    fun `updateWarranty_writesUpdatedEvent`() = runTest(timeout = 60.seconds) {
         val testWarranty = Warranty(
             id = 1,
             receiptId = 1,
@@ -549,7 +577,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `deleteWarranty_writesDeletedEvent`() = runTest {
+    fun `deleteWarranty_writesDeletedEvent`() = runTest(timeout = 60.seconds) {
         val testWarranty = Warranty(
             id = 2,
             receiptId = 2,
@@ -571,7 +599,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `reconcileExpiredItems_writesBatchExpiredEventWhenWarrantiesExpired`() = runTest {
+    fun `reconcileExpiredItems_writesBatchExpiredEventWhenWarrantiesExpired`() = runTest(timeout = 60.seconds) {
         coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 2
         coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 1
 
@@ -585,7 +613,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `reconcileExpiredItems_writesNoEventWhenNothingExpired`() = runTest {
+    fun `reconcileExpiredItems_writesNoEventWhenNothingExpired`() = runTest(timeout = 60.seconds) {
         coEvery { warrantyDao.markExpiredWarranties(any(), any()) } returns 0
         coEvery { returnWindowDao.markExpiredReturnWindows(any(), any()) } returns 0
 
@@ -599,7 +627,7 @@ class WarrantyTrackerRepositoryTest {
     // ──────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `cloudWarrantyConfidence_0_8_autoCreatesWithoutReview`() = runTest {
+    fun `cloudWarrantyConfidence_0_8_autoCreatesWithoutReview`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 10,
             imagePath = "/path/to/image.jpg",
@@ -631,7 +659,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `cloudWarrantyConfidence_0_4_createsNeedsReviewDraft`() = runTest {
+    fun `cloudWarrantyConfidence_0_4_createsNeedsReviewDraft`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 11,
             imagePath = "/path/to/image.jpg",
@@ -663,7 +691,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `cloudWarrantyConfidence_0_1_discardsWithDiagnostic`() = runTest {
+    fun `cloudWarrantyConfidence_0_1_discardsWithDiagnostic`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 12,
             imagePath = "/path/to/image.jpg",
@@ -693,7 +721,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `cloudWarrantyConfidence_0_75_exactBoundary_autoAccepts`() = runTest {
+    fun `cloudWarrantyConfidence_0_75_exactBoundary_autoAccepts`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 13,
             imagePath = "/path/to/image.jpg",
@@ -725,7 +753,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `cloudWarrantyConfidence_0_30_exactBoundary_createsReviewDraft`() = runTest {
+    fun `cloudWarrantyConfidence_0_30_exactBoundary_createsReviewDraft`() = runTest(timeout = 60.seconds) {
         val receipt = ScannedReceipt(
             id = 14,
             imagePath = "/path/to/image.jpg",
@@ -761,8 +789,7 @@ class WarrantyTrackerRepositoryTest {
     // ──────────────────────────────────────────────────────────────────────────
 
     @Test
-    fun `addWarranty_lifecycleEventFailure_doesNotFailPrimaryTransaction`() = runTest {
-        // withTransaction inline mock removed � mockk(relaxed=true) handles underlying RoomDatabase methods
+    fun `addWarranty_lifecycleEventFailure_doesNotFailPrimaryTransaction`() = runTest(timeout = 60.seconds) {
         val testWarranty = Warranty(
             receiptId = 4,
             productName = "Test Product",
@@ -783,7 +810,7 @@ class WarrantyTrackerRepositoryTest {
     }
 
     @Test
-    fun `lifecycleEventFailure_doesNotFailPrimaryTransaction`() = runTest {
+    fun `lifecycleEventFailure_doesNotFailPrimaryTransaction`() = runTest(timeout = 60.seconds) {
         val testWarranty = Warranty(
             id = 3,
             receiptId = 3,

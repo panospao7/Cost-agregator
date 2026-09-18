@@ -149,6 +149,22 @@ class ReceiptLifecycleCoordinatorTest {
         // persisted with id=1L (the create / save / cancellation paths all rely on
         // this). Tests that need a different outcome override this stub locally.
         coEvery { receiptInsertResolver.insertOrResolve(any()) } returns ReceiptInsertResult.Inserted(1L)
+        // Default happy-path expense creation for the high-confidence EMAIL path:
+        // processEmailReceipt calls createExpenseDbOnlyV2 inside the runner block
+        // (ReceiptLifecycleCoordinator.kt:1145) and the compiled `when (mutation.value)`
+        // at :1146 casts to CreateExpenseResult — a relaxed generic MutationResult
+        // supplies java.lang.Object for `value` and CCEs (measured:
+        // vr-20260918-093043-2fd8bf7d). Tests needing a different outcome override
+        // this stub locally (see validation_failure_produces_diagnostic_event).
+        coEvery { transactionLifecycleCoordinator.createExpenseDbOnlyV2(any()) } returns
+            MutationResult(CreateExpenseResult.Created(500L), PostCommitActionBatch.empty("test"))
+        // The Created branch then links the receipt (ReceiptLifecycleCoordinator.kt:1151)
+        // and production throws at :1156 when the link fails — pin an explicit success
+        // instead of relying on relaxed kotlin.Result handling (same explicit link
+        // stubbing style as ReceiptMatchingWorkerTest).
+        coEvery {
+            receiptLinkService.linkReceiptToExpense(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+        } returns Result.success(mockk<com.yourname.expensetracker.data.database.entity.ReceiptExpenseLink>(relaxed = true))
 
         coordinator = ReceiptLifecycleCoordinator(
             database = database,
@@ -217,7 +233,11 @@ class ReceiptLifecycleCoordinatorTest {
         )
 
         coEvery { inputValidator.validate(uri) } returns validationResult
-        coEvery { receiptRepository.processReceipt(uri, false) } returns ReceiptRepository.ProcessReceiptResult(receipt = savedReceipt, parsed = parsedReceipt)
+        // resolvedMimeType must be spelled out — production always passes it
+        // (resolvedMimeType = validation.mimeType, ReceiptLifecycleCoordinator.kt:330-334)
+        // and MockK fills an unspecified nullable arg with a null() matcher that can
+        // never match (see the NOTE above stubNonDuplicateScan).
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns ReceiptRepository.ProcessReceiptResult(receipt = savedReceipt, parsed = parsedReceipt)
         coEvery { scannedReceiptDao.insert(any()) } returns 1L
         coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
             isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
@@ -229,7 +249,7 @@ class ReceiptLifecycleCoordinatorTest {
         // RP-12 12a / P3-001: a fresh insert reports inserted=true.
         assertTrue("Expected inserted=true, got ${result.getOrThrow()}", result.getOrThrow().inserted)
         coVerify(exactly = 1) { inputValidator.validate(uri) }
-        coVerify(exactly = 1) { receiptRepository.processReceipt(uri, false) }
+        coVerify(exactly = 1) { receiptRepository.processReceipt(uri, false, "image/jpeg") }
     }
 
     @Test
@@ -849,6 +869,11 @@ class ReceiptLifecycleCoordinatorTest {
         )
         // insertOrIgnore returns -1 (conflict), then lookup by messageId returns existing
         coEvery { emailReceiptDao.insertOrIgnore(any()) } returns -1L
+        // The pre-transaction messageIdHash dedup (ReceiptLifecycleCoordinator.kt:928-934)
+        // must NOT fire here: a relaxed getBySourceFingerprint returns a non-null
+        // relaxed ScannedReceipt (id=0L), short-circuiting to Duplicate(0) before the
+        // in-transaction conflict path under test is reached (measured: expected 5, was 0).
+        coEvery { scannedReceiptDao.getBySourceFingerprint(any()) } returns null
         coEvery { emailReceiptDao.getByMessageId("msg-existing-1") } returns existingSource
         // getByMessageId for non-matching IDs should return null
         coEvery { emailReceiptDao.getByMessageId(any()) } answers {

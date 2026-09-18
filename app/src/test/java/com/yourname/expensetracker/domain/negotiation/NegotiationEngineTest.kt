@@ -16,8 +16,10 @@ import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Contract tests for [SmartBillNegotiationEngine].
@@ -39,6 +41,18 @@ class NegotiationEngineTest {
     fun setUp() {
         // Make database.negotiationOutcomeDao() return our mock
         coEvery { database.negotiationOutcomeDao() } returns negotiationOutcomeDao
+        // withTransaction compiles to the TOP-LEVEL static facade
+        // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2). Without
+        // mockkStatic, the per-test coAnswers stubs record but never intercept:
+        // the real Room body runs against the relaxed AppDatabase mock and
+        // suspends forever (measured hang: 1 test passes, then silence —
+        // docs/testing/test-sweep-outcomes-2026-09-18.md, §Hangs).
+        mockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     private fun createEngine(
@@ -57,7 +71,7 @@ class NegotiationEngineTest {
     )
 
     @Test
-    fun `no recommendation when no data`() = runTest {
+    fun `no recommendation when no data`() = runTest(timeout = 60.seconds) {
         // Given: no subscriptions exist
         coEvery { recurringExpenseRepository.getAll() } returns emptyList()
 
@@ -70,7 +84,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `provider failure handled gracefully`() = runTest {
+    fun `provider failure handled gracefully`() = runTest(timeout = 60.seconds) {
         // Given: the repository throws (e.g., database error)
         coEvery { recurringExpenseRepository.getAll() } throws RuntimeException("DB connection lost")
 
@@ -116,7 +130,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationEngine uses injected marketRateProvider`() = runTest {
+    fun `negotiationEngine uses injected marketRateProvider`() = runTest(timeout = 60.seconds) {
         val provider: MarketRateProvider = mockk()
         coEvery { provider.getRates(any(), any(), any()) } returns MarketRateResult(
             quotes = listOf(
@@ -151,7 +165,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `annual subscription script shows monthly equivalent not raw amount`() = runTest {
+    fun `annual subscription script shows monthly equivalent not raw amount`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 1L, merchant = "Netflix", amount = 120.0, currency = "EUR",
             frequency = RecurrenceFrequency.ANNUALLY,
@@ -180,7 +194,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `monthly subscription script uses same amount for monthly equivalent`() = runTest {
+    fun `monthly subscription script uses same amount for monthly equivalent`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 2L, merchant = "Spotify", amount = 9.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -205,7 +219,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `quarterly subscription script uses monthly equivalent`() = runTest {
+    fun `quarterly subscription script uses monthly equivalent`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 3L, merchant = "Gym", amount = 90.0, currency = "EUR",
             frequency = RecurrenceFrequency.QUARTERLY,
@@ -230,7 +244,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationSuccess_persistsOutcomeAndUpdatesSubscription`() = runTest {
+    fun `negotiationSuccess_persistsOutcomeAndUpdatesSubscription`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 1L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -240,8 +254,9 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(1L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
+        coEvery { priceHistoryDao.insert(any()) } returns 1L
         coEvery { recurringExpenseRepository.update(any()) } returns Unit
 
         val engine = createEngine()
@@ -271,7 +286,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationSuccess_annualSubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest {
+    fun `negotiationSuccess_annualSubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest(timeout = 60.seconds) {
         // PR8: For annual subscriptions, the monthly newPrice must be converted
         // back to the billing-cycle amount before storing in subscription + price history.
         val subscription = ManualRecurringExpense(
@@ -283,8 +298,9 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(1L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
+        coEvery { priceHistoryDao.insert(any()) } returns 1L
         coEvery { recurringExpenseRepository.update(any()) } returns Unit
 
         val engine = createEngine()
@@ -317,7 +333,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationSuccess_weeklySubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest {
+    fun `negotiationSuccess_weeklySubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 4L, merchant = "Weekly Gym", amount = 50.0, currency = "EUR",
             frequency = RecurrenceFrequency.WEEKLY,
@@ -327,7 +343,7 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(4L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
         coEvery { negotiationOutcomeDao.insert(any()) } returns 1L
         coEvery { priceHistoryDao.insert(any()) } returns 1L
@@ -352,7 +368,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationSuccess_biweeklySubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest {
+    fun `negotiationSuccess_biweeklySubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 5L, merchant = "Biweekly Service", amount = 100.0, currency = "EUR",
             frequency = RecurrenceFrequency.BIWEEKLY,
@@ -362,7 +378,7 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(5L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
         coEvery { negotiationOutcomeDao.insert(any()) } returns 1L
         coEvery { priceHistoryDao.insert(any()) } returns 1L
@@ -387,7 +403,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationFailure_persistsOutcomeButDoesNotUpdatePrice`() = runTest {
+    fun `negotiationFailure_persistsOutcomeButDoesNotUpdatePrice`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 2L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -397,7 +413,7 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(2L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
 
         val engine = createEngine()
@@ -421,7 +437,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationWriteBlockedDuringRestore`() = runTest {
+    fun `negotiationWriteBlockedDuringRestore`() = runTest(timeout = 60.seconds) {
         coEvery { recurringExpenseRepository.getById(any()) } returns ManualRecurringExpense(
             id = 1L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -448,7 +464,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `getNegotiationHistory_returnsPersistedOutcomes`() = runTest {
+    fun `getNegotiationHistory_returnsPersistedOutcomes`() = runTest(timeout = 60.seconds) {
         val now = System.currentTimeMillis()
         val outcome1 = NegotiationOutcomeEntity(
             id = 1, subscriptionId = 1L, outcome = "SUCCESS",
@@ -469,7 +485,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `recordNegotiationOutcome returns failure when subscription not found`() = runTest {
+    fun `recordNegotiationOutcome returns failure when subscription not found`() = runTest(timeout = 60.seconds) {
         coEvery { recurringExpenseRepository.getById(any()) } returns null
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
 
@@ -490,7 +506,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationPartial_persistsOutcomeAndUpdatesSubscription`() = runTest {
+    fun `negotiationPartial_persistsOutcomeAndUpdatesSubscription`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 1L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -500,8 +516,9 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(1L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
+        coEvery { priceHistoryDao.insert(any()) } returns 1L
         coEvery { recurringExpenseRepository.update(any()) } returns Unit
 
         val engine = createEngine()
@@ -531,7 +548,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationPartial_annualSubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest {
+    fun `negotiationPartial_annualSubscription_convertsMonthlyPriceToBillingCycleAmount`() = runTest(timeout = 60.seconds) {
         // PR8: Same conversion as success — PARTIAL outcomes also update the subscription.
         val subscription = ManualRecurringExpense(
             id = 1L, merchant = "Annual Sub", amount = 120.0, currency = "EUR",
@@ -542,8 +559,9 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(1L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
+        coEvery { priceHistoryDao.insert(any()) } returns 1L
         coEvery { recurringExpenseRepository.update(any()) } returns Unit
 
         val engine = createEngine()
@@ -575,7 +593,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationSuccess_rollsBackWhenPriceHistoryInsertFails`() = runTest {
+    fun `negotiationSuccess_rollsBackWhenPriceHistoryInsertFails`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 1L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -586,7 +604,7 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(1L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
         coEvery { negotiationOutcomeDao.insert(any()) } returns 1L
         coEvery { priceHistoryDao.insert(any()) } throws RuntimeException("DB locked")
@@ -606,7 +624,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `eydapWaterSubscription_generatesNegotiationOpportunity`() = runTest {
+    fun `eydapWaterSubscription_generatesNegotiationOpportunity`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 10L, merchant = "EYDAP", amount = 15.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -630,7 +648,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `greekWaterKeyword_generatesWaterServiceType`() = runTest {
+    fun `greekWaterKeyword_generatesWaterServiceType`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 11L, merchant = "ΥΔΡΕΥΣΗΣ ΔΗΜΟΥ", amount = 12.0, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -653,7 +671,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `vodafoneCu_matchesVodafoneMobileQuote_notCosmote`() = runTest {
+    fun `vodafoneCu_matchesVodafoneMobileQuote_notCosmote`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 20L, merchant = "Vodafone CU", amount = 24.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -701,7 +719,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `cosmoteFiber_matchesCosmoteFiberQuote`() = runTest {
+    fun `cosmoteFiber_matchesCosmoteFiberQuote`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 21L, merchant = "Cosmote Fiber", amount = 34.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -742,7 +760,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `deiEnergy_doesNotGenerateNegotiationOpportunity`() = runTest {
+    fun `deiEnergy_doesNotGenerateNegotiationOpportunity`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 22L, merchant = "DEI Energy", amount = 50.0, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -763,7 +781,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `usdSubscription_isSkippedNotComparedToEurRate`() = runTest {
+    fun `usdSubscription_isSkippedNotComparedToEurRate`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 25L, merchant = "Netflix", amount = 13.99, currency = "USD",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -783,7 +801,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `eurSubscription_stillProducesOpportunity`() = runTest {
+    fun `eurSubscription_stillProducesOpportunity`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 26L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -818,7 +836,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationSuccess_requiresFinitePositiveNewPrice`() = runTest {
+    fun `negotiationSuccess_requiresFinitePositiveNewPrice`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 30L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -841,7 +859,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationPartial_requiresFinitePositiveNewPrice`() = runTest {
+    fun `negotiationPartial_requiresFinitePositiveNewPrice`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 31L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -864,7 +882,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationSuccess_rejectsInfiniteNewPrice`() = runTest {
+    fun `negotiationSuccess_rejectsInfiniteNewPrice`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 32L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -887,7 +905,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationSuccess_rejectsNaNNewPrice`() = runTest {
+    fun `negotiationSuccess_rejectsNaNNewPrice`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 33L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -910,7 +928,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationOutcome_rejectsInfiniteSavings`() = runTest {
+    fun `negotiationOutcome_rejectsInfiniteSavings`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 34L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -933,7 +951,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationOutcome_rejectsNegativeSavings`() = runTest {
+    fun `negotiationOutcome_rejectsNegativeSavings`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 35L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -956,7 +974,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `negotiationFailure_allowsNullNewPrice`() = runTest {
+    fun `negotiationFailure_allowsNullNewPrice`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 36L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -966,7 +984,7 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(36L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
 
         val engine = createEngine()
@@ -982,9 +1000,19 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `findMarketRate_rethrowsCancellationException`() = runTest {
+    fun `findMarketRate_rethrowsCancellationException`() = runTest(timeout = 60.seconds) {
         val provider: MarketRateProvider = mockk()
         coEvery { provider.getRates(any(), any(), any()) } throws CancellationException("cancelled")
+        // analyzeNegotiationOpportunities reads subscriptions before consulting
+        // the provider; without this stub the strict mock throws before the
+        // cancellation-under-test can surface.
+        val subscription = ManualRecurringExpense(
+            id = 1L, merchant = "Netflix", amount = 13.99, currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            nextDate = System.currentTimeMillis(),
+            isSubscription = true, isActive = true
+        )
+        coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)
 
         val engine = createEngine(marketRateProvider = provider)
 
@@ -999,7 +1027,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `recordNegotiationOutcome_rethrowsCancellationException`() = runTest {
+    fun `recordNegotiationOutcome_rethrowsCancellationException`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 40L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1029,7 +1057,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `recordNegotiationOutcome_writeBarrierBlocked_doesNotReadSubscription`() = runTest {
+    fun `recordNegotiationOutcome_writeBarrierBlocked_doesNotReadSubscription`() = runTest(timeout = 60.seconds) {
         // Because writeBarrier is checked BEFORE getById, getById should never be called
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } throws
             DatabaseAccessBlockedException(
@@ -1055,7 +1083,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `recordNegotiationOutcome_getByIdFailure_returnsFailure`() = runTest {
+    fun `recordNegotiationOutcome_getByIdFailure_returnsFailure`() = runTest(timeout = 60.seconds) {
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { recurringExpenseRepository.getById(50L) } throws RuntimeException("DB error")
 
@@ -1076,7 +1104,7 @@ class NegotiationEngineTest {
     // ─────────────────────────────────────────────────────────────────
 
     @Test
-    fun `recordNegotiationOutcome_lowercaseEurCurrency_normalizesAndSucceeds`() = runTest {
+    fun `recordNegotiationOutcome_lowercaseEurCurrency_normalizesAndSucceeds`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 50L, merchant = "Netflix", amount = 13.99, currency = "eur",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1086,8 +1114,10 @@ class NegotiationEngineTest {
         coEvery { recurringExpenseRepository.getById(50L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
+        coEvery { priceHistoryDao.insert(any()) } returns 1L
+        coEvery { recurringExpenseRepository.update(any()) } returns Unit
 
         val engine = createEngine()
         val result = engine.recordNegotiationOutcome(
@@ -1110,7 +1140,7 @@ class NegotiationEngineTest {
     // ─────────────────────────────────────────────────────────────────
 
     @Test
-    fun `analyzeOpportunities_nanSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest {
+    fun `analyzeOpportunities_nanSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 60L, merchant = "Netflix", amount = Double.NaN, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1128,7 +1158,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `analyzeOpportunities_infiniteSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest {
+    fun `analyzeOpportunities_infiniteSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 61L, merchant = "Netflix", amount = Double.POSITIVE_INFINITY, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1146,7 +1176,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `analyzeOpportunities_zeroSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest {
+    fun `analyzeOpportunities_zeroSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 62L, merchant = "Netflix", amount = 0.0, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1164,7 +1194,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `analyzeOpportunities_negativeSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest {
+    fun `analyzeOpportunities_negativeSubscriptionAmount_skipsAndDoesNotCallProvider`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 63L, merchant = "Netflix", amount = -5.0, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1186,7 +1216,7 @@ class NegotiationEngineTest {
     // ─────────────────────────────────────────────────────────────────
 
     @Test
-    fun `providerReturnsZeroCompetitivePrice_skipsQuote`() = runTest {
+    fun `providerReturnsZeroCompetitivePrice_skipsQuote`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 70L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1219,7 +1249,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `providerReturnsNaNQuote_skipsQuote`() = runTest {
+    fun `providerReturnsNaNQuote_skipsQuote`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 71L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1252,7 +1282,7 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `providerReturnsOnlyInvalidQuotes_noOpportunity`() = runTest {
+    fun `providerReturnsOnlyInvalidQuotes_noOpportunity`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 72L, merchant = "Netflix", amount = 13.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1288,7 +1318,7 @@ class NegotiationEngineTest {
     // ─────────────────────────────────────────────────────────────────
 
     @Test
-    fun `unknownProvider_usesLowestCompetitivePriceFallback`() = runTest {
+    fun `unknownProvider_usesLowestCompetitivePriceFallback`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 80L, merchant = "Unknown Streaming Service", amount = 20.0, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,
@@ -1326,7 +1356,7 @@ class NegotiationEngineTest {
     // ─────────────────────────────────────────────────────────────────
 
     @Test
-    fun `plainVodafone_returnsNoOpportunityWithoutServiceKeyword`() = runTest {
+    fun `plainVodafone_returnsNoOpportunityWithoutServiceKeyword`() = runTest(timeout = 60.seconds) {
         val subscription = ManualRecurringExpense(
             id = 90L, merchant = "Vodafone", amount = 24.99, currency = "EUR",
             frequency = RecurrenceFrequency.MONTHLY,

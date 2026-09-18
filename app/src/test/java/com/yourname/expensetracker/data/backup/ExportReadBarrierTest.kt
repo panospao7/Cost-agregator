@@ -4,11 +4,15 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -116,9 +120,9 @@ class ExportReadBarrierTest {
         setMode(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
         val flow = kotlinx.coroutines.flow.flowOf(1, 2, 3)
             .guardedDatabaseRead(readBarrier, "test")
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            runTest { flow.toList() }
-        }
+        val exception = runCatching { flow.toList() }.exceptionOrNull()
+        assertNotNull("Collection must fail while reads are blocked", exception)
+        assertEquals(DatabaseAccessBlockedException::class, exception!!::class)
     }
 
     // ── blockedDuringRestore Flow helper ──────────────────────────
@@ -128,8 +132,11 @@ class ExportReadBarrierTest {
         val modeFlow = MutableStateFlow(RestoreMaintenanceMode.Mode.NORMAL)
         val flow = kotlinx.coroutines.flow.flowOf(42)
             .blockedDuringRestore(modeFlow, "test")
-        val results = flow.toList()
-        assertTrue(results.isNotEmpty())
+        // The modeFlow StateFlow never completes, so bounded collection is required:
+        // take the first emission from the upstream and stop.
+        val first = withTimeout(5_000) { flow.firstOrNull() }
+        assertNotNull("Upstream value must be emitted while mode is NORMAL", first)
+        assertEquals(42, first)
     }
 
     @Test
@@ -137,7 +144,10 @@ class ExportReadBarrierTest {
         val modeFlow = MutableStateFlow(RestoreMaintenanceMode.Mode.RESTORE_PREPARING)
         val flow = kotlinx.coroutines.flow.flowOf(42)
             .blockedDuringRestore(modeFlow, "test")
-        val results = flow.toList()
-        assertTrue(results.isEmpty())
+        // flatMapLatest switches to emptyFlow() in non-NORMAL mode, so no value is
+        // ever emitted. Bounded wait proves the upstream value is not emitted
+        // (collection stays suspended until the timeout elapses).
+        val first = withTimeoutOrNull(5_000) { flow.firstOrNull() }
+        assertNull("No value must be emitted while mode is non-NORMAL", first)
     }
 }

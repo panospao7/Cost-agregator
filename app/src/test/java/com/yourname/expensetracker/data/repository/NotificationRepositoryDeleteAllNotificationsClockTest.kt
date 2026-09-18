@@ -20,8 +20,10 @@ import io.mockk.*
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * T3A / G-TIME-01 focused test for [NotificationRepository.deleteAllNotifications].
@@ -64,10 +66,22 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
 
     @Before
     fun setup() {
+        // withTransaction compiles to the TOP-LEVEL static facade
+        // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2). Without
+        // mockkStatic, the coAnswers stub records but never intercepts: the real
+        // Room body runs against the relaxed AppDatabase mock and suspends
+        // forever (measured full-suite stall point,
+        // docs/testing/test-sweep-outcomes-2026-09-18.md, §Hangs).
+        mockkStatic("androidx.room.RoomDatabaseKt")
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
         coEvery { transactionEventDao.insert(capture(eventSlot)) } returns 1L
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     private fun repository() = NotificationRepository(
@@ -87,7 +101,7 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
     )
 
     @Test
-    fun `deleteAllNotifications writes audit event occurredAt equal to the provider-derived now`() = runTest {
+    fun `deleteAllNotifications writes audit event occurredAt equal to the provider-derived now`() = runTest(timeout = 60.seconds) {
         val providedNow = fakeTimeProvider.now()
         repository().deleteAllNotifications(providedNow)
 
@@ -105,7 +119,7 @@ class NotificationRepositoryDeleteAllNotificationsClockTest {
     }
 
     @Test
-    fun `deleteAllNotifications preserves deletion behavior`() = runTest {
+    fun `deleteAllNotifications preserves deletion behavior`() = runTest(timeout = 60.seconds) {
         repository().deleteAllNotifications(fakeTimeProvider.now())
 
         coVerify(exactly = 1) { dao.deleteAll() }

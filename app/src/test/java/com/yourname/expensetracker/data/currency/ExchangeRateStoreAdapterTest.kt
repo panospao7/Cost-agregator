@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
 
@@ -187,9 +186,9 @@ class ExchangeRateStoreAdapterTest {
             validDate = 1_700_000_001_000L
         )
 
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            runTest { blockingAdapter.insertOrUpdate(rate) }
-        }
+        val exception = runCatching { blockingAdapter.insertOrUpdate(rate) }.exceptionOrNull()
+        assertNotNull("insertOrUpdate must throw during restore mode", exception)
+        assertEquals(DatabaseAccessBlockedException::class, exception!!::class)
         coVerify(exactly = 0) { exchangeRateDao.insertOrUpdate(any()) }
     }
 }

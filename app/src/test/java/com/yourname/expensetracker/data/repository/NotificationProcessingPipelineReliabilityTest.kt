@@ -2,6 +2,7 @@ package com.yourname.expensetracker.data.repository
 
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.AppDatabase
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.PendingReviewDao
@@ -56,12 +57,14 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.slot
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.Assert.assertEquals
@@ -143,10 +146,36 @@ class NotificationProcessingPipelineReliabilityTest {
 
     @Before
     fun setup() {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
+        // GR-14p: the parsed-path DB phase is scoped in writeBarrier.runWrite
+        // (NotificationProcessingPipeline.kt:553); a relaxed mock would neither
+        // run the block nor return its value (the pipeline casts the result to
+        // ParsedDbOutcome), so pass the block through.
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        // withTransaction compiles to the TOP-LEVEL static facade
+        // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2). Without
+        // mockkStatic, the real Room body runs against the relaxed AppDatabase
+        // mock and either suspends forever or returns a default Object, which
+        // surfaces as a ClassCastException on ParsedDbOutcome (measured:
+        // docs/testing/test-sweep-outcomes-2026-09-18.md). The recorded call
+        // args are positional with the RECEIVER as arg 0 and the block as arg 1,
+        // so the block is secondArg.
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
         coEvery { classifier.initialize() } returns Unit
         every { timeProvider.now() } returns 1_700_000_000_000L
         coEvery { merchantNormalizer.normalize(any(), any(), any()) } answers { merchantLookupResult(firstArg()) }
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     @Test

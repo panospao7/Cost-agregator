@@ -19,10 +19,12 @@ import com.yourname.expensetracker.domain.sideeffect.MutationResult
 import com.yourname.expensetracker.domain.sideeffect.PostCommitActionBatch
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionLifecycleCoordinator
 import com.yourname.expensetracker.domain.util.TimeProvider
+import com.yourname.expensetracker.data.backup.DatabaseAccessOperation
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import io.mockk.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -47,11 +49,33 @@ class ReviewQueueRepositoryTest {
     private val timeProvider = mockk<TimeProvider>(relaxed = true)
     private val confidenceRouter = mockk<ConfidenceRouter>(relaxed = true)
     private val transactionLifecycleCoordinator = mockk<TransactionLifecycleCoordinator>(relaxed = true)
+    private val writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true)
     private lateinit var repository: ReviewQueueRepository
 
     @Before
     fun setup() {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
+        // GR-14p: mutations are scoped in writeBarrier.runWrite
+        // (ReviewQueueRepository.kt:219/433/610); a relaxed mock would neither
+        // run the block nor return its value (the repository casts the result
+        // to ReviewApprovalTxOutcome), so pass the block through.
+        coEvery {
+            writeBarrier.runWrite(
+                any<DatabaseAccessOperation>(),
+                any<suspend () -> Any?>()
+            )
+        } coAnswers { secondArg<suspend () -> Any?>().invoke() }
+        // withTransaction compiles to the TOP-LEVEL static facade
+        // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2). Without
+        // mockkStatic, the real Room body runs against the relaxed AppDatabase
+        // mock and either suspends forever or returns a default Object, which
+        // surfaces as a ClassCastException on ReviewApprovalTxOutcome (measured:
+        // docs/testing/test-sweep-outcomes-2026-09-18.md). The recorded call
+        // args are positional with the RECEIVER as arg 0 and the block as arg 1,
+        // so the block is secondArg.
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
 
         every { timeProvider.now() } returns 1700000000000L
         coEvery { merchantNormalizer.normalize(any(), any(), any()) } answers {
@@ -68,7 +92,7 @@ class ReviewQueueRepositoryTest {
         }
         
         repository = ReviewQueueRepository(
-            writeBarrier = mockk<DatabaseWriteBarrier>(relaxed = true),
+            writeBarrier = writeBarrier,
             database = database,
             pendingReviewDao = pendingReviewDao,
             rawNotificationDao = rawNotificationDao,
@@ -89,6 +113,11 @@ class ReviewQueueRepositoryTest {
             transactionEventDao = database.transactionEventDao(),
             postCommitActionRunner = mockk(relaxed = true),
         )
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     @Test

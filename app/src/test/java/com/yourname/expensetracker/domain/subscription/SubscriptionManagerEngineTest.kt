@@ -19,6 +19,7 @@ import io.mockk.*
 import kotlin.test.assertFailsWith
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -52,10 +53,27 @@ class SubscriptionManagerEngineTest {
 
     @Before
     fun setup() {
+        // withTransaction compiles to the TOP-LEVEL static facade
+        // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2), so a
+        // pass-through stub only intercepts with mockkStatic — without it the
+        // real Room body runs against the relaxed AppDatabase mock (fragile:
+        // depends on executor plumbing; the same defect hung sibling suites —
+        // docs/testing/test-sweep-outcomes-2026-09-18.md §Hangs). The recorded
+        // call args are positional with the RECEIVER as arg 0 and the block as
+        // arg 1, so the block is secondArg.
+        mockkStatic("androidx.room.RoomDatabaseKt")
+        coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
+            secondArg<suspend () -> Any>().invoke()
+        }
         // Reset mocks between tests
         clearMocks(database, recurringExpenseRepository, priceHistoryDao, usageDao,
             currencyConverter, currencySettingsRepository, candidateDao, writeBarrier,
             answers = false)
+    }
+
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -141,7 +159,6 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `validateAndCreate normalizes lowercase currency`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         coEvery { recurringExpenseRepository.insert(any()) } returns 1L
 
@@ -194,7 +211,6 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `validateAndCreate succeeds with valid input`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         coEvery { recurringExpenseRepository.insert(any()) } returns 1L
 
@@ -286,7 +302,6 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `acceptCandidate succeeds with valid candidate`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         coEvery { recurringExpenseRepository.insert(any()) } returns 5L
 
@@ -349,7 +364,6 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `recordPriceChange preserves subscription currency in price history`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         val subscription = ManualRecurringExpense(
             id = 10,
@@ -376,7 +390,6 @@ class SubscriptionManagerEngineTest {
 
     @Test
     fun `recordPriceChange succeeds with valid amount`() = runTest {
-        // withTransaction inline mock removed — mockk(relaxed=true) handles underlying RoomDatabase methods
         engine = createEngine()
         val subscription = ManualRecurringExpense(
             id = 20,
@@ -430,7 +443,7 @@ class SubscriptionManagerEngineTest {
         coEvery { recurringExpenseRepository.getById(1L) } returns subscription
         coEvery { writeBarrier.checkWritesAllowed(any<String>()) } returns Unit
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
         coEvery { priceHistoryDao.getLatestPrice(any()) } returns null
         coEvery { recurringExpenseRepository.getAll() } returns listOf(subscription)

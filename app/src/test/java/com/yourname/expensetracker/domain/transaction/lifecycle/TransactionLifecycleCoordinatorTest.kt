@@ -21,6 +21,8 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.mockkStatic
+import io.mockk.unmockkStatic
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import com.yourname.expensetracker.data.database.entity.Expense
@@ -33,9 +35,13 @@ import com.yourname.expensetracker.domain.sideeffect.SideEffectOutcome
 import com.yourname.expensetracker.domain.sideeffect.SideEffectTriggerType
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionSideEffectPlanner
 import com.yourname.expensetracker.domain.transaction.lifecycle.TransactionUpdateKind
+import com.yourname.expensetracker.domain.transaction.validation.TransactionValidationError
+import com.yourname.expensetracker.domain.transaction.validation.TransactionValidator
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import kotlin.test.assertFailsWith
+import kotlin.time.Duration.Companion.seconds
+import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -60,6 +66,7 @@ class TransactionLifecycleCoordinatorTest {
     private lateinit var currencySettingsRepository: CurrencySettingsRepository
     private lateinit var runner: PostCommitActionRunner
     private lateinit var planner: TransactionSideEffectPlanner
+    private lateinit var transactionValidator: TransactionValidator
     private lateinit var coordinator: TransactionLifecycleCoordinator
 
     private val now = 1_712_000_000_000L // 2024-04-01ish
@@ -87,8 +94,15 @@ class TransactionLifecycleCoordinatorTest {
         // The scoped block opens a Room transaction; a relaxed database mock
         // would never execute it. Pass the transaction block through (same
         // pattern as NotificationRepositoryDeleteAllNotificationsClockTest).
+        //
+        // withTransaction compiles to the TOP-LEVEL static facade
+        // androidx.room.RoomDatabaseKt.withTransaction (Room 2.7.2), so the stub
+        // only intercepts with mockkStatic — without it, the real Room body runs
+        // against the relaxed AppDatabase mock and suspends forever (measured
+        // hang: docs/testing/test-sweep-outcomes-2026-09-18.md, §Hangs).
+        mockkStatic("androidx.room.RoomDatabaseKt")
         coEvery { database.withTransaction(any<suspend () -> Any>()) } coAnswers {
-            firstArg<suspend () -> Any>().invoke()
+            secondArg<suspend () -> Any>().invoke()
         }
         currencySettingsRepository = mockk(relaxed = true)
 
@@ -104,6 +118,9 @@ class TransactionLifecycleCoordinatorTest {
 
         runner = mockk(relaxed = true)
         planner = mockk(relaxed = true)
+        // Relaxed mock: validateCreate returns an empty list (valid) unless a
+        // test stubs errors — the validation tests below stub it explicitly.
+        transactionValidator = mockk(relaxed = true)
 
         coordinator = TransactionLifecycleCoordinator(
             database = database,
@@ -118,13 +135,18 @@ class TransactionLifecycleCoordinatorTest {
             writeBarrier = writeBarrier,
             currencySettingsRepository = currencySettingsRepository,
             sourceLinkWriter = mockk(relaxed = true),
-            transactionValidator = mockk(relaxed = true),
+            transactionValidator = transactionValidator,
             diagnosticEventWriter = mockk(relaxed = true)
         )
     }
 
+    @After
+    fun tearDown() {
+        unmockkStatic("androidx.room.RoomDatabaseKt")
+    }
+
     @Test
-    fun `createExpense with valid request returns Created`() = runTest {
+    fun `createExpense with valid request returns Created`() = runTest(timeout = 60.seconds) {
         val request = CreateExpenseRequest(
             merchant = "Test",
             amount = 10.0,
@@ -141,12 +163,14 @@ class TransactionLifecycleCoordinatorTest {
 
         // Verify expense was inserted
         coVerify(exactly = 1) { expenseDao.insertAtomic(any()) }
-        // Verify event was logged
-        coVerify(exactly = 1) { transactionEventDao.insert(any()) }
+        // Verify event audit trail: production writes CREATE_ATTEMPTED before
+        // validation and CREATED after the atomic insert
+        // (TransactionLifecycleCoordinator.kt:293-339), so exactly 2 inserts.
+        coVerify(exactly = 2) { transactionEventDao.insert(any()) }
     }
 
     @Test
-    fun `createExpense with negative amount returns ValidationFailed`() = runTest {
+    fun `createExpense with negative amount returns ValidationFailed`() = runTest(timeout = 60.seconds) {
         val request = CreateExpenseRequest(
             merchant = "Test",
             amount = -5.0,
@@ -155,22 +179,8 @@ class TransactionLifecycleCoordinatorTest {
             transactionType = TransactionType.PURCHASE,
             source = ExpenseSource.MANUAL_ENTRY
         )
-
-        val result = coordinator.createExpense(request)
-
-        assertTrue("Expected ValidationFailed, got $result", result is CreateExpenseResult.ValidationFailed)
-        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
-    }
-
-    @Test
-    fun `createExpense with blank merchant returns ValidationFailed`() = runTest {
-        val request = CreateExpenseRequest(
-            merchant = "",
-            amount = 10.0,
-            currency = "EUR",
-            date = now,
-            transactionType = TransactionType.PURCHASE,
-            source = ExpenseSource.MANUAL_ENTRY
+        every { transactionValidator.validateCreate(any()) } returns listOf(
+            TransactionValidationError(code = "AMOUNT_INVALID", message = "amount must be positive", field = "amount")
         )
 
         val result = coordinator.createExpense(request)
@@ -180,7 +190,27 @@ class TransactionLifecycleCoordinatorTest {
     }
 
     @Test
-    fun `createExpense with invalid currency returns ValidationFailed`() = runTest {
+    fun `createExpense with blank merchant returns ValidationFailed`() = runTest(timeout = 60.seconds) {
+        val request = CreateExpenseRequest(
+            merchant = "",
+            amount = 10.0,
+            currency = "EUR",
+            date = now,
+            transactionType = TransactionType.PURCHASE,
+            source = ExpenseSource.MANUAL_ENTRY
+        )
+        every { transactionValidator.validateCreate(any()) } returns listOf(
+            TransactionValidationError(code = "MERCHANT_BLANK", message = "merchant must not be blank", field = "merchant")
+        )
+
+        val result = coordinator.createExpense(request)
+
+        assertTrue("Expected ValidationFailed, got $result", result is CreateExpenseResult.ValidationFailed)
+        coVerify(exactly = 0) { expenseDao.insertAtomic(any()) }
+    }
+
+    @Test
+    fun `createExpense with invalid currency returns ValidationFailed`() = runTest(timeout = 60.seconds) {
         val request = CreateExpenseRequest(
             merchant = "Test",
             amount = 10.0,
@@ -188,6 +218,9 @@ class TransactionLifecycleCoordinatorTest {
             date = now,
             transactionType = TransactionType.PURCHASE,
             source = ExpenseSource.MANUAL_ENTRY
+        )
+        every { transactionValidator.validateCreate(any()) } returns listOf(
+            TransactionValidationError(code = "CURRENCY_INVALID", message = "currency must be a valid ISO code", field = "currency")
         )
 
         val result = coordinator.createExpense(request)
@@ -208,7 +241,7 @@ class TransactionLifecycleCoordinatorTest {
     )
 
     @Test
-    fun `createExpense converter cancellation propagates and nothing is committed`() = runTest {
+    fun `createExpense converter cancellation propagates and nothing is committed`() = runTest(timeout = 60.seconds) {
         coEvery {
             currencyConverter.convertAsOf(
                 amount = any<Double>(),
@@ -225,7 +258,7 @@ class TransactionLifecycleCoordinatorTest {
     }
 
     @Test
-    fun `createExpense event-write cancellation propagates before insert`() = runTest {
+    fun `createExpense event-write cancellation propagates before insert`() = runTest(timeout = 60.seconds) {
         coEvery { transactionEventDao.insert(any()) } throws CancellationException("Cancelled")
 
         assertFailsWith<CancellationException> {
@@ -235,7 +268,7 @@ class TransactionLifecycleCoordinatorTest {
     }
 
     @Test
-    fun `updateExpense converter cancellation propagates before transaction`() = runTest {
+    fun `updateExpense converter cancellation propagates before transaction`() = runTest(timeout = 60.seconds) {
         val existing = Expense(
             id = 1L, amount = 10.0, merchant = "Test",
             transactionType = TransactionType.PURCHASE, date = now,
@@ -259,22 +292,13 @@ class TransactionLifecycleCoordinatorTest {
     /**
      * U-001: non-cancellation conversion failure must keep the null fallback.
      *
-     * IGNORED, not deleted: this is the only new test that reaches
-     * `database.withTransaction`, and every test that crosses that boundary
-     * hangs for 60s under the current fixture — the relaxed-mock AppDatabase
-     * drops the transaction runnable, so the Room transaction context never
-     * resumes. Proven pre-existing: the unchanged `createExpense with valid
-     * request returns Created` hangs identically at pristine HEAD, in
-     * isolation (build/guard-debug/rp01-baseline-pristine3.log,
-     * rp01-isolation.log). RP-21 triage owns the fixture fix (candidate:
-     * mockkStatic("androidx.room.RoomDatabaseKt") stub executing the block);
-     * un-ignore after that lands. The contract itself stays covered by the
-     * passing updateType non-cancellation test and the propagation contract
-     * entries.
+     * Un-ignored now that the fixture intercepts the top-level Room facade via
+     * mockkStatic("androidx.room.RoomDatabaseKt") (the sweep-hang fix this file
+     * documented as the RP-21 candidate); the transaction block executes, so
+     * tests crossing `database.withTransaction` no longer hang.
      */
     @Test
-    @org.junit.Ignore("withTransaction hang family — pre-existing fixture defect, RP-21 triage")
-    fun `createExpense converter non-cancellation failure keeps existing fallback`() = runTest {
+    fun `createExpense converter non-cancellation failure keeps existing fallback`() = runTest(timeout = 60.seconds) {
         coEvery {
             currencyConverter.convertAsOf(
                 amount = any<Double>(),
@@ -294,7 +318,7 @@ class TransactionLifecycleCoordinatorTest {
     private class TimeoutLikeCancellation(message: String) : CancellationException(message)
 
     @Test
-    fun `createExpense timeout cancellation is not swallowed into fallback`() = runTest {
+    fun `createExpense timeout cancellation is not swallowed into fallback`() = runTest(timeout = 60.seconds) {
         coEvery {
             currencyConverter.convertAsOf(
                 amount = any<Double>(),
@@ -328,7 +352,7 @@ class TransactionLifecycleCoordinatorTest {
     }
 
     @Test
-    fun `updateType runner cancellation rethrows`() = runTest {
+    fun `updateType runner cancellation rethrows`() = runTest(timeout = 60.seconds) {
         val expenseId = 1L
         val existingExpense = Expense(
             id = expenseId, amount = 10.0, merchant = "Test",
@@ -336,7 +360,10 @@ class TransactionLifecycleCoordinatorTest {
             currency = "EUR", dedupeKey = "old-dk", merchantKey = "mk"
         )
         coEvery { expenseDao.getById(expenseId) } returns existingExpense
-        coEvery { expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns null
+        // 8 positional matchers: the DAO method has 8 params (windowMs has a
+        // default in the middle, ExpenseDao.kt:852-861) — a 7-any() stub misses
+        // the recorded call and the relaxed mock returns 0L (a phantom duplicate).
+        coEvery { expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns null
         coEvery { planner.planUpdated(any(), any(), any(), TransactionUpdateKind.TYPE) } returns nonEmptyBatch()
         coEvery { runner.run(any()) } throws CancellationException("Cancelled")
 
@@ -346,7 +373,7 @@ class TransactionLifecycleCoordinatorTest {
     }
 
     @Test
-    fun `updateExpense runner cancellation rethrows`() = runTest {
+    fun `updateExpense runner cancellation rethrows`() = runTest(timeout = 60.seconds) {
         val existingExpense = Expense(
             id = 1L, amount = 10.0, merchant = "Original",
             transactionType = TransactionType.PURCHASE, date = now,
@@ -363,7 +390,7 @@ class TransactionLifecycleCoordinatorTest {
     }
 
     @Test
-    fun `deleteExpense runner cancellation rethrows`() = runTest {
+    fun `deleteExpense runner cancellation rethrows`() = runTest(timeout = 60.seconds) {
         val expenseId = 1L
         val expense = Expense(
             id = expenseId, amount = 10.0, merchant = "Test",
@@ -374,14 +401,18 @@ class TransactionLifecycleCoordinatorTest {
         coEvery { planner.planDeleted(any(), any(), any()) } returns nonEmptyBatch()
         coEvery { runner.run(any()) } throws CancellationException("Cancelled")
 
-        val result = coordinator.deleteExpense(expense)
-        assertTrue("Expected failure, got $result", result.isFailure)
-        assertTrue("Expected CancellationException", result.exceptionOrNull() is CancellationException)
+        // The delete commits inside the transaction; the post-commit runner's
+        // CancellationException must rethrow (runBestEffortAfterCommit always
+        // rethrows CE — PostCommitActionRunnerExtensions.kt), never be captured
+        // into a failure result.
+        assertFailsWith<CancellationException> {
+            coordinator.deleteExpense(expense)
+        }
         coVerify(exactly = 1) { expenseDao.delete(any()) }
     }
 
     @Test
-    fun `updateType runner non-cancellation failure does not rollback committed update`() = runTest {
+    fun `updateType runner non-cancellation failure does not rollback committed update`() = runTest(timeout = 60.seconds) {
         val expenseId = 1L
         val existingExpense = Expense(
             id = expenseId, amount = 10.0, merchant = "Test",
@@ -389,7 +420,8 @@ class TransactionLifecycleCoordinatorTest {
             currency = "EUR", dedupeKey = "old-dk", merchantKey = "mk"
         )
         coEvery { expenseDao.getById(expenseId) } returns existingExpense
-        coEvery { expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any()) } returns null
+        // 8 positional matchers (see note above): 7-any() misses the recorded call.
+        coEvery { expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any()) } returns null
         coEvery { planner.planUpdated(any(), any(), any(), TransactionUpdateKind.TYPE) } returns nonEmptyBatch()
         coEvery { runner.run(any()) } throws RuntimeException("Best-effort failure")
 

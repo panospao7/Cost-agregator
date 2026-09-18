@@ -4,6 +4,7 @@ import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Test
@@ -85,9 +86,11 @@ class DatabaseBarrierTest {
     @Test
     fun runWrite_throws_in_non_NORMAL() = runTest {
         setMode(RestoreMaintenanceMode.Mode.RESTORE_STAGING)
-        assertThrows(DatabaseAccessBlockedException::class.java) {
-            runTest { writeBarrier.runWrite(DatabaseAccessOperation("op")) { } }
-        }
+        val exception = runCatching {
+            writeBarrier.runWrite(DatabaseAccessOperation("op")) { }
+        }.exceptionOrNull()
+        assertNotNull("runWrite must throw in non-NORMAL mode", exception)
+        assertEquals(DatabaseAccessBlockedException::class, exception!!::class)
     }
 
     // ── Read barrier — NORMAL_APP_READ ────────────────────────────
