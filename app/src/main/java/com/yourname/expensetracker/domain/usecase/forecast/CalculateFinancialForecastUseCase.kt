@@ -60,7 +60,7 @@ class CalculateFinancialForecastUseCase @Inject constructor(
 
         val assembledInput = forecastInputAssembler.assemble(
             expenses = expenseSnapshots,
-            manualRecurringEntities = emptyList(),
+            manualRecurringEntities = recurringEntities,
             detectedRecurringPatterns = confirmedRecurringPatterns,
             plannedExpenses = forecastInputAssembler.mapPlannedExpenses(plannedEntities),
             savingsGoals = forecastInputAssembler.mapSavingsGoals(goalEntities),

@@ -129,19 +129,13 @@ class TransactionLifecycleCoordinatorUpdateTest {
         )
         coEvery { expenseDao.getById(1L) } returns existingExpense
 
-        // Conversion fails (returns null from runCatching)
-        // Concrete CurrencyCode matchers: mockk 1.13.8 cannot fabricate
-        // signature values for the validating CurrencyCode value class
-        // (its init rejects mock-generated strings), so any<CurrencyCode>()
-        // throws InvocationTargetException while recording. updateExpense
-        // converts from the expense currency (USD) to the home currency (EUR).
+        // Conversion fails. updateExpense calls the String-typed convertAsOf
+        // overload (expense.currency is String; homeCurrency() returns "EUR"),
+        // NOT the CurrencyCode convenience overload — stubbing that one leaves
+        // the String overload relaxed, which fabricates a zero ConversionResult
+        // and the coordinator takes the success branch instead of clearing.
         coEvery {
-            currencyConverter.convertAsOf(
-                any<Double>(),
-                CurrencyCode("USD"),
-                CurrencyCode("EUR"),
-                any<Long>()
-            )
+            currencyConverter.convertAsOf(any<Double>(), "USD", "EUR", any<Long>())
         } throws RuntimeException("Network error")
 
         // Capture the expense that gets persisted

@@ -225,6 +225,7 @@ class InvestmentTrackerTest {
     @Test
     fun `portfolio allocation uses same source for numerator and denominator`() = runTest {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("USD")
+        every { investmentDao.getAllActiveInvestments() } returns flowOf(emptyList())
         // This is a structural check — allocation runs without crash
         // and returns valid percentages
         val result = tracker.getPortfolioAllocation()
@@ -238,13 +239,17 @@ class InvestmentTrackerTest {
         val investmentB = makeInvestment(id = 10L)
         coEvery { investmentDao.getAllInvestments() } returns listOf(investmentA, investmentB)
 
+        // Local noon two days before `now`: inside a single calendar day in any
+        // timezone, so the dense day-range collapse consumes all three snapshots
+        // on their day and the final day carries forward 120 + 50 = 170.
+        val snapshotBase = 1_700_000_000_000L - 2 * 24 * 60 * 60 * 1000L + 12 * 60 * 60 * 1000L
         coEvery { investmentValueDao.getPortfolioHistoryBatch(listOf(9L, 10L), any(), any()) } returns listOf(
             InvestmentValue(
                 id = 20L,
                 investmentId = 9L,
                 price = 100.0,
                 totalValue = 100.0,
-                timestamp = 1_700_000_000_000L,
+                timestamp = snapshotBase,
                 dayChange = 0.0,
                 dayChangePercent = 0.0
             ),
@@ -253,7 +258,7 @@ class InvestmentTrackerTest {
                 investmentId = 9L,
                 price = 120.0,
                 totalValue = 120.0,
-                timestamp = 1_700_000_000_000L + 3_600_000L,
+                timestamp = snapshotBase + 3_600_000L,
                 dayChange = 20.0,
                 dayChangePercent = 20.0
             ),
@@ -262,7 +267,7 @@ class InvestmentTrackerTest {
                 investmentId = 10L,
                 price = 50.0,
                 totalValue = 50.0,
-                timestamp = 1_700_000_000_000L + 1_800_000L,
+                timestamp = snapshotBase + 1_800_000L,
                 dayChange = 0.0,
                 dayChangePercent = 0.0
             )
@@ -270,8 +275,11 @@ class InvestmentTrackerTest {
 
         val history = tracker.getPortfolioValueHistory(days = 30)
 
-        assertThat(history.values.size).isEqualTo(1)
-        assertThat(history.values.single().totalValue).isEqualTo(170.0)
+        // Dense day-range design: one entry per day in the window with
+        // carry-forward; same-day snapshots collapse to the latest, so the
+        // newest day (holding both fixtures' snapshots) totals 120 + 50.
+        assertThat(history.values).isNotEmpty()
+        assertThat(history.values.last().totalValue).isEqualTo(170.0)
         coVerify(exactly = 1) { investmentValueDao.getPortfolioHistoryBatch(listOf(9L, 10L), any(), any()) }
     }
 

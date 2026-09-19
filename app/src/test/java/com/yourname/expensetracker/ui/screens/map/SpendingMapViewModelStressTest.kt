@@ -303,12 +303,16 @@ class SpendingMapViewModelStressTest : ViewModelTestUtils() {
         } returns LocationResolutionResult.Retryable(GeocodingError.Timeout)
 
         viewModel.onResolveLocationForMarker(marker)
-        advanceUntilIdle()
-
-        assertEquals(
-            "Temporary location lookup failure. Please try again.",
-            viewModel.state.value.snackbarMessage
-        )
+        // onResolveLocationForMarker launches on Dispatchers.IO (a real pool,
+        // not the test scheduler), so advanceUntilIdle cannot guarantee the
+        // state update landed — wait on the state flow like the other tests.
+        viewModel.state.test {
+            val final = awaitUntil { !it.isResolvingLocation && it.snackbarMessage != null }
+            assertEquals(
+                "Temporary location lookup failure. Please try again.",
+                final.snackbarMessage
+            )
+        }
         assertFalse(viewModel.state.value.isResolvingLocation)
         coVerify(exactly = 0) { expenseRepository.updateExpenseLocation(any(), any(), any(), any(), any(), any()) }
     }

@@ -272,7 +272,7 @@ class CalculateFinancialForecastUseCaseTest {
     }
 
     @Test
-    fun `invoke merges recurring as manual plus high-confidence detected with manual precedence`() = runTest {
+    fun `invoke merges manual rules with high-confidence detected patterns and drops low confidence`() = runTest {
         val now = ms(2026, Calendar.JANUARY, 15, 12)
         every { timeProvider.now() } returns now
 
@@ -335,12 +335,28 @@ class CalculateFinancialForecastUseCaseTest {
 
         useCase.invoke().first()
 
-        val recurringByMerchant = capturedInput.captured.recurringPatterns.associateBy { it.merchantName }
-        assertEquals(2, capturedInput.captured.recurringPatterns.size)
-        assertEquals(15.0, recurringByMerchant.getValue("Netflix").averageAmount, 0.0001)
-        assertEquals(1.0f, recurringByMerchant.getValue("Netflix").confidence)
-        assertEquals(30.0, recurringByMerchant.getValue("Gym").averageAmount, 0.0001)
-        assertTrue("Low confidence detected patterns should be excluded", !recurringByMerchant.containsKey("LowConfidence"))
+        val patterns = capturedInput.captured.recurringPatterns
+        // Manual rules flow through the confirmed provider; amount-distinct high-confidence
+        // detections coexist (only exact merchant+frequency+amount signature collisions are
+        // suppressed, per ForecastInputAssemblerTest); below-threshold suggestions are excluded.
+        assertEquals(3, patterns.size)
+        val netflixPatterns = patterns.filter { it.merchantName == "Netflix" }
+        assertEquals(2, netflixPatterns.size)
+        assertTrue(
+            "Manual rule keeps its own amount with full confidence",
+            netflixPatterns.any { it.id == 1L && it.averageAmount == 15.0 && it.confidence == 1.0f }
+        )
+        assertTrue(
+            "High-confidence detection with a different amount is kept",
+            netflixPatterns.any { it.id == null && it.averageAmount == 99.0 && it.confidence == 0.95f }
+        )
+        assertTrue(
+            patterns.any { it.merchantName == "Gym" && it.averageAmount == 30.0 && it.confidence == 0.85f }
+        )
+        assertTrue(
+            "Low confidence detected patterns should be excluded",
+            patterns.none { it.merchantName == "LowConfidence" }
+        )
     }
 
     @Test

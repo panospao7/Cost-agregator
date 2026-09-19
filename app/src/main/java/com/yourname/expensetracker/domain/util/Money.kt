@@ -91,7 +91,29 @@ value class Money(val amount: BigDecimal) {
     fun divide(divisor: Double): Money {
         return Money(amount.divide(BigDecimal(divisor.toString()), DEFAULT_SCALE, DEFAULT_ROUNDING))
     }
-    
+
+    /**
+     * Split this amount into [parts] shares whose sum is exactly this amount.
+     * Shares are equal at cent granularity; the rounding remainder (at most one
+     * cent per share boundary) is distributed to the first shares — for negative
+     * totals, the negative remainder to the last shares.
+     * Example: Money.fromDouble(100.0).splitEvenly(3) == [33.34, 33.33, 33.33].
+     */
+    fun splitEvenly(parts: Int): List<Money> {
+        require(parts > 0) { "parts must be positive" }
+        val totalCents = amount.movePointRight(2).setScale(0, DEFAULT_ROUNDING).longValueExact()
+        val baseCents = totalCents / parts
+        val remainderCents = (totalCents % parts).toInt()
+        return List(parts) { index ->
+            val extra = when {
+                remainderCents > 0 && index < remainderCents -> 1L
+                remainderCents < 0 && index >= parts + remainderCents -> -1L
+                else -> 0L
+            }
+            Money.cents(baseCents + extra)
+        }
+    }
+
     /**
      * Calculate percentage of this amount.
      * Example: Money(100.0).percentage(15.0) = 15.0 (15%)

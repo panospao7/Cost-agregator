@@ -8,8 +8,15 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import java.io.ByteArrayOutputStream
 
+// Robolectric: ImagePart(bytes) decodes the image via android.graphics in its
+// init, which returns null on the plain JVM stub jar and aborts construction.
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
 class OnDeviceReceiptAssistServiceTest {
 
     private val service = OnDeviceReceiptAssistService()
@@ -51,7 +58,15 @@ class OnDeviceReceiptAssistServiceTest {
 
     @Test
     fun `buildRequestForTest attaches image when valid image input exists`() {
+        // KNOWN ENVIRONMENT LIMITATION (fails off-device): ImagePart's
+        // ByteArray constructor decodes via android-graphics internals that
+        // do not work on the JVM (plain stub jar returns null; Robolectric
+        // still fails; mockkConstructor cannot instrument the obfuscated
+        // class — VerifyError). Needs on-device verification of the attach
+        // path or a genai-prompt library upgrade; the text-only variant of
+        // this test covers the negative branch.
         val imageFile = kotlin.io.path.createTempFile(suffix = ".png").toFile().apply {
+            // Encode a real 1x1 PNG with the platform encoder (Robolectric-backed).
             val bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
             val output = ByteArrayOutputStream()
             try {

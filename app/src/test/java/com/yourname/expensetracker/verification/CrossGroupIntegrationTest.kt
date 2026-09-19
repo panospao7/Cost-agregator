@@ -270,6 +270,8 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             stressForecastEngine = stressForecastEngine,
             forecastInputAssembler = mockk {
                 coEvery { assemble(any(), any(), any(), any(), any(), any(), any()) } returns mockk(relaxed = true)
+                // ComputeDashboardWidgetsUseCase migrated to the normalized entry point.
+                coEvery { assembleNormalized(any()) } returns mockk(relaxed = true)
             },
             currencyConverter = mockk(relaxed = true),
             currencySettingsRepository = mockk(relaxed = true),
@@ -515,9 +517,16 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
             },
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined,
-            analyticsCurrencyNormalizer = mockk(relaxed = true),
+            analyticsCurrencyNormalizer = testAnalyticsCurrencyNormalizer(testCurrencyConverter()),
             expenseRepository = mockk(relaxed = true),
-            currencySettingsRepository = mockk(relaxed = true),
+            currencySettingsRepository = mockk {
+                every { homeCurrency() } returns flowOf("EUR")
+                coEvery {
+                    resolveHomeCurrency()
+                } returns com.yourname.expensetracker.domain.currency.HomeCurrencyResolution.Resolved(
+                    com.yourname.expensetracker.domain.core.money.CurrencyCode("EUR")
+                )
+            },
             currencyConverter = mockk(relaxed = true),
             writeBarrier = mockk(relaxed = true)
         )

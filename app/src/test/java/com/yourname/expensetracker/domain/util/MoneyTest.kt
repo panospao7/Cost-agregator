@@ -111,8 +111,9 @@ class MoneyTest {
         // Act
         val result = ten * 0.1
         
-        // Assert — compare underlying BigDecimal to avoid Kotlin value class boxing
-        assertThat(result.amount).isEqualTo(Money.fromDouble(1.0).amount)
+        // Assert — value equality via toDouble: BigDecimal.equals is scale-sensitive
+        // (1.00 vs 1.0) and multiply grows scale, so amount.equals would misfire.
+        assertThat(result.toDouble()).isEqualTo(1.0)
     }
 
     @Test
@@ -135,13 +136,42 @@ class MoneyTest {
         // Arrange
         val total = Money.fromDouble(100.0)
         val numParticipants = 3
-        
+
         // Act
-        val splits = List(numParticipants) { total.divide(numParticipants) }
+        val splits = total.splitEvenly(numParticipants)
         val sum = splits.sum()
-        
-        // Assert — compare underlying BigDecimal to avoid Kotlin value class boxing
-        assertThat(sum.amount).isEqualTo(total.amount)
+
+        // Assert — exact cent distribution and total conservation
+        assertThat(splits).isEqualTo(
+            listOf(Money.cents(3334), Money.cents(3333), Money.cents(3333))
+        )
+        assertThat(sum.toDouble()).isEqualTo(100.0)
+    }
+
+    @Test
+    fun `division - splitEvenly handles indivisible cents and single part`() {
+        // 1 cent across 4 people: first share gets the lone cent
+        val oneCent = Money.cents(1)
+        val fourWay = oneCent.splitEvenly(4)
+        assertThat(fourWay).isEqualTo(
+            listOf(Money.cents(1), Money.cents(0), Money.cents(0), Money.cents(0))
+        )
+        assertThat(fourWay.sum().toDouble()).isEqualTo(0.01)
+
+        // Single part is the identity
+        val total = Money.fromDouble(42.42)
+        assertThat(total.splitEvenly(1)).isEqualTo(listOf(total))
+    }
+
+    @Test
+    fun `division - splitEvenly distributes negative remainder to last shares`() {
+        val total = Money.fromDouble(-100.0)
+        val splits = total.splitEvenly(3)
+
+        assertThat(splits).isEqualTo(
+            listOf(Money.cents(-3333), Money.cents(-3333), Money.cents(-3334))
+        )
+        assertThat(splits.sum().toDouble()).isEqualTo(-100.0)
     }
 
     @Test
@@ -180,8 +210,9 @@ class MoneyTest {
         assertThat(adjustedSplits[2].toDouble()).isEqualTo(33.33)
         
         val totalOfSplits = adjustedSplits.sum()
-        // Compare underlying BigDecimal to avoid Kotlin value class boxing
-        assertThat(totalOfSplits.amount).isEqualTo(total.amount)
+        // Value equality via toDouble: BigDecimal.equals is scale-sensitive
+        // (100.00 vs 100.0) and sum() carries the parts' scale.
+        assertThat(totalOfSplits.toDouble()).isEqualTo(100.0)
     }
 
     @Test

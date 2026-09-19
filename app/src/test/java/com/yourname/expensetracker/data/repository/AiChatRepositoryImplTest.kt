@@ -7,6 +7,7 @@ import com.yourname.expensetracker.data.database.dao.AiChatSessionDao
 import com.yourname.expensetracker.data.database.entity.AiChatMessageEntity
 import com.yourname.expensetracker.data.database.entity.AiChatSessionEntity
 import com.yourname.expensetracker.domain.ai.model.AiSettings
+import com.yourname.expensetracker.domain.ai.model.AssistantHistorySettings
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageKind
 import com.yourname.expensetracker.domain.ai.model.AssistantMessageRole
 import com.yourname.expensetracker.domain.ai.service.AiSettingsRepository
@@ -139,6 +140,8 @@ class AiChatRepositoryImplTest {
     @Test
     fun `appendMessage inserts message and updates session timestamp when history enabled`() = runTest(timeout = 60.seconds) {
         every { aiSettingsRepository.settings() } returns flowOf(AiSettings(storeConversationHistory = true))
+        // W34: payloadJson is only persisted in RAW mode (REDACTED strips it).
+        repository.setHistorySettings(AssistantHistorySettings.RAW)
         coEvery { messageDao.insert(any()) } returns 9L
 
         val result = repository.appendMessage(

@@ -102,7 +102,8 @@ class GeocodingCancellationTest {
             return RecordingCall(
                 request = request,
                 enqueued = enqueued,
-                cancelled = cancelled
+                cancelled = cancelled,
+                cancellationRequested = cancellationRequested
             )
         }
 
@@ -114,7 +115,8 @@ class GeocodingCancellationTest {
     private class RecordingCall(
         private val request: Request,
         private val enqueued: CountDownLatch,
-        private val cancelled: AtomicBoolean
+        private val cancelled: AtomicBoolean,
+        private val cancellationRequested: CountDownLatch
     ) : Call {
         private val executed = AtomicBoolean(false)
 
@@ -141,7 +143,8 @@ class GeocodingCancellationTest {
         override fun clone(): Call = RecordingCall(
             request = request,
             enqueued = enqueued,
-            cancelled = cancelled
+            cancelled = cancelled,
+            cancellationRequested = cancellationRequested
         )
 
         override fun timeout(): Timeout = Timeout.NONE
