@@ -88,7 +88,9 @@ class TotalsAggregationEngine @Inject constructor(
         // P5-NEW-09 / P5-P1-01 FIX: per-expense TRANSACTION_DATE PURCHASE-only totals,
         // same rate basis as weekly/daily drilldown and analytics summary.
         val monthlyTotals = multiCurrencyRepository.getMonthlyAggregatesHistorical(startMs, endMs)
-        val average = getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = false)
+        // P5-014 (RP-07): monthly status badges compare against COMPLETED-month
+        // history — the in-progress month must not drag the baseline down.
+        val average = getAverageForPeriodType(PeriodType.MONTH, excludeCurrent = true)
 
         val totalsByKey = monthlyTotals.associateBy { it.monthKey }
         (1..12).map { month ->
@@ -130,7 +132,16 @@ class TotalsAggregationEngine @Inject constructor(
     fun getWeeklyTotals(year: Int, month: Int): Flow<List<PeriodTotal>> = reactiveFlow {
         val (monthStartMs, monthEndMs) = getMonthRange(year, month)
         val weeklyAggregates = multiCurrencyRepository.getWeeklyAggregatesHistorical(monthStartMs, monthEndMs)
-        val average = getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = false)
+        // P5-014 (RP-07): exclude the in-progress week from the typical-history
+        // baseline ONLY when the current week is actually part of the displayed
+        // month — a historical month's weeks are all completed and keep their
+        // full weight in the average.
+        val now = timeProvider.now()
+        val excludeCurrentFromBaseline = weeklyAggregates.any { periodAgg ->
+            val weekStart = TimePeriodUtils.parseWeekKeyToStart(periodAgg.periodKey) ?: return@any false
+            weekStart <= now && now < TimePeriodUtils.addDays(weekStart, 7)
+        }
+        val average = getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = excludeCurrentFromBaseline)
 
         if (weeklyAggregates.isEmpty()) return@reactiveFlow emptyList()
 
@@ -350,6 +361,26 @@ class TotalsAggregationEngine @Inject constructor(
         }.sortedByDescending { it.totalAmount }
     }
 
+    /**
+     * Average of historical period totals used as the "typical" baseline for
+     * status badges.
+     *
+     * P5-014 (RP-07) [excludeCurrent] policy:
+     * - `true` is REQUIRED for any historical comparison/status baseline. The
+     *   current period is still incomplete and would drag the baseline down,
+     *   mislabeling completed periods as OVER_AVERAGE.
+     * - `false` means the average deliberately includes the current partial
+     *   period. Within this engine the daily drill-down callers retain it as
+     *   legacy behavior outside the RP-07 matrix; any new `false` call site
+     *   must be a surface that explicitly labels itself as including the
+     *   current period, with a test proving that intent.
+     *
+     * Excluding the current period is NOT the same as dropping a missing rate:
+     * a completed month with recorded zero spend still counts in the mean,
+     * calendar-safe period keys are preserved, and per-period conversion
+     * partial-state ([MoneyAggregate.isPartial]/[MoneyAggregate.warningMessage])
+     * continues to propagate on the returned totals.
+     */
     suspend fun getAverageForPeriodType(periodType: PeriodType, excludeCurrent: Boolean): Double = withContext(ioDispatcher) {
         try {
             val now = timeProvider.now()

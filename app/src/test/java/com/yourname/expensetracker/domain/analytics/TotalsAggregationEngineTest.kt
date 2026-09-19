@@ -593,7 +593,15 @@ class TotalsAggregationEngineTest {
 
     @Test
     fun `getAverageForPeriodType WEEK excludeCurrent returns purchase-only average without current period`() = runTest {
-        val referenceDate = getStartOfDay(2026, Calendar.APRIL, 15)
+        // P5-014 (RP-07) repair: the fixture previously pinned the retired
+        // positional dropLast(1) semantics with a reference date (Apr 15)
+        // whose current week (W16) none of the fixture weeks belonged to.
+        // DSH-13 exclusion is time-based: Apr 8 2026 sits INSIDE week W15
+        // (Mon Apr 6 – Sun Apr 12), so W15 is the in-progress week and is
+        // excluded by the weekStart < currentWeekStart filter, while W13/W14
+        // count: (200 + 400) / 2 = 300.0 — the same expected value, now
+        // proving actual time-based exclusion instead of positional drop.
+        val referenceDate = getStartOfDay(2026, Calendar.APRIL, 8)
         every { timeProvider.now() } returns referenceDate
 
         coEvery { multiCurrencyRepo.getWeeklyAggregatesHistorical(any(), any()) } returns listOf(
@@ -604,7 +612,6 @@ class TotalsAggregationEngineTest {
 
         val average = engine.getAverageForPeriodType(PeriodType.WEEK, excludeCurrent = true)
 
-        // dropLast(1) removes current week: (200 + 400) / 2 = 300.0
         assertEquals(300.0, average, 0.01)
     }
 

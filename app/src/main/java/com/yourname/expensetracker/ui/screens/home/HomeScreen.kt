@@ -1,4 +1,4 @@
-﻿package com.yourname.expensetracker.ui.screens.home
+package com.yourname.expensetracker.ui.screens.home
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -761,6 +761,7 @@ fun HomeScreen(
                             is DashboardWidget.FinancialRunway -> {
             FinancialRunwayCard(
                 daysRemaining = widget.daysRemaining,
+                zeroBurnHorizonDays = widget.zeroBurnHorizonDays,
                 discretionaryRemaining = widget.discretionaryRemaining,
                 averageDailyDiscretionarySpend = widget.averageDailyDiscretionarySpend,
                 monthlyIncome = widget.monthlyIncome,

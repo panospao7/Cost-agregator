@@ -1,6 +1,8 @@
 # RP-07 - Runway, calendar, insight, and historical-status semantics
 
-> **Status:** corrected implementation plan; documentation only.
+> **Status:** implemented on branch `rp-07-wip`. P5-010, P5-011, P5-013, and P5-014 are implemented;
+> strict review PASS; targeted validation evidence captured 2026-09-19 (see "Implementation status"
+> at the end of this document).
 > **Mode:** strict for the runway model migration, standard for the display-only trend/status fixes.
 > **Depends on:** RP-05 dashboard windows and RP-06 normalized pace/synthesis contracts.
 > **Owns:** dashboard runway edge behavior, DST-safe block-party lookup, month-over-month insight wording, and completed-history status baselines.
@@ -116,3 +118,37 @@ After implementation and strict review, run sequentially with output captured:
 ```
 
 No Gradle command was run while preparing this plan. RP-08 and later remediation documents were intentionally not changed in this continuation.
+
+## Implementation status (2026-09-19, branch `rp-07-wip`)
+
+Implemented per plan, in slices, each with focused tests (new test files:
+`FinancialRunwayNoBurnTest`, `BlockPartyDstAlignmentTest`,
+`ComputeDashboardWidgetsInsightMoMTest`,
+`TotalsAggregationEngineStatusBaselineTest`; one pre-existing pin repaired in
+`TotalsAggregationEngineTest`):
+
+- **P5-010** — `FinancialRunway.daysRemaining: Int?` + `zeroBurnHorizonDays: Int?` + `RunwayStatus.NO_BURN`; only `totalCommitted` deducted (`coerceAtLeast(0.0)`), `totalLikely` informational; `roundToInt` day math; card/home-screen migration; NO_BURN renders `"{cap}+"` / "No remaining period"; non-NO_BURN defensive null keeps the prior numeric presentation.
+- **P5-011** — block-party fallback keys are `getStartOfDay(addDays(monthStart, dayIndex))` (calendar-safe, no fixed-millis key remains in the path); three DST fixtures (spring-forward, fall-back, and an empty-day-after-fall-back fixture that can only pass via the fallback list, proving the retired keying spilled day 1's value onto day 2).
+- **P5-013** — MoM insight compares `SpendingPace.projectedTotal` with the calculator's completed `previousMonthTotal` (one source, like-for-like); missing baseline/projection skips to the today-spent fallback, never coerced; >20% spike threshold and text keys unchanged.
+- **P5-014** — `excludeCurrent` matrix applied: `getMonthlyTotals` → `true`; `getWeeklyTotals` → conditional on the current week being in the displayed month; all six `HomeViewModel` status callers → `true`; policy KDoc added; daily drill-down callers intentionally left `false` (outside the matrix, documented in the KDoc as legacy). `TotalsAggregationEngineTest` WEEK-excludeCurrent pin repaired from positional `dropLast(1)` to time-based exclusion with a fixture whose third week is the actual in-progress week (same expected value, real exclusion).
+
+Strict review: initial FAIL (encoding corruption carried over from earlier session edits, fallback-path coverage gap, KDoc accuracy, NO_INCOME label drift) → all four findings fixed → focused re-review **PASS**.
+
+Validation via `scripts/validation-runner.ps1` (worktree `build/worktrees/rp-07`, profile results under `build/validation-runs/`):
+
+| Profile / filter | Result | Run ID |
+|---|---|---|
+| `compile` | PASS | vr-20260919-161511-b1d3be25 |
+| `targeted-unit-test` `*ComputeDashboardWidgets*` | PASS | vr-20260919-163625-e693afba |
+| `targeted-unit-test` `*BlockParty*` | PASS | vr-20260919-164505-15e8d714 |
+| `targeted-unit-test` `*TotalsAggregationEngine*` | FAIL — exactly one PRE-EXISTING stale test (see below) | vr-20260919-165424-1b2498fe |
+| `targeted-unit-test` `*FinancialRunway*` | PASS | vr-20260919-170033-4eb5f299 |
+| `targeted-unit-test` `*HomeViewModel*` | PASS | vr-20260919-170229-76201c64 |
+| `targeted-unit-test` `*DashboardProjectionSafety*` | PASS | vr-20260919-170424-4e787bad |
+| `targeted-unit-test` `*ForecastRunwayIntegration*` | PASS | vr-20260919-170704-c77dc2d7 |
+
+One test in the `*TotalsAggregationEngine*` filter remains red and is **not** caused by this diff (static proof: both its assertions execute only code paths untouched by the RP-07 diff — the `WEEK` branch of `getAverageForPeriodType` and the `mapIndexed` row mapping):
+
+- `TotalsAggregationEngineTest > getWeeklyTotals calculates correct week labels` — expects 5 rows and labels "W2"/"W3"/"W4" from a 3-row repository mock; the current (pre-existing) implementation returns exactly the repository rows with index-based labels, so the expectation cannot pass on HEAD. Left unrepaired deliberately: repairing it would either bless index-based labeling (a possible RP-05-era label regression) or expand this PR's scope. Recommend routing to the test-diagnosis decision menu (`workflows/active/handoff-test-diagnosis-20260919.md`).
+
+Not yet run: full `unit-tests` suite, `static-guards`, `app-check`. The first `compile` attempt failed on missing `local.properties` in the worktree (environmental; fixed by copying the gitignored machine-local file, same as sibling worktrees).

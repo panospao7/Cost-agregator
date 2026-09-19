@@ -22,7 +22,8 @@ import com.yourname.expensetracker.domain.usecase.dashboard.CurrencyQualityUi
 
 @Composable
 fun FinancialRunwayCard(
-    daysRemaining: Int,
+    daysRemaining: Int?,
+    zeroBurnHorizonDays: Int? = null,
     discretionaryRemaining: Double,
     averageDailyDiscretionarySpend: Double,
     monthlyIncome: Double,
@@ -35,15 +36,34 @@ fun FinancialRunwayCard(
     /** Placeholder default. Production callers should pass explicit currency. */
     currency: String = "EUR"
 ) {
-    // Guard negative days
-    val safeDays = daysRemaining.coerceAtLeast(0)
-    val isExhausted = daysRemaining <= 0 && status != DashboardWidget.RunwayStatus.NO_INCOME
+    // P5-010 (RP-07): daysRemaining is nullable — null means no runway number may
+    // be honestly stated (NO_BURN). Null with a non-NO_BURN status is NOT exhausted.
+    val safeDays = daysRemaining?.coerceAtLeast(0)
+    val isExhausted = daysRemaining != null &&
+        daysRemaining <= 0 &&
+        status != DashboardWidget.RunwayStatus.NO_INCOME &&
+        status != DashboardWidget.RunwayStatus.NO_BURN
+
+    // P5-010: NO_BURN presentation — "cap+" when the period has days left,
+    // "No remaining period" at zero. Bounded progress derives from the cap.
+    val isNoBurn = status == DashboardWidget.RunwayStatus.NO_BURN
+    val noBurnCap = if (isNoBurn) (zeroBurnHorizonDays ?: 0).coerceIn(0, 30) else 0
+    val dayLabel: String = when {
+        isNoBurn && noBurnCap > 0 -> "$noBurnCap+"
+        isNoBurn -> stringResource(R.string.financial_runway_no_remaining_period)
+        // P5-010: null with a non-NO_BURN status (defensive/preview path only —
+        // the assembly gate suppresses NO_INCOME cards) retains the existing
+        // numeric presentation instead of a placeholder glyph.
+        else -> safeDays?.toString() ?: "0"
+    }
+    val showDaysSuffix = !isNoBurn || noBurnCap > 0
 
     val (backgroundColor, accentColor) = when (status) {
         DashboardWidget.RunwayStatus.HEALTHY -> SemanticColors.SuccessGreen.copy(alpha = 0.15f) to SemanticColors.SuccessGreen
         DashboardWidget.RunwayStatus.CAUTION -> SemanticColors.WarningOrange.copy(alpha = 0.15f) to SemanticColors.WarningOrange
         DashboardWidget.RunwayStatus.CRITICAL -> SemanticColors.DangerRed.copy(alpha = 0.15f) to SemanticColors.DangerRed
         DashboardWidget.RunwayStatus.NO_INCOME -> SemanticColors.PrimaryIndigo.copy(alpha = 0.15f) to SemanticColors.PrimaryIndigo
+        DashboardWidget.RunwayStatus.NO_BURN -> SemanticColors.PrimaryLight.copy(alpha = 0.15f) to SemanticColors.PrimaryLight
     }
 
     val statusIcon = when (status) {
@@ -51,6 +71,7 @@ fun FinancialRunwayCard(
         DashboardWidget.RunwayStatus.CAUTION -> "🟡"
         DashboardWidget.RunwayStatus.CRITICAL -> "🔴"
         DashboardWidget.RunwayStatus.NO_INCOME -> "⚪"
+        DashboardWidget.RunwayStatus.NO_BURN -> "🔵"
     }
 
     val statusText = when (status) {
@@ -58,6 +79,7 @@ fun FinancialRunwayCard(
         DashboardWidget.RunwayStatus.CAUTION -> "Caution"
         DashboardWidget.RunwayStatus.CRITICAL -> "Critical"
         DashboardWidget.RunwayStatus.NO_INCOME -> "No Income Data"
+        DashboardWidget.RunwayStatus.NO_BURN -> "No burn yet"
     }
 
     if (isUnavailable) {
@@ -137,31 +159,38 @@ fun FinancialRunwayCard(
                 verticalAlignment = Alignment.Bottom
             ) {
                 Text(
-                    text = "$safeDays",
+                    text = dayLabel,
                     style = MaterialTheme.typography.displayMedium,
                     fontWeight = FontWeight.ExtraBold,
                     color = accentColor
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.financial_runway_days),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Medium,
-                    color = SemanticColors.TextSecondary,
-                    modifier = Modifier.padding(bottom = 6.dp)
-                )
+                if (showDaysSuffix) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.financial_runway_days),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Medium,
+                        color = SemanticColors.TextSecondary,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+                }
             }
 
             Text(
-                text = if (isExhausted) "Budget exhausted — discretionary funds depleted"
+                text = if (isNoBurn && noBurnCap == 0) stringResource(R.string.financial_runway_no_remaining_period)
+                       else if (isExhausted) "Budget exhausted — discretionary funds depleted"
                        else "of discretionary spending remaining",
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (isExhausted) SemanticColors.DangerRed else SemanticColors.TextSecondary
             )
 
-            // Runway progress bar
+            // Runway progress bar — NO_BURN uses the bounded cap, never null days
             Spacer(modifier = Modifier.height(8.dp))
-            val progress = (safeDays / 30f).coerceIn(0f, 1f)
+            val progress = if (isNoBurn) {
+                (noBurnCap / 30f).coerceIn(0f, 1f)
+            } else {
+                ((safeDays ?: 0) / 30f).coerceIn(0f, 1f)
+            }
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier

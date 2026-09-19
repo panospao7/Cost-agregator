@@ -2245,6 +2245,8 @@
     <string name="financial_upcoming">UPCOMING (NEXT 30 DAYS)</string>
     <string name="financial_runway_title">FINANCIAL RUNWAY</string>
     <string name="financial_runway_days">days</string>
+    <!-- P5-010 (RP-07): NO_BURN cap-zero state — the period has no days left -->
+    <string name="financial_runway_no_remaining_period">No remaining period</string>
     <string name="chart_total">Total</string>
     <string name="chart_category_split_label">CATEGORY SPLIT</string>
     <string name="chart_no_category_data_title">No category data yet</string>

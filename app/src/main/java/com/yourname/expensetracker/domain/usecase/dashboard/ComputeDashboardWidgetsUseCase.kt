@@ -41,6 +41,7 @@ import com.yourname.expensetracker.domain.util.MerchantKeyGenerator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
@@ -133,7 +134,17 @@ sealed class DashboardWidget {
     ) : DashboardWidget()
 
     data class FinancialRunway(
-        val daysRemaining: Int,
+        /**
+         * P5-010 (RP-07): null when no runway number may be honestly stated —
+         * currently only the NO_BURN state. Never a magic sentinel.
+         */
+        val daysRemaining: Int?,
+        /**
+         * P5-010 (RP-07): non-null ONLY for NO_BURN — honest display cap
+         * min(daysUntilPeriodEnd, 30). 0 means the period has no days left.
+         * Not a calculated runway; must never be used in threshold comparisons.
+         */
+        val zeroBurnHorizonDays: Int?,
         val totalBudget: Double,
         val discretionaryRemaining: Double,
         val averageDailyDiscretionarySpend: Double,
@@ -149,7 +160,8 @@ sealed class DashboardWidget {
         HEALTHY,   // 14+ days
         CAUTION,   // 7–13 days
         CRITICAL,  // < 7 days
-        NO_INCOME  // No deposits detected
+        NO_INCOME, // No deposits detected
+        NO_BURN    // P5-010: positive remainder, no observed spend this month
     }
 
     data class MonteCarloForecast(
@@ -305,8 +317,18 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val monteCarloWidget = computeMonteCarlo(ctx, runwayResult)
         val categoryTotals = computeCategoryTotals(ctx)
         val trend = computeSpendingTrend(ctx)
+        // P5-013 (RP-07): the MoM insight consumes the canonical RP-06 pace —
+        // the projection and the completed-month baseline come from one
+        // SpendingPaceCalculator pass over the same normalized expenses, so
+        // the comparison stays like-for-like. An unavailable pace (no
+        // RunwayResult.Available) passes nulls, which skips the MoM branch
+        // instead of coercing the projection to zero.
+        val insightPace = (runwayResult as? RunwayResult.Available)?.currentPace
         val insightText = buildNaturalLanguageInsight(
-            ctx.monthSpent, ctx.previousMonthTotal, ctx.todaySpent, ctx.todayTxCount
+            projectedTotal = insightPace?.projectedTotal,
+            previousMonthTotal = insightPace?.previousMonthTotal,
+            todaySpent = ctx.todaySpent,
+            txCount = ctx.todayTxCount
         )
         val budgetSummary = computeBudgetSummary(ctx)
         val streakData = calculateStreakData(ctx.now, ctx.data.data.expenses, ctx.monthStart)
@@ -689,7 +711,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         // P5-PR1 (NEW-P5-011): Compute totalRemaining from budget or income minus spent.
         // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
         // Uses monthly income as proxy when no explicit budget exists.
-        val totalRemaining = if (ctx.totalBudgetAmount > 0) { // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
+        val remainingBeforeCommitments = if (ctx.totalBudgetAmount > 0) { // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
             (ctx.totalBudgetAmount - ctx.monthSpent).coerceAtLeast(0.0) // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
         } else if (monthlyIncome > 0) {
             (monthlyIncome - ctx.monthSpent).coerceAtLeast(0.0)
@@ -697,17 +719,45 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             0.0
         }
 
-        val runwayDays = if (averageDailyBurn > 0 && totalRemaining > 0) {
-            (totalRemaining / averageDailyBurn).toInt().coerceAtLeast(0)
-        } else {
-            0
-        }
+        // P5-010 (RP-07): deduct ONLY totalCommitted (certain outflows). totalLikely
+        // stays informational — probabilistic amounts are never deducted from runway.
+        val totalRemaining = (remainingBeforeCommitments - totalCommitted).coerceAtLeast(0.0)
 
-        val runwayStatus = when {
-            monthlyIncome == 0.0 -> DashboardWidget.RunwayStatus.NO_INCOME
-            runwayDays >= 14     -> DashboardWidget.RunwayStatus.HEALTHY
-            runwayDays >= 7      -> DashboardWidget.RunwayStatus.CAUTION
-            else                 -> DashboardWidget.RunwayStatus.CRITICAL
+        // P5-010 (RP-07): honest runway edge cases — never Int.MAX_VALUE or sentinels.
+        // NO_INCOME precedence preserved exactly (no deposits AND no explicit budget
+        // basis) — checked before any runway number is fabricated.
+        val noIncomeBasis = monthlyIncome == 0.0 && ctx.totalBudgetAmount <= 0 // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: budget is home-currency user value
+        val daysUntilPeriodEnd = ctx.daysInMonth - ctx.dayOfMonth
+
+        val runwayDays: Int?
+        val zeroBurnHorizonDays: Int?
+        val runwayStatus: DashboardWidget.RunwayStatus
+        if (noIncomeBasis) {
+            runwayDays = null
+            zeroBurnHorizonDays = null
+            runwayStatus = DashboardWidget.RunwayStatus.NO_INCOME
+        } else if (totalRemaining <= 0) {
+            // Committed obligations exhausted the remainder (or none existed): a
+            // non-null zero day count, never a fabricated runway.
+            runwayDays = 0
+            zeroBurnHorizonDays = null
+            runwayStatus = DashboardWidget.RunwayStatus.CRITICAL
+        } else if (averageDailyBurn <= 0) {
+            // Positive remainder with no observed burn: not infinite money and not
+            // CRITICAL — an honest "no burn yet" state with a bounded display cap.
+            runwayDays = null
+            zeroBurnHorizonDays = daysUntilPeriodEnd.coerceIn(0, 30)
+            runwayStatus = DashboardWidget.RunwayStatus.NO_BURN
+        } else {
+            // P5-010: roundToInt (not truncation) so a 13.99-day quotient classifies
+            // as 14 under the unchanged 14/7 thresholds.
+            runwayDays = (totalRemaining / averageDailyBurn).roundToInt().coerceAtLeast(0)
+            zeroBurnHorizonDays = null
+            runwayStatus = when {
+                runwayDays >= 14 -> DashboardWidget.RunwayStatus.HEALTHY
+                runwayDays >= 7  -> DashboardWidget.RunwayStatus.CAUTION
+                else             -> DashboardWidget.RunwayStatus.CRITICAL
+            }
         }
 
         return RunwayResult.Available(
@@ -715,6 +765,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             forecast = forecast,
             financialRunway = DashboardWidget.FinancialRunway(
                 daysRemaining = runwayDays,
+                zeroBurnHorizonDays = zeroBurnHorizonDays,
                 totalBudget = ctx.totalBudgetAmount, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: legacy budget path until budget normalization
                 discretionaryRemaining = totalRemaining,
                 averageDailyDiscretionarySpend = averageDailyBurn,
@@ -752,7 +803,12 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val daysInMonth = TimePeriodUtils.getDaysInMonth(ctx.now)
         val monthStart = ctx.monthStart
         val dailyHistory = (0 until daysInMonth).map { dayIndex ->
-            val dayStart = monthStart + dayIndex * TimePeriodUtils.DAY_IN_MILLIS
+            // P5-011 (RP-07): calendar-safe day keys. A fixed 24h step drifts
+            // across a fall-back transition (25h day): the day after lands at
+            // 23:00 of the transition day and duplicates its key. addDays does
+            // DST-aware calendar arithmetic; getStartOfDay keeps the map-key
+            // contract identical to the expense grouping above.
+            val dayStart = TimePeriodUtils.getStartOfDay(TimePeriodUtils.addDays(monthStart, dayIndex))
             dailySpending[dayStart] ?: 0f
         }
 
@@ -1177,7 +1233,8 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 }
                 is RunwayResult.Unavailable -> {
                     add(DashboardWidget.FinancialRunway(
-                        daysRemaining = 0,
+                        daysRemaining = null,
+                        zeroBurnHorizonDays = null,
                         totalBudget = 0.0,
                         discretionaryRemaining = 0.0,
                         averageDailyDiscretionarySpend = 0.0,
@@ -1221,13 +1278,19 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
     }
 
     private fun buildNaturalLanguageInsight(
-        monthSpent: Double,
-        previousMonthTotal: Double,
+        projectedTotal: Double?,
+        previousMonthTotal: Double?,
         todaySpent: Double,
         txCount: Int
     ): Pair<UiText, String>? {
-        if (previousMonthTotal > 0) {
-            val diff = monthSpent - previousMonthTotal
+        // P5-013 (RP-07): compare the canonical RP-06 projection of the CURRENT
+        // month against the COMPLETED previous month. The old MTD-vs-full-month
+        // comparison read "spent less" early in every month because unlike
+        // quantities were subtracted. A missing projection or a missing/zero
+        // baseline skips the branch — values are never coerced to zero — and
+        // falls through to the today-spent message.
+        if (projectedTotal != null && previousMonthTotal != null && previousMonthTotal > 0) {
+            val diff = projectedTotal - previousMonthTotal
             return when {
                 diff < 0 -> Pair(
                     UiText.fromKey(DashboardTextKeys.WIDGET_INSIGHT_SPENT_LESS_FORMAT, -diff),
