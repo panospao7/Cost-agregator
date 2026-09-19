@@ -165,5 +165,181 @@ have):
   `MultiCurrencyRepository.updateExpenseCurrency` still has **zero callers**
   (declaration only). Removal stays deferred to the designated cleanup change.
 
-Next: batch 6b (synthesis suspend migration, typed conversion outcomes, raw
-fallback removal, block-party tests) on this lane.
+Next: batch 6b complete on lane rp-06-wip (uncommitted); remaining per plan:
+commit + merge decision, optional full unit-tests / static-guards gate before
+merge.
+
+### 6b slice 1 (P5-007) — implemented, validated (2026-09-19)
+
+- `SynthesisEngine.convertAmount` migrated off `runBlocking` onto the typed
+  suspend path: `convertOutcome(..., rateBasis = RateBasis.LATEST_AVAILABLE,
+  stalePolicy = StaleRatePolicy.LatestDefault)` — both named explicitly in
+  code per plan. Identity same-currency early-return kept. Failed outcomes
+  keep the per-site exclude-and-count (`recurringConversionFailures++` →
+  `excludedCount`/`isPartial`); a bounded Timber.w logs only the controlled
+  failure-type constant.
+- `synthesize(input)` / internal `synthesize` / `synthesizeInternal` are all
+  `suspend`; the broad catch rethrows `CancellationException` first (RP-01).
+  No new `runBlocking` anywhere in production code.
+- Production callers migrated/verified suspend-capable:
+  `FinancialWeatherRepository` (combine transform), `CalculateFinancialForecastUseCase`
+  (`synthesizeForecast`), `ComputeDashboardWidgetsUseCase` (`computeRunwayAndForecast`).
+  `FinancialStressForecastEngine` holds the engine but does not call
+  `synthesize` — untouched.
+- Tests migrated to `runTest` (no runBlocking adapter added):
+  `SynthesisEngineTest` (10), `SynthesisEngineStressTest` (54 plain tests
+  converted; executor-thread inner `runBlocking` kept as structurally
+  necessary), `SynthesisEngineGoldenTest` (3), `SynthesisEngineBlockPartyPaidExclusionTest`
+  (3), `CalculateFinancialForecastUseCaseTest` (6 MockK `every`→`coEvery`),
+  `FinancialWeatherRepositoryTest` (10 MockK `every`→`coEvery`).
+  `ForecastRunwayIntegrationTest` was already `runTest`-based — unchanged.
+- Slice-2 surface untouched: raw fallbacks at engine lines ~385/397
+  (`?: expense.amount`), block-party fallbacks (~513/531/588/604), and the
+  `effectiveAmount` actual-spend path.
+- Status: implementation complete, **validated** (2026-09-19): compile PASS
+  (vr-20260919-124317-74a75cff), `*SynthesisEngine*` targeted shard PASS
+  (vr-20260919-124955-afc3e3b1), caller shards PASS
+  (vr-20260919-130242-d27cfb7a `*FinancialWeatherRepositoryTest*`,
+  vr-20260919-130443-0a9ee055 `*CalculateFinancialForecastUseCaseTest*`,
+  vr-20260919-130728-606af25b `*DashboardCurrencyIntegration*` 7/7, all via
+  the runner). Lane not yet merged.
+
+### 6b slice 2 (P5-CURRENT-009 / U-MONEY-01) — implemented, validated (2026-09-19)
+
+**Raw fallback removal (all synthesis money paths)**
+
+- `synthesizeInternal` projection day-maps (mustExpensesByDay /
+  likelyExpensesByDay): `?: expense.amount` fallbacks removed. On conversion
+  failure the planned expense is EXCLUDED from its day (contributes 0, never
+  the source-currency amount) and counted in a new
+  `plannedConversionFailures` counter, which now feeds the same
+  `excludedCount`/`isPartial` accounting as `recurringConversionFailures`.
+- `monthlyRecurringTotal` (synthesizeInternal): was already exclude-only
+  (`mapNotNull`, no raw fallback) but silently dropped failures; now counted
+  into `recurringConversionFailures` so the excluded count is truthful.
+- `calculateBlockPartyData`: all four `?: raw` fallbacks removed
+  (totalMonthlyRecurring, totalMonthlyPlanned, recurringOnDay, plannedOnDay).
+  Failures now exclude (contribute 0) and count into a local
+  `bpConversionFailures`. The only permitted fallback remains same-currency
+  identity conversion inside `convertAmount`.
+- **Block-party excluded-count surfacing: partial.** `BlockPartyDay` has no
+  field to carry the count; adding one would break every caller's positional
+  mapping. Current state: bounded Timber.w (count only, privacy-safe).
+  Forced model change rejected per slice instructions — needs a separate
+  decision (e.g. return tuple or new field with caller migration).
+
+**Normalized-daily-authoritative mismatch (deferred — stop-condition item)**
+
+- Verified the engine comment against the actual caller:
+  `ComputeDashboardWidgetsUseCase.computeBlockParty` (~line 761) passes
+  `ctx.expenseEntities` RAW into `calculateBlockPartyData` (annotated
+  "display-only transaction list, not money math"), while the engine sums
+  `it.effectiveAmount` for `actualSpent` — real money math on possibly
+  non-normalized entities. The engine comment's claim ("callers must
+  normalize") is NOT currently satisfied.
+- Per slice instructions: behavior NOT changed, TODO(RP-06 P5-CURRENT-009
+  step 1) added at the site. The minimal caller fix (passing the
+  already-computed normalized daily map) requires deciding whether raw
+  entities stay as the topTransactions/metadata source — that changes
+  `actualFromExpenses ?: actualFromHistory` precedence semantics and is NOT
+  mechanical. **Deferred to orchestrator decision.** This is also a plan §
+  Sequencing stop condition: "a caller still passes raw mixed-currency
+  snapshots to pace/synthesis".
+
+**Tests (new file `SynthesisEngineRatePolicyPinTest.kt`, 7 tests)**
+
+- Policy pin (slice-1 reviewer NOTE): slot-captures `rateBasis` and
+  `stalePolicy` actually passed to `convertOutcome` in both `synthesize`
+  and `calculateBlockPartyData`; asserts `LATEST_AVAILABLE` +
+  `LatestDefault`. Real capture-and-assert, no marker.
+- Fallback-removal: all-Failed stub (coEvery) with USD→EUR fixtures —
+  asserts no USD amount enters totalCommitted/totalLikely (0.0),
+  projection endpoint keeps only lastKnownTotal, block-party
+  recurringImpact/plannedImpact are 0.0 with baseTarget = budgetLimit/31;
+  excludedCount asserted at exact per-call-site totals (6 / 4 / 2 — the
+  engine counts per invocation site, e.g. one failed USD recurring pattern
+  hits committed segment + monthlyRecurringTotal = 2).
+- Mixed single/multi: EUR pattern (identity, unaffected) + USD pattern
+  (Failed) → committed keeps 100.0, excludedCount 2, isPartial true.
+- Single-currency identity: EUR-only fixture must not call convertOutcome
+  at all (stub throws + coVerify exactly=0); totals unchanged (golden
+  semantics preserved).
+- Existing goldens untouched: all SynthesisEngine golden tests run with
+  blank displayCurrency (no conversion path), so fallback removal is a
+  no-op for them — verified by reading, not by editing.
+
+**Status:** implemented, **validated** (2026-09-19): compile PASS
+(vr-20260919-124317-74a75cff), `*SynthesisEngine*` targeted shard PASS
+(vr-20260919-124955-afc3e3b1, incl. new SynthesisEngineRatePolicyPinTest
+8/8), all via the runner. Lane not yet merged. Stop-condition item
+(raw entities into block-party actuals) open for orchestrator review.
+
+### 6b slice 3 (P5-CURRENT-009 step 1) — implemented, validated (2026-09-19)
+
+**Stop-condition item resolved: block-party actuals now convert through the
+typed converter.**
+
+- `SynthesisEngine.calculateBlockPartyData`: when `forecast.displayCurrency`
+  is NOT blank, each raw item's `effectiveAmount` is converted via the
+  existing private suspend `convertAmount` (LATEST_AVAILABLE +
+  LatestDefault, same as slices 1-2). Conversion failure → item EXCLUDED
+  (contributes 0) and counted in the existing `bpConversionFailures`
+  counter (bounded Timber.w, class/count only — no amounts, no exception
+  text). No source-currency amount enters a bpCurrency sum.
+- Identity paths preserved (contract item 4):
+  - `bpCurrency` blank → exact legacy behavior (raw `effectiveAmount`
+    identity sums, converter never invoked) — all existing goldens/stress
+    tests byte-identical, verified by reading.
+  - item `currency` blank (legacy callers that don't populate it) →
+    identity, no conversion call.
+- `?: ` semantics preserved (contract item 3): day with no raw list but a
+  normalized daily value still uses the normalized value; an empty raw
+  list cannot overwrite it (absent key → null → history fallback).
+  A day WITH a raw list keeps FCST-3 precedence (raw-converted over
+  history), now with converted values only (contract item 5).
+- Enabling model change: `TransactionSummary` gains a defaulted
+  `currency: String = ""` field (RP-06 6b slice 3). All existing
+  construction sites compile unchanged (default blank = legacy identity).
+  `DashboardExpense.toTransactionSummary()` now passes the source currency
+  through, so the production dashboard path supplies per-item currency.
+  `BlockPartyDay` model fields untouched.
+- `ComputeDashboardWidgetsUseCase.computeBlockParty`: TODO(RP-06
+  P5-CURRENT-009 step 1) removed, replaced by a contract comment (raw
+  entities are metadata-only; arithmetic goes through the engine's typed
+  converter). The `G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]` structured tag
+  is RETAINED inline on the flagged line (required by
+  `scripts/verify_money_boundaries.py`, which matches `ctx.expenseEntities`
+  per-line); only the reason text was updated.
+- topTransactions remain raw metadata (display only, no arithmetic).
+
+**Tests (new file `SynthesisEngineBlockPartyMultiCurrencyTest.kt`, 7 tests)**
+
+1. `转换失败项的源币金额不进当日actualSpent且成功项照常计入` — day 10 has
+   EUR 30 (identity) + USD 50 (Failed): actualSpent = 30.0, not 80.0;
+   topTransactions keeps both items (metadata unaffected);
+   converter called exactly once (EUR identity short-circuits).
+2. `同一fixture下USD成功时两币种金额换算后合并` — same fixture with
+   Converted stub: actualSpent = 80.0 (symmetry check).
+3. `无raw list时当日actualSpent采用normalized daily值` — empty expenses +
+   daily[day10] = 42.5f → actualSpent = 42.5; converter never called.
+4. `空raw list且零normalized值时actualSpent保持0不伪造非零` — empty
+   expenses + all-zero history → actualSpent stays 0.0 everywhere.
+5. `某天无raw也无history时该天为NO_DATA不伪造数值` — empty expenses +
+   empty dailySpending → past days are NO_DATA with actualSpent 0.0.
+6. `blank displayCurrency时保留恒等求和且不触发converter` — blank
+   displayCurrency with MIXED currencies (EUR 30 + USD 50) → identity sum
+   80.0, converter must not be called (stub throws).
+7. `有raw list时当日不回退到history` — FCST-3 precedence with conversion:
+   raw present (30 converted) + history 99 → actualSpent = 30.0, not 99.0.
+
+**Recorded limitation:** `BlockPartyDay` still has no per-day (or
+engine-level, beyond log) failure field — `bpConversionFailures` is visible
+only via the bounded Timber.w log. The forecast-level
+`excludedCount`/`isPartial` do NOT include block-party failures (they are
+computed in `synthesize`, before block-party runs). Surfacing needs a
+separate model/caller decision, same as the slice-2 note.
+
+**Status:** implemented, **validated** (2026-09-19): compile PASS
+(vr-20260919-124317-74a75cff), `*SynthesisEngine*` targeted shard PASS
+(vr-20260919-124955-afc3e3b1, incl. new SynthesisEngineBlockPartyMultiCurrencyTest
+7/7), all via the runner. Lane not yet merged.

@@ -13,6 +13,10 @@ package com.yourname.expensetracker.domain.model
  * - [isSharedExpense]: whether this transaction is shared with others
  * - [myShareAmount]: explicit per-person amount if set
  * - [mySharePercentage]: proportional share percentage if set
+ * - [currency]: source currency of [effectiveAmount]; blank means unknown
+ *   (legacy callers) — consumers must treat blank as identity, never invent
+ *   a currency. Metadata-only for display; block-party arithmetic on foreign
+ *   currencies converts via the engine's typed converter (RP-06 6b slice 3).
  */
 data class TransactionSummary(
     val id: Long,
@@ -23,7 +27,13 @@ data class TransactionSummary(
     val categoryId: Long?,
     val isSharedExpense: Boolean = false,
     val myShareAmount: Double? = null,
-    val mySharePercentage: Int? = null
+    val mySharePercentage: Int? = null,
+    /**
+     * RP-06 6b slice 3 (P5-CURRENT-009): source currency of [effectiveAmount].
+     * Blank means unknown/legacy — callers that populate it enable the engine's
+     * typed-converter arithmetic path; blank keeps legacy identity behavior.
+     */
+    val currency: String = ""
 ) {
     init {
         require(amount.isFinite()) { "amount must be finite" }

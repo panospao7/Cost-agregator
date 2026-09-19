@@ -11,7 +11,6 @@ import com.yourname.expensetracker.domain.model.*
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -46,7 +45,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `synthesize calculates totalCommitted correctly from recurring and planned`() {
+    fun `synthesize calculates totalCommitted correctly from recurring and planned`() = runTest {
         // Arrange
         val recurring = listOf(
             createRecurringPattern(amount = 100.0, confidence = 0.95f, date = 1705392000000L), // Next day
@@ -86,7 +85,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `synthesize respects strict goal reserves`() {
+    fun `synthesize respects strict goal reserves`() = runTest {
         // Arrange
         val goals = listOf(
             createSavingsGoal(target = 1000.0, current = 500.0, protection = GoalProtectionLevel.STRICT, targetDate = 1706697600000L), // Feb 1st
@@ -120,7 +119,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `determineRiskLevel returns CRITICAL when budgets are exceeded`() {
+    fun `determineRiskLevel returns CRITICAL when budgets are exceeded`() = runTest {
         // Arrange
         val budgets = listOf(
             createBudgetStatus(health = BudgetHealthStatus.EXCEEDED)
@@ -152,7 +151,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `discretionaryBudget calculation factors in all obligations`() {
+    fun `discretionaryBudget calculation factors in all obligations`() = runTest {
         // Arrange
         val budgets = listOf(
             createBudgetStatus(limit = 2000.0, categoryId = null) // Overall budget
@@ -189,7 +188,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `calculateBlockPartyData falls back to expenses when daily history is empty`() {
+    fun `calculateBlockPartyData falls back to expenses when daily history is empty`() = runTest {
         val pace = SpendingPace(
             currentMonthSpent = 100.0,
             daysElapsed = 15,
@@ -223,14 +222,12 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             categoryId = null
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = listOf(expenseOnDay10),
-                dailySpending = emptyList(),
-                budgetLimit = 1000.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = listOf(expenseOnDay10),
+            dailySpending = emptyList(),
+            budgetLimit = 1000.0
+        )
 
         val day10 = blockParty.first { it.dayOfMonth == 10 }
         assertEquals(42.0, day10.actualSpent, 0.01)
@@ -238,7 +235,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `synthesize on last day projects zero discretionary days`() {
+    fun `synthesize on last day projects zero discretionary days`() = runTest {
         every { timeProvider.now() } returns millis(2024, Calendar.JANUARY, 31)
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -267,7 +264,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `calculateBlockPartyData BIWEEKLY rejects weekly plus seven and matches plus fourteen`() {
+    fun `calculateBlockPartyData BIWEEKLY rejects weekly plus seven and matches plus fourteen`() = runTest {
         every { timeProvider.now() } returns millis(2024, Calendar.JANUARY, 1)
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -297,14 +294,12 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             )
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = emptyList(),
-                dailySpending = List(31) { 0f },
-                budgetLimit = 2000.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(31) { 0f },
+            budgetLimit = 2000.0
+        )
 
         val day10 = blockParty.first { it.dayOfMonth == 10 } // +7 from Jan 3
         val day17 = blockParty.first { it.dayOfMonth == 17 } // +14 from Jan 3
@@ -314,7 +309,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `calculateBlockPartyData BIWEEKLY matches across month boundary`() {
+    fun `calculateBlockPartyData BIWEEKLY matches across month boundary`() = runTest {
         every { timeProvider.now() } returns millis(2024, Calendar.FEBRUARY, 1)
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -344,21 +339,19 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             )
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = emptyList(),
-                dailySpending = List(29) { 0f },
-                budgetLimit = 1800.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(29) { 0f },
+            budgetLimit = 1800.0
+        )
 
         val day8 = blockParty.first { it.dayOfMonth == 8 } // 14 days after Jan 25
         assertEquals(75.0, day8.recurringImpact, 0.0001)
     }
 
     @Test
-    fun `calculateBlockPartyData fallback actual spend filters to PURCHASE mine-only`() {
+    fun `calculateBlockPartyData fallback actual spend filters to PURCHASE mine-only`() = runTest {
         val pace = SpendingPace(
             currentMonthSpent = 100.0,
             daysElapsed = 15,
@@ -386,14 +379,12 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
             expense(amount = 40.0, date = day10Ts, merchant = "Valid Purchase", isSharedExpense = false)
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = mixedTransactions,
-                dailySpending = emptyList(),
-                budgetLimit = 1000.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = mixedTransactions,
+            dailySpending = emptyList(),
+            budgetLimit = 1000.0
+        )
 
         val day10 = blockParty.first { it.dayOfMonth == 10 }
         assertEquals(40.0, day10.actualSpent, 0.01)
@@ -402,7 +393,7 @@ class SynthesisEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `financial_forecast_contains_currency_conversion_warnings`() {
+    fun `financial_forecast_contains_currency_conversion_warnings`() = runTest {
         // P6-CURRENT-015: Drive synthesis through the ForecastInput path (the same path the
         // use-case/UI flows through). The assembler reports a currency-conversion warning and a
         // non-zero excluded count via ForecastDataQuality; the resulting FinancialForecast must

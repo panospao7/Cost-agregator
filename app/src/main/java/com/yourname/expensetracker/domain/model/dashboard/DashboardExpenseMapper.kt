@@ -16,7 +16,10 @@ fun DashboardExpense.toTransactionSummary(): TransactionSummary {
         effectiveAmount = effectiveAmount,
         merchant = merchant,
         date = date,
-        categoryId = categoryId
+        categoryId = categoryId,
+        // RP-06 6b slice 3: carry the source currency so block-party arithmetic
+        // can convert effectiveAmount via the engine's typed converter.
+        currency = currency
     )
 }
 

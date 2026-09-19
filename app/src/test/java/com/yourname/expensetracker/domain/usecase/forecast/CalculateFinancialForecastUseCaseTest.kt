@@ -138,7 +138,7 @@ class CalculateFinancialForecastUseCaseTest {
         every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
 
         useCase.invoke().first()
 
@@ -185,7 +185,7 @@ class CalculateFinancialForecastUseCaseTest {
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(listOf(must, likely, optional))
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
 
         useCase.invoke().first()
 
@@ -212,7 +212,7 @@ class CalculateFinancialForecastUseCaseTest {
         every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
 
         useCase.invoke().first()
 
@@ -260,7 +260,7 @@ class CalculateFinancialForecastUseCaseTest {
         )
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
 
         useCase.invoke().first()
 
@@ -331,7 +331,7 @@ class CalculateFinancialForecastUseCaseTest {
         )
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
 
         useCase.invoke().first()
 
@@ -396,7 +396,7 @@ class CalculateFinancialForecastUseCaseTest {
         )
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns dummyForecast(now)
 
         useCase.invoke().first()
 

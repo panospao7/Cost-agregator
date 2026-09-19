@@ -756,9 +756,20 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             dailySpending[dayStart] ?: 0f
         }
 
+        // RP-06 6b slice 3 (P5-CURRENT-009): ctx.expenseEntities are METADATA-ONLY
+        // (topTransactions display). Any arithmetic on them happens inside
+        // SynthesisEngine via its typed converter (G-MONEY-ALLOW): items carry a
+        // source currency, foreign-currency amounts are converted to the forecast
+        // display currency, and conversion failures are excluded + counted — no
+        // source-currency amount ever enters a home-currency sum. The normalized
+        // dailyHistory remains the fallback actual-spend input.
         val domainBlocks = synthesisEngine.calculateBlockPartyData(
             forecast = availableResult.forecast,
-            expenses = ctx.expenseEntities, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: display-only transaction list, not money math
+            // RP-06 6b slice 3: metadata-only transaction list (topTransactions
+            // display); block-party arithmetic now converts via the engine's
+            // typed converter — no raw sum. (Tag kept on the flagged line below
+            // for the static guard, which matches per-line.)
+            expenses = ctx.expenseEntities, // G-MONEY-ALLOW[CURR-587-05][G-MONEY-15]: metadata-only list; arithmetic converts via engine typed converter (RP-06 6b slice 3)
             dailySpending = dailyHistory,
             budgetLimit = normalized.input.monthAggregate.displayAmount // Use normalized month total
         )

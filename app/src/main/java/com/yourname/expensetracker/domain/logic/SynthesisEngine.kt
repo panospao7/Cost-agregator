@@ -13,6 +13,9 @@ import com.yourname.expensetracker.domain.model.ConfirmedOccurrence
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import com.yourname.expensetracker.domain.text.DomainTextKeys
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.core.money.ConversionOutcome
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.util.TimeProvider
 
@@ -79,13 +82,39 @@ class SynthesisEngine @Inject constructor(
     }
 
     /**
-     * Converts an amount from [fromCurrency] to [toCurrency].
-     * Returns null if conversion fails (caller should exclude and track).
+     * RP-06 6b slice 1 (P5-007): converts an amount from [fromCurrency] to
+     * [toCurrency] on the typed suspend conversion path.
+     *
+     * Rate basis contract: future obligations (recurring patterns, planned
+     * expenses, confirmed occurrences) are converted at
+     * [RateBasis.LATEST_AVAILABLE] with the [StaleRatePolicy.LatestDefault]
+     * 7-day staleness policy, named explicitly here per the plan requirement
+     * ("whichever is selected must be named in code"). Historical actuals
+     * (`pastSumDaily`, spendingPace) arrive already normalized to home
+     * currency at TRANSACTION_DATE by RP-05 normalization and are NOT
+     * re-converted by this method; the forward-looking KPI intentionally
+     * combines those two bases.
+     *
+     * Returns the converted amount on success, or null when the conversion
+     * fails (caller should exclude the item and track the failure).
      */
-    private fun convertAmount(amount: Double, fromCurrency: String, toCurrency: String): Double? {
+    private suspend fun convertAmount(amount: Double, fromCurrency: String, toCurrency: String): Double? {
         if (fromCurrency.equals(toCurrency, ignoreCase = true)) return amount
-        return kotlinx.coroutines.runBlocking {
-            currencyConverter.convert(amount, fromCurrency, toCurrency)?.convertedAmount
+        return when (val outcome = currencyConverter.convertOutcome(
+            amount = amount,
+            fromCurrency = fromCurrency,
+            toCurrency = toCurrency,
+            rateBasis = RateBasis.LATEST_AVAILABLE,
+            stalePolicy = StaleRatePolicy.LatestDefault
+        )) {
+            is ConversionOutcome.Converted -> outcome.convertedAmount
+            is ConversionOutcome.Failed -> {
+                Timber.w(
+                    "%s: currency conversion failed (failureType=%s)",
+                    TAG, outcome.failureType.name
+                )
+                null
+            }
         }
     }
 
@@ -101,8 +130,14 @@ class SynthesisEngine @Inject constructor(
      * Callers no longer need to pre-filter; this engine handles it internally.
      * The [ForecastInputAssembler.mapPlannedExpenses] also filters at the
      * mapping boundary as an additional safety net.
+     *
+     * RP-06 6b slice 1 (P5-007): suspend entry point. Rate basis contract
+     * (see [synthesizeInternal]): historical actuals are NOT re-converted;
+     * future obligations convert at [RateBasis.LATEST_AVAILABLE] with the
+     * [StaleRatePolicy.LatestDefault] 7-day staleness policy; the
+     * forward-looking KPI intentionally combines those bases.
      */
-    fun synthesize(
+    suspend fun synthesize(
         input: ForecastInputAssembler.ForecastInput
     ): FinancialForecast {
         val forecast = synthesize(
@@ -132,7 +167,7 @@ class SynthesisEngine @Inject constructor(
         )
     }
 
-    internal fun synthesize(
+    internal suspend fun synthesize(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
@@ -145,6 +180,9 @@ class SynthesisEngine @Inject constructor(
         return try {
             synthesizeInternal(pastSumDaily, recurringPatterns, plannedExpenses, savingsGoals, budgetStatuses, spendingPace, confirmedOccurrences, displayCurrency)
         } catch (e: Exception) {
+            // RP-01 cancellation contract: cancellation must never be swallowed by the
+            // broad fallback below — rethrow it before any other handling.
+            if (e is kotlinx.coroutines.CancellationException) throw e
             val fallbackNow = timeProvider.now()
             Timber.e(e, "Error in synthesize")
             FinancialForecast(
@@ -169,7 +207,19 @@ class SynthesisEngine @Inject constructor(
         }
     }
 
-    private fun synthesizeInternal(
+    /**
+     * RP-06 6b slice 1 (P5-007): rate basis mix contract.
+     *
+     * - Historical actuals (`pastSumDaily`, [SpendingPace]) arrive already
+     *   normalized to home currency at TRANSACTION_DATE by RP-05 normalization
+     *   and are NOT re-converted here.
+     * - Future obligations (recurring patterns, planned expenses, confirmed
+     *   occurrences) are converted at [RateBasis.LATEST_AVAILABLE] with the
+     *   7-day [StaleRatePolicy.LatestDefault] staleness policy (named
+     *   explicitly in [convertAmount]).
+     * - The forward-looking KPIs intentionally combine those two bases.
+     */
+    private suspend fun synthesizeInternal(
         pastSumDaily: List<Double>,
         recurringPatterns: List<RecurringPattern>,
         plannedExpenses: List<PlannedExpense>,
@@ -277,6 +327,8 @@ class SynthesisEngine @Inject constructor(
                 ?: run { recurringConversionFailures++; null }
         }.sum() * LIKELY_EXPENSE_WEIGHT
         
+        // RP-06 6b slice 2 (P5-CURRENT-009): failures here already exclude (mapNotNull,
+        // no raw fallback) — count them so excludedCount/isPartial stay truthful.
         val monthlyRecurringTotal = recurringPatterns.mapNotNull { pattern ->
             when (pattern.frequency) {
                 RecurrenceFrequency.IRREGULAR -> null
@@ -284,6 +336,7 @@ class SynthesisEngine @Inject constructor(
                     val monthly = RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
                     if (displayCurrency.isBlank()) monthly
                     else convertAmount(monthly, pattern.currency, displayCurrency)
+                        ?: run { recurringConversionFailures++; null }
                 }
             }
         }.sum()
@@ -323,6 +376,12 @@ class SynthesisEngine @Inject constructor(
         // Collect planned expenses with their dates (MUST=100%, LIKELY=70%)
         val plannedExpensesInRange = filteredPlannedExpenses.filter { it.date >= startOfToday && it.date < endOfMonthExclusive }
         
+        // RP-06 6b slice 2 (P5-CURRENT-009): raw-amount fallbacks removed from the
+        // projection day-maps. A planned expense whose conversion fails is EXCLUDED
+        // from its day (never falls back to the source-currency amount) and counted
+        // as a planned-conversion failure feeding excludedCount/isPartial below.
+        var plannedConversionFailures = 0
+
         // Group planned expenses by day-of-month (java.time derivation)
         val mustExpensesByDay = plannedExpensesInRange
             .filter { it.priority == PlannedExpensePriority.MUST }
@@ -332,10 +391,11 @@ class SynthesisEngine @Inject constructor(
             .mapValues { (_, exps) ->
                 exps.sumOf { expense ->
                     if (displayCurrency.isBlank()) expense.amount
-                    else convertAmount(expense.amount, expense.currency, displayCurrency) ?: expense.amount
+                    else convertAmount(expense.amount, expense.currency, displayCurrency)
+                        ?: run { plannedConversionFailures++; 0.0 }
                 }
             }
-        
+
         val likelyExpensesByDay = plannedExpensesInRange
             .filter { it.priority == PlannedExpensePriority.LIKELY }
             .groupBy { expense ->
@@ -344,7 +404,8 @@ class SynthesisEngine @Inject constructor(
             .mapValues { (_, exps) ->
                 exps.sumOf { expense ->
                     val converted = if (displayCurrency.isBlank()) expense.amount
-                        else convertAmount(expense.amount, expense.currency, displayCurrency) ?: expense.amount
+                        else convertAmount(expense.amount, expense.currency, displayCurrency)
+                            ?: run { plannedConversionFailures++; 0.0 }
                     converted * LIKELY_EXPENSE_WEIGHT
                 }
             }
@@ -412,7 +473,12 @@ class SynthesisEngine @Inject constructor(
         if (recurringConversionFailures > 0) {
             Timber.w("$TAG: %d recurring pattern(s) excluded due to currency conversion failure", recurringConversionFailures)
         }
+        if (plannedConversionFailures > 0) {
+            Timber.w("$TAG: %d planned expense(s) excluded from projection due to currency conversion failure", plannedConversionFailures)
+        }
 
+        // RP-06 6b slice 2 (P5-CURRENT-009): planned-expense projection failures
+        // feed the same exclusion accounting as recurring failures (see excludedCount below).
         return FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
             generatedAt = Instant.ofEpochMilli(now),
@@ -432,8 +498,10 @@ class SynthesisEngine @Inject constructor(
                 confirmedOccurrences = confirmedOccurrences
             ),
             actionableInsights = buildInsights(riskLevel, budgetStatuses, spendingPace, filteredPlannedExpenses, savingsGoals),
-            excludedCount = recurringConversionFailures,
-            isPartial = recurringConversionFailures > 0
+            // RP-06 6b slice 2: planned-expense projection day-map conversion failures now
+            // feed the same exclusion accounting as recurring failures (U-MONEY-01).
+            excludedCount = recurringConversionFailures + plannedConversionFailures,
+            isPartial = (recurringConversionFailures + plannedConversionFailures) > 0
         )
     }
 
@@ -453,14 +521,22 @@ class SynthesisEngine @Inject constructor(
         val components = forecast.components
         
         // 1. Calculate Monthly Totals for pro-rating (frequency-adjusted)
+        //
+        // RP-06 6b slice 2 (P5-CURRENT-009/U-MONEY-01): all raw-amount fallbacks
+        // removed. On conversion failure the item is EXCLUDED (contributes 0) and
+        // counted; no source-currency amount ever enters a bpCurrency sum. The
+        // only permitted fallback is same-currency identity conversion inside
+        // [convertAmount].
         val bpCurrency = forecast.displayCurrency
+        var bpConversionFailures = 0
         val totalMonthlyRecurring = components.recurringExpenses.sumOf { pattern ->
             when (pattern.frequency) {
                 RecurrenceFrequency.IRREGULAR -> 0.0
                 else -> {
                     val monthly = RecurrenceCalculator.toMonthlyAmount(pattern.averageAmount, pattern.frequency)
                     if (bpCurrency.isBlank()) monthly
-                    else convertAmount(monthly, pattern.currency, bpCurrency) ?: monthly
+                    else convertAmount(monthly, pattern.currency, bpCurrency)
+                        ?: run { bpConversionFailures++; 0.0 }
                 }
             }
         }
@@ -478,7 +554,8 @@ class SynthesisEngine @Inject constructor(
                     PlannedExpensePriority.OPTIONAL -> 0.0
                 }
                 if (bpCurrency.isBlank()) raw
-                else convertAmount(raw, expense.currency, bpCurrency) ?: raw
+                else convertAmount(raw, expense.currency, bpCurrency)
+                    ?: run { bpConversionFailures++; 0.0 }
             }
         
             // Centralized Logic Gain: Factoring in Goal Reserves (Savings)
@@ -527,7 +604,7 @@ class SynthesisEngine @Inject constructor(
             )
         }
 
-        return (1..daysInMonth).map { day ->
+        val days = (1..daysInMonth).map { day ->
             // G-TIME-01: noon of each day derived from the injected TimeProvider instant.
             val dateMs = nowDate.withDayOfMonth(day).atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
@@ -535,7 +612,8 @@ class SynthesisEngine @Inject constructor(
             val recurringItemsOnDay = recurringByDay[day] ?: emptyList()
             val recurringOnDay = recurringItemsOnDay.sumOf { pattern ->
                 if (bpCurrency.isBlank()) pattern.averageAmount
-                else convertAmount(pattern.averageAmount, pattern.currency, bpCurrency) ?: pattern.averageAmount
+                else convertAmount(pattern.averageAmount, pattern.currency, bpCurrency)
+                    ?: run { bpConversionFailures++; 0.0 }
             }
             val recurringNames = recurringItemsOnDay.map { it.merchantName }
 
@@ -551,20 +629,38 @@ class SynthesisEngine @Inject constructor(
                         PlannedExpensePriority.OPTIONAL -> 0.0
                     }
                     if (bpCurrency.isBlank()) raw
-                    else convertAmount(raw, expense.currency, bpCurrency) ?: raw
+                    else convertAmount(raw, expense.currency, bpCurrency)
+                        ?: run { bpConversionFailures++; 0.0 }
                 }
             val plannedNames = plannedItemsOnDay.map { it.description }
 
             val dailyTarget = baseDiscretionaryRate + recurringOnDay + plannedOnDay
             val actualFromHistory = dailySpending.getOrNull(day - 1)?.toDouble()
-            // SAFE: Callers (ComputeDashboardWidgetsUseCase) must normalize expenses via
-            // AnalyticsCurrencyNormalizer before invoking SynthesisEngine.
-            // If adding a new caller, normalize first.
-            val actualFromExpenses = expensesByDay[day]?.sumOf { it.effectiveAmount }
+            // RP-06 6b slice 3 (P5-CURRENT-009): raw items are metadata-only
+            // (topTransactions); their amounts participate in ARITHMETIC only via
+            // the typed converter. Blank item currency (legacy callers) keeps the
+            // identity sum; blank bpCurrency keeps the exact legacy behavior so
+            // single-currency goldens are byte-identical. Failed conversions are
+            // excluded (contribute 0) and counted — no source-currency amount ever
+            // enters a bpCurrency sum.
+            val actualFromExpenses = when {
+                expensesByDay[day] == null -> null
+                bpCurrency.isBlank() -> expensesByDay[day]!!.sumOf { it.effectiveAmount }
+                else -> expensesByDay[day]!!.sumOf { item ->
+                    if (item.currency.isBlank()) item.effectiveAmount
+                    else convertAmount(item.effectiveAmount, item.currency, bpCurrency)
+                        ?: run { bpConversionFailures++; 0.0 }
+                }
+            }
             // FCST-3: Sum actual occurrences correctly — prefer expenses from the expense
             // table over daily history since the history may not account for all entries
             // (e.g., recently added expenses). Using expenses as the primary source ensures
             // the actual column always reflects all persisted data.
+            // Contract: a day with a raw list but only failed conversions still uses the
+            // raw-list branch (sum 0.0, not the normalized history); a day with NO raw
+            // list falls through to the normalized daily value via ?:. An empty raw
+            // list never overwrites a valid normalized value (emptyList sums to 0.0 only
+            // when the key exists; absent key yields null → history fallback).
             val actual = actualFromExpenses ?: actualFromHistory
             val actualOrZero = actual ?: 0.0
 
@@ -597,6 +693,14 @@ class SynthesisEngine @Inject constructor(
                 topTransactions = dayTransactions
             )
         }
+
+        // RP-06 6b slice 2: block-party 自身的转换失败计数（仅受控计数，无敏感内容）。
+        // 返回结构 BlockPartyDay 无字段可承载该计数（新增字段会破坏现有调用方映射），
+        // 故仅记日志——见实现报告中的"计数不可见"条目。
+        if (bpConversionFailures > 0) {
+            Timber.w("$TAG: block-party %d item(s) excluded due to currency conversion failure", bpConversionFailures)
+        }
+        return days
     }
 
     /**

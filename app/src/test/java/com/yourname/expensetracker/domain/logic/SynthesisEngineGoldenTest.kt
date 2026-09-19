@@ -15,7 +15,6 @@ import com.yourname.expensetracker.domain.model.SavingsGoal
 import com.yourname.expensetracker.domain.model.dashboard.BudgetStatusSnapshot
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.runBlocking
 import org.junit.Before
 import org.junit.Test
 
@@ -30,7 +29,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `confidence band thresholds classify recurring patterns into committed likely and excluded with base confidence 0 85`() {
+    fun `confidence band thresholds classify recurring patterns into committed likely and excluded with base confidence 0 85`() = runTest {
         every { timeProvider.now() } returns atTime("2026-03-01", 12, 0, 0)
 
         val recurring = listOf(
@@ -55,7 +54,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `biweekly recurrence matches on days 14 and 16 but not on day 17 with plus minus 2 tolerance`() {
+    fun `biweekly recurrence matches on days 14 and 16 but not on day 17 with plus minus 2 tolerance`() = runTest {
         every { timeProvider.now() } returns atTime("2026-03-01", 12, 0, 0)
 
         val forecast = engine.synthesize(
@@ -74,14 +73,12 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             spendingPace = pace(averageMonthlyTotal = 1200.0)
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = emptyList(),
-                dailySpending = List(31) { 0f },
-                budgetLimit = 2000.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(31) { 0f },
+            budgetLimit = 2000.0
+        )
 
         val day15 = blockParty.first { it.dayOfMonth == 15 }
         val day17 = blockParty.first { it.dayOfMonth == 17 }
@@ -93,7 +90,7 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `block party discretionary base rate follows budget minus recurring planned and strict goal reserves`() {
+    fun `block party discretionary base rate follows budget minus recurring planned and strict goal reserves`() = runTest {
         every { timeProvider.now() } returns atTime("2026-04-01", 12, 0, 0)
 
         val forecast = engine.synthesize(
@@ -132,14 +129,12 @@ class SynthesisEngineGoldenTest : AnalyticsEngineTestBase() {
             spendingPace = pace(averageMonthlyTotal = 1200.0)
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = emptyList(),
-                dailySpending = List(30) { 0f },
-                budgetLimit = 2000.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(30) { 0f },
+            budgetLimit = 2000.0
+        )
 
         val day2 = blockParty.first { it.dayOfMonth == 2 }
         val day10 = blockParty.first { it.dayOfMonth == 10 }

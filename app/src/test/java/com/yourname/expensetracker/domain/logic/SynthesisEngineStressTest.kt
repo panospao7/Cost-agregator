@@ -12,10 +12,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
-import org.junit.Ignore
 import java.util.Calendar
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -150,7 +150,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - first day of month boundary`() {
+    fun `stress - first day of month boundary`() = runTest {
         // January 1st, 2024 - first day of month
         createTimeProvider(getTimestampForDayOfMonth(2024, 0, 1))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -170,7 +170,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - last day of 31-day month`() {
+    fun `stress - last day of 31-day month`() = runTest {
         // January 31st, 2024 - last day of 31-day month
         createTimeProvider(getTimestampForDayOfMonth(2024, 0, 31))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -189,7 +189,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - last day of 30-day month`() {
+    fun `stress - last day of 30-day month`() = runTest {
         // April 30th, 2024 - 30-day month
         createTimeProvider(getTimestampForDayOfMonth(2024, 3, 30))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -207,7 +207,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - February 28th non-leap year`() {
+    fun `stress - February 28th non-leap year`() = runTest {
         // Feb 28, 2023 (non-leap year)
         createTimeProvider(getTimestampForDayOfMonth(2023, 1, 28))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -226,7 +226,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - February 29th leap year`() {
+    fun `stress - February 29th leap year`() = runTest {
         // Feb 29, 2024 (leap year)
         createTimeProvider(getTimestampForDayOfMonth(2024, 1, 29))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -245,7 +245,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - month transition edge case`() {
+    fun `stress - month transition edge case`() = runTest {
         // Test at 23:59:59 on last day of month vs 00:00:01 on first day
         createTimeProvider(getTimestampForDayOfMonth(2024, 0, 31) + 23*60*60*1000 + 59*60*1000 + 59*1000)
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -273,7 +273,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - DST spring forward transition`() {
+    fun `stress - DST spring forward transition`() = runTest {
         // March 31, 2024 - DST starts (Europe: clocks forward March 31)
         // This tests the boundary when DST begins
         createTimeProvider(getTimestampForDayOfMonth(2024, 2, 31))
@@ -297,7 +297,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - DST fall back transition`() {
+    fun `stress - DST fall back transition`() = runTest {
         // October 27, 2024 - DST ends (Europe: clocks back October 27)
         createTimeProvider(getTimestampForDayOfMonth(2024, 9, 27))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -320,7 +320,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - multiple DST transitions in year view`() {
+    fun `stress - multiple DST transitions in year view`() = runTest {
         // Test full year view spanning DST transitions
         createTimeProvider(getTimestampForDayOfMonth(2024, 0, 1))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -352,7 +352,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - 10000 expenses in daily history`() {
+    fun `stress - 10000 expenses in daily history`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -373,7 +373,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - 500 recurring patterns`() {
+    fun `stress - 500 recurring patterns`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -402,7 +402,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - 1000 planned expenses`() {
+    fun `stress - 1000 planned expenses`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -430,7 +430,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - combined large datasets`() {
+    fun `stress - combined large datasets`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -482,7 +482,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - zero budget with spending`() {
+    fun `stress - zero budget with spending`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -501,7 +501,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - zero budget but has category budgets`() {
+    fun `stress - zero budget but has category budgets`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -523,7 +523,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - spending exceeds all budgets`() {
+    fun `stress - spending exceeds all budgets`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -548,7 +548,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - negative discretionary budget`() {
+    fun `stress - negative discretionary budget`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -577,7 +577,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - extremely large amounts`() {
+    fun `stress - extremely large amounts`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -603,7 +603,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - extremely small amounts`() {
+    fun `stress - extremely small amounts`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -629,7 +629,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - NaN and Infinity inputs`() {
+    fun `stress - NaN and Infinity inputs`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -648,7 +648,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - extreme goal reserves calculation`() {
+    fun `stress - extreme goal reserves calculation`() = runTest {
         // Goal with target in past - should use full remaining amount
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -674,7 +674,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - goal with far future target date`() {
+    fun `stress - goal with far future target date`() = runTest {
         // Goal with target 10 years in future - should pro-rate significantly
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -706,7 +706,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - all nullable fields null in SpendingPace`() {
+    fun `stress - all nullable fields null in SpendingPace`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -737,7 +737,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - partially null SpendingPace`() {
+    fun `stress - partially null SpendingPace`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -767,7 +767,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - null budget amounts`() {
+    fun `stress - null budget amounts`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -796,7 +796,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - empty lists for all collections`() {
+    fun `stress - empty lists for all collections`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -825,7 +825,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - null targetDate in SavingsGoal`() {
+    fun `stress - null targetDate in SavingsGoal`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -857,7 +857,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - 10 concurrent synthesize calls`() = runBlocking {
+    fun `stress - 10 concurrent synthesize calls`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -897,11 +897,11 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - 50 concurrent synthesize calls`() = runBlocking {
+    fun `stress - 50 concurrent synthesize calls`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
-        val results = runBlocking(Dispatchers.Default) {
+        val results = withContext(Dispatchers.Default) {
             (1..50).map { i ->
                 async {
                     try {
@@ -925,7 +925,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - rapid sequential calls with different times`() {
+    fun `stress - rapid sequential calls with different times`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         var engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -953,7 +953,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - 5 years of daily spending data`() {
+    fun `stress - 5 years of daily spending data`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -974,7 +974,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - calculateBlockParty with large dataset`() {
+    fun `stress - calculateBlockParty with large dataset`() = runTest {
         createTimeProvider(getTimestampForDayOfMonth(2024, 5, 15)) // June 15
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1013,14 +1013,12 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
 
         val dailySpending = List(30) { (it + 1) * 50.0f }
 
-        val blockPartyData = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = expenses,
-                dailySpending = dailySpending,
-                budgetLimit = 2000.0
-            )
-        }
+        val blockPartyData = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = expenses,
+            dailySpending = dailySpending,
+            budgetLimit = 2000.0
+        )
 
         assertNotNull(blockPartyData)
         assertTrue(blockPartyData.isNotEmpty())
@@ -1031,7 +1029,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - weekly frequency calculation`() {
+    fun `stress - weekly frequency calculation`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1055,7 +1053,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - biweekly frequency calculation`() {
+    fun `stress - biweekly frequency calculation`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1079,7 +1077,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - quarterly frequency calculation`() {
+    fun `stress - quarterly frequency calculation`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1103,7 +1101,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - semi-annually frequency calculation`() {
+    fun `stress - semi-annually frequency calculation`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1127,7 +1125,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - annually frequency calculation`() {
+    fun `stress - annually frequency calculation`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1155,7 +1153,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - risk level with zero budget but on pace`() {
+    fun `stress - risk level with zero budget but on pace`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1177,7 +1175,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - risk level with zero budget and over pace`() {
+    fun `stress - risk level with zero budget and over pace`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1199,7 +1197,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - risk level at buffer thresholds`() {
+    fun `stress - risk level at buffer thresholds`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1224,7 +1222,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - multiple critical budgets`() {
+    fun `stress - multiple critical budgets`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1249,7 +1247,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - BlockParty at month start`() {
+    fun `stress - BlockParty at month start`() = runTest {
         createTimeProvider(getTimestampForDayOfMonth(2024, 0, 1))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1262,14 +1260,12 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             spendingPace = createPace(daysElapsed = 1, daysInMonth = 31)
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = emptyList(),
-                dailySpending = List(31) { 0f },
-                budgetLimit = 2000.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(31) { 0f },
+            budgetLimit = 2000.0
+        )
 
         assertEquals(31, blockParty.size)
         // First day should be TODAY
@@ -1277,7 +1273,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - BlockParty at month end`() {
+    fun `stress - BlockParty at month end`() = runTest {
         createTimeProvider(getTimestampForDayOfMonth(2024, 0, 31))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1290,20 +1286,18 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             spendingPace = createPace(daysElapsed = 31, daysInMonth = 31)
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = emptyList(),
-                dailySpending = List(31) { (it + 1) * 50.0f },
-                budgetLimit = 2000.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(31) { (it + 1) * 50.0f },
+            budgetLimit = 2000.0
+        )
 
         assertEquals(31, blockParty.size)
     }
 
     @Test
-    fun `stress - BlockParty with recurring on specific days`() {
+    fun `stress - BlockParty with recurring on specific days`() = runTest {
         createTimeProvider(getTimestampForDayOfMonth(2024, 3, 15)) // April 15
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1331,14 +1325,12 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             spendingPace = createPace()
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = emptyList(),
-                dailySpending = List(30) { 0f },
-                budgetLimit = 1500.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = List(30) { 0f },
+            budgetLimit = 1500.0
+        )
 
         // Day 1 and 15 should show recurring impact
         val day1 = blockParty.find { it.dayOfMonth == 1 }
@@ -1351,7 +1343,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - BlockParty empty daily spending`() {
+    fun `stress - BlockParty empty daily spending`() = runTest {
         createTimeProvider(getTimestampForDayOfMonth(2024, 5, 15))
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1364,14 +1356,12 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
             spendingPace = createPace()
         )
 
-        val blockParty = runBlocking {
-            engine.calculateBlockPartyData(
-                forecast = forecast,
-                expenses = emptyList(),
-                dailySpending = emptyList(), // Empty!
-                budgetLimit = 1000.0
-            )
-        }
+        val blockParty = engine.calculateBlockPartyData(
+            forecast = forecast,
+            expenses = emptyList(),
+            dailySpending = emptyList(), // Empty!
+            budgetLimit = 1000.0
+        )
 
         // Future days should remain forecast states (not past NO_DATA).
         val futureDays = blockParty.filter { !it.isToday && it.dayOfMonth > 15 }
@@ -1383,7 +1373,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - confidence with no budget no baseline`() {
+    fun `stress - confidence with no budget no baseline`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1411,7 +1401,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - confidence with full data`() {
+    fun `stress - confidence with full data`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1437,7 +1427,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - insights with exceeded budgets`() {
+    fun `stress - insights with exceeded budgets`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1461,7 +1451,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - insights with no issues`() {
+    fun `stress - insights with no issues`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1485,7 +1475,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - recurring pattern confidence boundaries`() {
+    fun `stress - recurring pattern confidence boundaries`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1515,7 +1505,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - zero days in month edge case`() {
+    fun `stress - zero days in month edge case`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1545,7 +1535,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `stress - planned expense on past date`() {
+    fun `stress - planned expense on past date`() = runTest {
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
 
@@ -1574,7 +1564,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `regression - confidence interval gap 0-89 to 0-90`() {
+    fun `regression - confidence interval gap 0-89 to 0-90`() = runTest {
         // Previously there was a gap between 0.89 and 0.90
         // Verify the fix is in place
         createTimeProvider(System.currentTimeMillis())
@@ -1596,7 +1586,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `regression - Calendar instance reuse`() {
+    fun `regression - Calendar instance reuse`() = runTest {
         // Verify Calendar is not recreated excessively
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -1626,7 +1616,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `regression - discretionary pool formula`() {
+    fun `regression - discretionary pool formula`() = runTest {
         // Verify LOG-021 fix: discretionary = budget - recurring - planned - goals
         createTimeProvider(System.currentTimeMillis())
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))
@@ -1651,7 +1641,7 @@ class SynthesisEngineStressTest : AnalyticsEngineTestBase() {
     // ============================================================================
 
     @Test
-    fun `stress - maximum chaos scenario`() {
+    fun `stress - maximum chaos scenario`() = runTest {
         // Combine as many edge cases as possible
         createTimeProvider(getTimestampForDayOfMonth(2024, 1, 29)) // Feb 29 - leap year + DST period
         val engine = SynthesisEngine(timeProvider, currencyConverter = mockk(relaxed = true))

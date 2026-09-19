@@ -128,7 +128,7 @@ class FinancialWeatherRepositoryTest {
         coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
 
         every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
@@ -181,7 +181,7 @@ class FinancialWeatherRepositoryTest {
                 priority = PlannedExpensePriority.LIKELY
             )
         )
-        every {
+        coEvery {
             synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>())
         } returns FinancialForecast(
             horizon = ForecastHorizon.REST_OF_MONTH,
@@ -229,7 +229,7 @@ class FinancialWeatherRepositoryTest {
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
         every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
         coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
-        every { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         val result = repository.getFinancialWeather().first()
@@ -267,7 +267,7 @@ class FinancialWeatherRepositoryTest {
         coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
@@ -301,7 +301,7 @@ class FinancialWeatherRepositoryTest {
         coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
@@ -330,7 +330,7 @@ class FinancialWeatherRepositoryTest {
         coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
@@ -392,7 +392,7 @@ class FinancialWeatherRepositoryTest {
         )
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
@@ -442,7 +442,7 @@ class FinancialWeatherRepositoryTest {
         )
 
         val capturedInput = slot<ForecastInputAssembler.ForecastInput>()
-        every { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(capture(capturedInput)) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         repository.getFinancialWeather().first()
@@ -516,7 +516,7 @@ class FinancialWeatherRepositoryTest {
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
         every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
         coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
-        every { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
 
         // Resolve a NON-EUR home currency to prove the narrative uses the resolved
         // value rather than the old hardcoded EUR fallback.
@@ -543,7 +543,7 @@ class FinancialWeatherRepositoryTest {
         every { plannedExpenseRepository.getAllPlannedExpenses() } returns flowOf(emptyList())
         every { savingsGoalRepository.observeSavingsGoals() } returns flowOf(emptyList())
         coEvery { mergedRecurringPatternsProvider.getPatternsFromSnapshots(any(), any()) } returns emptyList()
-        every { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
+        coEvery { synthesisEngine.synthesize(any<ForecastInputAssembler.ForecastInput>()) } returns createMockForecast()
         every { narrativeGenerator.generate(any(), any(), any()) } returns createMockNarrative()
 
         // Resolution failure must surface UNKNOWN weather via the terminal .catch,

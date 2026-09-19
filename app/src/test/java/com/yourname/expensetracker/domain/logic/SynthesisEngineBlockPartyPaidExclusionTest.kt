@@ -12,7 +12,7 @@ import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
@@ -72,7 +72,7 @@ class SynthesisEngineBlockPartyPaidExclusionTest {
     )
 
     @Test
-    fun `block party excludes PAID occurrences from recurring impact`() = runBlocking {
+    fun `block party excludes PAID occurrences from recurring impact`() = runTest {
         val now = dayOfMonth(2024, Calendar.APRIL, 15)
         every { timeProvider.now() } returns now
 
@@ -138,7 +138,7 @@ class SynthesisEngineBlockPartyPaidExclusionTest {
      * is not PLANNED, it contributes nothing to the bill-day map.
      */
     @Test
-    fun `block party excludes SKIPPED occurrences and does not resurface via legacy matching`() = runBlocking {
+    fun `block party excludes SKIPPED occurrences and does not resurface via legacy matching`() = runTest {
         val now = dayOfMonth(2024, Calendar.APRIL, 15)
         every { timeProvider.now() } returns now
 
@@ -187,7 +187,7 @@ class SynthesisEngineBlockPartyPaidExclusionTest {
      * in-range occurrence is CANCELLED must not be resurrected by the legacy fallback.
      */
     @Test
-    fun `block party excludes CANCELLED occurrences and does not resurface via legacy matching`() = runBlocking {
+    fun `block party excludes CANCELLED occurrences and does not resurface via legacy matching`() = runTest {
         val now = dayOfMonth(2024, Calendar.APRIL, 15)
         every { timeProvider.now() } returns now
 
