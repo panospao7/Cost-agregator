@@ -43,6 +43,7 @@ import com.yourname.expensetracker.domain.transaction.BusinessExpenseUpdateResul
 import com.yourname.expensetracker.domain.transaction.CreateExpenseRequest
 import com.yourname.expensetracker.domain.transaction.CreateExpenseResult
 import com.yourname.expensetracker.domain.transaction.DeduplicationMode
+import com.yourname.expensetracker.domain.transaction.InsertConflictCodes
 import com.yourname.expensetracker.domain.transaction.ExpenseSource
 import com.yourname.expensetracker.domain.transaction.LifecycleEventType
 import com.yourname.expensetracker.domain.transaction.SideEffectMode
