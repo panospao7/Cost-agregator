@@ -1348,6 +1348,59 @@ object TimePeriodUtils {
     }
 
     /**
+     * RP-04 / P4-005 (Option A, no-schema): advances from a **fixed anchor day
+     * of month** to the same nominal day [months] months away from the month
+     * containing [fromMs], clamped to each target month's length.
+     *
+     * ## D7 semantics — prevents NEW drift from the current expansion anchor
+     *
+     * Generic [addMonths] repeatedly applied to a drifting cursor loses the
+     * original day: Jan 31 + 1 month → Feb 28, then Feb 28 + 1 month → Mar 28
+     * (the day-of-month drifted from 31 to 28). This helper instead always
+     * targets `anchorDayOfMonth` in the destination month, clamped to that
+     * month's length: Jan 31 → Feb 28/29 → **Mar 31**. Successive calls with
+     * the same [anchorDayOfMonth] therefore never accumulate drift.
+     *
+     * This does **NOT** restore an original anchor for an already-drifted
+     * persisted rule: the schema (DB v148) stores no original anchor day, so
+     * the caller derives [anchorDayOfMonth] from the rule's current
+     * `nextDate`/`anchorDate` (e.g. a rule already drifted to Feb 28 yields
+     * anchor 28). Restoring an original day would require a separate approved
+     * schema migration and is explicitly out of scope for RP-04.
+     *
+     * ## Semantics
+     * - The month of the result is the month of [fromMs] advanced by [months]
+     *   calendar months (negative [months] moves backwards).
+     * - [anchorDayOfMonth] is clamped to `1..lengthOfMonth(target)`, so
+     *   anchors 29/30/31 land on the last day of shorter months (leap-year
+     *   aware: Feb 29 in leap years, Feb 28 otherwise).
+     * - The **time-of-day of [fromMs] is preserved** (identical to [addMonths]
+     *   `Calendar.add` semantics). Callers that need date-only semantics
+     *   normalize with [getStartOfDay]; recurring expansion feeds start-of-day
+     *   values, so occurrence due dates remain local midnight.
+     * - No wall-clock read: the target month is derived purely from
+     *   [fromMs] and [months] via `java.time` (system default timezone).
+     *
+     * @param anchorDayOfMonth the fixed day to target in every destination
+     *   month (1–31; values above a month's length are clamped).
+     * @param fromMs reference instant whose month is the expansion base.
+     * @param months number of calendar months to advance (may be negative).
+     * @return epoch millis at the clamped anchor day in the target month, with
+     *   the time-of-day of [fromMs].
+     */
+    fun advanceMonthAnchor(anchorDayOfMonth: Int, fromMs: Long, months: Int): Long {
+        val zone = ZoneId.systemDefault()
+        val zoned = Instant.ofEpochMilli(fromMs).atZone(zone)
+        val targetMonth = YearMonth.from(zoned).plusMonths(months.toLong())
+        val targetDay = anchorDayOfMonth.coerceIn(1, targetMonth.lengthOfMonth())
+        return targetMonth.atDay(targetDay)
+            .atTime(zoned.toLocalTime())
+            .atZone(zone)
+            .toInstant()
+            .toEpochMilli()
+    }
+
+    /**
      * Adds [days] calendar days to [timestamp] using [Calendar.add].
      * DST-safe: correctly handles 23-hour and 25-hour days.
      */

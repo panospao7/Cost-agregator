@@ -11,6 +11,9 @@ import com.yourname.expensetracker.data.database.dao.RecurringLifecycleEventDao
 import com.yourname.expensetracker.data.database.dao.RecurringOccurrenceDao
 import com.yourname.expensetracker.data.database.dao.RecurringReminderDeliveryDao
 import com.yourname.expensetracker.data.database.entity.ManualRecurringExpense
+import com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent
+import com.yourname.expensetracker.data.database.entity.RecurringOccurrence
+import com.yourname.expensetracker.data.database.entity.RecurringReminderDelivery
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver
 import com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander
@@ -23,6 +26,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import io.mockk.slot
 import io.mockk.verify
 import kotlinx.coroutines.test.runTest
 import kotlin.time.Duration.Companion.seconds
@@ -291,9 +295,89 @@ class RecurringLifecycleCoordinatorTest {
         assertTrue(thrown is IllegalArgumentException)
     }
 
-    // ── Fake transaction runner that executes the block synchronously ──────
+    // ── RP-04 P4-006: reminder failure status ──────────────────────────────
 
-    private class FakeDomainTransactionRunner(val now: Long) : DomainTransactionRunner {
+    private fun testDelivery(
+        id: Long = 1L,
+        occurrenceId: Long = 100L,
+        status: String = "CLAIMED"
+    ) = RecurringReminderDelivery(
+        id = id,
+        occurrenceId = occurrenceId,
+        reminderWindow = "DUE_DAY",
+        scheduledAt = now,
+        status = status,
+        createdAt = now,
+        updatedAt = now
+    )
+
+    @Test
+    fun `permissionFailureUsesControlledCancellationReason`() = runTest(timeout = 60.seconds) {
+        coEvery { reminderDeliveryDao.getById(1L) } returns testDelivery(id = 1L)
+        coEvery { reminderDeliveryDao.cancelClaimedDelivery(any(), any(), any()) } returns 1
+
+        val result = coordinator.markReminderFailed(1L, "permission_denied")
+
+        assertTrue(result)
+        // Must NOT write FAILED_PERMISSION and must NOT use markFailedFromClaimed
+        coVerify(exactly = 0) { reminderDeliveryDao.markFailedFromClaimed(any(), any(), any(), any()) }
+        // Must cancel with the controlled reason code PERMISSION_REVOKED
+        coVerify(exactly = 1) { reminderDeliveryDao.cancelClaimedDelivery(1L, "PERMISSION_REVOKED", now) }
+        // Sanitized diagnostic event with controlled reason code only
+        val eventSlot = slot<RecurringLifecycleEvent>()
+        coVerify(exactly = 1) { lifecycleEventDao.insert(capture(eventSlot)) }
+        assertEquals("REMINDER_DELIVERY_CANCELLED_PERMISSION", eventSlot.captured.eventType)
+        assertEquals("CANCELLED", eventSlot.captured.newStatus)
+        assertTrue(eventSlot.captured.metadata!!.contains("PERMISSION_REVOKED"))
+    }
+
+    @Test
+    fun `historicalFailedPermissionDeliveryIsTerminal`() = runTest(timeout = 60.seconds) {
+        coEvery { reminderDeliveryDao.getById(2L) } returns
+            testDelivery(id = 2L, status = "FAILED_PERMISSION")
+
+        // Historical FAILED_PERMISSION rows are terminal: dismiss/snooze are no-ops,
+        // and no new live/retry path reopens them.
+        val dismissed = coordinator.dismissReminderDelivery(2L)
+        val snoozed = coordinator.snoozeReminderDelivery(2L)
+
+        assertTrue(dismissed is ReminderActionResult.NoOp)
+        assertTrue(snoozed is ReminderActionResult.NoOp)
+        coVerify(exactly = 0) { reminderDeliveryDao.update(any()) }
+    }
+
+    @Test
+    fun `cancellationExceptionPropagatesFromReconciliation`() = runTest(timeout = 60.seconds) {
+        val paidOccurrence = RecurringOccurrence(
+            id = 10L,
+            sourceType = "RECURRING_RULE",
+            sourceId = 1L,
+            occurrenceKey = "RECURRING_RULE|1|$now|MONTHLY",
+            dueDate = now,
+            status = "PAID",
+            linkedExpenseId = 1L,
+            expectedAmount = 10.0,
+            expectedCurrency = "EUR",
+            frequency = "MONTHLY",
+            merchant = "Test"
+        )
+        coEvery { occurrenceDao.getByStatus("PAID") } returns listOf(paidOccurrence)
+        coEvery { expenseDao.getById(1L) } throws kotlinx.coroutines.CancellationException("test-cancel")
+
+        var thrown: Throwable? = null
+        try {
+            coordinator.reconcileAllLinkedExpensesAfterBulkUpdate("unit_test")
+        } catch (t: Throwable) {
+            thrown = t
+        }
+        // CancellationException must propagate, never be swallowed into failure counts
+        assertTrue(thrown is kotlinx.coroutines.CancellationException)
+    }
+
+    /** Fake runner that executes the block directly with a fixed occurredAt. */
+    private class FakeDomainTransactionRunner(
+        private val now: Long
+    ) : DomainTransactionRunner {
         override suspend fun <T> runInTransaction(
             correlationId: String,
             causationId: String?,
@@ -301,16 +385,15 @@ class RecurringLifecycleCoordinatorTest {
             source: String,
             metadata: Map<String, String>,
             block: suspend (TransactionContext) -> T
-        ): T {
-            return block(
-                TransactionContext(
-                    correlationId = correlationId,
-                    causationId = causationId,
-                    operationId = operationId,
-                    source = source,
-                    occurredAt = now
-                )
+        ): T = block(
+            TransactionContext(
+                correlationId = correlationId,
+                causationId = causationId,
+                operationId = operationId,
+                source = source,
+                occurredAt = now,
+                metadata = metadata
             )
-        }
+        )
     }
 }

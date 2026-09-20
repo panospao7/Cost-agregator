@@ -252,4 +252,46 @@ class BillReminderWorkerTest {
         coVerify(exactly = 1) { coordinator.markReminderFailed(3L, any()) }
         coVerify(exactly = 0) { coordinator.cancelClaimedReminderDelivery(any(), any()) }
     }
+
+    // ─── Test 5: RP-04 P4-006 — permission denial cancels delivery without
+    //              blocking core recurring work ───
+
+    @Test
+    fun `permissionDenialCancelsDeliveryWithoutBlockingCoreRecurringWork`() = runTest {
+        val denied = testReminder(id = 1L, occurrenceId = 100L)
+        val healthy = testReminder(id = 2L, occurrenceId = 101L)
+
+        // Two due reminders: the first will fail on permission, the second must
+        // still be dispatched — proving permission denial does not block core work.
+        coEvery { coordinator.recoverAndGetDueReminders() } returns listOf(denied, healthy)
+        coEvery { coordinator.claimReminderDelivery(denied.id) } returns true
+        coEvery { coordinator.claimReminderDelivery(healthy.id) } returns true
+        coEvery { coordinator.getDispatchableClaimedReminder(denied.id) } returns
+            testSnapshot(deliveryId = 1L, occurrenceId = 100L)
+        coEvery { coordinator.getDispatchableClaimedReminder(healthy.id) } returns
+            testSnapshot(deliveryId = 2L, occurrenceId = 101L)
+        coEvery { coordinator.cancelClaimedReminderDelivery(any(), any()) } returns true
+
+        mockkStatic(NotificationManagerCompat::class)
+        val mockNm = mockk<NotificationManagerCompat>(relaxed = true)
+        every { NotificationManagerCompat.from(any<Context>()) } returns mockNm
+        // notificationId = delivery.id % Int.MAX_VALUE
+        every { mockNm.notify(1, any()) } throws SecurityException("Missing notification permission")
+        every { mockNm.notify(2, any()) } returns Unit
+
+        val result = buildWorker().doWork()
+
+        // Permission denial does NOT fail the periodic worker run.
+        assertEquals(Result.success(), result)
+
+        // Core recurring work was NOT blocked: the due-reminder recovery loop ran
+        // and the healthy reminder was still dispatched.
+        coVerify(exactly = 1) { coordinator.recoverAndGetDueReminders() }
+        coVerify(exactly = 1) { coordinator.markReminderSent(2L, any()) }
+
+        // The denied delivery is cancelled with the controlled worker reason —
+        // never FAILED_PERMISSION, never FAILED_TRANSIENT.
+        coVerify(exactly = 1) { coordinator.cancelClaimedReminderDelivery(1L, "notification_permission_revoked") }
+        coVerify(exactly = 0) { coordinator.markReminderFailed(1L, any()) }
+    }
 }

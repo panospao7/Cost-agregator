@@ -579,12 +579,27 @@ class WriteBarrierArchitectureGuardTest {
             ?: error("SubscriptionManagementRepository.kt not found under ${sourceRoot.absolutePath}")
         val sanitized = SourceTextSanitizer.stripCommentsAndStringBodies(file.readText())
 
-        // The alias pattern MUST be detected (no under-detection)…
+        // The alias pattern MUST be detected (no under-detection). RP-04 A1 routed
+        // rule mutations through RecurringRuleLifecycleCoordinator, so the only
+        // remaining direct ManualRecurringExpenseDao write is the display-only
+        // scoped op `updateSubscriptionCategory` (plan step 7 carve-out).
         val calls = detectDaoWriteCalls(sanitized, buildDaoRegistry())
         assertTrue(
             "Alias detection must observe SubscriptionManagementRepository's " +
                 "subscriptionDao (ManualRecurringExpenseDao) write calls.",
-            calls.any { it.receiver == "subscriptionDao" && it.daoInterface == "ManualRecurringExpenseDao" }
+            calls.any {
+                it.receiver == "subscriptionDao" &&
+                    it.daoInterface == "ManualRecurringExpenseDao" &&
+                    it.methodName == "updateSubscriptionCategory"
+            }
+        )
+        assertFalse(
+            "SubscriptionManagementRepository must not retain direct rule mutator calls " +
+                "(update/deleteById) after RP-04 A1 coordinator routing.",
+            calls.any {
+                it.daoInterface == "ManualRecurringExpenseDao" &&
+                    it.methodName in setOf("update", "deleteById")
+            }
         )
         // …and the class MUST be recognized as barrier-protected WITHOUT any exemption.
         assertTrue(

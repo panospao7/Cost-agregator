@@ -1,0 +1,29 @@
+{
+  "dashboardTotal": 12.99,
+  "dashboardCurrency": "EUR",
+  "dashboardTransactionCount": 1,
+  "isPartial": false,
+  "doubleCounted": false,
+  "overdueOccurrenceStatus": "PAID",
+  "overdueLinkedExpenseId": 1,
+  "overduePaidAmount": 12.99,
+  "plannedRowCount": 13,
+  "openPlannedRowCount": 12,
+  "openPlannedAmounts": [
+    19.99,
+    19.99,
+    19.99,
+    19.99,
+    19.99,
+    19.99,
+    19.99,
+    19.99,
+    19.99,
+    19.99,
+    19.99,
+    19.99
+  ],
+  "totalOccurrences": 13,
+  "paidOccurrences": 1,
+  "plannedOccurrences": 12
+}

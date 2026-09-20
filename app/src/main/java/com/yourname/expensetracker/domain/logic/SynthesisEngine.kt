@@ -37,10 +37,10 @@ import javax.inject.Singleton
  * [ForecastInputAssembler]. The **recurring lifecycle coordinator**
  * ([com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator])
  * is the canonical source of truth for expanding recurrence rules into
- * concrete occurrences. Any future migration that generates [PlannedExpense]
- * rows from occurrences (e.g. [com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService])
- * MUST ensure that the assembler deduplicates these against the recurring
- * patterns it already produces, preventing double-counting.
+ * concrete occurrences. Planned-row projection happens only inside
+ * [com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator]'s
+ * rule-mutation transaction; the assembler deduplicates these against the
+ * recurring patterns it already produces, preventing double-counting.
  * 
  * ## Block Party Algorithm
  * 

@@ -97,14 +97,53 @@ object RecurrenceCalculator {
         return normalizeToDateOnly(previousDate)
     }
 
-    fun addFrequencyInterval(baseDate: Long, frequency: RecurrenceFrequency, forward: Boolean = true): Long {
+    /**
+     * Advances [baseDate] by one recurrence interval.
+     *
+     * RP-04 P4-005 (D7 anchor semantics): ALL calendar-month frequencies
+     * (MONTHLY/QUARTERLY/SEMI_ANNUALLY/ANNUALLY — the ANNUALLY path is 12 calendar
+     * months) advance from the FIXED anchor day derived from [baseDate] via
+     * [TimePeriodUtils.advanceMonthAnchor], clamped to each target month's length —
+     * so a Jan-31 base gives Feb 28/29 for +1 month and recovers to Mar 31 on the
+     * following step instead of compounding drift (Jan 31 -> Feb 28 -> Mar 28), and
+     * a Feb-29 annual anchor clamps to Feb 28 in non-leap years and recovers to
+     * Feb 29 in leap years. This prevents NEW drift from the current expansion
+     * anchor; it does NOT restore an original anchor for an already-drifted
+     * persisted rule (the schema has no original anchor day — an already-drifted
+     * base necessarily derives its drifted day as the anchor). Weekly/biweekly
+     * fixed-day behavior is unchanged.
+     *
+     * Contract for multi-step callers (RP-04 A3 reviewer fix): when walking several
+     * intervals from a single original anchor (roll-forward loops, projection),
+     * pass the SAME [anchorDayOfMonth] on every call — deriving it per-step from
+     * the clamped result re-introduces drift (Jan-31 quarterly: Apr 30 → Jul 30
+     * instead of Jul 31). Single-step callers may omit the anchor.
+     *
+     * This keeps next-date calculation and projection in agreement with
+     * [com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander],
+     * which uses the same fixed-anchor advancement for its month-based paths
+     * (including ANNUALLY via 12-month fixed-anchor steps).
+     */
+    fun addFrequencyInterval(
+        baseDate: Long,
+        frequency: RecurrenceFrequency,
+        forward: Boolean = true,
+        anchorDayOfMonth: Int? = null
+    ): Long {
         val direction = if (forward) 1 else -1
         frequency.fixedIntervalDays?.let { fixedDays ->
             return TimePeriodUtils.addDays(baseDate, fixedDays * direction)
         }
 
         frequency.calendarMonths?.let { months ->
-            return TimePeriodUtils.addMonths(baseDate, months * direction)
+            // RP-04 P4-005: when no explicit anchor is supplied, derive it from
+            // [baseDate] itself (D7: the current expansion anchor is the fixed
+            // anchor; an already-drifted base necessarily anchors on its drifted
+            // day). Callers that walk multiple steps and must agree with the
+            // occurrence expander pass the same [anchorDayOfMonth] every step.
+            val resolvedAnchor = anchorDayOfMonth
+                ?: TimePeriodUtils.getDayOfMonth(TimePeriodUtils.getStartOfDay(baseDate))
+            return TimePeriodUtils.advanceMonthAnchor(resolvedAnchor, baseDate, months * direction)
         }
 
         return baseDate

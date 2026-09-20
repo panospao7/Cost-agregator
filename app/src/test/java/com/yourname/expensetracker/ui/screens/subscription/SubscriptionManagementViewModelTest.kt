@@ -11,6 +11,7 @@ import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.util.ViewModelTestUtils
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -122,6 +123,29 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
         assertFalse(state.isLoading)
     }
 
+    @Test
+    fun `deleteAndToggleUseLifecycleRepositoryPath`() = runTest(testDispatcher) {
+        configureRepositoryWithSubscriptions(
+            listOf(
+                createSubscription(id = 1L, merchant = "Netflix", amount = 15.0)
+            )
+        )
+        viewModel = SubscriptionManagementViewModel(repository, timeProvider, subscriptionManagerEngine = mockk<SubscriptionManagerEngine>(relaxed = true), currencySettingsRepository = mockCurrencyRepo(), currencyConverter = mockk(relaxed = true))
+        advanceUntilIdle()
+
+        // RP-04 A1: toggle must go through setActive (coordinator activate/
+        // deactivate), not a full updateSubscription with flipped isActive.
+        viewModel.toggleSubscriptionStatus(1L)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { repository.setActive(1L, false) }
+        coVerify(exactly = 0) { repository.updateSubscription(any()) }
+
+        // Delete must go through deleteSubscriptionById (coordinator deleteRule).
+        viewModel.deleteSubscription(1L)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { repository.deleteSubscriptionById(1L) }
+    }
+
     private fun mockCurrencyRepo(): CurrencySettingsRepository {
         val repo = mockk<CurrencySettingsRepository>(relaxed = true)
         every { repo.homeCurrency() } returns flowOf("EUR")
@@ -161,6 +185,27 @@ class SubscriptionManagementViewModelTest : ViewModelTestUtils() {
         coEvery { repository.updateSubscription(any()) } coAnswers {
             val updated = invocation.args[0] as ManualRecurringExpense
             subscriptionsStore[updated.id] = updated
+            Unit
+        }
+        // RP-04 A1: mirror the setActive contract — but ONLY the isActive flip.
+        // The REAL coordinator activate/deactivate also regenerates/purges derived
+        // state (occurrences, planned rows, reminders); this in-memory store stub
+        // deliberately does NOT model that derived-state lifecycle, so these tests
+        // verify UI routing/reload behavior only, not coordinator side effects.
+        coEvery { repository.setActive(any(), any()) } coAnswers {
+            val subscriptionId = invocation.args[0] as Long
+            val active = invocation.args[1] as Boolean
+            subscriptionsStore[subscriptionId]?.let {
+                subscriptionsStore[subscriptionId] = it.copy(isActive = active)
+            }
+            Unit
+        }
+        coEvery { repository.updateSubscriptionCategory(any(), any()) } coAnswers {
+            val subscriptionId = invocation.args[0] as Long
+            val category = invocation.args[1] as String
+            subscriptionsStore[subscriptionId]?.let {
+                subscriptionsStore[subscriptionId] = it.copy(subscriptionCategory = category)
+            }
             Unit
         }
     }

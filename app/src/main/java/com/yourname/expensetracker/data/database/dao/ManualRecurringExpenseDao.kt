@@ -72,9 +72,20 @@ interface ManualRecurringExpenseDao {
     // Status management
     @Query("UPDATE manual_recurring_expenses SET isActive = :isActive WHERE id = :id")
     suspend fun setActiveStatus(id: Long, isActive: Boolean)
-    
+
     @Query("UPDATE manual_recurring_expenses SET nextDate = :nextDate WHERE id = :id")
     suspend fun updateNextDate(id: Long, nextDate: Long)
+
+    /**
+     * RP-04 A1 display-only carve-out (plan step 7): updates ONLY the
+     * `subscriptionCategory` display column. Verified 2026-09-19: no occurrence
+     * generator or matcher consumes this field — its only consumer is the
+     * subscription screen's category label. Never use this to mutate rule
+     * semantics (amount/date/frequency/currency/active state) — those go
+     * through RecurringRuleLifecycleCoordinator.
+     */
+    @Query("UPDATE manual_recurring_expenses SET subscriptionCategory = :category WHERE id = :id")
+    suspend fun updateSubscriptionCategory(id: Long, category: String)
     
     // Statistics and queries
     @Query("SELECT COUNT(*) FROM manual_recurring_expenses WHERE isActive = 1")

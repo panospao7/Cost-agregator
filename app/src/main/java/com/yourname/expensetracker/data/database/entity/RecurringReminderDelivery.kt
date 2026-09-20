@@ -28,7 +28,7 @@ data class RecurringReminderDelivery(
     val occurrenceId: Long,
     val reminderWindow: String,     // "DUE_DAY", "3_DAYS_BEFORE", "7_DAYS_BEFORE", "14_DAYS_BEFORE", "30_DAYS_BEFORE", "OVERDUE"
     val scheduledAt: Long,          // when the reminder should fire (epoch millis)
-    val status: String,             // "SCHEDULED", "CLAIMED", "SENT", "DISMISSED", "SNOOZED", "CANCELLED", "FAILED_PERMISSION", "FAILED_TRANSIENT", "FAILED_FINAL"
+    val status: String,             // "SCHEDULED", "CLAIMED", "SENT", "DISMISSED", "SNOOZED", "CANCELLED", "FAILED_PERMISSION" (legacy, terminal — no longer emitted, RP-04 P4-006), "FAILED_TRANSIENT", "FAILED_FINAL"
     val lastSentAt: Long? = null,
     val dismissedAt: Long? = null,
     val snoozedUntil: Long? = null,

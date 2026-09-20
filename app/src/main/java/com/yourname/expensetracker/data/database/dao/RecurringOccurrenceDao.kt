@@ -66,6 +66,14 @@ interface RecurringOccurrenceDao {
     @Query("DELETE FROM recurring_occurrences WHERE sourceType = :sourceType AND sourceId = :sourceId AND status = 'PLANNED'")
     suspend fun deleteOpenPlannedBySource(sourceType: String, sourceId: Long): Int
 
+    /**
+     * RP-04 A2: targeted retirement of specific open PLANNED occurrences
+     * (moved logical slots during rule update reconciliation).
+     * Only PLANNED rows are affected; terminal rows and links are never touched.
+     */
+    @Query("DELETE FROM recurring_occurrences WHERE id IN (:ids) AND status = 'PLANNED'")
+    suspend fun deletePlannedByIds(ids: List<Long>): Int
+
     /** Updates payment snapshot when a linked expense is edited but still matches. */
     @Query("""
         UPDATE recurring_occurrences
