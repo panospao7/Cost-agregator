@@ -6,8 +6,11 @@ import com.yourname.expensetracker.data.database.dao.ExpenseDao
 import com.yourname.expensetracker.data.database.dao.MerchantCurrencyTotal
 import com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal
 import com.yourname.expensetracker.data.database.entity.Expense
+import com.yourname.expensetracker.data.database.entity.TransactionType
 import com.yourname.expensetracker.di.ApplicationScope
+import com.yourname.expensetracker.domain.core.money.CategoryMonthlySpend
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.SpendScope
 import com.yourname.expensetracker.domain.core.money.BucketDatePolicy
 import com.yourname.expensetracker.domain.core.money.MoneyAggregate
 import com.yourname.expensetracker.domain.core.money.MoneyAggregateBuilder
@@ -738,6 +741,110 @@ class MultiCurrencyRepository @Inject constructor(
                 aggregate = normalizationEngine.aggregateExpenses(group, homeCurrency, RateBasis.TRANSACTION_DATE, transactionTypeFilter)
             )
         }
+    }
+
+    /**
+     * **HISTORICAL-RATE (RP-08 / P6-002/P6-003 contract):** Get per-scope,
+     * per-month PURCHASE spending history in home currency for budget autopilot.
+     *
+     * Contract (see `CategoryMonthlySpend` KDoc and RP-08 plan lines 46-75):
+     * - half-open range `[startDate, endDate)`;
+     * - month keys are local-time `yyyy-MM` via [TimePeriodUtils.formatMonthKey],
+     *   the same policy as `BudgetHistorySeriesBuilder` / `BudgetForecastingEngine`;
+     * - **PURCHASE-only**: transfers, income/deposits, and `isNotMine` rows are
+     *   excluded (the SQL read filters `isNotMine = 0`; the engine applies the
+     *   `PURCHASE_ONLY` type filter);
+     * - uncategorized rows are a real `SpendScope.Category(null)` bucket; the
+     *   overall budget is a separate `SpendScope.Overall` aggregate across every
+     *   included category including uncategorized rows;
+     * - every bucket is normalized with [RateBasis.TRANSACTION_DATE] using the
+     *   transaction date via [MoneyNormalizationEngine] with
+     *   `BucketDatePolicy.RequireBucketDate` semantics — no latest-rate or
+     *   home-currency sentinel substitution;
+     * - missing/invalid rates are excluded only by the normalizer and surfaced
+     *   through `MoneyAggregate.isPartial`, `conversionFailures`, and
+     *   `metadata.excludedTransactionCount`;
+     * - home-currency resolution and DAO failures propagate as typed exceptions
+     *   (e.g. [HomeCurrencyUnavailableException]); they must never become an
+     *   empty list. `CancellationException` always propagates unchanged.
+     *
+     * Data path (RP-08 approved fallback): a row read bounded by the requested
+     * date range via [ExpenseDao.getExpensesBetweenUncapped], grouped and
+     * normalized in the repository — no DAO is exposed to the domain engine and
+     * no raw mixed-currency SUM is reintroduced. A grouped
+     * `(categoryId, monthKey, currency, txDate, total, txCount)` DAO projection
+     * may replace this read in a later slice without changing this method's
+     * signature or contract.
+     *
+     * @return one row per `(scope, monthKey)` bucket that has qualifying
+     *         transactions. Months with no qualifying transactions are not
+     *         emitted; zero-fill is the series builder's responsibility.
+     */
+    suspend fun getHistoricalCategoryMonthlySpend(
+        startDate: Long,
+        endDate: Long
+    ): List<CategoryMonthlySpend> {
+        // Bounded home-currency resolution — repository owns it (plan step 5);
+        // unavailable home currency is a typed failure, never a silent default.
+        val homeCurrency = requireHomeCurrencyForMoneyMath()
+        val expenses = expenseDao.getExpensesBetweenUncapped(startDate, endDate)
+        if (expenses.isEmpty()) return emptyList()
+
+        // RP-08: half-open, PURCHASE-only scope — the same filter used by the
+        // budget engines (see MoneyNormalizationEngine.matchesFilter).
+        // Filtering before grouping guarantees no zero-value rows are emitted
+        // for months/categories that contain only non-PURCHASE rows.
+        val purchases = expenses.filter {
+            it.transactionType == TransactionType.PURCHASE
+        }
+        if (purchases.isEmpty()) return emptyList()
+
+        // Group by (categoryId, local monthKey). categoryId null → Category(null),
+        // the real uncategorized bucket. Each group is normalized per expense at
+        // its own transaction date (TRANSACTION_DATE basis) through the engine,
+        // so currencies are never summed before conversion.
+        data class SpendKey(val categoryId: Long?, val monthKey: String)
+
+        val byBucket = purchases.groupBy { SpendKey(it.categoryId, getMonthKey(it.date)) }
+
+        val categoryRows = byBucket.entries
+            .sortedWith(
+                compareBy(
+                    { it.key.monthKey },
+                    { it.key.categoryId ?: Long.MIN_VALUE }
+                )
+            )
+            .map { (key, group) ->
+                CategoryMonthlySpend(
+                    scope = SpendScope.Category(key.categoryId),
+                    monthKey = key.monthKey,
+                    aggregate = normalizationEngine.aggregateExpenses(
+                        expenses = group,
+                        homeCurrency = homeCurrency,
+                        rateBasis = RateBasis.TRANSACTION_DATE,
+                        transactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
+                    )
+                )
+            }
+
+        // Overall is a separate scope aggregate across every included category,
+        // including uncategorized rows — never the null-category bucket itself.
+        val overallRows = purchases.groupBy { getMonthKey(it.date) }
+            .toSortedMap()
+            .map { (monthKey, group) ->
+                CategoryMonthlySpend(
+                    scope = SpendScope.Overall,
+                    monthKey = monthKey,
+                    aggregate = normalizationEngine.aggregateExpenses(
+                        expenses = group,
+                        homeCurrency = homeCurrency,
+                        rateBasis = RateBasis.TRANSACTION_DATE,
+                        transactionTypeFilter = TransactionTypeFilter.PURCHASE_ONLY
+                    )
+                )
+            }
+
+        return categoryRows + overallRows
     }
 
     /**

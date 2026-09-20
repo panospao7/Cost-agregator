@@ -43,6 +43,7 @@ import com.yourname.expensetracker.domain.budget.BudgetHealthStatus
 import com.yourname.expensetracker.domain.budget.BudgetStatus
 import com.yourname.expensetracker.domain.budget.BudgetSuggestion
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
+import com.yourname.expensetracker.domain.budget.BudgetRecommendationQuality
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
 import com.yourname.expensetracker.domain.util.CurrencyFormatter
 import com.yourname.expensetracker.domain.util.DateFormatterUtils
@@ -1121,9 +1122,13 @@ fun AutopilotBanner(
                         modifier = Modifier.padding(vertical = 4.dp)
                     )
                 }
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
+                // RP-08 (P6-004): Apply All must not be offered when every
+                // recommendation is non-actionable (LOW_HISTORY). The ViewModel
+                // still fails closed — this is display-only gating.
+                val hasActionable = recommendations.any { it.isActionable }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
@@ -1138,8 +1143,10 @@ fun AutopilotBanner(
                     }
                     Button(
                         onClick = onApplyAll,
+                        enabled = hasActionable,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = SemanticColors.SuccessGreen
+                            containerColor = SemanticColors.SuccessGreen,
+                            disabledContainerColor = SemanticColors.SuccessGreen.copy(alpha = 0.3f)
                         )
                     ) {
                         Icon(
@@ -1208,6 +1215,11 @@ fun AutopilotRecommendationItem(
                         style = MaterialTheme.typography.labelSmall,
                         color = trendColor
                     )
+                    // RP-08 (P6-004): bounded quality label for LOW_HISTORY /
+                    // PARTIAL_DATA. Display-only; no business logic here.
+                    if (recommendation.quality != BudgetRecommendationQuality.COMPLETE) {
+                        AutopilotQualityChip(quality = recommendation.quality)
+                    }
                 }
             }
             
@@ -1245,8 +1257,13 @@ fun AutopilotRecommendationItem(
                 
                 Spacer(modifier = Modifier.height(4.dp))
                 
+                // RP-08 (P6-004): non-actionable (LOW_HISTORY) recommendations
+                // must not offer a destructive-sounding apply affordance — the
+                // control is disabled with a bounded explanation. Display-only;
+                // the ViewModel still fails closed on any apply attempt.
                 TextButton(
                     onClick = onApply,
+                    enabled = recommendation.isActionable,
                     modifier = Modifier.height(32.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
@@ -1257,5 +1274,33 @@ fun AutopilotRecommendationItem(
                 }
             }
         }
+    }
+}
+
+/**
+ * RP-08 (P6-004): bounded quality label for non-COMPLETE recommendations.
+ * Display-only — renders the quality the engine already computed on the
+ * recommendation object; no business logic, no persistence.
+ */
+@Composable
+fun AutopilotQualityChip(quality: BudgetRecommendationQuality) {
+    val (label, color) = when (quality) {
+        BudgetRecommendationQuality.LOW_HISTORY ->
+            "Low history" to SemanticColors.WarningOrange
+        BudgetRecommendationQuality.PARTIAL_DATA ->
+            "Partial data" to SemanticColors.WarningOrange
+        BudgetRecommendationQuality.COMPLETE ->
+            return
+    }
+    Surface(
+        color = color.copy(alpha = 0.15f),
+        shape = RoundedCornerShape(4.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+        )
     }
 }

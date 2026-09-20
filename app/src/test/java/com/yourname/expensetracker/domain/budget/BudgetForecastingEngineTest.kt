@@ -153,13 +153,17 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Lookback window is zero-filled through the current month: Jan=100, Feb=200, Mar=300, Apr=0
-        // avg=150, older avg=150, recent avg=150 => STABLE, seasonal factor remains neutral
-        assertApproxEquals(220.0, forecast.predictedSpending, 0.01)
-        // Confidence is driven by completeness (3 observed months out of desired 4) plus variance adjustment
-        assertApproxEquals(0.70, forecast.confidenceScore, 0.01)
+        // RP-08 (P6-004): the mid-month April window edge is excluded and the
+        // leading partial January month is trimmed, so the series is [200, 300].
+        // avg=250, trend INCREASING => 250 * 1.1 = 275
+        assertApproxEquals(275.0, forecast.predictedSpending, 0.01)
+        // Confidence: observed=2 → 2/3*0.8 = 0.5333; CV([200,300])≈0.283 < 0.3 → +0.1
+        assertApproxEquals(0.6333333333333333, forecast.confidenceScore, 0.001)
+        // Risk: the relaxed converter mock normalizes the budget limit to 0.0,
+        // so spentToDate >= normalizedBudgetAmount forces CRITICAL (pre-existing
+        // mock artifact in this suite, unchanged by RP-08).
         assertEquals(ForecastRiskLevel.CRITICAL, forecast.riskLevel)
-        assertApproxEquals(1.0, forecast.overspendProbability, 0.01) // 0.05 * 0.50
+        assertApproxEquals(1.0, forecast.overspendProbability, 0.01)
     }
 
     @Test
@@ -171,7 +175,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget)
 
-        // Zero-filled history: Jan=0, Feb=0, Mar=120, Apr=0 => avg=30
+        // RP-08 P6-004: mid-month April window edge is excluded; the series is [120].
         assertApproxEquals(120.0, forecast.predictedSpending, 0.01)
         assertApproxEquals(0.4666666666666667, forecast.confidenceScore, 0.01)
         assertEquals(ForecastRiskLevel.CRITICAL, forecast.riskLevel)
@@ -188,7 +192,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget)
 
-        // Zero-filled Apr bucket lowers the average and creates a decreasing recent-vs-older comparison.
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series is Feb=100,
+        // Mar=100 (leading partial January month excluded) → avg=100 → STABLE.
         assertApproxEquals(100.0, forecast.predictedSpending, 0.01)
         assertTrue("confidence in [0,1]", forecast.confidenceScore in 0.0..1.0)
         assertEquals(ForecastRiskLevel.CRITICAL, forecast.riskLevel)
@@ -232,9 +237,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Lookback is zero-filled through December: Sep=100, Oct=100, Nov=100, Dec=0.
-        // The result should not receive any December-specific seasonal multiplier.
-        assertApproxEquals(103.33333333333334, forecast.predictedSpending, 0.01)
+        // RP-08 P6-004: window [Sep 15, Dec 15) trimmed to [Oct 1, Dec 1) —
+        // only Oct=100, Nov=100 survive (Jun–Sep pre-window snapshots trimmed).
+        // avg=100, stable trend. No December-specific seasonal multiplier.
+        assertApproxEquals(100.0, forecast.predictedSpending, 0.01)
     }
 
     @Test
@@ -247,7 +253,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Zero-filled history: Jan=0, Feb=100, Mar=130, Apr=0 => avg=57.5, increasing trend => *1.1
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series is Feb=100, Mar=130
+        // => avg=115, increasing trend => *1.1
         assertApproxEquals(126.5, forecast.predictedSpending, 0.01)
     }
 
@@ -261,7 +268,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Zero-filled history: Jan=0, Feb=130, Mar=100, Apr=0 => avg=57.5, decreasing trend => *0.9
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series Feb=130, Mar=100
+        // => avg=115, decreasing trend => *0.9
         assertApproxEquals(103.5, forecast.predictedSpending, 0.01)
     }
 
@@ -275,7 +283,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Zero-filled history: Jan=0, Feb=100, Mar=105, Apr=0 => avg=51.25, stable trend => unchanged
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series Feb=100, Mar=105
+        // => avg=102.5, stable trend => unchanged
         assertApproxEquals(102.5, forecast.predictedSpending, 0.01)
     }
 
@@ -302,7 +311,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
             LocalDate.of(2026, 5, 1)
         ).toDouble()
 
-        // Historical months are Jan=300, Feb=300, Mar=300, Apr=0 => avg=225, decreasing trend => *0.9
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series Feb=300, Mar=300
+        // => avg=300, stable trend => 300 * 16/30 = 160
         assertApproxEquals(160.0, forecast.predictedSpending, 0.01)
         assertEquals(
             LocalDate.of(2026, 4, 1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),
@@ -344,8 +354,13 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget)
 
-        assertApproxEquals(0.70, forecast.confidenceScore, 0.01)
-        assertApproxEquals(58.66666666666667, forecast.predictedSpending, 0.01)
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — history series
+        // Feb=50, Mar=200 (the Apr 10 snapshot falls outside the trimmed
+        // window's month keys). observedMonthCount=2 → confidence
+        // 2/3*0.8 = 0.5333; CV([50,200])≈0.85 → -0.1 → 0.4333.
+        // Trend: [50] vs [200] → INCREASING → prediction = 125 * 1.1 = 137.5.
+        assertApproxEquals(0.4333333333333333, forecast.confidenceScore, 0.01)
+        assertApproxEquals(137.5, forecast.predictedSpending, 0.01)
         assertTrue(forecast.predictedSpending + 50.0 > budget.amount)
         assertApproxEquals(1.0, forecast.overspendProbability, 0.01)
     }
@@ -384,7 +399,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         assertEquals(yearStart, forecast.targetPeriodStart)
         assertEquals(yearEnd, forecast.targetPeriodEnd)
-        // Historical months are Jan=100, Feb=100, Mar=100, Apr=0 => avg=75, decreasing trend => *0.9
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series Feb=100, Mar=100
+        // => avg=100, stable trend => 100 * 261/30 = 870
         assertApproxEquals(870.0, forecast.predictedSpending, 0.01)
     }
 
@@ -407,9 +423,10 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Zero-filled Apr bucket: Jan=100, Feb=80, Mar=120, Apr=0 -> avg=75
-        // older=90, recent=60 -> DECREASING -> *0.9
-        assertApproxEquals(100.0, forecast.predictedSpending, 0.01)
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series is Feb=80, Mar=120
+        // (leading partial January month excluded). avg=100, trendRate=(120-80)/80=0.5
+        // -> INCREASING -> *1.1
+        assertApproxEquals(110.0, forecast.predictedSpending, 0.01)
     }
 
     @Test
@@ -424,15 +441,15 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Zero-filled Apr bucket: Jan=100, Feb=50, Mar=100, Apr=0 -> avg=62.5
-        // older=75, recent=50 -> DECREASING -> *0.9
-        assertApproxEquals(75.0, forecast.predictedSpending, 0.01)
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series is Feb=50, Mar=100.
+        // avg=75, trendRate=(100-50)/50=0.625 -> INCREASING -> *1.1
+        assertApproxEquals(82.5, forecast.predictedSpending, 0.01)
     }
 
     @Test
-    fun `historical data excludes isNotMine expenses and zero fills missing months`() = runTest {
+    fun `isNotMine expenses are excluded and pre-window months are trimmed`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 500.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // Snapshots with effective amounts: Jan=60, Mar=60 (Feb is a gap, zero-filled by engine)
+        // Snapshots with effective amounts: Jan=60 (outside trimmed window), Mar=60
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
             snapshot("2026-01", 60.0, 1L),
             snapshot("2026-03", 60.0, 1L)
@@ -440,8 +457,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Jan=60, Feb=0, Mar=60, Apr=0 -> avg=30, stable trend
-        assertApproxEquals(36.0, forecast.predictedSpending, 0.01)
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — January is a leading
+        // partial month and is excluded; the series is [Mar=60]. avg=60, stable trend.
+        assertApproxEquals(60.0, forecast.predictedSpending, 0.01)
     }
 
     @Test
@@ -456,9 +474,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Zero-filled Apr bucket: Jan=100, Feb=40, Mar=100, Apr=0 -> avg=60
-        // older=70, recent=50 -> DECREASING -> *0.9
-        assertApproxEquals(72.0, forecast.predictedSpending, 0.01)
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series is Feb=40, Mar=100.
+        // avg=70, trendRate=(100-40)/40=1.5 -> INCREASING -> *1.1
+        assertApproxEquals(77.0, forecast.predictedSpending, 0.01)
     }
 
     // =========================================================================
@@ -476,7 +494,8 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Zero-filled Apr bucket: Jan=200, Feb=200, Mar=200, Apr=0 -> avg=150, decreasing trend => *0.9
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — series is Feb=200, Mar=200,
+        // avg=200, stable trend => unchanged
         assertApproxEquals(200.0, forecast.predictedSpending, 0.01)
     }
 
@@ -487,9 +506,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     // =========================================================================
 
     @Test
-    fun `sparse months are zero filled before averaging`() = runTest {
+    fun `sparse months collapse to remaining complete months after edge trimming`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
-        // Snapshots for Jan and Mar only; Feb and Apr are gap-filled as zeros by the engine.
+        // Snapshots for Jan and Mar only; Jan is a leading partial month (trimmed).
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
             snapshot("2026-01", 90.0, 1L),
             snapshot("2026-03", 90.0, 1L)
@@ -497,8 +516,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Jan=90, Feb=0, Mar=90, Apr=0 -> avg=45, stable trend
-        assertApproxEquals(54.0, forecast.predictedSpending, 0.01)
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — January is excluded;
+        // the series is [Mar=90]. avg=90, stable trend.
+        assertApproxEquals(90.0, forecast.predictedSpending, 0.01)
     }
 
     @Test
@@ -517,7 +537,7 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
     }
 
     @Test
-    fun `contiguous observed months still include zero filled current month`() = runTest {
+    fun `contiguous observed months exclude the incomplete current month`() = runTest {
         val budget = Budget(categoryId = 1L, amount = 1000.0, period = BudgetPeriod.MONTHLY, startDate = now)
         coEvery { mockExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
             snapshot("2026-01", 100.0, 1L),
@@ -527,7 +547,9 @@ class BudgetForecastingEngineTest : AnalyticsEngineTestBase() {
 
         val forecast = engine.generateForecast(budget, forecastPeriodDays = 30)
 
-        // Jan=100, Feb=100, Mar=100, Apr=0 -> avg=75, decreasing trend => *0.9
+        // RP-08 P6-004: window trimmed to [Feb 1, Apr 1) — the mid-month April
+        // edge is never zero-filled into the series; series is Feb=100, Mar=100
+        // -> avg=100, stable trend => unchanged.
         assertApproxEquals(100.0, forecast.predictedSpending, 0.01)
     }
 

@@ -3,7 +3,9 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
-import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
+import com.yourname.expensetracker.domain.core.money.CategoryMonthlySpend
+import com.yourname.expensetracker.domain.core.money.SpendScope
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -13,7 +15,7 @@ import javax.inject.Singleton
  * AI-powered budget autopilot engine.
  * 
  * Generates per-category budget adjustment recommendations based on:
- * - Historical spending trends (via aggregate SQL — A.9)
+ * - Historical spending trends (via typed repository aggregates — RP-08)
  * - Spending volatility/risk analysis
  * - User-defined delta caps (±15% per cycle)
  * 
@@ -21,11 +23,20 @@ import javax.inject.Singleton
  * recommendedBudget_c = trendAdjustedSpend_c * safetyFactor(risk, volatility)
  * with min/max delta caps (e.g., ±15% per cycle)
  *
- * A.9: Historical spending is now retrieved through pre-aggregated monthly
- * totals from [ExpenseDao] instead of capped raw row reads from
- * [ExpenseRepository]. This eliminates silent data truncation on large
- * histories while normalizing sparse month gaps into zero-spend buckets for
- * trend and volatility analysis.
+ * RP-08 (P6-002/P6-003): Historical spending is retrieved through
+ * [MultiCurrencyRepository.getHistoricalCategoryMonthlySpend] — a typed,
+ * currency-normalized (`RateBasis.TRANSACTION_DATE`) per-scope/per-month
+ * aggregate. No reflection, no deprecated DAO calls, no raw mixed-currency
+ * sums. Repository/home-currency failures propagate as typed exceptions
+ * (never converted into empty history), and conversion failures surface as
+ * partial aggregates ([com.yourname.expensetracker.domain.core.money.MoneyAggregate.isPartial])
+ * mapped to [BudgetRecommendationQuality.PARTIAL_DATA] — never silent zeros.
+ *
+ * RP-08 (P6-004): incomplete edge months are excluded from the history
+ * series ([com.yourname.expensetracker.domain.budget.BudgetHistorySeriesBuilder])
+ * and fewer than [MIN_COMPLETE_HISTORY_MONTHS] complete months yields
+ * [BudgetRecommendationQuality.LOW_HISTORY] with an identity recommendation
+ * (keep the current budget; not actionable).
  */
 @Singleton
 class BudgetAutopilotEngine @Inject constructor(
@@ -45,6 +56,10 @@ class BudgetAutopilotEngine @Inject constructor(
         private const val MEDIUM_VOLATILITY_THRESHOLD = 0.15 // 15% CV
         private const val TREND_THRESHOLD = 0.10 // 10% change per month
         private const val PROJECTION_MONTHS = 3 // Project 3 months ahead
+
+        // RP-08 (P6-004 low-history contract): fewer than this many COMPLETE
+        // months → identity recommendation (quality = LOW_HISTORY).
+        private const val MIN_COMPLETE_HISTORY_MONTHS = 2
         
         // Safety factors based on volatility
         private const val HIGH_VOLATILITY_SAFETY_FACTOR = 1.15
@@ -55,9 +70,10 @@ class BudgetAutopilotEngine @Inject constructor(
     /**
      * Generate per-category budget adjustment recommendations.
      *
-     * A.9: Uses aggregate monthly spending totals from [ExpenseDao] instead of
-     * fetching raw expense rows through [ExpenseRepository], eliminating the
-     * risk of silent truncation on large datasets.
+     * RP-08 (P6-002): loads the typed per-scope/per-month history **once** via
+     * [MultiCurrencyRepository.getHistoricalCategoryMonthlySpend]. Failures
+     * (home currency unavailable, DAO errors, cancellation) propagate to the
+     * caller — they are never converted into empty history.
      */
     suspend fun generateRecommendations(): BudgetAutopilotRecommendations {
         val now = timeProvider.now()
@@ -75,6 +91,14 @@ class BudgetAutopilotEngine @Inject constructor(
             )
         }
         
+        // RP-08 (P6-002/P6-003): one typed load for the whole window; no
+        // reflection, no deprecated DAO calls. Typed exceptions propagate
+        // unchanged (including CancellationException).
+        val threeMonthsAgo = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(now, -3)
+        val scopedHistory = indexScopedHistory(
+            multiCurrencyRepository.getHistoricalCategoryMonthlySpend(threeMonthsAgo, now)
+        )
+        
         val categoryRecommendations = mutableListOf<CategoryBudgetRecommendation>()
         val hasOverallBudget = budgets.any { it.categoryId == null }
         
@@ -83,8 +107,43 @@ class BudgetAutopilotEngine @Inject constructor(
                 categories.find { it.id == catId } 
             }
             
-            // 1. Get historical monthly spend for this budget's category
-            val historicalSpend = getHistoricalSpendForBudget(budget, now)
+            // 1. Get historical monthly spend for this budget's scope
+            val historicalSpend = getHistoricalSpendForBudget(budget, threeMonthsAgo, now, scopedHistory)
+
+            // RP-08 (P6-004 low-history contract): fewer than 2 complete months
+            // of history → identity recommendation (keep current budget), not
+            // actionable. Delta caps, safety factors, and bounds are unchanged.
+            if (historicalSpend.completeMonthCount < MIN_COMPLETE_HISTORY_MONTHS) {
+                categoryRecommendations.add(
+                    CategoryBudgetRecommendation(
+                        budgetId = budget.id,
+                        categoryId = budget.categoryId,
+                        categoryName = category?.name ?: "Overall Budget",
+                        currentBudget = budget.amount,
+                        recommendedBudget = budget.amount,
+                        delta = 0.0,
+                        deltaPercentage = 0.0,
+                        reason = "Insufficient complete history (${historicalSpend.completeMonthCount} complete month(s)); keeping current budget.",
+                        confidence = calculateRecommendationConfidence(
+                            historicalSpend = historicalSpend.values,
+                            observedHistoryMonths = historicalSpend.completeMonthCount,
+                            volatility = 0.0
+                        ),
+                        trend = BudgetTrend.STABLE,
+                        quality = BudgetRecommendationQuality.LOW_HISTORY,
+                        isActionable = false
+                    )
+                )
+                continue
+            }
+
+            // RP-08 (P6-003): conversion failures surface as partial aggregates —
+            // mapped to PARTIAL_DATA, never read as zero spend.
+            val quality = if (historicalSpend.isPartial) {
+                BudgetRecommendationQuality.PARTIAL_DATA
+            } else {
+                BudgetRecommendationQuality.COMPLETE
+            }
             
             // 2. Calculate trend
             val trend = calculateTrend(historicalSpend.values)
@@ -156,7 +215,9 @@ class BudgetAutopilotEngine @Inject constructor(
                     deltaPercentage = deltaPercentage,
                     reason = reason,
                     confidence = confidence,
-                    trend = trendDirection
+                    trend = trendDirection,
+                    quality = quality,
+                    isActionable = true
                 )
             )
             
@@ -214,63 +275,65 @@ class BudgetAutopilotEngine @Inject constructor(
     }
     
     /**
-     * Get historical spending data for a specific budget as a list of
+     * Get historical spending data for a specific budget's scope as a list of
      * chronologically ordered monthly totals.
      *
-     * A.9: Uses aggregate SQL ([ExpenseDao.getMonthlySpendingTotalsByCategoryBetween]
-     * / [ExpenseDao.getMonthlySpendingTotalsBetween]) instead of fetching raw
-     * expense rows, eliminating the silent-truncation risk of capped row reads.
+     * RP-08 (P6-002/P6-003): reads from the pre-indexed
+     * [MultiCurrencyRepository.getHistoricalCategoryMonthlySpend] result —
+     * `SpendScope.Overall` for an overall budget, `SpendScope.Category(id)`
+     * (including `Category(null)` for uncategorized) for category budgets.
+     * No reflection, no deprecated DAO calls, no raw mixed-currency sums.
      *
      * Gap months between the first and last observed months are synthesized as
      * explicit zero-spend buckets before trend/volatility math runs.
+     * Incomplete leading/trailing edge months are excluded (P6-004).
      */
-    private suspend fun getHistoricalSpendForBudget(
+    private fun getHistoricalSpendForBudget(
         budget: com.yourname.expensetracker.data.database.entity.Budget,
-        now: Long
+        threeMonthsAgo: Long,
+        now: Long,
+        scopedHistory: Map<SpendScope, Map<String, com.yourname.expensetracker.domain.core.money.MoneyAggregate>>
     ): HistoricalSpendSeries {
-        val threeMonthsAgo = com.yourname.expensetracker.domain.util.TimePeriodUtils.addMonths(now, -3)
-        val homeCurrency = currencySettingsRepository.homeCurrency().first()
-
-        val monthlyTotals: List<MonthlySpendingTotal> = if (budget.categoryId != null) {
-            // S8-009: Category-specific path — MultiCurrencyRepository doesn't yet expose
-            // per-category monthly totals; access expenseDao via reflection as a bridge.
-            // TODO: extend MultiCurrencyRepository with per-category monthly totals
-            try {
-                val daoField = multiCurrencyRepository.javaClass.getDeclaredField("expenseDao")
-                    .also { it.isAccessible = true }
-                val dao = daoField.get(multiCurrencyRepository) as? com.yourname.expensetracker.data.database.dao.ExpenseDao
-                @Suppress("DEPRECATION_ERROR")
-                dao?.getMonthlySpendingTotalsByCategoryBetween(budget.categoryId, threeMonthsAgo, now)
-                    ?: emptyList()
-            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
+        val scope = if (budget.categoryId != null) {
+            SpendScope.Category(budget.categoryId)
         } else {
-            // S8-009: Overall budget — use currency-normalized totals from MultiCurrencyRepository
-            try {
-                val domainResult = multiCurrencyRepository.getMonthlyTotalsInHomeCurrency(
-                    startDate = threeMonthsAgo,
-                    endDate = now,
-                    homeCurrency = homeCurrency
-                )
-                val monthTotals: List<com.yourname.expensetracker.data.repository.MonthTotal> =
-                    if (domainResult is com.yourname.expensetracker.domain.model.Result.Success) {
-                        domainResult.data
-                    } else emptyList()
-                monthTotals.map { mt ->
-                    MonthlySpendingTotal(monthKey = mt.monthKey, total = mt.total, txCount = 0)
-                }
-            } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; emptyList() }
+            SpendScope.Overall
+        }
+        val byMonth = scopedHistory[scope] ?: emptyMap()
+
+        val monthlyTotals = byMonth.map { (monthKey, aggregate) ->
+            MonthlySpendingTotal(monthKey = monthKey, total = aggregate.displayAmount, txCount = 0)
         }
 
         val series = BudgetHistorySeriesBuilder.build(
             monthlyTotals = monthlyTotals,
             windowStartInclusive = threeMonthsAgo,
-            windowEndExclusive = now
+            windowEndExclusive = now,
+            excludeIncompleteEdgeMonths = true
         )
 
         return HistoricalSpendSeries(
             values = series.values,
-            observedMonthCount = series.observedMonthCount
+            observedMonthCount = series.observedMonthCount,
+            completeMonthCount = series.completeMonthCount,
+            isPartial = byMonth.values.any { it.isPartial }
         )
+    }
+
+    /**
+     * RP-08 (P6-002): index the typed history rows once by
+     * `(scope, monthKey)` so each budget resolves its series without a
+     * repository round-trip and without any scope ambiguity
+     * (`SpendScope.Overall` is never conflated with `Category(null)`).
+     */
+    private fun indexScopedHistory(
+        rows: List<CategoryMonthlySpend>
+    ): Map<SpendScope, Map<String, com.yourname.expensetracker.domain.core.money.MoneyAggregate>> {
+        val byScope = linkedMapOf<SpendScope, LinkedHashMap<String, com.yourname.expensetracker.domain.core.money.MoneyAggregate>>()
+        for (row in rows) {
+            byScope.getOrPut(row.scope) { linkedMapOf() }[row.monthKey] = row.aggregate
+        }
+        return byScope
     }
 
     /**
@@ -397,7 +460,9 @@ class BudgetAutopilotEngine @Inject constructor(
 
     private data class HistoricalSpendSeries(
         val values: List<Double>,
-        val observedMonthCount: Int
+        val observedMonthCount: Int,
+        val completeMonthCount: Int,
+        val isPartial: Boolean
     )
 }
 
@@ -414,6 +479,24 @@ data class BudgetAutopilotRecommendations(
 )
 
 /**
+ * RP-08 (P6-004 low-history contract): recommendation data quality.
+ *
+ * - [COMPLETE]: complete, fully converted history — normal Apply allowed.
+ * - [PARTIAL_DATA]: complete months but some conversions excluded — bounded
+ *   recommendation retained; UI must show the existing data-quality warning
+ *   before any apply action (ViewModel gating is slice C3).
+ * - [LOW_HISTORY]: fewer than the required complete months — recommendation
+ *   equals the current budget and is not actionable.
+ *
+ * Quality is in-memory only; it is never persisted.
+ */
+enum class BudgetRecommendationQuality {
+    COMPLETE,
+    PARTIAL_DATA,
+    LOW_HISTORY
+}
+
+/**
  * Single category budget recommendation.
  */
 data class CategoryBudgetRecommendation(
@@ -426,5 +509,13 @@ data class CategoryBudgetRecommendation(
     val deltaPercentage: Double,
     val reason: String,
     val confidence: Double,
-    val trend: BudgetTrend
+    val trend: BudgetTrend,
+    /** RP-08 (P6-004): recommendation data quality (in-memory only, never persisted). */
+    val quality: BudgetRecommendationQuality = BudgetRecommendationQuality.COMPLETE,
+    /**
+     * RP-08 (P6-004): `false` for [BudgetRecommendationQuality.LOW_HISTORY] —
+     * the recommendation equals the current budget and must not be applied.
+     * Apply/Apply-All gating in BudgetViewModel is slice C3.
+     */
+    val isActionable: Boolean = true
 )

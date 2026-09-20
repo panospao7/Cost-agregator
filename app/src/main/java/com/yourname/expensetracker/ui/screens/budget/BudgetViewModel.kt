@@ -71,6 +71,20 @@ class BudgetViewModel @Inject constructor(
     private val _uiEvents = kotlinx.coroutines.flow.MutableSharedFlow<BudgetUiEvent>(extraBufferCapacity = 4)
     val uiEvents: kotlinx.coroutines.flow.SharedFlow<BudgetUiEvent> = _uiEvents.asSharedFlow()
 
+    companion object {
+        /**
+         * RP-08 (P6-002/003 privacy): user-facing autopilot errors are controlled
+         * constants only — never raw exception messages. `BUDGET_HISTORY_UNAVAILABLE`
+         * is the sanitized failure state for repository/home-currency history
+         * failures; the raw cause stays in logs via the exception class name.
+         */
+        const val ERROR_BUDGET_HISTORY_UNAVAILABLE = "BUDGET_HISTORY_UNAVAILABLE: Budget history is temporarily unavailable."
+        const val ERROR_AUTOPILOT_GENERATE_FAILED = "AUTOPILOT_GENERATE_FAILED: Could not generate budget recommendations."
+        const val ERROR_AUTOPILOT_APPLY_FAILED = "AUTOPILOT_APPLY_FAILED: Could not apply the recommendation."
+        const val ERROR_AUTOPILOT_APPLY_ALL_FAILED = "AUTOPILOT_APPLY_ALL_FAILED: Apply all failed and was rolled back."
+        const val ERROR_AUTOPILOT_NOT_ACTIONABLE = "AUTOPILOT_NOT_ACTIONABLE: This recommendation cannot be applied."
+    }
+
     private sealed class ManualState {
         object Idle : ManualState()
         object Loading : ManualState()
@@ -276,8 +290,16 @@ class BudgetViewModel @Inject constructor(
                 val recommendations = autopilotEngine.generateRecommendations()
                 _autopilotRecommendations.value = recommendations
             } catch (e: Exception) {
+                // RP-01: never swallow CancellationException.
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Autopilot generate failed")
-                _autopilotError.value = "Failed to generate recommendations: ${e.message}"
+                // RP-08: typed/sanitized reason code — raw exception messages
+                // (e.g. repository failure details) must never reach the UI.
+                _autopilotError.value = when (e) {
+                    is com.yourname.expensetracker.data.repository.HomeCurrencyUnavailableException ->
+                        ERROR_BUDGET_HISTORY_UNAVAILABLE
+                    else -> ERROR_AUTOPILOT_GENERATE_FAILED
+                }
                 _autopilotRecommendations.value = null
             } finally {
                 _autopilotLoading.value = false
@@ -286,6 +308,12 @@ class BudgetViewModel @Inject constructor(
     }
 
     fun applyAutopilotRecommendation(recommendation: CategoryBudgetRecommendation) {
+        // RP-08 (P6-004): LOW_HISTORY / non-actionable recommendations must never
+        // write a budget. Fail closed before any repository access.
+        if (!recommendation.isActionable) {
+            _autopilotError.value = ERROR_AUTOPILOT_NOT_ACTIONABLE
+            return
+        }
         viewModelScope.launch {
             _autopilotLoading.value = true
             _autopilotError.value = null
@@ -311,14 +339,21 @@ class BudgetViewModel @Inject constructor(
                             }
                         }
                         is com.yourname.expensetracker.domain.model.Result.Error -> {
-                            _autopilotError.value = "Failed to apply recommendation: ${result.message}"
+                            // RP-08 privacy: repository Result messages are not
+                            // guaranteed controlled text — surface the sanitized
+                            // constant only (same policy as the C2 catch blocks).
+                            _autopilotError.value = ERROR_AUTOPILOT_APPLY_FAILED
                         }
                         else -> {}
                     }
                 }
             } catch (e: Exception) {
+                // RP-01: never swallow CancellationException.
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Autopilot apply single failed")
-                _autopilotError.value = "Failed to apply recommendation: ${e.message}"
+                // RP-08 privacy: sanitized constant only — raw exception
+                // messages must never reach the UI.
+                _autopilotError.value = ERROR_AUTOPILOT_APPLY_FAILED
             } finally {
                 _autopilotLoading.value = false
             }
@@ -330,7 +365,14 @@ class BudgetViewModel @Inject constructor(
             _autopilotLoading.value = true
             _autopilotError.value = null
             try {
-                val recommendations = _autopilotRecommendations.value?.categoryRecommendations ?: emptyList()
+                // RP-08 (P6-004): Apply All must never write non-actionable
+                // (LOW_HISTORY) recommendations — fail closed, filter them out.
+                val recommendations = (_autopilotRecommendations.value?.categoryRecommendations ?: emptyList())
+                    .filter { it.isActionable }
+                if (recommendations.isEmpty()) {
+                    _autopilotError.value = ERROR_AUTOPILOT_NOT_ACTIONABLE
+                    return@launch
+                }
                 val activeBudgets = budgetRepository.getActiveBudgets()
 
                 database.withTransaction {
@@ -354,8 +396,12 @@ class BudgetViewModel @Inject constructor(
                     generatedAt = timeProvider.now()
                 )
             } catch (e: Exception) {
+                // RP-01: never swallow CancellationException.
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Timber.e(e, "Autopilot apply-all transaction failed, rolled back")
-                _autopilotError.value = "Apply all failed and was rolled back: ${e.message}"
+                // RP-08 privacy: sanitized constant only — raw exception
+                // messages must never reach the UI.
+                _autopilotError.value = ERROR_AUTOPILOT_APPLY_ALL_FAILED
             } finally {
                 _autopilotLoading.value = false
             }

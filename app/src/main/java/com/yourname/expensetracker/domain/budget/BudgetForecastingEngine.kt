@@ -377,14 +377,17 @@ class BudgetForecastingEngine @Inject constructor(
      * Fetches raw expense snapshots and normalises them to the home currency
      * via [AnalyticsCurrencyNormalizer] before grouping into monthly buckets.
      * This replaces the earlier raw-SQL aggregate approach (A.9) that summed
-     * amounts across mixed currencies without conversion — see
-     * [ExpenseDao.getMonthlySpendingTotalsByCategoryBetween] /
-     * [ExpenseDao.getMonthlySpendingTotalsBetween] which are now deprecated
-     * for exactly that reason.
+     * amounts across mixed currencies without conversion; those raw DAO
+     * aggregates are now deprecated for exactly that reason and are no longer
+     * referenced by this engine.
      *
      * Gap months between first/last observed month keys are synthesized as
      * explicit zero-spend buckets so averages and trends are not skewed
      * upward when a user simply had no spending in an intermediate month.
+     *
+     * RP-08 (P6-004): incomplete leading/trailing edge months are excluded
+     * from the series (window trimmed to local month boundaries); no
+     * pro-rating is performed for partial buckets.
      */
     private suspend fun getHistoricalSpendingData(budget: Budget, homeCurrency: String): HistoricalData {
         val now = timeProvider.now()
@@ -436,10 +439,13 @@ class BudgetForecastingEngine @Inject constructor(
             }
             .sortedBy { it.monthKey }
 
+        // RP-08 (P6-004): explicit exclusion of incomplete edge months for
+        // history/forecast semantics — same policy as the autopilot engine.
         val normalizedSeries = BudgetHistorySeriesBuilder.build(
             monthlyTotals = monthlyTotals,
             windowStartInclusive = threeMonthsAgo,
-            windowEndExclusive = now
+            windowEndExclusive = now,
+            excludeIncompleteEdgeMonths = true
         )
 
         val monthlySpending = linkedMapOf<String, Double>()
