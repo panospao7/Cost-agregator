@@ -5,6 +5,7 @@ import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.core.money.FailureReason
 import com.yourname.expensetracker.domain.core.money.MoneyAmount
+import com.yourname.expensetracker.domain.core.money.StaleRatePolicy
 import com.yourname.expensetracker.domain.currency.CurrencyConverter
 import com.yourname.expensetracker.domain.currency.DomainExchangeRate
 import com.yourname.expensetracker.domain.currency.ExchangeRateStore
@@ -20,8 +21,8 @@ import org.junit.Test
  *
  * These tests validate that the domain correctly distinguishes fresh rates from
  * stale ones, that [ConversionFailure] carries the right [FailureReason], and
- * that [CurrencyConverter.convert] refuses to use rates older than
- * [CurrencyConverter.MAX_RATE_AGE_MS].
+ * that [CurrencyConverter.convert] refuses to use rates older than the named
+ * [StaleRatePolicy.Default] policy threshold (24 hours, NEW-P5-012).
  *
  * GIVEN / WHEN / THEN structure follows the scenario testing pattern used
  * throughout the project.
@@ -82,7 +83,7 @@ class CurrencyRateStalenessScenarioTest {
 
         val converter = CurrencyConverter(exchangeRateStore, timeProvider)
 
-        // WHEN: checking staleness threshold (MAX_RATE_AGE_MS = 24h)
+        // WHEN: checking staleness threshold (StaleRatePolicy.Default = 24h)
         val result = converter.convert(50.0, "USD", "EUR")
 
         // THEN: not stale — conversion succeeds
@@ -100,11 +101,11 @@ class CurrencyRateStalenessScenarioTest {
         val now = 1_700_000_000_000L
         val staleTimestamp = now - (25 * ONE_HOUR_MS)
 
-        // WHEN: checking staleness threshold (MAX_RATE_AGE_MS = 24h)
+        // WHEN: checking staleness threshold (StaleRatePolicy.Default = 24h)
         val age = now - staleTimestamp
 
         // THEN: rate is stale
-        assertThat(age).isGreaterThan(CurrencyConverter.MAX_RATE_AGE_MS)
+        assertThat(age).isGreaterThan(StaleRatePolicy.Default.maxAgeMs)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -121,7 +122,7 @@ class CurrencyRateStalenessScenarioTest {
 
         val exchangeRateStore = mockk<ExchangeRateStore>(relaxed = true)
 
-        // Direct USD->EUR rate is stale (older than MAX_RATE_AGE_MS)
+        // Direct USD->EUR rate is stale (older than the 24h StaleRatePolicy.Default threshold)
         coEvery { exchangeRateStore.getRate("USD", "EUR") } returns DomainExchangeRate(
             fromCurrency = "USD",
             toCurrency = "EUR",

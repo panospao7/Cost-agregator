@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
 import com.yourname.expensetracker.domain.health.FinancialHealthResult
 import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
+import com.yourname.expensetracker.domain.health.HealthScoreOutcome
 import com.yourname.expensetracker.domain.health.HealthTrend
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.UiText
@@ -111,8 +112,9 @@ class BlockPartyDstAlignmentTest {
         coEvery { monteCarloSimulator.simulate(any(), any(), any()) } returns null
         val healthCalculator = mockk<com.yourname.expensetracker.domain.health.FinancialHealthCalculator>(relaxed = true)
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
-        coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns FinancialHealthResult(
-            overallScore = 50,
+        coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
+            FinancialHealthResult(
+                overallScore = 50,
             savingsRateScore = 50,
             runwayScore = 50,
             budgetAdherenceScore = 50,

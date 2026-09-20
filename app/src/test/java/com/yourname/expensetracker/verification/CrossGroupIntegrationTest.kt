@@ -237,7 +237,22 @@ class CrossGroupIntegrationTest : AnalyticsEngineTestBase() {
 
         val weather = weatherRepository.getFinancialWeather().first()
 
+        // RP-06 6c (D2): sealed HealthScoreOutcome cannot be fabricated by a
+        // relaxed mock — explicit Available stub keeps the compute path deterministic.
         val healthScoreV2 = mockk<com.yourname.expensetracker.domain.health.FinancialHealthScoreV2>(relaxed = true)
+        coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns
+            com.yourname.expensetracker.domain.health.HealthScoreOutcome.Available(
+                com.yourname.expensetracker.domain.health.FinancialHealthResult(
+                    overallScore = 50,
+                    savingsRateScore = 50,
+                    runwayScore = 50,
+                    budgetAdherenceScore = 50,
+                    billReliabilityScore = 50,
+                    factorContributions = emptyList(),
+                    trend = com.yourname.expensetracker.domain.health.HealthTrend.STABLE,
+                    recommendation = null
+                )
+            )
         val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
         val computeMoneyRadarUseCase = mockk<ComputeMoneyRadarUseCase>(relaxed = true)
         coEvery { computeMoneyRadarUseCase.compute() } returns MoneyRadarData(

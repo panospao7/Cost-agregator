@@ -15,6 +15,8 @@ import com.yourname.expensetracker.domain.forecasting.StressHorizon
 import com.yourname.expensetracker.domain.forecasting.StressRiskLevel
 import com.yourname.expensetracker.domain.health.FinancialHealthResult
 import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
+import com.yourname.expensetracker.domain.health.HealthScoreOutcome
+import com.yourname.expensetracker.domain.health.HealthScoreUnavailableReason
 import com.yourname.expensetracker.domain.health.HealthTrend
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.UiText
@@ -224,15 +226,17 @@ class DashboardContractsAdapterTest {
             displayCurrency = "EUR"
         )
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
-        coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns FinancialHealthResult(
-            overallScore = 50,
-            savingsRateScore = 50,
-            runwayScore = 50,
-            budgetAdherenceScore = 50,
-            billReliabilityScore = 50,
-            factorContributions = emptyList(),
-            trend = HealthTrend.STABLE,
-            recommendation = null
+        coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
+            FinancialHealthResult(
+                overallScore = 50,
+                savingsRateScore = 50,
+                runwayScore = 50,
+                budgetAdherenceScore = 50,
+                billReliabilityScore = 50,
+                factorContributions = emptyList(),
+                trend = HealthTrend.STABLE,
+                recommendation = null
+            )
         )
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
@@ -456,13 +460,83 @@ class DashboardContractsAdapterTest {
     }
 
     /**
+     * P5-008 (RP-06 6c) V1-fallback suppression pin — the lane's actual
+     * production behavior change. When the typed health-score calculation is
+     * Unavailable, the widget assembly must emit NO health widget at all:
+     * neither the authoritative V2 widget nor the legacy V1
+     * [DashboardWidget.FinancialHealthScoreWidget] fallback (the pre-P5-008
+     * behavior fabricated/stale-rolled a V1 widget on null; that path is
+     * deliberately suppressed).
+     */
+    @Test
+    fun `computeHealthScoreV2 unavailable emits no health widget and no V1 fallback`() = runTest {
+        val zone = java.time.ZoneId.systemDefault()
+        fun epoch(date: java.time.LocalDateTime) = date.atZone(zone).toInstant().toEpochMilli()
+        val now = epoch(java.time.LocalDateTime.of(2024, 6, 15, 12, 0))
+        every { timeBoundaryTicker.dayBoundaryTicks() } returns flowOf(now)
+        // One real purchase so the compute path matches the proven window-test
+        // route (non-empty fixture) rather than an untested empty-input path.
+        every { expenseRepository.getExpensesWithCategoryInPeriod(any(), any()) } returns flowOf(
+            listOf(
+                com.yourname.expensetracker.data.database.model.ExpenseWithCategory(
+                    expense = com.yourname.expensetracker.data.database.entity.Expense(
+                        id = 1L, amount = 80.0, currency = "EUR", merchant = "M1",
+                        transactionType = com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE,
+                        date = epoch(java.time.LocalDateTime.of(2024, 6, 10, 9, 0)),
+                        categoryId = 1L, isNotMine = false,
+                        isSharedExpense = false, isManualEntry = false
+                    ),
+                    category = null
+                )
+            )
+        )
+        val dashboardExpenses = adapter.observeDashboardExpenses().first()
+
+        val compiled = windowTestComputeUseCase(
+            now = now,
+            forecastInputAssembler = mockk(relaxed = true),
+            healthScoreOutcome = HealthScoreOutcome.Unavailable(
+                HealthScoreUnavailableReason.NORMALIZATION_FAILED
+            )
+        ).compute(windowProcessedData(dashboardExpenses))
+
+        // NEITHER health widget may appear when the score is unavailable.
+        assertTrue(
+            "V2 health widget must not be emitted on Unavailable",
+            compiled.allWidgets.filterIsInstance<DashboardWidget.FinancialHealthScoreV2Widget>().isEmpty()
+        )
+        assertTrue(
+            "Legacy V1 health widget fallback must not be emitted on Unavailable",
+            compiled.allWidgets.filterIsInstance<DashboardWidget.FinancialHealthScoreWidget>().isEmpty()
+        )
+        // The suppression must not swallow the rest of the dashboard: the
+        // always-on widgets are still present (sanity, keeps the pin honest).
+        assertTrue(
+            "Unrelated widgets must still be emitted",
+            compiled.allWidgets.filterIsInstance<DashboardWidget.TotalsDashboard>().isNotEmpty()
+        )
+    }
+
+    /**
      * Full-compute harness shared by the RP-05 batch-2 window/baseline/category
      * tests — mirrors the round-trip test's construction with a swappable
      * forecast input assembler.
      */
     private fun windowTestComputeUseCase(
         now: Long,
-        forecastInputAssembler: ForecastInputAssembler
+        forecastInputAssembler: ForecastInputAssembler,
+        healthScoreOutcome: HealthScoreOutcome = HealthScoreOutcome.Available(
+            FinancialHealthResult(
+                overallScore = 50,
+                savingsRateScore = 50,
+                runwayScore = 50,
+                budgetAdherenceScore = 50,
+                billReliabilityScore = 50,
+                factorContributions = emptyList(),
+                trend = HealthTrend.STABLE,
+                recommendation = null
+            )
+        )
     ): ComputeDashboardWidgetsUseCase {
         val insightsEngine = mockk<com.yourname.expensetracker.domain.analytics.InsightsEngine>(relaxed = true)
         coEvery { insightsEngine.getSpendingPaceSuspend(any()) } returns SpendingPace(
@@ -477,16 +551,7 @@ class DashboardContractsAdapterTest {
             displayCurrency = "EUR"
         )
         val healthScoreV2 = mockk<FinancialHealthScoreV2>(relaxed = true)
-        coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns FinancialHealthResult(
-            overallScore = 50,
-            savingsRateScore = 50,
-            runwayScore = 50,
-            budgetAdherenceScore = 50,
-            billReliabilityScore = 50,
-            factorContributions = emptyList(),
-            trend = HealthTrend.STABLE,
-            recommendation = null
-        )
+        coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns healthScoreOutcome
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns
             HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))

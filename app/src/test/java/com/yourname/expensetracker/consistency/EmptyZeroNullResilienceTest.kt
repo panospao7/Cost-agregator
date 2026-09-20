@@ -28,6 +28,7 @@ import com.yourname.expensetracker.domain.groups.Settlement
 import com.yourname.expensetracker.domain.groups.SettlementCalculator
 import com.yourname.expensetracker.domain.health.FinancialHealthResult
 import com.yourname.expensetracker.domain.health.FinancialHealthScoreV2
+import com.yourname.expensetracker.domain.health.HealthScoreOutcome
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.logic.SplitCalculator
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
@@ -219,7 +220,12 @@ class EmptyZeroNullResilienceTest : AnalyticsEngineTestBase() {
 
         // FinancialHealthScoreV2: no income + no expenses
         every { timeProvider.now() } returns fixedNow
-        val healthResult = financialHealthScoreV2.calculateHealthScore()
+        // P5-008: empty-but-valid single-currency input stays Available with
+        // the neutral component policy; assert the typed outcome wrapper.
+        val healthResult = when (val outcome = financialHealthScoreV2.calculateHealthScore()) {
+            is HealthScoreOutcome.Available -> outcome.result
+            is HealthScoreOutcome.Unavailable -> error("Empty-but-valid input must not be Unavailable: ${outcome.reason}")
+        }
 
         // CurrencyConverter: zero amount + unknown currency
         val unknownCurrencyConversion = currencyConverter.convert(0.0, "ZZZ", "XXX")

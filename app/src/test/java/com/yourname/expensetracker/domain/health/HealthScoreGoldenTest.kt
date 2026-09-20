@@ -13,6 +13,7 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.mockk
@@ -69,7 +70,11 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
         every { timeProvider.now() } returns atTime("2026-03-31", 23, 59, 59)
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns goldenMarchExpenses()
 
-        val result = engine.calculateHealthScore()
+        // P5-008: the normalizer mock is relaxed (empty-but-valid result,
+        // excludedCount = 0), so this pin exercises the empty-valid → Available
+        // neutral-policy path on real golden data. availableResult() surfaces
+        // any unexpected Unavailable as a loud test failure.
+        val result = engine.availableResult()
 
         assertApproxEquals(50.0, result.savingsRateScore.toDouble(), 0.01)
         assertApproxEquals(50.0, result.runwayScore.toDouble(), 0.01)
@@ -84,7 +89,7 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
         every { timeProvider.now() } returns atTime("2026-04-01", 12, 0, 0)
         coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns emptyList()
 
-        val result = engine.calculateHealthScore()
+        val result = engine.availableResult()
 
         assertApproxEquals(50.0, result.savingsRateScore.toDouble(), 0.01)
         assertApproxEquals(50.0, result.runwayScore.toDouble(), 0.01)
@@ -119,6 +124,18 @@ class HealthScoreGoldenTest : AnalyticsEngineTestBase() {
         createExpense("2026-03-28", 120.00, merchant = "Utilities", category = "utilities", id = 13L),
         createExpense("2026-03-30", 500.00, type = TransactionType.DEPOSIT, merchant = "Bonus", id = 14L)
     )
+
+    /** P5-008: unwrap [HealthScoreOutcome.Available]; an unexpected Unavailable fails the test loudly. */
+    private suspend fun FinancialHealthScoreV2.availableResult(
+        periodStart: Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),
+        periodEnd: Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
+    ): FinancialHealthResult {
+        return when (val outcome = calculateHealthScore(periodStart, periodEnd)) {
+            is HealthScoreOutcome.Available -> outcome.result
+            is HealthScoreOutcome.Unavailable ->
+                error("Expected Available but got Unavailable(${outcome.reason.name})")
+        }
+    }
 
     private fun atTime(date: String, hour: Int, minute: Int, second: Int): Long {
         val start = com.yourname.expensetracker.dateToMillis(date)

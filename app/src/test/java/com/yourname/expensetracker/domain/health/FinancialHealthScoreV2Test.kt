@@ -23,15 +23,14 @@ import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
-import com.yourname.expensetracker.domain.model.DomainTransactionType
-import com.yourname.expensetracker.domain.model.DomainTransferDirection
-import com.yourname.expensetracker.domain.model.ExpenseSnapshot
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.FakeTimeProvider
+import com.yourname.expensetracker.toExpenseSnapshot
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.flowOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -84,7 +83,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
             val exps = firstArg<List<com.yourname.expensetracker.data.database.entity.Expense>>()
             val homeCurrency = secondArg<String>()
-            val snapshots = exps.map { it.toTestExpenseSnapshot() }
+            val snapshots = exps.map { it.toExpenseSnapshot() }
             AnalyticsNormalizationResult(
                 homeCurrency = homeCurrency,
                 normalizedExpenses = snapshots.map {
@@ -127,7 +126,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         )
         coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 3000.0, current = 900.0))
 
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         assertEquals(50, result.savingsRateScore)
         assertEquals(8, result.runwayScore)
@@ -176,7 +175,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
                 writeBarrier = writeBarrier
             )
 
-            val result = fakeCalculator.calculateHealthScore()
+            val result = fakeCalculator.availableResult()
 
             assertTrue(
                 "Timing diagnostic must use the injected clock, got: $captured",
@@ -207,7 +206,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             goal(2L, target = 5_000.0, current = 300.0)
         )
 
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         assertEquals(16, result.runwayScore)
     }
@@ -237,11 +236,151 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
 
         coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 900.0))
 
-        val result = calculator.calculateHealthScore(periodStart, periodEnd)
+        val result = calculator.availableResult(periodStart, periodEnd)
 
         // Early month day-2 with history should stay near 1 month runway
         // instead of inflating from sparse MTD data.
         assertEquals(16, result.runwayScore)
+    }
+
+    @Test
+    fun `baseline normalization failure returns unavailable normalization failed`() = runTest {
+        // Mirror of the baseline-blend fixture: early month (day 2), sparse
+        // current-month data, non-empty historical purchases — so the runway
+        // path MUST reach calculateHistoricalMonthlyBaseline and normalize the
+        // historical rows. P5-008: the historical (baseline) normalization is
+        // the SECOND raw-fallback site removed; a failure there must surface
+        // as the typed Unavailable(NORMALIZATION_FAILED) — not a silent raw
+        // effectiveAmount sum, not a fabricated score, not persistence.
+        val earlyNow = millis(2026, Calendar.APRIL, 2)
+        every { timeProvider.now() } returns earlyNow
+
+        val periodStart = TimePeriodUtils.getStartOfMonth(earlyNow)
+        val periodEnd = TimePeriodUtils.getEndOfMonth(earlyNow)
+
+        val currentPurchases = listOf(
+            expense(100L, 50.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 1))
+        )
+        val historicalPurchases = listOf(
+            expense(200L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.JANUARY, 15)),
+            expense(201L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.FEBRUARY, 15)),
+            expense(202L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.MARCH, 15))
+        )
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val start = invocation.args[0] as Long
+            val end = invocation.args[1] as Long
+            if (start == periodStart && end == periodEnd) currentPurchases else historicalPurchases
+        }
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 900.0))
+
+        // The CURRENT-month normalization succeeds (empty-but-valid is legal);
+        // only the BASELINE normalization fails — proving the typed reason
+        // propagates from calculateHistoricalMonthlyBaseline, not the main path.
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val exps = firstArg<List<com.yourname.expensetracker.data.database.entity.Expense>>()
+            if (exps.any { it.id == 200L }) {
+                throw RuntimeException("simulated baseline normalization failure")
+            } else {
+                val homeCurrency = secondArg<String>()
+                val snapshots = exps.map { it.toExpenseSnapshot() }
+                AnalyticsNormalizationResult(
+                    homeCurrency = homeCurrency,
+                    normalizedExpenses = snapshots.map {
+                        NormalizedExpenseSnapshot(it, it.currency, it.effectiveAmount, it.effectiveAmount)
+                    },
+                    includedExpenses = snapshots,
+                    warnings = emptyList(),
+                    latestRateTimestamp = null,
+                    totalInputCount = exps.size
+                )
+            }
+        }
+
+        val outcome = calculator.calculateHealthScore(periodStart, periodEnd)
+
+        assertTrue(outcome is HealthScoreOutcome.Unavailable)
+        assertEquals(
+            HealthScoreUnavailableReason.NORMALIZATION_FAILED,
+            (outcome as HealthScoreOutcome.Unavailable).reason
+        )
+        // Unavailable never persists.
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    @Test
+    fun `baseline row missing from normalized association returns unavailable normalization failed`() = runTest {
+        // Association-miss pin (P5-008): the baseline normalization "succeeds"
+        // but one historical row is absent from the normalized association map
+        // (modeled by normalizing only the first two of three rows with
+        // totalInputCount = 2 — excludedCount stays 0, so the gate passes and
+        // the per-row `?: throw` association lookup is what must fire).
+        val earlyNow = millis(2026, Calendar.APRIL, 2)
+        every { timeProvider.now() } returns earlyNow
+
+        val periodStart = TimePeriodUtils.getStartOfMonth(earlyNow)
+        val periodEnd = TimePeriodUtils.getEndOfMonth(earlyNow)
+
+        val currentPurchases = listOf(
+            expense(100L, 50.0, TransactionType.PURCHASE, millis(2026, Calendar.APRIL, 1))
+        )
+        val historicalPurchases = listOf(
+            expense(200L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.JANUARY, 15)),
+            expense(201L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.FEBRUARY, 15)),
+            expense(202L, 900.0, TransactionType.PURCHASE, millis(2026, Calendar.MARCH, 15))
+        )
+
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } answers {
+            val start = invocation.args[0] as Long
+            val end = invocation.args[1] as Long
+            if (start == periodStart && end == periodEnd) currentPurchases else historicalPurchases
+        }
+        coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 900.0))
+
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val exps = firstArg<List<com.yourname.expensetracker.data.database.entity.Expense>>()
+            if (exps.any { it.id == 200L }) {
+                // Baseline call: drop the LAST row from the normalized output so
+                // totalInputCount(2) == normalizedExpenses.size(2) → excludedCount 0,
+                // but historical row 202 has no association entry.
+                val homeCurrency = secondArg<String>()
+                val present = exps.filter { it.id != 202L }.map { it.toExpenseSnapshot() }
+                AnalyticsNormalizationResult(
+                    homeCurrency = homeCurrency,
+                    normalizedExpenses = present.map {
+                        NormalizedExpenseSnapshot(it, it.currency, it.effectiveAmount, it.effectiveAmount)
+                    },
+                    includedExpenses = present,
+                    warnings = emptyList(),
+                    latestRateTimestamp = null,
+                    totalInputCount = present.size
+                )
+            } else {
+                val homeCurrency = secondArg<String>()
+                val snapshots = exps.map { it.toExpenseSnapshot() }
+                AnalyticsNormalizationResult(
+                    homeCurrency = homeCurrency,
+                    normalizedExpenses = snapshots.map {
+                        NormalizedExpenseSnapshot(it, it.currency, it.effectiveAmount, it.effectiveAmount)
+                    },
+                    includedExpenses = snapshots,
+                    warnings = emptyList(),
+                    latestRateTimestamp = null,
+                    totalInputCount = exps.size
+                )
+            }
+        }
+
+        val outcome = calculator.calculateHealthScore(periodStart, periodEnd)
+
+        assertTrue(outcome is HealthScoreOutcome.Unavailable)
+        assertEquals(
+            HealthScoreUnavailableReason.NORMALIZATION_FAILED,
+            (outcome as HealthScoreOutcome.Unavailable).reason
+        )
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
     }
 
     @Test
@@ -263,7 +402,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         }
         coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 5000.0, current = 1000.0))
 
-        val result = calculator.calculateHealthScore(periodStart, periodEnd)
+        val result = calculator.availableResult(periodStart, periodEnd)
 
         assertEquals(50, result.runwayScore)
     }
@@ -325,15 +464,15 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             trend = HealthTrend.STABLE.name
         )
 
-        val improving = calculator.calculateHealthScore()
+        val improving = calculator.availableResult()
         assertEquals(HealthTrend.IMPROVING, improving.trend)
 
         coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns improving.toHistorySnapshot(overall = improving.overallScore - 3)
-        val stable = calculator.calculateHealthScore()
+        val stable = calculator.availableResult()
         assertEquals(HealthTrend.STABLE, stable.trend)
 
         coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns improving.toHistorySnapshot(overall = improving.overallScore + 6)
-        val declining = calculator.calculateHealthScore()
+        val declining = calculator.availableResult()
         assertEquals(HealthTrend.DECLINING, declining.trend)
     }
 
@@ -343,7 +482,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             expense(1L, 300.0, TransactionType.PURCHASE, now - 2 * dayMs)
         )
 
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         assertEquals(50, result.savingsRateScore)
     }
@@ -355,7 +494,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         )
         coEvery { savingsGoalRepository.getSavingsGoals() } returns listOf(goal(1L, target = 1000.0, current = 500.0))
 
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         assertEquals(50, result.runwayScore)
     }
@@ -367,7 +506,7 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         coEvery { savingsGoalRepository.getSavingsGoals() } returns emptyList()
         coEvery { recurringExpenseEngine.getPatterns(any()) } returns emptyList()
 
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         assertEquals(50, result.savingsRateScore)
         assertEquals(50, result.runwayScore)
@@ -386,11 +525,126 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
             budgetStatus(amount = 1000.0, spent = 1200.0)
         )
 
-        val result = calculator.calculateHealthScore(periodStart, periodEnd)
+        val result = calculator.availableResult(periodStart, periodEnd)
 
         assertEquals(80, result.budgetAdherenceScore)
         coVerify(exactly = 1) { budgetRepository.getBudgetStatusesAt(expectedEvaluationTime) }
         coVerify(exactly = 0) { budgetRepository.getBudgetStatusesAt(now) }
+    }
+
+    // ── P5-008: typed Unavailable outcomes ────────────────────────────────
+
+    @Test
+    fun `normalization failure returns unavailable normalization failed and does not save history`() = runTest {
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } throws
+            RuntimeException("simulated normalization failure")
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 100.0, TransactionType.PURCHASE, now - dayMs)
+        )
+
+        val outcome = calculator.calculateHealthScore()
+
+        assertTrue(outcome is HealthScoreOutcome.Unavailable)
+        assertEquals(
+            HealthScoreUnavailableReason.NORMALIZATION_FAILED,
+            (outcome as HealthScoreOutcome.Unavailable).reason
+        )
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    @Test
+    fun `normalization excluding any row returns unavailable normalization failed`() = runTest {
+        // One input row but the normalizer excludes it → excludedCount > 0.
+        // AnalyticsNormalizationResult computes excludedCount as
+        // totalInputCount - normalizedExpenses.size, so an empty normalizedExpenses
+        // list with a non-zero totalInputCount models exactly that exclusion.
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } returns listOf(
+            expense(1L, 100.0, TransactionType.PURCHASE, now - dayMs)
+        )
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
+            val exps = firstArg<List<com.yourname.expensetracker.data.database.entity.Expense>>()
+            AnalyticsNormalizationResult(
+                homeCurrency = "EUR",
+                normalizedExpenses = emptyList(),
+                includedExpenses = emptyList(),
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = exps.size
+            )
+        }
+
+        val outcome = calculator.calculateHealthScore()
+
+        assertTrue(outcome is HealthScoreOutcome.Unavailable)
+        assertEquals(
+            HealthScoreUnavailableReason.NORMALIZATION_FAILED,
+            (outcome as HealthScoreOutcome.Unavailable).reason
+        )
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    @Test
+    fun `unavailable outcome never persists placeholder or fabricated row`() = runTest {
+        // Broad-catch path: unexpected repository failure must yield
+        // Unavailable(DATA_LOAD_FAILED) with zero history writes — and no
+        // retention cleanup either: deleteOlderThan is a saveToHistory
+        // side-effect and must only run after a real persisted success.
+        coEvery { expenseRepository.getExpensesBetween(any(), any()) } throws
+            RuntimeException("simulated data load failure")
+
+        val outcome = calculator.calculateHealthScore()
+
+        assertTrue(outcome is HealthScoreOutcome.Unavailable)
+        assertEquals(
+            HealthScoreUnavailableReason.DATA_LOAD_FAILED,
+            (outcome as HealthScoreOutcome.Unavailable).reason
+        )
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.deleteOlderThan(any()) }
+    }
+
+    @Test
+    fun `home currency failure returns unavailable home currency unavailable`() = runTest {
+        coEvery { currencySettingsRepository.homeCurrency() } throws
+            RuntimeException("simulated home currency read failure")
+
+        val outcome = calculator.calculateHealthScore()
+
+        assertTrue(outcome is HealthScoreOutcome.Unavailable)
+        assertEquals(
+            HealthScoreUnavailableReason.HOME_CURRENCY_UNAVAILABLE,
+            (outcome as HealthScoreOutcome.Unavailable).reason
+        )
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    @Test
+    fun `cancellation exception propagates and is not converted to unavailable`() = runTest {
+        coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } throws
+            CancellationException("simulated caller cancellation")
+
+        val thrown = runCatching { calculator.calculateHealthScore() }
+            .exceptionOrNull()
+
+        assertTrue("Expected CancellationException to propagate", thrown is CancellationException)
+        coVerify(exactly = 0) { healthScoreHistoryDao.insert(any()) }
+        coVerify(exactly = 0) { healthScoreHistoryDao.update(any()) }
+    }
+
+    /** P5-008: unwrap [HealthScoreOutcome.Available]; an unexpected Unavailable fails the test loudly. */
+    private suspend fun FinancialHealthScoreV2.availableResult(
+        periodStart: Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),
+        periodEnd: Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
+    ): FinancialHealthResult {
+        return when (val outcome = calculateHealthScore(periodStart, periodEnd)) {
+            is HealthScoreOutcome.Available -> outcome.result
+            is HealthScoreOutcome.Unavailable ->
+                error("Expected Available but got Unavailable(${outcome.reason.name})")
+        }
     }
 
     private fun FinancialHealthResult.toHistorySnapshot(overall: Int): HealthScoreHistory {
@@ -468,34 +722,4 @@ class FinancialHealthScoreV2Test : AnalyticsEngineTestBase() {
         }.timeInMillis
     }
 
-    /**
-     * Converts a data-layer [Expense] into a domain [ExpenseSnapshot], mirroring
-     * the logic in [FinancialHealthScoreV2.toExpenseSnapshot].
-     */
-    private fun com.yourname.expensetracker.data.database.entity.Expense.toTestExpenseSnapshot(): ExpenseSnapshot =
-        ExpenseSnapshot(
-            id = id,
-            amount = effectiveAmount,
-            effectiveAmount = effectiveAmount,
-            currency = currency,
-            merchant = merchant,
-            merchantKey = merchantKey,
-            transactionType = when (transactionType) {
-                com.yourname.expensetracker.data.database.entity.TransactionType.PURCHASE -> DomainTransactionType.PURCHASE
-                com.yourname.expensetracker.data.database.entity.TransactionType.WITHDRAWAL -> DomainTransactionType.WITHDRAWAL
-                com.yourname.expensetracker.data.database.entity.TransactionType.TRANSFER -> DomainTransactionType.TRANSFER
-                com.yourname.expensetracker.data.database.entity.TransactionType.DEPOSIT -> DomainTransactionType.DEPOSIT
-                com.yourname.expensetracker.data.database.entity.TransactionType.UNKNOWN -> DomainTransactionType.UNKNOWN
-            },
-            date = date,
-            categoryId = categoryId,
-            isNotMine = isNotMine,
-            transferDirection = transferDirection?.let { d ->
-                when (d) {
-                    com.yourname.expensetracker.data.database.entity.TransferDirection.INCOMING -> DomainTransferDirection.INCOMING
-                    com.yourname.expensetracker.data.database.entity.TransferDirection.OUTGOING -> DomainTransferDirection.OUTGOING
-                }
-            },
-            notes = notes
-        )
 }

@@ -13,6 +13,10 @@ import timber.log.Timber
  */
 object MoneyAggregateBuilder {
 
+    /** NEW-P5-009: controlled warning text for count/bucket list mismatches. */
+    private const val NEW_P5_009_WARNING =
+        "Transaction counts incomplete: count list does not match bucket list; per-bucket counts are approximate"
+
     /**
      * Builds a MoneyAggregate from per-currency buckets, converting to home currency.
      *
@@ -39,12 +43,20 @@ object MoneyAggregateBuilder {
         }
 
         // Group by currency
-        // NEW-P5-009: Log warning when transactionCounts is shorter than buckets,
-        // indicating a caller-side bug that would otherwise silently default to 0.
-        if (transactionCounts.isNotEmpty() && transactionCounts.size < buckets.size) {
+        // NEW-P5-009: A counts/buckets size mismatch in EITHER direction is
+        // count-integrity damage — shorter means buckets were silently defaulted
+        // to 0; longer means counts exist that have no bucket. In both cases the
+        // aggregate is marked partial with countsIncomplete metadata (controlled
+        // counts in the warning; no negative sentinels, no fabricated counts).
+        // An EMPTY counts list is the caller's explicit count-agnostic opt-out
+        // (the parameter default): counts are unknown by design, not damaged, so
+        // it is NOT flagged — pinning that semantic keeps every count-agnostic
+        // caller's behavior unchanged (consumer changes are out of slice scope).
+        val countsIncomplete = transactionCounts.isNotEmpty() && transactionCounts.size != buckets.size
+        if (countsIncomplete) {
             Timber.w(
                 "MoneyAggregateBuilder size mismatch: %d buckets but %d transactionCounts. " +
-                    "Missing counts defaulted to 0.",
+                    "Count integrity incomplete (countsIncomplete=true).",
                 buckets.size, transactionCounts.size
             )
         }
@@ -64,7 +76,19 @@ object MoneyAggregateBuilder {
         if (byCurrency.size == 1) {
             val entry = byCurrency.entries.first()
             if (entry.key == homeCurrency.uppercase()) {
-                return MoneyAggregate.singleCurrency(entry.value.first, CurrencyCode.parse(entry.key) ?: CurrencyCode.EUR, entry.value.second, rateBasis)
+                return MoneyAggregate.singleCurrency(
+                    entry.value.first,
+                    CurrencyCode.parse(entry.key) ?: CurrencyCode.EUR,
+                    entry.value.second,
+                    rateBasis
+                ).let { aggregate ->
+                    if (!countsIncomplete) aggregate
+                    else aggregate.copy(
+                        isPartial = true,
+                        warningMessage = NEW_P5_009_WARNING,
+                        metadata = aggregate.metadata.copy(countsIncomplete = true)
+                    )
+                }
             }
         }
 
@@ -78,24 +102,32 @@ object MoneyAggregateBuilder {
             failure.toConversionFailure().copy(transactionCount = txCount)
         }
 
+        // NEW-P5-009: converted amounts stay trustworthy; the counts do not.
+        // Combine conversion-failure warnings with the count-integrity warning.
+        val conversionWarning = if (conversionFailures.isNotEmpty()) {
+            // VERIFIED (PR-E22 / E1): Warning correctly uses failedTransactionCount
+            // (sum of transactionCount across all ConversionFailure entries), NOT
+            // conversionFailures.size (bucket count). The variable totalFailedTx
+            // equals MoneyAggregate.failedTransactionCount.
+            val totalFailedTx = conversionFailures.sumOf { it.transactionCount }
+            val bucketCount = conversionFailures.size
+            "Total excludes $totalFailedTx transaction(s) across $bucketCount currency bucket(s)"
+        } else null
+
         return MoneyAggregate(
             displayAmount = conversionResult.total,
             displayCurrency = CurrencyCode.parse(homeCurrency) ?: CurrencyCode.EUR,
             sourceBuckets = sourceBuckets,
             conversionFailures = conversionFailures,
-            isPartial = conversionFailures.isNotEmpty(),
-            warningMessage = if (conversionFailures.isNotEmpty()) {
-                // VERIFIED (PR-E22 / E1): Warning correctly uses failedTransactionCount
-                // (sum of transactionCount across all ConversionFailure entries), NOT
-                // conversionFailures.size (bucket count). The variable totalFailedTx
-                // equals MoneyAggregate.failedTransactionCount.
-                val totalFailedTx = conversionFailures.sumOf { it.transactionCount }
-                val bucketCount = conversionFailures.size
-                "Total excludes $totalFailedTx transaction(s) across $bucketCount currency bucket(s)"
-            } else null,
+            isPartial = conversionFailures.isNotEmpty() || countsIncomplete,
+            warningMessage = if (countsIncomplete) {
+                if (conversionWarning != null) "$NEW_P5_009_WARNING $conversionWarning"
+                else NEW_P5_009_WARNING
+            } else conversionWarning,
             rateBasis = rateBasis,
             requestedRateBasis = rateBasis,
-            actualRateBasis = rateBasis
+            actualRateBasis = rateBasis,
+            metadata = MoneyAggregateMetadata(countsIncomplete = countsIncomplete)
         )
     }
 

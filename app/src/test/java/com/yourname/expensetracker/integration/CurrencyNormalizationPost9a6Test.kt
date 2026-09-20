@@ -82,6 +82,67 @@ class CurrencyNormalizationPost9a6Test {
         assertEquals(StaleRateReference.NOW, StaleRatePolicy.LatestDefault.compareAgainst)
     }
 
+    // ── NEW-P5-012: LatestDefault (forBasis LATEST_AVAILABLE) 7d boundary ──
+
+    /**
+     * 7-day boundary via [StaleRatePolicy.forBasis] (the policy
+     * [MoneyNormalizationEngine] selects for LATEST_AVAILABLE):
+     * just-under-7d converts, just-over-7d excludes.
+     */
+    @Test
+    fun `forBasis latest 7d boundary just under passes just over excludes`() = runTest {
+        // Boundary-controlled store (the shared TestStore returns a fixed
+        // 10-day-old rate, which cannot express ±1ms around the boundary).
+        val boundaryStore = BoundaryRateStore()
+        val boundaryConverter = CurrencyConverter(boundaryStore, object : TimeProvider { override fun now() = NOW })
+
+        // Rate aged 7d - 1ms → fresh under LatestDefault
+        boundaryStore.latestRates["USD_EUR"] =
+            DomainExchangeRate("USD", "EUR", 0.92, NOW - (7 * DAY) + 1, "api", NOW - (7 * DAY) + 1)
+        val under = boundaryConverter.convertOutcome(
+            100.0, "USD", "EUR", RateBasis.LATEST_AVAILABLE,
+            stalePolicy = StaleRatePolicy.forBasis(RateBasis.LATEST_AVAILABLE)
+        )
+        assertTrue("Just-under-7d latest rate must convert", under is ConversionOutcome.Converted)
+        assertEquals(92.0, (under as ConversionOutcome.Converted).convertedAmount, 0.001)
+
+        // Rate aged 7d + 1ms → stale under LatestDefault
+        boundaryStore.latestRates["USD_EUR"] =
+            DomainExchangeRate("USD", "EUR", 0.92, NOW - (7 * DAY) - 1, "api", NOW - (7 * DAY) - 1)
+        val over = boundaryConverter.convertOutcome(
+            100.0, "USD", "EUR", RateBasis.LATEST_AVAILABLE,
+            stalePolicy = StaleRatePolicy.forBasis(RateBasis.LATEST_AVAILABLE)
+        )
+        assertTrue("Just-over-7d latest rate must be stale", over is ConversionOutcome.Failed)
+        assertEquals(ConversionFailureType.STALE_RATE, (over as ConversionOutcome.Failed).failureType)
+    }
+
+    /**
+     * Engine-level pin: the same boundary through
+     * [MoneyNormalizationEngine.normalizeExpense] with LATEST_AVAILABLE —
+     * just-under-7d included, just-over-7d excluded.
+     */
+    @Test
+    fun `engine normalizeExpense honors 7d LatestDefault boundary`() = runTest {
+        val boundaryStore = BoundaryRateStore()
+        val boundaryConverter = CurrencyConverter(boundaryStore, object : TimeProvider { override fun now() = NOW })
+        val boundaryEngine = MoneyNormalizationEngine(boundaryConverter)
+
+        boundaryStore.latestRates["USD_EUR"] =
+            DomainExchangeRate("USD", "EUR", 0.92, NOW - (7 * DAY) + 1, "api", NOW - (7 * DAY) + 1)
+        val included = boundaryEngine.normalizeExpense(
+            expense(1, 100.0, "USD", NOW), CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE
+        )
+        assertTrue("Just-under-7d must be included", included is NormalizationResult.Included)
+
+        boundaryStore.latestRates["USD_EUR"] =
+            DomainExchangeRate("USD", "EUR", 0.92, NOW - (7 * DAY) - 1, "api", NOW - (7 * DAY) - 1)
+        val excluded = boundaryEngine.normalizeExpense(
+            expense(2, 100.0, "USD", NOW), CurrencyCode.EUR, RateBasis.LATEST_AVAILABLE
+        )
+        assertTrue("Just-over-7d must be excluded", excluded is NormalizationResult.Excluded)
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     private fun expense(id: Long, amount: Double, currency: String, date: Long) =
@@ -112,5 +173,20 @@ private class TestStore : ExchangeRateStore {
     override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) {}
     override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> = flowOf(emptyList())
     override suspend fun getLatestRate(): DomainExchangeRate? = null
+    override suspend fun deleteOldRates(olderThan: Long) {}
+}
+
+/** Boundary-controlled store: tests write the exact rates they need. */
+private class BoundaryRateStore : ExchangeRateStore {
+    val latestRates = mutableMapOf<String, DomainExchangeRate>()
+
+    override suspend fun getLatestRateForPair(from: String, to: String) = latestRates["${from}_${to}"]
+    override suspend fun getRateAsOf(from: String, to: String, atMillis: Long) =
+        latestRates["${from}_${to}"]?.takeIf { (it.validDate ?: 0L) <= atMillis }
+    override suspend fun getRate(from: String, to: String) = getLatestRateForPair(from, to)
+    override suspend fun insertOrUpdate(rate: DomainExchangeRate) { latestRates["${rate.fromCurrency}_${rate.toCurrency}"] = rate }
+    override suspend fun insertOrUpdateAll(rates: List<DomainExchangeRate>) { rates.forEach { insertOrUpdate(it) } }
+    override fun getRatesToCurrency(targetCurrency: String): Flow<List<DomainExchangeRate>> = flowOf(emptyList())
+    override suspend fun getLatestRate(): DomainExchangeRate? = latestRates.values.maxByOrNull { it.lastUpdated }
     override suspend fun deleteOldRates(olderThan: Long) {}
 }

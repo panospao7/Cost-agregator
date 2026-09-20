@@ -22,6 +22,7 @@ import com.yourname.expensetracker.domain.core.money.CurrencyCode
 import com.yourname.expensetracker.domain.logic.RecurringExpenseEngine
 import com.yourname.expensetracker.domain.model.RecurrenceFrequency
 import com.yourname.expensetracker.domain.model.RecurringPattern
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import io.mockk.coEvery
 import io.mockk.every
 import io.mockk.just
@@ -58,12 +59,22 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         every { currencySettingsRepository.homeCurrency() } returns flowOf("EUR")
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
 
+        // P5-008: the score aborts with Unavailable(NORMALIZATION_FAILED) when
+        // any input row is excluded, so the stub must model a fully-successful
+        // normalization: normalizedExpenses mirrors every input row.
         coEvery { analyticsCurrencyNormalizer.normalizeExpenses(any(), any()) } answers {
             val expenses = arg<List<Expense>>(0)
             val snapshots = expenses.map { it.toExpenseSnapshot() }
             AnalyticsNormalizationResult(
                 homeCurrency = "EUR",
-                normalizedExpenses = emptyList(),
+                normalizedExpenses = snapshots.map {
+                    com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot(
+                        it,
+                        it.currency,
+                        it.effectiveAmount,
+                        it.effectiveAmount
+                    )
+                },
                 includedExpenses = snapshots,
                 warnings = emptyList(),
                 latestRateTimestamp = null,
@@ -108,7 +119,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         )
 
         // Act
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         // Assert
         assertEquals(50, result.savingsRateScore)
@@ -136,7 +147,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         )
 
         // Act
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         // Assert
         assertEquals(0, result.savingsRateScore)
@@ -153,7 +164,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         coEvery { healthScoreHistoryDao.getMostRecentBefore(any(), any()) } returns null
 
         // Act
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         // Assert
         assertEquals(50, result.savingsRateScore)
@@ -203,7 +214,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         )
 
         // Act
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         // Assert
         val weightedRaw =
@@ -241,7 +252,7 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
         )
 
         // Act
-        val result = calculator.calculateHealthScore()
+        val result = calculator.availableResult()
 
         // Assert
         assertEquals(100, result.savingsRateScore)
@@ -307,6 +318,18 @@ class HealthScoreEdgeCaseTest : AnalyticsEngineTestBase() {
             previousDates = listOf(fixedNow - 30L * 24L * 60L * 60L * 1000L),
             categoryId = 5L
         )
+    }
+
+    /** P5-008: unwrap [HealthScoreOutcome.Available]; an unexpected Unavailable fails the test loudly. */
+    private suspend fun FinancialHealthScoreV2.availableResult(
+        periodStart: Long = TimePeriodUtils.getStartOfMonth(timeProvider.now()),
+        periodEnd: Long = TimePeriodUtils.getEndOfMonth(timeProvider.now())
+    ): FinancialHealthResult {
+        return when (val outcome = calculateHealthScore(periodStart, periodEnd)) {
+            is HealthScoreOutcome.Available -> outcome.result
+            is HealthScoreOutcome.Unavailable ->
+                error("Expected Available but got Unavailable(${outcome.reason.name})")
+        }
     }
 
     private fun millis(year: Int, month: Int, day: Int): Long {

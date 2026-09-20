@@ -17,6 +17,7 @@ import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
 import com.yourname.expensetracker.domain.forecasting.MonteCarloResult
 import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
 import com.yourname.expensetracker.domain.health.FinancialHealthResult
+import com.yourname.expensetracker.domain.health.HealthScoreOutcome
 import com.yourname.expensetracker.domain.logic.SynthesisEngine
 import com.yourname.expensetracker.domain.model.BlockPartyStatus
 import com.yourname.expensetracker.domain.model.CategoryInfo
@@ -332,7 +333,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         )
         val budgetSummary = computeBudgetSummary(ctx)
         val streakData = calculateStreakData(ctx.now, ctx.data.data.expenses, ctx.monthStart)
-        val healthScore = computeHealthScore(ctx, streakData.first)
         val healthScoreV2Result = computeHealthScoreV2(ctx)
         val lifestyleWidget = computeLifestyleWidget()
         val savingsSweepWidget = computeSavingsSweepWidget()
@@ -342,7 +342,7 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         val widgets = assembleWidgets(
             ctx, runwayResult, blockPartyDays, monteCarloWidget,
             categoryTotals, trend, insightText, budgetSummary,
-            streakData, healthScore, healthScoreV2Result,
+            streakData, healthScoreV2Result,
             lifestyleWidget, savingsSweepWidget, moneyRadarData, stressForecastResult
         )
 
@@ -1061,24 +1061,19 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         else UiText.fromKey(DashboardTextKeys.WIDGET_ALL_BUDGETS_ON_TRACK)
     }
 
-    private fun computeHealthScore(
-        ctx: ComputeContext,
-        currentStreak: Int
-    ): com.yourname.expensetracker.domain.health.HealthScoreResult {
-        val dashboardExpenses = ctx.data.data.expenses
-        return healthCalculator.calculateHealthScores(
-            // TODO ISSUE-3: FinancialHealthCalculator.calculateHealthScores still expects List<Expense>;
-            //  pass empty list until that API is migrated to TransactionSummary / DashboardExpense.
-            expenses = emptyList(),
-            budgetStatuses = ctx.data.data.budgetStatuses,
-            pendingReviews = ctx.data.data.pendingCount,
-            todayStreak = calculateStreakForPeriod(dashboardExpenses, ctx.todayStart, ctx.now),
-            weekStreak = calculateStreakForPeriod(dashboardExpenses, ctx.weekStart, ctx.now),
-            monthStreak = calculateStreakForPeriod(dashboardExpenses, ctx.monthStart, ctx.now),
-            noSpendStreak = currentStreak
-        )
-    }
-
+    /**
+     * Computes the V2 health score outcome.
+     *
+     * P5-008 (RP-06 6c): the calculator returns [HealthScoreOutcome]; only
+     * [HealthScoreOutcome.Available] maps to
+     * [DashboardWidget.FinancialHealthScoreV2Widget]. On
+     * [HealthScoreOutcome.Unavailable] NO widget is emitted — and, per the
+     * orchestrator-approved decision for this slice, the legacy V1
+     * [DashboardWidget.FinancialHealthScoreWidget] fallback is ALSO
+     * suppressed (the plan's "no widget/unknown UI state" wins over the
+     * previous V1-fallback-on-null behavior). Unavailability is recorded with
+     * a bounded diagnostic containing only controlled constants.
+     */
     private suspend fun computeHealthScoreV2(
         ctx: ComputeContext
     ): FinancialHealthResult? {
@@ -1086,10 +1081,16 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
             writeBarrier.checkWritesAllowed(
                 "ComputeDashboardWidgetsUseCase.computeHealthScoreV2"
             )
-            healthScoreV2.calculateHealthScore(
+            when (val outcome = healthScoreV2.calculateHealthScore(
                 periodStart = ctx.monthStart,
                 periodEnd = TimePeriodUtils.getEndOfMonth(ctx.now)
-            )
+            )) {
+                is HealthScoreOutcome.Available -> outcome.result
+                is HealthScoreOutcome.Unavailable -> {
+                    Timber.w("Financial health score v2 unavailable: ${outcome.reason.name}")
+                    null
+                }
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -1166,7 +1167,6 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
         insightText: Pair<UiText, String>?,
         budgetSummary: UiText?,
         streakData: Triple<Int, Int, Int>,
-        healthScore: com.yourname.expensetracker.domain.health.HealthScoreResult,
         healthScoreV2Result: com.yourname.expensetracker.domain.health.FinancialHealthResult?,
         lifestyleWidget: DashboardWidget.LifestyleSavingsPrompt?,
         savingsSweepWidget: DashboardWidget.SavingsSweepPrompt?,
@@ -1198,11 +1198,13 @@ class ComputeDashboardWidgetsUseCase @Inject constructor(
                 add(savingsSweepWidget)
             }
 
-            // Emit a single authoritative health KPI.
+            // Emit a single authoritative health KPI. P5-008 (RP-06 6c):
+            // Unavailable emits no widget at all — the legacy V1 fallback is
+            // suppressed by decision (see computeHealthScoreV2 KDoc), so the
+            // UI shows an unknown/unavailable state instead of a fabricated
+            // or stale V1 score.
             if (healthScoreV2Result != null) {
                 add(DashboardWidget.FinancialHealthScoreV2Widget(healthScoreV2Result))
-            } else {
-                add(DashboardWidget.FinancialHealthScoreWidget(healthScore))
             }
 
             add(DashboardWidget.TotalsDashboard)
