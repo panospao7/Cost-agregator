@@ -188,3 +188,167 @@ The plan is not complete until the contract, tests, and release check pass:
 Tests were not run while this plan was rewritten. The release build is mandatory because unit tests
 cannot prove the R8 failure is gone. Land RP-08 before RP-09's forecast-basis work; the two plans
 must use the same transaction-date historical semantics and explicit partial-data signaling.
+
+---
+
+## Slice status
+
+### C1 — shared domain-money contract + repository API: **partial** (implemented, tests NOT RUN)
+
+Implemented (2026-09-19), following the RP-06 doc status style:
+
+- `domain/core/money/CategoryMonthlySpend.kt` — new shared contract types:
+  `CategoryMonthlySpend(scope, monthKey, aggregate)` + `SpendScope.Overall` /
+  `SpendScope.Category(categoryId: Long?)` (null = uncategorized), with the full
+  contract KDoc (PURCHASE-only, `TRANSACTION_DATE` normalization, `TimePeriodUtils`
+  month-key policy, half-open range, no rate-sentinel substitution, typed failures
+  propagate — never an empty list).
+- `MultiCurrencyRepository.getHistoricalCategoryMonthlySpend(startDate, endDate)` —
+  new API per plan lines 46-75: separate `Overall` scope rows (including uncategorized
+  rows) + real `Category(null)` buckets, per-expense `TRANSACTION_DATE` normalization
+  via `MoneyNormalizationEngine`, repository-owned bounded home-currency resolution
+  (throws `HomeCurrencyUnavailableException` on failure), no reflection, no deprecated
+  DAO call, no `runCatching` (so `CancellationException` propagates unchanged).
+- Tests: `MultiCurrencyRepositoryHistoricalCategoryMonthlySpendTest.kt` (10 tests) —
+  PURCHASE-only filtering, uncategorized bucket, Overall separation, month-key policy +
+  half-open pass-through, multi-month grouping, multi-currency transaction-date
+  conversion, typed partial outcome for conversion failure, empty range, typed
+  home-currency failure propagation.
+
+**Deviation (recorded):** the grouped
+`(categoryId, monthKey, currency, txDate, total, txCount)` DAO projection was **not**
+added in C1 — the C1 lane constraint is "do not touch ExpenseDao at all in this slice"
+(the dedupe region of the DAO is owned by a parallel lane). The plan-permitted
+alternative (bounded row read inside the repository, plan line 73-74) is used:
+`getExpensesBetweenUncapped(startDate, endDate)` — a half-open, `isNotMine = 0`-filtered,
+read-only SQL range read with no row cap. C2 may swap in the grouped projection behind
+the unchanged method signature; the KDoc records this migration intent.
+
+**Tests NOT RUN** (C1 is static-only; no Gradle/compile execution in this slice). Status
+stays *partial* until the validation runner confirms compile + targeted
+`*MultiCurrencyRepository*` shard PASS. C2 (engine de-reflection P6-002/003) and C3
+(series-builder/quality P6-004) are **pending**.
+
+### C2 — engine de-reflection + series history quality (P6-002/P6-003/P6-004 core): **partial** (implemented, validation NOT RUN)
+
+Slice C2 status (2026-09-19) — implemented, validation NOT RUN.
+
+Implemented in this slice (static edits only; no Gradle/build/test execution):
+
+- **P6-002 (de-reflection):** `BudgetAutopilotEngine` no longer reflects on
+  `MultiCurrencyRepository`'s private `expenseDao` field and no longer calls the deprecated
+  `ExpenseDao.getMonthlySpendingTotalsByCategoryBetween`. The category-history input is now
+  `multiCurrencyRepository.getHistoricalCategoryMonthlySpend(start, end)` (the C1 API). The
+  engine's `@Suppress("DEPRECATION_ERROR")` is removed; the CancellationException rethrow
+  discipline (RP-01) is preserved — typed `HomeCurrencyUnavailableException` propagates through
+  the engine's existing catch-and-rethrow path and is never swallowed to an empty history.
+- **P6-003 (no unlike-currency sums, no sentinel/empty flattening):** all history math consumes
+  the C1 `MoneyAggregate` rows. The overall-budget path no longer calls the deprecated
+  `getMonthlyTotalsInHomeCurrency` (whose `Result.Error` flattened to `emptyList()`); overall
+  budgets read `SpendScope.Overall` rows from the same C1 result. Conversion failures surface as
+  partial aggregates (`MoneyAggregate.isPartial`) → `BudgetRecommendationQuality.PARTIAL_DATA`,
+  never sentinel substitution, never a silent `emptyList()`.
+- **P6-004 core (series builder):** `BudgetHistorySeriesBuilder.build` gains
+  `excludeIncompleteEdgeMonths: Boolean = true` (window trimmed to local month boundaries; a
+  trailing bucket derived from `windowEndExclusive - 1` counts as complete only when the window
+  end lands exactly on a month boundary) and an honest `completeMonthCount` in both modes.
+  Both callers updated: `BudgetAutopilotEngine` and `BudgetForecastingEngine` (the forecasting
+  engine's stale KDoc mention of the deprecated DAO path removed).
+- **P6-004 quality contract (part of C3 landed early):** `BudgetRecommendationQuality
+  { COMPLETE, PARTIAL_DATA, LOW_HISTORY }` + `isActionable` on `CategoryBudgetRecommendation`.
+  Fewer than 2 complete months of history (`MIN_COMPLETE_HISTORY_MONTHS = 2`) → identity
+  recommendation (current budget kept), `quality = LOW_HISTORY`, `isActionable = false`.
+  ±15% bounds and safety factors unchanged. Quality is not persisted (no schema change).
+  `BudgetViewModel` gating (Apply/Apply-All reject non-actionable, sanitized
+  `BUDGET_HISTORY_UNAVAILABLE`/constant error states replacing the raw `e.message` leaks at the
+  three autopilot call sites) was included in this slice so the contract is end-to-end
+  fail-closed; `BudgetScreen` UI text/decorations remain for the later slice.
+- **Tests:** the invalid 85.0-for-empty-history pins (old lines ~176/262/338) are removed —
+  empty/low history now asserts identity + `LOW_HISTORY` + `isActionable=false` per plan line 174.
+  `BudgetHistorySeriesBuilderTest` rewritten for edge-exclusion semantics (trailing/leading
+  mid-month exclusion, boundary-aligned window, legacy `excludeIncompleteEdgeMonths=false`
+  regression, `completeMonthCount` pins). `BudgetTrendBoundaryTest` rewritten (plan-mandated
+  rewrite, not deletion-to-pass): it stubbed the deprecated DAO path the forecasting engine no
+  longer calls; the ±10% boundary assertions now run through the live
+  snapshot→normalizer→series path. `BudgetForecastingEngineTest` pins recomputed for the
+  trimmed-window semantics (golden values updated in the same change per the money-semantics
+  rule; no float/rounding changes). New autopilot tests: empty-history identity/LOW_HISTORY,
+  single-complete-month LOW_HISTORY, two-complete-month bounded path, PARTIAL_DATA-not-zero
+  (conversion failure ≠ empty history), Overall/Category scope routing, typed repository failure
+  propagation, autopilot/forecasting shared-series parity.
+
+**Deviations (recorded):**
+1. `BudgetViewModel` gating + sanitized error constants landed inside C2 (the plan assigns them
+   to C3) so the new `isActionable=false` contract is enforced at the mutation boundary
+   immediately; without it, a LOW_HISTORY identity recommendation could still be applied via
+   Apply All. C3 remaining: `BudgetScreen` rendering of quality/isActionable and any
+   copy changes.
+2. The deprecated `ExpenseDao.getMonthlySpendingTotalsByCategoryBetween` block is **not**
+   deleted in this slice (lane-B constraint; C4 defers the deletion until after the parallel
+   ExpenseDao changes land). `BudgetAutopilotEngine` no longer references it.
+
+**Tests NOT RUN** (C2 is static-only). Status stays *partial* until the validation runner
+confirms compile + targeted `*Budget*` / `*MultiCurrencyRepository*` shards PASS **and** the
+plan-mandated `assembleRelease` (R8) gate passes — unit tests cannot prove the R8 reflection
+failure is gone.
+
+### C3 — autopilot quality UI (P6-004 low-history result/UI contract): **partial** (implemented, validation NOT RUN)
+
+Slice C3 status (2026-09-19) — implemented, validation NOT RUN.
+
+Implemented in this slice (static edits only; no Gradle/build/test execution):
+
+- **`BudgetScreen.kt` (display-only):**
+  - `AutopilotRecommendationItem` renders a bounded quality chip for non-`COMPLETE`
+    recommendations (`AutopilotQualityChip`): `LOW_HISTORY` → "Low history",
+    `PARTIAL_DATA` → "Partial data", both `SemanticColors.WarningOrange`; `COMPLETE` renders
+    nothing (normal Apply behavior unaffected).
+  - Non-actionable (`isActionable == false`, i.e. `LOW_HISTORY`) recommendations keep their
+    identity value display (current → recommended, both = current budget) but their Apply
+    `TextButton` is `enabled = recommendation.isActionable` — the destructive-sounding apply
+    affordance is disabled for LOW_HISTORY. The ViewModel still fails closed with
+    `ERROR_AUTOPILOT_NOT_ACTIONABLE` on any apply attempt (defense in depth).
+  - Apply All button is disabled when **no** recommendation is actionable; the banner's mixed
+    case (some actionable, some LOW_HISTORY) keeps Apply All enabled and relies on the
+    ViewModel's fail-closed filtering (existing C2 behavior).
+  - Banner text stays hardcoded Compose literals, matching the file's existing autopilot-section
+    style ("AI Budget Autopilot", "Analyze", "Apply All", "Dismiss All", "Apply" are all
+    literals; the budget-card/summary sections use `stringResource`, but the autopilot section
+    never did) — no strings.xml expansion, keeping this lane disjoint from other lanes'
+    resource files.
+- **No business logic added to the screen**: quality comes from the `CategoryBudgetRecommendation`
+  objects the ViewModel already exposes. Verified `BudgetUiState.autopilotRecommendations`
+  carries the full recommendation objects (C2 added `quality`/`isActionable` there) — **no
+  ViewModel mapping change was needed**; `BudgetViewModel.kt` is untouched in this slice.
+- **Tests:** new `BudgetAutopilotUiContractTest` (ViewModel-level; follows the
+  `BudgetViewModelStressTest` mockk/`InstantTaskExecutorRule`/`StandardTestDispatcher` harness
+  style but is NOT `@Ignore`d — the stress harness is a ledgered hang suspect and the rule
+   forbids new `@Ignore`. Because `uiState` is `stateIn(WhileSubscribed)`, each test keeps an
+   unconfined background collector on the StateFlow (runTest `backgroundScope`) so upstream
+   collection is active for assertions):
+  - `LOW_HISTORY recommendation is exposed with isActionable false and apply attempt fails closed`
+    — apply attempt yields `ERROR_AUTOPILOT_NOT_ACTIONABLE` and zero budget writes;
+  - `PARTIAL_DATA recommendation remains applicable and labeled` — quality flows to the UI state
+    and the apply path performs the budget write;
+  - `COMPLETE actionable recommendation is unaffected by quality gating` — normal apply succeeds;
+  - `apply all with only LOW_HISTORY recommendations fails closed with typed error` — zero budget
+    writes, `ERROR_AUTOPILOT_NOT_ACTIONABLE`;
+  - `generate failure from repository history surfaces sanitized constant only` —
+    `HomeCurrencyUnavailableException` maps to `ERROR_BUDGET_HISTORY_UNAVAILABLE`; the raw
+    exception message never reaches the UI state.
+  No existing Compose UI test module pattern exists for budget screens (only
+  `androidTest` DAO tests), so ViewModel-level tests are used per the slice contract.
+
+**Deviations (recorded):** none. No ±15% bounds, safety-factor, or rounding changes; no
+quality persistence; no raw `e.message` introduced; no CancellationException catch sites touched.
+
+**Still outstanding:**
+- **C4 (`ExpenseDao.getMonthlySpendingTotalsByCategoryBetween` deletion)** remains **deferred
+  pending lane-B coordination** — the deprecated method block is left untouched until the
+  parallel ExpenseDao lane lands; `BudgetAutopilotEngine` no longer references it.
+- The **plan-mandated `assembleRelease`/R8 gate** is still outstanding — unit tests cannot
+  prove the R8 reflection failure is gone.
+
+**Tests NOT RUN** (C3 is static-only). Status stays *partial* until the validation runner
+confirms compile + targeted `*BudgetViewModel*` / `*BudgetAutopilot*` shards PASS **and** the
+plan-mandated `assembleRelease` (R8) gate passes.

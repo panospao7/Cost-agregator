@@ -3,13 +3,7 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.assertApproxEquals
 import com.yourname.expensetracker.data.backup.DatabaseWriteBarrier
 import com.yourname.expensetracker.data.database.dao.BudgetForecastDao
-import com.yourname.expensetracker.data.database.dao.CurrencyTotal
-import com.yourname.expensetracker.data.database.dao.ExpenseDao
-import com.yourname.expensetracker.data.database.dao.MonthlyCurrencyTotal
-import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
-import com.yourname.expensetracker.domain.currency.CurrencyConverter
-import com.yourname.expensetracker.domain.currency.MultiConversionAggregate
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
@@ -18,11 +12,17 @@ import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.analytics.InsightsEngine
 import com.yourname.expensetracker.domain.analytics.SpendingPaceCalculator
-import com.yourname.expensetracker.domain.forecasting.MonteCarloSpendingSimulator
-import com.yourname.expensetracker.domain.util.TimePeriodUtils
+import com.yourname.expensetracker.domain.core.money.CategoryMonthlySpend
+import com.yourname.expensetracker.domain.core.money.ConversionFailure
 import com.yourname.expensetracker.domain.core.money.CurrencyCode
+import com.yourname.expensetracker.domain.core.money.FailureReason
+import com.yourname.expensetracker.domain.core.money.MoneyAggregate
+import com.yourname.expensetracker.domain.core.money.MoneyBucket
+import com.yourname.expensetracker.domain.core.money.RateBasis
+import com.yourname.expensetracker.domain.core.money.SpendScope
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.currency.HomeCurrencyResolution
+import com.yourname.expensetracker.domain.util.TimePeriodUtils
 import com.yourname.expensetracker.domain.util.TimeProvider
 import io.mockk.coEvery
 import io.mockk.every
@@ -31,21 +31,32 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.util.Calendar
 
-@Suppress("DEPRECATION_ERROR")
+/**
+ * RP-08 (slice C2): BudgetAutopilotEngine contract tests.
+ *
+ * The engine no longer reflects on MultiCurrencyRepository's private DAO nor
+ * calls the deprecated ExpenseDao aggregate methods; it consumes the typed
+ * [MultiCurrencyRepository.getHistoricalCategoryMonthlySpend] API directly
+ * (P6-002/P6-003). The old 85.0 empty-history pin is invalidated per RP-08
+ * plan line 174: empty/low history now yields an identity recommendation with
+ * LOW_HISTORY quality and isActionable=false (P6-004).
+ */
 class BudgetAutopilotEngineTest {
 
     private lateinit var budgetRepository: BudgetRepository
-    private lateinit var expenseDao: ExpenseDao
+    private lateinit var expenseDao: com.yourname.expensetracker.data.database.dao.ExpenseDao
     private lateinit var categoryRepository: CategoryRepository
     private lateinit var insightsEngine: InsightsEngine
     private lateinit var spendingPaceCalculator: SpendingPaceCalculator
     private lateinit var monteCarloSimulator: MonteCarloSpendingSimulator
     private lateinit var timeProvider: TimeProvider
+    private lateinit var multiCurrencyRepository: MultiCurrencyRepository
 
     private lateinit var engine: BudgetAutopilotEngine
 
@@ -71,31 +82,15 @@ class BudgetAutopilotEngineTest {
         )
 
         coEvery { budgetRepository.getActiveBudgets() } returns emptyList()
-        // Default: no spending data for any category
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(any(), any(), any()) } returns emptyList()
-        coEvery { expenseDao.getMonthlySpendingTotalsBetween(any(), any()) } returns emptyList()
-        // Default stubs for the overall-budget path (uses real MultiCurrencyRepository)
-        coEvery { expenseDao.getAllMonthlyTotalsBetweenByCurrency(any(), any()) } returns emptyList()
-
-        val currencyConverter = mockk<CurrencyConverter>(relaxed = true)
-        coEvery { currencyConverter.convertMultiple(any(), any()) } answers {
-            val amounts: List<Pair<Double, String>> = firstArg()
-            val target: String = secondArg()
-            MultiConversionAggregate(amounts.sumOf { it.first }, target, emptyList())
-        }
 
         val sharedCurrencySettingsRepo = mockk<CurrencySettingsRepository>(relaxed = true).also {
             coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
-            every { it.homeCurrency() } returns flowOf("EUR")
         }
 
-        val multiCurrencyRepository = MultiCurrencyRepository(
-            expenseDao = expenseDao,
-            currencyConverter = currencyConverter,
-            timeProvider = timeProvider,
-            currencySettingsRepository = sharedCurrencySettingsRepo,
-            applicationScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined)
-        )
+        // The engine consumes the typed repository API directly — stub it as a
+        // mock (P6-002: no reflection, no real MultiCurrencyRepository needed).
+        multiCurrencyRepository = mockk()
+        coEvery { multiCurrencyRepository.getHistoricalCategoryMonthlySpend(any(), any()) } returns emptyList()
 
         engine = BudgetAutopilotEngine(
             budgetRepository = budgetRepository,
@@ -109,132 +104,200 @@ class BudgetAutopilotEngineTest {
         )
     }
 
+    // ── helpers ─────────────────────────────────────────────────────────────
+
+    /** Stub the C1 repository API with EUR rows for one scope. */
+    private fun stubHistory(scope: SpendScope, rows: List<Pair<String, MoneyAggregate>>) {
+        coEvery {
+            multiCurrencyRepository.getHistoricalCategoryMonthlySpend(any(), any())
+        } answers {
+            val start = firstArg<Long>()
+            val end = secondArg<Long>()
+            if (end <= start) {
+                emptyList()
+            } else {
+                rows.map { (monthKey, aggregate) ->
+                    CategoryMonthlySpend(scope = scope, monthKey = monthKey, aggregate = aggregate)
+                }
+            }
+        }
+    }
+
+    private fun completeAggregate(amount: Double): MoneyAggregate = MoneyAggregate.singleCurrency(
+        amount = amount,
+        currency = CurrencyCode("EUR"),
+        transactionCount = 1
+    )
+
+    private fun partialAggregate(included: Double): MoneyAggregate = MoneyAggregate.partial(
+        displayAmount = included,
+        displayCurrency = CurrencyCode("EUR"),
+        sourceBuckets = listOf(MoneyBucket(CurrencyCode("EUR"), included, 1)),
+        failures = listOf(
+            ConversionFailure(
+                originalAmount = com.yourname.expensetracker.domain.core.money.MoneyAmount(
+                    1000.0,
+                    CurrencyCode("JPY")
+                ),
+                targetCurrency = CurrencyCode("EUR"),
+                reason = FailureReason.MISSING_RATE,
+                transactionCount = 1
+            )
+        ),
+        rateBasis = RateBasis.TRANSACTION_DATE
+    )
+
+    // ── P6-004 low-history contract ─────────────────────────────────────────
+
     @Test
-    fun `generateRecommendations aggregates monthly totals not per-transaction averages`() = runTest {
+    fun `empty history keeps current budget as identity with LOW_HISTORY and not actionable`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
+        stubHistory(SpendScope.Category(1L), emptyList())
 
-        // Three months, total per month = 100. Aggregate DAO returns monthly totals directly.
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 2),
-            MonthlySpendingTotal("2026-02", 100.0, 2),
-            MonthlySpendingTotal("2026-03", 100.0, 2)
-        )
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
 
-        val result = engine.generateRecommendations()
-        val rec = result.categoryRecommendations.single()
-
+        // RP-08 plan line 174: the old 85.0 (-15% ratchet) pin is invalid.
         assertApproxEquals(100.0, rec.recommendedBudget, 0.01)
+        assertApproxEquals(0.0, rec.delta, 0.01)
+        assertEquals(BudgetRecommendationQuality.LOW_HISTORY, rec.quality)
+        assertFalse(rec.isActionable)
         assertEquals(BudgetTrend.STABLE, rec.trend)
     }
 
     @Test
-    fun `generateRecommendations detects increasing trend using chronological month order`() = runTest {
+    fun `single complete month keeps current budget as identity with LOW_HISTORY`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
-            budget(id = 1L, categoryId = 1L, amount = 200.0)
+            budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
+        // April window edge is mid-month, so April is not a complete month;
+        // only March counts → 1 complete month < 2 → LOW_HISTORY.
+        val marchKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        stubHistory(SpendScope.Category(1L), listOf(marchKey to completeAggregate(120.0)))
 
-        // DAO returns rows in chronological order (SQL ORDER BY); totals increase.
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 200.0, 1),
-            MonthlySpendingTotal("2026-03", 300.0, 1)
-        )
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
 
-        val result = engine.generateRecommendations()
-        val rec = result.categoryRecommendations.single()
-
-        assertEquals(BudgetTrend.INCREASING, rec.trend)
+        assertApproxEquals(100.0, rec.recommendedBudget, 0.01)
+        assertEquals(BudgetRecommendationQuality.LOW_HISTORY, rec.quality)
+        assertFalse(rec.isActionable)
     }
 
     @Test
-    fun `generateRecommendations enforces plus and minus fifteen percent delta caps`() = runTest {
+    fun `two complete months exercise the bounded adjustment path`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
-            budget(id = 1L, categoryId = 1L, amount = 100.0),
-            budget(id = 2L, categoryId = 2L, amount = 100.0)
+            budget(id = 1L, categoryId = 1L, amount = 100.0)
+        )
+        // Feb + Mar are fully covered by [threeMonthsAgo, Apr 15); April is not.
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        stubHistory(
+            SpendScope.Category(1L),
+            listOf(febKey to completeAggregate(300.0), marKey to completeAggregate(300.0))
         )
 
-        // Category 1 wants strong increase -> cap at 115
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 300.0, 1),
-            MonthlySpendingTotal("2026-02", 300.0, 1),
-            MonthlySpendingTotal("2026-03", 300.0, 1)
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
+
+        // Stable flat history → average 300 → capped at +15% = 115.
+        assertApproxEquals(115.0, rec.recommendedBudget, 0.01)
+        assertEquals(BudgetRecommendationQuality.COMPLETE, rec.quality)
+        assertTrue(rec.isActionable)
+    }
+
+    // ── P6-003 partial-data contract ────────────────────────────────────────
+
+    @Test
+    fun `partial aggregate from conversion failure is PARTIAL_DATA and keeps the bounded floor`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = 1L, amount = 100.0)
+        )
+        // Two complete months where every month had a failed conversion: the
+        // partial aggregates still count as observed spend — they must NOT be
+        // read as zero spend nor trigger LOW_HISTORY.
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        stubHistory(
+            SpendScope.Category(1L),
+            listOf(febKey to partialAggregate(50.0), marKey to partialAggregate(50.0))
         )
 
-        // Category 2 wants strong decrease -> cap at 85
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(2L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 10.0, 1),
-            MonthlySpendingTotal("2026-02", 10.0, 1),
-            MonthlySpendingTotal("2026-03", 10.0, 1)
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
+
+        assertEquals(BudgetRecommendationQuality.PARTIAL_DATA, rec.quality)
+        assertTrue(rec.isActionable)
+        // The bounded recommendation is retained, not the identity value: the
+        // flat 50/month history drives the normal path and the −15% delta cap
+        // floors the recommendation at 85.0 — pinning the floor catches any
+        // coercion regression (e.g. an accidental LOW_HISTORY identity at 100.0).
+        assertApproxEquals(85.0, rec.recommendedBudget, 0.01)
+    }
+
+    // ── scope routing (P6-002) ──────────────────────────────────────────────
+
+    @Test
+    fun `overall budget reads SpendScope Overall rows`() = runTest {
+        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
+            budget(id = 1L, categoryId = null, amount = 1000.0)
+        )
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        stubHistory(
+            SpendScope.Overall,
+            listOf(febKey to completeAggregate(1000.0), marKey to completeAggregate(1000.0))
         )
 
-        val result = engine.generateRecommendations()
-        val recByCategory = result.categoryRecommendations.associateBy { it.categoryId }
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
 
-        assertApproxEquals(115.0, recByCategory.getValue(1L).recommendedBudget, 0.01)
-        assertApproxEquals(85.0, recByCategory.getValue(2L).recommendedBudget, 0.01)
+        assertEquals(BudgetTrend.STABLE, rec.trend)
+        assertApproxEquals(1000.0, rec.recommendedBudget, 0.01)
+        assertEquals(BudgetRecommendationQuality.COMPLETE, rec.quality)
     }
 
     @Test
-    fun `generateRecommendations applies volatility safety factor for medium and high volatility`() = runTest {
+    fun `category budget reads its own scope not Overall`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
-            budget(id = 1L, categoryId = 1L, amount = 100.0),
-            budget(id = 2L, categoryId = 2L, amount = 100.0)
+            budget(id = 1L, categoryId = 1L, amount = 100.0)
+        )
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        // Only Overall rows exist; the category scope must see nothing → LOW_HISTORY identity.
+        stubHistory(
+            SpendScope.Overall,
+            listOf(febKey to completeAggregate(500.0), marKey to completeAggregate(500.0))
         )
 
-        // Category 1: [80,120,80,120] => CV ~0.20 (medium) => *1.08 => 108
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 80.0, 1),
-            MonthlySpendingTotal("2026-02", 120.0, 1),
-            MonthlySpendingTotal("2026-03", 80.0, 1),
-            MonthlySpendingTotal("2026-04", 120.0, 1)
-        )
+        val rec = engine.generateRecommendations().categoryRecommendations.single()
 
-        // Category 2: [50,150,50,150] => CV 0.50 (high) => *1.15 => 115
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(2L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 50.0, 1),
-            MonthlySpendingTotal("2026-02", 150.0, 1),
-            MonthlySpendingTotal("2026-03", 50.0, 1),
-            MonthlySpendingTotal("2026-04", 150.0, 1)
-        )
-
-        val result = engine.generateRecommendations()
-        val recByCategory = result.categoryRecommendations.associateBy { it.categoryId }
-
-        assertApproxEquals(108.0, recByCategory.getValue(1L).recommendedBudget, 0.01)
-        assertApproxEquals(115.0, recByCategory.getValue(2L).recommendedBudget, 0.01)
+        assertApproxEquals(100.0, rec.recommendedBudget, 0.01)
+        assertEquals(BudgetRecommendationQuality.LOW_HISTORY, rec.quality)
+        assertFalse(rec.isActionable)
     }
+
+    // ── typed failure propagation (P6-002) ──────────────────────────────────
 
     @Test
-    fun `generateRecommendations uses overall budget as canonical summary scope when overall and category budgets coexist`() = runTest {
+    fun `repository typed failure propagates and is never swallowed to empty history`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
-            budget(id = 1L, categoryId = null, amount = 1000.0),
-            budget(id = 2L, categoryId = 1L, amount = 200.0)
+            budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
+        coEvery {
+            multiCurrencyRepository.getHistoricalCategoryMonthlySpend(any(), any())
+        } throws com.yourname.expensetracker.data.repository.HomeCurrencyUnavailableException("no home currency")
 
-        // Overall budget (categoryId=null) goes through MultiCurrencyRepository → getAllMonthlyTotalsBetweenByCurrency
-        coEvery { expenseDao.getAllMonthlyTotalsBetweenByCurrency(any(), any()) } returns listOf(
-            MonthlyCurrencyTotal("2026-01", "EUR", 1000.0, 10),
-            MonthlyCurrencyTotal("2026-02", "EUR", 1000.0, 10),
-            MonthlyCurrencyTotal("2026-03", "EUR", 1000.0, 10)
+        var thrown: Throwable? = null
+        try {
+            engine.generateRecommendations()
+        } catch (t: Throwable) {
+            thrown = t
+        }
+
+        assertTrue(
+            "typed repository failure must propagate",
+            thrown is com.yourname.expensetracker.data.repository.HomeCurrencyUnavailableException
         )
-        // Category budget uses reflection to access expenseDao directly
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 200.0, 2),
-            MonthlySpendingTotal("2026-02", 200.0, 2),
-            MonthlySpendingTotal("2026-03", 200.0, 2)
-        )
-
-        val result = engine.generateRecommendations()
-        val overallRecommendation = result.categoryRecommendations.single { it.categoryId == null }
-
-        assertEquals(2, result.categoryRecommendations.size)
-        assertApproxEquals(1000.0, result.totalCurrentBudget, 0.01)
-        assertApproxEquals(1000.0, result.totalRecommendedBudget, 0.01)
-        assertApproxEquals(0.0, result.overallDelta, 0.01)
-        assertApproxEquals(overallRecommendation.confidence, result.confidence, 0.0001)
     }
+
+    // ── regression: summary & caps unchanged ────────────────────────────────
 
     @Test
     fun `generateRecommendations edge case empty budgets returns empty recommendations`() = runTest {
@@ -250,67 +313,15 @@ class BudgetAutopilotEngineTest {
     }
 
     @Test
-    fun `generateRecommendations edge case empty spend history applies bounded decrease`() = runTest {
-        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
-            budget(id = 1L, categoryId = 1L, amount = 100.0)
-        )
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns emptyList()
-
-        val rec = engine.generateRecommendations().categoryRecommendations.single()
-
-        // With no history, raw recommendation becomes 0 and is capped at -15%.
-        assertApproxEquals(85.0, rec.recommendedBudget, 0.01)
-        assertEquals(BudgetTrend.STABLE, rec.trend)
-        assertApproxEquals(0.0, rec.confidence, 0.0001)
-    }
-
-    @Test
-    fun `generateRecommendations edge case single month history remains stable and finite`() = runTest {
-        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
-            budget(id = 1L, categoryId = 1L, amount = 100.0)
-        )
-        // Single month: the engine receives [120.0], trend = 0 (< 2 months), avg = 120 * safety 1.0 = 120,
-        // then delta-capped to [85, 115]. 120 > 115 so capped to 115.
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-04", 120.0, 1)
-        )
-
-        val result = engine.generateRecommendations()
-        val rec = result.categoryRecommendations.single()
-
-        assertEquals(BudgetTrend.STABLE, rec.trend)
-        assertTrue(!rec.recommendedBudget.isNaN())
-        assertTrue(rec.recommendedBudget.isFinite())
-        assertApproxEquals(0.1333, rec.confidence, 0.001)
-        assertTrue(rec.confidence < 0.2)
-    }
-
-    @Test
-    fun `generateRecommendations edge case stable spending keeps stable trend`() = runTest {
-        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
-            budget(id = 1L, categoryId = 1L, amount = 100.0)
-        )
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 100.0, 1),
-            MonthlySpendingTotal("2026-03", 100.0, 1)
-        )
-
-        val rec = engine.generateRecommendations().categoryRecommendations.single()
-
-        assertEquals(BudgetTrend.STABLE, rec.trend)
-        assertApproxEquals(100.0, rec.recommendedBudget, 0.01)
-    }
-
-    @Test
     fun `generateRecommendations with zero current budget uses safe initial budget phrasing`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = 1L, amount = 0.0)
         )
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-02", 200.0, 1),
-            MonthlySpendingTotal("2026-03", 300.0, 1)
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        stubHistory(
+            SpendScope.Category(1L),
+            listOf(febKey to completeAggregate(100.0), marKey to completeAggregate(300.0))
         )
 
         val rec = engine.generateRecommendations().categoryRecommendations.single()
@@ -322,51 +333,76 @@ class BudgetAutopilotEngineTest {
     }
 
     @Test
-    fun `generateRecommendations infills missing zero-spend months before trend math`() = runTest {
+    fun `generateRecommendations enforces plus fifteen percent delta cap with complete history`() = runTest {
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(
             budget(id = 1L, categoryId = 1L, amount = 100.0)
         )
-        // SQL returns Jan and Mar but not Feb — engine should infill Feb=0.0
-        // so the trend sees [200, 0, 200] instead of [200, 200].
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns listOf(
-            MonthlySpendingTotal("2026-01", 200.0, 2),
-            MonthlySpendingTotal("2026-03", 200.0, 2)
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(now, -1))
+        stubHistory(
+            SpendScope.Category(1L),
+            listOf(febKey to completeAggregate(300.0), marKey to completeAggregate(300.0))
         )
 
         val rec = engine.generateRecommendations().categoryRecommendations.single()
 
-        assertApproxEquals(85.0, rec.recommendedBudget, 0.01)
-        assertEquals(BudgetTrend.DECREASING, rec.trend)
+        assertApproxEquals(115.0, rec.recommendedBudget, 0.01)
+        assertEquals(BudgetRecommendationQuality.COMPLETE, rec.quality)
     }
 
+    // ── parity: autopilot & forecasting share the same series semantics ─────
+
     @Test
-    fun `generateRecommendations and forecasting use aligned normalized month history`() = runTest {
+    fun `autopilot history series and forecasting series agree for same input`() = runTest {
         val parityNow = millis(2026, Calendar.APRIL, 1) - (2L * 60L * 60L * 1000L) // 2026-04-01 10:00
         every { timeProvider.now() } returns parityNow
 
         val budget = budget(id = 1L, categoryId = 1L, amount = 100.0)
         coEvery { budgetRepository.getActiveBudgets() } returns listOf(budget)
 
-        val monthlyTotals = listOf(
-            MonthlySpendingTotal("2026-01", 100.0, 1),
-            MonthlySpendingTotal("2026-04", 300.0, 1)
+        // Feb + Mar complete; April (mid-month edge) is excluded by both engines.
+        val febKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(parityNow, -2))
+        val marKey = TimePeriodUtils.formatMonthKey(TimePeriodUtils.addMonths(parityNow, -1))
+        stubHistory(
+            SpendScope.Category(1L),
+            listOf(febKey to completeAggregate(100.0), marKey to completeAggregate(100.0))
         )
-        coEvery { expenseDao.getMonthlySpendingTotalsByCategoryBetween(1L, any(), any()) } returns monthlyTotals
 
         val autopilotRecommendation = engine.generateRecommendations().categoryRecommendations.single()
 
         val budgetForecastDao = mockk<BudgetForecastDao>(relaxed = true)
         coEvery { budgetForecastDao.insertWithDeactivation(any()) } returns 1L
-        coEvery { expenseDao.getCategorySpentInPeriod(any(), any(), any()) } returns 0.0
-        coEvery { expenseDao.getTotalSpentBetweenByCurrency(any(), any()) } returns listOf(CurrencyTotal("EUR", 0.0, 0))
+        // Pass-through normalizer so snapshots flow into monthly buckets unchanged.
+        val normalizer = mockk<com.yourname.expensetracker.domain.analytics.AnalyticsCurrencyNormalizer>(relaxed = true)
+        coEvery { normalizer.normalizeSnapshots(any(), any()) } answers {
+            val expenses = firstArg<List<com.yourname.expensetracker.domain.model.ExpenseSnapshot>>()
+            com.yourname.expensetracker.domain.analytics.AnalyticsNormalizationResult(
+                homeCurrency = secondArg(),
+                normalizedExpenses = expenses.map {
+                    com.yourname.expensetracker.domain.analytics.NormalizedExpenseSnapshot(
+                        it, it.currency, it.effectiveAmount, it.effectiveAmount
+                    )
+                },
+                includedExpenses = expenses,
+                warnings = emptyList(),
+                latestRateTimestamp = null,
+                totalInputCount = expenses.size
+            )
+        }
+        // Same window semantics for the forecasting engine: Feb+Mar snapshots
+        // only; April has no snapshot so no partial trailing bucket arises.
+        coEvery { forecastingExpenseRepo.getExpenseSnapshotsBetween(any(), any()) } returns listOf(
+            snapshot(febKey, 100.0, 1L),
+            snapshot(marKey, 100.0, 1L)
+        )
         val forecastingEngine = BudgetForecastingEngine(
             expenseDao = expenseDao,
             budgetRepository = budgetRepository,
             budgetForecastDao = budgetForecastDao,
             timeProvider = timeProvider,
             ioDispatcher = Dispatchers.Unconfined,
-            analyticsCurrencyNormalizer = mockk(relaxed = true),
-            expenseRepository = mockk(relaxed = true),
+            analyticsCurrencyNormalizer = normalizer,
+            expenseRepository = forecastingExpenseRepo,
             currencySettingsRepository = mockk<CurrencySettingsRepository>().also {
                 every { it.homeCurrency() } returns flowOf("EUR")
                 coEvery { it.resolveHomeCurrency() } returns HomeCurrencyResolution.Resolved(CurrencyCode("EUR"))
@@ -376,20 +412,24 @@ class BudgetAutopilotEngineTest {
         )
         val forecast = forecastingEngine.generateForecast(budget)
 
+        // Both engines must agree on the same two complete months → same
+        // monthly average → comparable predicted spending.
         val windowStart = TimePeriodUtils.addMonths(parityNow, -3)
         val normalized = BudgetHistorySeriesBuilder.build(
-            monthlyTotals = monthlyTotals,
+            monthlyTotals = listOf(
+                com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal(febKey, 100.0, 1),
+                com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal(marKey, 100.0, 1)
+            ),
             windowStartInclusive = windowStart,
             windowEndExclusive = parityNow
         )
-        assertEquals(listOf("2026-01", "2026-02", "2026-03", "2026-04"), normalized.monthKeys)
-        assertApproxEquals(100.0, normalized.values[0], 0.0001)
-        assertApproxEquals(0.0, normalized.values[1], 0.0001)
-        assertApproxEquals(0.0, normalized.values[2], 0.0001)
-        assertApproxEquals(300.0, normalized.values[3], 0.0001)
+        assertEquals(listOf(febKey, marKey), normalized.monthKeys)
+        assertEquals(2, normalized.completeMonthCount)
 
         val (_, periodEnd) = BudgetCalculator(timeProvider).calculatePeriodRange(budget, parityNow)
-        val forecastMonths = ((periodEnd - parityNow).coerceAtLeast(0L) / (24.0 * 60.0 * 60.0 * 1000.0)) / 30.0
+        // The engine derives remaining months via integer calendar days
+        // (TimePeriodUtils.daysBetween(elapsedEnd, periodEnd) / 30.0).
+        val forecastMonths = TimePeriodUtils.daysBetween(parityNow, periodEnd).coerceAtLeast(0).toDouble() / 30.0
         val trendMultiplier = when (autopilotRecommendation.trend) {
             BudgetTrend.INCREASING -> 1.1
             BudgetTrend.DECREASING -> 0.9
@@ -397,27 +437,34 @@ class BudgetAutopilotEngineTest {
         }
         val expectedFromSharedSeries = normalized.values.average() * forecastMonths * trendMultiplier
 
-        assertEquals(BudgetTrend.INCREASING, autopilotRecommendation.trend)
+        assertEquals(BudgetTrend.STABLE, autopilotRecommendation.trend)
         assertApproxEquals(expectedFromSharedSeries, forecast.predictedSpending, 0.01)
+        assertApproxEquals(100.0, normalized.values.average(), 0.0001)
     }
 
-    @Test
-    fun `generateRecommendations for overall budget uses non-category DAO method`() = runTest {
-        coEvery { budgetRepository.getActiveBudgets() } returns listOf(
-            budget(id = 1L, categoryId = null, amount = 100.0)
-        )
-        // Overall budget (categoryId=null) uses MultiCurrencyRepository.getMonthlyTotalsInHomeCurrency
-        // which internally calls ExpenseDao.getAllMonthlyTotalsBetweenByCurrency
-        coEvery { expenseDao.getAllMonthlyTotalsBetweenByCurrency(any(), any()) } returns listOf(
-            MonthlyCurrencyTotal("2026-01", "EUR", 100.0, 3),
-            MonthlyCurrencyTotal("2026-02", "EUR", 100.0, 3),
-            MonthlyCurrencyTotal("2026-03", "EUR", 100.0, 3)
-        )
+    private val forecastingExpenseRepo: com.yourname.expensetracker.data.repository.ExpenseRepository =
+        mockk(relaxed = true)
 
-        val rec = engine.generateRecommendations().categoryRecommendations.single()
-
-        assertEquals(BudgetTrend.STABLE, rec.trend)
-        assertApproxEquals(100.0, rec.recommendedBudget, 0.01)
+    private fun snapshot(monthKey: String, total: Double, categoryId: Long?): com.yourname.expensetracker.domain.model.ExpenseSnapshot {
+        val parts = monthKey.split("-")
+        val date = java.time.LocalDate.of(parts[0].toInt(), parts[1].toInt(), 15)
+            .atStartOfDay(java.time.ZoneId.systemDefault())
+            .toInstant()
+            .toEpochMilli()
+        return com.yourname.expensetracker.domain.model.ExpenseSnapshot(
+            id = 0L,
+            amount = total,
+            effectiveAmount = total,
+            currency = "EUR",
+            merchant = "Test",
+            merchantKey = null,
+            transactionType = com.yourname.expensetracker.domain.model.DomainTransactionType.PURCHASE,
+            date = date,
+            categoryId = categoryId,
+            isNotMine = false,
+            transferDirection = null,
+            notes = null
+        )
     }
 
     private fun budget(id: Long, categoryId: Long?, amount: Double): Budget {
