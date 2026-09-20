@@ -24,3 +24,10 @@
 - Parallel-safety rules: one lane = one worktree = one branch; chains never parallelized internally; at most one Room-schema-bumping RP in flight repo-wide at any time; Gradle capped at 2 concurrent invocations, `--tests`-filtered only (pre-existing ~178 suite failures are not a gate until RP-21).
 - GR-15 interaction: RPs that restructure DB writers (notably RP-02, RP-04, RP-11, RP-14) will change the mediation board; the owner-acceptance registry is fail-closed and must be regenerated from a cold board after those waves — an expected `GR15_ACCEPTANCE_ROW_UNMATCHED` is the gate working, not a regression.
 - Open at recording time: merge of `gr-14f-wip` (233 commits, finished GR-13/14/15 gate campaign) into the integration line — recommended before RP-02's first merge (same writer/barrier surface), stakeholder to trigger.
+
+| ID | Decision (as recorded) | Effect |
+|---|---|---|
+| D9 | 2026-09-20 — RP-16 worker counters: **durable Room columns** (immutable `WorkerRunCounters` persisted as real columns; DB version bump + migration + schema snapshots + migration tests) | RP-16 counter batches executable; measured-zero is provable across restarts |
+| D10 | 2026-09-20 — RP-13 Gate A: **explicit stable candidateId** contract (id derived from parser source-line identity; validate integer/range, uniqueness, 1:1 ownership; `AI_IDENTITY_MISMATCH` → parser-only fallback on any violation) | RP-13 identity gate unblocked |
+| D11 | 2026-09-20 — RP-13 Gate B: statement/source currency only when explicitly known + validated; otherwise typed `CURRENCY_UNKNOWN` skip; **no home-currency fallback** | RP-13 currency policy fixed; hard-coded EUR default removed |
+| D12 | 2026-09-20 — RP-17 remaining gates: bank pending-review identity = **cross-run source-fingerprint contract**; sync status = **terminal-only in DB + ViewModel in-flight state (no migration)**; D1 release/provider gating reaffirmed; provider cursor work stays deferred/gated | RP-17 batches 17-A..E executable |
