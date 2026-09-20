@@ -107,7 +107,7 @@ class RecurringRuleLifecycleCoordinatorTest {
                 occurrenceDao = occurrenceDao,
                 reminderDeliveryDao = deliveryDao,
                 timeProvider = timeProvider,
-                lifecycleEventDao = eventDao,
+                eventWriter = eventWriter,
                 plannedExpenseDao = plannedDao
             ),
             occurrenceDao = occurrenceDao,
@@ -146,7 +146,7 @@ class RecurringRuleLifecycleCoordinatorTest {
                 occurrenceDao = occurrenceDao,
                 reminderDeliveryDao = deliveryDao,
                 timeProvider = timeProvider,
-                lifecycleEventDao = eventDao,
+                eventWriter = eventWriter,
                 plannedExpenseDao = plannedDao
             ),
             expenseDao = expenseDao,

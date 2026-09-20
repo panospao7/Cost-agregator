@@ -115,13 +115,14 @@ class BlockPartyDstAlignmentTest {
         coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns HealthScoreOutcome.Available(
             FinancialHealthResult(
                 overallScore = 50,
-            savingsRateScore = 50,
-            runwayScore = 50,
-            budgetAdherenceScore = 50,
-            billReliabilityScore = 50,
-            factorContributions = emptyList(),
-            trend = HealthTrend.STABLE,
-            recommendation = null
+                savingsRateScore = 50,
+                runwayScore = 50,
+                budgetAdherenceScore = 50,
+                billReliabilityScore = 50,
+                factorContributions = emptyList(),
+                trend = HealthTrend.STABLE,
+                recommendation = null
+            )
         )
         val lifestyleSavingsPromptUseCase = mockk<LifestyleSavingsPromptUseCase>(relaxed = true)
         coEvery { lifestyleSavingsPromptUseCase.evaluateAndPrompt() } returns null

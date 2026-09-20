@@ -182,7 +182,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
             stubInsertConflict()
             coEvery { expenseDao.findIdByRawNotificationId(777L) } returns 99L
 
-            val result = coordinator.createExpense(request(rawNotificationId = 777L))
+            val result = coordinator.createExpenseStandaloneV2(request(rawNotificationId = 777L))
 
             assertTrue("Expected DuplicateSkipped, got $result", result is CreateExpenseResult.DuplicateSkipped)
             assertEquals(99L, (result as CreateExpenseResult.DuplicateSkipped).existingExpenseId)
@@ -205,7 +205,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
         coEvery { expenseDao.findIdByRawNotificationId(777L) } returns null
         coEvery { expenseDao.findIdByDedupeKey(canonicalKey()) } returns 55L
 
-        val result = coordinator.createExpense(request(rawNotificationId = 777L))
+        val result = coordinator.createExpenseStandaloneV2(request(rawNotificationId = 777L))
 
         assertTrue("Expected DuplicateSkipped, got $result", result is CreateExpenseResult.DuplicateSkipped)
         assertEquals(55L, (result as CreateExpenseResult.DuplicateSkipped).existingExpenseId)
@@ -225,7 +225,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
 
             // STRICT_EXTERNAL_ID requires an identity key to pass validation —
             // without it the create fails typed ValidationFailed before insert.
-            val result = coordinator.createExpense(
+            val result = coordinator.createExpenseStandaloneV2(
                 request(rawNotificationId = 777L, deduplicationMode = DeduplicationMode.STRICT_EXTERNAL_ID)
                     .copy(idempotencyKey = "test-key")
             )
@@ -242,7 +242,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
         coEvery { expenseDao.findIdByRawNotificationId(777L) } returns null
         coEvery { expenseDao.findIdByDedupeKey(canonicalKey()) } returns null
 
-        val result = coordinator.createExpense(
+        val result = coordinator.createExpenseStandaloneV2(
             request(rawNotificationId = 777L, deduplicationMode = DeduplicationMode.SKIP_FOR_DEBUG_RESTORE)
         )
 
@@ -258,7 +258,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
             expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
         } returns 31L
 
-        val result = coordinator.createExpense(request(rawNotificationId = null))
+        val result = coordinator.createExpenseStandaloneV2(request(rawNotificationId = null))
 
         assertTrue("Expected DuplicateSkipped, got $result", result is CreateExpenseResult.DuplicateSkipped)
         assertEquals(31L, (result as CreateExpenseResult.DuplicateSkipped).existingExpenseId)
@@ -275,7 +275,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
                 expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
             } returns null
 
-            val result = coordinator.createExpense(request(rawNotificationId = 777L))
+            val result = coordinator.createExpenseStandaloneV2(request(rawNotificationId = 777L))
 
             assertTrue("Expected InsertConflict, got $result", result is CreateExpenseResult.InsertConflict)
             val conflict = result as CreateExpenseResult.InsertConflict
@@ -297,7 +297,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
             expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
         } returns null
 
-        val result = coordinator.createExpense(request(rawNotificationId = null))
+        val result = coordinator.createExpenseStandaloneV2(request(rawNotificationId = null))
 
         assertTrue(result is CreateExpenseResult.InsertConflict)
         assertEquals(InsertConflictCodes.UNRESOLVED, (result as CreateExpenseResult.InsertConflict).reasonCode)
@@ -326,7 +326,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
                 expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
             } returns null
 
-            val result = coordinator.createExpense(request(rawNotificationId = 777L))
+            val result = coordinator.createExpenseStandaloneV2(request(rawNotificationId = 777L))
 
             assertTrue("Expected InsertConflict, got $result", result is CreateExpenseResult.InsertConflict)
             assertEquals(
@@ -365,7 +365,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
                 expenseDao.findDuplicateIdCurrencyAware(any(), any(), any(), any(), any(), any(), any(), any())
             } returns null
 
-            val result = coordinator.createExpense(
+            val result = coordinator.createExpenseStandaloneV2(
                 request(rawNotificationId = 777L, skipPreflight = true)
             )
 
@@ -391,8 +391,8 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
             } returns false
             coEvery { expenseDao.findIdByRawNotificationId(777L) } returns 42L
 
-            val first = coordinator.createExpense(request(rawNotificationId = 777L, skipPreflight = true))
-            val second = coordinator.createExpense(request(rawNotificationId = 777L, skipPreflight = true))
+            val first = coordinator.createExpenseStandaloneV2(request(rawNotificationId = 777L, skipPreflight = true))
+            val second = coordinator.createExpenseStandaloneV2(request(rawNotificationId = 777L, skipPreflight = true))
 
             assertTrue("First should be Created, got $first", first is CreateExpenseResult.Created)
             assertTrue("Second should be DuplicateSkipped, got $second", second is CreateExpenseResult.DuplicateSkipped)
@@ -411,7 +411,7 @@ class TransactionLifecycleCoordinatorConflictResolutionTest {
         val insertedSlot = slot<Expense>()
         coEvery { expenseDao.insertAtomic(capture(insertedSlot)) } returns -1L
 
-        coordinator.createExpense(request(rawNotificationId = 777L, skipPreflight = true))
+        coordinator.createExpenseStandaloneV2(request(rawNotificationId = 777L, skipPreflight = true))
 
         // P2-004: no random-UUID disguise — the attempted key is the canonical
         // deterministic key, untouched by the skip flag.

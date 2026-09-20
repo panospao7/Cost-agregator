@@ -4,12 +4,12 @@ import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import androidx.room.withTransaction
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotEngine
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotRecommendations
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationQuality
-import com.yourname.expensetracker.domain.budget.BudgetTrend
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
