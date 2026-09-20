@@ -188,9 +188,16 @@ class RecurringExpenseEngine @Inject constructor(
         if (frequency == RecurrenceFrequency.IRREGULAR) return nextExpectedDate
 
         val todayStart = TimePeriodUtils.getStartOfDay(now)
+        // RP-04 P4-005: pin the anchor day ONCE from the date entering the loop so
+        // clamping cannot compound across steps (Jan-31 quarterly → Apr 30 → Jul 31,
+        // not Jul 30). Without the pinned anchor, a clamped result would become the
+        // next step's anchor and drift the pattern.
+        val anchorDayOfMonth = TimePeriodUtils.getDayOfMonth(TimePeriodUtils.getStartOfDay(nextExpectedDate))
         var rolledDate = nextExpectedDate
         while (rolledDate < todayStart) {
-            val candidate = RecurrenceCalculator.addFrequencyInterval(rolledDate, frequency)
+            val candidate = RecurrenceCalculator.addFrequencyInterval(
+                rolledDate, frequency, anchorDayOfMonth = anchorDayOfMonth
+            )
 
             if (candidate == rolledDate) break
             rolledDate = candidate

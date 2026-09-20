@@ -46,13 +46,7 @@ class RecurringArchitectureGuardTest {
         "RecurringLifecycleCoordinator.kt" to "legal single-writer path for recurring mutations",
         "RecurringRuleLifecycleCoordinator.kt" to "legal single-writer path for rule mutations",
         "RecurringOccurrenceMaterializer.kt" to "occurrence projection writer invoked inside coordinator-held transactions",
-        "AppDatabase.kt" to "migrations only",
-        // TEMPORARY (RP-04): SubscriptionManagementRepository is writeBarrier-checked
-        // (see WriteBarrierArchitectureGuardTest) but is a non-coordinator mutator.
-        // Remove when coordinator routing lands (RP-04 batch 2-3).
-        "SubscriptionManagementRepository.kt" to
-            "owner=RP-04 issue=recurring-coordinator-routing expiry=2026-10-31 " +
-            "coordinator routing pending (RP-04 batch 2-3); writeBarrier-checked but non-coordinator mutator"
+        "AppDatabase.kt" to "migrations only"
     )
 
     /**
@@ -109,6 +103,118 @@ class RecurringArchitectureGuardTest {
         assertTrue(
             "Direct recurring rule DAO mutations found outside allowed files:\n${errors.joinToString("\n")}",
             errors.isEmpty()
+        )
+    }
+
+    /**
+     * RP-04 A1 negative control: proves the declared-type detector above actually
+     * FIRES on a violating snippet (not marker-only). The snippet mirrors the
+     * exact bypass shape the guard exists to catch: a property whose DECLARED
+     * type is a recurring-rule DAO but whose name masquerades as another DAO
+     * (here: `subscriptionDao: ManualRecurringExpenseDao`), plus a direct
+     * mutation call through it.
+     */
+    @Test
+    fun `subscriptionDaoAliasCannotMutateManualRecurringExpense`() {
+        val violatingSnippet = """
+            class SneakyRepository(
+                private val subscriptionDao: ManualRecurringExpenseDao
+            ) {
+                suspend fun bypass(rule: ManualRecurringExpense) {
+                    subscriptionDao.update(rule)
+                }
+            }
+        """.trimIndent()
+
+        // Run the snippet through the SAME detection logic the main guard uses:
+        // sanitize, collect declared-type receivers, match mutator calls.
+        val text = SourceTextSanitizer.stripCommentsAndStringBodies(violatingSnippet)
+        val daoInterface = "ManualRecurringExpenseDao"
+        val mutatingMethods = recurringRuleDaos.getValue(daoInterface)
+
+        val receivers = mutableSetOf(
+            daoInterface.replaceFirstChar { it.lowercaseChar() },
+            daoInterface
+        )
+        receivers += Regex("""\b([A-Za-z_]\w*)\s*:\s*(?:\w+\.)*${Regex.escape(daoInterface)}\b""")
+            .findAll(text)
+            .map { it.groupValues[1] }
+
+        val detectedMutators = mutableListOf<String>()
+        for (method in mutatingMethods) {
+            for (receiver in receivers) {
+                val callPattern = Regex(
+                    """\b${Regex.escape(receiver)}\s*\.\s*${Regex.escape(method)}\s*\("""
+                )
+                if (callPattern.containsMatchIn(text)) {
+                    detectedMutators += "$receiver.$method()"
+                }
+            }
+        }
+
+        assertTrue(
+            "Detector must flag the declared-type alias bypass (subscriptionDao: ManualRecurringExpenseDao).update(); " +
+                "detected: $detectedMutators",
+            detectedMutators.contains("subscriptionDao.update()")
+        )
+    }
+
+    @Test
+    fun `subscription repository has no rule mutators and only the display-only scoped op`() {
+        val repoFile = File(
+            sourceRoot,
+            "com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt"
+        )
+        if (!repoFile.exists()) return
+        val text = SourceTextSanitizer.stripCommentsAndStringBodies(repoFile.readText())
+
+        // RP-04 A1: the repository must delegate rule mutations to the coordinator.
+        for (mutator in listOf("updateRule", "deleteRule", "activateRule", "deactivateRule")) {
+            assertTrue(
+                "SubscriptionManagementRepository must route through $mutator (RP-04 A1)",
+                text.contains("$mutator(")
+            )
+        }
+        // The legacy direct DAO mutators must be gone.
+        for (forbidden in listOf("subscriptionDao.update(", "subscriptionDao.deleteById(")) {
+            assertFalse(
+                "SubscriptionManagementRepository must not call $forbidden directly (RP-04 A1)",
+                text.contains(forbidden)
+            )
+        }
+        // The display-only carve-out is the ONLY permitted direct write, and it is
+        // a scoped column update, never the general-purpose update.
+        // (Assertions run over sanitized text: string literals are blanked, so we
+        // assert the call structure — the scoped op call plus a barrier check call —
+        // not the tag string inside checkWritesAllowed.)
+        assertTrue(
+            "Display-only carve-out must use the scoped updateSubscriptionCategory op",
+            text.contains("subscriptionDao.updateSubscriptionCategory(")
+        )
+        val carveOutBlock = text.substringAfter("suspend fun updateSubscriptionCategory")
+            .substringBefore("suspend fun markCandidateAsRejected")
+        assertTrue(
+            "Display-only carve-out must be writeBarrier-checked",
+            carveOutBlock.contains("writeBarrier.checkWritesAllowed(")
+        )
+        assertFalse(
+            "Display-only carve-out must not fall back to general update()",
+            carveOutBlock.contains("subscriptionDao.update(")
+        )
+    }
+
+    @Test
+    fun `subscription repository coordinator injection matches the lazy pattern`() {
+        val repoFile = File(
+            sourceRoot,
+            "com/yourname/expensetracker/data/repository/SubscriptionManagementRepository.kt"
+        )
+        if (!repoFile.exists()) return
+        val text = SourceTextSanitizer.stripCommentsAndStringBodies(repoFile.readText())
+        assertTrue(
+            "SubscriptionManagementRepository must inject dagger.Lazy<RecurringRuleLifecycleCoordinator> " +
+                "(pattern shared with ManualRecurringExpenseRepository / RecurringExpenseRepository)",
+            text.contains("dagger.Lazy<")
         )
     }
 
@@ -225,17 +331,50 @@ class RecurringArchitectureGuardTest {
             deleteBlock.contains("unlinkExpenseFromOccurrenceDetailed"))
     }
 
+    /**
+     * RP-04 A2: updateRule now performs logical occurrence reconciliation
+     * (P4-003/004) instead of delete-all-PLANNED-then-regenerate. The old pin
+     * (deleteOpenPlannedByRecurringRuleId before projection) asserted the deleted
+     * algorithm and was replaced deliberately — assertions below pin the NEW
+     * contract: reconciliation runs in one transaction, targets terminal
+     * preservation, and writes the RULE_UPDATED_RECONCILED critical event.
+     * No assertions were weakened: the replacement guard checks strictly more
+     * semantic properties (terminal preservation + reconciliation entry point).
+     */
     @Test
-    fun `updateRule regenerates planned rows after deleting open planned`() {
+    fun `updateRule reconciles logical slots without deleting overdue obligations`() {
         val ruleFile = File(sourceRoot, "com/yourname/expensetracker/domain/recurring/lifecycle/RecurringRuleLifecycleCoordinator.kt")
         if (!ruleFile.exists()) return
         val text = ruleFile.readText()
         val updateRuleBody = text.substringAfter("suspend fun updateRule")
-        assertTrue("updateRule must call projectFromOccurrencesInCurrentTransaction",
+        // Reconciler entry point must be transaction-internal (single boundary).
+        assertTrue("updateRule must reconcile inside its transaction (reconcileUpdateInCurrentTransaction)",
+            updateRuleBody.contains("reconcileUpdateInCurrentTransaction"))
+        // The reconciler must preserve terminal rows and must NOT use the bulk
+        // delete-all-PLANNED wipe anymore. Call-site-precise: the legitimate
+        // targeted op `deleteOpenPlannedBySourceKeys` shares a prefix with the
+        // forbidden `deleteOpenPlannedBySource`, so match the full call including
+        // the closing paren.
+        val reconcileBody = text.substringAfter("private suspend fun reconcileUpdateInCurrentTransaction")
+        // The reconciler classifies open slots via the canonical PLANNED status
+        // constant (`RecurringOccurrenceStatus.PLANNED.dbValue`) — the single
+        // source of truth for what counts as an open/retryable occurrence.
+        assertTrue("reconciler must classify open rows via RecurringOccurrenceStatus.PLANNED.dbValue",
+            reconcileBody.contains("RecurringOccurrenceStatus.PLANNED.dbValue"))
+        assertFalse("reconciler must NOT bulk-delete all open planned rows (deleteOpenPlannedBySource)",
+            reconcileBody.contains("deleteOpenPlannedBySource("))
+        assertFalse("reconciler must NOT bulk-delete all open planned rows (deleteOpenPlannedByRecurringRuleId)",
+            reconcileBody.contains("deleteOpenPlannedByRecurringRuleId("))
+        // Targeted retirement only (moved slots), preserving overdue obligations.
+        assertTrue("reconciler must use targeted retirement (deletePlannedByIds)",
+            reconcileBody.contains("deletePlannedByIds"))
+        assertTrue("updateRule must still project planned rows for new slots",
             updateRuleBody.contains("projectFromOccurrencesInCurrentTransaction"))
-        assertTrue("updateRule must call deleteOpenPlannedByRecurringRuleId before projection",
-            updateRuleBody.substringBefore("projectFromOccurrencesInCurrentTransaction")
-                .contains("deleteOpenPlannedByRecurringRuleId"))
+        // Pre-commit invariant gate must exist (fail closed).
+        assertTrue("updateRule must run pre-commit invariant assertions",
+            updateRuleBody.contains("assertReconciliationInvariants"))
+        assertTrue("updateRule must write the RULE_UPDATED_RECONCILED critical event",
+            updateRuleBody.contains("RULE_UPDATED_RECONCILED"))
     }
 
     @Test

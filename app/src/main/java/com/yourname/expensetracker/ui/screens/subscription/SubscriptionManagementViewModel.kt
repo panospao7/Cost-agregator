@@ -258,8 +258,9 @@ class SubscriptionManagementViewModel @Inject constructor(
             try {
                 val subscription = repository.getSubscriptionById(subscriptionId)
                 subscription?.let {
-                    val updated = it.copy(isActive = !it.isActive)
-                    repository.updateSubscription(updated)
+                    // RP-04 A1: toggle routes through setActive → coordinator
+                    // activateRule/deactivateRule (not a bare isActive update).
+                    repository.setActive(subscriptionId, !it.isActive)
                     loadSubscriptions()
                 }
             } catch (e: Exception) {
@@ -298,9 +299,13 @@ class SubscriptionManagementViewModel @Inject constructor(
      * - baseline price history recording
      *
      * Entry points that still need validateAndCreate:
-     * - SubscriptionManagementRepository.insertSubscription (called externally)
      * - Any candidate-conversion path (markCandidateAsConverted → auto-create)
      * - NotificationSubscriptionDetector auto-creation path
+     *
+     * RP-04 A1: no `insertSubscription` was added to SubscriptionManagementRepository —
+     * rule creation already routes through SubscriptionManagerEngine →
+     * RecurringExpenseRepository.insert → RecurringRuleLifecycleCoordinator.createRule,
+     * and a duplicate creation entry point would widen the mutation surface.
      */
     fun addSubscription(
         merchant: String,
@@ -322,9 +327,11 @@ class SubscriptionManagementViewModel @Inject constructor(
                 subscriptionManagerEngine.validateAndCreate(request).fold(
                     onSuccess = { created ->
                         if (category != null) {
-                            repository.updateSubscription(
-                                created.copy(subscriptionCategory = category)
-                            )
+                            // RP-04 A1: display-only carve-out — subscriptionCategory is
+                            // a display column (only consumer is the screen label; no
+                            // occurrence generator or matcher reads it), so it must not
+                            // trigger a full coordinator rule update.
+                            repository.updateSubscriptionCategory(created.id, category)
                         }
                         // S12-013: Signal success so dialog can close
                         _uiState.value = _uiState.value.copy(addSubscriptionSuccess = true)

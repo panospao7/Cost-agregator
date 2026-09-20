@@ -17,6 +17,7 @@ import io.mockk.mockk
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 
@@ -120,6 +121,247 @@ class RecurringPlannedActualNoDoubleCountGoldenTest : GoldenTestBase() {
 
         // ── VERIFY ──
         verifier.verify(actual).assertPassed()
+    }
+
+    /**
+     * RP-04 A2 golden: rule update (amount change) on a rule with an overdue open
+     * occurrence + linked actual expense must count the actual ONCE and the open
+     * planned row ONCE — the reconciler must not duplicate or drop obligations.
+     *
+     * Uses the same counting approach as the existing golden test: REAL Room DB,
+     * REAL MultiCurrencyRepository dashboard total, REAL rule coordinator.
+     */
+    @Test
+    fun `ruleUpdateDoesNotDoubleCountPlannedAndActual`() = runTest {
+        // ── SEED ──
+        seedCategories()
+        val ruleId = database.manualRecurringExpenseDao().insert(ManualRecurringExpense(
+            merchant = "Netflix",
+            amount = 12.99,
+            currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            // Anchor one month in the past so the first slot is OVERDUE (open).
+            nextDate = fixedNow - 86400000L * 30,
+            isActive = true,
+            createdAt = fixedNow - 86400000L * 60,
+            categoryId = 5
+        ))
+
+        // Overdue open occurrence due yesterday (at/before the reference day).
+        val overdueDue = fixedNow - 86400000L
+        val overdueOccId = database.recurringOccurrenceDao().insert(RecurringOccurrence(
+            sourceType = "RECURRING_RULE", sourceId = ruleId,
+            occurrenceKey = "RECURRING_RULE|$ruleId|$overdueDue|MONTHLY",
+            dueDate = overdueDue,
+            expectedAmount = 12.99, expectedCurrency = "EUR",
+            status = "PLANNED", createdAt = fixedNow,
+            frequency = "MONTHLY", merchant = "Netflix", categoryId = 5
+        ))
+
+        // Open planned row derived from the overdue occurrence.
+        val occKey = "RECURRING_RULE|$ruleId|$overdueDue|MONTHLY"
+        val plannedRowId = database.plannedExpenseDao().insertPlannedExpense(PlannedExpense(
+            description = "Netflix subscription",
+            amount = 12.99, currency = "EUR",
+            date = overdueDue,
+            sourceRecurringRuleId = ruleId,
+            sourceOccurrenceKey = occKey,
+            openSourceOccurrenceKey = occKey,
+            status = "PLANNED",
+            createdAt = fixedNow, updatedAt = fixedNow
+        ))
+
+        // The ACTUAL payment for the overdue slot, linked to the occurrence.
+        val expenseId = insertExpense(createPurchase(
+            amount = 12.99, currency = "EUR", merchant = "Netflix", categoryId = 5,
+            date = overdueDue
+        ))
+        database.recurringOccurrenceDao().claimForExpense(
+            overdueOccId, expenseId, 12.99, "EUR", fixedNow
+        )
+        // Production fulfillment side effect (RecurringLifecycleCoordinator.
+        // linkExpenseToOccurrence performs claim + linkToActualExpense together);
+        // replaying both halves here keeps the seed consistent with what the
+        // real flow leaves behind: the derived planned row is FULFILLED, so the
+        // rule-update reconciliation's ORPHAN_PLANNED_ROW gate (e) sees a
+        // healthy pre-state instead of failing closed.
+        database.plannedExpenseDao().linkToActualExpense(plannedRowId, expenseId, fixedNow)
+
+        // Sanity: the overdue occurrence is now PAID (terminal) and linked.
+        val overdueOcc = database.recurringOccurrenceDao().getById(overdueOccId)!!
+        assertEquals("PAID", overdueOcc.status)
+        assertEquals(expenseId, overdueOcc.linkedExpenseId)
+
+        // Dashboard total BEFORE the update: the actual counts exactly once.
+        val periodStart = fixedNow - 86400000L * 15
+        val periodEnd = fixedNow + 86400000L
+        val totalBefore = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(periodStart, periodEnd)
+        assertEquals(12.99, totalBefore.displayAmount, 0.01)
+        assertEquals(1, totalBefore.totalTransactionCount)
+
+        // ── ACT: update the rule amount through the REAL coordinator ──
+        val rule = database.manualRecurringExpenseDao().getById(ruleId)!!
+        val updated = rule.copy(amount = 19.99)
+        buildRuleCoordinator().updateRule(updated)
+
+        // ── ACT: dashboard counting after the update ──
+        val totalAfter = multiCurrencyRepository.getHomeCurrencyPurchaseTotal(periodStart, periodEnd)
+
+        val overdueOccAfter = database.recurringOccurrenceDao().getById(overdueOccId)!!
+        val allOccs = database.recurringOccurrenceDao().getBySource("RECURRING_RULE", ruleId)
+        val plannedRows = database.plannedExpenseDao().getByRecurringRuleId(ruleId)
+
+        // ── SERIALIZE ──
+        val actual = JSONObject().apply {
+            put("dashboardTotal", totalAfter.displayAmount)
+            put("dashboardCurrency", totalAfter.displayCurrency.code)
+            put("dashboardTransactionCount", totalAfter.totalTransactionCount)
+            put("isPartial", totalAfter.isPartial)
+            put("doubleCounted", totalAfter.displayAmount > 12.99 + 0.01)
+
+            // Terminal row preserved through the update (linked actual untouched).
+            put("overdueOccurrenceStatus", overdueOccAfter.status)
+            put("overdueLinkedExpenseId", overdueOccAfter.linkedExpenseId)
+            put("overduePaidAmount", overdueOccAfter.paidAmount)
+
+            // Exactly one open planned row remains for the rule (future slot),
+            // and no duplicate rows were created for the paid slot.
+            put("plannedRowCount", plannedRows.size)
+            put("openPlannedRowCount", plannedRows.count { it.status == "PLANNED" })
+            put("openPlannedAmounts", org.json.JSONArray(
+                plannedRows.filter { it.status == "PLANNED" }.map { it.amount }.sorted()
+            ))
+            put("totalOccurrences", allOccs.size)
+            put("paidOccurrences", allOccs.count { it.status == "PAID" })
+            put("plannedOccurrences", allOccs.count { it.status == "PLANNED" })
+        }
+
+        // ── VERIFY ──
+        verifier.verify(actual, subPath = "recurring_planned_actual_rule_update_no_double_count.json")
+            .assertPassed()
+    }
+
+    /**
+     * Builds a REAL [RecurringRuleLifecycleCoordinator] wired to this test's
+     * REAL database (same pattern as RecurringRuleLifecycleCoordinatorTest).
+     */
+    private fun buildRuleCoordinator(): com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator {
+        val occurrenceDao = database.recurringOccurrenceDao()
+        val deliveryDao = database.recurringReminderDeliveryDao()
+        val plannedDao = database.plannedExpenseDao()
+        val eventDao = database.recurringLifecycleEventDao()
+        val expenseDao = database.expenseDao()
+        val ruleDao = database.manualRecurringExpenseDao()
+
+        val lifecycleCoordinator = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleCoordinator(
+            database = database,
+            expander = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander(),
+            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(),
+            materializer = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer(
+                database = database,
+                writeBarrier = writeBarrier,
+                occurrenceDao = occurrenceDao,
+                reminderDeliveryDao = deliveryDao,
+                timeProvider = timeProvider,
+                lifecycleEventDao = eventDao,
+                plannedExpenseDao = plannedDao
+            ),
+            occurrenceDao = occurrenceDao,
+            expenseDao = expenseDao,
+            timeProvider = timeProvider,
+            manualRecurringExpenseDao = ruleDao,
+            reminderDeliveryDao = deliveryDao,
+            lifecycleEventDao = eventDao,
+            restoreMaintenanceMode = restoreMaintenanceMode,
+            writeBarrier = writeBarrier,
+            plannedExpenseDao = plannedDao,
+            transactionRunner = object : com.yourname.expensetracker.domain.transaction.DomainTransactionRunner {
+                override suspend fun <T> runInTransaction(
+                    correlationId: String,
+                    causationId: String?,
+                    operationId: String,
+                    source: String,
+                    metadata: Map<String, String>,
+                    block: suspend (com.yourname.expensetracker.domain.transaction.TransactionContext) -> T
+                ): T = block(
+                    com.yourname.expensetracker.domain.transaction.TransactionContext(
+                        correlationId = correlationId,
+                        causationId = causationId,
+                        operationId = operationId,
+                        source = source,
+                        occurredAt = fixedNow
+                    )
+                )
+            },
+            eventWriter = object : com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleEventWriter {
+                override suspend fun writeCritical(
+                    occurrenceId: Long?,
+                    eventType: String,
+                    oldStatus: String?,
+                    newStatus: String?,
+                    metadata: String?,
+                    occurredAt: Long
+                ): Long = eventDao.insert(
+                    com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent(
+                        occurrenceId = occurrenceId,
+                        eventType = eventType,
+                        occurredAt = if (occurredAt == 0L) fixedNow else occurredAt,
+                        oldStatus = oldStatus,
+                        newStatus = newStatus,
+                        metadata = metadata
+                    )
+                )
+            }
+        )
+
+        val projectionService = com.yourname.expensetracker.domain.recurring.RecurringPlanProjectionService(
+            plannedExpenseDao = plannedDao,
+            occurrenceDao = occurrenceDao
+        )
+
+        return com.yourname.expensetracker.domain.recurring.lifecycle.RecurringRuleLifecycleCoordinator(
+            database = database,
+            writeBarrier = writeBarrier,
+            timeProvider = timeProvider,
+            manualRecurringExpenseDao = ruleDao,
+            occurrenceDao = occurrenceDao,
+            reminderDeliveryDao = deliveryDao,
+            plannedExpenseDao = plannedDao,
+            lifecycleEventDao = eventDao,
+            lifecycleCoordinator = dagger.Lazy { lifecycleCoordinator },
+            expander = com.yourname.expensetracker.domain.recurring.RecurringOccurrenceExpander(),
+            resolver = com.yourname.expensetracker.domain.recurring.OccurrenceConflictResolver(),
+            materializer = com.yourname.expensetracker.domain.recurring.lifecycle.RecurringOccurrenceMaterializer(
+                database = database,
+                writeBarrier = writeBarrier,
+                occurrenceDao = occurrenceDao,
+                reminderDeliveryDao = deliveryDao,
+                timeProvider = timeProvider,
+                lifecycleEventDao = eventDao,
+                plannedExpenseDao = plannedDao
+            ),
+            expenseDao = expenseDao,
+            eventWriter = object : com.yourname.expensetracker.domain.recurring.lifecycle.RecurringLifecycleEventWriter {
+                override suspend fun writeCritical(
+                    occurrenceId: Long?,
+                    eventType: String,
+                    oldStatus: String?,
+                    newStatus: String?,
+                    metadata: String?,
+                    occurredAt: Long
+                ): Long = eventDao.insert(
+                    com.yourname.expensetracker.data.database.entity.RecurringLifecycleEvent(
+                        occurrenceId = occurrenceId,
+                        eventType = eventType,
+                        occurredAt = if (occurredAt == 0L) fixedNow else occurredAt,
+                        oldStatus = oldStatus,
+                        newStatus = newStatus,
+                        metadata = metadata
+                    )
+                )
+            },
+            planProjectionService = dagger.Lazy { projectionService }
+        )
     }
 
     // ── Seed helpers ──

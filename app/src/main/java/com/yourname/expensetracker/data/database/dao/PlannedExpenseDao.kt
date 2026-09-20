@@ -95,6 +95,70 @@ interface PlannedExpenseDao {
     suspend fun deleteOpenPlannedByRecurringRuleId(ruleId: Long): Int
 
     /**
+     * RP-04 A2: read side for rule-derived planned rows (invariant checks and
+     * lifecycle tests). Read-only; no payload-sensitive columns materialized
+     * beyond the entity's own planned-budget fields.
+     */
+    @Query("SELECT * FROM planned_expenses WHERE sourceRecurringRuleId = :ruleId")
+    suspend fun getByRecurringRuleId(ruleId: Long): List<PlannedExpense>
+
+    /**
+     * RP-04 A2: targeted retirement of specific open PLANNED rows by their
+     * occurrence keys (moved logical slots during rule update reconciliation).
+     * Only rows with status='PLANNED' are affected; FULFILLED history and
+     * linked actual expenses are never touched.
+     */
+    @Query("""
+        DELETE FROM planned_expenses
+        WHERE sourceOccurrenceKey IN (:keys) AND status = 'PLANNED'
+    """)
+    suspend fun deleteOpenPlannedBySourceKeys(keys: List<String>): Int
+
+    /**
+     * RP-04 A2: atomically refreshes a derived planned row when its logical
+     * occurrence adopts the new rule snapshot (amount/currency/date/merchant/
+     * category and — after a frequency change — the re-keyed occurrenceKey).
+     * Preserves the materialized-key CHECK invariant: openSourceOccurrenceKey
+     * is set to the new key only when the row is still PLANNED, else left NULL.
+     * FULFILLED rows keep their snapshot: the WHERE clause must be narrowed by
+     * the caller-verified open key (openSourceOccurrenceKey = :oldKey).
+     */
+    @Query("""
+        UPDATE planned_expenses
+        SET description = :description,
+            amount = :amount,
+            currency = :currency,
+            date = :date,
+            categoryId = :categoryId,
+            merchantKey = :merchantKey,
+            sourceOccurrenceKey = :newKey,
+            openSourceOccurrenceKey = :newKey,
+            updatedAt = :updatedAt
+        WHERE sourceOccurrenceKey = :oldKey
+          AND status = 'PLANNED'
+          AND openSourceOccurrenceKey = :oldKey
+    """)
+    suspend fun updateDerivedSnapshotForKey(
+        oldKey: String,
+        newKey: String,
+        description: String,
+        amount: Double,
+        currency: String,
+        date: Long,
+        categoryId: Long?,
+        merchantKey: String?,
+        updatedAt: Long
+    ): Int
+
+    /**
+     * RP-04 A2: read side of the reconciler's pre-commit invariant check.
+     * Returns open PLANNED rows projected from a rule (orphans and slot
+     * coverage are validated against these rows inside the update transaction).
+     */
+    @Query("SELECT * FROM planned_expenses WHERE sourceRecurringRuleId = :ruleId AND status = 'PLANNED'")
+    suspend fun getOpenPlannedByRecurringRuleId(ruleId: Long): List<PlannedExpense>
+
+    /**
      * P4-CURRENT-003: Fulfill a planned expense by its occurrence key.
      * Marks it as FULFILLED when the occurrence transitions to PAID.
      * Now accepts an expenseId to preserve provenance of which actual expense fulfilled it.

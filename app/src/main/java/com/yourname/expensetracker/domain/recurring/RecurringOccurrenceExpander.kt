@@ -85,9 +85,24 @@ class RecurringOccurrenceExpander @Inject constructor() {
      * control where the expansion begins (e.g. from [rule.nextDate]).
      * Only occurrences where `dueDate` is in `[startDate, endDate)` are returned.
      *
-     * Uses calendar-aware advancement via [TimePeriodUtils.addDays], [TimePeriodUtils.addMonths],
-     * and [TimePeriodUtils.addYears] to handle DST transitions, leap years, and varying month
-     * lengths correctly.
+     * Uses calendar-aware advancement via [TimePeriodUtils.addDays],
+     * [TimePeriodUtils.advanceMonthAnchor], and [TimePeriodUtils.addYears] to handle DST
+     * transitions, leap years, and varying month lengths correctly.
+     *
+     * ## RP-04 P4-005 (D7 anchor semantics)
+     * For MONTHLY/QUARTERLY/SEMI_ANNUALLY the anchor day of month is derived ONCE from
+     * [anchorDate] and every subsequent period advances from that FIXED anchor (clamped to
+     * each target month's length): Jan 31 -> Feb 28/29 -> Mar 31, never the cumulative
+     * drift Jan 31 -> Feb 28 -> Mar 28. This prevents NEW drift from the current expansion
+     * anchor; it does NOT restore an original anchor for an already-drifted persisted rule
+     * (the schema has no original anchor day — an already-drifted `nextDate` necessarily
+     * derives its drifted day as the anchor).
+     *
+     * ANNUALLY (RP-04 A3 reviewer fix): routed through the same fixed-anchor year
+     * advance ([TimePeriodUtils.advanceMonthAnchor] with months=12), so a Feb-29 anchor
+     * clamps to Feb 28 in non-leap years and recovers to Feb 29 in leap years, in
+     * agreement with [com.yourname.expensetracker.domain.logic.RecurrenceCalculator.addFrequencyInterval].
+     * Weekly/biweekly fixed-day behavior is unchanged.
      *
      * Returns an empty list for [RecurrenceFrequency.IRREGULAR].
      */
@@ -100,6 +115,10 @@ class RecurringOccurrenceExpander @Inject constructor() {
 
         // No valid range
         if (request.startDate >= request.endDate) return emptyList()
+
+        // RP-04 P4-005: derive the fixed anchor day ONCE per expansion operation so all
+        // month-based advances within this expansion agree on the same anchor day.
+        val anchorDayOfMonth = TimePeriodUtils.getDayOfMonth(TimePeriodUtils.getStartOfDay(request.anchorDate))
 
         val candidates = mutableListOf<OccurrenceCandidate>()
         var currentDate = TimePeriodUtils.getStartOfDay(request.anchorDate)
@@ -124,7 +143,7 @@ class RecurringOccurrenceExpander @Inject constructor() {
                 )
             }
 
-            currentDate = advance(currentDate, request.frequency)
+            currentDate = advance(currentDate, request.frequency, anchorDayOfMonth)
         }
 
         return candidates
@@ -134,8 +153,27 @@ class RecurringOccurrenceExpander @Inject constructor() {
      * Advances [date] by one period according to [frequency].
      * Public so that callers (e.g. [RecurringLifecycleCoordinator]) can advance
      * an anchor date before constructing an [ExpandRequest].
+     *
+     * RP-04 P4-005: for month-based frequencies the anchor day is [anchorDayOfMonth]
+     * when supplied, else derived from [date] itself. Callers that advance repeatedly
+     * (e.g. the anchor catch-up loop) MUST derive the anchor day ONCE from the
+     * operation's anchorDate (the persisted `rule.nextDate`) and pass it to every
+     * step, so clamping never compounds (Jan 31 → Feb 28/29 → Mar 31). This
+     * prevents NEW drift from the current expansion anchor; it does NOT restore an
+     * original anchor for an already-drifted persisted rule (no original anchor day
+     * exists in the schema — an already-drifted `nextDate` necessarily derives its
+     * drifted day as the anchor). ANNUALLY uses the same fixed-anchor year advance
+     * (12 months, clamp-and-recover). Weekly/biweekly fixed-day behavior is unchanged.
      */
-    fun advanceDate(date: Long, frequency: RecurrenceFrequency): Long = advance(date, frequency)
+    fun advanceDate(
+        date: Long,
+        frequency: RecurrenceFrequency,
+        anchorDayOfMonth: Int? = null
+    ): Long = advance(
+        date,
+        frequency,
+        anchorDayOfMonth ?: TimePeriodUtils.getDayOfMonth(TimePeriodUtils.getStartOfDay(date))
+    )
 
     /**
      * Builds the unique occurrence key: `"$sourceType|$sourceId|<dayStart>|<frequencyName>"`.
@@ -157,15 +195,36 @@ class RecurringOccurrenceExpander @Inject constructor() {
     /**
      * Advances [currentDate] by one period according to [frequency].
      * All arithmetic is calendar-aware (not raw millisecond multiplication).
+     *
+     * RP-04 P4-005 (D7 anchor semantics): MONTHLY/QUARTERLY/SEMI_ANNUALLY/ANNUALLY
+     * advance from the FIXED [anchorDayOfMonth] (derived once per expansion from the
+     * operation's anchor date) instead of from the previous result's day, so a Jan-31
+     * anchor produces Jan 31 -> Feb 28/29 -> Mar 31 without cumulative drift, and a
+     * Feb-29 annual anchor clamps to Feb 28 in non-leap years and recovers in leap
+     * years. This prevents NEW drift from the current expansion anchor; it does NOT
+     * restore an original anchor for an already-drifted persisted rule (the schema has
+     * no original anchor day). Weekly/biweekly fixed-day behavior is unchanged.
      */
-    private fun advance(currentDate: Long, frequency: RecurrenceFrequency): Long {
+    private fun advance(
+        currentDate: Long,
+        frequency: RecurrenceFrequency,
+        anchorDayOfMonth: Int
+    ): Long {
         return when (frequency) {
             RecurrenceFrequency.WEEKLY -> TimePeriodUtils.addDays(currentDate, 7)
             RecurrenceFrequency.BIWEEKLY -> TimePeriodUtils.addDays(currentDate, 14)
-            RecurrenceFrequency.MONTHLY -> TimePeriodUtils.addMonths(currentDate, 1)
-            RecurrenceFrequency.QUARTERLY -> TimePeriodUtils.addMonths(currentDate, 3)
-            RecurrenceFrequency.SEMI_ANNUALLY -> TimePeriodUtils.addMonths(currentDate, 6)
-            RecurrenceFrequency.ANNUALLY -> TimePeriodUtils.addYears(currentDate, 1)
+            RecurrenceFrequency.MONTHLY ->
+                TimePeriodUtils.advanceMonthAnchor(anchorDayOfMonth, currentDate, 1)
+            RecurrenceFrequency.QUARTERLY ->
+                TimePeriodUtils.advanceMonthAnchor(anchorDayOfMonth, currentDate, 3)
+            RecurrenceFrequency.SEMI_ANNUALLY ->
+                TimePeriodUtils.advanceMonthAnchor(anchorDayOfMonth, currentDate, 6)
+            // RP-04 A3 reviewer fix: fixed-anchor year advance (12 months) so the
+            // annual path agrees with RecurrenceCalculator.addFrequencyInterval —
+            // a Feb-29 anchor clamps to Feb 28 (non-leap) and recovers to Feb 29
+            // (leap) instead of permanently drifting down via addYears.
+            RecurrenceFrequency.ANNUALLY ->
+                TimePeriodUtils.advanceMonthAnchor(anchorDayOfMonth, currentDate, 12)
             RecurrenceFrequency.IRREGULAR -> currentDate // unreachable; handled above
         }
     }

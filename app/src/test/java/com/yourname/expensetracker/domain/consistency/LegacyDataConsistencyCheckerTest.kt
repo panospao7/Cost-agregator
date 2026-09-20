@@ -170,6 +170,7 @@ class LegacyDataConsistencyCheckerTest {
         override suspend fun claimForExpense(occurrenceId: Long, expenseId: Long, amount: Double, currency: String, paidAt: Long): Int = 0
         override suspend fun deleteOpenPlannedBySource(sourceType: String, sourceId: Long): Int = 0
         override suspend fun updateLinkedPaymentSnapshot(occurrenceId: Long, expenseId: Long, amount: Double, currency: String, paidAt: Long, updatedAt: Long): Int = 0
+        override suspend fun deletePlannedByIds(ids: List<Long>): Int = 0
     }
 
     private class FakeRecurringLifecycleEventDao : RecurringLifecycleEventDao {

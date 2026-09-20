@@ -68,8 +68,22 @@ class RecurringLifecycleCoordinator @Inject constructor(
         /** Default reminder windows applied when no explicit windows are provided and reminders are enabled. */
         val DEFAULT_REMINDER_WINDOWS = listOf("3_DAYS_BEFORE", "DUE_DAY", "OVERDUE")
 
-        /** Statuses from which dismiss/snooze are no-ops. */
-        val TERMINAL_STATUSES = setOf("DISMISSED", "CANCELLED", "FAILED_FINAL", "SENT")
+        /**
+         * Statuses from which dismiss/snooze are no-ops. RP-04 P4-006 adds the
+         * historical `FAILED_PERMISSION` literal: the live path no longer emits it
+         * (permission denial routes to CANCELLED / PERMISSION_REVOKED), but rows
+         * written before that change must be treated as terminal — no new live or
+         * retry path is created for them.
+         */
+        val TERMINAL_STATUSES =
+            setOf("DISMISSED", "CANCELLED", "FAILED_FINAL", "SENT", "FAILED_PERMISSION")
+
+        /**
+         * RP-04 P4-006: controlled reason code for reminder deliveries cancelled
+         * because notification permission was revoked. Always a controlled
+         * constant — never raw exception text.
+         */
+        const val REASON_PERMISSION_REVOKED = "PERMISSION_REVOKED"
 
         /** Stale claim threshold in ms (5 minutes). */
         const val STALE_CLAIM_THRESHOLD_MS = 300_000L
@@ -107,6 +121,14 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
             // Use rule.nextDate as the expansion anchor. If it's before startDate,
             // advance it by the frequency until it falls within the range.
+            // RP-04 P4-005: derive the anchor day ONCE from the operation's anchorDate
+            // (rule.nextDate) so the catch-up loop advances from the FIXED anchor day
+            // (Jan 31 → Feb 28/29 → Mar 31) without cumulative drift, in agreement
+            // with expand(). Already-drifted nextDates necessarily anchor on their
+            // drifted day (no original-anchor restoration; Option A, no-schema).
+            val anchorDayOfMonth = TimePeriodUtils.getDayOfMonth(
+                TimePeriodUtils.getStartOfDay(rule.nextDate)
+            )
             var anchorDate = rule.nextDate
             var advanceIterations = 0
             while (anchorDate < startDate && rule.frequency != RecurrenceFrequency.IRREGULAR) {
@@ -114,7 +136,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                     Timber.w("Anchor advance loop exceeded 1000 iterations for ruleId=%d, breaking", ruleId)
                     break
                 }
-                anchorDate = expander.advanceDate(anchorDate, rule.frequency)
+                anchorDate = expander.advanceDate(anchorDate, rule.frequency, anchorDayOfMonth)
             }
 
             val request = RecurringOccurrenceExpander.ExpandRequest(
@@ -199,6 +221,12 @@ class RecurringLifecycleCoordinator @Inject constructor(
 
         // Anchor advancement — identical to generateOccurrences so projected
         // dueDates/keys match what materialization would produce.
+        // RP-04 P4-005: anchor day derived ONCE from rule.nextDate so the
+        // catch-up loop stays fixed-anchor (no cumulative drift), in agreement
+        // with generateOccurrences and expand().
+        val anchorDayOfMonth = TimePeriodUtils.getDayOfMonth(
+            TimePeriodUtils.getStartOfDay(rule.nextDate)
+        )
         var anchorDate = rule.nextDate
         var advanceIterations = 0
         while (anchorDate < startDate && rule.frequency != RecurrenceFrequency.IRREGULAR) {
@@ -206,7 +234,7 @@ class RecurringLifecycleCoordinator @Inject constructor(
                 Timber.w("Anchor advance loop exceeded 1000 iterations for ruleId=%d, breaking", ruleId)
                 break
             }
-            anchorDate = expander.advanceDate(anchorDate, rule.frequency)
+            anchorDate = expander.advanceDate(anchorDate, rule.frequency, anchorDayOfMonth)
         }
 
         val request = RecurringOccurrenceExpander.ExpandRequest(
@@ -1078,11 +1106,56 @@ class RecurringLifecycleCoordinator @Inject constructor(
         }
     }
 
+    /**
+     * Marks a CLAIMED reminder delivery as failed for a non-permission reason.
+     *
+     * RP-04 P4-006: permission denial is NOT a recurring-rule failure and must
+     * never produce a `FAILED_PERMISSION` status. If a caller passes a
+     * permission-flavored [reason], the delivery is transitioned to the terminal
+     * `CANCELLED` status with the controlled reason code
+     * [REASON_PERMISSION_REVOKED] and a sanitized diagnostic instead. Non-permission
+     * failures write `FAILED_TRANSIENT`. The [reason] argument is persisted into
+     * the delivery's `failureReason` column by the DAO and echoed into the event
+     * metadata via the caller-supplied controlled constant — callers must pass
+     * controlled reason codes, never raw exception text.
+     */
     suspend fun markReminderFailed(deliveryId: Long, reason: String): Boolean {
         writeBarrier.checkWritesAllowed("RecurringLifecycleCoordinator.markReminderFailed")
 
         val now = timeProvider.now()
-        val status = if (reason.contains("permission", ignoreCase = true)) "FAILED_PERMISSION" else "FAILED_TRANSIENT"
+
+        // RP-04 P4-006: defensive routing — permission reasons cancel (terminal),
+        // they never mark the recurring delivery as FAILED_PERMISSION.
+        if (reason.contains("permission", ignoreCase = true)) {
+            Timber.w(
+                "Reminder delivery permission denied — routing to CANCELLED (deliveryId=%d)",
+                deliveryId
+            )
+            return database.withTransaction {
+                val existing = reminderDeliveryDao.getById(deliveryId) ?: return@withTransaction false
+                val rows = reminderDeliveryDao.cancelClaimedDelivery(
+                    deliveryId, REASON_PERMISSION_REVOKED, now
+                )
+                if (rows > 0) {
+                    lifecycleEventDao.insert(
+                        RecurringLifecycleEvent(
+                            occurrenceId = existing.occurrenceId,
+                            eventType = "REMINDER_DELIVERY_CANCELLED_PERMISSION",
+                            occurredAt = now,
+                            oldStatus = existing.status,
+                            newStatus = "CANCELLED",
+                            metadata = JSONObject().apply {
+                                put("deliveryId", deliveryId)
+                                put("reason", REASON_PERMISSION_REVOKED)
+                            }.toString()
+                        )
+                    )
+                }
+                rows > 0
+            }
+        }
+
+        val status = "FAILED_TRANSIENT"
 
         // MIT-043: Wrap markFailed + event in a single transaction.
         return database.withTransaction {
@@ -1200,6 +1273,13 @@ class RecurringLifecycleCoordinator @Inject constructor(
      * This is the EXPLICIT WRITE command — callers must do this before getting a report.
      *
      * P4-NEW-008: Extracted from reconcilePlannedVsActual to separate write from read.
+     *
+     * RP-04 P4-006 dead-code disposition (2026-09-19): RETAINED — its only caller is
+     * the `@Deprecated(DeprecationLevel.ERROR)` [reconcilePlannedVsActual] below
+     * (compile-error guarded, no live production or test callers). It is not a
+     * second production generation path; deletion is deferred until that
+     * deprecated method is removed (RP-20 candidate), since removing it now would
+     * break the deprecated method's compilation.
      */
     suspend fun ensureOccurrencesGeneratedForReconciliation(ruleId: Long, monthsBack: Int = 3) {
         val now = timeProvider.now()

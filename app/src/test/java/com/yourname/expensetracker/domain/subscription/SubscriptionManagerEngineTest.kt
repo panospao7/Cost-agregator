@@ -233,6 +233,42 @@ class SubscriptionManagerEngineTest {
         coVerify { priceHistoryDao.insert(any()) }
     }
 
+    /**
+     * RP-04 A1 routing pin: validateAndCreate must create the subscription ONLY
+     * through [RecurringExpenseRepository.insert], whose production implementation
+     * routes to RecurringRuleLifecycleCoordinator.createRule() (A1-verified in
+     * RecurringArchitectureGuardTest + SubscriptionManagementRepositoryTest).
+     *
+     * LIMITATION (honest): this harness uses a relaxed repository MOCK, so the
+     * coordinator hop itself is NOT exercised here — this test pins that the
+     * engine's only rule-write path is the coordinator-routed repository insert
+     * (exactly once, no other write), while the repository→coordinator edge is
+     * proven by the repository/guard tests.
+     */
+    @Test
+    fun `validateAndCreateUsesCoordinatorRuleCreation`() = runTest {
+        engine = createEngine()
+        coEvery { recurringExpenseRepository.insert(any()) } returns 77L
+
+        val request = CreateSubscriptionRequest(
+            merchant = "CoordinatorRouted",
+            amount = 12.34,
+            currency = "EUR",
+            frequency = RecurrenceFrequency.MONTHLY,
+            startDate = 1_000_000L
+        )
+        val result = engine.validateAndCreate(request)
+
+        assertTrue(result.isSuccess)
+        assertEquals(77L, result.getOrThrow().id)
+        // The single rule-write goes through the coordinator-routed repository.
+        coVerify(exactly = 1) { recurringExpenseRepository.insert(any()) }
+        // No out-of-band rule-row write happens alongside it (the engine has no
+        // direct ManualRecurringExpenseDao dependency at all — asserted by the
+        // engine constructor; this verifies the write count is exactly one).
+        coVerify(exactly = 1) { priceHistoryDao.insert(any()) }
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // acceptCandidate — rejection tests
     // ──────────────────────────────────────────────────────────────────────────
@@ -324,6 +360,47 @@ class SubscriptionManagerEngineTest {
         coVerify { recurringExpenseRepository.insert(match { it.merchant == "Spotify" }) }
         coVerify { priceHistoryDao.insert(match { it.currency == "USD" }) }
         coVerify { candidateDao.markAsConverted(4, 5L, timeProvider.now()) }
+    }
+
+    /**
+     * RP-04 A1 routing pin: acceptCandidate must create the subscription ONLY
+     * through [RecurringExpenseRepository.insert], whose production implementation
+     * routes to RecurringRuleLifecycleCoordinator.createRule() (A1-verified in
+     * RecurringArchitectureGuardTest + SubscriptionManagementRepositoryTest).
+     *
+     * LIMITATION (honest): the repository is a relaxed MOCK here, so the
+     * coordinator hop itself is not exercised in this class — this test pins that
+     * the candidate-conversion write path is exactly one coordinator-routed
+     * repository insert (plus price history + candidate conversion, and nothing
+     * else); the repository→coordinator edge is proven by the repository/guard
+     * tests.
+     */
+    @Test
+    fun `acceptCandidateUsesCoordinatorRuleCreation`() = runTest {
+        engine = createEngine()
+        coEvery { recurringExpenseRepository.insert(any()) } returns 88L
+
+        val candidate = SubscriptionCandidate(
+            id = 9,
+            merchant = "RoutedCandidate",
+            canonicalMerchant = "routedcandidate",
+            averageAmount = 14.5,
+            currency = "EUR",
+            detectedInterval = "monthly",
+            confidence = 0.9,
+            transactionCount = 4,
+            firstSeen = 1000L,
+            lastSeen = 4000L,
+            estimatedAnnualCost = 174.0
+        )
+        val subscriptionId = engine.acceptCandidate(candidate, RecurrenceFrequency.MONTHLY, 5000L)
+
+        assertEquals(88L, subscriptionId)
+        // The single rule-write goes through the coordinator-routed repository.
+        coVerify(exactly = 1) { recurringExpenseRepository.insert(any()) }
+        // Baseline + conversion still recorded; no other rule-row write path.
+        coVerify(exactly = 1) { priceHistoryDao.insert(any()) }
+        coVerify(exactly = 1) { candidateDao.markAsConverted(9, 88L, timeProvider.now()) }
     }
 
     // ──────────────────────────────────────────────────────────────────────────

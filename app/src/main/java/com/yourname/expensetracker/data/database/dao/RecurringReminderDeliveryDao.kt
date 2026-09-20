@@ -154,6 +154,31 @@ interface RecurringReminderDeliveryDao {
     suspend fun deleteByOccurrenceIds(occurrenceIds: List<Long>)
 
     /**
+     * RP-04 A2: reads all deliveries for the given occurrences in one query so
+     * the reconciler can compute per-window keep/retire decisions inside the
+     * rule-update transaction without N+1 reads.
+     */
+    @Query("SELECT * FROM recurring_reminder_deliveries WHERE occurrenceId IN (:occurrenceIds)")
+    suspend fun getByOccurrenceIds(occurrenceIds: List<Long>): List<RecurringReminderDelivery>
+
+    /**
+     * RP-04 A2: deletes only OPEN (non-terminal) deliveries for the given
+     * occurrences. Called by the rule-update reconciler for RETIRED slots (the
+     * slot moved and no new candidate covers it): their open deliveries are
+     * removed together with the occurrence, and the materializer schedules fresh
+     * deliveries for the NEW slot's occurrences — adopted (matched) slots keep
+     * their open deliveries in place; they are never re-dated by the reconciler.
+     * SENT/DISMISSED terminal delivery history is preserved and never replayed;
+     * CANCELLED history rows are also kept (they document past suppression).
+     */
+    @Query("""
+        DELETE FROM recurring_reminder_deliveries
+        WHERE occurrenceId IN (:occurrenceIds)
+          AND status IN ('SCHEDULED', 'SNOOZED', 'CLAIMED', 'FAILED_TRANSIENT')
+    """)
+    suspend fun deleteOpenDeliveriesByOccurrenceIds(occurrenceIds: List<Long>): Int
+
+    /**
      * Reopens a previously cancelled/failed reminder delivery for an occurrence+window,
      * resetting it back to SCHEDULED. Used when an expense is unlinked and the
      * occurrence becomes PLANNED again.
