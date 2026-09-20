@@ -3,6 +3,7 @@
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
 import java.util.TimeZone
@@ -35,7 +36,7 @@ class UberReceiptParserTest {
         val receipt = parser.parse(
             emailBody = """
                 Uber trip receipt
-                Total â‚¬12,34
+                Total €12,34
                 Trip date: 15 mars 2026
                 Trip ID: ride-456
             """.trimIndent(),
@@ -53,7 +54,7 @@ class UberReceiptParserTest {
             emailBody = """
                 Uber Eats receipt
                 Restaurant: Burger Place
-                Order Total 18,90 â‚¬
+                Order Total 18,90 €
                 Order date: 15 mars 2026
                 Order ID: eats-789
             """.trimIndent(),
@@ -114,6 +115,99 @@ class UberReceiptParserTest {
 
         assertNotNull(receipt)
         assertEquals("USD", receipt!!.currency)
+    }
+
+    // -------------------------------------------------------------------------
+    // RP-18 18-A: label hierarchy, strict total grammar, currency resolution.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `parse prefers Order Total over bare Total for eats orders`() {
+        val receipt = parser.parse(
+            emailBody = """
+                Uber Eats receipt
+                Restaurant: Burger Place
+                Total 5,00
+                Order Total 18,90 €
+                Order date: 15 mars 2026
+                Order ID: eats-ordering
+            """.trimIndent(),
+            receivedAt = 0L
+        )
+
+        assertNotNull(receipt)
+        assertEquals(
+            "Specific 'Order Total' must win over a bare 'Total' line",
+            18.90,
+            receipt!!.amount,
+            0.001
+        )
+        assertEquals("EUR", receipt.currency)
+    }
+
+    @Test
+    fun `parse ignores vat annotation and unit price forms for rides`() {
+        val receipt = parser.parse(
+            emailBody = """
+                Uber trip receipt
+                2 x 5,00 €
+                Total incl. 21% IVA: 12,10 €
+                Trip ID: ride-vat
+            """.trimIndent(),
+            receivedAt = 0L
+        )
+
+        assertNotNull(receipt)
+        assertEquals(
+            "VAT percentage and unit-price forms must not be selected as the total",
+            12.10,
+            receipt!!.amount,
+            0.001
+        )
+        assertEquals("EUR", receipt.currency)
+    }
+
+    @Test
+    fun `parse skips with CURRENCY_UNRESOLVED when no trusted currency signal exists`() {
+        val body = """
+            Uber trip receipt
+            Total 23,45
+            Trip ID: ride-nocurrency
+        """.trimIndent()
+
+        val outcome = parser.parseWithOutcome(emailBody = body, receivedAt = 0L)
+
+        assertTrue(
+            "Expected CURRENCY_UNRESOLVED skip, got $outcome",
+            outcome is EmailParseOutcome.Skipped &&
+                outcome.reason == EmailParseSkipReason.CURRENCY_UNRESOLVED
+        )
+        assertNull(
+            "Skipped parse must surface as null from parse()",
+            parser.parse(emailBody = body, receivedAt = 0L)
+        )
+    }
+
+    @Test
+    fun `parse does not infer currency from everyday words it us de`() {
+        val body = """
+            Uber trip receipt
+            Total 19,50
+            Hope you enjoyed it. Rate us. de
+            Trip ID: ride-words
+        """.trimIndent()
+
+        val outcome = parser.parseWithOutcome(emailBody = body, receivedAt = 0L)
+
+        assertTrue(
+            "Expected CURRENCY_UNRESOLVED skip, got $outcome",
+            outcome is EmailParseOutcome.Skipped &&
+                outcome.reason == EmailParseSkipReason.CURRENCY_UNRESOLVED
+        )
+        assertNull(
+            "Skipped parse must surface as null from parse()",
+            parser.parse(emailBody = body, receivedAt = 0L)
+        )
     }
 
     /** Use system default timezone to match UberReceiptParser.parseUberDate behavior. */

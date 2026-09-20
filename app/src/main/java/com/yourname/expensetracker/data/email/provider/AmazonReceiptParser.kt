@@ -18,17 +18,6 @@ class AmazonReceiptParser : BaseEmailParser() {
             "digital-no-reply@amazon"
         )
 
-        private val ORDER_PATTERNS = listOf(
-            // Order total patterns
-            Pattern.compile("""Order Total:\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Grand Total:\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Total:\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            // Alternative format
-            Pattern.compile("""(?:Order Total|Grand Total|Total)\s+([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            // HTML formatted
-            Pattern.compile("""order-total[^>]*>[^<]*([^<]{1,32})""", Pattern.CASE_INSENSITIVE)
-        )
-
         private val ORDER_NUMBER_PATTERNS = listOf(
             // P11-PR3 (NEW-P11-005): Fixed double-escaped \s in raw strings
             Pattern.compile("""Order #?\s*([0-9-]+)""", Pattern.CASE_INSENSITIVE),
@@ -48,11 +37,17 @@ class AmazonReceiptParser : BaseEmailParser() {
             Pattern.MULTILINE
         )
 
-        // Currency detection patterns
-        private val CURRENCY_PATTERNS = mapOf(
-            "USD" to listOf("$", "USD", "dollar", "amazon.com"),
-            "EUR" to listOf("€", "EUR", "euro", "amazon.de", "amazon.fr", "amazon.it", "amazon.es"),
-            "GBP" to listOf("£", "GBP", "pound", "amazon.co.uk")
+        // RP-18 18-A: trusted Amazon storefront domains for currency resolution.
+        // Symbols and word-bounded ISO codes are checked first (BaseEmailParser);
+        // bare two-letter country tokens and word heuristics are no longer
+        // currency signals, and there is no default currency.
+        private val TRUSTED_DOMAIN_CODES = mapOf(
+            "amazon.com" to "USD",
+            "amazon.co.uk" to "GBP",
+            "amazon.de" to "EUR",
+            "amazon.fr" to "EUR",
+            "amazon.it" to "EUR",
+            "amazon.es" to "EUR"
         )
     }
 
@@ -64,14 +59,25 @@ class AmazonReceiptParser : BaseEmailParser() {
     }
 
     override fun parse(emailBody: String, receivedAt: Long): ParsedEmailReceipt? {
+        return when (val outcome = parseWithOutcome(emailBody, receivedAt)) {
+            is EmailParseOutcome.Parsed -> outcome.receipt
+            is EmailParseOutcome.Skipped -> null
+        }
+    }
+
+    override fun parseWithOutcome(emailBody: String, receivedAt: Long): EmailParseOutcome {
         val cleanedBody = cleanHtml(emailBody)
-        
+
         // Extract order total
         val amount = extractOrderTotal(cleanedBody)
         if (amount == null || amount <= 0) {
             Timber.w("Amazon parser: Could not extract order total")
-            return null
+            return EmailParseOutcome.Skipped(EmailParseSkipReason.PARSE_FAILED)
         }
+
+        // RP-18 18-A: unknown currency must skip — never guess a default currency
+        val currency = detectCurrency(cleanedBody, emailBody)
+            ?: return EmailParseOutcome.Skipped(EmailParseSkipReason.CURRENCY_UNRESOLVED)
 
         // Extract order number
         val orderNumber = extractOrderNumber(cleanedBody)
@@ -79,45 +85,30 @@ class AmazonReceiptParser : BaseEmailParser() {
         // Extract date
         val date = extractDate(cleanedBody) ?: receivedAt
 
-        // Detect currency
-        val currency = detectCurrency(emailBody)
-
         // Extract items (best effort)
         val items = extractItems(cleanedBody)
 
         // Calculate confidence based on what we found
         val confidence = calculateConfidence(amount, orderNumber, date != receivedAt, items.isNotEmpty())
 
-        return ParsedEmailReceipt(
-            merchant = "Amazon",
-            amount = amount,
-            currency = currency,
-            date = date,
-            items = items,
-            orderNumber = orderNumber,
-            confidence = confidence
+        return EmailParseOutcome.Parsed(
+            ParsedEmailReceipt(
+                merchant = "Amazon",
+                amount = amount,
+                currency = currency,
+                date = date,
+                items = items,
+                orderNumber = orderNumber,
+                confidence = confidence
+            )
         )
     }
 
     private fun extractOrderTotal(text: String): Double? {
-        for (pattern in ORDER_PATTERNS) {
-            val matcher = pattern.matcher(text)
-            if (matcher.find()) {
-                parseLocalizedAmount(matcher.group(1))?.let { return it }
-            }
-        }
-        
-        // Fallback: look for any reasonable total amount near keywords
-        val fallbackPattern = Pattern.compile(
-            """(?:total|grand\s+total|order\s+total)[^\d]{0,20}([^\n]{1,32})""",
-            Pattern.CASE_INSENSITIVE
-        )
-        val fallbackMatcher = fallbackPattern.matcher(text)
-        if (fallbackMatcher.find()) {
-            return parseLocalizedAmount(fallbackMatcher.group(1))
-        }
-        
-        return null
+        // RP-18 18-A: line-anchored, specific-labels-first hierarchy —
+        // "Order Total"/"Grand Total" beat a bare "Total", and mid-line words
+        // ("Subtotal") or value-less "Total items: 3" lines can never match.
+        return extractTotalAmount(text, listOf("order total", "grand total"))
     }
 
     private fun extractOrderNumber(text: String): String? {
@@ -150,25 +141,11 @@ class AmazonReceiptParser : BaseEmailParser() {
         return dateText?.trim()?.takeIf { it.isNotEmpty() }
     }
 
-    private fun detectCurrency(text: String): String {
-        val textLower = text.lowercase()
-        
-        for ((currency, indicators) in CURRENCY_PATTERNS) {
-            if (indicators.any { textLower.contains(it.lowercase()) }) {
-                return currency
-            }
-        }
-        
-        // Default based on domain
-        return when {
-            text.contains(".co.uk", ignoreCase = true) -> "GBP"
-            text.contains("amazon.com", ignoreCase = true) -> "USD"
-            text.contains(".de", ignoreCase = true) || 
-            text.contains(".fr", ignoreCase = true) ||
-            text.contains(".it", ignoreCase = true) ||
-            text.contains(".es", ignoreCase = true) -> "EUR"
-            else -> "USD" // Default to USD for Amazon
-        }
+    // RP-18 18-A: currency resolution via symbols, word-bounded ISO codes and
+    // trusted Amazon domains only. Returns null when unresolved — the caller
+    // must skip with CURRENCY_UNRESOLVED instead of defaulting.
+    private fun detectCurrency(cleanedBody: String, rawBody: String): String? {
+        return detectCurrencyCode(cleanedBody + rawBody, TRUSTED_DOMAIN_CODES)
     }
 
     private fun extractItems(text: String): List<ReceiptItem> {
@@ -178,6 +155,18 @@ class AmazonReceiptParser : BaseEmailParser() {
         while (matcher.find()) {
             try {
                 val description = matcher.group(1).trim().take(100)
+
+                // RP-18 18-A: aggregate/summary rows and total/tax/vat lines are
+                // never line items.
+                if (isSummaryRow(matcher.group()) ||
+                    description.contains("total", ignoreCase = true) ||
+                    description.contains("subtotal", ignoreCase = true) ||
+                    description.contains("tax", ignoreCase = true) ||
+                    description.contains("vat", ignoreCase = true)
+                ) {
+                    continue
+                }
+
                 val quantity = matcher.group(2).toIntOrNull() ?: 1
                 val priceStr = matcher.group(3).replace(",", "")
                 val unitPrice = priceStr.toDoubleOrNull() ?: continue

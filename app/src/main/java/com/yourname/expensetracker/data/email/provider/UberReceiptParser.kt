@@ -26,19 +26,11 @@ class UberReceiptParser : BaseEmailParser() {
             "uber-eats@uber.com"
         )
 
-        // Amount extraction patterns for different Uber receipt types
-        private val RIDE_AMOUNT_PATTERNS = listOf(
-            Pattern.compile("""Total\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""You paid\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Charged\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Amount charged\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE)
-        )
-
-        private val EATS_AMOUNT_PATTERNS = listOf(
-            Pattern.compile("""Total\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Order Total\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""You paid\s*:?[\s]*(${amountCapturePattern})""", Pattern.CASE_INSENSITIVE)
-        )
+        // RP-18 18-A: amount extraction uses the shared line-anchored,
+        // specific-labels-first hierarchy in BaseEmailParser (see
+        // extractRideAmount / extractEatsAmount). The old unanchored pattern
+        // lists tried a bare "Total" before "Order Total" and could select
+        // unit prices and VAT percentages.
 
         // Trip/Order ID patterns
         private val TRIP_ID_PATTERNS = listOf(
@@ -75,14 +67,12 @@ class UberReceiptParser : BaseEmailParser() {
             )
         )
 
-        private const val amountCapturePattern = "[€\\$£]?\\s*[0-9]+(?:[.,\\s\\u00A0\\u202F\\u2007][0-9]{3})*(?:[.,][0-9]{2})?\\s*(?:€|\\$|£|EUR|USD|GBP)?"
-
-        // Currency detection
-        private val CURRENCY_INDICATORS = mapOf(
-            "USD" to listOf("$", "USD", "US", "United States"),
-            "EUR" to listOf("€", "EUR", "Euro", "Europe", "GR", "DE", "FR", "IT", "ES"),
-            "GBP" to listOf("£", "GBP", "pound", "UK", "United Kingdom", "London")
-        )
+        // RP-18 18-A: currency resolution — symbols and word-bounded ISO codes
+        // only. Country tokens ("US", "GR", "DE", "FR", "IT", "ES", "UK",
+        // "London") and city names are no longer currency signals, and there
+        // is no default currency (Uber operates in USD, EUR and GBP markets,
+        // so "uber.com" is not a trusted currency domain either).
+        private val TRUSTED_DOMAIN_CODES: Map<String, String> = emptyMap()
     }
 
     override fun canParse(sender: String, subject: String, body: String): Boolean {
@@ -93,22 +83,33 @@ class UberReceiptParser : BaseEmailParser() {
     }
 
     override fun parse(emailBody: String, receivedAt: Long): ParsedEmailReceipt? {
+        return when (val outcome = parseWithOutcome(emailBody, receivedAt)) {
+            is EmailParseOutcome.Parsed -> outcome.receipt
+            is EmailParseOutcome.Skipped -> null
+        }
+    }
+
+    override fun parseWithOutcome(emailBody: String, receivedAt: Long): EmailParseOutcome {
         val cleanedBody = cleanHtml(emailBody)
-        
+
         // Determine if this is Uber Eats or Uber Ride
         val isEats = isUberEats(cleanedBody, emailBody)
-        
+
         // Extract amount
         val amount = if (isEats) {
             extractEatsAmount(cleanedBody)
         } else {
             extractRideAmount(cleanedBody)
         }
-        
+
         if (amount == null || amount <= 0) {
             Timber.w("Uber parser: Could not extract amount")
-            return null
+            return EmailParseOutcome.Skipped(EmailParseSkipReason.PARSE_FAILED)
         }
+
+        // RP-18 18-A: unknown currency must skip — never guess a default currency
+        val currency = detectCurrency(cleanedBody, emailBody)
+            ?: return EmailParseOutcome.Skipped(EmailParseSkipReason.CURRENCY_UNRESOLVED)
 
         // Extract trip/order ID
         val orderNumber = extractTripId(cleanedBody)
@@ -116,23 +117,22 @@ class UberReceiptParser : BaseEmailParser() {
         // Extract date
         val date = extractDate(cleanedBody, receivedAt) ?: receivedAt
 
-        // Detect currency
-        val currency = detectCurrency(cleanedBody, emailBody)
-
         // Extract merchant info (driver name for rides, restaurant for eats)
         val merchant = extractMerchant(cleanedBody, isEats)
 
         // Calculate confidence
         val confidence = calculateConfidence(amount, orderNumber, date != receivedAt, merchant)
 
-        return ParsedEmailReceipt(
-            merchant = merchant,
-            amount = amount,
-            currency = currency,
-            date = date,
-            items = emptyList(), // Uber receipts don't typically have itemized lists
-            orderNumber = orderNumber,
-            confidence = confidence
+        return EmailParseOutcome.Parsed(
+            ParsedEmailReceipt(
+                merchant = merchant,
+                amount = amount,
+                currency = currency,
+                date = date,
+                items = emptyList(), // Uber receipts don't typically have itemized lists
+                orderNumber = orderNumber,
+                confidence = confidence
+            )
         )
     }
 
@@ -146,35 +146,15 @@ class UberReceiptParser : BaseEmailParser() {
     }
 
     private fun extractRideAmount(text: String): Double? {
-        extractAmountFromPatterns(text, RIDE_AMOUNT_PATTERNS)?.let { return it }
-        
-        // Fallback: look for amount near "total" keyword
-        val fallbackPattern = Pattern.compile(
-            """total[^\d]{0,30}(${amountCapturePattern})""",
-            Pattern.CASE_INSENSITIVE
-        )
-        val matcher = fallbackPattern.matcher(text)
-        if (matcher.find()) {
-            return parseLocalizedAmount(matcher.group(1))
-        }
-        
-        return null
+        // RP-18 18-A: line-anchored specific payment labels, then a bare
+        // "total" line, then the word-bounded keyword fallback.
+        return extractTotalAmount(text, listOf("amount charged", "you paid", "charged"))
     }
 
     private fun extractEatsAmount(text: String): Double? {
-        extractAmountFromPatterns(text, EATS_AMOUNT_PATTERNS)?.let { return it }
-        return extractRideAmount(text) // Fallback to ride patterns
-    }
-
-    private fun extractAmountFromPatterns(text: String, patterns: List<Pattern>): Double? {
-        for (pattern in patterns) {
-            val matcher = pattern.matcher(text)
-            if (matcher.find()) {
-                parseLocalizedAmount(matcher.group(1))?.let { return it }
-            }
-        }
-
-        return null
+        // RP-18 18-A: "Order Total" (specific) must win over a bare "Total".
+        return extractTotalAmount(text, listOf("order total", "you paid"))
+            ?: extractRideAmount(text) // Fallback to ride labels
     }
 
     private fun extractTripId(text: String): String? {
@@ -235,21 +215,11 @@ class UberReceiptParser : BaseEmailParser() {
         return null
     }
 
-    private fun detectCurrency(cleanedBody: String, rawBody: String): String {
-        val text = (cleanedBody + rawBody).uppercase()
-        
-        for ((currency, indicators) in CURRENCY_INDICATORS) {
-            if (indicators.any { indicator -> containsBoundedToken(text, indicator.uppercase()) }) {
-                return currency
-            }
-        }
-        
-        // Default based on common Uber markets
-        return when {
-            text.contains("USD") || text.contains("$") -> "USD"
-            text.contains("£") || text.contains("UK") -> "GBP"
-            else -> "EUR" // Default to EUR for European Uber operations
-        }
+    // RP-18 18-A: currency resolution via symbols and word-bounded ISO codes
+    // only (see TRUSTED_DOMAIN_CODES — intentionally empty for Uber). Returns
+    // null when unresolved — the caller must skip with CURRENCY_UNRESOLVED.
+    private fun detectCurrency(cleanedBody: String, rawBody: String): String? {
+        return detectCurrencyCode(cleanedBody + rawBody, TRUSTED_DOMAIN_CODES)
     }
 
     private fun extractMerchant(text: String, isEats: Boolean): String {
