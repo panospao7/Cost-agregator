@@ -52,15 +52,17 @@ class ComputeDashboardWidgetsHistoricalMeanPolicyTest {
 
         val healthScoreV2 = mockk<com.yourname.expensetracker.domain.health.FinancialHealthScoreV2>(relaxed = true)
         coEvery { healthScoreV2.calculateHealthScore(any(), any()) } returns
-            com.yourname.expensetracker.domain.health.FinancialHealthResult(
-                overallScore = 50,
-                savingsRateScore = 50,
-                runwayScore = 50,
-                budgetAdherenceScore = 50,
-                billReliabilityScore = 50,
-                factorContributions = emptyList(),
-                trend = com.yourname.expensetracker.domain.health.HealthTrend.STABLE,
-                recommendation = null
+            com.yourname.expensetracker.domain.health.HealthScoreOutcome.Available(
+                com.yourname.expensetracker.domain.health.FinancialHealthResult(
+                    overallScore = 50,
+                    savingsRateScore = 50,
+                    runwayScore = 50,
+                    budgetAdherenceScore = 50,
+                    billReliabilityScore = 50,
+                    factorContributions = emptyList(),
+                    trend = com.yourname.expensetracker.domain.health.HealthTrend.STABLE,
+                    recommendation = null
+                )
             )
         val currencySettingsRepository = mockk<CurrencySettingsRepository>(relaxed = true)
         coEvery { currencySettingsRepository.resolveHomeCurrency() } returns

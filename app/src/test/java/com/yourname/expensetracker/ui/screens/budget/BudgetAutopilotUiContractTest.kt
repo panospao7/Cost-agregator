@@ -3,13 +3,13 @@ package com.yourname.expensetracker.ui.screens.budget
 import androidx.arch.core.executor.testing.InstantTaskExecutorRule
 import com.yourname.expensetracker.data.database.entity.Budget
 import com.yourname.expensetracker.data.database.entity.BudgetPeriod
+import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.repository.BudgetRepository
 import com.yourname.expensetracker.data.repository.CategoryRepository
 import com.yourname.expensetracker.data.repository.HomeCurrencyUnavailableException
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotEngine
 import com.yourname.expensetracker.domain.budget.BudgetAutopilotRecommendations
 import com.yourname.expensetracker.domain.budget.BudgetRecommendationQuality
-import com.yourname.expensetracker.domain.budget.BudgetTrend
 import com.yourname.expensetracker.domain.budget.CategoryBudgetRecommendation
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.groups.SharedExpenseBudgetOffsetEngine
@@ -24,6 +24,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -101,7 +102,7 @@ class BudgetAutopilotUiContractTest {
      * eager background collector so the StateFlow is active for assertions,
      * mirroring what the Compose screen does while visible.
      */
-    private fun startUiStateCollector() {
+    private fun TestScope.startUiStateCollector() {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect { }
         }
