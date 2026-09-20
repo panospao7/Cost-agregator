@@ -3,6 +3,7 @@ package com.yourname.expensetracker.domain.budget
 import com.yourname.expensetracker.data.database.dao.MonthlySpendingTotal
 import com.yourname.expensetracker.data.database.entity.BudgetTrend
 import com.yourname.expensetracker.data.repository.MultiCurrencyRepository
+import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
 import com.yourname.expensetracker.domain.core.money.CategoryMonthlySpend
 import com.yourname.expensetracker.domain.core.money.SpendScope
 import com.yourname.expensetracker.domain.util.TimePeriodUtils
