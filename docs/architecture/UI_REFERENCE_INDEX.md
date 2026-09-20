@@ -1,6 +1,6 @@
 # ExpenseTracker Frontend UI/UX - Quick Reference Index
 
-**Scout Analysis Complete** | Last Updated: September 7, 2026
+**Scout Analysis Complete** | Last Updated: September 21, 2026
 
 ---
 
@@ -354,6 +354,7 @@ Scaffold(
 1. **DebugScreen**: Raw notifications, AI runtime diagnostics, database tools
 2. **CategorizationDebugScreen**: ML model performance metrics
 3. **DebugViewerScreen**: Raw data viewer
+4. **SourceLinkDebugScreen**: Source-link diagnostics (no in-app entry point as of 2026-09-21)
 
 **Access**: Hidden in menu, accessible via Settings (debug build only)
 
@@ -539,8 +540,6 @@ Column {
 <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 <uses-permission android:name="android.permission.WAKE_LOCK" />
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
 <uses-permission android:name="android.permission.INTERNET" />
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 ```
@@ -556,7 +555,7 @@ Column {
 **State Management**: ViewModel + StateFlow pattern  
 **Navigation**: Sealed class + CompositionLocal  
 
-**Status**: ✅ Complete, consistent, and well-organized (index refreshed against source on 2026-09-07)
+**Status**: ✅ Complete, consistent, and well-organized (index refreshed against source on 2026-09-21)
 
 ---
 

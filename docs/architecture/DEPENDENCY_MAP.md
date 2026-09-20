@@ -44,10 +44,14 @@ Android NotificationListener
   ▼
 NotificationCaptureService              [service/NotificationCaptureService.kt]
   │
-  ├──► NotificationFilter               [domain/privacy/NotificationPrivacyGate.kt]
-  │     └──► PrivacyCapability.NOTIFICATION_CAPTURE
+  ├──► NotificationFilter               [service/NotificationFilter.kt]
+  ├──► NotificationCaptureGate           [domain/notification/capture/NotificationCaptureGate.kt]
+  ├──► NotificationCaptureDeduper        [domain/notification/capture/NotificationCaptureDeduper.kt]
+  ├──► NotificationIntakePayloadRepairer  [domain/notification/capture/NotificationIntakePayloadRepairer.kt]
+  ├──► NotificationIntakeRecoveryScheduler [domain/notification/capture/NotificationIntakeRecoveryScheduler.kt]
   │
   ├──► PrivacyGate.check()              [domain/privacy/CompositePrivacyGate.kt]
+  │     └──► PrivacyCapability.NOTIFICATION_CAPTURE
   │
   ├──► RestoreMaintenanceMode            [data/backup/RestoreMaintenanceMode.kt]
   │     └── isActive() → pauses capture during restore
@@ -55,13 +59,9 @@ NotificationCaptureService              [service/NotificationCaptureService.kt]
   ▼
 NotificationIntakeCoordinator           [domain/notification/capture/NotificationIntakeCoordinator.kt]
   │
-  ├──► NotificationCaptureGate           [domain/notification/capture/NotificationCaptureGate.kt]
-  ├──► NotificationCaptureDeduper        [domain/notification/capture/NotificationCaptureDeduper.kt]
   ├──► NotificationTransientPayloadCrypto [domain/notification/capture/NotificationTransientPayloadCrypto.kt]
   ├──► NotificationIntakeDao             [data/database/dao/NotificationIntakeDao.kt]
   │     └──► NotificationIntakeEntity    [data/database/entity/NotificationIntakeEntity.kt]
-  ├──► NotificationIntakePayloadRepairer  [domain/notification/capture/NotificationIntakePayloadRepairer.kt]
-  ├──► NotificationIntakeRecoveryScheduler [domain/notification/capture/NotificationIntakeRecoveryScheduler.kt]
   │
   ▼
 NotificationIntakeWorker                [worker/NotificationIntakeWorker.kt]
@@ -120,7 +120,7 @@ ReviewQueueRepository                    [data/repository/ReviewQueueRepository.
 | `ReviewViewModel` | `ui/screens/review/ReviewViewModel.kt` | `NotificationRepository`, `ReviewQueueRepository` |
 | `DebugViewModel` | `ui/screens/debug/DebugViewModel.kt` | `NotificationRepository` |
 | `CategorizationDebugViewModel` | `ui/screens/debug/CategorizationDebugViewModel.kt` | `CategorizationEngine` |
-| `NotificationIntakeCoordinator` | `domain/notification/capture/NotificationIntakeCoordinator.kt` | `NotificationCaptureGate`, `NotificationCaptureDeduper`, `NotificationIntakeDao` |
+| `NotificationIntakeCoordinator` | `domain/notification/capture/NotificationIntakeCoordinator.kt` | `NotificationIntakeDao`, `NotificationTransientPayloadCrypto` |
 | `NotificationIntakeWorker` | `worker/NotificationIntakeWorker.kt` | `NotificationIntakeDao`, `NotificationRepository`, `NotificationProcessingPipeline` |
 
 ---
@@ -212,7 +212,7 @@ ViewModel
 
 ### Targeted Update Methods (Phase C migration)
 
-TransactionLifecycleCoordinator now provides 8 targeted single-field/bulk update methods,
+TransactionLifecycleCoordinator now provides 10 targeted single-field/bulk update methods,
 each writing TransactionEvent.UPDATED or BULK_UPDATED with before/after snapshots:
 
 | Method | Updates | Event |
@@ -223,6 +223,8 @@ each writing TransactionEvent.UPDATED or BULK_UPDATED with before/after snapshot
 | updateTransferDetails(expenseId, direction, accountName) | transferDirection, transferAccountName | UPDATED |
 | updateOwnership(expenseId, ...) | isNotMine, ownerName, isSharedExpense, sharedWithName, mySharePercentage, myShareAmount | UPDATED |
 | updateLocation(expenseId, lat, lng, ...) | latitude, longitude, locationSource, placeId, resolvedAddress | UPDATED |
+| updateTypeAndTransferDetails(expenseId, newType, direction, accountName) | transactionType, transferDirection, transferAccountName | UPDATED |
+| updateOwnershipDbOnlyV2(expenseId, ...) | ownership fields (DB-only variant, no lifecycle event) | — |
 | bulkUpdateCategory(merchant, newCategoryId) | categoryId (all matching rows) | BULK_UPDATED |
 | bulkUpdateMerchant(oldMerchant, newMerchant) | merchant, merchantKey, dedupeKey (all matching rows) | BULK_UPDATED |
 
@@ -231,7 +233,7 @@ each writing TransactionEvent.UPDATED or BULK_UPDATED with before/after snapshot
 TransactionSideEffectDispatcher is now a **compatibility facade** that delegates
 to TransactionSideEffectPlanner + PostCommitActionRunner. The planner builds
 typed PostCommitAction batches; the runner executes them after the DB transaction
-commits. The full side-effect framework lives in `domain/sideeffect/` (19 files).
+commits. The full side-effect framework lives in `domain/sideeffect/` (20 files).
 
 ```
 TransactionLifecycleCoordinator.createExpense()
@@ -271,7 +273,6 @@ ReceiptLifecycleCoordinator              [domain/receipt/lifecycle/ReceiptLifecy
        │
        ├──► ReceiptInputValidator        — URI/MIME/size validation
        ├──► ReceiptAssetStore            — File persistence + SHA-256 hash
-       ├──► ReceiptOcrService            — OCR extraction
        ├──► ReceiptParser                — Structured parsing
        ├──► ReceiptDuplicateDetector     — 3-signal dedup (hash/text/semantic)
        ├──► ScannedReceiptDao            — Save entity
@@ -297,22 +298,26 @@ PostCommitActionRunner                   [domain/sideeffect/PostCommitActionRunn
 
 BankStatementLifecycleProcessor           [domain/receipt/lifecycle/BankStatementLifecycleProcessor.kt]
   │  Processes bank statement imports through the receipt lifecycle
-  ├──► ReceiptParser
+  ├──► BankStatementParser
   ├──► ReceiptAssetStore
-  ├──► ReceiptInputValidator
+  ├──► ReceiptDuplicateDetector
   ├──► ScannedReceiptDao
-  └──► ReceiptEventDao
+  └──► ReceiptLifecycleEventWriter
 
 ReceiptLinkService                        [domain/receipt/lifecycle/ReceiptLinkService.kt]
-       │   Constructor dependencies (9 total):
+       │   Constructor dependencies (13 total):
        │   ├──► AppDatabase              — Transactional coordination
        │   ├──► ReceiptExpenseLinkDao    — Many-to-many link table
-       │   ├──► ReceiptEventDao          — Link/unlink audit events
+       │   ├──► ReceiptLifecycleEventWriter — Link/unlink audit events
        │   ├──► ExpenseDao               — Cross-reference
        │   ├──► ScannedReceiptDao        — Verify receipt exists
        │   ├──► ReceiptItemCategorizationDao — RCP-30 category propagation
        │   ├──► WarrantyDao              — Auto-create warranty on link
        │   ├──► ReturnWindowDao          — Auto-create return window on link
+       │   ├──► DatabaseWriteBarrier     — Restore-safety gate
+       │   ├──► SourceLinkWriter         — Provenance link rows
+       │   ├──► ExpenseCategoryAssignmentPort — Category assignment
+       │   ├──► DomainTransactionRunner  — Atomic state+event writes
        │   └──► TimeProvider             — Timestamps for link events
        │
        │   Behavioral notes:
@@ -383,7 +388,7 @@ RecurringExpensesScreen
   │
   ▼
 RecurringLifecycleCoordinator             [domain/recurring/lifecycle/RecurringLifecycleCoordinator.kt]
-   │   Constructor dependencies (10 total):
+   │   Constructor dependencies (15 total):
    │   ├──► RecurringOccurrenceExpander           — Expand rule → occurrence candidates
    │   ├──► OccurrenceConflictResolver            — Resolve candidates vs actual expenses
    │   ├──► RecurringOccurrenceMaterializer       — Persist + create reminders
@@ -498,15 +503,16 @@ DatabaseBackupRepositoryImpl              [data/repository/DatabaseBackupReposit
   ├──► BackupEncryptionService            — AES-256-GCM / PBKDF2
   ├──► ExportAnonymizer                   — Strips raw OCR/notification text
   ├──► PrivacyGate.check(RAWBACKUP_EXPORT | ENCRYPTED_BACKUP)
-  ├──► RestoreJournal                     — Crash-safe 9-state journal (ASSETS_RESTORING,
-  │     EXPORTING, RESTORING_DATABASE, RESTORING_ASSETS, FINALIZING, COMPLETED, FAILED,
-  │     CANCELLING, CANCELLED)
+  ├──► RestoreJournal                     — Crash-safe 9-state journal (PREPARING,
+  │     STAGED, SAFETY_BACKUP_CREATED, SWAPPING, VERIFYING, ASSETS_RESTORING,
+  │     ROLLING_BACK, COMPLETE, FAILED)
   └──► RestoreMaintenanceMode             — Pauses 7 workers during restore (uses
-        WORKER_REGISTRY; new BACKUP_EXPORTING mode; pauseAllWorkers()/resumeAllWorkers()
-        via WorkerRegistry.entries)
+        WorkerRegistry; new BACKUP_EXPORTING mode; pauseAllWorkers() /
+        scheduleAllWorkers() → WorkerRegistry.scheduleAll())
        │
        ▼
-  TransactionLifecycleCoordinator         — Restore uses SKIP_FOR_DEBUG_RESTORE dedup mode
+  Restore writes bypass the lifecycle coordinator (raw restore path;
+  integrity via BackupVerifier + RestoreDatabaseOpener)
 
 AppStartupCoordinator
   └──► checkRestoreJournal()              — Crash recovery on every startup
@@ -584,11 +590,11 @@ PrivacyDecision.FailClosed(reason)         [domain/privacy/PrivacyDecision.kt]
   ├──► CloudReviewExplanationService
   ├──► CloudWarrantyExtractionService
   ├──► SmartReceiptAssistService
-  ├──► DailyBriefingWorker
-  ├──► DataRetentionWorker
-  ├──► LocationBackfillWorker
+  ├──► DailyBriefingWorker                   (via WorkerExecutionGuard)
+  ├──► DataRetentionWorker                   (via WorkerExecutionGuard)
+  ├──► LocationBackfillWorker                (via WorkerExecutionGuard)
   ├──► OverpassNearbyService
-  └──► AndroidForegroundLocationProvider
+  └──► LocationResolver (domain/location)    — GPS / geocoding / Overpass checks
 ```
 
 ### AccountingExportPolicy Dependency Chain (2026-06-01)
@@ -699,7 +705,9 @@ PrivacyAuditEvent → PrivacyAuditDao       [data/database/entity + dao]
 
 PrivacyBlocked                            [domain/privacy/PrivacyBlocked.kt]
   │  Sealed interface with concrete subclasses for standardized privacy-denied
-  │  states. Returned by all 4 privacy gates instead of ad-hoc Denied(reason).
+  │  states. Derived from gate PrivacyDecision results via toPrivacyBlocked()
+  │  (single mapper entry point); used by cloud AI providers and UI instead of
+  │  ad-hoc Denied(reason) strings.
   │
   ├──► CloudAiDisabled
   ├──► ReceiptImageUploadDisabled
@@ -730,7 +738,7 @@ RedactionSanitizer                        [domain/privacy/RedactionSanitizer.kt]
 
 RawContentSanitizer                       [domain/privacy/RawContentSanitizer.kt]
   │  (Sanitizes raw OCR text and notification content based on RawStorageMode)
-  │  (Used by ReceiptLifecycleCoordinator and EmailReceiptIngestionService)
+  │  (Used by ReceiptLifecycleCoordinator and NotificationProcessingPipeline)
   │
   ▼
 RawStorageMode                            [domain/privacy/RawStorageMode.kt]
@@ -743,7 +751,7 @@ RawSourceType                             [domain/privacy/RawSourceType.kt]
 
 EffectiveCloudAiPolicy                    [domain/privacy/EffectiveCloudAiPolicy.kt]
   │  (Resolves effective cloud AI policy based on settings + capability)
-  │  (Used by HybridRouter via CloudPayloadPolicy)
+  │  (Consumed by CloudPayloadPolicy; enforced in hybrid cloud AI services)
 
 CloudPayloadPolicy                        [domain/privacy/CloudPayloadPolicy.kt]
   │  (Interface — replaces CloudPayloadRedactor — controls which fields are sent to cloud AI)
@@ -791,7 +799,7 @@ PrivacyAuditContext                        [domain/privacy/PrivacyAuditContext.k
 | `ENCRYPTED_BACKUP` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
 | `CLOUD_AI_WARRANTY_EXTRACTION` | `CloudWarrantyExtractionService` | `data/ai/provider/CloudWarrantyExtractionService.kt` |
 | `CLOUD_AI_RECEIPT_ITEM_CATEGORIZATION` | `HybridReceiptItemCategorizationService` | `data/ai/provider/HybridReceiptItemCategorizationService.kt` |
-| `DEVICE_GPS_LOCATION` | `AndroidForegroundLocationProvider` | `data/location/AndroidForegroundLocationProvider.kt` |
+| `DEVICE_GPS_LOCATION` | `LocationResolver` | `domain/location/LocationResolver.kt` |
 | `OVERPASS_API` | `OverpassNearbyService` | `data/location/OverpassNearbyService.kt` |
 | `BACKUP_EXPORT` | `DatabaseBackupRepositoryImpl` | `data/repository/DatabaseBackupRepositoryImpl.kt` |
 
@@ -881,7 +889,7 @@ MainApplication (@HiltAndroidApp)
                     │     └──► ExpenseDao, MerchantNormalizationDao
                     │
                     ├── WarrantyExpirationWorker          [service/warranty/WarrantyExpirationWorker.kt]
-                    │     └──► WarrantyDao, WarrantyReminderDeliveryDao, NotificationService
+                    │     └──► WarrantyTrackerRepository, WarrantyReminderDeliveryDao, NotificationService
                     │
                     ├── DataRetentionWorker               [data/privacy/DataRetentionWorker.kt]
                     │     └──► RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao
@@ -951,7 +959,7 @@ WorkerRegistry                            [domain/workers/WorkerRegistry.kt]
       Registry entries:
         location_backfill       → LocationBackfillWorker.schedule()
         merchant_key_backfill   → MerchantKeyBackfillWorker.schedule()
-        warranty_expiration     → WarrantyExpirationWorker.schedule()
+        warranty_expiration_check → WarrantyExpirationWorker.schedule()
         data_retention          → DataRetentionWorker.schedule()
         bill_reminder_periodic  → BillReminderWorker.schedule()
         receipt_matching        → ReceiptMatchingWorker.schedule()
@@ -963,22 +971,23 @@ WorkerRegistry                            [domain/workers/WorkerRegistry.kt]
 
 ### Worker → DAO Dependencies
 
-All 7 workers individually inject and check **`RestoreMaintenanceMode.isWritesAllowed()`**
-before performing write operations, ensuring workers yield during an active restore.
-Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps execution with
-**`WorkerRunLogger`** lifecycle tracking (automatically records start/success/skipped/retry/failure).
+The restore check (**`RestoreMaintenanceMode.isWritesAllowed()`**) now runs inside
+**`WorkerExecutionGuard.runGuarded()`** — workers inject the guard, not the
+maintenance mode directly — ensuring workers yield during an active restore.
+The guard also wraps execution with **`WorkerRunLogger`** lifecycle tracking
+(automatically records start/success/skipped/retry/failure).
 
 | Worker | DAO Dependencies | Also Injects |
 |--------|-----------------|--------------|
-| `DailyBriefingWorker` | AiArtifactDao | RestoreMaintenanceMode, WorkerExecutionGuard, PrivacyGate |
-| `LocationBackfillWorker` | ExpenseDao | RestoreMaintenanceMode, WorkerExecutionGuard, PrivacyGate |
-| `MerchantKeyBackfillWorker` | ExpenseDao, MerchantNormalizationDao | RestoreMaintenanceMode, WorkerExecutionGuard |
-| `WarrantyExpirationWorker` | WarrantyDao, WarrantyReminderDeliveryDao | RestoreMaintenanceMode, WorkerExecutionGuard |
-| `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao | RestoreMaintenanceMode, WorkerExecutionGuard |
-| `ReceiptMatchingWorker` | ScannedReceiptDao, ExpenseDao, ReceiptExpenseLinkDao | RestoreMaintenanceMode, WorkerExecutionGuard |
-| `DataRetentionWorker` | RawNotificationDao, ScannedReceiptDao, PrivacyAuditDao | RestoreMaintenanceMode, WorkerExecutionGuard |
+| `DailyBriefingWorker` | AiArtifactDao (via AiArtifactRepository) | WorkerExecutionGuard |
+| `LocationBackfillWorker` | ExpenseDao (via ExpenseRepository) | WorkerExecutionGuard |
+| `MerchantKeyBackfillWorker` | ExpenseDao, MerchantNormalizationDao (via ExpenseRepository) | WorkerExecutionGuard |
+| `WarrantyExpirationWorker` | WarrantyReminderDeliveryDao (direct; warranty data via WarrantyTrackerRepository) | WorkerExecutionGuard |
+| `BillReminderWorker` | RecurringOccurrenceDao, RecurringReminderDeliveryDao (via RecurringLifecycleCoordinator) | WorkerExecutionGuard |
+| `ReceiptMatchingWorker` | ScannedReceiptDao, ExpenseDao, ReceiptExpenseLinkDao (via ReceiptRepository / ReceiptMatchLifecycleService) | WorkerExecutionGuard |
+| `DataRetentionWorker` | PrivacyAuditDao (post-purge audit, direct); purges via RetentionRegistry targets | WorkerExecutionGuard |
 | `SourceLinkBackfillWorker` | RawNotificationDao, ExpenseDao, ScannedReceiptDao, PendingReviewDao, ReceiptExpenseLinkDao, EmailReceiptDao, EntitySourceLinkDao | DatabaseWriteBarrier, TimeProvider |
-| `NotificationIntakeWorker` | NotificationIntakeDao, NotificationRepository | DatabaseWriteBarrier, WorkerExecutionGuard, NotificationTransientPayloadCrypto, NotificationFilter |
+| `NotificationIntakeWorker` | NotificationIntakeDao (direct + via NotificationRepository) | WorkerExecutionGuard, PrivacyGate, NotificationTransientPayloadCrypto |
 
 ---
 
@@ -1001,7 +1010,7 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 
 | Module | File | Provided Types | Consumed By |
 |--------|------|---------------|-------------|
-| `AiModule` | `di/AiModule.kt` | AI repositories (6), AI services (10), AI DAOs (3), `RedactionSanitizer`, `AiPolicy`, `AiCapabilityRouter`, `AiWorkScheduler`, semantic detector, priority scorer, notification parser, `HybridRouter` (consolidates routing via `AiCapabilityRouter` + `AiSettingsRepository`), `CloudPayloadPolicy` (replaces `CloudPayloadRedactor`) | AI ViewModels, Workers, use cases |
+| `AiModule` | `di/AiModule.kt` | AI repositories (6), AI services (10), AI DAOs (3), `RedactionSanitizer`, `AiPolicy`, `AiCapabilityRouter`, `AiWorkScheduler`, semantic detector, priority scorer, notification parser, `CloudPayloadPolicy` (replaces `CloudPayloadRedactor`) | AI ViewModels, Workers, use cases |
 | `OcrImprovementsModule` | `di/OcrImprovementsModule.kt` | `EnhancedMerchantExtractor`, `OcrLanguageProcessor`, `OcrPreprocessingPipeline` | Receipt OCR pipeline |
 | `NaturalLanguageModule` | `di/NaturalLanguageModule.kt` | `NaturalLanguageExpenseQueryRepository` → impl | `NaturalLanguageSearchViewModel` |
 
@@ -1015,7 +1024,7 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 | `DashboardAnomalyModule` | `di/DashboardAnomalyModule.kt` | `AnomalyAlertRepository` (domain + dashboard) | Analytics, dashboard |
 | `SavingsModule` | `di/SavingsModule.kt` | `SmartSavingsEngine`, `AutomatedSavingsRuleStateRepository`, `SavingsContributionHistoryRepository`, `AutomatedSavingsRuleEngine`, `SavingsGamificationEngine` | Savings ViewModels |
 | `SavingsRepositoryBindingsModule` | `di/SavingsRepositoryBindingsModule.kt` | `DomainSavingsGoalRepository` binding | Savings engines |
-| `GroupsModule` | `di/GroupsModule.kt` | `GroupsRepository`, `SharedExpenseDataPort`, Use cases (3); auto-provided: `GroupLifecycleCoordinator`, `GroupBalanceCalculator` | Groups ViewModel |
+| `GroupsModule` | `di/GroupsModule.kt` | `GroupsRepository`, `SharedExpenseDataPort`, Use cases (3): `AddGroupExpenseUseCase`, `DeleteGroupUseCase`, `DeleteGroupMemberUseCase` | Groups ViewModel |
 | `TaxModule` | `di/TaxModule.kt` | `TaxConfiguration` → `GreeceTaxConfiguration`, `TaxRateProvider` → `DemoTaxRateProvider` | Tax ViewModel |
 | `ExportModule` | `di/ExportModule.kt` | `QuickBooksIIFExporter`, `XeroCSVExporter`, `FreshBooksExporter` | Export ViewModel |
 | `ReminderSettingsModule` | `di/ReminderSettingsModule.kt` | `BillReminderSettingsRepository` → impl (P4) | BillReminderWorker, BillRemindersViewModel |
@@ -1026,7 +1035,7 @@ Workers now also use **`WorkerExecutionGuard.runGuarded()`** which wraps executi
 |--------|------|---------------|-------------|
 | `NetworkModule` | `di/NetworkModule.kt` | `@LocationHttpClient`, `@CloudAiHttpClient` | Geocoding services, AI providers |
 | `SecurityModule` | `di/SecurityModule.kt` | `SecureKeyStorage`, `NotificationTransientKeyProvider` → `AndroidKeystoreNotificationTransientKeyProvider` | AI providers, encryption, notification capture |
-| `PrivacyModule` | `di/PrivacyModule.kt` | `CompositePrivacyGate` (incl. `ExportPrivacyGate`), `PrivacyAuditLogger`, `PrivacySettingsRepository`, `CloudPayloadPolicy`, `CloudPayloadRedactor`, `SensitiveHashingService`, `RedactionSanitizer` | Every gated capability, backup |
+| `PrivacyModule` | `di/PrivacyModule.kt` | `CompositePrivacyGate` (incl. `ExportPrivacyGate`), `PrivacyAuditLogger`, `PrivacySettingsRepository`, `CloudPayloadPolicy`, `CloudPayloadRedactor`, `SensitiveHashingService` | Every gated capability, backup |
 | `BackupRepositoryModule` | `di/BackupRepositoryModule.kt` | `DatabaseBackupRepository` → impl; binds `MaintenanceSafeDiagnosticSink`, `RestoreDatabaseOpener` | BackupRestoreViewModel |
 | `ParserModule` | `di/ParserModule.kt` | `GreekBankParser` | Notification parsing |
 | `ReceiptParsingModule` | `di/ReceiptParsingModule.kt` | `MerchantRulesPolicy` binding | Receipt parsing |
@@ -1114,15 +1123,14 @@ TimeProvider / MonotonicTimeProvider       [domain/util/]
 | `ExpenseGroup` | `ExpenseGroupDao` | `GroupsRepositoryImpl`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
 | `GroupMember` | `GroupMemberDao` | `GroupsRepositoryImpl`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
 | `GroupExpense` | `GroupExpenseDao` | `GroupsRepositoryImpl`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
-| `GroupSettlementEntity` | `GroupSettlementDao` | `GroupLifecycleCoordinator` → recordSettlement(), `GroupBalanceCalculator` | SharedExpenseGroupsVM |
-| `GroupLifecycleEventEntity` | `GroupLifecycleEventDao` | `GroupLifecycleCoordinator` | Group lifecycle audit log |
-| *(n/a)* | *(n/a)* | `GroupLifecycleCoordinator` → `GroupTransactionCoordinator` (domain interface), `TimeProvider`, `CurrencySettingsRepository` | Groups ViewModel |
+| `GroupSettlementEntity` | `GroupSettlementDao` | `SettlementCalculator`, `GroupBalanceCalculator` | SharedExpenseGroupsVM |
+| `GroupLifecycleEventEntity` | `GroupLifecycleEventDao` | *(none — GroupLifecycleCoordinator removed 2026-09)* | Group lifecycle audit log |
 | `SplitTemplate` | `SplitTemplateDao` | (Direct usage) | VisualSplitVM |
 | `SplitItemAssignment` | `SplitItemAssignmentDao` | (Direct usage) | VisualSplitVM |
 | `SpendingChallengeEntity` | `SpendingChallengeDao` | `SpendingChallengeRepository` | SpendingChallengesVM |
 | `PromptState` | `PromptStateDao` | `PromptStateRepository` | Savings prompts |
 | `BackgroundJobRun` | `BackgroundJobRunDao` | Workers directly, `WorkerRunLoggerImpl` | Worker tracking |
-| `PipelineDiagnosticEvent` | `PipelineDiagnosticEventDao` | `NotificationProcessingPipeline` | Cross-pipeline diagnostics |
+| `PipelineDiagnosticEvent` | `PipelineDiagnosticEventDao` | `DiagnosticEventWriter` (via `NotificationDiagnosticEmitter`), `DiagnosticsRepository` | Cross-pipeline diagnostics |
 | `OperationRun` | `OperationRunDao` | `CompositeOperationRunRecorder` | Durable operation run tracking |
 | `OperationRunEvent` | `OperationRunEventDao` | `CompositeOperationRunRecorder` | Durable operation run events |
 | `EntitySourceLink` | `EntitySourceLinkDao` | `SourceLinkWriterImpl`, `SourceLinkBackfillWorker` | Provenance tracing |
@@ -1238,7 +1246,7 @@ Domain AI Services (interfaces)
         └──► HybridReceiptItemCategorizationService
 
 All Hybrid services use:
-  ├──► HybridRouter (consolidates AiCapabilityRouter + CloudPayloadPolicy)
+  ├──► AiCapabilityRouter            — Cloud/OnDevice/NoOp provider selection
   ├──► PrivacyGate.check()           — Respects user privacy settings
   └──► CloudPayloadPolicy            — Replaces CloudPayloadRedactor, controls field-level payload filtering
 ```
@@ -1296,7 +1304,7 @@ All Hybrid services use:
 > **Generated:** Manual analysis of 1100+ source files across 3 layers (UI/Domain/Data),  
 > 33 Hilt @Module files (32 in `di/` + 1 `EmptyStatePresentationModule.kt`), 41 @HiltViewModel (40 files + 1 inline), 46+ repositories, ~68 DAOs, 70 entities.  
 > DB schema version: v148 (via `DatabaseSchemaPolicy.CURRENT_VERSION`)  
-> **Last updated:** 2026-09-07  
+> **Last updated:** 2026-09-21  
 > **Next update:** Regenerate when significant architectural changes occur (new module, major refactor).
 
 ---
@@ -1312,7 +1320,7 @@ Added as nullable field on BackupManifest.
 
 ### CloudPayloadPolicy (Segment 28)
 Replaces CloudPayloadRedactor. Controls field-level payload filtering for cloud AI calls.
-Implemented via HybridRouter consolidation in AiModule.
+Provided via AiModule; hybrid services consume it through AiCapabilityRouter.
 
 ### ForecastDataQuality (Segment 1)
 Additive data class (no consumer break) with fields: isPartial,
@@ -1359,8 +1367,9 @@ GroupBalanceCalculator                    [domain/groups/GroupBalanceCalculator.
        settlementsPaid, settlementsReceived, netBalance, isSettled
 
   Consumed by:
-  └──► GroupLifecycleCoordinator         — Balance-aware operations
-  └──► SharedExpenseGroupsViewModel      — UI display of member balances
+  └──► SettlementCalculator              — settlement math (domain/groups);
+        GroupBalanceCalculator currently has no production consumers
+        (GroupLifecycleCoordinator removed 2026-09; covered by tests)
 ```
 
 ## Negotiation Dependency Chain (2026-05-09)
@@ -1437,9 +1446,9 @@ SourceLinkPayload                          [domain/provenance/SourceLinkPayload.
 
 PendingReviewSourceLinkPromoter            [domain/provenance/PendingReviewSourceLinkPromoter.kt]
   │  Promotes pending-review source links to full EntitySourceLink rows
-  ├──► PendingReviewDao
+  │  (interface; impl PendingReviewSourceLinkPromoterImpl injects:)
   ├──► EntitySourceLinkDao
-  └──► PendingReviewSourceContext
+  └──► SourceLinkWriter
 
 SourceLinkQueryService                     [domain/provenance/SourceLinkQueryService.kt]
   │  Read-only query service for source link debugging
@@ -1472,6 +1481,13 @@ NotificationCaptureService                 [service/NotificationCaptureService.k
   ├──► PrivacyGate.check(NOTIFICATION_CAPTURE)
   ├──► RestoreMaintenanceMode.isActive()
   ├──► NotificationFilter
+  ├──► NotificationCaptureGate             [domain/notification/capture/NotificationCaptureGate.kt]
+  │     └──► PrivacyCapabilityHandlingPolicy resolution
+  ├──► NotificationCaptureDeduper          [domain/notification/capture/NotificationCaptureDeduper.kt]
+  │     └──► Deduplicates by fingerprint + transient key
+  ├──► NotificationTransientKeyProvider    [domain/notification/capture/NotificationTransientKeyProvider.kt]
+  ├──► NotificationIntakePayloadRepairer   [domain/notification/capture/NotificationIntakePayloadRepairer.kt]
+  └──► NotificationIntakeRecoveryScheduler [domain/notification/capture/NotificationIntakeRecoveryScheduler.kt]
   │
   ▼
 NotificationIntakeCoordinator              [domain/notification/capture/NotificationIntakeCoordinator.kt]
@@ -1479,16 +1495,12 @@ NotificationIntakeCoordinator              [domain/notification/capture/Notifica
   │  Queues incoming notifications as NotificationIntakeEntity rows
   │  instead of processing inline (crash-safe decoupling)
   │
-  ├──► NotificationCaptureGate             [domain/notification/capture/NotificationCaptureGate.kt]
-  │     └──► PrivacyCapabilityHandlingPolicy resolution
-  ├──► NotificationCaptureDeduper          [domain/notification/capture/NotificationCaptureDeduper.kt]
-  │     └──► Deduplicates by fingerprint + transient key
-  ├──► NotificationTransientKeyProvider    [domain/notification/capture/NotificationTransientKeyProvider.kt]
-  ├──► NotificationTransientPayloadCrypto  [domain/notification/capture/NotificationTransientPayloadCrypto.kt]
   ├──► NotificationIntakeDao               — INSERT intake rows
   │     └──► NotificationIntakeEntity      — status: PENDING / PROCESSING / COMPLETED / FAILED
-  ├──► NotificationIntakePayloadRepairer   [domain/notification/capture/NotificationIntakePayloadRepairer.kt]
-  └──► NotificationIntakeRecoveryScheduler [domain/notification/capture/NotificationIntakeRecoveryScheduler.kt]
+  ├──► NotificationTransientPayloadCrypto  [domain/notification/capture/NotificationTransientPayloadCrypto.kt]
+  ├──► DatabaseWriteBarrier                — restore-safety gate
+  ├──► DomainTransactionRunner             — atomic state+event writes
+  └──► WorkManager / NotificationDiagnosticEmitter / TimeProvider
        │
        ▼
   NotificationIntakeWorker                 [worker/NotificationIntakeWorker.kt]
@@ -1503,12 +1515,9 @@ NotificationIntakeCoordinator              [domain/notification/capture/Notifica
     │   6. Mark intake row COMPLETED or FAILED
     │
     ├──► NotificationIntakeDao
-    ├──► NotificationFilter
-    ├──► NotificationProcessingPipeline
     ├──► NotificationRepository
-    ├──► RestoreMaintenanceMode
-    ├──► DatabaseWriteBarrier
     ├──► WorkerExecutionGuard
+    ├──► PrivacyGate
     └──► NotificationTransientPayloadCrypto
 
 NotificationDomain Data Types:
@@ -1585,7 +1594,7 @@ AnomalyAlertOrchestrator                   [domain/alerts/AnomalyAlertOrchestrat
   │
   ├──► AnomalyDetector                     [domain/analytics/AnomalyDetector.kt]
   │     └──► MultiCurrencyRepository, ExpenseDao
-  ├──► AnomalyAlertDao                     — Persist triggered alerts
+  ├──► AnomalyAlertRepository              — Persist triggered alerts
   │     └──► AnomalyAlert                  — Entity: type, severity, message, expenseId
   └──► TimeProvider
 
@@ -1607,6 +1616,7 @@ Dashboard consumer:
 FinancialRescueCoordinator                 [data/rescue/FinancialRescueCoordinator.kt]
   │  Raw SQLite import path — bypasses Room migration chain for emergency data rescue
   │  Used when schema version mismatch prevents normal DB open
+  │  (manually constructed: Context + TimeProvider — no DI)
   │
   ├──► RescueConfig                        [data/rescue/RescueConfig.kt]
   │     └── Configuration for rescue operation
@@ -1614,7 +1624,8 @@ FinancialRescueCoordinator                 [data/rescue/FinancialRescueCoordinat
   │     └── Captures snapshots during rescue for rollback
   ├──► RescueActivity                      [data/rescue/RescueActivity.kt]
   │     └── UI activity for rescue flow
-  └──► TransactionLifecycleCoordinator     — Dedup mode SKIP_FOR_DEBUG_RESTORE
+  └──► AppDatabase / SupportSQLiteDatabase — imports rescued rows into a fresh DB
+        at APP_DATABASE_SCHEMA_VERSION (no lifecycle-coordinator path)
 ```
 
 ---
@@ -1626,22 +1637,20 @@ BusinessExpenseReportGenerator             [domain/business/BusinessExpenseRepor
   │  @Singleton @Inject
   │  Generates business expense reports with tax categorization
   │
-  ├──► ExpenseDao
-  ├──► CategoryDao
   ├──► BusinessExpenseRepository            [data/repository/BusinessExpenseRepository.kt]
-  └──► TaxConfiguration                    [domain/tax/TaxConfiguration.kt]
+  └──► TaxSettingsRepository                (domain tax settings; no direct DAO access)
 
 RecurringIncomeTracker                     [domain/income/RecurringIncomeTracker.kt]
   │  Tracks recurring income patterns alongside expenses
-  └──► ExpenseDao, CategoryDao
+  └──► ExpenseDao, ExpenseRepository
 
 LifestyleInflationDetector                 [domain/lifestyle/LifestyleInflationDetector.kt]
   │  Detects lifestyle inflation by comparing spending over time
-  └──► ExpenseDao, MultiCurrencyRepository
+  └──► ExpenseDao, TimeProvider
 
 SpendingChallengeManager                   [domain/challenge/SpendingChallengeManager.kt]
   │  Manages user-defined spending challenges
-  └──► SpendingChallengeDao
+  └──► ExpenseDao, SpendingChallengeRepository
 ```
 
 ---
@@ -1653,7 +1662,8 @@ DashboardFollowThroughEngine               [domain/engine/DashboardFollowThrough
   │  Follow-through engine for dashboard recommendations
   │  Monitors whether users actioned suggested changes
   │
-  └──► RecommendationDao, ExpenseDao
+  └──► TransactionFilterSerializer, SpendingThresholdCalculator
+        (recommendation follow-through; no direct DAO access)
 ```
 
 ---```

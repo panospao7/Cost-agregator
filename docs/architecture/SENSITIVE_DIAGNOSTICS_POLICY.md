@@ -1,6 +1,6 @@
 # Sensitive Diagnostics & Logging Policy
 
-> Last updated: 2026-09-07 (re-verified against code; PII guard now enforced blocking in CI)
+> Last updated: 2026-09-21 (re-verified against code; PII guard enforced blocking in CI — re-checked 2026-09-21)
 
 ## Rule
 
@@ -47,6 +47,12 @@ All background-work diagnostics use controlled, structured fields — never raw 
 - `WorkerReasonCodes` (PR12J-1, `domain/workers/`) is the central exception → reason-code mapper. Codes are constrained to `[A-Z0-9_]{1,80}` controlled constants from `DiagnosticReasonCode` (e.g. `WORKER_TIMEOUT`, `WORKER_CANCELLED`, `WORKER_PRIVACY_DENIED`, `WORKER_NOTIFICATION_PERMISSION_DENIED`) — never raw exception messages, file paths, or PII.
 - `DiagnosticEventWriter` (`domain/diagnostics/`) writes typed `DiagnosticEvent` rows (pipeline, stage, outcome, severity, `DiagnosticReasonCode`, entity type/id, `sourceIdHash`, correlation/causation IDs, counts/booleans, `SafeEventMetadata`) to `PipelineDiagnosticEventDao`.
 - Terminal DB-write failures fall back to `WorkerTerminalDiagnosticSink` (PR12H-3); the durable implementation `FileWorkerTerminalDiagnosticSink` (PR12I-1) persists bounded JSONL records (workerName, runId, correlationId, workId, runAttempt, intendedStatus, reasonCode, failureCode, `errorClass` — exception class name only, timestamp) and must never throw.
+
+### SafeDiagnostic typed error contract
+
+- `SafeDiagnostic` (`diagnostics/SafeDiagnosticReporter.kt`, root `diagnostics` package — not `domain/diagnostics/`) is a typed diagnostic value for safe error reporting: `reasonCode` (fixed enum-style code, e.g. `BACKUP_CREATE_FAILED`), `stage`, `Severity`, `exceptionClass` (class name only, never the message), `retryable`.
+- Built via the `safeDiagnostic()` factory, it structurally enforces the same sanitization principles as the durable writers: bounded controlled fields only — no exception messages, file paths, SQL errors, OCR/notification text, or amounts can be carried.
+- Example: `ExportAnonymizer.sanitizeExport()` maps a database-open failure to `safeDiagnostic("EXPORT_ANONYMIZE_FAILED", "EXPORT", Severity.ERROR, e)` and throws `IllegalStateException(diag.reasonCode, e)` — the propagated exception message is the controlled reason code only.
 
 ### Export/backup
 - Controlled by `PrivacyGate` via `ExportPrivacyGate` (`domain/privacy/ExportPrivacyGate.kt`, PR8): dedicated capabilities `EXPENSE_EXPORT`, `EXPENSE_EXPORT_REDACTED`, `EXPENSE_EXPORT_ENCRYPTED`, `EXPENSE_EXPORT_RAW`, `DEBUG_RAW_EXPORT`, `RAW_DATABASE_EXPORT`. `RAWBACKUP_EXPORT` is denied in every branch (sole-owner per the `PrivacyGate` contract KDoc).

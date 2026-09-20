@@ -1,6 +1,6 @@
 # Shared UI Primitives Architecture
 
-**Last Updated:** September 7, 2026
+**Last Updated:** September 21, 2026
 
 ## Overview
 
@@ -91,7 +91,7 @@ A few skeletons still reference `SemanticColors.SurfaceLight` / `SemanticColors.
 
 ## Known Tech Debt
 
-- 15 files under `ui/` use hardcoded `Color(0xFF4CAF50)` instead of `SemanticColors.StatusGreen` (verified September 2026)
+- 15 files under `ui/` use hardcoded `Color(0xFF4CAF50)` instead of `SemanticColors.StatusGreen` (re-verified 2026-09-21)
 - Loading skeleton accessibility is noisy (S2-005) — ✅ FIXED: parent semantics
 - Empty-state action strings are hardcoded English (S2-007) — ✅ FIXED: @StringRes
 - Form amount input lacks proper money sanitization (S2-008) — ✅ FIXED: AmountInputSanitizer (`ui/util/AmountInputSanitizer.kt`)

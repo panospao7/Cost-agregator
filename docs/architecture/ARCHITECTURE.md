@@ -1,6 +1,6 @@
 # ExpenseTracker Architecture Guide
 
-> Last updated: 2026-09-07 (DB v148, java.time/TimeProvider series, CI guardrail suite)
+> Last updated: 2026-09-21 (DB v148, java.time/TimeProvider series, CI guardrail suite; re-verified against source 2026-09-21)
 
 ## How to Use This Document
 
@@ -33,7 +33,7 @@
 ## Current Project Metrics
 - Database version: v148 (`APP_DATABASE_SCHEMA_VERSION = 148` in `data/database/AppDatabase.kt`). **Migration baseline is v145** — `DatabaseMigrations.ALL` contains only `MIGRATION_145_146`, `MIGRATION_146_147`, `MIGRATION_147_148`; there are intentionally no historical migrations below v145 (old databases use the financial rescue/import path). Latest steps: v145→146 creates `negotiation_outcomes`; v146→147 adds `group_members.leftAt` + `group_expenses.idempotencyKey` and makes the `(groupId, name)` member index non-unique; v147→148 (PR12A) adds 9 worker-run tracing columns to `background_job_runs` (`workId`, `uniqueWorkName`, `specVersion`, `runAttempt`, `leaseId`, `terminalReasonCode`, `terminalDiagnosticCode`, `partialFailureCount`, `failedTargetCount`).
 - `DatabaseSchemaPolicy` (`data/database/DatabaseSchemaPolicy.kt`) is the single source of truth for migration config: `CURRENT_VERSION`, `MIGRATION_BASELINE = 145`, `UNSUPPORTED_VERSIONS` (1..<145, destructive migration), and `ALL_MIGRATIONS` (delegates to `DatabaseMigrations.ALL`). Production code and tests must reference this, not hardcoded values.
-- ~1073 production Kotlin source files (~1719 including unit tests) across domain, data, ui, di, util, service, startup, and worker packages
+- ~1075 production Kotlin source files (~1758 including unit tests) across domain, data, ui, di, util, service, startup, and worker packages
 - 68 DAOs (64 in DaoModule + 3 in AiModule + 1 unbound), 70 entities registered in AppDatabase
 - 41 @HiltViewModel (40 *ViewModel.kt files + 1 inline in RecurringExpensesScreen.kt)
 - 33 @Module Hilt modules
@@ -46,14 +46,14 @@
 - 6 shell destinations in the app chrome; Assistant is an overlay/entry surface, not a bottom tab
 - Deep links are handled in `ui/MainActivity.kt` (`handleIntent` / `onNewIntent`); saved navigation state stays in `NavigationController`
 - Startup/background pipeline: `MainApplication` → `AppStartupDelegate` → `AppStartupCoordinator` → `AppBackgroundLifecycleObserver`; restore journal checked before any work is scheduled
-- Worker instrumentation: `WorkerRunLogger` (`domain/workers/WorkerRunLogger.kt`) provides per-run success/skipped/retry/failure tracking via `BackgroundJobRunDao`. `WorkerExecutionGuard` (`domain/workers/WorkerExecutionGuard.kt`) provides structured guarded execution with logging, exception handling, and restore-mode gating. Both bound via `WorkerModule` (`di/WorkerModule.kt`). All production `CoroutineWorker`s — including `NotificationIntakeWorker` — route through the guard; the guard's allowlist is now empty.
+- Worker instrumentation: `WorkerRunLogger` (`domain/workers/WorkerRunLogger.kt`) provides per-run success/skipped/retry/failure tracking via `BackgroundJobRunDao`. `WorkerExecutionGuard` (`domain/workers/WorkerExecutionGuard.kt`) provides structured guarded execution with logging, exception handling, and restore-mode gating. `WorkerRunLogger` is bound via `DiagnosticsModule` (`di/DiagnosticsModule.kt`); `WorkerExecutionGuard` is auto-provided (`@Singleton @Inject`). All production `CoroutineWorker`s — including `NotificationIntakeWorker` — route through the guard; the guard's allowlist is now empty.
 - **Worker retry contract (P9-NEW-13):** a worker that wants WorkManager to retry must throw `RetryableWorkerException` (`domain/workers/RetryableWorkerException.kt`). The guard's catch precedence is: timeout policy handling (`WorkerTimeoutPolicy` — RETRY records `WORKER_TIMEOUT`, PROPAGATE_CANCELLATION records `WORKER_CANCELLED` and rethrows) → `CancellationException` (recorded CANCELLED, rethrown) → `WorkerCheckpointBlockedException` (applies `BlockedPolicy`) → `RetryableWorkerException` (Retry; its sanitized `reasonCode` takes precedence over message heuristics — PR12J-1) → `classifyTransient(...)` (Retry, `WORKER_TRANSIENT_ERROR`) → otherwise **permanent Failed** (`WORKER_UNHANDLED_EXCEPTION`). `classifyTransient` only matches the keyword set `timeout` / `interrupted` / `deadlock` / `SQLITE_BUSY` / `database is locked` (case-insensitive) or an `IOException`. A plain `RuntimeException` with a non-transient message is therefore classified as a permanent failure and burns the attempt budget. `LocationBackfillWorker` and `MerchantKeyBackfillWorker` use `RetryableWorkerException` for their no-progress/transient paths.
 - **Worker notification-permission gate (P9-NEW-04):** `WorkerExecutionGuard` enforces `WorkerGuardRequest.requiresNotificationPermission` via an injected `NotificationPermissionChecker` (`AndroidNotificationPermissionChecker`, bound in `WorkerModule`). When notifications are disabled the run is durably skipped with `DiagnosticReasonCode.NOTIFICATION_PERMISSION_DENIED`. `WarrantyExpirationWorker` sets this flag.
 - **Worker run counts (updated 2026-09-07):** all 10 production `CoroutineWorker`s now run via `runGuardedWithContext`: the 7 registry-managed workers (`BillReminderWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `DataRetentionWorker`, `ReceiptMatchingWorker`, `DailyBriefingWorker`, `WarrantyExpirationWorker`), `NotificationIntakeWorker` (previously allowlisted, now guarded), and the 2 reminder action workers (`SnoozeReminderActionWorker`, `DismissReminderActionWorker`). They feed `rowsScanned`/`rowsUpdated`/`notificationsSent` into `BackgroundJobRun`. **Known limitation:** `WorkerRunContext` also collects `rowsSkipped`/`errors`, but the guard's `run.success()` does not yet persist those two columns (follow-up).
 - **Privacy → worker gating (P9-P1-11 / S7):** `PrivacyRuntimeWorkerPolicy` (`domain/workers/PrivacyRuntimeWorkerPolicy.kt`) maps privacy toggles to the workers they gate; `PrivacySettingsRepositoryImpl.applyPrivacyChange()` is policy-driven (no hardcoded names). Disabling background location does **not** cancel `merchant_key_backfill` (it is local). `data_retention` is **never** cancelled by a privacy toggle. Re-enabling a toggle reschedules its workers.
 - **Worker guard architecture test (P9-P1-02 / S8):** `WorkerGuardArchitectureGuardTest` asserts every `CoroutineWorker` in main source uses `WorkerExecutionGuard`. `ALLOWLISTED_WORKERS` is now `emptySet()` — the guard test also fails on stale or redundant allowlist entries.
 - `DatabaseReadBarrier` (`data/backup/DatabaseReadBarrier.kt`) and `DatabaseWriteBarrier` (`data/backup/DatabaseWriteBarrier.kt`) provide operation-level read/write blocking during backup/restore. Violations throw `DatabaseAccessBlockedException` (typed access type + operation + mode). Writes are allowed **only in `NORMAL` mode**; reads use explicit `DatabaseReadPolicy` (`NORMAL_APP_READ`, `EXPORT_OR_BACKUP_SNAPSHOT_READ` for backup export, `RESTORE_INTERNAL_STAGED_DB_READ` always denied through the app singleton).
-- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`). Each worker individually injects `RestoreMaintenanceMode` and calls `isWritesAllowed()` at the start of `doWork()` to self-pause during restore. All workers use `WorkerSpecScheduler` for centralized scheduling with version-change detection.
+- WorkManager periodic jobs include: `DailyBriefingWorker`, `LocationBackfillWorker`, `MerchantKeyBackfillWorker`, `WarrantyExpirationWorker`, `BillReminderWorker`, `ReceiptMatchingWorker`, `DataRetentionWorker` (all 7 paused during restore via `RestoreMaintenanceMode`). Restore/write gating is centralized in `WorkerExecutionGuard` (it injects `RestoreMaintenanceMode` and applies the request's `BlockedPolicy` with `RESTORE_BLOCKED` when mode != `NORMAL`); workers no longer each call `isWritesAllowed()` themselves. All workers use `WorkerSpecScheduler` for centralized scheduling with version-change detection.
 - `HybridRouter` (`domain/ai/HybridRouter.kt`) replaces duplicated cloud/on-device/fallback routing logic across 6 hybrid AI services (AID-4).
 - `AtRestEncryptionService` (`data/privacy/AtRestEncryptionService.kt`): AES-256-GCM via Android Keystore for ML model data at rest.
 - `SourceStatsEvent` entity + `SourceStatsEventDao`: event-based notification source stats tracking.
@@ -70,11 +70,20 @@
 - `PrivacyBlockedCard` (`ui/components/PrivacyBlockedCard.kt`): reusable Compose UI card for privacy-blocked states with lock icon.
 - New architecture docs: `ENGINE_INTERACTION_MAP.md` (engine-to-pipeline impact matrix) and `LEGAL_PATHS.md` (single allowed implementation path for each operation).
 - `ReceiptMatchLifecycleService` (`domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt`): lifecycle-aware receipt match mutations with write barrier, transaction, and durable events.
-- `RecurringRuleLifecycleCoordinator` is now the **single writer** for all rule lifecycle mutations, enforced by `RecurringArchitectureGuardTest` (14 static architecture guards).
+- `RecurringRuleLifecycleCoordinator` is now the **single writer** for all rule lifecycle mutations, enforced by `RecurringArchitectureGuardTest` (22 static architecture guard tests).
 - `RecurringOccurrenceStatus` typed enum + `RecurringOccurrenceTransitionPolicy` for validated status transitions.
 - `RecurringLifecycleEventWriter` `writeCritical()`/`writeDiagnostic()` split for provenance vs informational events.
 - `BillReminderSettingsRepository` + `ReminderSettingsModule` DI module for runtime reminder dispatch control.
 - AI, location, shared-expense, split, privacy, backup-encryption, and `.costbackup` bundle backup/restore flows are first-class subsystems
+
+### Architecture Drift Updates (2026-09-21 — expense write-path closure, receipt/recurring refinements, GR-15 mediation gate)
+- **GR-14u35 — `ExpenseWriteStore` deleted:** expense writes go through `DatabaseWriteBarrier` (`data/backup/DatabaseWriteBarrier.kt`) — `checkWritesAllowed(operation)` throws `DatabaseAccessBlockedException` unless mode is `NORMAL`, and `suspend runWrite(operation) { ... }` wraps check + write. No write-store abstraction remains (main-source grep: zero `ExpenseWriteStore` references).
+- **GR-14u36 — `GroupLifecycleCoordinator` wrapper removed (owner decision, 2026-09-11):** group lifecycle operations run through `SharedExpenseManager` / `SharedExpenseDataPortAdapter` → the data-layer `GroupTransactionCoordinator` (`data/database/GroupTransactionCoordinator.kt`: atomic multi-DAO Room `withTransaction`, write barrier, post-commit batch). The coordinator's KDoc records the decision.
+- **RP-04 (P4-006) — recurring projection semantics:** `RecurringPlanProjectionService.projectFromRule()` deleted after a zero-caller audit (2026-09-19). The service's only entry point is `projectFromOccurrencesInCurrentTransaction()` — it projects `PlannedExpense` rows from already-materialized PLANNED occurrences strictly inside the caller-owned rule-mutation transaction of `RecurringRuleLifecycleCoordinator`; it performs no occurrence generation and no standalone persistence.
+- **RP-11 — collision/resolver split:** `ExpenseDao` (FIX 2) separates the resolver family — which must NOT be used for mutation-collision preflights — from the COLLISION query family, which intentionally includes `isNotMine` rows. FIX 4 splits `ExpenseCategoryAssignmentPort` into the in-transaction assignment commit and a separate post-commit side-effect dispatch (consumed by `ReceiptLinkService` and `DefaultExpenseCategoryAssignmentService`).
+- **RP-12 — receipt structured-data policy:** `ReceiptStructuredDataPolicy` (`domain/receipt/lifecycle/ReceiptStructuredDataPolicy.kt`, P3-007) is the single `RawStorageMode` transformer applied before a receipt row is inserted; redacted line items persist only the fixed `RedactedReceiptItem` schema (quantity/unitPrice/totalPrice/currency — no item name, brand, SKU, or free-text notes; category fields never populated at insert). `AssetCleanupCoordinator` (P3-008) owns uncommitted receipt-image assets: delete only under a transaction with a zero reference count plus an attempt-local cleanup claim; best-effort, diagnostics never carry file paths.
+- **RP-18 — email receipt parsers:** `data/email/EmailReceiptIngestionService.kt` is a thin parser/delegate — provider-specific parsers (`data/email/provider/`: `EmailReceiptParser` base + `AmazonReceiptParser`, `AppleReceiptParser`, `UberReceiptParser`) detect the provider, parse structured receipt fields, and compute a content-only dedup fingerprint before delegating all mutation to `ReceiptLifecycleCoordinator.processEmailReceipt()`; the service itself performs no expense/receipt writes and no post-commit dispatch.
+- **GR-15 — DB mediation gate acceptance:** `scripts/ci/inspect_db_mediation_proof.py` implements the owner-accepted tier (`docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md`): exit 0 requires every `helper`/`workerMediated` active-policy mutation row to end `proven_helper` / `proven_worker_mediated` / `proven_restore_internal` / or `owner_accepted` per the acceptance registry `docs/ci/db-mediation/GR-14_OWNER_ACCEPTANCE_RECORD.md` (endpoint board `03acbb044721e9dc`: 0 unproven, 0 counterexamples); any registry mismatch exits 1, infrastructure/unsupported uncertainty exits 2 — fail closed. Report-only shadow CLI outside the 25-guard registry (see the CI guardrail suite notes in the 2026-09-07 entry below).
 
 ### Architecture Drift Updates (2026-09-07 — DB v148 chain, java.time/TimeProvider migration, CI guardrail suite)
 
@@ -94,15 +103,16 @@
 
 #### CI guardrail enforcement suite
 - Static guard suite: `scripts/ci/run_static_guard_suite.py` runs ALL guards regardless of individual failures, emits per-guard logs + `summary.json`/`summary.md`, and computes a deterministic exit code (0 pass / 1 blocking violation / 2 infrastructure). Wired as the `static-guards` CI job in `.github/workflows/ci.yml`.
-- `scripts/ci/guard_registry.py`: canonical registry of all 18 guards (12 blocking, 6 ratchet); `scripts/ci/verify_guard_registry.py` validates registry ↔ manifest ↔ files consistency (runs first, blocking).
+- `scripts/ci/guard_registry.py`: canonical registry of all 25 guards (19 blocking, 6 ratchet; re-counted 2026-09-21); `scripts/ci/verify_guard_registry.py` validates registry ↔ manifest ↔ files consistency (runs first, blocking).
 - Ratchet infrastructure: `scripts/ci/guard_ratchet.py` (no-growth baselines with violation fingerprints; new or stale/resolved baseline entries fail), `scripts/ci/generate_baselines.py` (bootstrap; baselines live under `config/baselines/`), `scripts/ci/gradle_db_guard_inputs.py` (Python contract mirror of the `:app:verifyDbAccessBoundaries` Gradle task, PR-GR-01).
-- Registered guards (blocking): source_provenance, ui_dao, worker, receipt_link, import_lifecycle, cloud_payload, pii_logging, di_release, allowlist_compliance, ignored_test_budget, lint_baseline_policy, time_boundaries. (Ratchet with baselines): migration_matrix, cancellation, privacy, db_access, event_writers, money. Policy files: `config/guards/db_ownership_policy.yml` (canonical legal DB writers — exact class/method/DAO/operation contract), `config/guards/db_structural_exceptions.yml`, `config/guards/time_boundary_exceptions.yml`; allowlists under `scripts/allowlists/*.yml` (8 files: cancellation, cloud_payload, di_release, import_lifecycle, pii_logging, receipt_link, ui_dao, worker).
+- Registered guards (blocking): source_provenance, ui_dao, worker, receipt_link, import_lifecycle, cloud_payload, pii_logging, di_release, allowlist_compliance, ignored_test_budget, lint_baseline_policy, time_boundaries, deprecation_escalations, db_artifact_sync, known_good_state, guard_docs_truth, raw_money_aggregates, currency_guardrails_ps, release_artifact. (Ratchet with baselines): migration_matrix, cancellation, privacy, db_access, event_writers, money. Policy files: `config/guards/db_ownership_policy.yml` (canonical legal DB writers — exact class/method/DAO/operation contract), `config/guards/db_structural_exceptions.yml`, `config/guards/time_boundary_exceptions.yml`, `config/guards/production_source_roots.yml` (declared production source roots for source-scoped guards); allowlists under `scripts/allowlists/*.yml` (8 files: cancellation, cloud_payload, di_release, import_lifecycle, pii_logging, receipt_link, ui_dao, worker).
+- DB mediation proof gate (GR-13/GR-14/GR-15; a report-only shadow CLI outside the 25-guard registry above): `scripts/ci/inspect_db_mediation_proof.py` builds the exact interprocedural call graph over every `helper`/`workerMediated` active-policy mutation and classifies each entry with the shared GR-12 dominance engine. Amended acceptance criterion (`docs/ci/db-mediation/GR-15_GATE_AMENDMENT.md`): every row ends in `proven_helper` / `proven_worker_mediated` / `proven_restore_internal` / or `owner_accepted` per the tracked acceptance registry `docs/ci/db-mediation/GR-14_OWNER_ACCEPTANCE_RECORD.md`; a row absent from the registry is unproven — fail closed; counterexample tolerance is ZERO and absolute; infrastructure failures are their own exit class (0 pass / 1 unproven-or-registry-mismatch / 2 infrastructure). It never modifies policy, source, or active gate results and is not a ratchet child.
 - Standalone advisory scripts (not wired into the CI manifest): `scripts/guards/check_direct_time_calls.kts`, `scripts/guards/check_lifecycle_bypasses.kts` (flags direct ExpenseDao mutation calls that bypass `TransactionLifecycleCoordinator`), `scripts/guards/check_raw_money_aggregates.kts` (flags raw `sumOf` financial aggregates), `scripts/guardrails/dao-access-check.kts` + `dao-approved-files.txt`, `tools/lifecycle-bypass-guard.groovy`.
 - Guard framework contract (rule IDs, exit codes 0/1/2, allowlist format, fail-closed rules): see `docs/ci/guard-policy.md` and `docs/ci/guard-framework.md`.
-- In-repo architecture guard unit tests live under `app/src/test/java/com/yourname/expensetracker/architecture/`: `BackupRestoreArchitectureGuardTest`, `BankPrivacyModeArchitectureGuardTest`, `CancellationSafetyArchitectureGuardTest`, `DeprecatedApiArchitectureGuardTest`, `DirectEventDaoInsertGuardTest`, `Engine5PrimitiveGuardTest`, `ExpenseDaoMutationAccessTest` (CI-time hard enforcement of `@RestrictedExpenseDaoMutation` opt-in), `RawDaoArchitectureGuardTest`, `RecurringArchitectureGuardTest`, `SourceScanningArchitectureGuardTest`, `TransactionContextProvenanceGuardTest`, `WorkerGuardArchitectureGuardTest`, `WorkerGuardStaticVerificationTest`, `WriteBarrierArchitectureGuardTest`.
+- In-repo architecture guard unit tests live under `app/src/test/java/com/yourname/expensetracker/architecture/`: `BackupRestoreArchitectureGuardTest`, `BankPrivacyModeArchitectureGuardTest`, `BudgetAutopilotArchitectureGuardTest`, `CancellationSafetyArchitectureGuardTest`, `DeprecatedApiArchitectureGuardTest`, `DirectEventDaoInsertGuardTest`, `Engine5PrimitiveGuardTest`, `ExpenseDaoMutationAccessTest` (CI-time hard enforcement of `@RestrictedExpenseDaoMutation` opt-in), `RawDaoArchitectureGuardTest`, `RecurringArchitectureGuardTest`, `SourceScanningArchitectureGuardTest`, `TransactionContextProvenanceGuardTest`, `WorkerGuardArchitectureGuardTest`, `WorkerGuardStaticVerificationTest`, `WriteBarrierArchitectureGuardTest`.
 
 ### Architecture Drift Updates (2026-05-13 — Pipeline 3: Receipt Match Lifecycle & Debug Redaction)
-- **ReceiptMatchLifecycleService** created (`domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt`) — `@Singleton @Inject` lifecycle-aware service replacing direct `ReceiptRepository` match mutations (now `DeprecationLevel.ERROR`). Every operation: checks `DatabaseWriteBarrier`, runs inside Room `withTransaction`, writes durable `ReceiptEvent`. Methods: `saveMatchSuggestion()`, `approveMatchSuggestion()`, `rejectAllSuggestions()`, `clearMatchForReceipt()`. Dependencies: `AppDatabase`, `ScannedReceiptDao`, `ReceiptEventDao`, `DatabaseWriteBarrier`, `TimeProvider`.
+- **ReceiptMatchLifecycleService** created (`domain/receipt/lifecycle/ReceiptMatchLifecycleService.kt`) — `@Singleton @Inject` lifecycle-aware service replacing direct `ReceiptRepository` match mutations (now `DeprecationLevel.ERROR`). Every operation: checks `DatabaseWriteBarrier`, runs inside Room `withTransaction`, writes durable `ReceiptEvent`. Methods: `saveMatchSuggestion()`, `approveMatchSuggestion()`, `rejectAllSuggestions()`, `clearMatchForReceipt()`. Dependencies: `AppDatabase`, `ScannedReceiptDao`, `ReceiptEventDao`, `DatabaseWriteBarrier`, `TimeProvider`. *[Update 2026-09-21: `approveMatchSuggestion()` is no longer on the service — approval now routes through `ReceiptLinkService.linkReceiptToExpense()`; the service also exposes `recordMatchAttempted()` / `recordMatchNotFound()` / `recordMatchSkippedDocumentType()` / `recordAutoMatchLinkFailed()` / `recordNotificationSuppressed()`.]*
 - **ReceiptDebugExporter audit instrumentation** — every debug export decision writes a `DiagnosticEvent` (ALLOWED/DENIED) with reason codes (`consent_blank`, `storage_mode_<mode>`, `receipt_not_found`). `formatReceiptDebug()` signature changed: `includeImagePath` parameter defaults to `false` for privacy-by-default image path redaction.
 - **Exception message redaction policy** — `ReceiptRepository` error logging sanitizes exception messages: URIs → `[REDACTED_URI]`, file paths → `[REDACTED_PATH]`, URLs → `[REDACTED_URL]`, emails → `[REDACTED_EMAIL]`, 12-19 digit sequences → `[REDACTED_NUMBER]`.
 - **Debug data privacy-by-default** — `BankStatementLifecycleProcessor.debugData` set to `null` by default. Raw OCR text export requires `exportConsent` + `RawStorageMode.STORE_RAW`. Image paths redacted unless `includeImagePath=true`.
@@ -117,7 +127,7 @@
 - Generic exports in `ExportOptionsViewModel` now use `effectiveAmount` for CSV/JSON generation (preview + streaming), aligning exports with ownership-adjusted accounting semantics.
 
 ### Architecture Drift Updates (2026-05-09)
-- **GroupLifecycleCoordinator** implemented (`domain/groups/GroupLifecycleCoordinator.kt`) — a `@Singleton @Inject` domain-level coordinator wrapping the domain `GroupTransactionCoordinator` interface. Enforces 7 business rules: member count/currentUser/duplicate validation (createGroup), active-group/duplicate/single-currentUser checks (addMember), last-currentUser gate (removeMember), single-currency policy (addExpense), soft-delete (archiveGroup), explicit-confirmation guard (deleteGroupPermanently), and currency-match/member-ownership validation (recordSettlement). No Dagger cycle — depends on domain interface, not data-layer implementation.
+- **GroupLifecycleCoordinator** implemented (`domain/groups/GroupLifecycleCoordinator.kt`) — a `@Singleton @Inject` domain-level coordinator wrapping the domain `GroupTransactionCoordinator` interface. Enforces 7 business rules: member count/currentUser/duplicate validation (createGroup), active-group/duplicate/single-currentUser checks (addMember), last-currentUser gate (removeMember), single-currency policy (addExpense), soft-delete (archiveGroup), explicit-confirmation guard (deleteGroupPermanently), and currency-match/member-ownership validation (recordSettlement). No Dagger cycle — depends on domain interface, not data-layer implementation. *[Superseded 2026-09-11: the GroupLifecycleCoordinator wrapper was removed (GR-14u36, owner decision); group lifecycle operations run through `SharedExpenseManager` / `SharedExpenseDataPortAdapter` and the data-layer `GroupTransactionCoordinator` (`data/database/GroupTransactionCoordinator.kt`).]*
 - **[Dagger/DependencyCycle] FIXED:** Deleted `SubscriptionModule.kt` — its pass-through `@Provides` method was the sole cause of the cycle involving `SubscriptionManagerEngine`. `SubscriptionManagerEngine` is already auto-provided by its `@Singleton @Inject constructor`.
 - **DaoModule FIXED:** Added 3 missing `@Provides` bindings (`WarrantyLifecycleEventDao`, `GroupSettlementDao`, `InvestmentTransactionDao`) resolving `[Dagger/MissingBinding]` errors.
 - **CloudPayloadRedactor Stage 2 COMPLETE:** Migrated 6 cloud providers from direct `CloudPiiSanitizer` calls to `CloudPayloadRedactor`. Affected: `CloudReviewExplanationService`, `CloudReceiptAssistService`, `CloudCategorizationAssistService`, `CloudDedupeJudgeService`, `CloudReceiptItemCategorizationService`, `CloudWarrantyExtractionService`. Removed `shouldRedact` extra argument from `redactor.redactMerchant()` calls. `DashboardBriefingPromptFormatter` intentionally remains on `CloudPiiSanitizer` (it is a prompt formatter, not a cloud service; `DefaultCloudPayloadRedactor` wraps `CloudPiiSanitizer` anyway).
@@ -203,7 +213,7 @@
 - **DB upgraded to v141** (from v131). Migration 139→140 canonicalizes occurrence keys with full dedup strategy. Migration 140→141 adds FOREIGN KEY on `recurring_reminder_deliveries.occurrenceId` → `recurring_occurrences.id` with CASCADE delete.
 - **RecurringRuleLifecycleCoordinator** — expanded to become the single writer for all rule lifecycle mutations: `createRule()`, `activateRule()`, `updateRule()`, `deactivateRule()`, `deleteRule()`. All operations atomic in `withTransaction`, guarded by `DatabaseWriteBarrier`, with durable lifecycle events. Deactivation deletes (not cancels) open PLANNED occurrences/planned rows for clean regeneration. Activation generates 12 months of future occurrences atomically. Direct dependencies: `RecurringOccurrenceExpander`, `OccurrenceConflictResolver`, `RecurringOccurrenceMaterializer`, `ExpenseDao`, `RecurringLifecycleEventWriter`.
 - **OccurrenceGenerationOptions** created (`domain/recurring/lifecycle/OccurrenceGenerationOptions.kt`) — data class controlling reminder creation, windows, generation source, and past-due allowance during occurrence generation.
-- **RecurringExpenseReconcileResult** created (`domain/recurring/lifecycle/RecurringExpenseReconcileResult.kt`) — sealed interface with 6 variants (Linked, Unlinked, Relinked, UpdatedLinkedSnapshot, NoMatch, Skipped) replacing opaque Boolean/Unit returns for link/unlink/reconcile ops.
+- **RecurringExpenseReconcileResult** created (`domain/recurring/lifecycle/RecurringExpenseReconcileResult.kt`) — sealed interface with 7 variants (Linked, Unlinked, Relinked, UpdatedLinkedSnapshot, NoMatch, Skipped, Error) replacing opaque Boolean/Unit returns for link/unlink/reconcile ops.
 - **RecurringOccurrenceStatus** created (`domain/recurring/lifecycle/RecurringOccurrenceStatus.kt`) — typed enum (PLANNED, PAID, SKIPPED, MISSED, CANCELLED, IGNORED) replacing raw status strings. `RecurringOccurrenceTransitionPolicy` centralizes transition validation with `canTransition()`/`requireAllowed()`.
 - **RecurringLifecycleEventWriter** — split into `writeCritical()` (always writes, returns Long, for provenance) and `writeDiagnostic()` (best-effort, swallows exceptions, for informational). `SafeEventMetadata` dependency removed.
 - **BillReminderSettings + BillReminderSettingsRepository** created (`domain/reminder/BillReminderSettings.kt`, `domain/reminder/BillReminderSettingsRepository.kt`) — runtime dispatch settings (enabled/disabled, quiet hours). SharedPreferences-backed impl bound via new **ReminderSettingsModule** (`di/ReminderSettingsModule.kt`).
@@ -445,8 +455,10 @@ domain/
 ├── challenge/                   # Spending challenges
 ├── common/                      # Common domain utilities
 ├── config/                      # Feature configuration
+├── consistency/                 # Domain consistency helpers
 ├── currency/                    # Currency management domain
 ├── engine/                      # Domain engine utilities
+├── event/                       # Domain event models
 ├── forecast/                    # Forecast domain logic
 ├── forecasting/                 # Monte Carlo + stress forecast engines
 ├── groups/                      # Shared expense and settlement flows
@@ -534,8 +546,8 @@ domain/
 │   ├── money/                   # Type-safe money primitives (CurrencyCode, MoneyAmount, etc.)
 │   └── time/                    # Typed time period models (PeriodRange, PeriodKind)
 ├── transaction/                 # Transaction lifecycle models
-│   ├── ExpenseSource.kt         # Enum of 14 expense origin sources
-│   ├── LifecycleEventType.kt    # Enum of 14 lifecycle event types
+│   ├── ExpenseSource.kt         # Enum of 17 expense origin sources
+│   ├── LifecycleEventType.kt    # Enum of 18 lifecycle event types
 │   ├── DeduplicationMode.kt     # Enum of deduplication strategies
 │   ├── CreateExpenseRequest.kt  # Source-neutral creation request (40+ fields)
 │   ├── CreateExpenseResult.kt   # Sealed result (Created, DuplicateSkipped, etc.)
@@ -608,8 +620,8 @@ data/
 ├── backup/                       # .costbackup bundle format + restore engine
 │   ├── CostbackupBundle.kt      # AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
 │   ├── RestoreMaintenanceMode.kt # 8-state mode manager; pauses workers + notification capture during restore
-│   ├── RestoreJournal.kt        # Crash-safe 8-state restore journal (PREPARING → COMPLETE/FAILED)
-│   ├── BackupVerifier.kt        # Full 56-entity 3-tier verification (EXACT / VALIDITY / OPTIONAL)
+│   ├── RestoreJournal.kt        # Crash-safe 9-state restore journal (PREPARING → COMPLETE/FAILED, incl. ASSETS_RESTORING)
+│   ├── BackupVerifier.kt        # Full 57-entity 3-tier verification (EXACT / VALIDITY / OPTIONAL)
 │   ├── DatabaseReadBarrier.kt   # Operation-level read blocking during restore
 │   └── DatabaseWriteBarrier.kt  # Operation-level write blocking during restore
 ├── ai/provider/                 # Cloud + on-device AI providers
@@ -656,7 +668,8 @@ data/
 │   ├── model/                   # Database models
 │   └── converter/               # Type converters
 ├── service/
-│   └── AndroidNotificationService.kt # Android notifications
+│   ├── AndroidNotificationService.kt # Android notifications
+│   └── AndroidNotificationPermissionChecker.kt # Notification permission checks (bound as NotificationPermissionChecker in WorkerModule)
 └── provider/
     └── MerchantCategoryProvider.kt # Pre-defined categories
 ```
@@ -669,15 +682,15 @@ MainApplication
              ├─ checkRestoreJournal()    ← Phase 9: crash recovery before any work
              │    └─ RestoreJournal.checkAndRecover() → RecoveryResult
              │         (NoAction / CompleteClean / CleanedNonDestructive /
-             │          RecoveredFromSwap / CriticalRecoveryRequired)
+             │          AssetsIncomplete / RecoveredFromSwap / CriticalRecoveryRequired)
              ├─ scheduleStartupWork()    ← uses WorkerRegistry.scheduleAll()
              ├─ AppBackgroundLifecycleObserver
             └─ WorkManager jobs
-               ├─ DailyBriefingWorker         (Phase 8 — every 24h, privacy-gated)
+               ├─ DailyBriefingWorker         (Phase 8 — midnight one-shot, privacy-gated)
                ├─ LocationBackfillWorker      (Phase 8 — every 12h, overwrite guard)
                ├─ MerchantKeyBackfillWorker   (Phase 8 — one-shot, legacy backfill)
                ├─ WarrantyExpirationWorker    (Phase 8 — every 24h, idempotent)
-               ├─ BillReminderWorker          (Phase 8 — every 6h, disabled by default)
+               ├─ BillReminderWorker          (Phase 8 — every 6h, enabled by default; runtime settings gate)
                ├─ ReceiptMatchingWorker       (Phase 8 — every 2h, automated matching)
                └─ DataRetentionWorker         (Phase 6 — every 24h)
                                     ↑ All 7 workers cancelled by
@@ -694,6 +707,8 @@ NotificationCaptureService (Android)
         ↓
 NotificationTextParts.extract()   ← unified API: resolves text from notification extras in a single pass
         ↓
+NotificationIntakeCoordinator → NotificationIntakeWorker   ← durable intake queue; payload is parsed inside the guarded worker
+        ↓
 AppParserRegistry → Specific Parser (GreekBank, Revolut, etc.)
        ↓
 ConfidenceRouter → Determine confidence level
@@ -706,7 +721,7 @@ ReviewQueueRepository → Add to review queue (if needed)
        ↓
 ReviewScreen (UI) → User approves/rejects
        ↓
-TransactionLifecycleCoordinator.createExpense()
+TransactionLifecycleCoordinator.createExpenseStandaloneV2()
        │  [validate → normalize → dedupe → insert atomic → event log]
        ↓
 TransactionSideEffectDispatcher.dispatchOnCreated()
@@ -771,6 +786,7 @@ FinancialWeatherRepository
 | Forecast | `domain/logic/SynthesisEngine.kt` | Month-end prediction (deterministic) |
 | Monte Carlo | `domain/forecasting/MonteCarloSpendingSimulator.kt` | Probabilistic spending forecast (stochastic) |
 | Budget | `domain/budget/BudgetMonitor.kt` | Budget alerts |
+| Budget Autopilot | `domain/budget/BudgetAutopilotEngine.kt` | Per-category budget adjustment recommendations (±15% delta caps); historical spend loaded once per window via `MultiCurrencyRepository.getHistoricalCategoryMonthlySpend()` typed aggregates (RP-08) |
 | Categorization | `domain/categorization/CategorizationEngine.kt` | Auto-categorization (5-layer pipeline) |
 | Recurring | `domain/logic/RecurringExpenseEngine.kt` | Pattern detection |
 | Insights | `domain/analytics/InsightsEngine.kt` | Spending insights coordinator |
@@ -790,7 +806,7 @@ FinancialWeatherRepository
 | AssistantHistorySettings | `domain/ai/model/AssistantHistoryMode.kt` | Enum: OFF/REDACTED/RAW for conversation history redaction |
 | Transaction Lifecycle | `domain/transaction/lifecycle/TransactionLifecycleCoordinator.kt` | Single entry point for ALL expense CUD |
 | Receipt Lifecycle | `domain/receipt/lifecycle/ReceiptLifecycleCoordinator.kt` | Single entry point for ALL receipt processing |
-| Group Lifecycle | `domain/groups/GroupLifecycleCoordinator.kt` | Domain-level coordinator for group lifecycle: create, add/remove member, add expense, archive, permanent-delete, record settlement (7 methods, 8 invariants). `emitLifecycleEvent()` dispatches real post-commit side effects (budget check + expense side-effect dispatch). |
+| Group Lifecycle | `SharedExpenseManager` + `SharedExpenseDataPortAdapter`; atomic writes via `data/database/GroupTransactionCoordinator.kt` | Group create/add-member/add-expense/settlement flows run through the shared-expense manager and the data-layer `GroupTransactionCoordinator` (Room `withTransaction`, write barrier, post-commit batch). The former `GroupLifecycleCoordinator` wrapper was removed 2026-09-11 (GR-14u36). |
 | Tax Rate Provider | `domain/tax/TaxRateProvider.kt` | Interface for tax-rate data (standard/reduced VAT rates per country+region) consumed by TaxEstimator |
 | Privacy Gate | `domain/privacy/CompositePrivacyGate.kt` | Chains 4 privacy sub-gates |
 
@@ -845,6 +861,14 @@ FinancialWeatherRepository
 
 ### TaxEstimator MoneyAggregate Output (May 2026)
 `TaxEstimate` and `TaxYearSummary` (both in `domain/tax/TaxEstimator.kt`) now carry `MoneyAggregate` fields — `deductibleAggregate`, `vatAggregate`, `taxableIncomeAggregate`, `incomeAggregate`, `estimatedTaxAggregate` — replacing raw Double totals with per-currency-bucket aggregates. Backed by `buildDeductibleAggregate()` and `buildIncomeAggregate()` private methods using `MoneyAggregateBuilder.fromBuckets()`.
+
+### Dashboard Money-Quality & Pace Semantics (RP-05/06c — Sep 2026)
+
+- **Canonical pace calculator:** `ComputeDashboardWidgetsUseCase` (`domain/usecase/dashboard/ComputeDashboardWidgetsUseCase.kt`, `@Singleton @Inject`) injects `SpendingPaceCalculator` and feeds it home-currency-normalized snapshots — the pace widget and the month-over-month insight both consume one calculator pass, so the projection and the completed-month baseline stay like-for-like (RP-06 6a/6b, P5-002/P5-013). `NO_BASELINE` suppresses the pace widget; the old `pacePercentage = 100f` / `-1f` placeholder never reaches UI.
+- **SynthesisEngine typed conversion:** `synthesize()` (`domain/logic/SynthesisEngine.kt`) is suspend; every conversion goes through `CurrencyConverter.convertOutcome()` returning a typed `ConversionOutcome` — `convertAmount()` returns null on failure and there are no raw-currency/raw-amount fallbacks (RP-06 6b slice 1/2: P5-007, P5-CURRENT-009/U-MONEY-01). Historical actuals are never re-converted; future obligations convert at `RateBasis.LATEST_AVAILABLE`; excluded conversions surface via `excludedCount`/`isPartial` instead of silent zeros.
+- **FinancialHealthScoreV2 conversion semantics:** `calculateHealthScore()` (`domain/health/FinancialHealthScoreV2.kt`) returns `HealthScoreOutcome` — `Available(result)` or `Unavailable(reason)` with the closed reason set `HOME_CURRENCY_UNAVAILABLE` / `NORMALIZATION_FAILED` / `DATA_LOAD_FAILED`. Raw `Expense.toExpenseSnapshot()` and `effectiveAmount` fallbacks are removed (P5-008); `Unavailable` is never persisted to health-score history and never coerced into a fabricated score.
+- **Dashboard reload on home-currency change:** `HomeViewModel` (`ui/screens/home/HomeViewModel.kt`) collects `CurrencySettingsRepository.homeCurrency()`; on a real change (first emission skipped) it bumps `dashboardReloadTrigger` — exactly one recompute per change, no loop — and reloads category trends for the new currency (P5-006/RP-06).
+- **Six-month trend window + uncategorized pseudo-category:** the dashboard adapter fetches current month + five completed months (calendar keys `M-5..M-0`, P5-001/P5-005); only `previousMonthAggregate`, `historicalMonthAggregates` and the forecast baseline may see that wider window — every aggregate consumed as current-month is scoped to `[periodStart, periodEnd)`. Uncategorized spending is the reserved pseudo-category id `0L`, never clickable/filterable as a real category (P5-012).
 
 ### Natural Language Search — Pagination & Data Quality (May 2026)
 | Component | File | Purpose |
@@ -907,6 +931,7 @@ A 7-phase refactoring (~70 files) introduced type-safe money primitives and wire
 | `CurrencyAssumption` | `domain/core/money/CurrencyAssumption.kt` | Enum: `UNKNOWN`, `ASSUMED_HOME_CURRENCY`, `ASSUMED_LEGACY_EUR`, `USER_CONFIRMED`, `PARSED_FROM_SOURCE`. Prevents silent EUR defaults. |
 | `MoneyMappers` | `domain/core/money/MoneyMappers.kt` | Bridge from legacy `ConversionResult`/`FailedConversion` → new `ConvertedMoney`/`ConversionFailure`. |
 | `MoneyFormatUtils` | `domain/core/money/MoneyFormatUtils.kt` | `MoneyAmount` extension functions (`formatMoney()`, `formatMoneyCompact()`, `formatMoneyWithSign()`) delegating to `CurrencyFormatter`. |
+| `CategoryMonthlySpend` | `domain/core/money/CategoryMonthlySpend.kt` | One `(scope, monthKey)` bucket of historical category monthly spend: PURCHASE-only, home-currency normalized at `RateBasis.TRANSACTION_DATE`, no rate-sentinel substitution (failures surface via `MoneyAggregate.isPartial`/`conversionFailures`). Produced by `MultiCurrencyRepository.getHistoricalCategoryMonthlySpend()`, consumed by `BudgetAutopilotEngine`. `SpendScope.Overall` and `SpendScope.Category(categoryId)` are distinct subtypes — `categoryId == null` is the uncategorized bucket, never "overall" (RP-08). |
 
 #### `MultiCurrencyRepository` — Canonical Aggregation Backbone
 
@@ -985,8 +1010,8 @@ A 120+ file cross-cutting feature establishing a single, auditable entry point f
 
 | Type | File | Purpose |
 |------|------|---------|
-| `ExpenseSource` | `domain/transaction/ExpenseSource.kt` | Enum tracking the origin of every expense: MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, REVIEW_APPROVAL, RECEIPT_SCAN, CSV_IMPORT, EMAIL_RECEIPT, GROUP_EXPENSE, BANK_API_SYNC, etc. (14 values) |
-| `LifecycleEventType` | `domain/transaction/LifecycleEventType.kt` | Enum of lifecycle transition types: CREATED, UPDATED, DELETED, CREATE_DUPLICATE_SKIPPED, etc. (14 values) |
+| `ExpenseSource` | `domain/transaction/ExpenseSource.kt` | Enum tracking the origin of every expense: MANUAL_ENTRY, NOTIFICATION_AUTO_ACCEPT, REVIEW_APPROVAL, RECEIPT_SCAN, CSV_IMPORT, EMAIL_RECEIPT, GROUP_EXPENSE, BANK_API_SYNC, etc. (17 values) |
+| `LifecycleEventType` | `domain/transaction/LifecycleEventType.kt` | Enum of lifecycle transition types: CREATED, UPDATED, DELETED, CREATE_DUPLICATE_SKIPPED, etc. (18 values) |
 | `DeduplicationMode` | `domain/transaction/DeduplicationMode.kt` | Enum: STANDARD, STRICT_EXTERNAL_ID, BULK_IMPORT, SKIP_FOR_DEBUG_RESTORE |
 | `CreateExpenseRequest` | `domain/transaction/CreateExpenseRequest.kt` | Source-neutral creation request with 40+ fields covering all expense properties, source-link fields, and deduplication policy controls |
 | `CreateExpenseResult` | `domain/transaction/CreateExpenseResult.kt` | Sealed result: Created(id), DuplicateSkipped(existingId, reason), ValidationFailed(errors), InsertConflict(dedupeKey), Error(exception) |
@@ -996,7 +1021,7 @@ A 120+ file cross-cutting feature establishing a single, auditable entry point f
 
 | Component | File | Purpose |
 |-----------|------|---------|
-| `TransactionLifecycleCoordinator` | `lifecycle/TransactionLifecycleCoordinator.kt` | **Single entry point** for ALL expense creation/update/delete. Pipeline: validate → normalize → dedupe → insert atomic → event logging → side effects. `createExpense()` now accepts a `SideEffectMode` param (`IMMEDIATE` or `DEFER`). When `DEFER` is used, callers invoke `dispatchPostCreationSideEffects()` separately to run side effects outside the DB transaction, fixing the nested-transaction/post-commit bug where side effects previously ran inside the DB transaction. Injected by 10+ consumer classes. |
+| `TransactionLifecycleCoordinator` | `lifecycle/TransactionLifecycleCoordinator.kt` | **Single entry point** for ALL expense creation/update/delete. Pipeline: validate → normalize → dedupe → insert atomic → event logging → side effects. `createExpense()` now accepts a `SideEffectMode` param (`IMMEDIATE` or `DEFER`). When `DEFER` is used, callers invoke `dispatchPostCreationSideEffects()` separately to run side effects outside the DB transaction, fixing the nested-transaction/post-commit bug where side effects previously ran inside the DB transaction. Injected by 10+ consumer classes. *[Update 2026-09-21: both `createExpense()` overloads (with and without `SideEffectMode`) are now `@Deprecated(DeprecationLevel.ERROR)`; the current creation entry points are `createExpenseStandaloneV2()` (planner+runner dispatches side effects after commit) and `createExpenseDbOnlyV2()` (returns `MutationResult` with the `PostCommitActionBatch` for outer-transaction callers). `dispatchPostCreationSideEffects()` remains for post-commit dispatch.]* |
 | `TransactionSideEffectDispatcher` | `lifecycle/TransactionSideEffectDispatcher.kt` | Consolidates post-creation side effects: budget check, anomaly alert, merchant-category pattern learning. Best-effort / fire-and-forget. |
 
 **C1 Migration complete:** 8 targeted update methods added (category, merchant, type,
@@ -1151,7 +1176,7 @@ backup encryption, and an export anonymizer for the expense tracker database.
 | `PrivacyCapability` | `domain/privacy/PrivacyCapability.kt` | Enum of 27 gated capabilities (NOTIFICATION_CAPTURE, CLOUD_AI_RECEIPT_ASSIST, EXTERNAL_GEOCODING, RAWBACKUP_EXPORT, ENCRYPTED_BACKUP, EXPENSE_EXPORT_RAW, DEBUG_RAW_EXPORT, RAW_DATABASE_EXPORT, etc.) |
 | `PrivacyGate` (interface) | `domain/privacy/PrivacyGate.kt` | Contract: `check(capability, context) → PrivacyDecision`. Fail-closed, audit-logged, deterministic per capability+settings. |
 | `PrivacyDecision` | `domain/privacy/PrivacyDecision.kt` | Sealed interface: `Allowed` or `Denied(reason)` |
-| `PrivacySettings` | `domain/privacy/PrivacySettings.kt` | Data class with 10 privacy toggles (notificationCapture, cloudAi, redactBeforeCloud, receiptImageCloud, externalGeocoding, backgroundLocationBackfill, deviceGpsLocation, encryptedBackup, debugDataPersistence) + 2 retention day settings |
+| `PrivacySettings` | `domain/privacy/PrivacySettings.kt` | Data class with 10 privacy toggles (notificationCapture, cloudAi, redactBeforeCloud, receiptImageCloud, bankStatementAi, externalGeocoding, backgroundLocationBackfill, deviceGpsLocation, encryptedBackup, debugDataPersistence) + 2 retention day settings |
 | `PrivacySettingsRepository` | `domain/privacy/PrivacySettingsRepository.kt` | Interface for reading/writing settings |
 | `PrivacyAuditLogger` | `domain/privacy/PrivacyAuditLogger.kt` | Logs every gate check decision (capability, decision, reason, context, caller) to the privacy_audit_events table |
 | `NotificationPrivacyGate` | `domain/privacy/NotificationPrivacyGate.kt` | Guards NOTIFICATION_CAPTURE and NOTIFICATION_PACKAGE_ALLOWLIST |
@@ -1232,18 +1257,18 @@ Phase 8 introduces a persistent job-run tracking table, a worker-specification m
 |-----------|------|---------|
 | `BackgroundJobRun` (entity) | `data/database/entity/BackgroundJobRun.kt` | Persistent record of each worker execution: workerName, startedAt/finishedAt, status (SCHEDULED/RUNNING/SUCCESS/FAILED/RETRY), rowsScanned/Updated, notificationsSent, retryReason, errorMessage |
 | `BackgroundJobRunDao` | `data/database/dao/BackgroundJobRunDao.kt` | DAO with `insert()`, `update()`, `getRecent(workerName)`, `getStaleRunningRuns()` |
-| `WorkerSpec` | `domain/workers/WorkerSpec.kt` | Data class modeling worker name, version, enabled flag, constraints, repeat interval, backoff policy. Has separate `existingWorkPolicy` (periodic) and `oneShotPolicy: ExistingWorkPolicy` (one-shot); a spec **version bump always forces `REPLACE`** over either. `merchant_key_backfill` uses `REPLACE` (re-enqueue on each schedule); `ai_daily_briefing` uses `KEEP` (protects the midnight self-reschedule chain). Ships `DEFAULTS` map with specs for all 7 workers. |
+| `WorkerSpec` | `domain/workers/WorkerSpec.kt` | Data class modeling worker name, version, enabled flag, constraints, repeat interval, backoff policy. Has separate `existingWorkPolicy` (periodic) and `oneShotPolicy: ExistingWorkPolicy` (one-shot); a spec **version bump always forces `UPDATE`** over either (WorkManager 2.8+ `UPDATE` replaced the deprecated `REPLACE` constant). `merchant_key_backfill` uses `REPLACE` (re-enqueue on each schedule); `ai_daily_briefing` uses `REPLACE` (U-WORKER-04: `KEEP` caused silent chain death when a stale pending request blocked re-arming; the worker's artifact-freshness check prevents duplicate generation). Ships `DEFAULTS` map with specs for all 7 workers. |
 | `WorkerSpecScheduler` | `domain/workers/WorkerSpecScheduler.kt` | **Centralized scheduling object** that all workers use instead of duplicating schedule logic. Reads `WorkerSpec.DEFAULTS` by worker name, handles version-change detection (force REPLACE when version bumps), and delegates to `WorkManager.enqueueUniquePeriodicWork` / `enqueueUniqueWork`. `scheduleAtMidnight()` **cancels existing unique work when the spec is disabled** (parity with `scheduleFromSpec`). Stateless Kotlin `object` — no DI needed. All 7 workers are scheduled via this scheduler in `AppStartupCoordinator`. |
 
 #### Workers Summary
 
 | Worker | Location | Schedule | Key Change in Phase 8 |
 |--------|----------|----------|-----------------------|
-| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | Every 6h, flex 15min | **Disabled by default** (user opt-in); fixed to query `RecurringLifecycleCoordinator` via `WorkerSpec` |
+| `BillReminderWorker` | `service/reminder/BillReminderWorker.kt` | Every 6h, flex 15min | **Enabled by default** (spec v2 flipped `enabled=true`; runtime dispatch is governed by `BillReminderSettings` — enabled flag + quiet hours); queries `RecurringLifecycleCoordinator` via `WorkerSpec` |
 | `ReceiptMatchingWorker` | `service/receiptmatching/ReceiptMatchingWorker.kt` | Every 2h | Scheduled via `AppStartupCoordinator`; automated receipt↔expense matching. **Concurrency invariant (S6):** double auto-match across concurrent periodic+manual runs is prevented by a per-receipt atomic claim `ScannedReceiptDao.claimForAutoMatch` (conditional `UPDATE ... WHERE matchStatus IN ('UNMATCHED','SUGGESTED')`) — *not* by `WorkerLeaseRegistry`, which is a drain/registry mechanism and is **not** mutually exclusive per worker name. **Durable events (S5):** `MATCH_ATTEMPTED`, `MATCH_NOT_FOUND`, `MATCH_SKIPPED_DOCUMENT_TYPE`, `AUTO_MATCH_LINK_FAILED` (alongside `MATCH_SUGGESTED`) via `ReceiptMatchLifecycleService`. |
 | `WarrantyExpirationWorker` | `service/warranty/WarrantyExpirationWorker.kt` | Every 24h | **Room-backed delivery (S9):** sent-state is now the `WarrantyReminderDelivery` entity (claim-before-notify; `SENT` only on `DELIVERED`; unique key `warrantyId+windowDays+expiryDate`) — the SharedPreferences flag is removed. Sets `requiresNotificationPermission` (guard-enforced). |
 | `LocationBackfillWorker` | `data/location/LocationBackfillWorker.kt` | Every 12h, UNMETERED | **Overwrite guard:** skips expenses that already have lat/lon; privacy-gated via `PrivacyCapability.BACKGROUND_LOCATION_BACKFILL`. Throws `RetryableWorkerException` on no-progress/transient paths (does not burn the permanent attempt budget). |
-| `DailyBriefingWorker` | `data/ai/worker/DailyBriefingWorker.kt` | Midnight one-shot | **Privacy gate:** checks `CLOUD_AI_DAILY_BRIEFING` at runtime. **Reschedule contract (S3):** reschedules the next midnight run on terminal Success **and** on all incidental Skips (fresh-artifact / no-work / privacy-denied / restore-blocked). Only an explicit spec-disable (reason literal `"Worker disabled by spec"`) stops the chain (`ai_daily_briefing` uses `oneShotPolicy = KEEP`). |
+| `DailyBriefingWorker` | `data/ai/worker/DailyBriefingWorker.kt` | Midnight one-shot | **Privacy gate:** checks `CLOUD_AI_DAILY_BRIEFING` at runtime. **Reschedule contract (S3):** reschedules the next midnight run on terminal Success **and** on all incidental Skips (fresh-artifact / no-work / privacy-denied / restore-blocked). Only an explicit spec-disable (reason literal `"Worker disabled by spec"`) stops the chain (`ai_daily_briefing` uses `oneShotPolicy = REPLACE`). |
 | `MerchantKeyBackfillWorker` | `data/location/MerchantKeyBackfillWorker.kt` | One-shot | One-time backfill of `merchantKey` for legacy expense rows. Uses `oneShotPolicy = REPLACE` so it can be re-enqueued; throws `RetryableWorkerException` on no-progress paths. |
 | `DataRetentionWorker` | `data/privacy/DataRetentionWorker.kt` | Every 24h | Pre-existing (Phase 6); moved to `WorkerSpec` governance |
 
@@ -1254,16 +1279,16 @@ Phase 8 introduces a persistent job-run tracking table, a worker-specification m
 ### Phase 9 — Backup & Restore Engine (May 2026)
 
 Phase 9 introduces a complete backup/restore subsystem with an encrypted bundle format,
-crash-safe journaling, worker pausing, and full 56-entity verification.
+crash-safe journaling, worker pausing, and full 57-entity verification.
 
 #### New `data/backup/` Package
 
 | Component | File | Purpose |
 |-----------|------|---------|
 | `CostbackupBundle` | `data/backup/CostbackupBundle.kt` | **`.costbackup` bundle format.** Outer layer: `COSTBACKUP1` magic (10B) + format version (2B) + salt (16B) + IV (12B) + AES-256-GCM ciphertext. Inner layer: standard ZIP containing `manifest.json`, `database.sqlite`, `files/receipts/`, `checksums.json`. Data classes: `BackupManifest`, `BackupIncludes`, `BackupOptionsManifest`, `ChecksumsManifest`. Exceptions: `WrongBackupPasswordException`, `UnsupportedBackupVersionException`, `InvalidBackupFormatException`, `ChecksumMismatchException`. Exposes `create()` and `extract()` as `Result<T>`. |
-| `RestoreMaintenanceMode` | `data/backup/RestoreMaintenanceMode.kt` | **8-state maintenance mode manager.** Modes: `NORMAL`, `BACKUP_EXPORTING`, `RESTORE_PREPARING`, `RESTORE_STAGING`, `RESTORE_SWAPPING`, `RESTORE_VERIFYING`, `RESTORE_ROLLING_BACK`, `RESTORE_COMPLETE_RESTART_REQUIRED`. On `enter()`: cancels all 7 WorkManager workers by tag via `WorkerSpec.DEFAULTS`. State persisted in `SharedPreferences` (survives process death). `isWritesAllowed()` returns `false` for all modes except `NORMAL` and `BACKUP_EXPORTING`. `exit(forceRestartRequired)` optionally transitions to `RESTORE_COMPLETE_RESTART_REQUIRED` to keep writes blocked until app restart. |
-| `RestoreJournal` | `data/backup/RestoreJournal.kt` | **Crash-safe 8-state restore journal.** State machine: `PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING → COMPLETE` (with `ROLLING_BACK` and `FAILED` as recovery paths). Writes `restore_journal.json` before each critical step. `checkAndRecover()` returns `RecoveryResult` sealed class: `NoAction`, `CompleteClean`, `CleanedNonDestructive`, `RecoveredFromSwap`, `CriticalRecoveryRequired`. Non-destructive states (`PREPARING`, `STAGED`, `FAILED`) clean staging files automatically. Destructive states (`SWAPPING`, `VERIFYING`, `ROLLING_BACK`) signal the caller to attempt safety-backup recovery. |
-| `BackupVerifier` | `data/backup/BackupVerifier.kt` | **Full 56-entity verification in 3 tiers.** `TIER_1_EXACT` (30 tables — user/business data: row count **must** match exactly). `TIER_2_VALIDITY` (16 tables — derived/event-log: must pass integrity + FK checks). `TIER_3_OPTIONAL` (10 tables — cache/external: may be absent). Methods: `verify()` returns `VerificationSummary` with per-table results; `verifyQuick()` throws on first failure for pre-swap gating. Runs `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the restored database. |
+| `RestoreMaintenanceMode` | `data/backup/RestoreMaintenanceMode.kt` | **8-state maintenance mode manager.** Modes: `NORMAL`, `BACKUP_EXPORTING`, `RESTORE_PREPARING`, `RESTORE_STAGING`, `RESTORE_SWAPPING`, `RESTORE_VERIFYING`, `RESTORE_ROLLING_BACK`, `RESTORE_COMPLETE_RESTART_REQUIRED`. On `enter()`: pauses all 7 WorkManager workers by cancelling each unique name in `WorkerSpec.DEFAULTS`. State persisted in `SharedPreferences` (survives process death). `isWritesAllowed()` returns `true` **only** in `NORMAL` (writes are blocked in `BACKUP_EXPORTING` too — that mode allows DB reads for snapshot export but not writes). `exit(forceRestartRequired)` optionally transitions to `RESTORE_COMPLETE_RESTART_REQUIRED` to keep writes blocked until app restart. |
+| `RestoreJournal` | `data/backup/RestoreJournal.kt` | **Crash-safe 9-state restore journal.** State machine: `PREPARING → STAGED → SAFETY_BACKUP_CREATED → SWAPPING → VERIFYING → ASSETS_RESTORING → COMPLETE` (with `ROLLING_BACK` and `FAILED` as recovery paths). Writes `restore_journal.json` before each critical step. `checkAndRecover()` returns `RecoveryResult` sealed class: `NoAction`, `CompleteClean`, `CleanedNonDestructive`, `AssetsIncomplete` (P7-P1-04: DB swapped but assets incomplete — journal preserved for recovery), `RecoveredFromSwap`, `CriticalRecoveryRequired`. Non-destructive states (`PREPARING`, `STAGED`, `FAILED`) clean staging files automatically. Destructive states (`SWAPPING`, `VERIFYING`, `ROLLING_BACK`) signal the caller to attempt safety-backup recovery. |
+| `BackupVerifier` | `data/backup/BackupVerifier.kt` | **Full 57-entity verification in 3 tiers.** `TIER_1_EXACT` (38 tables — user/business data incl. the lifecycle/event tables: row count **must** match exactly). `TIER_2_VALIDITY` (10 tables — derived/event-log: must pass integrity + FK checks). `TIER_3_OPTIONAL` (9 tables — cache/external: may be absent). Methods: `verify()` returns `VerificationSummary` with per-table results; `verifyQuick()` throws on first failure for pre-swap gating. Runs `PRAGMA integrity_check` and `PRAGMA foreign_key_check` on the restored database. |
 
 #### Integration Points
 
@@ -1300,7 +1325,7 @@ crash-safe journaling, worker pausing, and full 56-entity verification.
 9. RestoreJournal.transitionTo(SWAPPING)
 
 10. Reopen live DB; BackupVerifier.verify(liveDbFile, manifestTableCounts)
-    → full 56-entity 3-tier verification
+    → full 57-entity 3-tier verification
 
 11. RestoreJournal.transitionTo(VERIFYING)
 
@@ -1590,7 +1615,7 @@ The Room schema at v120 (historical reference) included all tables from v106 plu
 | **140→141** | FOREIGN KEY on recurring_reminder_deliveries.occurrenceId → recurring_occurrences.id CASCADE | FK constraint |
 | **141→142** | Relax budget_forecasts.budgetId FK to CASCADE | FK constraint change |
 | **142→143** | warranty_reminder_deliveries table — durable warranty sent-state | New table (replaces SharedPreferences flag) |
-| **143→144** | raw_notifications index cleanup | Drop stale indices |
+| **143→144** | Drop stale `index_categories_name_nocase` index | Drop stale index |
 | **144→145** | pending_reviews rebuild with correct nullable schema + stale index cleanup; **v145 becomes the migration baseline** (historical migrations below v145 retired — old DBs use the financial rescue path) | DROP+CREATE pending_reviews, index cleanup |
 | **145→146** | `negotiation_outcomes` table (Engine-4 negotiation outcomes; FK to manual_recurring_expenses) | New table + 3 indices |
 | **146→147** | Group soft-delete/idempotency (Engine-4 PR8): `group_members.leftAt`, `group_expenses.idempotencyKey`; unique (groupId, name) index → non-unique | 2 new columns + index change |
@@ -1804,7 +1829,7 @@ Cross-cutting fixes applied after architecture review tightened correctness, con
 
 ### Add New Parser
 1. Create `domain/parser/parsers/NewParser.kt` extending base parser
-2. Register in `AppParserRegistry.parserList`
+2. Constructor-inject it into `AppParserRegistry` and add it to the `parsers` list in `init` (before the generic fallback)
 3. Add test cases in `domain/parser/`
 
 ### Add New Screen

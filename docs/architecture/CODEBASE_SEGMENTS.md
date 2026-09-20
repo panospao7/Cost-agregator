@@ -2,7 +2,7 @@
 
 Canonical guide for segment ownership and AI analysis.
 
-**Last updated:** 2026-09-07 (verified against source). Database schema version: v148 (`data/database/AppDatabase.kt`).
+**Last updated:** 2026-09-21 (verified against source). Database schema version: v148 (`data/database/AppDatabase.kt`).
 
 ## Rules
 - One segment list, one ascending order, one owning section per segment.
@@ -353,7 +353,7 @@ Owns holdings, portfolio tracking, and investment metrics.
 
 Owns currency normalization, exchange-rate handling, multi-currency calculations, and type-safe money primitives.
 
-**Representative files — domain/core/money/** (24 files)
+**Representative files — domain/core/money/** (25 files)
 - `domain/core/money/CurrencyCode.kt` — Type-safe ISO 4217 value class with ASCII validation
 - `domain/core/money/MoneyAmount.kt` — Amount + currency pair with safe arithmetic; ★ APPROVED TYPE ★
 - `domain/core/money/ConvertedMoney.kt` — Conversion result with rate metadata
@@ -364,7 +364,7 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 - `domain/core/money/MoneyAggregateMetadata.kt` — Metadata counters for aggregate (expenseCount, currencyCount, etc.)
 - `domain/core/money/MoneyAggregateResult.kt` — Sealed: Available / Unavailable
 - `domain/core/money/ConversionFailure.kt` — Failed conversion record with FailureReason
-- `domain/core/money/ConversionFailureType.kt` — Enum: MISSING_RATE, INVALID_AMOUNT, RATE_STALE, UNKNOWN
+- `domain/core/money/ConversionFailureType.kt` — Enum: INVALID_SOURCE_CURRENCY, INVALID_TARGET_CURRENCY, MISSING_RATE, MISSING_HISTORICAL_RATE, STALE_RATE, UNSUPPORTED_PAIR, HOME_CURRENCY_UNAVAILABLE, RATE_SOURCE_UNTRUSTED, UNKNOWN
 - `domain/core/money/ConversionOutcome.kt` — Sealed: Converted / Failed
 - `domain/core/money/ConversionPath.kt` — Records the conversion path (direct, via EUR cross-rate, etc.)
 - `domain/core/money/ConversionQuality.kt` — Quality metadata for conversion results
@@ -373,7 +373,7 @@ Owns currency normalization, exchange-rate handling, multi-currency calculations
 - `domain/core/money/MoneyFormatUtils.kt` — MoneyAmount extension formatting functions
 - `domain/core/money/MoneyNormalizationEngine.kt` — Multi-expense normalization engine
 - `domain/core/money/NormalizationResult.kt` — Result type for normalization operations
-- `domain/core/money/RateBasis.kt` — Enum: LATEST_AVAILABLE, TRANSACTION_DATE, PERIOD_START, PERIOD_END, FORECAST_DATE, PERIOD_MIDPOINT_ESTIMATE
+- `domain/core/money/RateBasis.kt` — Enum: IDENTITY, LATEST_AVAILABLE, TRANSACTION_DATE, PERIOD_START, PERIOD_END, PERIOD_MIDPOINT_ESTIMATE, FORECAST_DATE, MANUAL_LOCKED
 - `domain/core/money/StaleRatePolicy.kt` — Policy for handling stale exchange rates
 - `domain/core/money/BucketDatePolicy.kt` — Policy for bucket date assignment
 - `domain/core/money/HomeCurrencyForMoneyMath.kt` — Home currency resolution for money math
@@ -420,8 +420,8 @@ Owns export pipelines, backup/restore flows, and file packaging.
 - `data/repository/DatabaseBackupRepositoryImpl.kt`
 - `data/backup/BackupVerifier.kt` — 57-entity 3-tier verification (TIER_1_EXACT / TIER_2_VALIDITY / TIER_3_OPTIONAL)
 - `data/backup/CostbackupBundle.kt` — AES-256-GCM encrypted ZIP: header + manifest + DB + receipt images + checksums
-- `data/backup/RestoreJournal.kt` — Crash-safe 8-state restore journal; ASSETS_RESTORING state for asset recovery
-- `data/backup/RestoreMaintenanceMode.kt` — 8-state mode manager; pauses 7 workers; BACKUP_EXPORTING mode
+- `data/backup/RestoreJournal.kt` — Crash-safe 9-state restore journal; ASSETS_RESTORING state for asset recovery
+- `data/backup/RestoreMaintenanceMode.kt` — 11-state mode manager; pauses 7 workers; BACKUP_EXPORTING mode
 - `data/backup/DatabaseReadBarrier.kt` — Operation-level read blocking during restore (allows NORMAL/BACKUP_EXPORTING)
 - `data/backup/DatabaseWriteBarrier.kt` — Operation-level write blocking during restore (throws IllegalStateException in non-NORMAL/BACKUP_EXPORTING modes)
 - `domain/backup/BackupPrivacyMode.kt` — enum defining 4 backup privacy levels
@@ -512,7 +512,7 @@ Owns the base group/shared-expense model, membership, and transaction coordinati
 - `domain/groups/GroupTransactionCoordinator.kt`
 - `data/database/GroupTransactionCoordinator.kt` — Data-layer executor of the domain coordinator contract; runs group mutations atomically in a single Room transaction via `RoomDomainTransactionRunner` (DB ownership policy v2)
 - `data/database/RoomDomainTransactionRunner.kt` — Room-transaction runner bridging domain coordinators to atomic DB writes
-- `domain/groups/GroupLifecycleCoordinator.kt` — @Singleton domain coordinator wrapping GroupTransactionCoordinator (7 methods, 8 invariants)
+- Group lifecycle operations run through `SharedExpenseManager` / `SharedExpenseDataPortAdapter`; the planned `GroupLifecycleCoordinator` wrapper (PR-E15) was never built and was removed (GR-14u36, 2026-09-11)
 - `domain/groups/GroupBalanceCalculator.kt` — @Singleton @Inject per-member net balance calculator (paidTotal, owedShareTotal, settlementsPaid/Received, netBalance)
 - `domain/groups/usecase/AddGroupExpenseUseCase.kt`
 - `domain/groups/SharedExpenseManager.kt`
@@ -567,8 +567,8 @@ Owns encrypted key storage and security/network bindings.
 - `domain/privacy/RawStorageMode.kt` — Enum: STORE_RAW / STORE_REDACTED / STORE_METADATA_ONLY / DO_NOT_STORE
 - `domain/privacy/RawContentSanitizer.kt` — Write-time sanitizer applying RawStorageMode to OCR/email content; HMAC-safe variants (removed String.hashCode())
 - `domain/privacy/EffectiveCloudAiPolicy.kt` — Resolves effective cloud AI policy from privacy + AI settings (`cloudAllowed`, `redactBeforeCloud`, `receiptImageUploadAllowed`, `bankStatementCloudAllowed` flags)
-- `domain/privacy/PrivacyBlocked.kt` — Sealed interface standardizing privacy-denied states: CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled, NotificationCaptureDisabled, RawExportDisabled, Custom
-- `domain/privacy/PrivacyDecision.kt` — Sealed interface: `Allowed`, `Denied(reason)`, `FailClosed(reason)`; `blocksExecution()` returns true for both Denied and FailClosed; `reason()` for all variants; 30+ callers use for fail-closed propagation
+- `domain/privacy/PrivacyBlocked.kt` — Sealed interface standardizing privacy-denied states: CloudAiDisabled, ReceiptImageUploadDisabled, ExternalGeocodingDisabled, NotificationCaptureDisabled, RawExportDisabled, DeviceGpsDisabled, BackgroundLocationDisabled, BankStatementAiDisabled, EncryptedBackupDisabled, OverpassDisabled, DebugDataPersistenceDisabled, Custom
+- `domain/privacy/PrivacyDecision.kt` — Sealed interface: `Allowed`, `NotApplicable`, `Denied(reason)`, `FailClosed(reason)`; `blocksExecution()` returns true for both Denied and FailClosed; `reason()` for all variants; 30+ callers use for fail-closed propagation
 - `ui/components/PrivacyBlockedCard.kt` — Reusable Compose card for privacy-blocked state with lock icon, "Feature disabled" title, and specific PrivacyBlocked reason
 
 ## SEGMENT 29: Debug & Diagnostics
@@ -581,7 +581,7 @@ Owns debug surfaces, diagnostics pipeline, pipeline diagnostics, data integrity 
 - `ui/screens/debug/DebugViewerScreen.kt`
 - `domain/debug/ServiceDiagnostics.kt`
 - `domain/debug/NotificationSeeder.kt`
-- `domain/diagnostics/DatabaseIntegrityScanner.kt` — Scans for 11 invariant violations (duplicate active budgets, current user per group, fingerprint collisions, etc.)
+- `domain/diagnostics/DatabaseIntegrityScanner.kt` — Scans for 12 invariant violations (duplicate active budgets, current user per group, fingerprint collisions, etc.)
 - `di/DiagnosticsModule.kt` — Diagnostics DI wiring
 - `data/database/entity/OperationRunEvent.kt` — Operation run event record
 - `data/database/dao/OperationRunEventDao.kt` — DAO for operation run events
@@ -766,7 +766,7 @@ File-to-segment mapping for all 39 segments:
 | 13 | Cash Flow Planning | `domain/cashflow/`, `CashFlowCalculator` |
 | 14 | Bank Integration | `domain/bank/`, `BankConnection` |
 | 15 | Investment Tracking | `domain/investment/`, `InvestmentTracker`, `InvestmentDataQuality`, `InvestmentPerformance` |
-| 16 | Currency & Exchange | `domain/core/money/` (24 files), `CurrencyConverter`, `MultiCurrencyRepository`, `AnalyticsCurrencyNormalizer` |
+| 16 | Currency & Exchange | `domain/core/money/` (25 files), `CurrencyConverter`, `MultiCurrencyRepository`, `AnalyticsCurrencyNormalizer` |
 | 17 | Tax Calculation & Reporting | `domain/tax/`, `TaxEstimator`, `TaxRateProvider`, `DemoTaxRateProvider` |
 | 18 | Export & Backup | `domain/backup/`, `data/backup/`, `AccountingExport`, `CsvCellSanitizer`, `AccountingExportPolicy`, `DatabaseReadBarrier`, `DatabaseWriteBarrier` |
 | 19 | Location Enrichment | `domain/location/`, `CompositeGeocodingService` |

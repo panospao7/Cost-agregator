@@ -1,6 +1,6 @@
 # ExpenseTracker ViewModel Injection Reference
 
-**Generated:** June 1, 2026 · **Last updated:** September 7, 2026 (verified against constructors)  
+**Generated:** June 1, 2026 · **Last updated:** September 21, 2026 (verified against constructors)  
 **Total ViewModels:** 41 (40 @HiltViewModel files + 1 inline RecurringExpensesViewModel)  
 **Architecture:** Hilt @HiltViewModel with constructor injection
 
@@ -11,9 +11,9 @@
 1. [Main ViewModel](#1-main-viewmodel)
 2. [Shell Tab ViewModels (6)](#2-shell-tab-viewmodels)
 3. [Overlay ViewModels (5)](#3-overlay-viewmodels)
-4. [Feature Screen ViewModels (24)](#4-feature-screen-viewmodels)
+4. [Feature Screen ViewModels (22)](#4-feature-screen-viewmodels)
 5. [Management Screen ViewModels (3)](#5-management-screen-viewmodels)
-6. [Debug ViewModels (2)](#6-debug-viewmodels)
+6. [Debug ViewModels (4)](#6-debug-viewmodels)
 7. [Injection Complexity Heatmap](#7-injection-complexity-heatmap)
 
 ---
@@ -41,8 +41,8 @@
 
 ### ReviewViewModel
 **File:** `ui/screens/review/ReviewViewModel.kt`
-**Injections:** NotificationRepository, ReviewQueueRepository, CategoryRepository, ReceiptRepository, ExpenseRepository, DebugDataStorage, GeocodingService, PrivacyGate, ExplainPendingReviewUseCase, SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase, JudgePendingReviewDuplicateUseCase, AiArtifactRepository, AiSettingsRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptDebugExporter
-**Complexity:** 🔴 High (17 dependencies)
+**Injections:** NotificationRepository, ReviewQueueRepository, CategoryRepository, ReceiptRepository, ExpenseRepository, DebugDataStorage, GeocodingService, PrivacyGate, ExplainPendingReviewUseCase, SuggestCategoryFallbackUseCase, SuggestReceiptExtractionUseCase, JudgePendingReviewDuplicateUseCase, AiArtifactRepository, AiSettingsRepository, AiRuntimeDiagnostics, ReceiptLifecycleCoordinator, ReceiptDebugExporter, TimeProvider
+**Complexity:** 🔴 High (18 dependencies)
 
 ### BudgetViewModel
 **File:** `ui/screens/budget/BudgetViewModel.kt`
@@ -114,7 +114,7 @@
 
 ### PriceProtectionViewModel
 **File:** `ui/screens/price/PriceProtectionViewModel.kt`
-**Injections:** PriceProtectionTracker, CurrencySettingsRepository, Context
+**Injections:** PriceProtectionTracker, CurrencySettingsRepository, @ApplicationContext Context
 **Complexity:** 🟡 Medium (3 dependencies)
 
 ### BillNegotiationViewModel
@@ -199,8 +199,8 @@
 
 ### BackupRestoreViewModel
 **File:** `ui/screens/backup/BackupRestoreViewModel.kt`
-**Injections:** @ApplicationContext Context, DatabaseBackupRepository, RestoreMaintenanceMode
-**Complexity:** 🟡 Medium (3 dependencies)
+**Injections:** @ApplicationContext Context, DatabaseBackupRepository, RestoreMaintenanceMode, TimeProvider
+**Complexity:** 🟡 Medium (4 dependencies)
 
 ---
 
@@ -232,8 +232,8 @@
 
 ### CategorizationDebugViewModel
 **File:** `ui/screens/debug/CategorizationDebugViewModel.kt`
-**Injections:** CategorizationEngine
-**Complexity:** 🟢 Low (1 dependency)
+**Injections:** CategorizationEngine, TimeProvider
+**Complexity:** 🟢 Low (2 dependencies)
 
 ### SourceLinkDebugViewModel
 **File:** `ui/screens/debug/SourceLinkDebugViewModel.kt`
@@ -253,16 +253,16 @@
 
 | Complexity | # VMs | ViewModels |
 |-----------|-------|------------|
-| 🔴 High (10+) | 6 | HomeViewModel (20), ReviewViewModel (17), AnalyticsViewModel (18), ReceiptScanViewModel (18), SpendingMapViewModel (12), DebugViewModel (16) |
-| 🟡 Medium (3-9) | 21 | TransactionsViewModel (9), BudgetViewModel (7), AddExpenseViewModel (5), RecurringExpensesViewModel (7), ManualRecurringExpenseViewModel (3), AssistantViewModel (9), BudgetForecastingViewModel (3), SavingsGoalsViewModel (8), CarbonFootprintViewModel (3), PriceProtectionViewModel (3), NaturalLanguageSearchViewModel (4), ReceiptMatchingViewModel (4), SpendingChallengesViewModel (3), AdvancedAnalyticsViewModel (3), CashFlowCalendarViewModel (3), CurrencyManagementViewModel (5), SubscriptionManagementViewModel (5), ExportOptionsViewModel (9), SharedExpenseGroupsViewModel (7), BackupRestoreViewModel (3), AiSettingsViewModel (7) |
-| 🟢 Low (1-2) | 14 | MainViewModel (2), WarrantyTrackerViewModel (2), BillRemindersViewModel (2), InvestmentViewModel (2), BankConnectionsViewModel (1), LifestyleInflationViewModel (2), VisualSplitViewModel (2), TaxConfigurationViewModel (2), BillNegotiationViewModel (2), CategoryViewModel (1), PrivacySettingsViewModel (1), CategorizationDebugViewModel (1), SourceLinkDebugViewModel (1), SourceLinkBackfillViewModel (1) |
+| 🔴 High (10+) | 6 | HomeViewModel (20), ReviewViewModel (18), AnalyticsViewModel (18), ReceiptScanViewModel (18), SpendingMapViewModel (12), DebugViewModel (16) |
+| 🟡 Medium (3-9) | 21 | TransactionsViewModel (9), BudgetViewModel (7), AddExpenseViewModel (5), RecurringExpensesViewModel (7), ManualRecurringExpenseViewModel (3), AssistantViewModel (9), BudgetForecastingViewModel (3), SavingsGoalsViewModel (8), CarbonFootprintViewModel (3), PriceProtectionViewModel (3), NaturalLanguageSearchViewModel (4), ReceiptMatchingViewModel (4), SpendingChallengesViewModel (3), AdvancedAnalyticsViewModel (3), CashFlowCalendarViewModel (3), CurrencyManagementViewModel (5), SubscriptionManagementViewModel (5), ExportOptionsViewModel (9), SharedExpenseGroupsViewModel (7), BackupRestoreViewModel (4), AiSettingsViewModel (7) |
+| 🟢 Low (1-2) | 14 | MainViewModel (2), WarrantyTrackerViewModel (2), BillRemindersViewModel (2), InvestmentViewModel (2), BankConnectionsViewModel (1), LifestyleInflationViewModel (2), VisualSplitViewModel (2), TaxConfigurationViewModel (2), BillNegotiationViewModel (2), CategoryViewModel (1), PrivacySettingsViewModel (1), CategorizationDebugViewModel (2), SourceLinkDebugViewModel (1), SourceLinkBackfillViewModel (1) |
 
 ### Most-Injected Dependencies
 
 | Dependency | Used By (# VMs) |
 |------------|-----------------|
 | **CurrencySettingsRepository** | 24 |
-| **TimeProvider** | 18 |
+| **TimeProvider** | 20 |
 | **CategoryRepository** | 11 |
 | **ExpenseRepository** | 9 |
 | **AiSettingsRepository** | 6 |

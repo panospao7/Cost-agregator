@@ -1,6 +1,6 @@
 # Navigation Architecture
 
-*Last updated: 2026-09-07*
+*Last updated: 2026-09-21*
 
 ## Overview
 
@@ -110,7 +110,7 @@ Scheme: `expensetracker://`
 | `plan` | Allow | Budget overview |
 | Unknown | Reject | Safety default |
 
-Implementation status (verified 2026-09-07):
+Implementation status (verified 2026-09-21):
 
 - `DeepLinkParser.kt` returns `DeepLinkDecision` (Allow / RequireConfirmation / Reject) and is covered by `DeepLinkParserTest`, but it is **not called from production code** today.
 - `MainActivity.handleIntent` (invoked from both `onCreate` and `onNewIntent`) performs its own inline parsing of the same 8 hosts and navigates immediately — there is currently no confirmation dialog for sensitive routes (see PRV-16 TODO in `MainActivity`).

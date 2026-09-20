@@ -2,7 +2,7 @@
 
 > Complete mapping of every `NavigationDestination` to its corresponding ViewModel, screen file, and feature segment.
 >
-> *Last updated: 2026-09-07*
+> *Last updated: 2026-09-21*
 
 ---
 
@@ -63,7 +63,7 @@
 | Budget Forecasting | `NavigationDestination.BudgetForecasting(budget?)` | `BudgetForecastingViewModel` | `ui/screens/budget/BudgetForecastingScreen.kt` | 1 (Forecast) |
 | Category Management | `NavigationDestination.CategoryManagement` | `CategoryViewModel` | `ui/screens/categories/CategoryScreen.kt` | 6 (Merchant Cat.) |
 | AI Settings | `NavigationDestination.AiSettings` | `AiSettingsViewModel` | `ui/screens/aisettings/AiSettingsScreen.kt` | 20 (AI Platform) |
-| Privacy Settings | `NavigationDestination.PrivacySettings` | `PrivacySettingsViewModel` | `ui/screens/privacysettings/PrivacySettingsScreen.kt` | 6 (Privacy) |
+| Privacy Settings | `NavigationDestination.PrivacySettings` | `PrivacySettingsViewModel` | `ui/screens/privacysettings/PrivacySettingsScreen.kt` | 28 / 6 (Security / Privacy) |
 
 ### Debug & Unrouted Support Screens
 
@@ -72,8 +72,8 @@
 | Debug | `NavigationDestination.Debug` (render only when `BuildConfig.DEBUG`) | `DebugViewModel` | `ui/screens/debug/DebugScreen.kt` | BuildConfig.DEBUG gated |
 | Categorization Debug | *(no destination — opened from DebugScreen)* | `CategorizationDebugViewModel` | `ui/screens/debug/CategorizationDebugScreen.kt` | Debug sub-screen |
 | Debug Viewer | *(no destination — embedded in ReceiptScanScreen and ReviewScreen)* | *(host screens' ViewModels)* | `ui/screens/debug/DebugViewerScreen.kt` | Debug sub-screen |
-| Source Link Debug | *(no destination — no in-app entry point found as of 2026-09-07)* | `SourceLinkDebugViewModel` | `ui/screens/debug/SourceLinkDebugScreen.kt` | Debug sub-screen |
-| Source Link Backfill | *(no destination — headless ViewModel, no UI consumer found as of 2026-09-07)* | `SourceLinkBackfillViewModel` | `ui/screens/settings/SourceLinkBackfillViewModel.kt` | Settings sub-screen |
+| Source Link Debug | *(no destination — no in-app entry point found as of 2026-09-21)* | `SourceLinkDebugViewModel` | `ui/screens/debug/SourceLinkDebugScreen.kt` | Debug sub-screen |
+| Source Link Backfill | *(no destination — headless ViewModel, no UI consumer found as of 2026-09-21)* | `SourceLinkBackfillViewModel` | `ui/screens/settings/SourceLinkBackfillViewModel.kt` | Settings sub-screen |
 
 ---
 
@@ -137,7 +137,7 @@ App Chrome (6 tabs)
 | ViewModel | # Injections | Complexity |
 |-----------|-------------|------------|
 | `HomeViewModel` | 19+ dependencies | 🔴 High |
-| `TransactionsViewModel` | 8 dependencies | 🟡 Medium |
+| `TransactionsViewModel` | 9 dependencies | 🟡 Medium |
 | `ReviewViewModel` | 14+ dependencies | 🔴 High |
 | `ReceiptScanViewModel` | 18+ dependencies | 🔴 High |
 | `BudgetViewModel` | 7 dependencies | 🟡 Medium |

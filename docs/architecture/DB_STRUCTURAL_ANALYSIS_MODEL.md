@@ -10,8 +10,12 @@
 > (`docs/ci/db-structural/GR-11_CORPUS.yml`) and the structural-debt manifest
 > (`docs/ci/db-structural/GR-11_STRUCTURAL_DEBT.yml`).
 > Real-tree state at generation: 276 policy callables observed — 114
-> SUPPORTED, 162 UNSUPPORTED_CONSERVATIVELY (structural debt rows), 0
-> infrastructure failures; two shadow runs byte-identical.  GR-11 makes no
+> SUPPORTED, 162 UNSUPPORTED_CONSERVATIVELY, 0 infrastructure failures; two
+> shadow runs byte-identical.  The corpus inventory and structural-debt
+> manifest were later regenerated for the GR-12 capability extension
+> (startSha `384905f6`): the corpus now holds 276 entries — 159 SUPPORTED /
+> 117 UNSUPPORTED_CONSERVATIVELY expected statuses — and the debt manifest
+> holds 129 rows.  GR-11 makes no
 > dominance, mediation, or safety claim: everything below describes the
 > shadow evidence GR-12 will consume.
 
@@ -364,8 +368,10 @@ scan_db_access(source_root, ownership_policy=None, structural_policy=None,
 
 ## Report schema (shadow report)
 
-*Planned — not yet implemented.* The shadow CLI writes deterministic,
-safe JSON:
+*Implemented* — `scripts/db_guard/structural_analysis/shadow_report.py`
+(`build_shadow_report`), written by the shadow CLI
+`scripts/ci/inspect_db_structural_model.py`. The shadow CLI writes
+deterministic, safe JSON:
 
 ```json
 {
@@ -394,7 +400,9 @@ safe JSON:
 
 Note the casing split: Python seam attributes are `snake_case`; shadow-report
 JSON keys follow the schema above (`camelCase`), as specified in the GR-11
-plan.
+plan. With `--include-graphs`, the shadow CLI additionally embeds a `graph`
+object (nodes/edges with internal spans) per supported callable for GR-12
+consumption; the default CLI report omits it.
 
 No graph source text, raw code, SQL, exception trace, absolute path, or
 unbounded body excerpt may appear in a report. The `targetSha` semantics are
@@ -435,7 +443,7 @@ Those conclusions are reserved for later PRs (GR-12/GR-13 and beyond).
   with a closed diagnostic code — never a guessed graph, never a
   synthesized barrier.
 - An internal assertion/error is **infrastructure failure**, not silently
-  converted into unsupported source syntax. The planned shadow CLI returns:
+  converted into unsupported source syntax. The shadow CLI returns:
   `0` all selected callables modeled; `1` valid analysis with one or more
   unsupported/ambiguous callables; `2` infrastructure failure, malformed
   input, invalid policy/root, or report failure.

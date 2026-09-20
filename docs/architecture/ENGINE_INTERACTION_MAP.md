@@ -1,6 +1,6 @@
 # Engine Interaction Map
 
-> **Last updated:** 2026-09-07 (verified against code: DB v148, guarded-worker set, guard suite)
+> **Last updated:** 2026-09-21 (verified against code: DB v148, guarded-worker set, guard suite)
 >
 > **Purpose:** Before fixing any engine, check this map to know which pipelines will be affected.  
 > **Rule:** Any engine change requires verifying ALL affected pipelines still work.
@@ -35,7 +35,7 @@
 | **BillReminderWorker** | 4 (Reminder dispatch), BillReminderSettings runtime check | 🟢 LOW |
 | **WorkerExecutionGuard** | ALL workers (all 10 CoroutineWorkers run through it, incl. `NotificationIntakeWorker` + snooze/dismiss reminder action workers), 7 (Backup restore gating) | 🟡 HIGH |
 | **WorkerRegistry** | 12 (Startup scheduling), 7 (Backup resume via spec lookup) | 🟢 LOW |
-| **GroupLifecycleCoordinator** | Groups, Expenses, Budget offsets, Analytics | 🟡 HIGH |
+| **SharedExpenseManager** | Groups, shared expenses (domain facade over `SharedExpenseDataPort` → `SharedExpenseDataPortAdapter` → `GroupTransactionCoordinator`; the GroupLifecycleCoordinator wrapper was removed, GR-14u36) | 🟡 HIGH |
 | **GroupBalanceCalculator** | Groups, Settlements | 🟢 LOW |
 | **HybridRouter** | 8 (AI cloud/on-device routing), 10 (Bank statement), 3 (Receipt) | 🟡 HIGH |
 | **AccountingExportPolicy** | 12 (Export), Tax reports | 🟢 LOW |
@@ -45,8 +45,11 @@
 | **MoneyNormalizationEngine** | Money pipelines (conversion outcomes, rate basis, bucket policy) via `domain/core/money/` | 🟡 HIGH |
 | **SubscriptionManagerEngine** | Subscriptions (validate/create, price history, usage, candidates, health, savings) | 🟡 HIGH |
 | **SynthesisEngine** | 6 (Month-end forecast, read-only) | 🟢 LOW |
-| **BudgetForecastingEngine** | 5/6 (Budget forecast generation + `BudgetForecastDao` persistence) | 🟢 LOW |
+| **BudgetForecastingEngine** | 5/6 (Budget forecast generation + `BudgetForecastDao` persistence via `insertForecast`/`insertWithDeactivation`) | 🟢 LOW |
 | **NaturalLanguageSearchEngine** | NL query search (read-only; keyset `SearchCursor` pagination) | 🟢 LOW |
+| **BudgetAutopilotEngine** | 6 (Budget autopilot correctness — historical category monthly spend read once via `MultiCurrencyRepository.getHistoricalCategoryMonthlySpend()` as typed `domain/core/money/CategoryMonthlySpend` rows, RP-08; the engine only reads budgets via `BudgetRepository.getActiveBudgets()` — apply writes go through `BudgetViewModel.applyAutopilotRecommendation()`/apply-all → `BudgetRepository.updateBudget()`/`updateBudgetOrThrow()`) | 🟡 HIGH |
+| **SpendingPaceCalculator** | 5 (Dashboard spending pace via `ComputeDashboardWidgetsUseCase`, wired 0f1f587b), 6 (Analytics: canonical pace in `InsightsEngine`, `SpendingPersonalityClassifier`; consumed by `BudgetAutopilotEngine`) — read-only; expects caller-pre-normalized input via `AnalyticsCurrencyNormalizer` | 🟢 LOW |
+| **AssetCleanupCoordinator** | 3 (Receipt uncommitted-asset cleanup, RP-12 12c) | 🟢 LOW |
 
 ---
 
@@ -80,10 +83,10 @@ MerchantNormalizer.normalize()
   ├── NotificationProcessingPipeline (parser merchant normalization)
   ├── ReviewQueueRepository (approval merchant key)
   ├── ReceiptTransactionMatcher (matching score)
-  ├── RecurringLifecycleCoordinator (occurrence matching)
+  ├── RecurringLifecycleCoordinator (occurrence matching via MerchantKeyGenerator)
   ├── EmailReceiptIngestionService (expense creation)
-  ├── MerchantKeyBackfillWorker (backfill existing rows)
-  └── MerchantInsightEngine (merchant grouping)
+  ├── MerchantKeyBackfillWorker (backfill existing rows via MerchantKeyGenerator)
+  └── MerchantInsightEngine (merchant grouping via merchantKey)
 ```
 
 ### CategorizationEngine changes affect:
@@ -99,9 +102,10 @@ CategorizationEngine.categorize() / categorizeWithContext()
 
 ### ReceiptMatchLifecycleService changes affect:
 ```
-ReceiptMatchLifecycleService.saveMatchSuggestion() / approveMatchSuggestion()
-  ├── ReceiptMatchingWorker (auto-match)
-  ├── ReceiptMatchingViewModel (user-match UI)
+ReceiptMatchLifecycleService.saveMatchSuggestion() / rejectAllSuggestions() / clearMatchForReceipt()
+  ├── ReceiptMatchingWorker (auto-match; durable outcome events)
+  ├── ReceiptMatchingViewModel (suggestions; approval/rejection writes go
+  │     through ReceiptLinkService.linkReceiptToExpense())
   └── ReceiptLifecycleEventTypes (MATCH_SUGGESTED / MATCH_APPROVED / MATCH_REJECTED / MATCH_CLEARED)
 ```
 
@@ -145,14 +149,14 @@ WorkerRegistry.scheduleAll() / entries
   └── WorkerSpecScheduler (centralized scheduling)
 ```
 
-### GroupLifecycleCoordinator changes affect:
+### SharedExpenseManager / GroupTransactionCoordinator changes affect:
 ```
-GroupLifecycleCoordinator.createGroup() / addMember() / removeMember() / addExpense() / archiveGroup()
-  ├── GroupTransactionCoordinator (delegation)
-  ├── GroupBalanceCalculator (balance updates)
-  ├── BudgetMonitor.checkBudgets() (post-commit side effect)
-  ├── TransactionSideEffectDispatcher.dispatchOnCreated() (post-commit side effect)
-  └── GroupLifecycleEventDao (audit event logging)
+SharedExpenseManager.createGroup() / addMember() / removeMember() / addExpense() / archiveGroup()
+  ├── SharedExpenseDataPortAdapter (barrier-checked data-layer delegation)
+  ├── GroupTransactionCoordinator (atomic group/member/expense writes via DomainTransactionRunner)
+  ├── TransactionLifecycleCoordinator (createExpenseDbOnlyV2 + updateOwnershipDbOnlyV2)
+  ├── PostCommitActionRunner (post-commit side effects)
+  └── GroupBalanceCalculator / SplitCalculator (read-time balances)
 ```
 
 ### HybridRouter changes affect:
@@ -186,9 +190,9 @@ PrivacyGate.check(capability, context)
   ├── LocationBackfillWorker (background location)
   ├── DataRetentionWorker (data purging)
   └── DailyBriefingWorker (AI briefing)
-  ↑ PrivacyDecision.FailClosed: 38 call sites across 26 files now use blocksExecution()
-    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 48 call sites
-    across 32 production files — different metric, both current)
+  ↑ PrivacyDecision.FailClosed: 39 call sites across 27 files now use blocksExecution()
+    (blocksExecution() metric; `PrivacyGate.check(...)` itself: 51 call sites
+    across 34 production files — different metric, both current)
     which returns true for both Denied and FailClosed variants,
     providing consistent fail-closed behavior across all pipelines.
 ```
@@ -223,7 +227,7 @@ PrivacyGate.check(capability, context)
 - PrivacyGate — verify ALL privacy-sensitive paths
 - RecurringRuleLifecycleCoordinator — verify recurring, transaction reconciliation, reminder dispatch, backup
 - WorkerExecutionGuard — verify ALL 10 CoroutineWorkers, backup restore gating, notification permission checking
-- GroupLifecycleCoordinator — verify groups, expenses, budget offsets, analytics
+- GroupTransactionCoordinator / SharedExpenseManager — verify groups, expenses, budget offsets, analytics
 - HybridRouter — verify ALL AI hybrid services fed by the router
 - AdvancedAnalyticsEngine — verify analytics UI consumers; requires `NormalizedAnalyticsInput` (assemble via `AnalyticsInputAssembler`)
 - TotalsAggregationEngine — verify dashboard totals consumers

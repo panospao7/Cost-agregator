@@ -1,12 +1,12 @@
 # Privacy UI Architecture
 
-> Last updated: 2026-09-07 (re-verified against code)
+> Last updated: 2026-09-21 (re-verified against code)
 
 ## Overview
 
 The app enforces privacy settings through `PrivacyGate` checks at the ViewModel, domain, and data/service layers. When a capability is denied, the UI shows the user why and prevents the action. Privacy-denied states are modeled as the typed `PrivacyBlocked` sealed interface rather than ad-hoc error strings.
 
-Gate composition (as of 2026-09-07): five concrete gates — `NotificationPrivacyGate`, `LocationPrivacyGate`, `CloudAiPrivacyGate`, `BackupPrivacyGate`, `ExportPrivacyGate` (all in `domain/privacy/`) — are chained by `CompositePrivacyGate` (wired in `di/PrivacyModule.kt`). `PrivacyGate.check(...)` is invoked from 48 call sites across 32 production files.
+Gate composition (as of 2026-09-21): five concrete gates — `NotificationPrivacyGate`, `LocationPrivacyGate`, `CloudAiPrivacyGate`, `BackupPrivacyGate`, `ExportPrivacyGate` (all in `domain/privacy/`) — are chained by `CompositePrivacyGate` (wired in `di/PrivacyModule.kt`). `PrivacyGate.check(...)` is invoked from 48 call sites across 32 production files.
 
 ## Privacy Gate Integration Pattern
 
@@ -41,7 +41,8 @@ Related but not direct callers:
 @Composable
 fun PrivacyBlockedCard(
     blocked: PrivacyBlocked,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onOpenPrivacySettings: (() -> Unit)? = null
 )
 ```
 
@@ -131,3 +132,5 @@ Re-verified against source:
 - `AssistantViewModel.privacyBlocked` is constructed directly from the settings flag (`PrivacyBlocked.CloudAiDisabled()`), not via `toPrivacyBlocked()` — a minor deviation from the "single entry point" KDoc contract, which that KDoc scopes to cloud providers.
 - No UI-level screenshot protection (`FLAG_SECURE`) or blur/redaction overlay exists in production UI code; privacy UI enforcement is limited to the typed blocked states, gating, and export redaction described above.
 - Worker toggle→worker mapping and `data_retention` exemption unchanged (see "Background Worker Privacy Gating").
+
+Re-verified 2026-09-21: all items above still hold; no changes to gates, call-site counts (48 across 32 files), `PrivacyBlocked` subclasses, worker policy, or test files.

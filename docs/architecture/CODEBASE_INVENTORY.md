@@ -1,6 +1,6 @@
 # ExpenseTracker Android Codebase - Ground-Truth Inventory
 
-**Generated:** 2026-09-07 (verified snapshot)  
+**Generated:** 2026-09-07 (verified snapshot; re-verified 2026-09-21)  
 **Database Version:** v148  
 **Architecture:** Clean Architecture + MVVM + Jetpack Compose + Room + Hilt DI
 
@@ -322,7 +322,7 @@ Assistant is an overlay/entry surface, not a bottom tab.
 - SubscriptionManagerEngine
 
 ### Groups & Splitting
-- GroupTransactionCoordinator, GroupLifecycleCoordinator, SettlementCalculator
+- GroupTransactionCoordinator, SettlementCalculator
 - SharedExpenseManager, EnhancedSplitManager, SplitCalculator
 
 ### Utilities
@@ -466,7 +466,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 - BudgetAdjustmentRecommendation, BudgetAdjustmentEvent
 - SpendingPersonalityProfileEntity, StressForecastSnapshot
 - EmailReceiptSource, SpendingChallengeEntity
-- BackgroundJobRun, SourceStatsEvent, ReceiptEvent
+- BackgroundJobRun, SourceStatsEvent, TransactionEvent, ReceiptEvent
 - ReceiptExpenseLink, RecurringLifecycleEvent
 - RecurringOccurrence, RecurringReminderDelivery
 - PrivacyAuditEvent
@@ -485,7 +485,7 @@ Actual repository inventory (interfaces and implementations); counts shift as im
 One DAO per entity (mostly 1-to-1 mapping)
 - **Deprecated:** RecurringExpenseDao (delegates to ManualRecurringExpenseDao)
 - **Special:** MerchantNormalizationDao, BankConnectionDao
-- BackgroundJobRunDao, SourceStatsEventDao, ReceiptEventDao
+- BackgroundJobRunDao, SourceStatsEventDao, TransactionEventDao, ReceiptEventDao
 - ReceiptExpenseLinkDao, RecurringLifecycleEventDao
 - RecurringOccurrenceDao, RecurringReminderDeliveryDao
 - SpendingChallengeDao, PrivacyAuditDao
@@ -567,18 +567,22 @@ One DAO per entity (mostly 1-to-1 mapping)
   - Foreground: dataSync (FOREGROUND_SERVICE_LOCATION permission declared separately)
   - Exported: true
 
+### Activities (2)
+- **MainActivity** (`ui/`) - Launcher activity; deep-link host (`expensetracker://`)
+- **RescueActivity** (`data/rescue/`) - Manually triggered database recovery (ADB-launched; exported only in rescue builds)
+
 ### Receivers (4)
 - **BootReceiver** (`receiver/`) - BOOT_COMPLETED, MY_PACKAGE_REPLACED
 - **ServiceRestartReceiver** (`receiver/`) - Service keep-alive
 - **SnoozeReminderReceiver** (`service/reminder/`) - Hilt @AndroidEntryPoint for reminder snooze (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
 - **DismissReminderReceiver** (`service/reminder/`) - Hilt @AndroidEntryPoint for reminder dismiss (injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode)
 
-### Permissions (13)
+### Permissions (11)
 - Foreground service (3): FOREGROUND_SERVICE, FOREGROUND_SERVICE_DATA_SYNC, FOREGROUND_SERVICE_LOCATION
 - Notifications (2): POST_NOTIFICATIONS, RECEIVE_BOOT_COMPLETED
 - Camera (1): CAMERA permission + hardware feature
 - Location (2): ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION
-- File access (2): READ_EXTERNAL_STORAGE (maxSdkVersion=32), WRITE_EXTERNAL_STORAGE (maxSdkVersion=28)
+- File access (0): READ/WRITE_EXTERNAL_STORAGE removed (RP-03A) — export/restore uses SAF (CreateDocument/OpenDocument)
 - Network (2): INTERNET, ACCESS_NETWORK_STATE
 - System (1): WAKE_LOCK
 
@@ -634,7 +638,7 @@ One DAO per entity (mostly 1-to-1 mapping)
  6. **NotificationFilter** - Notification filter
  7. **AndroidNotificationService** - Notification management
 
-### Recommendation System (7 services)
+### Recommendation System (6 services)
  8. **RecommendationCacheService** - In-memory LRU cache with 7-day TTL
  9. **RecommendationDeduplicator** - Signature-based dedup per merchant/category/target
  10. **RecommendationDismissalHandler** - User dismissal handling
@@ -770,4 +774,4 @@ One DAO per entity (mostly 1-to-1 mapping)
 
 ## End of Inventory
 
-**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-09-07.**
+**This inventory represents a comprehensive analysis of the ExpenseTracker codebase as of 2026-09-21.**

@@ -1,6 +1,6 @@
 # ExpenseTracker Frontend UI/UX Comprehensive Mapping
 
-**Refreshed**: September 7, 2026  
+**Refreshed**: September 21, 2026  
 **Scope**: Current frontend inventory including screens, components, navigation, integration, and theming  
 **Total Files**: 166 UI source files (41 ViewModels — 40 in dedicated files incl. MainViewModel + 1 inline, 59 components, 83 screens files, 5 nav, 3 mappers, 2 theme, 4 model, 7 util, 1 integration, 2 root)
 
@@ -15,7 +15,7 @@
 - **Scaffold**: Material3 with BottomNavigationBar + FAB
 
 ```
-ExpenseTrackerApp
+MainScreen (MainActivity)
 │
 ├── Main Tabs (Bottom Navigation) [6 tabs]
 │   ├── Tab 0: Home/Dashboard
@@ -72,6 +72,8 @@ ExpenseTrackerApp
   - NoSpendStreakWidget (streaks counter)
 
 > **Note**: `PlaceInsightCard` is **not** a Home dashboard widget — it is consumed by `AnalyticsScreen` and `SpendingMapScreen` for location-based spending insights.
+
+> **Note (RP-06 / P5-006)**: Changing the home currency reloads the dashboard. `HomeViewModel` derives `homeCurrency` from `CurrencySettingsRepository.homeCurrency()` and collects it in `init{}` — on a real change (initial emission skipped) it bumps `dashboardReloadTrigger`, which re-runs `DashboardDataProvider.getProcessedDataFlow()` via `flatMapLatest` and recomputes the widgets through `ComputeDashboardWidgetsUseCase.compute()`; category trends are re-fetched per currency via `loadCategoryTrendsForCurrency()`.
 
 #### Navigation Callbacks:
 - `onNavigateToReview()` → Tab 2
@@ -143,7 +145,7 @@ Pending transaction review/approval workflow
 
 #### Features:
 - One-click approve/reject
-- Bulk approve all (FAB action in this tab)
+- Bulk approve all (top-bar action in this tab)
 - Edit before approving
 - Undo recent approvals
 
@@ -188,6 +190,7 @@ Pending transaction review/approval workflow
 - **Spending Trend Chart**: Historical spending line chart
 - **Spending Pace Gauge**: Current burn rate
 - **Top Categories**: List of top spending categories
+- **Personality & Statistics**: `PersonalityProfileCard` plus charts from `StatisticalVisualizations.kt` (`PercentileGridCard`, `TransactionHistogramChart`, `RichMerchantCard`, `CategoryPercentileBadge`) render in this screen
 
 #### Features:
 - Interactive charts (tap to drill down)
@@ -200,8 +203,6 @@ Pending transaction review/approval workflow
 
 #### Related Screen:
 - **AdvancedAnalyticsScreen**: Feature with deeper analytics
-  - PersonalityProfileCard
-  - StatisticalVisualizations
   - Historical data analysis
 
 ---
@@ -288,7 +289,7 @@ These appear over main tabs via `NavigationDestination` sealed class.
 ---
 
 ### Manual Recurring Expense Screen
-**File**: `ui/screens/recurringmanual/ManualRecurringExpenseScreen.kt` + `ViewModel.kt`
+**File**: `ui/screens/recurringmanual/ManualRecurringExpenseScreen.kt` + `ManualRecurringExpenseViewModel.kt`
 **Type**: Full Screen
 **Navigation**: `NavigationDestination.ManualRecurringExpense`
 
@@ -317,9 +318,10 @@ These appear over main tabs via `NavigationDestination` sealed class.
 
 #### Components:
 - **AssistantResultCard**: Display results
-- **CategoryAssistCard**: Category suggestions
-- **DedupeAssistCard**: Duplicate detection
-- **ReceiptAssistCard**: Receipt OCR results
+- **AiChatBubble**: Chat message bubble
+- **AiTypingIndicator**: Typing indicator
+
+(`CategoryAssistCard`, `DedupeAssistCard`, `ReceiptAssistCard` are consumed by `ReviewScreen` and `ReceiptScanScreen`, not this sheet.)
 
 ---
 
@@ -331,11 +333,11 @@ These appear over main tabs via `NavigationDestination` sealed class.
 #### Features:
 - Budget projection
 - Historical burn rate analysis
-- Forecast timeline (see when budget exhausted)
+- Overspend probability and predicted remaining budget
 - Confidence intervals
 
 #### Components:
-- **ForecastTimeline**: Visual timeline
+- **ForecastDetailsCard** / **ConfidenceIntervalSection** / **ConfidenceCard**: Inline forecast panels (note: `ForecastTimeline` is not used here — it renders inside `FinancialWeatherCard`)
 
 ---
 
@@ -398,9 +400,6 @@ All features accessible from:
 - Price match notifications
 - Return instructions
 
-#### Sub-Component:
-- **ReturnWindowCard**: Track return deadlines
-
 ---
 
 ### Feature 5: Bill Negotiation
@@ -420,7 +419,7 @@ All features accessible from:
 ---
 
 ### Feature 6: Smart Search (Natural Language)
-**File**: `ui/screens/naturallanguage/NaturalLanguageSearchScreen.kt` + `ViewModel.kt`
+**File**: `ui/screens/naturallanguage/NaturalLanguageSearchScreen.kt` + `NaturalLanguageSearchViewModel.kt`
 **Navigation**: `NavigationDestination.SmartSearch`
 
 #### Features:
@@ -499,13 +498,8 @@ All features accessible from:
 
 #### Features:
 - Statistical analysis
-- Personality profile insights
 - Trend forecasting
 - Comparative analysis
-
-#### Components:
-- **PersonalityProfileCard**: Spending personality
-- **StatisticalVisualizations**: Advanced charts
 
 ---
 
@@ -518,10 +512,6 @@ All features accessible from:
 - Daily cash flow visualization
 - Income vs. expense timeline
 - Period balance tracking
-
-#### Components:
-- **PeriodBlock**: Calendar period cell
-- **PeriodGridView**: Month grid
 
 ---
 
@@ -640,7 +630,7 @@ All features accessible from:
 - Split expenses within group
 - Settlement tracking
 
-Group expense/member mutations flow through the domain group use cases injected into `SharedExpenseGroupsViewModel` (`AddGroupExpenseUseCase`, `AddGroupMemberUseCase`, `DeleteGroupUseCase`); transaction integrity is enforced by the `GroupTransactionCoordinator` contract (domain interface, data-layer implementation) behind `GroupLifecycleCoordinator`.
+Group expense/member mutations flow through the domain group use cases injected into `SharedExpenseGroupsViewModel` (`AddGroupExpenseUseCase`, `AddGroupMemberUseCase`, `DeleteGroupUseCase`); transaction integrity is enforced by the `GroupTransactionCoordinator` contract (domain interface, data-layer implementation).
 
 #### Sub-Screens (Dialogs):
 - **CreateGroupDialog**: New group form
@@ -727,8 +717,8 @@ Group expense/member mutations flow through the domain group use cases injected 
 #### Sub-Screens:
 - **CategorizationDebugScreen**: ML model debugging (opened from within DebugScreen)
 - **DebugViewerScreen**: Raw data viewer (embedded in ReceiptScanScreen and ReviewScreen, not routed from DebugScreen)
-- **DebugIssueDetector**: runtime issue inspection
-- **SourceLinkDebugScreen**: Source link provenance debug viewer (no in-app entry point found as of 2026-09-07)
+- **DebugIssueDetector**: runtime issue inspection (a `@Deprecated` typealias to `domain.debug.DebugIssueDetector` — not a screen)
+- **SourceLinkDebugScreen**: Source link provenance debug viewer (no in-app entry point found as of 2026-09-21)
 
 #### Sub-Components (Dialogs):
 - **ImportDatabaseDialog**: Database restore
@@ -861,7 +851,7 @@ Group expense/member mutations flow through the domain group use cases injected 
 | **RetroTotalsDashboardCard** | `RetroTotalsDashboardCard.kt` | Alternative totals card |
 | **DataQualityWarningChip** | `DataQualityWarningChip.kt` | Data quality warning chip (used on HomeScreen, BudgetScreen) |
 | **PersonalityProfileCard** | `analytics/PersonalityProfileCard.kt` | Spending personality |
-| **StatisticalVisualizations** | `analytics/StatisticalVisualizations.kt` | Advanced stat charts |
+| **PercentileGridCard** / **TransactionHistogramChart** | `analytics/StatisticalVisualizations.kt` | Advanced stat charts |
 
 ### 7.10 Feature Components (Form/Utility)
 
@@ -1131,7 +1121,7 @@ Handles configuration-driven feature display and integration with Home screen, F
 </intent-filter>
 ```
 
-### Required Permissions (verified against `AndroidManifest.xml`, 2026-09-07)
+### Required Permissions (verified against `AndroidManifest.xml`, 2026-09-21)
 - `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` (map/location features)
 - `CAMERA` (receipt scanning)
 - `POST_NOTIFICATIONS` (bill reminders)
@@ -1143,12 +1133,13 @@ Handles configuration-driven feature display and integration with Home screen, F
 ### Services
 - `NotificationCaptureService` (notification listener)
 - `BootReceiver` (service restart)
+- `ServiceRestartReceiver` (periodic keep-alive restart)
 
 ---
 
 ## 15. ORPHANED SCREENS (Non-Navigated)
 
-Every screen/overlay is reachable through a `NavigationDestination`, with these nuances (verified 2026-09-07):
+Every screen/overlay is reachable through a `NavigationDestination`, with these nuances (verified 2026-09-21):
 - **PrivacySettingsScreen** now has `NavigationDestination.PrivacySettings` and a `FeatureConfig` entry (`id = "privacy"`); it is no longer settings-gear-only.
 - **DebugScreen** is routed via `NavigationDestination.Debug` but renders only under `BuildConfig.DEBUG`.
 - **DebugViewerScreen** has no destination — it is embedded inside `ReceiptScanScreen` and `ReviewScreen`.

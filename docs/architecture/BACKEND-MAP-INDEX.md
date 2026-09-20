@@ -1,7 +1,7 @@
 # 📋 COMPLETE BACKEND & DATABASE MAP INDEX
 
-**Generated:** 2026-06-09 · **Reconciled with code:** 2026-09-07  
-**Total Files Documented:** 1073 source files (535 domain + 307 data + 166 UI + 35 di (32 @Module) + 19 service + 3 startup + 2 receiver + 1 worker + 3 util + 1 diagnostics + 1 root)  
+**Generated:** 2026-06-09 · **Reconciled with code:** 2026-09-21  
+**Total Files Documented:** 1075 source files (538 domain + 306 data + 166 UI + 35 di (32 @Module) + 19 service + 3 startup + 2 receiver + 1 worker + 3 util + 1 diagnostics + 1 root)  
 **Scope:** ExpenseTracker domain, data, and DI packages  
 **Current DB Version:** v148 (baseline v145) · **DAOs:** 68 · **Entities:** 70 · **Hilt @Module files:** 32
 
@@ -12,12 +12,12 @@
 ### Primary Maps (NEW)
 
 1. **[COMPLETE-BACKEND-MAP.md](./COMPLETE-BACKEND-MAP.md)** ⭐ START HERE
-    - Exhaustive list of the 1073 backend/source files (principal classes per subsystem)
+    - Exhaustive list of the 1075 backend/source files (principal classes per subsystem)
    - Organized by package and subpackage
    - File type, purpose, dependencies for each
    - Data flow diagrams
    - Architecture patterns
-   - **Size:** ~8000 lines
+   - **Size:** ~1700 lines
 
 2. **[BACKEND-DEPENDENCIES.md](./BACKEND-DEPENDENCIES.md)** ⭐ DEPENDENCY CHAINS
     - Test coverage summary (600+ tests)
@@ -48,19 +48,19 @@
 
 ### By Package Type
 
-#### Domain Package (535 files)
+#### Domain Package (538 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/domain/`
 
 - **AI Subsystem** (64+ files)
   - Models, policies, services, use cases
   - 25 use cases covering AI capabilities
 
-- **Analytics & Insights** (16+ files)
+- **Analytics & Insights** (23 files)
   - Advanced analytics, anomaly detection
   - Spending insights, personality classification
   - 28 engine test files
 
-- **Budget Management** (8+ files)
+- **Budget Management** (10 files)
   - Budget calculation, forecasting, monitoring
   - Shared budget management, autopilot engine
 
@@ -68,14 +68,14 @@
   - Core categorization engine
   - Contextual inference, semantic matching
 
-- **Data Models** (24+ files)
+- **Data Models** (31 files)
   - Dashboard primitives, recommendations
   - Navigation, dashboard-specific models
 
-- **Use Cases** (13 files)
+- **Use Cases** (17 files)
   - Budget, dashboard, expense, forecast, receipt, savings, warranty
 
-- **Utilities** (26+ files)
+- **Utilities** (22 files)
   - Amount, currency, date/time, merchant, statistics
   - String matching, geography, hashing
   - `domain/common/Hashing.kt` — SHA-256 hash prefix utility
@@ -89,8 +89,8 @@
   - BankApiIntegration, BankApiConfig
   - External bank API connectivity
 
-- **Business Expense** (`domain/business/`, 2 files)
-  - BusinessExpenseReportGenerator, BusinessExpenseRepository
+- **Business Expense** (`domain/business/`, 1 file)
+  - BusinessExpenseReportGenerator (`BusinessExpenseRepository` lives in `data/repository/`)
   - Business-specific expense reporting
 
 - **Carbon Footprint** (`domain/carbon/`, 1 file)
@@ -101,12 +101,13 @@
   - CashFlowCalculator
   - Cash flow analysis and projections
 
-- **Core Types** (~10 files)
+- **Core Types** (~28 files)
   - `domain/core/time/` — PeriodRange, PeriodKind (typed time primitives)
   - `domain/core/money/` — CurrencyCode, MoneyAmount, MoneyAggregate, MoneyNormalizationEngine, etc. (type-safe money)
+  - `domain/core/validation/` — EntityTimeValidation
 
 - **Diagnostics** (14 files)
-  - DatabaseIntegrityScanner, DatabaseOperationResults, ServiceDiagnostics
+  - DatabaseIntegrityScanner, CompositeDiagnosticEventWriter, DiagnosticReasonCode
   - Debug utilities: DebugIssueDetector, DebugIssue, DebugData, AiRuntimeDiagnostics, NotificationSeeder, ReceiptDebugExporter
 
 - **Data Transfer Objects (DTO)** (4 files)
@@ -121,7 +122,7 @@
   - BillReminderManager, BillReminderSettings, BillReminderSettingsRepository
   - Bill payment reminders (`BillReminderWorker` lives in `service/reminder/`)
 
-- **Transaction** (~10 files)
+- **Transaction** (~24 files)
   - ExpenseSource, LifecycleEventType, DeduplicationMode, CreateExpenseRequest, CreateExpenseResult, ExpenseUpdates, SideEffectMode
   - `lifecycle/` — TransactionLifecycleCoordinator, TransactionSideEffectDispatcher
   - `validation/` — transaction validation rules
@@ -133,11 +134,11 @@
   - WorkerReasonCodes, WorkerTerminalDiagnosticSink, FileWorkerTerminalDiagnosticSink, ScheduleResult
   - CoroutineWorkers live elsewhere (10 total, 7 registered in `WorkerRegistry`)
 
-- **Recurring** (~7 files)
+- **Recurring** (~10 files)
   - RecurringOccurrenceExpander, OccurrenceConflictResolver, RecurringPlanProjectionService
-  - `lifecycle/` — RecurringLifecycleCoordinator, RecurringOccurrenceMaterializer (~2 files)
+  - `lifecycle/` — RecurringLifecycleCoordinator, RecurringRuleLifecycleCoordinator, RecurringOccurrenceMaterializer, RecurringLifecycleEventWriter (~7 files)
 
-- **Receipt Lifecycle** (~7+ files)
+- **Receipt Lifecycle** (~16 files in `domain/receipt/lifecycle/`)
   - `domain/receipt/lifecycle/` — ReceiptLifecycleCoordinator, ReceiptLinkService, ReceiptAssetStore, ReceiptInputValidator, ReceiptDuplicateDetector, ReceiptSideEffectDispatcher, BankStatementLifecycleProcessor
   - `domain/receiptmatching/` — ReceiptTransactionMatcher
 
@@ -146,7 +147,7 @@
   - PendingReviewSourceLinkService, PendingReviewSourceLinkPromoter
   - Payload factories for bank, notification, receipt, import, pending-review sources
 
-- **Side Effects** (19 files)
+- **Side Effects** (20 files)
   - Dedicated side-effect domain package for post-transaction side effects
 
 - **Engine** (standalone package)
@@ -165,7 +166,7 @@
   - BackupPrivacyMode, DatabaseOperationResults, DatabaseBackupRepository
 
 - **Currency** (7 files)
-  - CurrencyConverter, CurrencyNormalizer, exchange rate services
+  - CurrencyConverter, CurrencyResolution, exchange rate services/settings
 
 - **Lifestyle** (1 file)
   - LifestyleInflationDetector
@@ -200,11 +201,11 @@
 - **Other Subsystems**
   - Forecasting, location, parsing (`domain/parser/parsers/`), receipt
   - Health, savings, subscriptions, tax
-  - Notification capture (11 files), notification money (1 file)
+  - Notification capture (12 files), notification money (1 file)
   - Notification fingerprinting — `domain/notification/RawNotificationFingerprint`
   - Shared hashing — `domain/common/Hashing.kt`
 
-#### Data Package (307 files)
+#### Data Package (306 files)
 **Location:** `app/src/main/java/com/yourname/expensetracker/data/`
 
 - **Database** (151 files)
@@ -213,8 +214,8 @@
    - 70 Entities (Room-managed tables, all registered in AppDatabase)
    - 6+ composite models, 1 converter file (22 `@TypeConverter` methods)
 
-- **Repositories** (62 files)
-   - 46 data-layer implementations + 16 domain-layer interfaces
+- **Repositories** (70 files)
+   - 54 data-layer implementations + 16 domain-layer interfaces
    - Expense, budget, analytics, currency
    - Merchant, location, notification
    - Savings, subscription, warranty
@@ -224,7 +225,7 @@
 
 - **AI Providers** (43 files)
    - Cloud, OnDevice, Hybrid, NoOp implementations
-   - 8 capability types × 4 implementations (+ SmartReceiptAssistService)
+   - 6 core capabilities with Cloud/OnDevice/Hybrid/NoOp variants, plus receipt item categorization, warranty extraction, notification parsing, review priority scoring, semantic duplicate detection (+ SmartReceiptAssistService)
    - SmartReceiptAssistService, StrictAiJsonParsing, DashboardBriefingPromptFormatter, DashboardBriefingResponseParser
    - Several NoOp* services
    - OnDevice notification parser, review priority scorer, semantic duplicate detector
@@ -247,8 +248,8 @@
    - `data/location/` — CompositeGeocodingService, NominatimGeocodingService, GeoapifyGeocodingService, GooglePlacesGeocodingService, PhotonGeocodingService, OverpassNearbyService, AndroidForegroundLocationProvider, LocationBackfillWorker, MerchantKeyBackfillWorker
    - `data/location/internal/` — CancellableHttpCall, LogSanitizer
 
-- **Privacy** (7 files)
-   - `data/privacy/` — PrivacySettingsRepositoryImpl, BackupEncryptionService, ExportAnonymizer, DataRetentionWorker, AtRestEncryptionService, PrivacyAuditLoggerImpl, DefaultCloudPayloadRedactor
+- **Privacy** (9 files)
+   - `data/privacy/` — PrivacySettingsRepositoryImpl, BackupEncryptionService, ExportAnonymizer, DataRetentionWorker, AtRestEncryptionService, PrivacyAuditLoggerImpl, DefaultCloudPayloadRedactor, DefaultCloudPayloadPolicy, DefaultSensitiveHashingService
 
 - **Security** (2 files)
    - `data/security/` — BankTokenCipher, SecureKeyStorage
@@ -271,8 +272,8 @@
 - **Rescue** (4 files)
    - `data/rescue/` — FinancialRescueCoordinator, FinancialRescueSnapshot, RescueActivity, RescueConfig (raw SQLite import bypassing migration chain for pre-v145 DBs)
 
-- **Store** (2 files)
-   - `data/store/` — ExpenseReadStore, ExpenseWriteStore
+- **Store** (1 file)
+   - `data/store/` — ExpenseReadStore (write paths go through TransactionLifecycleCoordinator)
 
 - **Negotiation** (data layer)
    - `data/negotiation/` — MarketRateProvider data implementations
@@ -280,17 +281,14 @@
 - **Tax** (data layer)
    - `data/tax/` — Tax configuration data
 
-- **Store** (data layer)
-   - `data/store/` — Data store preferences
-
 - **Provider** (data layer)
-   - `data/provider/` — Content provider support
+   - `data/provider/` — MerchantCategoryProvider
 
 #### DI Package (32 Hilt @Module files)
 
 **Location:** `com.yourname.expensetracker.di`
 
-- 32 Hilt @Module files (all in `di/`) + `EmptyStatePresentationModule` in `ui/` + qualifier files (`NetworkQualifiers`, `ApplicationScope`)
+- 32 Hilt @Module files (all in `di/`) + `EmptyStatePresentationModule` in `ui/` + qualifier files (`NetworkQualifiers`, `ApplicationScope`) + `EmptyStateRegistryInitializer` contract in `di/`
 - 1 `@EntryPoint` (`AppStartupDelegate` in `startup/`)
 - Database, DAO, Repository bindings
 - AI, services, location provider modules
@@ -317,7 +315,7 @@
 
 - **Workers** (5 files)
   - `receiptmatching/ReceiptMatchingWorker` — Background receipt-to-transaction matching (registered: `receipt_matching`)
-  - `reminder/BillReminderWorker` — Periodic bill reminder delivery, every 4h (registered: `bill_reminder_periodic`)
+  - `reminder/BillReminderWorker` — Periodic bill reminder delivery, every 6h (registered: `bill_reminder_periodic`)
   - `reminder/DismissReminderActionWorker` — Durable reminder dismiss action
   - `reminder/SnoozeReminderActionWorker` — Durable reminder snooze action
   - `warranty/WarrantyExpirationWorker` — Warranty expiry notification worker (registered: `warranty_expiration_check`)
@@ -362,13 +360,13 @@
 - **Coordinators:** `GroupTransactionCoordinator.kt` (atomic group transactions), `RoomDomainTransactionRunner.kt` (DomainTransactionRunner impl)
 
 ### Repository Layer
-- **63 repositories** providing business logic (47 data + 16 domain interfaces)
+- **70 repositories** providing business logic (54 data + 16 domain interfaces)
 - Handle data transformation and aggregation
 - Implement domain interfaces
 - Manage database transactions
 
 ### Domain/Business Logic Layer
-- **535 files** implementing business rules
+- **538 files** implementing business rules
 - Engines, services, use cases, value objects
 - No database dependencies
 - Clean separation from infrastructure
@@ -383,24 +381,24 @@
 
 ## 🔍 Files by Type
 
-### Database-Related (181+ files)
+### Database-Related (151 files)
 - DAOs (68), Entities (70), Models (6), Converters (1), Coordinators/Runner (2), Database + Migrations + Schema policy (3)
 - **Key files:** `ExpenseDao.kt`, `Expense.kt`, `AppDatabase.kt`
 - **Guardrail:** direct DAO access outside the tiered allowlist (`scripts/guardrails/dao-approved-files.txt`) is CI-enforced
 
-### Repository-Related (62 files)
-- Data-layer repositories (46), Domain interfaces (16)
+### Repository-Related (70 files)
+- Data-layer repositories (54), Domain interfaces (16)
 - **Key files:** `ExpenseRepository.kt`, `BudgetRepository.kt`, `CategoryRepository.kt`
 
 ### AI-Related (110+ files)
-- Domain services (32+), Data providers (44+), Workers (8+)
+- Domain services (18 in `domain/ai/service/`), Data providers (43 files in `data/ai/`), Workers (2 in `data/ai/worker/`)
 - **Key files:** `AiCapabilityRouter.kt`, `CloudCategorizationAssistService.kt`
 
 ### Engine/Business Logic (70+ files)
 - Calculation, analysis, decision engines (28 `*Engine.kt` files)
 - **Key files:** `CategorizationEngine.kt`, `BudgetCalculator.kt`, `InsightsEngine.kt`, `InvestmentTracker.kt`
 
-### Side Effects (19 files)
+### Side Effects (20 files)
 - Post-transaction side-effect orchestration
 
 ### Provenance (28 files)
@@ -409,7 +407,7 @@
 ### Privacy (34+ files)
 - Multi-gate privacy system, audit logging, PII sanitization
 
-### Utility (30+ files)
+### Utility (25+ files)
 - Text processing, math, time, geo utilities
 - **Key files:** `MerchantKeyGenerator.kt`, `AmountUtils.kt`
 
@@ -418,7 +416,7 @@
 - **Key files:** `AiModels.kt`, `DashboardPrimitives.kt`
 
 ### ViewModels (41 files)
-- UI state management (40 @HiltViewModel + 1 inline @HiltViewModel)
+- UI state management (41 @HiltViewModel)
 - **Key files:** `DashboardViewModel.kt`, `ExpenseListViewModel.kt`
 
 ---
@@ -427,24 +425,24 @@
 
 | Metric | Count |
 |--------|-------|
-| **Total Source Files** | 1073 |
-| Domain files | 535 |
-| Data files | 307 |
+| **Total Source Files** | 1075 |
+| Domain files | 538 |
+| Data files | 306 |
 | UI files | 166 |
 | DI files | 32 |
 | Hilt @Module files | 32 |
 | **Database Entities** | 70 |
 | **DAOs** | 68 |
-| **Repositories** | 62 (46 data + 16 domain interfaces) |
-| **Use Cases** | 31 |
+| **Repositories** | 70 (54 data + 16 domain interfaces) |
+| **Use Cases** | 17 |
 | **ViewModels** | 41 |
 | **Workers** | 10 CoroutineWorkers (7 in `WorkerRegistry` + `NotificationIntakeWorker` + 2 reminder action workers) |
 | **Engines** | 28 named `*Engine` files |
-| **AI Services** | 32+ |
-| **Parsers** | 23 (across all layers) |
+| **AI Services** | 18 (in `domain/ai/service/`) |
+| **Parsers** | 21 (`*Parser*.kt` files, across all layers) |
 | **Geocoders** | 5 |
 | **Email Receipt Parsers** | 4 |
-| **Test Files** | 626+ (unit) + 28 (instrumented) |
+| **Test Files** | 683+ (unit) + 28 (instrumented) |
 
 ---
 
@@ -540,17 +538,17 @@ Receipt captured → validate → dedup → persist → link to expense → side
 
 ## 🧪 Test Coverage
 
-**Total Tests:** 600+ unit + 27 instrumented (coverage expanding)
+**Total Tests:** 683+ unit + 28 instrumented (coverage expanding)
 
 ### High-Coverage Areas
 - Consistency tests (13 files)
-- AI provider tests (23 files)
-- Repository tests (41 files)
-- Analytics engine tests (21 files)
-- Parser tests (25 files)
-- Engine tests (42 files across all engines)
+- AI provider tests (24 files)
+- Repository tests (44 files)
+- Analytics engine tests (35 files)
+- Parser tests (15 files)
+- Engine tests (47 `*Engine*Test.kt` files across all engines)
 - Privacy tests (22 files)
-- Budget tests (34 files)
+- Budget tests (38 files)
 
 ### Key Test Files
 - `ExpenseDao.kt` - Database DAO testing
@@ -642,16 +640,16 @@ Receipt captured → validate → dedup → persist → link to expense → side
 
 | Document | Lines | Size |
 |----------|-------|------|
-| **COMPLETE-BACKEND-MAP.md** | 8000+ | ~250KB |
-| **BACKEND-DEPENDENCIES.md** | 2000+ | ~65KB |
-| **This Index** | 600+ | ~25KB |
-| **Total** | 10,500+ | ~335KB |
+| **COMPLETE-BACKEND-MAP.md** | 1700+ | ~132KB |
+| **BACKEND-DEPENDENCIES.md** | 700+ | ~25KB |
+| **This Index** | 600+ | ~26KB |
+| **Total** | 3,100+ | ~183KB |
 
 ---
 
 ## ✅ Completeness Checklist
 
-- ✅ Domain (535 files) and data (307 files) packages covered — principal classes row-listed, remainder noted per package
+- ✅ Domain (538 files) and data (306 files) packages covered — principal classes row-listed, remainder noted per package
 - ✅ All 32 Hilt @Module files + @EntryPoint listed
 - ✅ File-by-file breakdown with:
   - ✅ File path
@@ -691,6 +689,6 @@ Receipt captured → validate → dedup → persist → link to expense → side
 
 ---
 
-**Last Updated:** 2026-09-07  
-**Version:** 2.3 - Reconciled with codebase (DB v148, 68 DAOs, 70 entities)  
+**Last Updated:** 2026-09-21  
+**Version:** 2.4 - Reconciled with codebase (1075 source files, DB v148, 68 DAOs, 70 entities)  
 **Status:** ✅ Production-Ready Documentation

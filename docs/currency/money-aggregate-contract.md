@@ -73,3 +73,23 @@ When home currency resolution fails:
 - Use `DashboardNormalizedInputResult.Unavailable` for dashboard paths.
 - Use `currency = ""` with `riskLevel = UNKNOWN` for budget forecasts.
 - UI must check for empty currency and display "unavailable" state, not EUR totals.
+
+## RP-06c Money-Quality Conversion Contracts (2026-09-21)
+
+### SynthesisEngine (forecast / block-party conversions)
+
+- Conversions must go through `CurrencyConverter.convertOutcome()` and its typed `ConversionOutcome` result (`Converted` / `Failed(failureType)`). There are **no raw-currency fallback paths**: on failure the item is excluded from the sum and counted — a source-currency amount never enters a display-currency total (commits `686b3256`, `9d5ad720`). The only permitted short-circuits are same-currency identity conversion and the legacy blank-currency behavior for single-currency/legacy callers.
+- Rate basis contract: future obligations (recurring patterns, planned expenses, confirmed occurrences) convert at `RateBasis.LATEST_AVAILABLE` with the 7-day `StaleRatePolicy.LatestDefault` policy, named explicitly in code; historical actuals arrive already normalized at `TRANSACTION_DATE` by RP-05 normalization and are NOT re-converted — the forward-looking KPI intentionally combines those two bases.
+- Conversion failures feed `FinancialForecast.excludedCount` / `isPartial`; each `BlockPartyDay` carries a bounded `conversionFailureCount` (counts only — no amounts, currencies, or exception text). Engine-level failure logs use bounded counts only.
+
+### FinancialHealthScoreV2 (typed unavailability over fabricated scores)
+
+- Returns `HealthScoreOutcome` — `Available(result)` or `Unavailable(reason)` from a closed reason set (`HOME_CURRENCY_UNAVAILABLE`, `NORMALIZATION_FAILED`, `DATA_LOAD_FAILED`). An `Unavailable` outcome is never persisted to history and never becomes a fabricated score.
+- Normalization failure or **any excluded row** makes the score `Unavailable(NORMALIZATION_FAILED)`; a failed home-currency read makes it `HOME_CURRENCY_UNAVAILABLE`; any other calculation failure makes it `DATA_LOAD_FAILED`. The raw `Expense` fallback is removed.
+- Residual conversion loss on success is surfaced as `FinancialHealthResult.conversionConfidence` — tiered 1.0 / 0.95 / 0.80 / 0.50 by normalization loss percentage.
+
+### SpendingPaceCalculator (canonical pace)
+
+- The canonical pace calculator, wired into dashboard pace via `ComputeDashboardWidgetsUseCase` (commit `0f1f587b`), replacing the `pacePercentage = 100f, NO_BASELINE` placeholder that made the pace widget permanently unreachable.
+- It performs no conversion of its own: input `ExpenseSnapshot`s must already be normalized by `AnalyticsCurrencyNormalizer` before reaching it; all sums operate on already-normalized values.
+- Data quality propagates as `PaceStatus.NO_BASELINE` with a `-1f` pace-percentage sentinel (never a misleading `0f`, which would be indistinguishable from a true 0% pace); the dashboard emits no pace widget for `NO_BASELINE`.

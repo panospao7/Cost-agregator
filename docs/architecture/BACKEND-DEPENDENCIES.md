@@ -1,24 +1,24 @@
 # Backend Map - Test Coverage & Cross-References
 
-**Generated:** 2026-06-09 · **Reconciled with code:** 2026-09-07
+**Generated:** 2026-06-09 · **Reconciled with code:** 2026-09-21
 
 ---
 
 ## Test Coverage Summary
 
-**Total Test Files:** 626+ (unit) + 28 (instrumented)
+**Total Test Files:** 683+ (unit) + 28 (instrumented)
 
 ### Test Categories
 
 | Category | Count | Files |
 |----------|-------|-------|
 | Consistency Tests | 13 | `consistency/*Test.kt` |
-| AI Provider Tests | 23 | `data/ai/provider/*Test.kt` |
-| Repository Tests | 41 | `data/repository/*Test.kt` |
-| Engine Tests | 42 | `domain/*/engine/*Test.kt` |
-| Domain Logic Tests | 254 | `domain/*/` |
+| AI Provider Tests | 24 | `data/ai/provider/*Test.kt` |
+| Repository Tests | 44 | `data/repository/*Test.kt` |
+| Engine Tests | 47 | `*Engine*Test.kt` |
+| Domain Logic Tests | 310 | `domain/*/` |
 | Privacy Tests | 22 | `domain/privacy/*Test.kt` |
-| Parser Tests | 25 | `domain/parser/*`, `data/email/provider/*` |
+| Parser Tests | 15 | `domain/parser/*`, `data/email/provider/*` |
 
 ### Files With Test Coverage
 
@@ -98,7 +98,7 @@ ConfidenceRouter (if low confidence → AI)
     ├─→ CloudCategorizationAssistService
     └─→ NoOpCategorizationAssistService
     ↓
-MerchantCategoryRepository.save()
+MerchantCategoryRepository.learnPattern()
     ↓
 MerchantCategoryDao
     ↓
@@ -116,11 +116,11 @@ MerchantCategory entity
 ComputeDashboardWidgetsUseCase
     ↓
 DashboardDataProvider (collects data)
-    ├─→ BudgetRepository
-    ├─→ ExpenseRepository
-    ├─→ SavingsGoalRepository
-    ├─→ RecurringExpenseRepository
-    └─→ AnalyticsRepository
+    ├─→ DashboardExpenseRepository (contract)
+    ├─→ DashboardBudgetRepository (contract)
+    ├─→ DashboardSavingsGoalRepository (contract)
+    ├─→ DashboardReviewQueueRepository (contract)
+    └─→ DashboardFinancialWeatherRepository (contract)
     ↓
 Multiple Engines compute in parallel:
     ├─→ SpendingPaceCalculator
@@ -169,7 +169,7 @@ GetMonteCarloBudgetImpactUseCase
 MonteCarloSpendingSimulator
     ├─→ DataQualityAssessor
     ├─→ HistoricalSpendingDistribution
-    └─→ FinancialStressForecastEngine
+    └─→ TimeProvider
     ↓
 Reads from:
     ├─→ ExpenseRepository (historical data)
@@ -243,9 +243,9 @@ TransactionLifecycleCoordinator.createExpense()
     └─ Atomic insert + TransactionEvent log
     ↓
 TransactionSideEffectDispatcher.dispatchOnCreated()
-    ├─→ BudgetMonitor.checkBudget()
-    ├─→ AnomalyAlertOrchestrator.assess()
-    └─→ MerchantCategoryRepository.learn()
+    ├─→ BudgetMonitor.checkBudgets()
+    ├─→ AnomalyAlertOrchestrator.checkAndAlert()
+    └─→ MerchantCategoryRepository.learnPattern()
     ↓
 Expense stored in DB + event audit trail
 ```
@@ -261,14 +261,16 @@ CompositePrivacyGate.check(capability, context)
     ↓
 ┌───────────────────────────────────────────────────────────┐
 │ 1. NotificationPrivacyGate: NOTIFICATION_CAPTURE, etc.   │
-│ 2. CloudAiPrivacyGate: CLOUD_AI_*, RECEIPT_IMAGE_CLOUD  │
-│ 3. LocationPrivacyGate: EXTERNAL_GEOCODING, GPS, etc.   │
+│ 2. CloudAiPrivacyGate: CLOUD_AI_*, RECEIPT_IMAGE_CLOUD_  │
+│    UPLOAD                                                │
+│ 3. LocationPrivacyGate: EXTERNAL_GEOCODING, DEVICE_GPS_  │
+│    LOCATION, etc.                                        │
 │ 4. BackupPrivacyGate: RAWBACKUP_EXPORT, ENCRYPTED_BACKUP│
 └───────────────────────────────────────────────────────────┘
     ↓ (first Denied wins, or Allowed if all pass)
 PrivacyDecision (Allowed | Denied(reason))
     ↓
-PrivacyAuditLogger.log(capability, decision, reason, caller)
+PrivacyAuditLogger.logDecision(capability, decision, context)
     ↓
 Proceed or Block operation
 ```
@@ -289,11 +291,11 @@ WorkerExecutionGuard.acquire(workerName)
     ├─ Prevents concurrent execution
     └─ Timeout-based locking
     ↓
-WorkerRunLogger.runStarted(workerName, runId)
+WorkerRunLogger.start(workerName) → WorkerRunHandle
     ↓
 Worker execution (domain logic)
     ↓
-WorkerRunLogger.runCompleted/runFailed(workerName, runId, result)
+WorkerRunHandle.success/failure/skipped/retry/cancelled(workerName, runId)
     ↓
 PrivacyRuntimeWorkerPolicy (gates execution at runtime)
 ```
@@ -553,7 +555,7 @@ NetworkModule
     └─ Provides: @LocationHttpClient, @CloudAiHttpClient OkHttpClient
 
 DispatchersModule
-    └─ Provides: IO, Default, Main dispatchers, ApplicationScope
+    └─ Provides: IO, Default dispatchers, ApplicationScope
 
 CurrencyModule
     ├─ CurrencyConverter
@@ -625,7 +627,7 @@ EmptyStateModule
 | **Overpass API** | `OverpassNearbyService.kt` | POI lookup |
 | **Cloud AI (Gemini)** | `Cloud*Service.kt` | AI services |
 | **On-Device ML (ML Kit GenAI)** | `OnDevice*Service.kt` | ML models |
-| **Email (IMAP)** | `EmailReceiptIngestionService.kt` | Email receipts |
+| **Email receipts (parsed)** | `EmailReceiptIngestionService.kt` | Email receipts |
 | **Bank APIs** | `BankApiIntegration.kt` | Bank connections |
 | **Android Keystore** | `AtRestEncryptionService.kt`, `SecureKeyStorage.kt` | Hardware-backed encryption |
 | **Google Geocoding API** | `CompositeGeocodingService.kt` | Geocoding |

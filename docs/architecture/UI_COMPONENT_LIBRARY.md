@@ -1,6 +1,6 @@
 # ExpenseTracker UI Component Library
 
-**Last Updated:** September 7, 2026  
+**Last Updated:** September 21, 2026  
 **Total Components:** 59 files in `ui/components/` across 9 categories + root level (plus 7 files in `ui/util/` and 1 in `ui/integration/`)  
 **Framework:** Jetpack Compose with Material 3
 
@@ -41,7 +41,7 @@
 | **PlaceInsightCard** | `components/PlaceInsightCard.kt` | Location-based spending insights | SpendingMapScreen, AnalyticsScreen | Dashboard + Map |
 | **NearbyShopSuggestionCard** | `components/NearbyShopSuggestionCard.kt` | Nearby store suggestions | SpendingMapScreen | Map-only |
 | **NoSpendStreakWidget** | `components/analytics/NoSpendStreakWidget.kt` | Spending streaks counter | HomeScreen | Dashboard-only |
-| **DataQualityWarningChip** | `components/DataQualityWarningChip.kt` | Data quality warning chip | HomeScreen, BudgetScreen | Cross-screen |
+| **DataQualityWarningChip** | `components/DataQualityWarningChip.kt` | Data quality warning chip | HomeScreen, BudgetScreen, FinancialRunwayCard | Cross-screen |
 
 ---
 
@@ -77,7 +77,7 @@
 | **ReceiptItemBreakdownCard** | `components/ai/ReceiptItemBreakdownCard.kt` | Item-level receipt data | ReceiptScanScreen | Receipt-only |
 | **AiChatBubble** | `components/ai/AiChatBubble.kt` | Chat message bubble | AssistantSheet | Assistant-only |
 | **AiInsightsCard** | `components/ai/AiInsightsCard.kt` | AI-generated insights display | AssistantSheet | Assistant-only |
-| **AiRecommendationCard** | `components/ai/AiRecommendationCard.kt` | AI recommendation card | HomeScreen | Dashboard-only |
+| **AiRecommendationCard** | `components/ai/AiRecommendationCard.kt` | AI recommendation card | AssistantSheet | Assistant-only |
 | **AiTypingIndicator** | `components/ai/AiTypingIndicator.kt` | Typing indicator animation | AssistantSheet | Assistant-only |
 
 ---
@@ -159,13 +159,13 @@
 | Component | File | Purpose | Consumers | Reusability |
 |-----------|------|---------|-----------|-------------|
 | **UiTextExtensions** | `components/UiTextExtensions.kt` | `UiText.asString()` resolution helpers for domain `UiText` | Currently unreferenced (no importers) | Cross-cutting |
-| **ColorExtensions** | `util/ColorExtensions.kt` | Color transformations/extensions | Multiple screens | Cross-cutting |
-| **HapticFeedback** | `util/HapticFeedback.kt` | Haptic feedback utilities | Multiple screens | Cross-cutting |
-| **ModifierExtensions** | `util/ModifierExtensions.kt` | Reusable Compose modifiers | Multiple screens | Cross-cutting |
-| **ClipboardAmountParser** | `util/ClipboardAmountParser.kt` | Clipboard amount parsing | AddExpenseSheet | Screen-specific |
-| **AmountInputSanitizer** | `util/AmountInputSanitizer.kt` | Money input sanitization (digits, single decimal separator, max 2 decimals) — S2-008 fix | Add/Edit expense amount fields | Cross-screen |
-| **OwnershipValidator** | `util/OwnershipValidator.kt` | Shared-expense ownership validation for Add/Edit expense paths | AddExpenseSheet and edit paths | Cross-screen |
-| **UiTimeUtils** | `util/UiTimeUtils.kt` | Time formatting/conversion helpers (uses `TimeProvider`) | Multiple screens | Cross-cutting |
+| **ColorExtensions** | `util/ColorExtensions.kt` | Color transformations/extensions | Currently unreferenced (no importers) | Cross-cutting |
+| **HapticFeedback** | `util/HapticFeedback.kt` | Haptic feedback utilities (`AppHaptics`, `rememberHapticFeedback`) | MainActivity, ReviewScreen | Cross-cutting |
+| **ModifierExtensions** | `util/ModifierExtensions.kt` | Reusable Compose modifiers (`budgetScale`, `ifTrue`) | BudgetScreen | Cross-cutting |
+| **ClipboardAmountParser** | `util/ClipboardAmountParser.kt` | Clipboard amount parsing | MainActivity (SmartFAB / AddExpense prefill) | Screen-specific |
+| **AmountInputSanitizer** | `util/AmountInputSanitizer.kt` | Money input sanitization (digits, single decimal separator, max 2 decimals) — S2-008 fix | AddExpenseViewModel, ReceiptScanViewModel, BudgetScreen, FormComponents | Cross-screen |
+| **OwnershipValidator** | `util/OwnershipValidator.kt` | Shared-expense ownership validation for Add/Edit expense paths | AddExpenseViewModel (add), TransactionsViewModel (edit) | Cross-screen |
+| **UiTimeUtils** | `util/UiTimeUtils.kt` | Time formatting/conversion helpers (uses `TimeProvider`) | HomeScreen, HomeViewModel | Cross-cutting |
 
 ---
 
@@ -179,7 +179,7 @@ Usage counts below are direct call-site references verified against `app/src/mai
 | **ErrorState** | 8 screen files (+ FeatureComponents wrapper) | 🔴 CRITICAL — the standard error contract |
 | **LoadingSkeleton** | 5 main-tab screens (Home, Transactions, Analytics, Budget, Map) | 🔴 HIGH — all primary tabs |
 | **AppNavigationBar** | 1 (MainActivity) | 🔴 HIGH — the entire app chrome |
-| **BentoCard** | 2 screens + 8 dashboard/chart components | 🟡 MEDIUM — shared layout primitive |
+| **BentoCard** | 2 screens + 7 dashboard/chart components | 🟡 MEDIUM — shared layout primitive |
 | **CategoryAssistCard** | 2 (Review, ReceiptScan) | 🟢 LOW — isolated |
 | **RecommendationCard** | 4 (Home, BudgetForecasting, CarbonFootprint, LifestyleInflation) | 🟡 MEDIUM — cross-screen |
 | **FormComponents** | 0 (currently unused) | 🟢 LOW — reserved library code |

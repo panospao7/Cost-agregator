@@ -1,7 +1,7 @@
 # Hilt Module Bindings Map
 
 > Complete interface → implementation binding map for all 33 Hilt @Module files (+ 1 @EntryPoint).
-> **Last updated:** 2026-09-07 (verified against source; DB schema v148).
+> **Last updated:** 2026-09-21 (verified against source; DB schema v148).
 >
 > **Note:** `SubscriptionModule.kt` was deleted in 2026-05-09 refactoring — `SubscriptionManagerEngine`
 > is auto-provided by its `@Singleton @Inject constructor`. Replaced in count by `WorkerModule.kt`.
@@ -88,8 +88,8 @@ Dependencies:
 ### Entry Points Updated (2026-05-06)
 ```
 BroadcastReceivers:
-  SnoozeReminderReceiver                      → @AndroidEntryPoint + injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode
-  DismissReminderReceiver                     → @AndroidEntryPoint + injected RecurringReminderDeliveryDao, TimeProvider, RestoreMaintenanceMode
+  SnoozeReminderReceiver                      → @AndroidEntryPoint + injected WorkManager (delegates to SnoozeReminderActionWorker)
+  DismissReminderReceiver                     → @AndroidEntryPoint + injected WorkManager (delegates to DismissReminderActionWorker)
 
 Lifecycle coordinator wiring:
   TransactionLifecycleCoordinator             → now consumes CurrencySettingsRepository for home-currency snapshot resolution
@@ -233,7 +233,7 @@ Binds (all from DashboardContractsAdapter):
 ```
 Binds (both from AnomalyAlertRepositoryImpl):
   AnomalyAlertRepository (domain)             → AnomalyAlertRepositoryImpl
-  AnomalyAlertRepository (dashboard)          → AnomalyAlertRepositoryImpl
+  DashboardAnomalyAlertRepository (dashboard)  → AnomalyAlertRepositoryImpl
 ```
 
 ### `SavingsModule` — `di/SavingsModule.kt`
@@ -263,19 +263,18 @@ Provides:
   DeleteGroupMemberUseCase                    → DeleteGroupMemberUseCase(repository)
   DeleteGroupUseCase                          → DeleteGroupUseCase(repository)
   AddGroupExpenseUseCase                      → AddGroupExpenseUseCase(repository, timeProvider)
-
-Auto-provided via @Inject constructor:
-  GroupLifecycleCoordinator                   → @Singleton @Inject constructor (no Dagger module needed)
 ```
 
 ### `GroupsModule` — `di/GroupsModule.kt` (continued)
 ```
 Auto-provided via @Inject constructor:
-  GroupLifecycleCoordinator                   → @Singleton @Inject constructor (domain interface, no Dagger cycle)
   GroupBalanceCalculator                      → @Singleton @Inject constructor (per-member net balance calculator)
 ```
 
 Note: `MarketRateProvider` is now explicitly bound by `NegotiationModule` (see section 1).
+Note: the previously listed `GroupLifecycleCoordinator` was never built (PR-E15, see
+`GroupTransactionCoordinator.kt`) — group lifecycle events are written via
+`GroupTransactionCoordinator` / `GroupLifecycleEventDao` instead.
 
 ### Analytics Engines — Auto-provided (no module needed)
 

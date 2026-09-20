@@ -1,5 +1,5 @@
 # ExpenseTracker Frontend - Visual Navigation Map
-*Last refreshed: September 7, 2026*
+*Last refreshed: September 21, 2026*
 
 ## APPLICATION FLOW DIAGRAM
 
@@ -243,7 +243,7 @@
 │ │                                                                  ││
 │ └──────────────────────────────────────────────────────────────────┘│
 │                                                                       │
-│ FAB (in this tab): [✓ Approve All]                                  │
+│ Top-bar action: [✓ Approve All]                                      │
 │                                                                       │
 └──────────────────────────────────────────────────────────────────────┘
 ```

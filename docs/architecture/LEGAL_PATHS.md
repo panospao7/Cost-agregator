@@ -1,6 +1,6 @@
 # Legal Paths — Architecture Law
 
-> **Last updated:** 2026-09-07 (verified against code: DB v148, guarded-worker set, CI guard suite)
+> **Last updated:** 2026-09-21 (verified against code: DB v148, guarded-worker set, CI guard suite)
 >
 > **Purpose:** Define the ONE allowed implementation path for each major operation.  
 > **Rule:** Any code that uses a different path is a bug, regardless of whether it "works."  
@@ -13,7 +13,9 @@
 ```
 CREATE expense:
   Any source (UI/notification/receipt/email/bank/import/group)
-    → TransactionLifecycleCoordinator.createExpense() or createExpenseStandalone()
+    → TransactionLifecycleCoordinator.createExpenseStandaloneV2() or
+      createExpenseDbOnlyV2() (createExpense()/createExpenseStandalone()/
+      createExpenseDbOnly() remain as deprecated delegates to the V2 paths)
     → ExpenseDao.insertAtomic() [ONLY from coordinator]
     → TransactionEvent with LifecycleEventType.CREATED
     → Post-commit side effects via TransactionSideEffectPlanner → TransactionSideEffectDispatcher
@@ -30,8 +32,10 @@ ENFORCEMENT:
     scripts/verify_db_access_boundaries.py (ratchet mode in CI).
   • Direct ExpenseDao mutation methods are annotated @RestrictedExpenseDaoMutation
     (opt-in); ExpenseDaoMutationAccessTest provides hard CI enforcement.
-  • Coordinators write through ExpenseWriteStore (data/store/), a write
-    facade that runs DatabaseWriteBarrier.checkWritesAllowed on every method.
+  • Legal writers wrap mutations in canonical write-barrier scopes —
+    writeBarrier.checkWritesAllowed(...) at entry and writeBarrier.runWrite(...)
+    around database.withTransaction. (The former ExpenseWriteStore facade was
+    removed as a dead layer — GR-14u35.)
 ```
 
 ```
@@ -58,6 +62,62 @@ FORBIDDEN:
   ❌ Loading snapshot outside the delete transaction
 ```
 
+```
+DUPLICATE BLOCKING vs OWNERSHIP RESOLUTION (RP-11):
+  Two deliberately separate ExpenseDao query families exist (P2-008 11c + RP-11 FIX 2):
+
+  BLOCKING family — collision preflights, intentionally INCLUDES isNotMine rows:
+  → existsByMerchantKeyInRangeCurrencyAware / existsByMerchantKeyPrefixInRangeCurrencyAware /
+    existsByMerchantInRangeCurrencyAware (EXISTS prechecks behind isDuplicateCurrencyAware())
+  → getBlockingCandidateByMerchantKeyInRangeCurrencyAware /
+    getBlockingCandidateByMerchantKeyPrefixInRangeCurrencyAware /
+    getBlockingCandidateByMerchantInRangeCurrencyAware (full-row candidates, no ownership filter)
+  → findBlockingDuplicateIdCurrencyAware() — @Transaction, returns the colliding id or null
+  → Matching (all tiers): exact merchantKey → prefix containment (both keys LENGTH >= 8,
+    mirroring DuplicateDetectionPolicy.MIN_MERCHANT_KEY_PREFIX_LENGTH) → raw merchant;
+    window [date - windowMs, date + windowMs + 1) (DUPLICATE_WINDOW_MS = 5 min),
+    amount +/- AMOUNT_TOLERANCE (0.01), currency case-insensitive, UNKNOWN type matches any
+  → Why include not-mine: a not-mine row occupying the target identity must abort the
+    write; using the resolver here would let the write slip past the preflight and die on
+    the raw dedupeKey unique index (unique Index on dedupeKey; insertAtomic
+    OnConflictStrategy.IGNORE returns -1 on collision)
+
+  RESOLVER family — ownership-scoped reads, SQL filters isNotMine = 0:
+  → getDuplicateCandidateByMerchantKeyInRangeCurrencyAware /
+    getDuplicateCandidateByMerchantKeyPrefixInRangeCurrencyAware /
+    getDuplicateCandidateByMerchantInRangeCurrencyAware; findDuplicateIdCurrencyAware()
+    — the fuzzy resolver must NEVER return a not-mine row; also feeds the
+    suggestion/import candidate paths
+
+  COLLISION PREFLIGHT call sites — all five run findBlockingDuplicateIdCurrencyAware()
+  inside database.withTransaction (TOCTOU-safe) and abort with a typed
+  DuplicateUpdateException when the colliding id differs from the target id:
+  → updateExpense (key-fields-changed branch)
+  → updateMerchant
+  → updateType
+  → updateTypeAndTransferDetails (preflight runs whenever the recomputed dedupeKey
+    differs from the stored key)
+  → bulkUpdateMerchant (preflights EVERY target key inside the transaction BEFORE any
+    write; a collision outside the rename set aborts everything → Result.failure with
+    the controlled BulkMerchantRenameFailure.MERCHANT_RENAME_DUPLICATE reason — no row
+    written, no event, no dispatch; zero matching rows is a successful no-op with no
+    event and no dispatch)
+
+  Receipt-side atomic assignment:
+  → ReceiptLinkService.linkReceiptToExpense() runs link insert + legacy field +
+    warranty/return/item propagation + ReceiptEvent inside one DomainTransactionRunner
+    transaction, with a fresh in-transaction receipt read; the AUTO_MATCH path uses the
+    atomic compare-and-set ScannedReceiptDao.claimForAutoMatch — a 0-row claim throws
+    ReceiptAlreadyClaimedException and rolls the link back; the category assignment
+    committed inside the transaction dispatches its side effects only AFTER commit
+
+FORBIDDEN:
+  ❌ Using the resolver family (findDuplicateIdCurrencyAware) for mutation collision
+     preflights or post-blocking duplicate audit lookups
+  ❌ Adding an isNotMine filter to the blocking family
+  ❌ Collision checks outside the coordinator transaction (TOCTOU)
+```
+
 ---
 
 ## Receipt Mutations
@@ -65,7 +125,9 @@ FORBIDDEN:
 ```
 PROCESS receipt (camera/gallery/file/PDF):
   → ReceiptLifecycleCoordinator.processReceiptInput()
-  → ReceiptRepository.processReceipt() [OCR/parse only, returns draft]
+  → ReceiptRepository.processReceipt() [OCR/parse + draft insert via
+    ReceiptInsertResolver/ReceiptRecordWriter with pre-OCR image-hash dedup;
+    coordinator owns lifecycle enrichment + events + side effects]
   → Coordinator owns: insert + metadata + fingerprints + event + side effects
 
 CREATE expense FROM receipt:
@@ -86,8 +148,11 @@ FORBIDDEN:
 
 ```
 MATCH receipt (suggest/approve/reject/clear):
-  → ReceiptMatchLifecycleService.saveMatchSuggestion() / approveMatchSuggestion()
-  → ReceiptMatchLifecycleService.rejectAllSuggestions() / clearMatchForReceipt()
+  → ReceiptMatchLifecycleService.saveMatchSuggestion() / rejectAllSuggestions()
+    / clearMatchForReceipt()
+  → Approving (accepting) a suggestion is a LINK: ReceiptLinkService.linkReceiptToExpense()
+    (ReceiptMatchLifecycleService has no approveMatchSuggestion method;
+    ReceiptRepository.approveMatchSuggestion() is permanently disabled)
   → Each operation: DatabaseWriteBarrier check → withTransaction → ReceiptEvent
   → Events: MATCH_SUGGESTED / MATCH_APPROVED / MATCH_REJECTED / MATCH_CLEARED
 
@@ -108,6 +173,24 @@ FORBIDDEN:
 ```
 
 ```
+PERSIST receipt structured data (RP-12 12b P3-007):
+  → ReceiptStructuredDataPolicy.persistedItems() — the ONLY persisted
+    representation of receipt line items
+  → Single RawStorageMode transformer applied BEFORE the receipt row insert:
+    STORE_RAW passes the parser JSON through unchanged; STORE_REDACTED
+    persists the typed RedactedReceiptItem projection and drops the parsed
+    merchant; STORE_METADATA_ONLY / DO_NOT_STORE persist no item JSON and
+    no parsed merchant
+  → Serialization failure yields null — most restrictive, fail-closed
+
+CLEAN UP uncommitted receipt assets (RP-12 12c P3-008):
+  → AssetCleanupCoordinator.cleanupUncommittedAsset()
+
+FORBIDDEN:
+  ❌ Persisting receipt item JSON outside ReceiptStructuredDataPolicy
+```
+
+```
 DEBUG EXPORT receipt data:
   → ReceiptDebugExporter.debugReceipt() / exportParserDebugData()
   → Writes DiagnosticEvent (ALLOWED/DENIED with reason code)
@@ -122,6 +205,79 @@ FORBIDDEN:
 
 ---
 
+## Email Receipt Parsing
+
+```
+PARSE email receipt (RP-18):
+  → EmailReceiptIngestionService.processEmailReceipt() — thin parser/delegate, owns NO mutation
+  → DatabaseWriteBarrier check → Semaphore(3) bounded concurrency → EMAIL DiagnosticEvents
+  → detectProvider(sender, subject, body): parser canParse() in fixed order amazon →
+    uber → apple, then sender-domain fallbacks, then body-domain fallbacks; provider
+    "unknown" tries all parsers in the same amazon → uber → apple order (there is NO
+    pluggable parser registry — the order is hardcoded in the service)
+  → Parser set (data/email/provider/): AmazonReceiptParser / UberReceiptParser /
+    AppleReceiptParser, all extending BaseEmailParser (EmailReceiptParser.kt);
+    canParse() is sender-gated for all three (subject/body only corroborate)
+
+PARSING CONTRACT (as implemented, RP-18 18-A):
+  → Total extraction is line-anchored, specific-labels-first: per-parser specific labels
+    (e.g. Amazon "order total" / "grand total") → bare "total" LAST → any line containing
+    a word-bounded "total" (never "Subtotal"; deliberately no trailing boundary so the
+    "Totals:" recovery spelling also matches)
+  → Total number grammar is strict: grouped thousands (optional cents) or a plain
+    two-decimal number — bare integers ("Total items: 3") and VAT percentages ("19%")
+    never match as totals
+  → Unit-price and summary contexts are excluded: "2 x 5,00 €" / "45,90 x 2" /
+    "2 @ $5.00" quantity×price forms and aggregate rows ("3 items, total 45,90") never
+    become totals or line items
+  → Currency resolution precedence: symbols (€ → EUR, £ → GBP, $ → USD, fixed priority)
+    → word-bounded 3-letter ISO codes (conflicting codes fail) → per-parser trusted
+    domain map (amazon.com→USD, amazon.co.uk→GBP, amazon.de/fr/it/es→EUR;
+    apple.com/appstore.com→USD; Uber ships an EMPTY map — "uber.com" is not a currency
+    signal). Bare two-letter country tokens are deliberately NOT signals.
+    Unresolved → skip; NO default currency is ever guessed
+  → Date: extracted date, falling back to receivedAt; amount must be > 0
+
+PARSE OUTCOMES:
+  → EmailParseOutcome sealed: Parsed / Skipped(EmailParseSkipReason) — controlled,
+    payload-independent constants only: PARSE_FAILED, CURRENCY_UNRESOLVED
+  → parse() keeps the stable null-on-failure contract (this is what the ingestion
+    service consumes); parseWithOutcome() carries the typed skip reason
+
+LEGAL PATH:
+  → Parsed data funnels into ReceiptLifecycleCoordinator.processEmailReceipt() — the
+    ONLY mutation path (receipt save + expense creation + linking + events + side
+    effects); the service has NO inline fallback and never dispatches side effects
+  → Pre-delegation dedup fingerprint: sha256(provider + normalized merchant +
+    amount(2dp) + currency + senderDomain + 1-hour date bucket + orderNumber)
+  → messageId is passed to the coordinator only as an HMAC-SHA256 prefix hash, never
+    plaintext; HMAC failure fails closed (ParseError, no plaintext fallback)
+
+DIAGNOSTICS:
+  → Pipeline EMAIL DiagnosticEvents at front_door / provider_detection / parser /
+    validation / outcome / dedupe / coordinator / ingestion stages
+  → Controlled reason codes: RESTORE_BLOCKED, PARSER_FAILED (null parse — parser-level
+    PARSE_FAILED and CURRENCY_UNRESOLVED both surface here), VALIDATION_FAILED,
+    DUPLICATE, UNKNOWN_ERROR
+  → messageId/sender recorded hashed only
+
+TESTS:
+  → app/src/test/java/com/yourname/expensetracker/data/email/provider/
+    (EmailReceiptParserTest, AmazonReceiptParserTest, AppleReceiptParserTest,
+    UberReceiptParserTest)
+  → app/src/test/java/com/yourname/expensetracker/data/email/
+    (EmailReceiptIngestionServiceTest, EmailReceiptIngestionServiceTransactionTest)
+  → app/src/test/java/com/yourname/expensetracker/scenarios/EmailReceiptPipelineScenarioTest
+
+FORBIDDEN:
+  ❌ Email receipt mutation outside ReceiptLifecycleCoordinator.processEmailReceipt()
+  ❌ Defaulting or guessing a currency when no trusted signal exists (must skip)
+  ❌ Bare two-letter country tokens as currency signals (removed by design)
+  ❌ Persisting or logging raw email bodies, senders or plaintext messageIds
+```
+
+---
+
 ## Recurring Rule Mutations
 
 ```
@@ -132,7 +288,9 @@ CREATE rule:
 
 UPDATE rule:
   → RecurringRuleLifecycleCoordinator.updateRule()
-  → Atomic: updates rule + regenerates occurrences in single transaction
+  → Atomic: updates rule + reconciles occurrences in single transaction
+    (RP-04 A2 reconcileUpdateInCurrentTransaction; fixed-anchor semantics,
+    golden no-double-count)
   → DatabaseWriteBarrier check + durable lifecycle event
 
 ACTIVATE rule:
@@ -153,7 +311,8 @@ GENERATE occurrences:
   → Uses OccurrenceGenerationOptions (controls reminder creation, windows, past-due allowance)
   → Rejects inactive rules
   → Terminal statuses (PAID, CANCELLED, SKIPPED, MISSED, IGNORED) never auto-downgraded
-  → materializeInCurrentTransaction() for use inside existing transactions
+  → RecurringOccurrenceMaterializer.materializeInCurrentTransaction() for use
+    inside existing transactions
 
 LINK expense to occurrence:
   → RecurringLifecycleCoordinator.linkExpenseToOccurrenceDetailed()
@@ -210,7 +369,8 @@ CLOUD AI call:
     DAILY_BRIEFING, RECEIPT_ASSIST, BANK_STATEMENT, etc.)
   → If redactBeforeCloud: apply CloudPayloadPolicy via DefaultCloudPayloadPolicy.prepareText()
     / prepareReceiptAssist() / prepareBankStatementValidation() (no generic prepare())
-  → PreparedCloudPayload contract used by all 7 cloud providers
+  → PreparedCloudPayload contract used by all 8 cloud providers
+    (data/ai/provider/Cloud*Service)
   → Audit via CompositePrivacyGate final decision
 
 RAW DATA storage:
@@ -228,9 +388,9 @@ PRIVACY BLOCKED states:
     OverpassDisabled, DebugDataPersistenceDisabled, Custom
   → PrivacyDecision.FailClosed: never proceed; blocks execution unconditionally
   → toPrivacyBlocked() maps any denial + capability to a typed PrivacyBlocked
-  → 38 call sites across 26 files use blocksExecution() before proceeding
+  → 39 call sites across 27 files use blocksExecution() before proceeding
     (blocksExecution() metric; `PrivacyGate.check(...)` itself is invoked from
-    48 call sites across 32 production files — different metric, both current)
+    51 call sites across 34 production files — different metric, both current)
 
 FORBIDDEN:
   ❌ Cloud HTTP without privacy gate check (must pass through CompositePrivacyGate)
@@ -389,10 +549,11 @@ EVERY pipeline exit must write a durable event:
   → TransactionEvent (expense lifecycle — LifecycleEventType)
   → ReceiptEvent (receipt lifecycle)
   → RecurringLifecycleEvent (recurring lifecycle)
-  → GroupLifecycleEvent (group lifecycle)
-  → InvestmentEvent (investment lifecycle)
+  → WarrantyLifecycleEvent (warranty lifecycle)
   → BackgroundJobRun (worker lifecycle)
   → BankStatementImportRun (bank statement lifecycle)
+  (GroupLifecycleEvent / InvestmentEvent no longer exist in code — group
+   audit events go through TransactionLifecycleEventWriter where required)
 
 Exception messages sanitized via EventMetadataSanitizer.sanitizeExceptionMessage():
   → Digit sequences (12+), IBANs, JWT tokens, Bearer tokens → [REDACTED]
@@ -468,66 +629,74 @@ FORBIDDEN:
 
 ```
 CREATE group:
-  → GroupLifecycleCoordinator.createGroup(name, members, defaultCurrency)
+  → SharedExpenseManager.createGroup(name, description, memberNames, defaultCurrency, currentUserName)
+  → SharedExpenseDataPort.createGroupWithMembers() → SharedExpenseDataPortAdapter
+    (write-barrier checked)
   → GroupTransactionCoordinator.createGroupWithMembersAtomic()
   → Atomic inserts: ExpenseGroupDao.insert + GroupMemberDao.insertAll
-  → GroupLifecycleEvent (eventType="GROUP_CREATED")
+    (single-currentUser validation, joinedAt normalization, currentUserGroupKey invariant)
+  → NOTE: the planned GroupLifecycleCoordinator wrapper (PR-E15) was never built
+    and was removed (GR-14u36, owner decision 2026-09-11); group lifecycle
+    operations run through SharedExpenseManager / SharedExpenseDataPortAdapter.
 
 ADD member:
-  → GroupLifecycleCoordinator.addMember(groupId, name)
+  → SharedExpenseManager.addMember(groupId, name, email)
   → GroupTransactionCoordinator.addMemberToGroup()
-  → Validates: group exists + active, name not blank, no duplicate name, max members
+  → Validates: group exists + active, no duplicate name, no second currentUser
   → GroupMemberDao.insert within transaction
-  → GroupLifecycleEvent (eventType="MEMBER_ADDED")
 
 REMOVE member:
-  → GroupLifecycleCoordinator.removeMember(groupId, memberId)
-  → Validates: not the only member, not currentUser if others exist
-  → GroupMemberDao.delete or leftAt update
-  → GroupLifecycleEvent (eventType="MEMBER_REMOVED")
+  → SharedExpenseManager.removeMember(member)
+  → Validates: member exists, no paid expenses, no split references
+  → GroupMemberDao leftAt update via SharedExpenseDataPortAdapter.removeMember()
 
 ADD expense to group (standalone — no system link):
-  → GroupLifecycleCoordinator.addExpense(groupId, expenseInput)
-  → GroupTransactionCoordinator.addExpenseToGroup()
-  → Validates: group active, members exist, split valid
-  → GroupExpenseDao.insert within transaction
-  → GroupLifecycleEvent (eventType="EXPENSE_ADDED")
+  → SharedExpenseManager.addExpense(groupId, expenseId, ...)
+  → Validates: description/amount, payer is member, split payload valid (SHR-17)
+  → SharedExpenseDataPort.addExpense() → GroupTransactionCoordinator.addExpenseToGroup()
+  → Validates: group active, payer is active member, custom split format,
+    single-currency group policy (E4-005)
+  → GroupExpenseDao.insert within transaction (idempotency key PR8)
 
 ADD expense to group (with system expense link):
-  → TransactionLifecycleCoordinator.createExpense() → get expenseId
-  → GroupTransactionCoordinator.addExpenseWithLink(groupId, expenseId, ...)
-  → Ownership update on system expense
-  → GroupExpenseDao.insert with expenseId FK
+  → GroupTransactionCoordinator.addExpenseWithLink(groupId, systemExpenseId, ...)
+  → GroupExpenseDao.insert with expenseId FK + ownership update via
+    TransactionLifecycleCoordinator.updateOwnershipDbOnlyV2() in one transaction
+  → PostCommitActionBatch side effects run only after the outer commit
 
 CREATE system expense AND link to group (atomic):
   → GroupTransactionCoordinator.createSystemExpenseAndLinkToGroup()
-  → database.withTransaction { TransactionLifecycleCoordinator.createExpense(DEFER) + GroupExpenseDao.insert }
-  → Throws on failure → rollback both
+  → database.withTransaction { TransactionLifecycleCoordinator.createExpenseDbOnlyV2(DEFER side effects) + GroupExpenseDao.insert }
+  → Throws on failure → rollback both (GroupExpenseAtomicRollback)
 
 RECORD settlement:
-  → GroupLifecycleCoordinator.recordSettlement(groupId, fromMemberId, toMemberId, amount)
-  → GroupSettlementDao.insert
-  → GroupLifecycleEvent (eventType="SETTLEMENT_RECORDED")
+  → REMOVED — no production settlement writer exists; GroupSettlementDao is
+    read-only (consumed by GroupBalanceCalculator / SettlementCalculator)
 
-ARCHIVE / DELETE group:
-  → GroupLifecycleCoordinator.archiveGroup() / deleteGroupPermanently()
+ARCHIVE / RESTORE / DELETE group:
+  → SharedExpenseManager.archiveGroup() / restoreGroup() / deleteGroup()
   → archiveGroup: sets isActive=false (soft delete)
-  → deleteGroupPermanently: GroupTransactionCoordinator.permanentlyDeleteGroup()
-    → Hard delete with cascade cleanup via ExpenseGroupDao + GroupExpenseDao + GroupMemberDao + GroupSettlementDao
-  → GroupLifecycleEvent (eventType="GROUP_ARCHIVED" / "GROUP_PERMANENTLY_DELETED")
+  → deleteGroup → GroupTransactionCoordinator.permanentlyDeleteGroup()
+    → deleteGroupAtomic: hard delete with cascade cleanup (GroupExpenseDao +
+      GroupMemberDao + ExpenseGroupDao), clears shared-expense flags on linked
+      system expenses, writes TransactionLifecycleEvent (BULK_UPDATED)
 
 CALCULATE balances:
   → GroupBalanceCalculator.calculateMemberBalance(groupId, memberId)
   → Read-only: sums paidTotal, owedShareTotal via SplitCalculator, settlements
   → Returns GroupMemberBalance (isSettled when |netBalance| <= 0.01)
+  → SharedExpenseManager.calculateBalances() for the all-member snapshot
 
 FORBIDDEN:
   ❌ ExpenseGroupDao.insert() outside GroupTransactionCoordinator
-  ❌ GroupMemberDao.insert() outside GroupTransactionCoordinator
+  ❌ GroupMemberDao.insert()/insertAll() outside GroupTransactionCoordinator
   ❌ GroupExpenseDao.insert() outside GroupTransactionCoordinator
-  ❌ GroupSettlementDao.insert() outside GroupLifecycleCoordinator
-  ❌ GroupLifecycleEventDao.insert() directly (must go through coordinator)
-  ❌ Any group mutation without GroupLifecycleEvent
+  ❌ GroupSettlementDao.insert() — no legal writer exists today
+  ❌ GroupLifecycleEventDao.insert() (DAO is dormant — no production writer;
+     group audit events go through TransactionLifecycleEventWriter where required)
+  ❌ Reviving the removed GroupLifecycleCoordinator wrapper (GR-14u36)
+  ❌ Any group mutation without a barrier-checked entry (SharedExpenseManager
+     facade or GroupTransactionCoordinator)
   ❌ Hard-deleting a group without checking for linked system expenses
 
 ENFORCEMENT:
@@ -546,11 +715,12 @@ ENFORCEMENT:
 
 ```
 CREATE / ACCEPT subscription:
-  → SubscriptionManagerEngine.validateAndCreate(subscription input / candidate)
+  → SubscriptionManagerEngine.validateAndCreate(CreateSubscriptionRequest)
+    (candidates accepted via acceptCandidate())
   → DatabaseWriteBarrier check
   → Atomic: inserts subscription + price history + candidate resolution + usage baseline
   → Uses RecurringExpenseRepository + SubscriptionPriceHistoryDao + SubscriptionUsageDao
-  → Returns Result<Long>
+  → Returns Result<ManualRecurringExpense>
 
 RECORD price change:
   → SubscriptionManagerEngine.recordPriceChange(subscriptionId, newPrice, effectiveDate)
@@ -568,13 +738,15 @@ ANALYZE subscription health:
 
 CALCULATE savings:
   → SubscriptionManagerEngine.calculatePotentialSavings()
-  → Returns MoneyAggregate (preserves currency safety across subscriptions)
+  → @Deprecated (DeprecationLevel.WARNING) — raw Double; NO MoneyAggregate
+    alternative exists yet (REC-19: max savings per subscription, not summed)
+  → Use getTotalMonthlySubscriptionCostAggregate() for currency-safe cost totals
 
 FORBIDDEN:
   ❌ SubscriptionPriceHistoryDao.insert() outside recordPriceChange
   ❌ SubscriptionCandidateDao.insert/delete outside validateAndCreate/acceptCandidate
   ❌ SubscriptionManagerEngine.getTotalMonthlySubscriptionCost() [Deprecated — raw Double across currencies]
-  ❌ SubscriptionManagerEngine.calculatePotentialSavings() using raw Double [uses MoneyAggregate now]
+  ❌ SubscriptionManagerEngine.calculatePotentialSavings() [Deprecated WARNING — raw Double; no aggregate alternative exists yet]
   ❌ Direct DAO mutations bypassing engine validation
 ```
 
@@ -584,7 +756,8 @@ FORBIDDEN:
 
 ```
 CATEGORIZE expense (auto):
-  → CategorizationEngine.categorize(merchantName, amount, categoryContext, existingCategory)
+  → CategorizationEngine.categorize(merchant) /
+    categorizeWithContext(merchant, amount, timestamp)
   → Read-only: 6-layer cascade (Exact → Canonical → Greeklish → Fuzzy → Semantic → Context)
   → Returns CategorizationResult with MatchType + confidence
   → No persistent side effects
@@ -614,6 +787,8 @@ FORBIDDEN:
 ```
 PROCESS bank statement (image/PDF):
   → BankStatementLifecycleProcessor.processBankStatement(uri)
+    [UI entry: ReceiptLifecycleCoordinator.processBankStatement() delegates here;
+     ReceiptRepository.processBankStatement() is deprecated]
   → SHA-256 pre-OCR dedup check against BankStatementImportRunDao
   → OCR execution → transaction parsing
   → AiSettings.AI_BANK_STATEMENT privacy check
@@ -642,18 +817,19 @@ CREATE split template:
   → DatabaseWriteBarrier check → validation
   → SplitTemplateDao.insertTemplate with serialized shares
   → Returns template ID
+  → EnhancedSplitManager is also the legal writer for deleteTemplate() /
+    setDefaultTemplate() (SplitTemplateDao writes)
 
 ASSIGN split items to participants:
-  → EnhancedSplitManager.assignItemsToParticipants(expenseId, assignments)
-  → DatabaseWriteBarrier check
-  → Atomic within database.withTransaction:
-      SplitItemAssignmentDao.deleteAllForExpense(expenseId)
-      SplitItemAssignmentDao.insertAssignments(assignments)
+  → REMOVED — EnhancedSplitManager.assignItemsToParticipants() no longer exists;
+    SplitItemAssignmentDao mutation methods (deleteAllForExpense /
+    insertAssignments) have NO production writer today. Assignment reads remain
+    via getAssignmentsForExpense() / getParticipantTotals().
 
 FORBIDDEN:
   ❌ SplitTemplateDao.insertTemplate outside EnhancedSplitManager.createTemplate()
-  ❌ SplitItemAssignmentDao.insertAssignments without clearing old assignments for same expense
-  ❌ Direct SplitItemAssignmentDao.deleteAllForExpense + insertAssignments without transaction wrapping
+  ❌ Reintroducing SplitItemAssignmentDao mutation callers outside a documented
+     transactional writer (currently none exists)
   ❌ Splitting expenses with raw Double (must use Money/BigDecimal precision via Money)
 ```
 
@@ -667,7 +843,8 @@ CAPTURE notification (system/messaging):
   → Computes dedup fingerprint (packageName + tag + key + hash)
   → Checks RawStorageMode: if DO_NOT_STORE/METADATA_ONLY, encrypts/redacts payload
   → NotificationIntakeDao.insert with dedupeKey + encrypted payload
-  → Enqueues NotificationIntakeWorker via WorkManager
+  → Enqueues NotificationIntakeWorker via WorkManager (enqueueUniqueWork, awaited
+    with atomic failure transition on enqueue failure — RP-10 10b)
 
 CAPTURE for retry:
   → NotificationIntakeCoordinator.captureForRetry(notificationData, source)
@@ -678,6 +855,41 @@ FORBIDDEN:
   ❌ Storing raw notification text when RawStorageMode is DO_NOT_STORE
   ❌ Skipping dedup fingerprint computation
   ❌ Direct WorkManager enqueue outside capture flow
+```
+
+```
+CAPTURE HYGIENE (RP-10 10b/10c):
+  → In-memory dedup: NotificationCaptureDeduper.tryStart(key, windowMs) — atomic
+    check-and-insert under a lock; timestamps come from MonotonicTimeProvider.nowNanos()
+    and are stored in NANOSECONDS (windowMs converted once per call), so the dedupe
+    window is immune to wall-clock jumps — a backward jump cannot suppress identical
+    re-posts and a forward jump cannot disable the window
+  → Deduper hygiene: access-order LinkedHashMap capped at 1000 entries (oldest evicted);
+    remove(key) on error/cancellation paths; cleanupExpired(maxAgeMs) on service cycle
+  → Transient payload framing: NotificationTransientPayloadCrypto — AES-256/GCM/NoPadding
+    (Keystore-backed key, random 12-byte nonce per encryption, 128-bit GCM tag). The
+    five payload fields are framed BEFORE encryption: per field a presence byte
+    (0 = null / 1 = present) then, when present, a 4-byte big-endian length + UTF-8
+    bytes — null vs empty stays distinct and NUL-containing content round-trips exactly
+    (replaces the colliding NUL-join framing; the legacy NUL-split parse remains only
+    as a decrypt fallback for in-flight old-framed rows; both parses failing throws
+    GeneralSecurityException with a fixed, content-free message)
+  → Sensitive extras key policy: NotificationCaptureService.SENSITIVE_EXTRAS_KEYS — a
+    fixed key set (Android system/media keys, MessagingStyle content keys, and
+    financial/personal keys in snake_case and camelCase) filtered case-insensitively
+    out of extrasJson; values >= 2000 chars dropped (bitmap guard); serialization
+    failure yields "{}"
+  → Retry backoff: NotificationIntakeRetryPolicy.backoffFor(attempt) is the single
+    ladder (30s → 2m → 10m → 30m → 1h, attempt 1-based, clamped to ladder bounds),
+    consumed by BOTH NotificationIntakeWorker per-attempt retry scheduling AND
+    NotificationIntakeCoordinator enqueue-failure transitions
+    (nextAttemptAt = now + backoffFor(attempts + 1)) — one source, no drift
+
+FORBIDDEN:
+  ❌ Reading wall-clock time for dedupe windows (must use MonotonicTimeProvider)
+  ❌ Framing transient payloads with delimiter joins (NUL or otherwise)
+  ❌ Persisting extras keys matching SENSITIVE_EXTRAS_KEYS
+  ❌ Duplicating the backoff ladder locally in the worker or coordinator
 ```
 
 ---
@@ -877,7 +1089,8 @@ IMPORT expenses from file/content:
   → Detects format: CSV_LEGACY / CSV_FULL / JSON_V1 / JSON_V2 / UNKNOWN
   → Delegates to CsvExpenseImporter or JsonExpenseImporter
   → Each importer: parses → validates → calls TransactionLifecycleCoordinator.createExpense() per row
-  → Returns ImportResult(imported, skipped, errors, total)
+    (also inserts missing categories via CategoryDao)
+  → Returns ImportResult(success, importedCount, skippedCount, errorCount, errors, expenseIds)
 
 FORBIDDEN:
   ❌ CsvExpenseImporter/JsonExpenseImporter used outside ImportCoordinator
@@ -981,39 +1194,44 @@ FORBIDDEN:
 
 ```
 GENERATE spending forecast:
-  → BudgetForecastingEngine.generateAndSaveForecast(budgetId, period)
+  → BudgetForecastingEngine.generateForecastResult(budget, forecastPeriodDays)
+    [UI caller: BudgetForecastingViewModel]
   → Reads historical expense data via ExpenseDao + ExpenseRepository
   → Normalizes via AnalyticsCurrencyNormalizer
   → Computes projected spending using time-series patterns
-  → BudgetForecastDao.saveBudgetForecast() persists result
+  → insertForecast() → BudgetForecastDao.insertWithDeactivation() persists result
+    (write-barrier checked; UNIQUE-conflict maps to DuplicateInSameInstant)
 
 FORBIDDEN:
-  ❌ BudgetForecastDao.saveBudgetForecast() outside BudgetForecastingEngine
+  ❌ BudgetForecastDao insert/update outside BudgetForecastingEngine.insertForecast()
   ❌ Forecasting without historical expense normalization
   ❌ Persisting forecasts without AnalyticsCurrencyNormalizer normalization
 ```
 
 ---
 
-## Shared Expense Management (Groups — Alternative Facade)
+## Shared Expense Management (Groups — Domain Facade)
 
 ```
 CREATE shared group expense:
-  → SharedExpenseManager.createGroup(name, members)
-  → SharedExpenseDataPort.createGroup() → delegates to multi-table write
+  → SharedExpenseManager.createGroup(name, description, memberNames, defaultCurrency)
+  → SharedExpenseDataPort.createGroupWithMembers() → SharedExpenseDataPortAdapter
+    → GroupTransactionCoordinator.createGroupWithMembersAtomic() (multi-table atomic write)
 
 ADD shared expense:
-  → SharedExpenseManager.addExpense(groupId, input)
-  → SplitCalculator computes member shares
-  → SharedExpenseDataPort.createExpense() → multi-table atomic write
+  → SharedExpenseManager.addExpense(groupId, expenseId, ...)
+  → SplitCalculator computes member shares (myShareAmount recompute, SHR-12)
+  → SharedExpenseDataPort.addExpense() → GroupTransactionCoordinator
+    (addExpenseToGroup / addExpenseWithLink — multi-table atomic write)
 
 REMOVE shared expense member:
-  → SharedExpenseManager.removeMember(groupId, memberId)
+  → SharedExpenseManager.removeMember(member)
   → SharedExpenseDataPort.removeMember()
 
 FORBIDDEN:
-  ❌ SharedExpenseDataPort.createExpense() outside SharedExpenseManager
-  ❌ SharedExpenseManager CRUD outside GroupLifecycleCoordinator (preferred path)
+  ❌ SharedExpenseDataPort mutations outside SharedExpenseManager
+     (this facade is now the PRIMARY group path — see Group Mutations;
+      GroupLifecycleCoordinator no longer exists)
 ```
 
 ---
@@ -1021,17 +1239,26 @@ FORBIDDEN:
 ## Recurring Plan Projection
 
 ```
-PROJECT future occurrences:
-  → RecurringPlanProjectionService.projectOccurrences(ruleId, windowStart, windowEnd)
-  → Reads recurring rule + existing occurrences
-  → Computes projected dates using RecurringLifecycleCoordinator
-  → PlannedExpenseDao.insert() for each projected occurrence
-  → Used by UI to show upcoming planned expenses before materialization
+PROJECT future occurrences (read-only):
+  → RecurringLifecycleCoordinator.projectOccurrences(ruleId, startDate, endDate)
+  → Returns transient (unsaved) occurrences for the window; inactive rules
+    project nothing
+  → Deliberately NO write-barrier check (read-only projection)
+  → Consumers: CashFlowCalculator, FinancialStressForecastEngine,
+    ForecastInputAssembler
+
+PERSIST planned rows for projected occurrences:
+  → RecurringPlanProjectionService.projectFromOccurrencesInCurrentTransaction()
+  → PlannedExpenseDao.insertPlannedExpense() for PLANNED occurrences without one
+    (deduped by sourceOccurrenceKey)
+  → ONLY called from inside RecurringRuleLifecycleCoordinator rule-mutation
+    transactions (projectFromRule was deleted — RP-04 P4-006 dead-code disposition)
 
 FORBIDDEN:
-  ❌ PlannedExpenseDao.insert() outside RecurringPlanProjectionService
+  ❌ PlannedExpenseDao.insertPlannedExpense() outside
+     RecurringPlanProjectionService inside a rule-mutation transaction
   ❌ Projecting occurrences without validating rule is active
-  ❌ Duplicate projection without clearing stale planned rows first
+  ❌ Duplicate planned rows (must check sourceOccurrenceKey first)
 ```
 
 ---
@@ -1043,8 +1270,9 @@ READ active challenges + progress:
   → SpendingChallengeManager.getActiveChallengesSnapshot()
   → SpendingChallengeManager.getChallengeProgress(challenge)
   → Read-only; NOTE: progress spend is currently computed via deprecated raw
-    ExpenseDao SUM aggregates (getTotalSpentBetween / getCategorySpentInPeriod,
-    marked for MultiCurrencyRepository migration — no ownership filter)
+    Double ExpenseDao SUM aggregates (getTotalSpentBetween / getCategorySpentInPeriod
+    — @Deprecated "Use MultiCurrencyRepository"; ownership-filtered (isNotMine = 0)
+    but not currency-safe — marked for MultiCurrencyRepository migration)
   → Returns progress percentage against challenge target
 
 CREATE challenge:

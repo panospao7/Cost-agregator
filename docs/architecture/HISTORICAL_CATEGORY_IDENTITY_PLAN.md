@@ -1,6 +1,6 @@
 # Historical Category Identity Plan
 
-> Last updated: 2026-09-07 (status re-verified against code — see "Status Review" below; the plan text itself is preserved)
+> Last updated: 2026-09-21 (status re-verified against code — see "Status Review" below; the plan text itself is preserved)
 
 ## Problem Statement
 
@@ -123,6 +123,8 @@ If rename history becomes a requirement, Option A can be extended later with an 
 
 Re-verified 2026-09-07: still accurate. The database is at schema v148 (`APP_DATABASE_SCHEMA_VERSION` in `data/database/AppDatabase.kt`) and none of Options A/B/C have been implemented (see Status Review below).
 
+Re-verified 2026-09-21: still accurate — schema remains v148 and Options A/B/C remain unimplemented.
+
 ---
 
 ## Status Review (2026-09-07)
@@ -149,7 +151,7 @@ Overall plan status: **PENDING / DEFERRED** (unchanged). No option has partial i
 
 ## Tracker Entry
 
-Add to `ENGINE_ISSUES_MASTER_TRACKER.md` under Analytical Engines (file lives at `docs/analyses and debug master/ENGINE_ISSUES_MASTER_TRACKER.md`; row A15 already present at that wording as of 2026-09-07):
+Add to `ENGINE_ISSUES_MASTER_TRACKER.md` under Analytical Engines (the tracker has since been archived: as of 2026-09-21 the file lives at `docs/archive/superseded-campaign-docs/trackers/ENGINE_ISSUES_MASTER_TRACKER.md`; row A15 is still present and still `⏭ DEFERRED`, but at updated wording — "Category deletion/history weak … Soft-delete (isArchived) designed and deferred" — not the exact row text below):
 
 ```
 | A15 | P1 | Category deletion/rename distorts history | Enhancement | Soft-delete (isArchived) designed and deferred; see docs/architecture/HISTORICAL_CATEGORY_IDENTITY_PLAN.md | ⏭ DEFERRED |
