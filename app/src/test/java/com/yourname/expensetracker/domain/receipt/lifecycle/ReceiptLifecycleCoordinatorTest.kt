@@ -90,6 +90,7 @@ class ReceiptLifecycleCoordinatorTest {
     private lateinit var postCommitActionRunner: PostCommitActionRunner
     private lateinit var receiptSideEffectPlanner: ReceiptSideEffectPlanner
     private lateinit var receiptInsertResolver: ReceiptInsertResolver
+    private lateinit var receiptParser: ReceiptParser
     private lateinit var writeBarrier: DatabaseWriteBarrier
     private lateinit var diagnosticEventWriter: DiagnosticEventWriter
     private lateinit var privacySettingsRepository: PrivacySettingsRepository
@@ -119,6 +120,7 @@ class ReceiptLifecycleCoordinatorTest {
         postCommitActionRunner = mockk(relaxed = true)
         receiptSideEffectPlanner = mockk(relaxed = true)
         receiptInsertResolver = mockk(relaxed = true)
+        receiptParser = mockk(relaxed = true)
         writeBarrier = mockk(relaxed = true)
         diagnosticEventWriter = mockk(relaxed = true)
         privacySettingsRepository = mockk(relaxed = true)
@@ -194,6 +196,8 @@ class ReceiptLifecycleCoordinatorTest {
             pendingReviewDao = mockk(relaxed = true),
             pendingReviewSourceLinkService = mockk(relaxed = true),
             receiptInsertResolver = receiptInsertResolver,
+            // RP-12 12b (P3-007) conditional remainder: email ephemeral item parsing.
+            receiptParser = receiptParser,
             transactionRunner = transactionRunner,
             receiptLifecycleEventWriter = receiptLifecycleEventWriter,
             effectiveCloudAiPolicyResolver = mockk(relaxed = true)
@@ -556,6 +560,113 @@ class ReceiptLifecycleCoordinatorTest {
         coVerify(exactly = 1) { receiptInsertResolver.insertOrResolve(any()) }
         coVerify(exactly = 0) { receiptSideEffectPlanner.planAfterReceiptSaved(any<ReceiptSideEffectInput>(), any(), any()) }
         coVerify(exactly = 0) { postCommitActionRunner.run(any()) }
+    }
+
+    // RP-12 12b (P3-007) conditional remainder: a FRESH insert under a restricted
+    // storage mode carries the in-memory ephemeral parsed items into planning so
+    // the post-commit categorization action can run. STORE_RAW carries nothing —
+    // persisted items are the permitted representation there.
+    @Test
+    fun `processReceiptInput fresh insert carries ephemeral parsed items into planning under restricted mode`() = runTest {
+        val uri = mockk<Uri>(relaxed = true)
+        val ephemeralItems = listOf(
+            ReceiptParser.LineItem(description = "Camera Item", quantity = 2.0, unitPrice = 1.5, totalPrice = 3.0)
+        )
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns
+            ReceiptRepository.ProcessReceiptResult(
+                receipt = scanDraftReceipt(),
+                parsed = parsedScanReceipt().copy(lineItems = ephemeralItems)
+            )
+        coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
+            isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
+        )
+        coEvery { privacySettingsRepository.getSettings() } returns
+            PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_REDACTED)
+        val inputSlot = slot<ReceiptSideEffectInput>()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(capture(inputSlot), any(), any()) } returns nonEmptyBatch()
+        coEvery { postCommitActionRunner.run(any()) } returns mockk(relaxed = true)
+
+        val outcome = coordinator.processReceiptInput(uri).getOrThrow()
+
+        assertTrue("Expected inserted=true, got $outcome", outcome.inserted)
+        assertEquals("Fresh insert under STORE_REDACTED must carry the ephemeral items",
+            ephemeralItems, inputSlot.captured.ephemeralParsedItems)
+        assertEquals(RawStorageMode.STORE_REDACTED, inputSlot.captured.rawStorageMode)
+    }
+
+    @Test
+    fun `processReceiptInput fresh insert under STORE_RAW carries no ephemeral items`() = runTest {
+        val uri = mockk<Uri>(relaxed = true)
+        val ephemeralItems = listOf(
+            ReceiptParser.LineItem(description = "Camera Item", quantity = 2.0, unitPrice = 1.5, totalPrice = 3.0)
+        )
+        coEvery { inputValidator.validate(uri) } returns scanValidationResult()
+        coEvery { receiptRepository.processReceipt(uri, false, "image/jpeg") } returns
+            ReceiptRepository.ProcessReceiptResult(
+                receipt = scanDraftReceipt(),
+                parsed = parsedScanReceipt().copy(lineItems = ephemeralItems)
+            )
+        coEvery { duplicateDetector.checkDuplicate(any(), any(), any(), any()) } returns ReceiptDuplicateDetector.DuplicateResult(
+            isDuplicate = false, confidence = 0.0f, existingReceiptId = null, reason = null, matchType = "NONE"
+        )
+        coEvery { privacySettingsRepository.getSettings() } returns
+            PrivacySettings(rawOcrStorageMode = RawStorageMode.STORE_RAW)
+        val inputSlot = slot<ReceiptSideEffectInput>()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(capture(inputSlot), any(), any()) } returns nonEmptyBatch()
+        coEvery { postCommitActionRunner.run(any()) } returns mockk(relaxed = true)
+
+        val outcome = coordinator.processReceiptInput(uri).getOrThrow()
+
+        assertTrue("Expected inserted=true, got $outcome", outcome.inserted)
+        assertNull("STORE_RAW must not carry ephemeral items (persisted items are permitted)",
+            inputSlot.captured.ephemeralParsedItems)
+    }
+
+    // RP-12 12b (P3-007) conditional remainder: the email path parses its
+    // ephemeral parser-format items JSON into the in-memory projection for a
+    // fresh insert under a restricted storage mode.
+    @Test
+    fun `processEmailReceipt fresh insert carries ephemeral parsed items into planning under restricted mode`() = runTest {
+        coEvery { privacySettingsRepository.getSettings() } returns
+            PrivacySettings(emailReceiptStorageMode = RawStorageMode.STORE_REDACTED)
+        val emailItemsJson = "[{\"description\":\"Email Item\",\"totalPrice\":4.5,\"quantity\":1,\"unitPrice\":4.5}]"
+        val expectedEphemeral = listOf(
+            ReceiptParser.LineItem(description = "Email Item", quantity = 1.0, unitPrice = 4.5, totalPrice = 4.5)
+        )
+        coEvery { receiptParser.lineItemsFromJson(emailItemsJson) } returns expectedEphemeral
+        val emailData = EmailReceiptData(
+            messageId = "", from = "sender@example.com", subject = "Receipt",
+            body = "Your receipt", receivedAt = now,
+            amount = 25.0, merchant = "Test Shop", currency = "EUR",
+            date = now, items = emailItemsJson,
+            confidence = 0.2
+        )
+        coEvery { scannedReceiptDao.insert(any()) } returns 1L
+        coEvery { emailReceiptDao.insertOrIgnore(any()) } returns 1L
+        coEvery { scannedReceiptDao.getById(1L) } returns ScannedReceipt(
+            id = 1L, imagePath = null, rawOcrText = "Your receipt",
+            parsedTotal = 25.0, parsedMerchant = "Test Shop", parsedDate = now,
+            parsedItems = null, parsedTaxAmount = null, confidence = 0.2f
+        )
+        val inputSlot = slot<ReceiptSideEffectInput>()
+        coEvery { receiptSideEffectPlanner.planAfterReceiptSaved(capture(inputSlot), any(), any()) } returns nonEmptyBatch()
+        coEvery { postCommitActionRunner.run(any()) } returns mockk(relaxed = true)
+
+        val result = coordinator.processEmailReceipt(
+            emailData = emailData,
+            fingerprint = "",
+            rawEmailBody = "Your receipt",
+            sender = "sender@example.com",
+            subject = "Receipt",
+            messageId = "",
+            provider = "unknown"
+        )
+
+        assertTrue("Expected NeedsReview for low-confidence parse, got $result", result is EmailReceiptProcessResult.NeedsReview)
+        assertEquals("Fresh email insert under STORE_REDACTED must carry the ephemeral items",
+            expectedEphemeral, inputSlot.captured.ephemeralParsedItems)
+        assertEquals(RawStorageMode.STORE_REDACTED, inputSlot.captured.rawStorageMode)
     }
 
     // RP-12 12a / P3-001: autoMatchExistingExpense=false must reach planning so the

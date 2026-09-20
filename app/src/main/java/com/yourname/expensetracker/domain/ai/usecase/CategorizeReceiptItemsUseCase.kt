@@ -18,6 +18,7 @@ import com.yourname.expensetracker.domain.ai.service.ReceiptItemCategorizationSe
 import com.yourname.expensetracker.domain.ai.util.AiArtifactSourceHash
 import com.yourname.expensetracker.domain.config.AppConfig
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
+import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.util.TimeProvider
 import com.yourname.expensetracker.domain.ai.model.ReceiptItemCategorizationInput
@@ -42,7 +43,43 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
     private val timeProvider: TimeProvider
 ) {
 
-    suspend operator fun invoke(receiptId: Long, force: Boolean = false): CategorizationResult {
+    /**
+     * Categorizes the items of [receiptId].
+     *
+     * RP-12 12b (P3-007) conditional remainder: [ephemeralItems] is the
+     * minimum in-memory projection of the freshly parsed line items, carried
+     * ONLY for a fresh insert under a restricted storage mode. When present
+     * it takes precedence as the item source; when it is absent (process
+     * restart, or a mode where the persisted representation is permitted)
+     * the allowed persisted representation (the receipt's parsedItems —
+     * full parser JSON under STORE_RAW, typed redacted projection under
+     * STORE_REDACTED) is used exactly as before. If neither source is
+     * available the call returns [CategorizationResult.Error] (the planner
+     * records the controlled STRUCTURED_RECEIPT_DATA_UNAVAILABLE skip
+     * upstream). The ephemeral items are never persisted or logged by this
+     * use case.
+     *
+     * RP-12 12b (P3-007) OUTPUT gate: [persistItemTextAllowed] = false (the
+     * planner passes it for STORE_REDACTED) gates every PERSISTED projection
+     * of the result. The [com.yourname.expensetracker.data.database.entity.ReceiptItemCategorization]
+     * entity declares a NOT-NULL itemDescription, so no name-free row
+     * projection exists — restricted modes therefore persist NO categorization
+     * rows (schema-forced path) and keep the receipt at PENDING, and the
+     * artifact payload/summary carry only category ids/names, confidences and
+     * counts: never item descriptions, amounts, rationales (the on-device
+     * rationale embeds the raw description verbatim), or suggested new
+     * category names (derivable from item text and not approved categories).
+     * The in-session [CategorizationResult.Success] value is unaffected.
+     * Defaults to true so every pre-existing caller keeps byte-identical
+     * persistence behavior (STORE_RAW full output). The artifact sourceHash
+     * stays a one-way SHA-256 digest in every mode.
+     */
+    suspend operator fun invoke(
+        receiptId: Long,
+        force: Boolean = false,
+        ephemeralItems: List<ReceiptParser.LineItem>? = null,
+        persistItemTextAllowed: Boolean = true
+    ): CategorizationResult {
         // 1. Check AI enabled
         val settings = aiSettingsRepository.settings().first()
         if (!settings.aiEnabled || !settings.receiptItemCategorizationEnabled) {
@@ -74,14 +111,20 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             return CategorizationResult.Error
         }
 
-        // 4. Check if there are items to categorize
-        if (receipt.parsedItems.isNullOrBlank()) {
+        // 4. Check if there are items to categorize.
+        // RP-12 12b (P3-007): permitted ephemeral items for a fresh insert
+        // take precedence; otherwise fall back to the allowed persisted
+        // representation exactly as before.
+        val hasEphemeralItems = !ephemeralItems.isNullOrEmpty()
+        if (!hasEphemeralItems && receipt.parsedItems.isNullOrBlank()) {
             Timber.d("Receipt $receiptId has no line items to categorize")
             return CategorizationResult.Error
         }
 
-        // 5. Build input
-        val input = inputBuilder.build(receipt, settings)
+        // 5. Build input — the ephemeral projection (when present) goes through
+        // the SAME sanitization/redaction pipeline as persisted items; it is
+        // never logged and never persisted by the builder.
+        val input = inputBuilder.build(receipt, settings, ephemeralItems)
         if (input.lineItems.isEmpty()) {
             Timber.d("No line items found for receipt $receiptId")
             return CategorizationResult.Error
@@ -141,26 +184,47 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
                 return failCategorization(receiptId, baseEntity, reason)
             }
 
-            // 10. Store results and check count
-            val savedCount = storeResults(receiptId, result)
+            // 10. Store results and check count.
+            // RP-12 12b (P3-007) OUTPUT gate: under a restricted storage mode
+            // the persisted output must not contain item-name-derived content.
+            // ReceiptItemCategorization.itemDescription is NOT NULL in the Room
+            // schema, so no name-free row projection exists — restricted modes
+            // persist NO categorization rows (the schema-forced path). The
+            // in-session result below is unaffected.
+            val savedCount = if (persistItemTextAllowed) storeResults(receiptId, result) else 0
 
-            // 11. Update receipt status to READY ONLY IF at least one row was inserted
-            if (savedCount > 0) {
-                receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.READY)
+            // 11. Receipt status: READY only when rows were actually persisted.
+            if (persistItemTextAllowed) {
+                if (savedCount > 0) {
+                    receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.READY)
+                } else {
+                    Timber.w("Categorization completed for receipt $receiptId but no rows were saved — reverting to PENDING")
+                    receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
+                    updateArtifactFailed(baseEntity, "No categorization rows were inserted")
+                    return CategorizationResult.Error
+                }
             } else {
-                Timber.w("Categorization completed for receipt $receiptId but no rows were saved — reverting to PENDING")
+                // Nothing was persisted — keep the truthful PENDING status.
                 receiptRepository.updateCategorizationStatus(receiptId, CategorizationStatus.PENDING)
-                updateArtifactFailed(baseEntity, "No categorization rows were inserted")
-                return CategorizationResult.Error
             }
 
-            // 12. Update artifact to READY
-            updateArtifactReady(baseEntity, result)
+            // 12. Update artifact to READY (payload gated by the storage mode)
+            updateArtifactReady(baseEntity, result, persistItemTextAllowed)
 
             CategorizationResult.Success(result)
         } catch (e: Exception) {
             Timber.e(e, "Error categorizing receipt items for $receiptId")
-            failCategorization(receiptId, baseEntity, e.message ?: "Unknown error")
+            // RP-12 12b (P3-007) OUTPUT gate: restricted modes never persist
+            // uncontrolled exception text (framework messages can embed
+            // item-derived input); the exception class name is the permitted
+            // bounded diagnostic. validateResult reasons are controlled
+            // constants and are persisted in both cases.
+            failCategorization(
+                receiptId,
+                baseEntity,
+                if (persistItemTextAllowed) (e.message ?: "Unknown error")
+                else e::class.java.simpleName
+            )
         }
     }
 
@@ -216,17 +280,28 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
 
     private suspend fun updateArtifactReady(
         baseEntity: AiArtifactRecord,
-        result: ReceiptItemCategorizationResult
+        result: ReceiptItemCategorizationResult,
+        persistItemTextAllowed: Boolean
     ) {
         val itemsArray = JSONArray().apply {
             result.items.forEach { item ->
                 put(JSONObject().apply {
-                    put("description", item.itemDescription)
-                    put("amount", item.amount)
+                    // RP-12 12b (P3-007) OUTPUT gate: restricted modes persist
+                    // NO item-name-derived content — no description (echoed
+                    // item name), no amount, no rationale (the on-device
+                    // rationale embeds the raw description verbatim). Category
+                    // ids/names, confidences and counts are the permitted
+                    // projection under STORE_REDACTED.
+                    if (persistItemTextAllowed) {
+                        put("description", item.itemDescription)
+                        put("amount", item.amount)
+                    }
                     put("categoryName", item.suggestedCategory?.categoryName ?: "Unknown")
                     put("categoryId", item.suggestedCategory?.categoryId)
                     put("confidence", item.confidence)
-                    put("rationale", item.rationale)
+                    if (persistItemTextAllowed) {
+                        put("rationale", item.rationale)
+                    }
                     put("isNewCategorySuggestion", item.suggestedCategory?.isNewCategorySuggestion ?: false)
                     put("alternatives", JSONArray().apply {
                         item.alternatives.forEach { alt ->
@@ -241,37 +316,49 @@ class CategorizeReceiptItemsUseCase @Inject constructor(
             }
         }
 
-        val taxObject = JSONObject().apply {
-            result.taxDistribution.forEach { (categoryId, taxAmount) ->
-                put(categoryId.toString(), taxAmount)
-            }
-        }
-
         val payload = JSONObject().apply {
             put("items", itemsArray)
-            put("suggestedNewCategories", JSONArray(result.suggestedNewCategories))
-            put("taxDistribution", taxObject)
+            if (persistItemTextAllowed) {
+                // Amounts (tax distribution) and AI-suggested new category
+                // names (derivable from item text, not approved categories)
+                // are raw-only as well.
+                val taxObject = JSONObject().apply {
+                    result.taxDistribution.forEach { (categoryId, taxAmount) ->
+                        put(categoryId.toString(), taxAmount)
+                    }
+                }
+                put("suggestedNewCategories", JSONArray(result.suggestedNewCategories))
+                put("taxDistribution", taxObject)
+            }
         }
 
         aiArtifactRepository.upsert(
             baseEntity.copy(
                 status = AiArtifactStatus.READY,
-                summaryText = "Categorized ${result.items.size} items",
-                explanationText = buildExplanation(result),
+                summaryText = if (persistItemTextAllowed) {
+                    "Categorized ${result.items.size} items"
+                } else {
+                    // Controlled constants + counts only — never item content.
+                    "Categorized ${result.items.size} items (not persisted for storage mode)"
+                },
+                explanationText = buildExplanation(result, persistItemTextAllowed),
                 payloadJson = payload.toString(),
                 updatedAt = timeProvider.now()
             )
         )
     }
 
-    private fun buildExplanation(result: ReceiptItemCategorizationResult): String {
+    private fun buildExplanation(
+        result: ReceiptItemCategorizationResult,
+        persistItemTextAllowed: Boolean
+    ): String {
         val lines = buildList {
             add("Categorized ${result.items.size} receipt items")
             if (result.needsReview) {
                 val uncertainCount = result.items.count { it.needsReview }
                 add("⚠️ $uncertainCount items need review (confidence < 70%)")
             }
-            if (result.suggestedNewCategories.isNotEmpty()) {
+            if (persistItemTextAllowed && result.suggestedNewCategories.isNotEmpty()) {
                 add("💡 Suggested new categories: ${result.suggestedNewCategories.joinToString()}")
             }
             add("Average confidence: ${(result.totalConfidence * 100).toInt()}%")

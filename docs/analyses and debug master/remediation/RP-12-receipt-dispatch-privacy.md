@@ -102,8 +102,34 @@ email-path failures (a subset of the 10 recorded at the lane base in
 > AssetCleanupCoordinator with reference-counted, attempt-claimed cleanup on
 > every uncommitted-asset exit, typed OcrRecognitionFailedException carrying
 > the owned path (double-copy removed), cancellation-safe best-effort cleanup.
-> RP-12 core sequence 12a-12b-12c is now complete (conditional remainder
-> above).
+>
+> **Update (2026-09-19):** the conditional P3-007 remainder is IMPLEMENTED on
+> branch `rp-12-resume`: fresh inserts under restricted
+> modes carry the minimum in-memory ephemeral item projection
+> (`ReceiptSideEffectInput.ephemeralParsedItems`) into categorization via the
+> new `CategorizeReceiptItemsUseCase` `ephemeralItems` parameter; absence of
+> the projection (process restart) and duplicates keep the controlled
+> STRUCTURED_RECEIPT_DATA_UNAVAILABLE skip / no-categorization behavior;
+> STORE_RAW keeps persisted items as the permitted representation. Output
+> persistence is mode-gated per the P3-007 matrix (strict-review fix):
+> STORE_REDACTED runs categorization on the ephemeral
+> projection but persists no item-name-derived content — no
+> `ReceiptItemCategorization` rows (the NOT-NULL `itemDescription` column
+> forces the no-rows path; receipt stays PENDING) and an `aiArtifacts`
+> payload limited to category ids/names, confidences and counts (no
+> descriptions, amounts, rationales, suggested new categories, tax
+> distribution); STORE_METADATA_ONLY and DO_NOT_STORE skip categorization
+> entirely (controlled STRUCTURED_RECEIPT_DATA_UNAVAILABLE) even when the
+> projection is present; STORE_RAW output persistence is unchanged.
+>
+> **Validated (2026-09-19, validation-runner, this worktree):**
+> `*ReceiptSideEffect*` PASS (vr-20260919-223628-286ed826),
+> `*CategorizeReceiptItems*` PASS (vr-20260919-225106-567d665a),
+> `*ReceiptLifecycleCoordinator*` PASS 28/28 (vr-20260919-225339-c00b064f) —
+> the six email-path failures recorded at the 12c battery are repaired on
+> this base (upstream mainline test sweeps) and the diff touches none of
+> them. Strict review: initial FAIL (output re-persisted ephemeral item
+> names) → mode-gating fix → focused re-review PASS.
 
 ### P3-004 — Use fresh reads and column-scoped receipt writes
 

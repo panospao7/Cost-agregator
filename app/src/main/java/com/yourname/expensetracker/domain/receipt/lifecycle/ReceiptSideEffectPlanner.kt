@@ -229,14 +229,29 @@ class ReceiptSideEffectPlanner @Inject constructor(
     ): PostCommitAction {
         val receipt = input.receipt
         val receiptId = receipt.id
-        // RP-12 12b (P3-007): item categorization is name-dependent. Only
-        // STORE_RAW persists nameable items — redacted items carry prices only,
-        // and metadata-only/DO_NOT_STORE persist none. In every other mode the
-        // action runs as a CONTROLLED skip (never a silent read of disallowed
-        // persisted data and never a retryable failure). The ephemeral
-        // pass-through into the use case is the documented remaining P3-007
-        // step; until then a fresh insert under a restricted mode skips too.
-        val categorizationPermitted = input.rawStorageMode == RawStorageMode.STORE_RAW
+        // RP-12 12b (P3-007): item categorization is name-dependent and its
+        // OUTPUT is name-derived. Mode-gated per the P3-007 matrix:
+        // - STORE_RAW: persisted items are the permitted representation; full
+        //   output persistence (unchanged behavior). Any carried items are
+        //   ignored.
+        // - STORE_REDACTED: a FRESH insert may carry the minimum in-memory
+        //   ephemeral item projection ([ReceiptSideEffectInput.ephemeralParsedItems])
+        //   into the use case with persistItemTextAllowed = false — the
+        //   categorization OUTPUT (rows/artifact) must not re-persist
+        //   item-name-derived content. The projection lives only in memory —
+        //   never persisted, logged, or written to diagnostics — and dies with
+        //   the process: when it is absent (e.g. process restart) the
+        //   controlled STRUCTURED_RECEIPT_DATA_UNAVAILABLE skip below applies
+        //   and the batch is never retried from raw data.
+        // - STORE_METADATA_ONLY / DO_NOT_STORE: persist no item data at all,
+        //   so categorization NEVER runs here — even when the projection is
+        //   present — and the controlled skip applies.
+        val restrictedMode = input.rawStorageMode != RawStorageMode.STORE_RAW
+        val ephemeralItems = if (input.rawStorageMode == RawStorageMode.STORE_REDACTED) {
+            input.ephemeralParsedItems?.takeIf { it.isNotEmpty() }
+        } else {
+            null
+        }
         return PostCommitAction(
             pipeline = AppPipeline.RECEIPT,
             name = "receipt_item_categorization",
@@ -254,13 +269,28 @@ class ReceiptSideEffectPlanner @Inject constructor(
                 .build()
         ) {
             try {
-                if (!categorizationPermitted) {
+                if (restrictedMode && ephemeralItems == null) {
                     writeMatchEvent(receipt, "SIDE_EFFECT_SKIPPED_PRIVACY",
                         "Item categorization skipped: structured receipt data unavailable for storage mode")
                     return@PostCommitAction SideEffectOutcome.Skipped(
                         com.yourname.expensetracker.domain.sideeffect.SideEffectSkipReason.STRUCTURED_RECEIPT_DATA_UNAVAILABLE)
                 }
-                categorizeReceiptItemsUseCase(receiptId)
+                if (ephemeralItems != null) {
+                    // Event type/message are controlled constants — never item content.
+                    writeMatchEvent(receipt, "ITEMS_USED_EPHEMERALLY",
+                        "Item categorization used the in-memory ephemeral item projection (fresh insert)")
+                    // STORE_REDACTED output contract: persistItemTextAllowed =
+                    // false keeps item-name-derived content out of every
+                    // persisted projection; the category assignments stay
+                    // in-session only.
+                    categorizeReceiptItemsUseCase(
+                        receiptId,
+                        ephemeralItems = ephemeralItems,
+                        persistItemTextAllowed = false
+                    )
+                } else {
+                    categorizeReceiptItemsUseCase(receiptId)
+                }
                 SideEffectOutcome.Completed
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e

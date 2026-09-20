@@ -40,6 +40,7 @@ import com.yourname.expensetracker.domain.provenance.SourceLinkWriter
 import com.yourname.expensetracker.domain.provenance.TargetEntityType
 import com.yourname.expensetracker.domain.receipt.EmailReceiptData
 import com.yourname.expensetracker.domain.receipt.ReceiptDocumentType
+import com.yourname.expensetracker.domain.receipt.ReceiptParser
 import com.yourname.expensetracker.domain.receipt.ReceiptProcessingStatus
 import com.yourname.expensetracker.domain.receipt.ReceiptSourceType
 import com.yourname.expensetracker.domain.currency.CurrencySettingsRepository
@@ -125,6 +126,10 @@ class ReceiptLifecycleCoordinator @Inject constructor(
     private val sourceLinkWriter: SourceLinkWriter,
     private val receiptSideEffectPlanner: ReceiptSideEffectPlanner,
     private val receiptInsertResolver: ReceiptInsertResolver,
+    // RP-12 12b (P3-007) conditional remainder: parses the ephemeral email
+    // items JSON into the in-memory LineItem projection for the post-commit
+    // categorization action (fresh inserts under restricted storage modes).
+    private val receiptParser: ReceiptParser,
     // U-PR5: Authoritative cloud AI gate — checks both PrivacySettings and AiSettings before cloud OCR calls
     private val effectiveCloudAiPolicyResolver: EffectiveCloudAiPolicyResolver
 ) {
@@ -650,6 +655,16 @@ class ReceiptLifecycleCoordinator @Inject constructor(
                         input = ReceiptSideEffectInput(
                             receipt = freshReceipt,
                             ephemeralRawOcrText = processResult.ephemeralRawOcrText,
+                            // RP-12 12b (P3-007) conditional remainder: a fresh
+                            // insert under a RESTRICTED mode carries the in-memory
+                            // ephemeral items into the categorization action
+                            // (never persisted/logged; dies with the process).
+                            // STORE_RAW needs no carry — persisted items are the
+                            // permitted representation there. The planner remains
+                            // the policy owner.
+                            ephemeralParsedItems = processResult.parsed.lineItems.takeIf {
+                                it.isNotEmpty() && rawStorageMode != RawStorageMode.STORE_RAW
+                            },
                             rawStorageMode = rawStorageMode,
                             correlationId = correlationId,
                             autoMatchExistingExpense = options.autoMatchExistingExpense
@@ -1214,6 +1229,16 @@ suspend fun saveEmailReceipt(receipt: ScannedReceipt): Long {
                         receipt = freshReceipt,
                         ephemeralRawOcrText = null,
                         ephemeralEmailBody = null,
+                        // RP-12 12b (P3-007) conditional remainder: a fresh
+                        // insert under a RESTRICTED mode carries the in-memory
+                        // ephemeral items (parsed from the parser-format JSON,
+                        // which is itself the ephemeral EmailReceiptData input)
+                        // into the categorization action. Never persisted or
+                        // logged; dies with the process. STORE_RAW keeps the
+                        // persisted parser JSON as the item source.
+                        ephemeralParsedItems = receiptParser.lineItemsFromJson(emailData.items).takeIf {
+                            it.isNotEmpty() && emailStorageMode != RawStorageMode.STORE_RAW
+                        },
                         rawStorageMode = emailStorageMode,
                         correlationId = correlationId
                     ),

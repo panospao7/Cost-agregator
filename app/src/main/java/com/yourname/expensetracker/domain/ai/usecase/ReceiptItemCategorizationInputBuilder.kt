@@ -25,23 +25,40 @@ class ReceiptItemCategorizationInputBuilder @Inject constructor(
 ) {
     /**
      * Builds input for receipt item categorization.
+     *
+     * RP-12 12b (P3-007) conditional remainder: [ephemeralItems] is the
+     * in-memory projection of the freshly parsed items for a FRESH insert
+     * under a restricted storage mode. When present it takes precedence over
+     * the persisted representation; both sources pass through the SAME
+     * sanitization/redaction below — the ephemeral source never bypasses
+     * AI-input hygiene and is never persisted or logged.
      */
-    suspend fun build(receipt: ScannedReceipt, settings: AiSettings): ReceiptItemCategorizationInput {
+    suspend fun build(
+        receipt: ScannedReceipt,
+        settings: AiSettings,
+        ephemeralItems: List<ReceiptParser.LineItem>? = null
+    ): ReceiptItemCategorizationInput {
         val privacyRequiresRedaction = privacySettingsRepository.getSettings().redactBeforeCloud
         val shouldRedact =
             aiPolicy.canUseCloudFor(settings, AiCapability.RECEIPT_ITEM_CATEGORIZATION) &&
                 (aiPolicy.shouldRedact(settings, AiCapability.RECEIPT_ITEM_CATEGORIZATION) || privacyRequiresRedaction)
 
-        // Parse line items from JSON
-        val lineItems = receipt.parsedItems?.let {
-            receiptParser.lineItemsFromJson(it)
-        }?.map { item ->
+        // Parse line items — permitted ephemeral items for a fresh insert take
+        // precedence over the (possibly restricted) persisted items JSON.
+        val sourceItems: List<ReceiptParser.LineItem> = if (!ephemeralItems.isNullOrEmpty()) {
+            ephemeralItems
+        } else {
+            receipt.parsedItems?.let {
+                receiptParser.lineItemsFromJson(it)
+            } ?: emptyList()
+        }
+        val lineItems = sourceItems.map { item ->
             if (!shouldRedact) {
                 item.copy(description = sanitizeText(item.description, false, 80))
             } else {
                 item.copy(description = sanitizeText(item.description, true, 80))
             }
-        } ?: emptyList()
+        }
         
         // Get user's categories and map to domain DTOs at the boundary
         val categoryRefs = categoryRepository.getAll().map { category ->
