@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -194,6 +195,127 @@ class AppleReceiptParserTest {
         )
 
         assertTrue("Apple subdomain sender must be accepted", result)
+    }
+
+    // -------------------------------------------------------------------------
+    // RP-18 18-A: label hierarchy, strict total grammar, currency resolution.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `parse prefers Total Amount label over bare Total`() {
+        val receipt = parser.parse(
+            emailBody = """
+                Apple Services Receipt
+                Order ID: MT777888999
+                Total ${'$'}5.00
+                Total Amount: ${'$'}8.00
+                apple.com/bill
+            """.trimIndent(),
+            receivedAt = 0L
+        )
+
+        assertNotNull(receipt)
+        assertEquals(8.00, receipt!!.amount, 0.001)
+    }
+
+    @Test
+    fun `parse ignores vat suffix and selects the actual total`() {
+        val receipt = parser.parse(
+            emailBody = """
+                Apple Services Receipt
+                Order ID: MT998877665
+                Total incl. 19% VAT: 23,80 €
+                apple.com/bill
+            """.trimIndent(),
+            receivedAt = 0L
+        )
+
+        assertNotNull(receipt)
+        assertEquals(23.80, receipt!!.amount, 0.001)
+        assertEquals("EUR", receipt.currency)
+    }
+
+    @Test
+    fun `parse does not select unit price forms as the total`() {
+        val receipt = parser.parse(
+            emailBody = """
+                App Store Receipt
+                Document No: 555000222333
+                App: Note Taking App
+                2 @ ${'$'}5.00
+                Total ${'$'}10.00
+                apple.com/bill
+            """.trimIndent(),
+            receivedAt = 0L
+        )
+
+        assertNotNull(receipt)
+        assertEquals(10.00, receipt!!.amount, 0.001)
+    }
+
+    @Test
+    fun `parse excludes aggregate summary rows from items`() {
+        val receipt = parser.parse(
+            emailBody = """
+                App Store Receipt
+                Document No: 555000999888
+                App: Puzzle Pack
+                Puzzle Pack 3 items ${'$'}12.34
+                Total ${'$'}12.34
+                apple.com/bill
+            """.trimIndent(),
+            receivedAt = 0L
+        )
+
+        assertNotNull(receipt)
+        assertEquals(12.34, receipt!!.amount, 0.001)
+        assertTrue(
+            "Aggregate summary rows must never become line items",
+            receipt.items.isEmpty()
+        )
+    }
+
+    @Test
+    fun `parse does not infer currency from everyday words it us de`() {
+        val body = """
+            Apple Services Receipt
+            Order ID: MT111222333
+            Total 7,00
+            Read it, contact us, check de support page.
+        """.trimIndent()
+
+        val outcome = parser.parseWithOutcome(emailBody = body, receivedAt = 0L)
+
+        assertTrue(
+            "Expected CURRENCY_UNRESOLVED skip, got $outcome",
+            outcome is EmailParseOutcome.Skipped &&
+                outcome.reason == EmailParseSkipReason.CURRENCY_UNRESOLVED
+        )
+        assertNull(
+            "Skipped parse must surface as null from parse()",
+            parser.parse(emailBody = body, receivedAt = 0L)
+        )
+    }
+
+    @Test
+    fun `parse skips with CURRENCY_UNRESOLVED when no currency signal exists`() {
+        val body = """
+            Apple Services Receipt
+            Order ID: MT444555666
+            Total 12,00
+        """.trimIndent()
+
+        val outcome = parser.parseWithOutcome(emailBody = body, receivedAt = 0L)
+
+        assertTrue(
+            "Expected CURRENCY_UNRESOLVED skip, got $outcome",
+            outcome is EmailParseOutcome.Skipped &&
+                outcome.reason == EmailParseSkipReason.CURRENCY_UNRESOLVED
+        )
+        assertNull(
+            "Skipped parse must surface as null from parse()",
+            parser.parse(emailBody = body, receivedAt = 0L)
+        )
     }
 
     private fun expectedLocalDateMillis(value: String): Long {

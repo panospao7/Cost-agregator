@@ -29,3 +29,8 @@ Tests cover sender/body routing, generic `canParse`, unknown senders, refund ski
 ## Sequence and gates
 
 18-A → 18-B → 18-C. Targeted parser, hashing, routing, privacy, and lifecycle tests plus strict review are required.
+
+## Status
+
+- 2026-09-19 — 18-A (parsing) implemented on branch `rp-18-wip`; 18-B/18-C not started.
+- 2026-09-19 — Validated (validation-runner, this worktree): `*EmailReceipt*` targeted shard PASS (vr-20260919-222301-9b9caa09), incl. 22 new parser tests (label hierarchy, VAT/unit-price exclusion incl. on total-bearing lines, summary rows, CURRENCY_UNRESOLVED, two-letter-word false positives). Strict review PASS with documented minors (single-decimal totals rejected by the strict grammar; dot-grouped-no-decimals misparse inherited from pre-existing AmountUtils path; whole-body currency priority — candidates for 18-C).

@@ -20,16 +20,13 @@ class AppleReceiptParser : BaseEmailParser() {
             "invoice@apple.com"
         )
 
-        // Amount patterns for Apple receipts
-        private val AMOUNT_PATTERNS = listOf(
-            Pattern.compile("""Total\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Total Amount\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Amount\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Charged\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""Price\s*([^\n]{1,32})""", Pattern.CASE_INSENSITIVE),
-            Pattern.compile("""([^\n]{1,32})\s*(?:USD|EUR|GBP|\$|€|£)""", Pattern.CASE_INSENSITIVE),
-            // App Store specific pattern
-            Pattern.compile("""total-price[^>]*>\s*([^<]{1,32})""", Pattern.CASE_INSENSITIVE)
+        // RP-18 18-A: trusted Apple domains only. Two-letter country tokens
+        // ("US", "FR", "DE", "IT", "ES", "NL", "GB", "UK") and country names
+        // are no longer currency signals — they false-positive on ordinary
+        // words ("us", "de", "it"). There is no default currency.
+        private val TRUSTED_DOMAIN_CODES = mapOf(
+            "apple.com" to "USD",
+            "appstore.com" to "USD"
         )
 
         // Order/Document ID patterns
@@ -62,12 +59,10 @@ class AppleReceiptParser : BaseEmailParser() {
             Pattern.MULTILINE
         )
 
-        // Currency detection for Apple stores
-        private val CURRENCY_INDICATORS = mapOf(
-            "USD" to listOf("$", "USD", "US", "United States", "appstore.com"),
-            "EUR" to listOf("€", "EUR", "Euro", "euro", "FR", "DE", "IT", "ES", "NL"),
-            "GBP" to listOf("£", "GBP", "pound", "UK", "United Kingdom", "GB")
-        )
+        // RP-18 18-A: the old CURRENCY_INDICATORS map with bare two-letter
+        // tokens ("US", "FR", "DE", …) was removed; currency resolution now
+        // uses TRUSTED_DOMAIN_CODES above plus symbols/bounded ISO codes from
+        // BaseEmailParser.detectCurrencyCode.
 
         // Purchase type detection
         private val PURCHASE_TYPE_PATTERNS = mapOf(
@@ -113,23 +108,31 @@ class AppleReceiptParser : BaseEmailParser() {
     }
 
     override fun parse(emailBody: String, receivedAt: Long): ParsedEmailReceipt? {
+        return when (val outcome = parseWithOutcome(emailBody, receivedAt)) {
+            is EmailParseOutcome.Parsed -> outcome.receipt
+            is EmailParseOutcome.Skipped -> null
+        }
+    }
+
+    override fun parseWithOutcome(emailBody: String, receivedAt: Long): EmailParseOutcome {
         val cleanedBody = cleanHtml(emailBody)
-        
+
         // Extract amount
         val amount = extractAppleAmount(cleanedBody)
         if (amount == null || amount <= 0) {
             Timber.w("Apple parser: Could not extract amount")
-            return null
+            return EmailParseOutcome.Skipped(EmailParseSkipReason.PARSE_FAILED)
         }
+
+        // RP-18 18-A: unknown currency must skip — never guess a default currency
+        val currency = detectCurrency(cleanedBody, emailBody)
+            ?: return EmailParseOutcome.Skipped(EmailParseSkipReason.CURRENCY_UNRESOLVED)
 
         // Extract order/document ID
         val orderNumber = extractOrderId(cleanedBody)
 
         // Extract date
         val date = extractDate(cleanedBody) ?: receivedAt
-
-        // Detect currency
-        val currency = detectCurrency(cleanedBody, emailBody)
 
         // Detect purchase type and set merchant
         val purchaseType = detectPurchaseType(cleanedBody)
@@ -141,36 +144,26 @@ class AppleReceiptParser : BaseEmailParser() {
         // Calculate confidence
         val confidence = calculateConfidence(amount, orderNumber, date != receivedAt, items.isNotEmpty())
 
-        return ParsedEmailReceipt(
-            merchant = merchant,
-            amount = amount,
-            currency = currency,
-            date = date,
-            items = items,
-            orderNumber = orderNumber,
-            confidence = confidence
+        return EmailParseOutcome.Parsed(
+            ParsedEmailReceipt(
+                merchant = merchant,
+                amount = amount,
+                currency = currency,
+                date = date,
+                items = items,
+                orderNumber = orderNumber,
+                confidence = confidence
+            )
         )
     }
 
     private fun extractAppleAmount(text: String): Double? {
-        for (pattern in AMOUNT_PATTERNS) {
-            val matcher = pattern.matcher(text)
-            if (matcher.find()) {
-                parseLocalizedAmount(matcher.group(1))?.let { return it }
-            }
-        }
-        
-        // Fallback: find any amount preceded by total/charged keywords
-        val fallbackPattern = Pattern.compile(
-            """(?:total|charged|amount|price)[^\d]{0,20}([^\n]{1,32})""",
-            Pattern.CASE_INSENSITIVE
-        )
-        val matcher = fallbackPattern.matcher(text)
-        if (matcher.find()) {
-            return parseLocalizedAmount(matcher.group(1))
-        }
-        
-        return null
+        // RP-18 18-A: "total amount" (specific) → "total" → "charged". The
+        // former catch-alls ("Amount"/"Price" and "any text followed by a
+        // currency token") were removed: they could select unit prices and
+        // VAT percentages instead of the actual total.
+        return extractTotalAmount(text, listOf("total amount"))
+            ?: extractLabeledLineAmount(text, "charged")
     }
 
     private fun extractOrderId(text: String): String? {
@@ -203,22 +196,11 @@ class AppleReceiptParser : BaseEmailParser() {
         return dateText?.trim()?.takeIf { it.isNotEmpty() }
     }
 
-    private fun detectCurrency(cleanedBody: String, rawBody: String): String {
-        val text = (cleanedBody + rawBody).uppercase()
-        
-        for ((currency, indicators) in CURRENCY_INDICATORS) {
-            if (indicators.any { indicator -> containsBoundedToken(text, indicator.uppercase()) }) {
-                return currency
-            }
-        }
-        
-        // Default based on common patterns
-        return when {
-            text.contains("$") && !text.contains("AUD") && !text.contains("CAD") -> "USD"
-            text.contains("£") -> "GBP"
-            text.contains("€") -> "EUR"
-            else -> "USD" // Default to USD for Apple (largest market)
-        }
+    // RP-18 18-A: currency resolution via symbols, word-bounded ISO codes and
+    // trusted Apple domains only. Returns null when unresolved — the caller
+    // must skip with CURRENCY_UNRESOLVED instead of defaulting to USD.
+    private fun detectCurrency(cleanedBody: String, rawBody: String): String? {
+        return detectCurrencyCode(cleanedBody + rawBody, TRUSTED_DOMAIN_CODES)
     }
 
     private fun detectPurchaseType(text: String): String {
@@ -258,6 +240,11 @@ class AppleReceiptParser : BaseEmailParser() {
         
         while (matcher.find()) {
             try {
+                // RP-18 18-A: aggregate/summary rows are never line items.
+                if (isSummaryRow(matcher.group())) {
+                    continue
+                }
+
                 val description = matcher.group(1).trim()
                     .replace(Regex("""\s+"""), " ")
                     .take(100)
